@@ -5,6 +5,7 @@ import { bot, botClient } from './bots/fixtures.test-support';
 import { CmaClientProvider } from './api/context';
 import { AuthContextProvider } from './auth/context';
 import { createMockAuthProvider } from './auth/mock';
+import type { AuthProvider, AuthState } from './auth/types';
 import { agentClient } from './test/agent';
 import './test/connectedAccounts';
 import { chooseService, currentService } from './test/services';
@@ -119,6 +120,98 @@ it('discards retained private service drafts when the global account signs out',
   fireEvent.change(editor, { target: { value: 'private draft' } });
   fireEvent.click(screen.getByRole('button', { name: /account menu/i }));
   fireEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+  await waitFor(() => expect(editor).not.toBeInTheDocument());
+});
+
+/** An identity provider whose every answer the test chooses, in order. */
+function scriptedIdentity() {
+  const owner = (id: string): AuthState => ({
+    status: 'authenticated',
+    user: { id, handle: id, capabilities: ['use_own_sandboxes'], visitor: false },
+  });
+  const answers: ((state: AuthState) => void)[] = [];
+  const provider: AuthProvider = {
+    current: () => new Promise<AuthState>((resolve) => answers.push(resolve)),
+    signIn: async () => {},
+    signOut: async () => {},
+  };
+  const answer = async (state: AuthState) => {
+    await waitFor(() => expect(answers.length).toBeGreaterThan(0));
+    await act(async () => answers.shift()?.(state));
+  };
+  const recheck = () =>
+    act(() => {
+      window.dispatchEvent(new Event('focus'));
+    });
+  return { provider, answer, owner, recheck };
+}
+
+async function openChannelDraft(value: string) {
+  fireEvent.click(
+    within(await screen.findByRole('region', { name: 'Channel workspace' })).getByRole('button', {
+      name: 'New channel',
+    }),
+  );
+  const editor = screen.getByRole('textbox', { name: 'Channel name' });
+  fireEvent.change(editor, { target: { value } });
+  return editor;
+}
+
+it('mounts the Gateway once its owner is known, so resolving sign-in keeps an opened editor', async () => {
+  window.history.replaceState({}, '', '/event-gateway');
+  const fetcher = vi.fn(async (url: string) =>
+    url.endsWith('/auth/session') ? Response.json(session) : Response.json({ items: [] }),
+  );
+  vi.stubGlobal('fetch', fetcher);
+  const identity = scriptedIdentity();
+  render(
+    <AuthContextProvider provider={identity.provider}>
+      <CmaClientProvider client={agentClient()}>
+        <App />
+      </CmaClientProvider>
+    </AuthContextProvider>,
+  );
+  expect(await screen.findByRole('status', { name: 'Signing you in' })).toBeVisible();
+  expect(screen.queryByRole('region', { name: 'Channel workspace' })).toBeNull();
+  expect(fetcher.mock.calls.some(([url]) => url.includes('/event-gateway/'))).toBe(false);
+
+  await identity.answer(identity.owner('mock-subject'));
+  const editor = await openChannelDraft('kept draft');
+  // A background check that confirms the same owner retains the editor.
+  identity.recheck();
+  await identity.answer(identity.owner('mock-subject'));
+  expect(screen.getByRole('textbox', { name: 'Channel name' })).toBe(editor);
+  expect(editor).toHaveValue('kept draft');
+});
+
+it('keeps a Gateway editor through an identity outage and discards it for another owner', async () => {
+  window.history.replaceState({}, '', '/event-gateway');
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) =>
+      url.endsWith('/auth/session') ? Response.json(session) : Response.json({ items: [] }),
+    ),
+  );
+  const identity = scriptedIdentity();
+  render(
+    <AuthContextProvider provider={identity.provider}>
+      <CmaClientProvider client={agentClient()}>
+        <App />
+      </CmaClientProvider>
+    </AuthContextProvider>,
+  );
+  await identity.answer({ status: 'error', message: 'identity response was not readable' });
+  const editor = await openChannelDraft('outage draft');
+
+  // The first known owner adopts what was opened while the identity was unknown.
+  identity.recheck();
+  await identity.answer(identity.owner('mock-subject'));
+  expect(screen.getByRole('textbox', { name: 'Channel name' })).toBe(editor);
+  expect(editor).toHaveValue('outage draft');
+
+  // A different known owner does not inherit it.
+  identity.recheck();
+  await identity.answer(identity.owner('another-subject'));
   await waitFor(() => expect(editor).not.toBeInTheDocument());
 });
 
