@@ -172,6 +172,7 @@ trap 'exit 143' TERM
 docker volume create --label "$contract_label" "$contract_volume" >/dev/null
 volume_owner=$(docker volume inspect --format '{{index .Labels "dev.chrono.cma.mongo-contract"}}' "$contract_volume")
 [[ "$volume_owner" == "$contract_name" ]] || exit 1
+bash "$repo_root/.github/scripts/pull-pinned-image.sh" "$mongo_image"
 docker run --detach --name "$contract_name" --label "$contract_label" \
   --publish 127.0.0.1::27017 --memory 2g --memory-swap 2g --cpus "$mongo_cpus" --pids-limit 256 \
   --ulimit nofile=64000:64000 \

@@ -49,6 +49,9 @@ jobs:
         name: "Source files stay within size limits"
         run: ".github/scripts/check-file-size.sh"
       -
+        name: "Pinned image pull retry regressions"
+        run: "bash .github/scripts/pull-pinned-image-tests.sh"
+      -
         uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38" # v6
         with:
           node-version: 26

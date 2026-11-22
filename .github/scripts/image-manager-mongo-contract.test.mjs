@@ -50,7 +50,8 @@ function fixture(reuse, scenario = 'success') {
   const metadata = join(root, 'api/target/nextest');
   mkdirSync(scripts, {recursive: true});
   mkdirSync(metadata, {recursive: true});
-  for (const name of ['image-manager-mongo-contract.sh', 'authenticated-mongo-readiness.js', 'backend-nextest.sh']) {
+  for (const name of ['image-manager-mongo-contract.sh', 'authenticated-mongo-readiness.js', 'backend-nextest.sh',
+    'pull-pinned-image.sh']) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name));
   }
   writeFileSync(join(metadata, 'cargo-metadata.json'), JSON.stringify({workspace_root: join(root, 'api'), target_directory: join(root, 'api/target')}));
