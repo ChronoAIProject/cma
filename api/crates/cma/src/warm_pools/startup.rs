@@ -24,7 +24,7 @@ use std::time::Duration;
 //   allocation against it. Waiting longer only keeps them serving longer.
 // - A rolling update starts replicas one after another, and each pays this
 //   wait inside the same rollout deadline.
-const STARTUP_WARMUP_LIMIT: Duration = super::RELEASE_SETTLE;
+pub(super) const STARTUP_WARMUP_LIMIT: Duration = super::RELEASE_SETTLE;
 
 /// How the bounded startup wait for the default runtime pool ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

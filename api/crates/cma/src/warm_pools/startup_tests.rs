@@ -1,4 +1,4 @@
-use super::super::startup::{await_ready, observed_ready};
+use super::super::startup::{await_ready, observed_ready, STARTUP_WARMUP_LIMIT};
 use super::*;
 use std::io::Write;
 
@@ -97,6 +97,11 @@ async fn startup_respects_durable_zero_target_without_provider_mutation_or_inven
     );
     assert!(store.calls.lock().unwrap().is_empty());
     assert!(store.target.lock().unwrap().binding.is_none());
+}
+
+#[test]
+fn startup_wait_never_outlasts_the_release_settle_window() {
+    assert!(STARTUP_WARMUP_LIMIT <= RELEASE_SETTLE);
 }
 
 #[tokio::test(start_paused = true)]
