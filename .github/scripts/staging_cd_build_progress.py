@@ -7,6 +7,14 @@ import re
 
 CATEGORIES = ("rust-compile", "dependency-compile", "go-compile", "media-compile",
               "cache-import", "cache-export", "archive-export", "other-build")
+# A Dockerfile step is named "[<stage> <n>/<total>] <instruction>". The bracket
+# holds only the public stage name and position; the instruction is withheld.
+STEP = re.compile(r"\[([A-Za-z0-9][A-Za-z0-9_.-]{0,63}) ([1-9][0-9]{0,3})/([1-9][0-9]{0,3})\] ")
+# BuildKit's own vertices for base images and the build context carry no command.
+INTERNAL = (("[internal] load metadata for ", "base-image-metadata"),
+            ("[internal] load build context", "build-context"),
+            ("[internal] load build definition", "build-definition"),
+            ("[internal] load .dockerignore", "build-context"))
 
 
 def summarize(raw):
@@ -34,10 +42,14 @@ def summarize(raw):
             vertices.setdefault(hashlib.sha256(key.encode()).hexdigest(), {}).update(row)
     intervals = {name: [] for name in CATEGORIES}
     cached = 0
+    failed = []
     for row in vertices.values():
         name = row.get("name", "")
         if not isinstance(name, str):
             continue
+        if row.get("error"):
+            # Cancelled siblings also carry an error; the earliest one is the cause.
+            failed.append((str(row.get("completed") or ""), failed_step(name)))
         if row.get("cached") is True:
             cached += 1
         try:
@@ -77,5 +89,21 @@ def summarize(raw):
         durations[category] = round(sum(end - start for start, end in merged), 3)
     complete = bool(vertices) and any(row.get("completed") for row in vertices.values())
     complete = complete and all(not row.get("started") or row.get("completed") for row in vertices.values())
-    return {"complete": bool(complete), "vertices": len(vertices), "cached_vertices": cached,
-            "category_seconds": durations}
+    result = {"complete": bool(complete), "vertices": len(vertices), "cached_vertices": cached,
+              "category_seconds": durations}
+    if failed:
+        # Name where the build stopped so its owner can open that Dockerfile
+        # step; never the instruction text, its arguments or the error message.
+        ordered = [label for _, label in sorted(failed)]
+        result["failed_steps"] = list(dict.fromkeys(ordered))[:8]
+    return result
+
+
+def failed_step(name):
+    match = STEP.match(name)
+    if match:
+        return f"{match[1]} {match[2]}/{match[3]}"
+    for prefix, label in INTERNAL:
+        if name.startswith(prefix):
+            return label
+    return "other"

@@ -110,6 +110,7 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/admin/admission` | - | - | 200 AdmissionReadView |
 | `POST /api/v1/admin/admission/stop` | AdmissionChangeRequest | - | 200 AdmissionView |
 | `PUT /api/v1/admin/admission/ceilings` | ReplaceCeilingsRequest | - | 200 CeilingsStateView |
+| `POST /api/v1/admin/admission/pending-homes/reconcile` | ReconcilePendingHomesRequest | - | 200 PendingHomesReconciliationView |
 | `POST /api/v1/admin/admission/resume` | AdmissionChangeRequest | - | 200 AdmissionView |
 | `GET /api/v1/admin/settings` | - | - | 200 SettingsView |
 | `GET /api/v1/admin/spend` | ConfigurePlatform; no write gate | - | 200 SpendView; 401 not_authenticated; 403 forbidden (not-an-operator); 503 platform_spend_unavailable. An absent service precedes the capability check. |
@@ -861,6 +862,7 @@ Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_
 | `GET /api/v1/documents/{id}/source` | Read current or specific source revision. |
 | `GET /api/v1/documents/{id}/revisions` | Page immutable source revision metadata. |
 | `GET /api/v1/documents/{id}/shares` | Owner direct recipient inventory. |
+| `GET /api/v1/documents/{id}/share-recipients` | Owner search for eligible direct recipients. |
 | `PUT /api/v1/documents/{id}/shares/{subject}` | Grant/update read or comment access. |
 | `DELETE /api/v1/documents/{id}/shares/{subject}` | Revoke direct recipient access. |
 | `GET /api/v1/documents/{id}/share-links` | Owner link metadata, never secrets. |

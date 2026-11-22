@@ -4,11 +4,8 @@ import type { AppRoute } from '../routing/routes';
 const EventGatewayDocs = lazy(() =>
   import('./EventGatewayDocs').then((module) => ({ default: module.EventGatewayDocs })),
 );
-const DocsIndex = lazy(() =>
-  import('./EventGatewayDocs').then((module) => ({ default: module.DocsIndex })),
-);
+const TaskDocs = lazy(() => import('./TaskDocs').then((module) => ({ default: module.TaskDocs })));
 
-/** Documentation routes share their loading boundary and lazy module. */
 export function DocsPage({
   view,
   onNavigate,
@@ -21,7 +18,7 @@ export function DocsPage({
       {view === 'event_gateway_protocol' ? (
         <EventGatewayDocs onNavigate={onNavigate} />
       ) : (
-        <DocsIndex onNavigate={onNavigate} />
+        <TaskDocs view={view} onNavigate={onNavigate} />
       )}
     </Suspense>
   );

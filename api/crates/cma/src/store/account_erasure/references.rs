@@ -19,9 +19,11 @@ mod share_policy;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Redaction {
     Unchanged,
+    Deleted,
     Updated,
     Conflict,
     Waiting,
+    DrainRequired,
 }
 
 #[cfg(test)]
@@ -111,6 +113,14 @@ pub(super) async fn redact_content(
             ) =>
         {
             receipt(db, row, subjects).await
+        }
+        "trigger_definition_revisions"
+            if row
+                .get_str("owner")
+                .ok()
+                .is_some_and(|s| subjects.contains(s)) =>
+        {
+            trigger_revision(db, row).await
         }
         "platform_settings"
             if row
@@ -306,6 +316,35 @@ async fn receipt(
     let (filter, next) = immutable_cas(row, "resource_share_commands")?;
     replacement.insert("mutation_version", next);
     let result = majority_collection::<Document>(db, "resource_share_commands")
+        .replace_one(filter, replacement)
+        .await?;
+    Ok(outcome(result.matched_count == 1))
+}
+async fn trigger_revision(db: &Database, row: &Document) -> Result<Redaction, Error> {
+    let stored = crate::store::trigger_definitions::documents::read_revision(row)
+        .map_err(|_| Error::InvalidRecord("trigger_definition_revisions"))?;
+    let mut revision = stored.revision;
+    revision.erase_publisher();
+    revision
+        .validate()
+        .map_err(|_| Error::InvalidRecord("trigger_definition_revisions"))?;
+    let (filter, next) = immutable_cas(row, "trigger_definition_revisions")?;
+    let mut replacement = row.clone();
+    replacement.insert(
+        "record",
+        bson::serialize_to_bson(&revision)
+            .map_err(|_| Error::InvalidRecord("trigger_definition_revisions"))?,
+    );
+    replacement.insert("owner", layer2_core::DELETED_ACCOUNT_SUBJECT);
+    for field in [
+        "sandbox_profile_id",
+        "workspace_profile_id",
+        "agent_profile_id",
+    ] {
+        replacement.insert(field, "");
+    }
+    replacement.insert("mutation_version", next);
+    let result = majority_collection::<Document>(db, "trigger_definition_revisions")
         .replace_one(filter, replacement)
         .await?;
     Ok(outcome(result.matched_count == 1))

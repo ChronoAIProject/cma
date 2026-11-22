@@ -209,3 +209,194 @@ async fn admission_control_closed_gate_and_invalid_input_never_change_state() {
     }
     assert!(store.audit_records().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn pending_homes_reconciliation_defaults_to_read_only_and_requires_the_ceilings_gate() {
+    let path = "/api/v1/admin/admission/pending-homes/reconcile";
+    let request = json!({"reason": "investigate pending homes", "observed_pending": 0});
+    let (closed, _) = admission_fixture_with_ceilings(false, false);
+    let denied = send(&closed, Method::POST, path, Some(request.clone()), []).await;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let gated = send(
+        &closed,
+        Method::POST,
+        path,
+        Some(request.clone()),
+        [Capability::ConfigurePlatform],
+    )
+    .await;
+    assert_eq!(gated.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let (open, _) = admission_fixture_with_ceilings_store(
+        false,
+        true,
+        Arc::new(PendingHomesFixture::default()),
+    );
+    let response = send(
+        &open,
+        Method::POST,
+        path,
+        Some(request),
+        [Capability::ConfigurePlatform],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let result = body(response).await;
+    assert_eq!(
+        result,
+        json!({
+            "previous_pending_launch_homes": 0, "expected_pending_launch_homes": 0,
+            "pending_launch_homes": 0, "dry_run": true, "corrected": false
+        })
+    );
+}
+
+#[tokio::test]
+async fn pending_homes_requests_reject_invalid_reasons_counts_and_preview_values() {
+    let path = "/api/v1/admin/admission/pending-homes/reconcile";
+    let (app, _) = admission_fixture_with_ceilings(false, true);
+    for request in [
+        json!({"reason":" ","observed_pending":0}),
+        json!({"reason":"line\nbreak","observed_pending":0}),
+        json!({"reason":"a".repeat(513),"observed_pending":0}),
+        json!({"reason":"inspect","observed_pending":-1}),
+        json!({"reason":"inspect","observed_pending":1.5}),
+        json!({"reason":"inspect","observed_pending":9223372036854775808_u64}),
+        json!({"reason":"inspect","observed_pending":0,"dry_run":null}),
+        json!({"reason":"inspect","observed_pending":0,"dry_run":"false"}),
+        json!({"reason":"inspect","observed_pending":0,"unknown":true}),
+    ] {
+        let response = send(
+            &app,
+            Method::POST,
+            path,
+            Some(request),
+            [Capability::ConfigurePlatform],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body(response).await["code"], "invalid_request");
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct PendingHomesFixture {
+    pub pending: u64,
+    pub observation: layer2_core::admission::PendingHomesObservation,
+    pub inner: layer2_core::admission::MemoryAdmissionCeilingsStore,
+}
+#[async_trait]
+impl layer2_core::admission::AdmissionCeilingsStore for PendingHomesFixture {
+    async fn read(&self) -> Result<layer2_core::admission::AdmissionCeilingsState, StoreError> {
+        self.inner.read().await
+    }
+    async fn read_with_history(
+        &self,
+    ) -> Result<layer2_core::admission::AdmissionCeilingsRead, StoreError> {
+        let mut read = self.inner.read_with_history().await?;
+        read.counts.pending_launch_homes = match self.observation {
+            layer2_core::admission::PendingHomesObservation::Verified {
+                expected_pending_launch_homes,
+                pending_launch_homes_drift,
+            } => expected_pending_launch_homes
+                .checked_add_signed(pending_launch_homes_drift)
+                .unwrap(),
+            _ => self.pending,
+        };
+        read.counts.pending_homes = self.observation.clone();
+        Ok(read)
+    }
+    async fn replace(
+        &self,
+        revision: u64,
+        actor: &SubjectId,
+        reason: &str,
+        ceilings: layer2_core::admission::AdmissionCeilings,
+        now: u64,
+    ) -> Result<layer2_core::admission::AdmissionCeilingsState, StoreError> {
+        self.inner
+            .replace(revision, actor, reason, ceilings, now)
+            .await
+    }
+    async fn reconcile_pending_homes(
+        &self,
+        observed: u64,
+        _: &SubjectId,
+        _: &str,
+        dry_run: bool,
+        _: u64,
+    ) -> Result<layer2_core::admission::PendingHomesReconciliation, StoreError> {
+        if observed == 1 {
+            Err(StoreError::RevisionConflict {
+                expected: 1,
+                actual: 2,
+            })
+        } else if observed == 0 {
+            Ok(layer2_core::admission::PendingHomesReconciliation {
+                dry_run,
+                ..Default::default()
+            })
+        } else {
+            Err(StoreError::Unavailable(
+                "transaction retry budget exhausted".into(),
+            ))
+        }
+    }
+}
+#[tokio::test]
+async fn pending_homes_conflicts_are_typed_and_retry_exhaustion_is_retryable() {
+    let (app, _) = admission_fixture_with_ceilings_store(
+        false,
+        true,
+        Arc::new(PendingHomesFixture::default()),
+    );
+    let path = "/api/v1/admin/admission/pending-homes/reconcile";
+    for (observed, status, code) in [
+        (1, StatusCode::CONFLICT, "pending_homes_conflict"),
+        (
+            2,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "pending_homes_unavailable",
+        ),
+    ] {
+        let response = send(
+            &app,
+            Method::POST,
+            path,
+            Some(json!({"reason":"inspect drift","observed_pending":observed,"dry_run":false})),
+            [Capability::ConfigurePlatform],
+        )
+        .await;
+        assert_eq!(response.status(), status);
+        if status == StatusCode::SERVICE_UNAVAILABLE {
+            assert_eq!(response.headers()[header::RETRY_AFTER], "60");
+        }
+        assert_eq!(body(response).await["code"], code);
+    }
+}
+
+#[tokio::test]
+async fn disabled_ledger_returns_no_fake_correction_or_verified_measurements() {
+    let (app, _) = admission_fixture_with_ceilings(false, true);
+    let response = send(
+        &app,
+        Method::POST,
+        "/api/v1/admin/admission/pending-homes/reconcile",
+        Some(json!({"reason":"inspect", "observed_pending":0})),
+        [Capability::ConfigurePlatform],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body(response).await["code"], "pending_homes_unavailable");
+    let response = send(
+        &app,
+        Method::GET,
+        CONTROL,
+        None,
+        [Capability::ConfigurePlatform],
+    )
+    .await;
+    assert_eq!(
+        body(response).await["capacity"]["pending_homes"],
+        json!({"status":"disabled"})
+    );
+}

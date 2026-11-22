@@ -2,14 +2,10 @@ import { ComputerContext } from './environment/context';
 import { SuggestedReplies } from './SuggestedReplies';
 import type { SuggestedReplySet } from './suggestions';
 import { useAgentSuggestions } from './useAgentSuggestions';
-import { Presence } from '../ui/Presence';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { subscriptionService } from '../connections/client';
 import type { AppRoute } from '../routing/routes';
-import { Button } from '../ui/Button';
-import { IconCloseOutline16 } from '../ui/icons';
 import type { AgentController, AgentResourceState } from './controller';
 import { Composer } from './Composer';
 import { SessionSettings } from './SessionSettings';
@@ -19,15 +15,19 @@ import type { AgentDraft } from './draft';
 import { OwnerMessageStream } from './OwnerMessageStream';
 import './Agent.css';
 import { OwnerAgentHeader } from './OwnerAgentHeader';
-import { Alert } from '../ui/Alert';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
-import { agentBreadcrumb, agentHeaderMenu, selectAgentAction } from './headerActions';
+import { agentBreadcrumb, agentHeaderMenu, agentHeaderActionHandler } from './headerActions';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
-import { sandboxChildrenAvailable } from '../sandbox/lifecycle';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
 import type { SteeringMode } from './SteeringMode';
-import { AgentOpening, AgentUnavailable, AgentCommandNotices } from './AgentSurfaceStates';
+import {
+  AgentOpening,
+  AgentUnavailable,
+  AgentCommandNotices,
+  AgentSurfaceIssue,
+  AgentConnectionSetup,
+} from './AgentSurfaceStates';
 import { AgentSandboxStatus } from './AgentSandboxStatus';
 import { setupEnvironmentRoute } from './setupEnvironment';
 import { agentOriginEntries, useAgentSource } from './source';
@@ -45,6 +45,8 @@ import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
 import { messageSubmission } from './messageSubmission';
+import { useFirstTextSend } from './useFirstTextSend';
+import { composerInputAvailability } from './composerPresentation';
 import type { AgentComputerObservation } from './environment/observation';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
@@ -58,6 +60,7 @@ interface AgentSurfaceProps {
   readonly accessUncertain?: boolean;
   /** Current personal access was checked for this exact Agent before mounting. */
   readonly accessAuthorized?: boolean;
+  readonly firstSendContext?: { readonly authEpoch: number; readonly visible: boolean };
   readonly draft?: AgentDraft;
   readonly viewerId?: string;
   readonly user?: MessageUser;
@@ -94,6 +97,7 @@ export function AgentSurface({
   user,
   accessUncertain = false,
   accessAuthorized = false,
+  firstSendContext,
   permissions,
   actionsBusy = false,
   onAgentAction,
@@ -143,6 +147,23 @@ export function AgentSurface({
     controller,
   });
   const suggestions = editing.source;
+  const firstTextSend = useFirstTextSend({
+    state,
+    controller,
+    client: lifecycleClient,
+    agentId,
+    owner: viewerId,
+    authEpoch: firstSendContext?.authEpoch ?? 0,
+    eligibleView:
+      firstSendContext?.visible === true &&
+      accessAuthorized &&
+      !readOnly &&
+      !editing.contextualInput &&
+      !actionsBusy &&
+      (draft === undefined || (!draft.recoveryBlocked && draft.attachments.length === 0)),
+    connection,
+    connections,
+  });
   useLayoutEffect(() => {
     discardPrepared();
   }, [detailsOpen, discardPrepared]);
@@ -165,6 +186,12 @@ export function AgentSurface({
     );
 
   const { detail, conversation } = state;
+  const inputAvailability = composerInputAvailability(
+    controller.inputAvailability,
+    readOnly,
+    accessUncertain,
+    verified !== undefined,
+  );
   const messageQueue = queuePresentation(
     conversation,
     optimistic.messages,
@@ -172,10 +199,6 @@ export function AgentSurface({
   );
   const status = detail.status;
   const title = agentDisplayTitle(detail);
-  const pausedNotice =
-    conversation.livePausedNotice === undefined
-      ? detail.pausedNotice
-      : (conversation.livePausedNotice ?? undefined);
   const running = conversation.activeRunId !== undefined;
   const stopping = controller.pending === 'interrupt';
   const starting = controller.pending === 'send' && !running;
@@ -214,12 +237,12 @@ export function AgentSurface({
     observed,
   );
   const reviewEnvironment = setupRoute ? () => onNavigate(setupRoute) : undefined;
-  const headerMenu = agentHeaderMenu(
-    status,
-    readOnly ? undefined : permissions,
-    observed !== undefined && !observed.stale && sandboxChildrenAvailable(observed.sandbox),
-    actionsBusy,
-  );
+  const headerMenu = agentHeaderMenu(status, readOnly ? undefined : permissions, {
+    sandbox: observed?.sandbox.id === detail.sandbox.id ? observed.sandbox : undefined,
+    viewerId,
+    stale: observed?.stale,
+    busy: actionsBusy,
+  });
   // A subscription Agent can be signed in again from the header menu.
   const signInAgain =
     !readOnly && verified?.services.some((service) => service.service === subscriptionService);
@@ -274,9 +297,9 @@ export function AgentSurface({
           }}
           moreActions={headerMenu}
           onReviewEnvironment={reviewEnvironment}
-          onMoreAction={(id) =>
-            selectAgentAction(id, agentId, readOnly ? undefined : onAgentAction)
-          }
+          onMoreAction={agentHeaderActionHandler(agentId, readOnly, onAgentAction, () =>
+            onNavigate({ kind: 'sandbox', sandboxId: detail.sandbox.id }),
+          )}
         />
 
         <div className="agent-surface__alerts">
@@ -290,40 +313,16 @@ export function AgentSurface({
             eventRevision={conversation.agentCursor ?? conversation.cursor}
             enabled={!readOnly && viewerId !== undefined}
           />
-          <Presence>
-            {issue === undefined ? null : historyIncomplete ? (
-              <p className="agent-surface__history-notice" role="status">
-                {issue}
-              </p>
-            ) : (
-              <Alert
-                tone={historyIncomplete ? 'info' : 'error'}
-                actions={
-                  <>
-                    {connectionError && !readOnly ? (
-                      <Button size="sm" onClick={connection.retry}>
-                        Retry connections
-                      </Button>
-                    ) : null}
-                    {historyIncomplete ? null : (
-                      <Button
-                        size="sm"
-                        icon={<IconCloseOutline16 />}
-                        aria-label="Dismiss error"
-                        onClick={() => {
-                          connection.clearError();
-                          connections.clearError();
-                          controller.clearActionError();
-                        }}
-                      />
-                    )}
-                  </>
-                }
-              >
-                {issue}
-              </Alert>
-            )}
-          </Presence>
+          <AgentSurfaceIssue
+            issue={issue}
+            historyIncomplete={historyIncomplete}
+            onRetry={connectionError && !readOnly ? connection.retry : undefined}
+            onDismiss={() => {
+              connection.clearError();
+              connections.clearError();
+              controller.clearActionError();
+            }}
+          />
 
           <AgentCommandNotices
             controller={controller}
@@ -416,6 +415,7 @@ export function AgentSurface({
                   usage={conversation?.usage}
                   key={`settings:${viewerId}:${agentId}`}
                   agentId={agentId}
+                  viewerId={viewerId}
                   active={!accessUncertain}
                   runtimeReady={modelCatalogReady(detail, observed, state.sandboxEvents)}
                   busy={status !== 'ready' || controller.pending !== undefined || historyIncomplete}
@@ -433,7 +433,11 @@ export function AgentSurface({
                 : undefined
             }
             status={status}
-            pausedNotice={pausedNotice}
+            pausedNotice={
+              conversation.livePausedNotice === undefined
+                ? detail.pausedNotice
+                : (conversation.livePausedNotice ?? undefined)
+            }
             running={running}
             queueWhileRunning={state.v2 !== undefined}
             queueWhileStarting={state.v2 !== undefined}
@@ -455,33 +459,31 @@ export function AgentSurface({
             acceptedSteeringMessage={controller.acceptedSteeringMessage}
             acceptedInterruptionMessage={controller.acceptedInterruptionMessage}
             uploadAttachment={uploadAttachment}
+            firstTextSend={firstTextSend}
             inputAvailability={
-              readOnly
-                ? {
-                    ...controller.inputAvailability,
-                    allowed: false,
-                    notice: accessUncertain
-                      ? controller.inputAvailability.notice
-                      : 'Only the owner can send messages to this agent.',
-                  }
-                : verified === undefined
-                  ? { ...controller.inputAvailability, allowed: false }
-                  : editing.inputAvailability(controller.inputAvailability)
+              readOnly || !verified
+                ? inputAvailability
+                : editing.inputAvailability(inputAvailability)
             }
             busy={
               connections.pending ||
               (controller.pending !== undefined && controller.pending !== 'send')
             }
             stopping={stopping}
-            onSend={(content, accepted) => editing.send(submitMessage, content, accepted)}
+            onSend={(content, accepted, brokerReport) =>
+              brokerReport
+                ? submitMessage(content, accepted, undefined, undefined, brokerReport)
+                : editing.send(submitMessage, content, accepted)
+            }
             onStop={controller.interrupt}
           />
         </div>
-        {verified === undefined && connection.needed && !readOnly ? (
-          <ConnectionWizard
-            target={{ type: 'agent', id: agentId }}
-            presentation="dialog"
-            expectedOwner={viewerId}
+        {verified === undefined && connection.needed && !readOnly && !firstTextSend.pending ? (
+          <AgentConnectionSetup
+            agentId={agentId}
+            owner={viewerId}
+            explicit={firstTextSend.available}
+            gate={connections}
             onReady={connection.accept}
             onCancel={() => onNavigate({ kind: 'home' })}
           />

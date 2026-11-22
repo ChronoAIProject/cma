@@ -63,6 +63,8 @@ fn router(handle: PrometheusHandle) -> Router {
 async fn scrape(
     State(handle): State<PrometheusHandle>,
 ) -> ([(header::HeaderName, &'static str); 2], String) {
+    let mut output = handle.render();
+    layer1_public::desktop_telemetry::append_desktop_send_histograms(&mut output);
     (
         [
             (
@@ -71,7 +73,7 @@ async fn scrape(
             ),
             (header::CACHE_CONTROL, "no-store"),
         ],
-        handle.render(),
+        output,
     )
 }
 
@@ -132,6 +134,17 @@ mod tests {
             .to_str()
             .unwrap()
             .starts_with("text/plain"));
+        let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .unwrap();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert_eq!(
+            text.matches("# TYPE cma_desktop_relay_send_wait_seconds histogram")
+                .count(),
+            1
+        );
+        assert!(text.contains("cma_desktop_relay_send_wait_seconds_count{direction=\"uplink\"}"));
+        assert!(text.contains("cma_desktop_relay_send_wait_seconds_count{direction=\"downlink\"}"));
         assert_eq!(
             app.oneshot(
                 Request::builder()

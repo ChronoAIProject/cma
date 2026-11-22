@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import ci_retry
+from ci_outcome import report
 from image_secret_gate import ScanRefusal, checksum, verified_staging_scan
 from staging_cd_admission import event_identity
 from staging_cd_artifacts import try_reuse
@@ -194,12 +195,15 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
 def emit_cache_metrics(component, cache_metrics, stream):
     for metrics in cache_metrics:
         print(json.dumps({"event": "publication-cache", **metrics}, sort_keys=True), file=stream, flush=True)
-        oversize = metrics.get("result") == "withheld" and metrics.get("reason", "").startswith("oversize")
-        if metrics.get("operation") == "export" and (oversize or metrics.get("headroom") == "low"):
+        if metrics.get("operation") != "export":
+            continue
+        if metrics.get("result") == "withheld" and isinstance(metrics.get("reason"), str):
+            # A withheld bundle slows the next build; the catalogue says why and what to do.
+            report("cache-withheld", metrics["reason"], subject="build-cache", component=component, stream=stream)
+        elif metrics.get("headroom") == "low":
             # Fixed text only: surface the bound before builds quietly slow down.
             print(f"::warning title=Cargo cache bound::{component} Cargo bundle is "
-                  + ("over" if oversize else "above 75% of") + " its bound in staging_cd_cargo_artifact.py",
-                  file=stream, flush=True)
+                  "above 75% of its bound in staging_cd_cargo_artifact.py", file=stream, flush=True)
 
 
 def main():
@@ -217,7 +221,7 @@ def main():
         output = Path(env["CD_RECEIPTS_PATH"])
         output.parent.mkdir(parents=True, exist_ok=True)
         registry = Registry(credential=env.get("GH_TOKEN"), actor=env.get("GITHUB_ACTOR"))
-        api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(env.get("CD_COMPONENT"), Path.cwd()))
+        api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(root))
         for mode, value in tasks:
             cache = None
             diagnostics.mark("validate")
@@ -301,16 +305,27 @@ def main():
         require(env.get("CD_COMPONENT") in DEPLOYABLES, "Unexpected superseded component")
         step_output(env, "disposition", skip["disposition"])
 
-    result = run_publication(operation, on_superseded=superseded)
+    outcome = {}
+    result = run_publication(operation, on_superseded=superseded, component=env.get("CD_COMPONENT"), outcome=outcome)
     # run_private has restored the public descriptors; only fixed stage records
     # cross that boundary, including the failing phase on an unsuccessful run.
     component = env.get("CD_COMPONENT")
     if component in TARGETS:
         timings.emit(sys.stdout, scan_only=component in RUNTIME_TARGETS)
+    # Every image reports its build summary, so a failed runtime build also
+    # names the Dockerfile step where it stopped. BuildKit can mark a vertex
+    # failed in a build that still completes (an optional cache import, for
+    # example), so the error annotation is reserved for a publication that
+    # actually stopped in its build stage.
+    label = component if component in DEPLOYABLES else "image"
+    stopped_in_build = bool(result) and outcome.get("stage") == "build"
+    for metrics in build_metrics:
+        value = metrics or {"complete": False, "reason": "progress-unavailable"}
+        print(json.dumps({"event": "publication-build", **value}, sort_keys=True), flush=True)
+        for step in value.get("failed_steps", ())[:1] if stopped_in_build else ():
+            print(f"::error title=Image build step failed::{label} stopped at Dockerfile step {step}; "
+                  "its output is withheld. Reproduce that step locally from the same source.", flush=True)
     if component in APP_TARGETS:
-        for metrics in build_metrics:
-            value = metrics or {"complete": False, "reason": "progress-unavailable"}
-            print(json.dumps({"event": "publication-build", **value}, sort_keys=True), flush=True)
         emit_cache_metrics(component, cache_metrics, sys.stdout)
     return result
 

@@ -9,6 +9,15 @@ use layer2_core::profiles::{
 use layer2_core::sandbox::{AgentServiceError, SandboxServiceError, WorkspaceServiceError};
 use url::Url;
 
+pub(super) fn initial_title(request: &AgentLifecycleCreateRequest) -> Option<String> {
+    match request.title_mode {
+        Some(layer1_public::rest::AgentLifecycleTitleMode::Automatic) => None,
+        Some(layer1_public::rest::AgentLifecycleTitleMode::Named) | None => {
+            Some(request.name.clone())
+        }
+    }
+}
+
 pub(super) fn validate_request(
     request: &AgentLifecycleCreateRequest,
 ) -> Result<(), AgentLifecycleProvisioningError> {

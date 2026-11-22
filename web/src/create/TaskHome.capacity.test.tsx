@@ -205,7 +205,7 @@ it('revalidates an expired snapshot before fresh submission', async () => {
 });
 
 it.each(['ctrlKey', 'metaKey', 'submit'])(
-  'revalidates capacity for a template submitted through %s and preserves its fields',
+  'revalidates capacity for a template submitted through %s and preserves its fields and automatic title mode',
   async (submission) => {
     let snapshot: SandboxCapacity = free;
     const create = vi.fn(async () => ({ id: 'accepted-template' }));
@@ -214,6 +214,7 @@ it.each(['ctrlKey', 'metaKey', 'submit'])(
         client={client({
           readSandboxCapacity: async () => snapshot,
           readTaskTemplateSupport: async () => true,
+          readTaskTitleModeSupport: async () => true,
           createAgentLifecycle: create,
         })}
         viewerId="owner"
@@ -243,6 +244,7 @@ it.each(['ctrlKey', 'metaKey', 'submit'])(
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
+        title_mode: 'automatic',
         template: { id: 'research', version: 1, fields: { topic: 'Retained research topic' } },
         initial_message:
           'Research Retained research topic and summarize the key findings, with links to sources.',

@@ -29,6 +29,27 @@ impl MongoSandboxStore {
     where
         F: Fn() -> String + Send + Sync,
     {
+        self.commit_sandbox_admission_inner(admission, observe, false)
+            .await
+    }
+
+    pub(super) async fn commit_catalogue_sandbox_admission(
+        &self,
+        admission: SandboxAdmission,
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
+        self.commit_sandbox_admission_inner(admission, layer2_core::now_rfc3339, true)
+            .await
+    }
+
+    async fn commit_sandbox_admission_inner<F>(
+        &self,
+        admission: SandboxAdmission,
+        observe: F,
+        catalogue: bool,
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError>
+    where
+        F: Fn() -> String + Send + Sync,
+    {
         admission.validate()?;
         let started = tokio::time::Instant::now();
         let mut last_transient = None;
@@ -60,47 +81,55 @@ impl MongoSandboxStore {
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
             let wait_for_lease = started.elapsed() < PREPARED_WAIT;
-            let receipt =
-                match apply(self, &admission, &mut session, &observe, wait_for_lease).await {
-                    Ok(receipt) => receipt,
-                    Err(AdmissionError::PreparedLeaseBusy) => {
-                        let _ = session.abort_transaction().await;
-                        prepared_lease_waits += 1;
-                        delay = PREPARED_POLL.min(PREPARED_WAIT.saturating_sub(started.elapsed()));
-                        continue;
-                    }
-                    Err(AdmissionError::Domain(error)) => {
-                        let _ = session.abort_transaction().await;
-                        return Err(error);
-                    }
-                    Err(AdmissionError::Retry(error)) | Err(AdmissionError::Driver(error))
-                        if is_transient(&error) =>
-                    {
-                        let _ = session.abort_transaction().await;
-                        last_transient = Some(error.to_string());
-                        failures += 1;
-                        delay = admission_retry_delay(failures);
-                        continue;
-                    }
-                    Err(AdmissionError::Retry(error)) => {
-                        let _ = session.abort_transaction().await;
-                        last_transient = Some(error.to_string());
-                        failures += 1;
-                        delay = admission_retry_delay(failures);
-                        continue;
-                    }
-                    Err(AdmissionError::Duplicate) => {
-                        let _ = session.abort_transaction().await;
-                        return match durable_replay(self, &admission).await? {
-                            Some(sandbox) => Ok(SandboxAdmissionResult::Existing(sandbox)),
-                            None => Err(SandboxStoreError::Duplicate),
-                        };
-                    }
-                    Err(AdmissionError::Driver(error)) => {
-                        let _ = session.abort_transaction().await;
-                        return Err(SandboxStoreError::Unavailable(error.to_string()));
-                    }
-                };
+            let receipt = match apply(
+                self,
+                &admission,
+                &mut session,
+                &observe,
+                wait_for_lease,
+                catalogue,
+            )
+            .await
+            {
+                Ok(receipt) => receipt,
+                Err(AdmissionError::PreparedLeaseBusy) => {
+                    let _ = session.abort_transaction().await;
+                    prepared_lease_waits += 1;
+                    delay = PREPARED_POLL.min(PREPARED_WAIT.saturating_sub(started.elapsed()));
+                    continue;
+                }
+                Err(AdmissionError::Domain(error)) => {
+                    let _ = session.abort_transaction().await;
+                    return Err(error);
+                }
+                Err(AdmissionError::Retry(error)) | Err(AdmissionError::Driver(error))
+                    if is_transient(&error) =>
+                {
+                    let _ = session.abort_transaction().await;
+                    last_transient = Some(error.to_string());
+                    failures += 1;
+                    delay = admission_retry_delay(failures);
+                    continue;
+                }
+                Err(AdmissionError::Retry(error)) => {
+                    let _ = session.abort_transaction().await;
+                    last_transient = Some(error.to_string());
+                    failures += 1;
+                    delay = admission_retry_delay(failures);
+                    continue;
+                }
+                Err(AdmissionError::Duplicate) => {
+                    let _ = session.abort_transaction().await;
+                    return match durable_replay(self, &admission).await? {
+                        Some(sandbox) => Ok(SandboxAdmissionResult::Existing(sandbox)),
+                        None => Err(SandboxStoreError::Duplicate),
+                    };
+                }
+                Err(AdmissionError::Driver(error)) => {
+                    let _ = session.abort_transaction().await;
+                    return Err(SandboxStoreError::Unavailable(error.to_string()));
+                }
+            };
             match commit_transaction(&mut session).await {
                 CommitOutcome::Committed => {
                     self.observe_prepared_admission(

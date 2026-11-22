@@ -16,11 +16,31 @@ readonly audit_bounds_test='store::agent_log_segments::mongo_tests::audit_bounds
 readonly diagnostics_test='store::mongo_diagnostics::mongo_tests::real_mongo_monitoring_privacy_and_overhead'
 readonly scan_cooperation_test='store::agent_log_telemetry::tests::cooperation::benchmark::local_scan_scheduling_abba_reproduction'
 readonly bson_ceiling_test='store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::failures::personal_agent_list_preserves_sources_near_the_bson_document_ceiling'
+# On-demand qualifications never enter a PR shard: the listing (all) and the
+# ordinary partitions both exclude them, so they run only through their mode.
+readonly observation_budget_test='store::sandbox_mongo_integration_tests::resource_access_tests::history_measurement::observation_budget::observation_one_hundred_observers_on_two_replicas_for_thirty_minutes'
+readonly first_response_test='store::usage_reports::tests::submission::default_day_report_serves_four_hundred_sandboxes_without_polling'
 selection='all'
 suite_filter=$(python3 "$script_directory/mongo-contract-registry.py" --filter)
 readonly suite_filter
+# Ordinary PR partitions run under this nextest profile's per-test budget
+# (api/.config/nextest.toml). Dedicated modes keep the unbounded default.
+readonly ordinary_profile='mongo-ordinary'
+# Nextest prints no custom text when it terminates a test at the budget.
+contract_failure() {
+  local status=$1
+  if [[ "$selection" == ordinary ]]; then
+    printf '%s\n' >&2 \
+      "Mongo partition $partition failed (exit $status). A TIMEOUT above is a test that exceeded" \
+      "the per-test budget of nextest profile $ordinary_profile in api/.config/nextest.toml." \
+      "Do not raise the budget: move the long measurement or qualification into a dedicated mode" \
+      "in .github/scripts/mongo-contract-tests.sh (a readonly name, a selection case, the" \
+      "ordinary/all exclusions and an argument) and declare it in mongo-contract-exceptions.json."
+  fi
+  return "$status"
+}
 nextest_contracts() {
-  local selection_filter='not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets))'
+  local selection_filter="not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets) or test(=$observation_budget_test))"
   case "$selection" in
     ingress-ownership) selection_filter='package(=cma) and (test(store::agent_conversation_store::mongo_ingress_tests::) or test(store::agent_conversation_store::checkpoint_tests::))' ;;
     scale) selection_filter="package(=cma) and test(=$scale_test)" ;;
@@ -28,6 +48,7 @@ nextest_contracts() {
     audit-bounds) selection_filter="package(=cma) and test(=$audit_bounds_test)" ;;
     diagnostics) selection_filter="package(=cma) and test(=$diagnostics_test)" ;;
     scan-cooperation) selection_filter="package(=cma) and test(=$scan_cooperation_test)" ;;
+    first-response) selection_filter="package(=cma) and test(=$first_response_test)" ;;
     bson-ceiling) selection_filter="package(=cma) and test(=$bson_ceiling_test)" ;;
     agent-list-contracts) selection_filter='package(=cma) and test(::resource_access_tests::personal_inventory::contracts::)' ;;
     availability) selection_filter='package(=cma) and test(::personal_inventory::availability::)' ;;
@@ -36,14 +57,16 @@ nextest_contracts() {
     agent-lists) selection_filter='package(=cma) and not test(::personal_inventory::availability::) and not (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile)) and (test(::resource_access_tests::personal_inventory::) or test(::resource_access_tests::inventory::) or test(::resource_access_tests::provenance::) or test(::agent_task_status::batch::tests::) or test(::agent_task_status::activity::tests::) or test(::agent_admission::mongo_integration_tests::channel_usage::) or test(::agent_admission::mongo_integration_tests::provenance_inventory::))' ;;
     request-limits) selection_filter='package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::) or test(rate_limit::anonymous_mongo_tests::) or test(rate_limit::control_tests::mongo::) or test(rate_limit::input_tests::mongo::))' ;;
     cpu-profile) selection_filter="package(=cma) and test(::cpu_profile::)" ;;
-    ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test) or test(=$bson_ceiling_test)) & not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets))" ;;
+    observation-budget) selection_filter="package(=cma) and test(=$observation_budget_test)" ;;
+    ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test) or test(=$bson_ceiling_test) or test(=$first_response_test)) & not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets) or test(=$observation_budget_test))" ;;
   esac
+  [[ "$selection" != ordinary ]] || set -- "$@" --profile "$ordinary_profile"
   # Isolated role proof belongs to image-manager-mongo-contract.sh, which owns
   # an authenticated fixture. Never run it against this unauthenticated set.
   # Process children need their parent's request/database; their parents invoke
   # them explicitly. Desktop latency is a separate matched-measurement fixture.
   nextest_build "$@" --run-ignored only \
-    -E "$selection_filter & not test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure) & not test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors) & not test(=store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison) & not test(=store::usage_reports::tests::hotfix_cpu::native_usage_hotfix_decode_phase_calibration) & not test(=store::usage_reports::tests::hotfix_matrix::native_usage_hotfix_full_report_six_case_matrix) & not test(store::migrations::tests::segments_runtime::) & not test(=sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child) & not test(=store::sandbox_sessions::exclusive::process_tests::desktop_claim_child) & not test(=store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_disabled_services_and_ownerless_receiver_refuse_new_streams) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::retained_legacy_rows_block_until_close_or_expiry_and_cannot_release_successor) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_replica_handoff_and_revocation_use_actual_receiver) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_uncertain_confirm_and_receiver_restart_preserve_fencing) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::delayed_receiver_renewal_ack_cannot_restore_public_authority) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::measurements::matched_public_desktop_connect_windows) & ($suite_filter)"
+    -E "$selection_filter & not test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure) & not test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors) & not test(=store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison) & not test(=store::usage_reports::tests::hotfix_cpu::native_usage_hotfix_decode_phase_calibration) & not test(=store::usage_reports::tests::hotfix_matrix::native_usage_hotfix_full_report_six_case_matrix) & not test(store::migrations::tests::segments_runtime::) & not test(=sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child) & not test(=store::sandbox_sessions::exclusive::process_tests::desktop_claim_child) & not test(=store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_disabled_services_and_ownerless_receiver_refuse_new_streams) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::retained_legacy_rows_block_until_close_or_expiry_and_cannot_release_successor) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_replica_handoff_and_revocation_use_actual_receiver) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_uncertain_confirm_and_receiver_restart_preserve_fencing) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::delayed_receiver_renewal_ack_cannot_restore_public_authority) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::measurements::matched_public_desktop_connect_windows) & ($suite_filter)" || contract_failure "$?"
 }
 if [[ $# == 0 || ( $# == 2 && "$1" == '--shard' ) ]]; then
   exec python3 "$script_directory/mongo-contract-partitions.py" "${BASH_SOURCE[0]}" "$@"
@@ -73,6 +96,8 @@ elif [[ $# == 1 && "$1" == '--diagnostics' ]]; then
   selection='diagnostics'
 elif [[ $# == 1 && "$1" == '--scan-cooperation' ]]; then
   selection='scan-cooperation'
+elif [[ $# == 1 && "$1" == '--first-response' ]]; then
+  selection='first-response'
 elif [[ $# == 1 && "$1" == '--bson-ceiling' ]]; then
   selection='bson-ceiling'
 elif [[ $# == 1 && "$1" == '--agent-list-contracts' ]]; then
@@ -89,6 +114,8 @@ elif [[ $# == 1 && "$1" == '--request-limits' ]]; then
   selection='request-limits'
 elif [[ $# == 1 && "$1" == '--cpu-profile' ]]; then
   selection='cpu-profile'
+elif [[ $# == 1 && "$1" == '--observation-budget' ]]; then
+  selection='observation-budget'
 else
   [[ $# == 1 && "$1" =~ ^count:([1-9][0-9]{0,5})/([1-9][0-9]{0,5})$ ]] || exit 2
   [[ ${BASH_REMATCH[1]} -le ${BASH_REMATCH[2]} ]] || exit 2
@@ -188,7 +215,7 @@ export CHRONO_TEST_MONGODB_FAILPOINT_URI="$CHRONO_TEST_MONGODB_URI"
 cd "$repo_root/api"
 if [[ "$selection" == 'availability' || "$selection" == 'ingress-ownership' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --no-capture
-elif [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'organization-inventory' || "$selection" == 'agent-list-contracts' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'request-limits' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' || "$selection" == 'bson-ceiling' ]]; then
+elif [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'organization-inventory' || "$selection" == 'agent-list-contracts' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'request-limits' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' || "$selection" == 'bson-ceiling' || "$selection" == 'first-response' || "$selection" == 'observation-budget' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --success-output final
 else
   nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition"

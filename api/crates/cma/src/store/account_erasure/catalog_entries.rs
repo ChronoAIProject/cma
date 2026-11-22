@@ -170,6 +170,9 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("checkpoint_archive_gates", Linked(Sandboxes, &["_id"]) => true),
     entry!("checkpoint_archive_tombstones", ObjectAccounting => false),
     entry!("checkpoint_objects", ObjectAccounting => true),
+    // Retain capture authority and storage/key references for object erasure.
+    entry!("home_backup_schedules", ObjectAccounting => false),
+    entry!("home_backups", ObjectAccounting => false),
     entry!("checkpoints", Linked(Sandboxes, &["sandbox_id"]) => true),
     entry!("codex_subscription_connections", Custody(&["_id"]) => true),
     entry!("event_worker_profiles", Owner(&["owner"]) => true),

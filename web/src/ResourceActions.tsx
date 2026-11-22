@@ -15,7 +15,7 @@ import {
 } from './deletion';
 import { restoreDeletions } from './deletionRecovery';
 import { Button } from './ui/Button';
-import { downloadAgentHistory } from './agent/historyExport';
+import { useHistoryExport } from './agent/useHistoryExport';
 import type { AppRoute } from './routing/routes';
 import { SandboxActionStatus, type SandboxActionRequest } from './sandbox/SandboxActionStatus';
 
@@ -23,7 +23,10 @@ export type CreateAction =
   | Extract<TreeAction, { kind: 'new_agent' | 'new_workspace' }>
   | { kind: 'new_agent' }
   | { kind: 'new_sandbox' };
-type LifecycleAction = Exclude<TreeAction, { kind: 'new_agent' | 'new_workspace' }>;
+type LifecycleAction = Exclude<
+  TreeAction,
+  { kind: 'new_agent' | 'new_workspace' | 'export_history' | 'export_retained_conversation' }
+>;
 
 export function useResourceActions(
   client: CmaWebClient,
@@ -70,6 +73,7 @@ export function useResourceActions(
   const inFlight = useRef(false);
   const connectionScope = useMemo(() => ({ client, viewerId }), [client, viewerId]);
   const connections = useConnectionGate(enabled, connectionScope);
+  const history = useHistoryExport(client, viewerId, enabled);
   const execute = async (action: LifecycleAction) => {
     if (!enabled || inFlight.current) return;
     inFlight.current = true;
@@ -106,11 +110,6 @@ export function useResourceActions(
         case 'delete_agent':
           await client.deleteAgent(action.agentId, options);
           break;
-        case 'export_history': {
-          const history = await client.exportAgentHistory(action.agentId);
-          downloadAgentHistory(action.agentId, history);
-          break;
-        }
       }
       keys.current.settle(scope);
       if (sandboxAction)
@@ -119,7 +118,7 @@ export function useResourceActions(
           key: options.idempotencyKey,
           phase: 'accepted',
         });
-      if (action.kind !== 'export_history') changed.current(action);
+      changed.current(action);
     } catch (failure: unknown) {
       if (sandboxAction)
         setSandboxRequest({
@@ -157,8 +156,9 @@ export function useResourceActions(
     } else if (action.kind === 'stop_agent') {
       if (pending || stopping || deletion) return;
       setStopping({ agentId: action.agentId, key: keys.current.for(JSON.stringify(action)) });
-    } else if (action.kind === 'export_history') {
-      void execute(action);
+    } else if (action.kind === 'export_history' || action.kind === 'export_retained_conversation') {
+      if (pending || stopping || deletion || connections.pending) return;
+      void history.run(action.agentId, action.kind === 'export_retained_conversation');
     } else if (['delete_sandbox', 'remove_workspace', 'delete_agent'].includes(action.kind)) {
       if (pending || deletion !== undefined) return;
       setError(undefined);
@@ -203,12 +203,22 @@ export function useResourceActions(
         .filter((request) => request.phase === 'accepted' || request.phase === 'submitting')
         .map((request) => request.action.sandboxId),
     ),
-    pending: pending || deletion !== undefined || stopping !== undefined || connections.pending,
-    error: error ?? connections.error,
+    pending:
+      pending ||
+      history.pending ||
+      deletion !== undefined ||
+      stopping !== undefined ||
+      connections.pending,
+    error: history.error ?? error ?? connections.error,
     viewDeletionStatus:
       retained === undefined ? undefined : () => setDeletion({ request: retained, restored: true }),
     notice: (
       <>
+        {history.notice ? (
+          <p role="status" className="console__navigation-status">
+            {history.notice}
+          </p>
+        ) : null}
         {deletionRequests.map((request, index) => (
           <section
             key={request.key}

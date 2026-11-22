@@ -61,6 +61,16 @@ it('ignores old versions and preferences from another origin', () => {
   expect(hook.result.current.statuses).toEqual(defaults);
 });
 
+it('restores runtime and access updates as separate saved status values', () => {
+  const hook = renderHook(() => useNavigationFilterState('viewer-one', ''));
+  act(() => hook.result.current.select('sandbox', 'rotating'));
+  hook.unmount();
+  const restored = renderHook(() => useNavigationFilterState('viewer-one', ''));
+  expect(restored.result.current.statuses.sandbox).toBe('rotating');
+  act(() => restored.result.current.select('sandbox', 'credential_rotating'));
+  expect(JSON.parse(sessionStorage.getItem(key())!).sandbox).toBe('credential_rotating');
+});
+
 it('clears both views and the Personal destination without changing another scope', () => {
   for (const scope of ['', 'shared', 'organization:research'])
     sessionStorage.setItem(

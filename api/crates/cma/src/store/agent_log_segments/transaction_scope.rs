@@ -6,7 +6,7 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use mongodb::{bson::Document, ClientSession, Collection};
 use uuid::Uuid;
 
-use crate::store::sandbox_mongo::start_transaction;
+use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::start_transaction};
 
 mod ingress;
 mod page;
@@ -42,6 +42,21 @@ impl<'session> TransactionScope<'session> {
         store: &crate::store::MongoSandboxStore,
     ) -> Result<(), SandboxStoreError> {
         crate::store::work_publication::fence(store, self.session).await
+    }
+
+    pub(in crate::store) async fn live_agents(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        sandbox_id: &layer2_core::SandboxId,
+        workspace_id: &layer2_core::WorkspaceId,
+    ) -> Result<u64, TransactionLogError> {
+        use crate::store::shared_child_capacity::{agents, CapacityError};
+        agents(store, sandbox_id, workspace_id, self.session)
+            .await
+            .map_err(|error| match error {
+                CapacityError::Domain(error) => error.into(),
+                CapacityError::Driver(error) => TransactionLogError::Driver(error),
+            })
     }
 
     /// Release consumes the scope. The caller may commit/abort and do normal

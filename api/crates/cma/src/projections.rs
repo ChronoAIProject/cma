@@ -123,10 +123,19 @@ impl AgentProjectionServices {
         self
     }
 
-    pub(crate) fn with_features(mut self, flags: crate::config::FeatureFlags) -> Self {
+    pub(crate) fn with_features(
+        mut self,
+        flags: crate::config::FeatureFlags,
+        model_funding: Option<Arc<layer2_core::sandbox::model_credit::AgentTurnFunding>>,
+    ) -> Self {
         self.operations = self
             .operations
-            .with_skill_upgrades_enabled(flags.agent_skill_upgrade_enabled);
+            .with_skill_upgrades_enabled(flags.agent_skill_upgrade_enabled)
+            .with_model_credit_required(flags.model_credit_required)
+            .with_model_funding(model_funding);
+        self.agents = self
+            .agents
+            .with_model_credit_required(flags.model_credit_required);
         self.bounded_replay = flags.agui_bounded_replay;
         self
     }
@@ -303,21 +312,25 @@ impl AgentHistoryExporter for AdapterAgentHistoryExporter {
                 &layer3_adapter::AgentSlot::new(agent_id),
             )
             .await
-            .map_err(|error| match error {
-                AdapterError::RuntimeCapacity(_) => AgentHistoryExportError::Capacity,
-                AdapterError::Unsupported(_) => AgentHistoryExportError::Unsupported,
-                AdapterError::InputAuthorityUnavailable(_)
-                | AdapterError::PromptNotWritten(_)
-                | AdapterError::NativeClaimNotReady(_)
-                | AdapterError::RuntimeStartupHold(_)
-                | AdapterError::Unavailable(_)
-                | AdapterError::RuntimeLedgerHold(_)
-                | AdapterError::AtCapacity(_) => AgentHistoryExportError::Unavailable,
-                AdapterError::Rejected(_)
-                | AdapterError::AccessRevoked
-                | AdapterError::SkillUpgradeRefused(_)
-                | AdapterError::OperationIdentityConflict(_)
-                | AdapterError::RuntimeContractMismatch(_) => AgentHistoryExportError::Rejected,
+            .map_err(|error| {
+                let reason = match error {
+                    AdapterError::RuntimeCapacity(_) => AgentHistoryExportError::Capacity,
+                    AdapterError::Unsupported(_) => AgentHistoryExportError::Unsupported,
+                    AdapterError::InputAuthorityUnavailable(_)
+                    | AdapterError::PromptNotWritten(_)
+                    | AdapterError::NativeClaimNotReady(_)
+                    | AdapterError::RuntimeStartupHold(_)
+                    | AdapterError::Unavailable(_)
+                    | AdapterError::RuntimeLedgerHold(_)
+                    | AdapterError::AtCapacity(_) => AgentHistoryExportError::Unavailable,
+                    AdapterError::Rejected(_)
+                    | AdapterError::AccessRevoked
+                    | AdapterError::SkillUpgradeRefused(_)
+                    | AdapterError::OperationIdentityConflict(_)
+                    | AdapterError::RuntimeContractMismatch(_) => AgentHistoryExportError::Rejected,
+                };
+                tracing::warn!(parent: None, reason = ?reason, "Agent raw history export failed");
+                reason
             })?;
         Ok(bytes)
     }

@@ -70,7 +70,7 @@ impl DeliverableReference {
                 layer3_adapter::valid_agent_file_path(path)
                     && !path.is_empty()
                     && self.name == file_name(path.rsplit('/').next().unwrap_or("deliverable"))
-                    && self.media_type == "application/octet-stream"
+                    && super::media::allowed(path, &self.media_type)
                     && self.size_bytes <= layer3_adapter::MAX_AGENT_FILE_BYTES
             }
             DeliverableResource::AgentArtifact { id } => {
@@ -105,13 +105,23 @@ impl DeliverableReference {
 
     pub fn marker(&self) -> Result<String, DeliverableError> {
         self.validate()?;
-        let bytes = serde_json::to_vec(self).map_err(|_| DeliverableError::Invalid)?;
+        // V1 markers also need to remain readable by binaries during a rolling deployment.
+        let mut stored = self.clone();
+        stored.use_legacy_file_media();
+        let bytes = serde_json::to_vec(&stored).map_err(|_| DeliverableError::Invalid)?;
         let encoded = URL_SAFE_NO_PAD.encode(bytes);
         if encoded.len() > 4096 {
             return Err(DeliverableError::Invalid);
         }
         Ok(format!("{PREFIX}{encoded}{SUFFIX}"))
     }
+
+    pub fn use_legacy_file_media(&mut self) {
+        if matches!(self.resource, DeliverableResource::LiveFile { .. }) {
+            self.media_type = super::media::OPAQUE.into();
+        }
+    }
+
     pub fn id(&self) -> Result<String, DeliverableError> {
         let bytes = serde_json::to_vec(&(
             &self.agent_id,

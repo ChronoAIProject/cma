@@ -119,7 +119,13 @@ it('keeps an edited proposal after conflict refresh and does not infer an active
   const updates = vi
     .fn()
     .mockRejectedValueOnce(
-      new AgentSettingsError('The turn is active.', 409, undefined, 'agent_operation_in_flight'),
+      new AgentSettingsError(
+        'The turn is active.',
+        409,
+        undefined,
+        'agent_operation_in_flight',
+        'admission_conflict',
+      ),
     )
     .mockResolvedValue({ ...defaults, permission_mode: 'guarded' });
   render(draw(clientFor(reads, updates)));
@@ -127,7 +133,7 @@ it('keeps an edited proposal after conflict refresh and does not infer an active
   permission('Guarded');
   fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
   const error = await screen.findByRole('alert');
-  expect(error).toHaveTextContent('The Agent state changed or an update is in progress.');
+  expect(error).toHaveTextContent('The Agent changed during the update.');
   expect(error).not.toHaveTextContent('The turn is active.');
   expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Refresh current settings' }));
@@ -158,7 +164,17 @@ it('preserves a new edit during a refresh even when it returns to the previous b
         finish = resolve;
       }),
     );
-  const updates = vi.fn().mockRejectedValue(new AgentSettingsError('private', 409));
+  const updates = vi
+    .fn()
+    .mockRejectedValue(
+      new AgentSettingsError(
+        'private',
+        409,
+        undefined,
+        'agent_operation_in_flight',
+        'admission_conflict',
+      ),
+    );
   render(draw(clientFor(reads, updates)));
   await expand();
   permission('Guarded');

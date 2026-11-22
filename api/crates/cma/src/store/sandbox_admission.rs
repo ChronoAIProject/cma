@@ -75,6 +75,15 @@ impl SandboxAdmissionStore for MongoSandboxStore {
         self.sandbox_admitted.notify_one();
         Ok(result)
     }
+
+    async fn admit_catalogue_sandbox(
+        &self,
+        admission: SandboxAdmission,
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
+        let result = self.commit_catalogue_sandbox_admission(admission).await?;
+        self.sandbox_admitted.notify_one();
+        Ok(result)
+    }
 }
 
 fn admission_retry_delay(attempt: usize) -> Duration {
@@ -88,6 +97,7 @@ async fn apply<F>(
     session: &mut mongodb::ClientSession,
     observe: &F,
     wait_for_prepared_lease: bool,
+    catalogue: bool,
 ) -> Result<AdmissionReceipt, AdmissionError>
 where
     F: Fn() -> String + Sync,
@@ -128,6 +138,26 @@ where
         return Err(AdmissionError::Domain(
             SandboxStoreError::AccountDeletionInProgress,
         ));
+    }
+    if catalogue {
+        let profile = &admission.sandbox.profile;
+        if matches!(&admission.sandbox.origin, SandboxOrigin::Trigger { .. })
+            || !super::profile_pin_admission::sandbox(
+                &database,
+                profile.id.as_str(),
+                profile.revision,
+                Some(&profile.digest),
+                session,
+            )
+            .await
+            .map_err(AdmissionError::Driver)?
+        {
+            super::profile_pin_admission::frozen::sandbox(&database, &admission.sandbox, session)
+                .await
+                .map_err(AdmissionError::Driver)?
+                .require()
+                .map_err(AdmissionError::Domain)?;
+        }
     }
     let live = store
         .sandboxes
@@ -295,7 +325,10 @@ fn admission_filter(admission: &SandboxAdmission) -> Option<mongodb::bson::Docum
     origin_filter(admission.sandbox.owner.as_str(), &admission.sandbox.origin)
 }
 
-fn origin_filter(owner: &str, origin: &SandboxOrigin) -> Option<mongodb::bson::Document> {
+pub(super) fn origin_filter(
+    owner: &str,
+    origin: &SandboxOrigin,
+) -> Option<mongodb::bson::Document> {
     let (kind, id) = origin.replay_key()?;
     let (query_field, record_field) = match origin {
         SandboxOrigin::Trigger { .. } => ("origin_launch_id", "record.origin.launch_id"),

@@ -44,7 +44,24 @@ def record_withheld(env, original, selected):
 
 def require_current_versions(receipts, *, runner=subprocess.run):
     require_version_refs({key: (r["tag"], r["identity"]["version"]) for key, r in receipts.items()},
-                         runner=runner, missing="Final version is absent from component inventory")
+                         runner=runner, final=True)
+
+
+def require_released_versions(receipts, history, *, runner=subprocess.run):
+    """Production's watermark: only a higher final on the release's develop history supersedes.
+
+    Develop keeps publishing past every release. A final whose peeled source
+    is outside `history` belongs to a later release, whose own run deploys it,
+    so it never withholds this one. Presence of each receipt's tag is still
+    required exactly as for staging.
+    """
+    try:
+        require_current_versions(receipts, runner=runner)
+    except SupersededVersions as error:
+        later = later_final_sources({key: receipts[key] for key in error.components}, runner=runner)
+        stale = {key for key, commits in later.items() if any(c in history.positions for c in commits)}
+        if stale:
+            raise SupersededVersions(stale) from error
 
 
 def advertise(prefixes, *, runner, peeled=False):
@@ -83,7 +100,7 @@ def later_final_sources(receipts, *, runner=subprocess.run):
     return later
 
 
-def require_version_refs(expected, *, runner=subprocess.run, missing="Expected version is absent from component inventory"):
+def require_version_refs(expected, *, runner=subprocess.run, final=False):
     # Every lane finishes a started build, so a successor's pending reservation
     # never withholds a final. Only a higher final in the same advertisement does.
     require(bool(expected) and expected.keys() <= DEPLOYABLES.keys(), "Unknown release component")
@@ -100,6 +117,8 @@ def require_version_refs(expected, *, runner=subprocess.run, missing="Expected v
         component = prefixes[prefix]
         if version > version_tuple(expected[component][1]):
             stale.add(component)
-    require(all("refs/tags/" + tag in found for tag, _ in expected.values()), missing)
+    present = all("refs/tags/" + tag in found for tag, _ in expected.values())
+    require(present or not final, "Final version is absent from component inventory")
+    require(present, "Expected version is absent from component inventory")
     if stale:
         raise SupersededVersions(stale)
