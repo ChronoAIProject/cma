@@ -1,3 +1,4 @@
+import { connectionCopy } from '../vocabulary/connect';
 import { StateDot } from '../ui/StateDot';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -9,6 +10,8 @@ interface ViewProps {
   running: boolean;
   busy: boolean;
   blocked: boolean;
+  sameTabUrl: string | undefined;
+  continueInSameTab: () => boolean;
   error: string | undefined;
   done: boolean;
   forceSubscription: boolean;
@@ -34,6 +37,8 @@ export function ConnectionWizardView({
   running,
   busy,
   blocked,
+  sameTabUrl,
+  continueInSameTab,
   error,
   done,
   forceSubscription,
@@ -109,9 +114,11 @@ export function ConnectionWizardView({
             </>
           )}
           <p role="status">
-            {blocked
-              ? 'Open the sign-in window to continue. CMA will keep checking here.'
-              : 'Finish sign-in in the other window. CMA is checking automatically…'}
+            {sameTabUrl !== undefined
+              ? connectionCopy.blocked
+              : blocked
+                ? 'Open the sign-in window to continue. CMA will keep checking here.'
+                : 'Finish sign-in in the other window. CMA is checking automatically…'}
           </p>
         </div>
       )}
@@ -126,6 +133,16 @@ export function ConnectionWizardView({
         </p>
       )}
       <div className="connection-wizard__actions">
+        {sameTabUrl === undefined ? null : (
+          <a
+            href={sameTabUrl}
+            onClick={(event) => {
+              if (!continueInSameTab()) event.preventDefault();
+            }}
+          >
+            {connectionCopy.sameTab}
+          </a>
+        )}
         {done ? (
           <p>All connections verified.</p>
         ) : (

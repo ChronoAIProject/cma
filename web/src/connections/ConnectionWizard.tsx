@@ -14,6 +14,7 @@ import {
 } from './client';
 import { ConnectionWizardView } from './ConnectionWizardView';
 import { ConnectionIntentRecovery, savedConnection } from './intentRecovery';
+import { rememberSameTabReturn } from './sameTabReturn';
 import './Connections.css';
 
 const POLL_MS = 2000;
@@ -427,6 +428,28 @@ function ConnectionSequence({
       if (recovery.current === controller) recovery.current = null;
     }
   };
+  const sameTabUrl =
+    recoveryEnabled &&
+    target.type === 'launch' &&
+    blocked &&
+    !busy &&
+    !intentRecovery.needsResume &&
+    handoff !== undefined &&
+    report?.owner === handoff.owner &&
+    report.services.some((row) => row.service === handoff.service_id && row.kind === 'nyxid')
+      ? handoff.hosted_url
+      : undefined;
+  const continueInSameTab = () => {
+    if (
+      sameTabUrl !== undefined &&
+      handoff !== undefined &&
+      target.type === 'launch' &&
+      rememberSameTabReturn(target.id, handoff.expires_at)
+    )
+      return true;
+    setError('Your return to CMA could not be saved. Allow pop-ups or try again.');
+    return false;
+  };
   return (
     <ConnectionWizardView
       {...{
@@ -435,6 +458,8 @@ function ConnectionSequence({
         running,
         busy,
         blocked,
+        sameTabUrl,
+        continueInSameTab,
         error,
         done,
         forceSubscription,
