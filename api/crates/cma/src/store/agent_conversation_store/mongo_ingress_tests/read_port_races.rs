@@ -1,4 +1,5 @@
 use super::{doc, fixture::Fixture, policy, AllocationPlan, IngressClass};
+use super::{gate_plan, gate_row};
 use crate::store::agent_log_segments::transaction_scope::TransactionScope;
 use crate::store::ingress_reads::cursor::DocumentSchema;
 use layer2_core::sandbox::ingress_ownership::{AdmissionRefusal, AdmittedError};
@@ -139,30 +140,10 @@ async fn admitted_and_legacy_reads_use_the_same_ordinary_work_schema_predicate()
     fixture.finish().await;
 }
 
-use crate::store::agent_log_segments::writer_gate::{self, GateName, GateRecord, Policy};
+use crate::store::agent_log_segments::writer_gate::{self, GateName};
 use crate::store::{agent_log_integrity::TransactionLogError, ingress_reads::error::ReadFailure};
 use layer2_core::sandbox::store::SandboxStoreError;
 use mongodb::bson::{self, Bson};
-
-fn gate_row(name: GateName, count: usize) -> Document {
-    bson::serialize_to_document(&GateRecord {
-        name,
-        format_version: 1,
-        revision: 1,
-        admission_fence: 0,
-        policy: Policy {
-            enabled: true,
-            agents: (0..count).map(|n| format!("{n:0512}")).collect(),
-            ..Policy::default()
-        },
-        slots: Vec::new(),
-    })
-    .unwrap()
-}
-
-fn gate_plan() -> AllocationPlan {
-    AllocationPlan::checked("gate read", &[50 * 1024 * 1024]).unwrap()
-}
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
@@ -421,5 +402,96 @@ async fn seal_read_keeps_snapshot_time_and_replacement_rows_independent() {
     drop((current, later));
     assert_eq!(root.available_bytes(), idle);
     other.shutdown().await;
+    fixture.finish().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn containing_seal_checks_both_neighbors_and_keeps_independent_results() {
+    use crate::store::agent_log_segments::Seal;
+    let fixture = Fixture::new("containing_chain").await;
+    let store = &fixture.store;
+    let (head, seals) = super::read_port_custody::seal_chain(1);
+    store
+        .segment_logs
+        .seals
+        .insert_many(
+            seals
+                .iter()
+                .map(|s| bson::serialize_to_document(s).unwrap()),
+        )
+        .await
+        .unwrap();
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    for seal in &seals {
+        let result = Seal::containing_admitted(
+            store,
+            &head,
+            seal.start_seq,
+            &mut session,
+            false,
+            &policy,
+            gate_plan(),
+        )
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+        assert_eq!(**result, *seal);
+        let retained = (*result).clone();
+        drop(result);
+        assert!(retained.belongs_to(&policy));
+        assert_eq!(
+            policy
+                .budget(IngressClass::Transformation)
+                .available_bytes(),
+            policy.bounds().transformation_bytes()
+        );
+        assert!(root.available_bytes() < idle);
+        drop(retained);
+        assert_eq!(root.available_bytes(), idle);
+    }
+    let mut changed = seals[0].clone();
+    changed.sealing_operation = "changed-neighbor".into();
+    changed.seal_digest = changed.digest();
+    store
+        .segment_logs
+        .seals
+        .replace_one(
+            doc! {"_id":&changed.id},
+            bson::serialize_to_document(&changed).unwrap(),
+        )
+        .session(&mut session)
+        .await
+        .unwrap();
+    let error =
+        Seal::containing_admitted(store, &head, 2, &mut session, false, &policy, gate_plan())
+            .unwrap()
+            .await
+            .unwrap()
+            .transpose()
+            .unwrap_err();
+    assert!(matches!(
+        &*error,
+        ReadFailure::Domain(SandboxStoreError::Corrupt(_))
+    ));
+    drop(error);
+    session.abort_transaction().await.unwrap();
+    let restored =
+        Seal::containing_admitted(store, &head, 2, &mut session, false, &policy, gate_plan())
+            .unwrap()
+            .await
+            .unwrap()
+            .transpose()
+            .unwrap();
+    assert_eq!(**restored, seals[1]);
+    drop((restored, session));
+    assert_eq!(root.available_bytes(), idle);
     fixture.finish().await;
 }

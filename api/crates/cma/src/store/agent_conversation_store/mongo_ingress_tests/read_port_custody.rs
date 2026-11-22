@@ -438,3 +438,47 @@ async fn seal_read_admission_and_unpolled_cancellation_issue_no_queries() {
     assert_eq!(root.available_bytes(), idle);
     fixture.finish().await;
 }
+
+use super::read_ports::seal_fixture;
+use crate::store::agent_log_segments::{Head, Seal};
+pub(super) fn seal_chain(first_count: i64) -> (Head, Vec<Seal>) {
+    let (mut head, first) = seal_fixture(first_count);
+    let mut seals = vec![first];
+    for ordinal in 1..3 {
+        let previous = seals.last().unwrap();
+        let mut next = previous.clone();
+        next.ordinal = ordinal;
+        next.id = Seal::identity(&next.agent_id, &next.incarnation, ordinal);
+        next.start_seq = previous.end_seq + 1;
+        next.end_seq = next.start_seq;
+        next.entry_count = 1;
+        next.encoded_bytes = 1;
+        next.previous_seal = Some(previous.seal_digest.clone());
+        next.prefix_count = next.end_seq;
+        next.prefix_bytes = previous.prefix_bytes + 1;
+        next.leaf_digests.bytes = vec![1; 32];
+        next.seal_digest = next.digest();
+        next.validate().unwrap();
+        next.follows(previous).unwrap();
+        seals.push(next);
+    }
+    let last = seals.last().unwrap();
+    head.active_ordinal = 3;
+    head.active_start_seq = last.end_seq + 1;
+    head.last_seq = last.end_seq;
+    head.previous_seal = Some(last.seal_digest.clone());
+    head.lifetime_count = last.end_seq;
+    head.lifetime_bytes = last.prefix_bytes;
+    head.projection_through = last.end_seq;
+    head.validate().unwrap();
+    last.precedes(&head).unwrap();
+    (head, seals)
+}
+
+pub(super) fn broken_predecessor(seal: &Seal) -> Document {
+    let mut changed = seal.clone();
+    changed.previous_seal.as_mut().unwrap().bytes[0] ^= 1;
+    changed.seal_digest = changed.digest();
+    changed.validate().unwrap();
+    bson::serialize_to_document(&changed).unwrap()
+}

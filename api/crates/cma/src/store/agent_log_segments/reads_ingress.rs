@@ -21,10 +21,6 @@ impl Seal {
     /// Read one seal with the original session and read concern. The caller's
     /// read plan covers query/raw response/driver storage; driver bounds and
     /// detached cleanup still require their separately qualified port.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "enabled recording awaits driver resource custody")
-    )]
     pub(in crate::store) fn read_at_admitted<'a>(
         store: &'a MongoSandboxStore,
         head: &'a Head,
@@ -69,6 +65,98 @@ impl Seal {
                     Err(error) => return error::finish(Err(error), &scope),
                 };
                 Ok(scope.initialize_owned(|| Ok(value)))
+            },
+        )
+    }
+}
+
+impl Seal {
+    /// Locate the requested seal and validate its neighboring chain in the same
+    /// session. Each independent read uses the caller's full read allowance.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "enabled recording awaits driver resource custody")
+    )]
+    pub(in crate::store) fn containing_admitted<'a>(
+        store: &'a MongoSandboxStore,
+        head: &'a Head,
+        seq: i64,
+        session: &'a mut ClientSession,
+        snapshot: bool,
+        policy: &'a IngressOwnershipPolicy,
+        read_plan: AllocationPlan,
+    ) -> Result<SealRead<'a>, AdmittedError> {
+        AdmittedOperation::from_owned(
+            policy,
+            IngressClass::Transformation,
+            AllocationPlan::checked(
+                "containing seal result",
+                &[128, shared_owner_bytes::<ReadFailure>()],
+            )?,
+            move |scope| async move {
+                let result = row::load_with_error::<SealSchema, _, _>(policy, read_plan, || async {
+                    let seals = majority_collection::<RawDocumentBuf>(&database(store), SEGMENTS);
+                    let find = seals.find_one(mongodb::bson::doc! {
+                        "agent_id": &head.agent_id, "incarnation": &head.incarnation, "start_seq": {"$lte": seq},
+                    }).sort(mongodb::bson::doc! {"start_seq": -1});
+                    let find = if snapshot { find.read_concern(ReadConcern::snapshot()) } else { find };
+                    find.session(&mut *session).await
+                }).await;
+                let seal = match result {
+                    Ok(Some(seal)) => seal,
+                    Ok(None) => {
+                        return Ok(scope.initialize_owned(|| Err(ReadFailure::Domain(corrupt()))))
+                    }
+                    Err(error) => return error::finish(Err(error), &scope),
+                };
+                if let Err(error) = super::validate_containing(&seal, head, seq) {
+                    return Ok(scope.initialize_owned(|| Err(ReadFailure::Domain(error))));
+                }
+                if seal.ordinal > 0 {
+                    let previous = match Seal::read_at_admitted(
+                        store,
+                        head,
+                        seal.ordinal - 1,
+                        session,
+                        snapshot,
+                        policy,
+                        read_plan,
+                    )?
+                    .await?
+                    .transpose()
+                    {
+                        Ok(previous) => previous,
+                        Err(error) => return Ok(error.map(Err)),
+                    };
+                    if let Err(error) = seal.follows(&previous) {
+                        return Ok(scope.initialize_owned(|| Err(ReadFailure::Domain(error))));
+                    }
+                }
+                if seal.ordinal + 1 == head.active_ordinal {
+                    if let Err(error) = seal.precedes(head) {
+                        return Ok(scope.initialize_owned(|| Err(ReadFailure::Domain(error))));
+                    }
+                } else {
+                    let next = match Seal::read_at_admitted(
+                        store,
+                        head,
+                        seal.ordinal + 1,
+                        session,
+                        snapshot,
+                        policy,
+                        read_plan,
+                    )?
+                    .await?
+                    .transpose()
+                    {
+                        Ok(next) => next,
+                        Err(error) => return Ok(error.map(Err)),
+                    };
+                    if let Err(error) = next.follows(&seal) {
+                        return Ok(scope.initialize_owned(|| Err(ReadFailure::Domain(error))));
+                    }
+                }
+                Ok(scope.initialize_owned(|| Ok(seal)))
             },
         )
     }

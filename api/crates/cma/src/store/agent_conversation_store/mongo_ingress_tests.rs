@@ -376,3 +376,112 @@ async fn seal_read_keeps_driver_error_identity_and_transaction_label() {
     drop((session, admin));
     fixture.finish().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn containing_seal_sizes_large_predecessor_independently_and_releases_refusal() {
+    use crate::store::agent_log_segments::Seal;
+    use layer2_core::sandbox::ingress_ownership::AdmittedError;
+    use mongodb::bson;
+    let fixture = fixture::Fixture::new("containing_pressure").await;
+    let store = &fixture.store;
+    let (head, seals) = read_port_custody::seal_chain(10_128);
+    store
+        .segment_logs
+        .seals
+        .insert_many(
+            seals
+                .iter()
+                .map(|s| bson::serialize_to_document(s).unwrap()),
+        )
+        .await
+        .unwrap();
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().snapshot(true).await.unwrap();
+    let pressure = policy
+        .admit(
+            IngressClass::Data,
+            AllocationPlan::checked(
+                "small candidate allowance",
+                &[policy.bounds().data_bytes() - 8192],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let held = root.available_bytes();
+    let small = Seal::read_at_admitted(
+        store,
+        &head,
+        1,
+        &mut session,
+        true,
+        &policy,
+        AllocationPlan::checked("neighbor read", &[50 * 1024 * 1024]).unwrap(),
+    )
+    .unwrap()
+    .await
+    .unwrap()
+    .transpose()
+    .unwrap();
+    assert_eq!(**small, seals[1]);
+    drop(small);
+    let timestamp = session.snapshot_time();
+    assert!(matches!(
+        Seal::containing_admitted(
+            store,
+            &head,
+            10_129,
+            &mut session,
+            true,
+            &policy,
+            AllocationPlan::checked("neighbor read", &[50 * 1024 * 1024]).unwrap()
+        )
+        .unwrap()
+        .await,
+        Err(AdmittedError::Refused(_))
+    ));
+    assert_eq!(root.available_bytes(), held);
+    drop(pressure);
+    let result = Seal::containing_admitted(
+        store,
+        &head,
+        10_129,
+        &mut session,
+        true,
+        &policy,
+        AllocationPlan::checked("neighbor read", &[50 * 1024 * 1024]).unwrap(),
+    )
+    .unwrap()
+    .await
+    .unwrap()
+    .transpose()
+    .unwrap();
+    assert_eq!(**result, seals[1]);
+    assert_eq!(session.snapshot_time(), timestamp);
+    drop((result, session));
+    assert_eq!(root.available_bytes(), idle);
+    fixture.finish().await;
+}
+
+use crate::store::agent_log_segments::writer_gate::{GateName, GateRecord, Policy};
+use mongodb::bson::{self, Document};
+pub(super) fn gate_row(name: GateName, count: usize) -> Document {
+    bson::serialize_to_document(&GateRecord {
+        name,
+        format_version: 1,
+        revision: 1,
+        admission_fence: 0,
+        policy: Policy {
+            enabled: true,
+            agents: (0..count).map(|n| format!("{n:0512}")).collect(),
+            ..Policy::default()
+        },
+        slots: Vec::new(),
+    })
+    .unwrap()
+}
+
+pub(super) fn gate_plan() -> AllocationPlan {
+    AllocationPlan::checked("gate read", &[50 * 1024 * 1024]).unwrap()
+}

@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use layer2_core::sandbox::ingress_ownership::{AdmissionRefusal, AdmittedError};
+use layer2_core::sandbox::store::SandboxStoreError;
 use mongodb::bson::Document;
 
 use super::{doc, fixture::Fixture, policy, AllocationPlan, IngressClass};
@@ -396,6 +397,100 @@ async fn seal_read_retains_its_exact_row_across_transaction_replacement_and_roll
     drop((later, retained));
     session.abort_transaction().await.unwrap();
     assert_eq!(root.available_bytes(), idle);
+    drop(session);
+    fixture.finish().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn containing_seal_refuses_missing_broken_and_unsupported_neighbor_evidence() {
+    use crate::store::{agent_log_segments::Seal, ingress_reads::error::ReadFailure};
+    use layer2_core::sandbox::ingress_ownership::AdmittedError;
+    use mongodb::bson::{self, Document};
+    let fixture = Fixture::new("containing_errors").await;
+    let store = &fixture.store;
+    let (head, seals) = super::read_port_custody::seal_chain(1);
+    let rows = &store.segment_logs.seals;
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let plan = || AllocationPlan::checked("containing errors", &[50 * 1024 * 1024]).unwrap();
+    let mut session = store.client.start_session().await.unwrap();
+    for fault in [
+        "missing_previous",
+        "missing_next",
+        "bad_previous",
+        "bad_next",
+        "bad_head",
+        "gap",
+        "active",
+        "deep_previous",
+    ] {
+        rows.delete_many(doc! {}).await.unwrap();
+        let mut documents: Vec<Document> = seals
+            .iter()
+            .map(|s| bson::serialize_to_document(s).unwrap())
+            .collect();
+        let mut current = head.clone();
+        let mut seq = 2;
+        match fault {
+            "missing_previous" => {
+                documents.remove(0);
+            }
+            "missing_next" => {
+                documents.pop();
+            }
+            "bad_previous" => {
+                documents[0].insert("format_version", 99_i64);
+            }
+            "bad_next" => {
+                documents[2] = super::read_port_custody::broken_predecessor(&seals[2]);
+            }
+            "bad_head" => {
+                current.previous_seal.as_mut().unwrap().bytes[0] ^= 1;
+                seq = 3;
+            }
+            "gap" => {
+                seq = 4;
+            }
+            "active" => {
+                current.active_ordinal = 1;
+            }
+            "deep_previous" => {
+                let mut nested = doc! {"value":true};
+                for _ in 0..66 {
+                    nested = doc! {"nested":nested};
+                }
+                documents[0].insert("unsupported", nested);
+            }
+            _ => unreachable!(),
+        }
+        rows.insert_many(documents.clone()).await.unwrap();
+        let result =
+            Seal::containing_admitted(store, &current, seq, &mut session, false, &policy, plan())
+                .unwrap()
+                .await;
+        if fault == "deep_previous" {
+            assert!(matches!(result, Err(AdmittedError::Unsupported(_))));
+        } else {
+            let error = result.unwrap().transpose().unwrap_err();
+            assert!(
+                matches!(&*error, ReadFailure::Domain(SandboxStoreError::Corrupt(_))),
+                "{fault}"
+            );
+            assert!(error.belongs_to(&policy));
+            assert!(root.available_bytes() < idle);
+            drop(error);
+        }
+        assert_eq!(root.available_bytes(), idle);
+        for row in documents {
+            assert_eq!(
+                rows.find_one(doc! {"_id":row.get_str("_id").unwrap()})
+                    .await
+                    .unwrap(),
+                Some(row)
+            );
+        }
+    }
     drop(session);
     fixture.finish().await;
 }
