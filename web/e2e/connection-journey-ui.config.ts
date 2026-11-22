@@ -9,7 +9,11 @@ process.once('exit', () => rmSync(output, { recursive: true, force: true }));
 const quotedOutput = "'" + output.replaceAll("'", "'\\''") + "'";
 const baseURL = 'http://127.0.0.1:4357';
 export default defineConfig(startup, {
-  testMatch: ['connection-journey-ui.check.ts', 'connection-journey-ui-modes.check.ts'],
+  testMatch: [
+    'connection-journey-ui.check.ts',
+    'connection-journey-ui-modes.check.ts',
+    'connection-popup-blocked.check.ts',
+  ],
   metadata: { connectionWizardBuild: output },
   use: { baseURL },
   webServer: {

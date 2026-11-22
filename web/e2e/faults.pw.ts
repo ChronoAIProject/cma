@@ -1,5 +1,6 @@
 import { test, expect } from './harness';
 import { faultNames } from './environment';
+import { runPopupBlockedConnection } from './connection-popup-blocked';
 import { ConnectionJourney } from './connection-journey';
 import { assertConnectionReplay, connectionStartPath } from './connection-journey-contract';
 
@@ -126,33 +127,7 @@ test('FAULT-browser-close durable Launch completes while its browser is closed',
 test('FAULT-popup-blocked connection falls back to the same tab without duplicate handoff', async ({
   harness: h,
 }) => {
-  const journey = new ConnectionJourney(h, 'oauth');
-  const page = await h.open('visitor');
-  await page.addInitScript(() => {
-    window.open = () => null;
-  });
-  const launch = await h.launch(page, 'missingService');
-  await journey.begin(page, launch);
-  const result = journey.startResult(page);
-  const wizard = page.getByRole('region', { name: journey.wizardName });
-  await wizard.getByRole('button', { name: 'Connect all', exact: true }).click();
-  await result;
-  const fallback = wizard.getByRole('link', { name: 'Continue in NyxID', exact: true });
-  await expect(fallback).toBeVisible();
-  expect([null, '_self']).toContain(await fallback.getAttribute('target'));
-  const tabs = page.context().pages().length;
-  await h.capture(page, 'fault-popup-blocked');
-  await h.identity(async () => {
-    await fallback.click();
-    await page.waitForURL((url) => url.origin !== h.config.baseURL);
-    expect(page.context().pages()).toHaveLength(tabs);
-    await h.operators.completeConnection(page, 'oauth');
-  });
-  await journey.returnFromSameTab(page);
-  await page.waitForLoadState('networkidle');
-  await h.flush();
-  await journey.finish(page, 'popup_blocked');
-  expect(page.context().pages()).toHaveLength(tabs);
+  await runPopupBlockedConnection(h);
 });
 
 test('FAULT-handoff-response lost browser response keeps the same unsettled handoff command', async ({
