@@ -4,7 +4,8 @@ use std::ops::Deref;
 use std::sync::{Arc, OnceLock};
 
 use layer3_adapter::ingress_budget::{
-    IngressBudget, IngressClass, IngressOwnershipPolicy, IngressReservation,
+    sizing::component_shared_owner_bytes, IngressBudget, IngressClass, IngressOwnershipPolicy,
+    IngressReservation, SharedComponentOwned,
 };
 use tokio::sync::Semaphore;
 
@@ -61,10 +62,7 @@ impl LiveBudget {
         let bytes = copied_bytes(fragment, delta.len())?;
         let permit = IngressReservation::try_acquire(&self.local, self.aggregate.as_ref(), bytes)?;
         Some(AgentLiveDelivery(
-            Delivery::Admitted(Admitted {
-                fragment: Arc::new(copy_fragment(fragment, delta)),
-                _permit: Arc::new(permit),
-            }),
+            Delivery::Admitted(permit.initialize_shared(|| copy_fragment(fragment, delta))),
             tokio::time::Instant::now(),
         ))
     }
@@ -103,26 +101,12 @@ fn copy_fragment(fragment: &AgentLiveFragment, delta: &str) -> AgentLiveFragment
 }
 
 fn copied_bytes(fragment: &AgentLiveFragment, delta_bytes: usize) -> Option<usize> {
-    // str::to_owned/String::clone request exactly their length. These are the
-    // only variable allocations; the two Arc layouts include their headers.
-    fn arc_bytes<T>() -> Option<usize> {
-        std::alloc::Layout::new::<[usize; 2]>()
-            .extend(std::alloc::Layout::new::<T>())
-            .ok()
-            .map(|(layout, _)| layout.pad_to_align().size())
-    }
-    arc_bytes::<AgentLiveFragment>()?
-        .checked_add(arc_bytes::<IngressReservation>()?)?
+    // These copies request exactly their lengths; P1 sizes both owner backings.
+    component_shared_owner_bytes::<AgentLiveFragment>()
+        .ok()?
         .checked_add(fragment.agent_id.0.len())?
         .checked_add(fragment.message_id.len())?
         .checked_add(delta_bytes)
-}
-
-#[derive(Clone)]
-struct Admitted {
-    // Free the entire payload Arc before releasing the shared reservation.
-    fragment: Arc<AgentLiveFragment>,
-    _permit: Arc<IngressReservation>,
 }
 
 pub(super) fn retained_bytes(fragment: &AgentLiveFragment) -> Option<u32> {
@@ -145,7 +129,7 @@ struct Reserved {
 enum Delivery {
     Legacy(AgentLiveFragment),
     Reserved(Arc<Reserved>),
-    Admitted(Admitted),
+    Admitted(SharedComponentOwned<AgentLiveFragment>),
 }
 
 /// Immutable source data. Enabled deliveries share both storage and reservation
@@ -160,7 +144,7 @@ impl Deref for AgentLiveDelivery {
         match &self.0 {
             Delivery::Legacy(fragment) => fragment,
             Delivery::Reserved(fragment) => &fragment.fragment,
-            Delivery::Admitted(fragment) => &fragment.fragment,
+            Delivery::Admitted(fragment) => fragment,
         }
     }
 }
@@ -218,3 +202,7 @@ mod tests;
 #[cfg(test)]
 #[path = "conversation_recorder/ingress_live_tests.rs"]
 mod ingress_tests;
+
+#[cfg(test)]
+#[path = "conversation_recorder/ingress_live_deallocation_tests.rs"]
+mod deallocation_tests;
