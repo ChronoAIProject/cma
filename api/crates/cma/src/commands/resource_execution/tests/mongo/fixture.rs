@@ -66,6 +66,10 @@ pub(super) struct Fixture {
 }
 
 impl Fixture {
+    pub fn database(&self) -> mongodb::Database {
+        self.client.database(&self.name)
+    }
+
     pub async fn new() -> Self {
         let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("Mongo replica-set URI required");
         let name = format!("cma_revocation_worker_{}", uuid::Uuid::new_v4().simple());

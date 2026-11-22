@@ -6,6 +6,8 @@ use std::sync::Mutex;
 mod fixtures;
 mod mongo;
 mod participants;
+mod process_child;
+mod process_fixture;
 mod reconciliation;
 mod store;
 mod sweep;
