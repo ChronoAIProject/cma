@@ -23,6 +23,7 @@ mod anonymous_public;
 mod auth_mode;
 mod debug;
 mod global_admission;
+mod http_connections;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
 #[cfg(test)]
@@ -149,6 +150,7 @@ pub struct Config {
     pub(crate) agent_log_fleet_percent: u8,
     pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
     pub bind: SocketAddr,
+    pub(crate) http_connection_max_age: Option<std::time::Duration>,
     pub metrics_bind: SocketAddr,
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
@@ -334,6 +336,7 @@ impl Config {
             account_deletion_enabled,
             account_erasure_transaction_drain_seconds,
             bind,
+            http_connection_max_age: http_connections::max_age(&mut lookup)?,
             metrics_bind,
             public_stream_limit: public_streams::from_lookup(&mut lookup)?,
             relay_capacity: RelayCapacityConfig::from_lookup(&mut lookup)?,

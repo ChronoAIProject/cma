@@ -435,6 +435,8 @@ dependencies = [
  "http-body",
  "http-body-util",
  "httpdate",
+ "hyper",
+ "hyper-util",
  "ipnet",
  "jsonschema",
  "kube",
