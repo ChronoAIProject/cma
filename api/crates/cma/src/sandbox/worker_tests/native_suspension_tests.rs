@@ -27,6 +27,8 @@ struct Fixture {
     harness: Harness,
     homes: Arc<home_tests::Homes>,
     backend: NativeBackend,
+    /// Native retirement admission; the production default is off.
+    retirement_admission: std::sync::atomic::AtomicBool,
 }
 impl Fixture {
     async fn new() -> Self {
@@ -43,7 +45,13 @@ impl Fixture {
             harness,
             homes,
             backend,
+            retirement_admission: std::sync::atomic::AtomicBool::new(true),
         }
+    }
+    /// Exercise the production default, where finality admission is off.
+    fn without_retirement_admission(self) -> Self {
+        self.retirement_admission.store(false, Ordering::SeqCst);
+        self
     }
     async fn native() -> Self {
         let mut fixture = Self::new().await;
@@ -94,7 +102,7 @@ impl Fixture {
                 adapter.clone(),
                 "test".into(),
                 self.backend.retirement_records.clone(),
-                true,
+                self.retirement_admission.load(Ordering::SeqCst),
             )
             .with_clock(Arc::new(move || now + Duration::from_secs(1))),
         ));
