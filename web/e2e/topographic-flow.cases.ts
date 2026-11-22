@@ -311,6 +311,90 @@ export function registerTopographicFlowCases() {
     expect((await flowProbe(page)).contextReleases).toBe(1);
   });
 
+  test('LOCAL topographic Home focus and template changes preserve drafts without replay', async ({
+    page,
+    baseURL,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await installFlowProbe(page);
+    const fixture = await flowFixture(page, baseURL!, 'first-visit');
+    await page.goto('/');
+    await expect.poll(async () => (await flowProbe(page)).draws.length).toBeGreaterThan(1);
+    const input = page.getByRole('textbox', { name: 'Your task', exact: true });
+    await input.fill('Keep my separate Home draft.');
+    await expect.poll(async () => (await flowProbe(page)).contextReleases).toBe(1);
+    const stopped = await flowProbe(page);
+    await page.getByRole('button', { name: 'Research a topic', exact: true }).click();
+    await expect(page.getByLabel('Topic', { exact: true })).toBeFocused();
+    await expect(page.locator('.topographic-backdrop')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Write a task without a template' }).click();
+    await page.getByRole('button', { name: 'Switch and keep draft', exact: true }).click();
+    await expect(input).toHaveValue('Keep my separate Home draft.');
+    await expect(input).toBeFocused();
+    await expect(page.locator('.topographic-backdrop__static')).toBeVisible();
+    await input.evaluate((node: HTMLTextAreaElement) => node.blur());
+    await page.waitForTimeout(300);
+    const returned = await flowProbe(page);
+    expect(returned.draws).toEqual(stopped.draws);
+    expect(returned.contexts).toBe(1);
+    expect(returned.releases).toBe(returned.allocations);
+    expect(returned.pendingFrames).toEqual([]);
+    expect(returned.errors).toEqual([]);
+    expect(returned.fatal).toEqual([]);
+    expect(fixture.boundary.writes).toEqual([]);
+    expect(fixture.boundary.unexpected).toEqual([]);
+  });
+
+  test('LOCAL topographic retained Home pauses during service history and keeps its deadline', async ({
+    page,
+    baseURL,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await installFlowProbe(page);
+    const fixture = await flowFixture(page, baseURL!, 'first-visit');
+    await page.route('**/api/event-gateway/auth/session', (route) =>
+      route.fulfill({ status: 403, json: { detail: 'Synthetic service access denied.' } }),
+    );
+    await page.goto('/');
+    await expect.poll(async () => (await flowProbe(page)).draws.length).toBeGreaterThan(1);
+    const host = await page.locator('.topographic-backdrop').elementHandle();
+    const leave = async () => {
+      // Browser history can hide a retained service without focusing an app control.
+      await page.evaluate(() => {
+        history.pushState(null, '', '/event-gateway');
+        dispatchEvent(new PopStateEvent('popstate'));
+      });
+      await expect(page.locator('.topographic-backdrop')).toBeHidden();
+      await expect.poll(async () => (await flowProbe(page)).pendingFrames.length).toBe(0);
+      expect(await host!.evaluate((node) => node.isConnected)).toBe(true);
+    };
+    await leave();
+    const hidden = await flowProbe(page);
+    await page.waitForTimeout(200);
+    expect((await flowProbe(page)).draws).toEqual(hidden.draws);
+    await page.goBack();
+    await expect(page.locator('.topographic-backdrop')).toBeVisible();
+    await expect
+      .poll(async () => (await flowProbe(page)).draws.length)
+      .toBeGreaterThan(hidden.draws.length);
+    await leave();
+    const paused = await flowProbe(page);
+    await page.waitForTimeout(4300);
+    await page.goBack();
+    await expect(page.locator('.topographic-backdrop__static')).toBeVisible();
+    await page.waitForTimeout(300);
+    const returned = await flowProbe(page);
+    expect(returned.draws).toEqual(paused.draws);
+    expect(returned.contexts).toBe(1);
+    expect(returned.contextReleases).toBe(1);
+    expect(returned.releases).toBe(returned.allocations);
+    expect(returned.pendingFrames).toEqual([]);
+    expect(returned.errors).toEqual([]);
+    expect(returned.fatal).toEqual([]);
+    expect(fixture.boundary.writes).toEqual([]);
+    expect(fixture.boundary.unexpected).toEqual([]);
+  });
+
   for (const target of ['ordinary', 'running', 'deletion', 'usage', 'channel'] as const)
     for (const theme of ['light', 'dark'] as const) {
       test(`LOCAL topographic protects ${target} ${theme} without renderer work`, async ({
