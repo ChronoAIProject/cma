@@ -4,6 +4,7 @@ import type { TriggerDocument, TriggerRevision } from '@cma/client';
 import type { Harness } from './harness';
 import type { PublisherRole } from './environment';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
+import { materializeCurrentTriggerContent } from './public-trigger-fixture';
 import { publicApiPath } from './public-api-path';
 
 export async function publisherFixture(page: Page, baseURL: string, role: PublisherRole) {
@@ -18,6 +19,8 @@ export async function publisherFixture(page: Page, baseURL: string, role: Publis
   };
   const commands: Harness['commands'] = [];
   const resources: Harness['journal']['resources'] = [];
+  const repository = { url: 'https://github.com/example/repository', ref: 'b'.repeat(40) };
+  const materialize = (value: unknown) => materializeCurrentTriggerContent(value, repository, role);
   let document: TriggerDocument | undefined;
   let revision: TriggerRevision | undefined;
   const read = (path: string): unknown => {
@@ -90,7 +93,7 @@ export async function publisherFixture(page: Page, baseURL: string, role: Publis
     if (path === '/api/v1/triggers' && request.method() === 'POST') {
       document = {
         id: `trigger-${role}`,
-        draft: body.content,
+        draft: materialize(body.content),
         draft_version: 1,
         availability: 'draft',
         revision_count: 0,
@@ -103,7 +106,11 @@ export async function publisherFixture(page: Page, baseURL: string, role: Publis
       return route.fulfill({ status: 201, json: document });
     }
     if (path === `/api/v1/triggers/trigger-${role}` && request.method() === 'PUT') {
-      document = { ...document!, draft: body.content, draft_version: document!.draft_version + 1 };
+      document = {
+        ...document!,
+        draft: materialize(body.content),
+        draft_version: document!.draft_version + 1,
+      };
       return route.fulfill({ json: document });
     }
     if (path.endsWith('/placements')) {

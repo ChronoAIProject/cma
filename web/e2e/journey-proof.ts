@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { TriggerInlineTarget, TriggerStatistics } from '@cma/client';
 import { object, required, type Hooks } from './environment';
 import type { Command, Launch } from './harness';
+import { generatedProfileReferences, submittedProfileIds } from './public-journey-contracts';
 import type { publishCurrentTrigger } from './publisher-current';
 
 export const hashText = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -46,10 +47,11 @@ export function publicationProof(
     publisher: subject,
     observedPublisher: published.observedPublisher,
     targetKind: 'inline',
-    legacyProfileIds: ['sandbox', 'workspace', 'agent'].flatMap((kind) => {
-      const profile = object(revision.content.target)[`${kind}_profile`];
-      return profile && object(profile).id ? [object(profile).id] : [];
-    }),
+    submittedProfileIds: submittedProfileIds(published.requestTarget),
+    submittedTargetHash: hashValue(object(published.requestTarget).inline),
+    publishedProfiles: generatedProfileReferences(document.draft.target),
+    revisionProfiles: generatedProfileReferences(revision.content.target),
+    authoringCommands: published.authoringCommands.map(commandProof),
     requestedTargetHash: hashValue(target),
     publishedTargetHash: hashValue(document.draft.target.inline),
     revisionTargetHash: hashValue(revision.content.target.inline),

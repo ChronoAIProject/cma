@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   assertContextualTask,
   assertInlineTarget,
+  assertInlineRequest,
+  assertPublishedTarget,
   assertPublishedLaunch,
   assertPublisherIdentity,
   assertSingleLaunchDelta,
@@ -24,25 +26,58 @@ const target = {
     services: ['model'],
   },
   workspace: {
-    repository: { url: 'https://github.com/example/repository', reference: 'b'.repeat(40) },
+    repository: { url: 'https://github.com/example/repository', ref: 'b'.repeat(40) },
   },
 };
 
 describe('current public journey assertions', () => {
-  it('accepts selected inline configuration with empty legacy sentinels only', () => {
-    assertInlineTarget({ inline: target, sandbox_profile: { id: '', revision: 0 } }, target);
+  it('separates selected request profiles from generated response references', () => {
+    const generated = {
+      inline: target,
+      sandbox_profile: { id: 'generated-sandbox', revision: 1 },
+      workspace_profile: { id: 'generated-workspace', revision: 2 },
+      agent_profile: { id: 'generated-agent', revision: 3 },
+    };
+    assertInlineRequest({ inline: target }, target);
+    assertInlineRequest({ inline: target, sandbox_profile: { id: '', revision: 0 } }, target);
+    assertInlineTarget(generated, target);
+    expect(() => assertInlineRequest(generated, target)).toThrow();
     expect(() =>
-      assertInlineTarget({ sandbox_profile: { id: 'old-profile', revision: 1 } }, target),
+      assertInlineRequest({ sandbox_profile: generated.sandbox_profile }, target),
     ).toThrow();
+    expect(() => assertInlineTarget({ ...generated, inline: undefined }, target)).toThrow();
+    const document = {
+      id: 'trigger',
+      public_id: 'public',
+      availability: 'published',
+      revision_count: 1,
+      draft: { target: generated },
+    };
+    const revision = { revision: 1, digest: 'digest', content: { target: generated } };
+    assertPublishedTarget(document, revision, target);
+    for (const inline of [
+      { ...target, agent: { ...target.agent, system_prompt: 'changed' } },
+      { ...target, image: { ...target.image, version: 'wrong' } },
+      {
+        ...target,
+        workspace: { repository: { ...target.workspace.repository, ref: 'c'.repeat(40) } },
+      },
+    ])
+      expect(() =>
+        assertPublishedTarget(
+          document,
+          { ...revision, content: { target: { ...generated, inline } } },
+          target,
+        ),
+      ).toThrow();
+    expect(() => assertPublishedTarget(document, { ...revision, revision: 2 }, target)).toThrow();
     expect(() =>
-      assertInlineTarget(
-        { inline: target, sandbox_profile: { id: 'old-profile', revision: 1 } },
-        target,
-      ),
-    ).toThrow();
-    expect(() =>
-      assertInlineTarget(
-        { inline: { ...target, image: { ...target.image, version: 'wrong' } } },
+      assertPublishedTarget(
+        document,
+        {
+          ...revision,
+          content: { target: { ...generated, agent_profile: { id: 'other', revision: 3 } } },
+        },
         target,
       ),
     ).toThrow();

@@ -1,14 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import type {
-  TriggerDocument,
-  TriggerEmbed,
-  TriggerInlineTarget,
-  TriggerRevision,
-} from '@cma/client';
+import type { TriggerDocument, TriggerEmbed, TriggerRevision } from '@cma/client';
 import type { Page } from '@playwright/test';
 import { expect, type Harness } from './harness';
-import type { PublisherRole } from './environment';
-import { assertPublishedTarget, assertPublisherIdentity } from './public-journey-contracts';
+import { object, type PublisherRole } from './environment';
+import { currentTriggerTarget } from './current-trigger-target';
+import { publicApiPath } from './public-api-path';
+import {
+  assertInlineRequest,
+  assertPublishedTarget,
+  assertPublisherIdentity,
+} from './public-journey-contracts';
 
 export async function publishCurrentTrigger(
   h: Harness,
@@ -21,18 +22,12 @@ export async function publishCurrentTrigger(
   assertPublisherIdentity(identity, subject);
   const fixture = h.fixture.publicJourneys.owners[role];
   const { name: imageName, ...image } = fixture.image;
-  const target: TriggerInlineTarget = {
-    ...(managedImage ? {} : { image }),
-    agent: {
-      model: fixture.model,
-      reasoning_effort: role === 'owner' ? 'high' : 'medium',
-      permission_mode: 'guarded',
-      skills: [],
-      system_prompt: `Private journey configuration ${role} ${randomUUID()}`,
-      services: h.fixture.baselineServices,
-    },
-    workspace: { repository: h.fixture.publicJourneys.repository },
-  };
+  const target = currentTriggerTarget(
+    h.fixture,
+    role,
+    `Private journey configuration ${role} ${randomUUID()}`,
+    managedImage,
+  );
   const commandsBefore = h.commands.length;
   await page.goto(`${h.config.baseURL}/triggers/manage`);
   await expect(page.getByRole('button', { name: 'Image', exact: true })).toBeVisible();
@@ -76,7 +71,16 @@ export async function publishCurrentTrigger(
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByLabel('Source label', { exact: true }).fill(`Current ${role} embed`);
   await page.getByLabel('Source URL', { exact: true }).fill(fixture.embedUrl);
+  const creation = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      publicApiPath(new URL(response.url()).pathname) === '/api/v1/triggers',
+  );
   await page.getByRole('button', { name: 'Add source URL', exact: true }).click();
+  const created = await creation;
+  expect(created.status()).toBe(201);
+  const requestTarget = object(object(created.request().postDataJSON()).content).target;
+  assertInlineRequest(requestTarget, target);
   await expect(page.getByLabel('Source label', { exact: true })).toHaveValue('');
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.locator('.trigger-review input[type="checkbox"]').check();
@@ -114,6 +118,8 @@ export async function publishCurrentTrigger(
   await page.getByRole('tab', { name: 'Page with JavaScript', exact: true }).click();
   await expect(page.getByLabel('Subresource integrity', { exact: true })).toContainText('sha384-');
   return {
+    requestTarget,
+    authoringCommands: commands,
     document,
     revision,
     placement,
