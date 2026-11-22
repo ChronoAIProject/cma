@@ -388,7 +388,7 @@ export function AgentShareLinksDialog({
             <RevocationStatus
               key={item.shareId}
               client={client}
-              agentId={agentId}
+              target={{ kind: 'agent', id: agentId }}
               intent={item}
               onEffective={revoked}
             />

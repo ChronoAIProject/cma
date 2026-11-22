@@ -2,19 +2,23 @@ import { useEffect, useState } from 'react';
 import type { ResourceRevocationStatus } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import type { RevocationIntent } from './revocationIntent';
+import { matchesShareChange, type RetainedShareChange } from './retainedShareChange';
 import { Button } from '../ui/Button';
 
 export function RevocationStatus({
   client,
-  agentId,
+  target,
+  expected,
   intent,
   onEffective,
 }: {
   readonly client: ResourceViewsClient;
-  readonly agentId: string;
+  readonly target: { readonly kind: 'agent' | 'sandbox'; readonly id: string };
+  readonly expected?: RetainedShareChange;
   readonly intent: RevocationIntent;
   readonly onEffective: (shareId: string, unresolved: number) => void;
 }) {
+  const { kind, id } = target;
   const [status, setStatus] = useState<ResourceRevocationStatus>();
   const [error, setError] = useState<string>();
   const [retry, setRetry] = useState(0);
@@ -24,17 +28,18 @@ export function RevocationStatus({
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
       try {
-        const value = await client.resourceRevocations!.status(
-          intent.operation!,
-          'agent',
-          agentId,
-          { signal: request.signal },
-        );
+        const value = await client.resourceRevocations!.status(intent.operation!, kind, id, {
+          signal: request.signal,
+        });
         if (request.signal.aborted) return;
         if (
           value.share_id !== intent.shareId ||
           value.expected_revision !== intent.revision ||
-          (value.state === 'effective' && !value.receipt?.share.revoked_at)
+          (value.state === 'effective' &&
+            (!value.receipt ||
+              (expected
+                ? !matchesShareChange(value.receipt, { kind, id }, expected)
+                : !value.receipt.share.revoked_at)))
         )
           throw new Error('The revocation result did not match this share change.');
         setStatus(value);
@@ -51,17 +56,35 @@ export function RevocationStatus({
       request.abort();
       clearTimeout(timer);
     };
-  }, [client, agentId, intent.operation, intent.revision, intent.shareId, onEffective, retry]);
+  }, [
+    client,
+    kind,
+    id,
+    expected,
+    intent.operation,
+    intent.revision,
+    intent.shareId,
+    onEffective,
+    retry,
+  ]);
   return (
     <div aria-label="Revocation status">
       <p role="status">
         {status?.state === 'effective'
-          ? 'Access revoked.'
+          ? expected?.revoked === false
+            ? 'Access change confirmed.'
+            : 'Access revoked.'
           : status?.deadline_exceeded
-            ? 'Revocation is taking longer than expected. Access removal has not been confirmed.'
+            ? expected?.revoked === false
+              ? 'The access change is taking longer than expected. It has not been confirmed.'
+              : 'Revocation is taking longer than expected. Access removal has not been confirmed.'
             : status?.state === 'evidence_received'
-              ? 'Work has stopped. Confirming access removal…'
-              : 'Revocation pending. Waiting for in-flight work to stop.'}
+              ? expected?.revoked === false
+                ? 'Work has stopped. Confirming the access change…'
+                : 'Work has stopped. Confirming access removal…'
+              : expected?.revoked === false
+                ? 'Access change pending. Waiting for in-flight work to stop.'
+                : 'Revocation pending. Waiting for in-flight work to stop.'}
       </p>
       {status && status.unresolved_effects > 0 ? (
         <p>Previously submitted external requests may still complete.</p>

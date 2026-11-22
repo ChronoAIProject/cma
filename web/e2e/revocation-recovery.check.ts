@@ -118,3 +118,135 @@ test('LOCAL revocation preserves the original request through lost reply and rel
   expect(boundary.errors).toEqual([]);
   expect(boundary.unexpected).toEqual([]);
 });
+
+for (const change of ['revoke', 'set_mode'] as const) {
+  test(`LOCAL Sandbox ${change} retains the original command and resumes status after reload`, async ({
+    page,
+    baseURL,
+  }) => {
+    const boundary = new LocalStartup();
+    await boundary.route(page, baseURL!);
+    const sandboxId = boundary.sandbox.id;
+    const selector = { kind: 'sandbox', sandbox_id: sandboxId };
+    const operation = 'b'.repeat(64);
+    const actor = { kind: 'human', subject: 'local-owner' };
+    const original = {
+      id: 'sandbox-share',
+      owner: { kind: 'person', subject: 'local-owner' },
+      selector,
+      target_org_id: 'research',
+      mode: 'org_roles',
+      issuer_actor: actor,
+      created_at: localTime,
+      revoked_at: null,
+      revision: 1,
+    };
+    let lost = true;
+    let finished = false;
+    const writes: { method: string; body: unknown; key?: string; revision: string | null }[] = [];
+    await page.route('**/api/v1/organizations', (route) =>
+      route.fulfill({
+        json: { items: [{ id: 'research', display_name: 'Research team', role: 'admin' }] },
+      }),
+    );
+    await page.route('**/api/v1/resource-access/**', (route) =>
+      route.fulfill({
+        json: {
+          capabilities: ['view_details', 'manage_sharing'],
+          revalidate_at: null,
+          policy_revision: 1,
+        },
+      }),
+    );
+    await page.route('**/api/v1/resource-shares/**', (route) => {
+      const request = route.request();
+      if (request.method() === 'GET')
+        return route.fulfill({
+          json: { items: finished && change === 'revoke' ? [] : [original] },
+        });
+      writes.push({
+        method: request.method(),
+        body: request.postData() ? request.postDataJSON() : null,
+        key: request.headers()['idempotency-key'],
+        revision: new URL(request.url()).searchParams.get('expected_revision'),
+      });
+      if (lost) return route.abort('failed');
+      return route.fulfill({
+        status: 409,
+        headers: {
+          Link: `</api/v1/resource-revocations/${operation}?kind=sandbox&id=${sandboxId}>; rel="status"`,
+        },
+        json: { code: 'resource_revocation_pending', detail: 'Pending' },
+      });
+    });
+    await page.route('**/api/v1/resource-revocations/**', (route) =>
+      route.fulfill({
+        json: {
+          operation_id: operation,
+          selector,
+          share_id: original.id,
+          expected_revision: 1,
+          state: finished ? 'effective' : 'evidence_received',
+          participants: 1,
+          stopped: 1,
+          unresolved_effects: 1,
+          deadline_unix_ms: 11000,
+          deadline_exceeded: !finished,
+          receipt: finished
+            ? {
+                operation_id: operation,
+                actor,
+                at: localTime,
+                policy_revision: 2,
+                share: {
+                  ...original,
+                  mode: change === 'revoke' ? 'org_roles' : 'view',
+                  revision: 2,
+                  revoked_at: change === 'revoke' ? localTime : null,
+                },
+              }
+            : null,
+        },
+      }),
+    );
+    const open = async () => {
+      await page.getByRole('button', { name: 'More actions', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'Sharing', exact: true }).click();
+      await expect(page.getByRole('heading', { name: 'Current grants' })).toBeVisible();
+    };
+    await page.goto(`/sandboxes/${sandboxId}`);
+    await open();
+    if (change === 'revoke') {
+      await page.getByRole('button', { name: 'Revoke', exact: true }).click();
+      await page.getByRole('button', { name: 'Revoke grant', exact: true }).click();
+    } else {
+      await page.getByRole('button', { name: 'Access for Research team', exact: true }).click();
+      await page.getByRole('menuitemradio', { name: 'View only', exact: true }).click();
+      await page.getByRole('button', { name: 'Save access', exact: true }).click();
+    }
+    await expect(page.getByRole('button', { name: 'Retry saved share change' })).toBeEnabled();
+    expect(writes).toHaveLength(1);
+    await page.reload();
+    await open();
+    expect(writes).toHaveLength(1);
+    lost = false;
+    await page.getByRole('button', { name: 'Retry saved share change' }).click();
+    await expect(page.getByLabel('Revocation status')).toBeVisible();
+    expect(writes).toHaveLength(2);
+    expect(writes[1]).toEqual(writes[0]);
+    await page.reload();
+    await open();
+    await expect(page.getByLabel('Revocation status')).toBeVisible();
+    expect(writes).toHaveLength(2);
+    finished = true;
+    await expect(
+      page.getByText(
+        `${change === 'revoke' ? 'Access revoked.' : 'Access change confirmed.'} Previously submitted external requests may still complete.`,
+      ),
+    ).toBeVisible();
+    expect(writes).toHaveLength(2);
+    expect(writes[0]!.key).toBeTruthy();
+    expect(boundary.errors).toEqual([]);
+    expect(boundary.unexpected).toEqual([]);
+  });
+}
