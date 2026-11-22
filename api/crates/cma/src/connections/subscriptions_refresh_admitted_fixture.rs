@@ -5,7 +5,7 @@ pub(super) fn plan(bytes: usize) -> AllocationPlan {
     AllocationPlan::checked("synthetic admitted refresh", &[bytes]).unwrap()
 }
 pub(super) fn policy() -> (IngressBudget, IngressOwnershipPolicy) {
-    let root = IngressBudget::new(32 * 1024 * 1024);
+    let root = IngressBudget::new(128 * 1024 * 1024);
     let bounds = IngressOwnershipPolicy::conversation_bounds(
         root.capacity_bytes(),
         2,
