@@ -70,6 +70,9 @@ impl MeasuredInput {
         {
             hold = Some("immutable_resource_conflict".into());
         }
+        if hold.is_none() {
+            hold = self.refresh_hold(frozen.as_ref(), complete)?;
+        }
         let result_digest = frozen.as_ref().map(|f| {
             hash(&serde_json::to_vec(&(f.fact(), &self.resource)).expect("finite integer fact"))
         });

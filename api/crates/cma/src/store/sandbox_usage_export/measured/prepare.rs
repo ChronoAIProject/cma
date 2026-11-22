@@ -19,6 +19,8 @@ pub(crate) struct MeasuredInput {
     pub(super) resource: ResourceSnapshot,
     pub(super) hold: Option<String>,
     pub(super) predecessor: Option<FactHead>,
+    #[serde(skip)]
+    pub(super) previous_evidence: Option<super::replay::PreviousEvidence>,
 }
 
 impl MeasuredInput {
@@ -274,6 +276,13 @@ impl CaptureStore {
             .as_ref()
             .map(decode)
             .transpose()?;
+        let previous_evidence = match &predecessor {
+            Some(head) => Some(
+                self.previous_measured_evidence(stream, minute, head, &mut session)
+                    .await?,
+            ),
+            None => None,
+        };
         Ok(MeasuredInput {
             stream: stream.clone(),
             minute,
@@ -286,6 +295,7 @@ impl CaptureStore {
             resource,
             hold,
             predecessor,
+            previous_evidence,
         })
     }
 

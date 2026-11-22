@@ -10,6 +10,7 @@ mod prepare;
 mod publish;
 mod records;
 mod repair;
+mod replay;
 mod transaction;
 pub(crate) use bridge::retain_binding_bridge;
 pub(crate) use cli::command as repair_command;
