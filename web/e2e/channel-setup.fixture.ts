@@ -8,13 +8,14 @@ export async function setup(
   baseURL: string,
   identity?: Promise<unknown>,
   managedSetup = true,
+  serviceAuthorization = false,
 ) {
   const boundary = new LocalStartup();
   const writes: { body: string | null; key: string | undefined; url: string }[] = [];
   await boundary.route(page, baseURL);
   await page.route('**/auth/session', async (route) => {
     await identity;
-    return route.fulfill({ json: cmaSession });
+    return route.fulfill({ json: { ...cmaSession, service_authorization: serviceAuthorization } });
   });
   await page.route('**/api/v1/bots?**', (route) =>
     route.fulfill({ json: { items: [], next_after: null } }),

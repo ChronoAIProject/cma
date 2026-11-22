@@ -189,3 +189,43 @@ test('LOCAL disabled managed setup hides new admission and retains a manual draf
   expect(connectionReads).toBe(0);
   expect(writes).toEqual([]);
 });
+
+for (const expired of [true, false]) {
+  test(`LOCAL authorization ${expired ? 'sign-in expiry' : 'management refusal'} keeps the channel draft and makes no writes`, async ({
+    page,
+    baseURL,
+  }) => {
+    const writes = await setup(page, baseURL!, undefined, false, true);
+    await page.getByLabel('Channel name', { exact: true }).fill('Draft before authorization check');
+    await page.route('**/auth/service-authorization', (route) =>
+      route.fulfill(
+        expired
+          ? { status: 401, json: { code: 'not_authenticated' } }
+          : {
+              json: {
+                owner: 'local-owner',
+                status: 'unknown',
+                management_access: 'unsupported_credential',
+              },
+            },
+      ),
+    );
+    await page.getByRole('button', { name: 'Account menu for Local owner', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Service authorization', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Service authorization', exact: true });
+    if (expired) {
+      const login = dialog.getByRole('link', { name: 'Sign in again', exact: true });
+      await expect(login).toHaveAttribute('href', '/auth/login?return_to=%2Fevent-gateway');
+      await expect(login).toHaveAttribute('target', '_blank');
+    } else {
+      await expect(dialog).toContainText('Signing in again will not change that access.');
+      await expect(dialog.getByRole('link', { name: 'Sign in again', exact: true })).toHaveCount(0);
+    }
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+    await expect(page.getByLabel('Channel name', { exact: true })).toHaveValue(
+      'Draft before authorization check',
+    );
+    expect(writes).toEqual([]);
+  });
+}
