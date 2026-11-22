@@ -25,15 +25,16 @@ impl OwnershipCoordinator {
             Ok(Err(error)) => return Err(self.maintenance_error("member_heartbeat", None, error)),
         };
         // Only established, serving membership may wait for the next tick.
-        // Drain, process failure and local expiry keep their fatal result.
+        // Drain, process failure and local expiry keep their fatal result;
+        // is_ready() already refuses at or after the member deadline.
+        if !self.is_ready() {
+            return Err(self.maintenance_error("member_heartbeat", None, error));
+        }
         let remaining = self
             .member_deadline
             .lock()
             .unwrap()
             .saturating_duration_since(Instant::now());
-        if remaining.is_zero() || !self.is_ready() {
-            return Err(self.maintenance_error("member_heartbeat", None, error));
-        }
         let consecutive = self.skipped_heartbeats.fetch_add(1, Ordering::AcqRel) + 1;
         metrics::counter!("cma_agent_ownership_heartbeat_skips_total", "reason" => reason)
             .increment(1);
