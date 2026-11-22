@@ -6,6 +6,7 @@ export * from './types/thread-lifecycle.js';
 export * from './types/conversation-history.js';
 export * from './types/activities.js';
 export * from './types/channel-activity.js';
+export * from './types/activity-history.js';
 export * from './types/channels.js';
 export * from './types/relay.js';
 export * from './types/connections.js';

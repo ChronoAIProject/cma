@@ -179,20 +179,35 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      # Downloading the exact receipt artifact is safe to repeat; only the repeat may fail the job.
+      # Downloading the exact receipt artifact is safe to repeat; only the repeat
+      # may fail the job. 145 receipt downloads took at most 2 seconds, so an
+      # attempt still running after 2 minutes is a stall: it is stopped and the
+      # repeat starts on a fresh connection.
       - id: receipts-download
         continue-on-error: true
+        timeout-minutes: 2
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           artifact-ids: ${{ needs.publish.outputs.artifact }}
           path: ${{ runner.temp }}/public-receipts
           merge-multiple: true
-      - if: steps.receipts-download.outcome == 'failure'
+      - id: receipts-download-retry
+        if: steps.receipts-download.outcome == 'failure'
+        timeout-minutes: 2
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           artifact-ids: ${{ needs.publish.outputs.artifact }}
           path: ${{ runner.temp }}/public-receipts
           merge-multiple: true
+      - name: Explain the unavailable receipt artifact
+        if: failure() && steps.receipts-download-retry.outcome == 'failure'
+        env:
+          RECEIPT_ARTIFACT: ${{ needs.publish.outputs.artifact }}
+        run: |
+          artifact=$RECEIPT_ARTIFACT
+          [[ "$artifact" =~ ^[0-9]{1,20}$ ]] || artifact='?'
+          echo "::error title=Receipt artifact unavailable::Receipt artifact $artifact was not downloaded: both attempts failed. Each attempt is limited to 2 minutes; an attempt that hit the limit shows 'has timed out' in its log. Finalization did not start. Next step: re-run all jobs so publication uploads the receipt again (finalize/artifact_unavailable in .github/scripts/ci_outcomes.json)."
+          exit 1
       - name: Publish digest-bound final tags and remove successful reservations
         id: finalize
         env:

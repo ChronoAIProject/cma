@@ -4,6 +4,7 @@ mod account_deletion;
 pub(crate) mod activity;
 mod adapter;
 mod agent_manager;
+pub(crate) mod backend_free;
 mod bindings;
 mod bots;
 mod capacity_recovery;
@@ -25,7 +26,6 @@ use crate::{
     profile_authoring::CmaProfileAuthoringSource,
     profile_policy::profile_route_policy,
     projections::{AdapterAgentHistoryExporter, AdapterSandboxResources, AgentProjectionServices},
-    rate_limit::RateLimiters,
     sandbox::{
         runtime_capabilities, LiveAgentRegistry, LiveSandboxPolicy, PlatformTitleEndpoint,
         SandboxLifecycleComposition, SandboxLifecycleDependencies,
@@ -33,7 +33,6 @@ use crate::{
     store::{DefaultProfileSpec, MongoStores},
     trigger::{TriggerComposition, TriggerCompositionDependencies},
 };
-use axum::Router;
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
 use layer2_core::{
     profiles::authoring::ProfileAuthoringService,
@@ -232,11 +231,7 @@ impl ControlPlaneComposition {
             adapter.clone(),
         )?;
         let agent_skills = credentials::agent_skills(config, sandbox_credentials.clone())?;
-        let limits = RateLimiters::from_config(
-            config.rate_limits,
-            config.trusted_proxies.clone(),
-            stores.request_limits.clone(),
-        );
+        let limits = crate::control_admission::limiters(config, stores.request_limits.clone());
         let worker_holder = format!("{}:{}", config.deployment_id, uuid::Uuid::new_v4());
         let mut sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
@@ -413,6 +408,7 @@ impl ControlPlaneComposition {
             .merge(layer1_public::rest::admin::router(admin));
         let resource_routes = resource_routes.merge(bindings.router(config.gateway.as_ref())?);
         let resource_routes = routes::stream_budget(resource_routes, config.public_stream_limit);
+        let resource_routes = crate::control_admission::routes(resource_routes, limits.lifecycle());
         let (bot_routes, bots) = bots::BotComposition::build(bots::BotCompositionDependencies {
             config,
             stores: &stores,

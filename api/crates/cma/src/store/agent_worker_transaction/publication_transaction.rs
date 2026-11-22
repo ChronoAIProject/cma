@@ -20,6 +20,7 @@ pub(super) async fn commit(
     mutation: AgentWorkMutation,
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
     repeated_marker: Option<&AgentLogEntry>,
+    skill_guard: Option<&layer2_core::sandbox::store::AgentSkillResultGuard>,
 ) -> Result<bool, SandboxStoreError> {
     match run(
         store,
@@ -27,6 +28,7 @@ pub(super) async fn commit(
         observed,
         repeated_marker,
         Attempts::KeepProposal,
+        skill_guard,
     )
     .await?
     {
@@ -41,7 +43,16 @@ pub(super) async fn try_publish(
     mutation: AgentWorkMutation,
     parents: AgentWorkPublicationParents,
 ) -> Result<AgentWorkPublication, SandboxStoreError> {
-    match run(store, mutation, None, None, Attempts::Rebuild(parents)).await? {
+    match run(
+        store,
+        mutation,
+        None,
+        None,
+        Attempts::Rebuild(parents),
+        None,
+    )
+    .await?
+    {
         Completion::Published => Ok(AgentWorkPublication::Published),
         Completion::KnownAborted => Ok(AgentWorkPublication::KnownAborted),
         Completion::PreparedIneligible => Err(SandboxStoreError::InvalidTransaction(
@@ -56,6 +67,7 @@ async fn run(
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
     repeated_marker: Option<&AgentLogEntry>,
     attempts: Attempts,
+    skill_guard: Option<&layer2_core::sandbox::store::AgentSkillResultGuard>,
 ) -> Result<Completion, SandboxStoreError> {
     let (limit, parents) = match attempts {
         Attempts::KeepProposal => (TRANSACTION_ATTEMPTS, None),
@@ -95,7 +107,10 @@ async fn run(
             observed,
             repeated_marker,
             &mut history_cache,
-            parents.as_ref(),
+            PublicationGuards {
+                rebuild_parents: parents.as_ref(),
+                skill_result: skill_guard,
+            },
             scope,
         ))
         .await;

@@ -344,6 +344,62 @@ class StagingWorkflowTest < Minitest::Test
     end
   end
 
+  def test_package_bundle_writes_only_on_a_develop_dispatch_with_pinned_actions
+    require_relative 'ci-contract'
+    inputs = CIContract.load_inputs
+    CIContract.staging_package_authority(inputs)
+    [->(w) { w[true]['push'] = { 'branches' => ['develop'] } },
+     ->(w) { w['permissions'] = { 'packages' => 'write' } },
+     ->(w) { w['jobs']['bundle']['permissions']['contents'] = 'write' },
+     ->(w) { w['jobs']['bundle']['if'] = "github.repository == 'ChronoAIProject/cma'" },
+     ->(w) { w['jobs']['bundle']['runs-on'] = 'ubuntu-latest-16-cores' },
+     ->(w) { w['jobs']['bundle']['env']['REPOSITORY'] = 'chronoaiproject/cma-runtime' },
+     ->(w) { w['jobs']['bundle']['steps'].find { |s| s['uses'].to_s.start_with?('docker/login-action') }['uses'] = 'docker/login-action@v3' },
+     ->(w) { w['jobs']['bundle']['steps'].reject! { |s| s['name'] == 'Refuse an existing tag before building' } },
+     ->(w) { w['jobs']['bundle']['steps'].find { |s| s['name'] == 'Publish the exact verified layout' }['run'].sub!('--preserve-digests ', '') },
+     ->(w) { w['jobs']['extra'] = { 'permissions' => { 'contents' => 'read' }, 'runs-on' => 'ubuntu-24.04', 'steps' => [] } }].each do |mutate|
+      copy = Marshal.load(Marshal.dump(inputs))
+      mutate.call(copy['omarchy-package-bundle'])
+      assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(copy) }
+    end
+  end
+
+  def test_package_bundle_proves_its_tag_absent_immediately_before_its_only_push
+    require_relative 'ci-contract'
+    inputs = CIContract.load_inputs
+    CIContract.staging_package_authority(inputs)
+    step = ->(w, name) { w['jobs']['bundle']['steps'].find { |s| s['name'] == name } }
+    refuse = ->(w) { step.call(w, 'Refuse an existing tag before building') }
+    publish = ->(w) { step.call(w, 'Publish the exact verified layout') }
+    {
+      'step-level REPOSITORY on the push' => ->(w) { publish.call(w)['env']['REPOSITORY'] = 'chronoaiproject/cma-runtime' },
+      'REPOSITORY reassigned in the push script' =>
+        ->(w) { publish.call(w)['run'].sub!("set -euo pipefail\n", "set -euo pipefail\nREPOSITORY=chronoaiproject/cma-runtime\n") },
+      'second absence check after the push' => lambda do |w|
+        lines = publish.call(w)['run'].lines
+        check = lines.delete_at(lines.index { |line| line.include?('omarchy-package-bundle.py absent') })
+        lines.insert(lines.index { |line| line.include?('"docker://ghcr.io/$REPOSITORY:$TAG"') } + 1, check)
+        publish.call(w)['run'] = lines.join
+      end,
+      'second absence check allowed to fail' => ->(w) { publish.call(w)['run'].sub!(%(--tag "$TAG"\n), %(--tag "$TAG" || true\n)) },
+      'first absence check after the build' => lambda do |w|
+        steps = w['jobs']['bundle']['steps']
+        moved = steps.delete(refuse.call(w))
+        steps.insert(steps.index { |s| s['name'] == 'Download, verify and lay out the bundle' } + 1, moved)
+      end,
+      'hard-coded push destination' =>
+        ->(w) { publish.call(w)['run'].sub!('"docker://ghcr.io/$REPOSITORY:$TAG"', '"docker://ghcr.io/chronoaiproject/cma-runtime:latest"') },
+      'optional first absence check' => ->(w) { refuse.call(w)['continue-on-error'] = true },
+      'skipped first absence check' => ->(w) { refuse.call(w)['if'] = 'false' },
+      'optional bundle job' => ->(w) { w['jobs']['bundle']['continue-on-error'] = true },
+    }.each do |label, mutate|
+      copy = Marshal.load(Marshal.dump(inputs))
+      mutate.call(copy['omarchy-package-bundle'])
+      refute_equal inputs['omarchy-package-bundle'], copy['omarchy-package-bundle'], label
+      assert_raises(CIContract::Refusal, label) { CIContract.staging_package_authority(copy) }
+    end
+  end
+
   def test_all_external_actions_are_pinned_and_only_sanitized_deployment_outcomes_upload
     %w[staging-cd staging-release staging-promote staging-deploy redeploy-staging].each do |name|
       workflow(name)['jobs'].each_value do |job|
@@ -400,16 +456,40 @@ class StagingWorkflowTest < Minitest::Test
 
   def test_exact_artifact_download_layout_matches_the_finalizer
     steps = workflow('staging-release')['jobs']['finalize']['steps']
-    download = steps.find { |step| step['uses'].to_s.start_with?('actions/download-artifact@') }
+    downloads = steps.select { |step| step['uses'].to_s.start_with?('actions/download-artifact@') }
     finalizer = steps.find { |step| step['run'].to_s.include?('staging_cd_finalize.py') }
-    assert_equal '${{ needs.publish.outputs.artifact }}', download.dig('with', 'artifact-ids')
-    refute download['with'].key?('pattern')
-    refute download['with'].key?('name')
-    config = {action: download['uses'], inputs: download['with'],
-              receiptPath: finalizer.dig('env', 'CD_RECEIPTS_PATH')}
-    output, status = Open3.capture2e('node', File.join(__dir__, 'staging_cd_download_layout_tests.cjs'),
-                                    stdin_data: JSON.generate(config))
-    assert status.success?, output
+    assert_equal %w[receipts-download receipts-download-retry], downloads.map { |step| step['id'] }
+    # Both attempts execute the same pinned selection and destination logic.
+    downloads.each do |download|
+      assert_equal '${{ needs.publish.outputs.artifact }}', download.dig('with', 'artifact-ids')
+      refute download['with'].key?('pattern')
+      refute download['with'].key?('name')
+      config = {action: download['uses'], inputs: download['with'],
+                receiptPath: finalizer.dig('env', 'CD_RECEIPTS_PATH')}
+      output, status = Open3.capture2e('node', File.join(__dir__, 'staging_cd_download_layout_tests.cjs'),
+                                      stdin_data: JSON.generate(config))
+      assert status.success?, output
+    end
+  end
+
+  def test_receipt_download_attempts_are_bounded_inside_the_finalize_budget
+    job = workflow('staging-release')['jobs']['finalize']
+    steps = job['steps']
+    first, repeat = %w[receipts-download receipts-download-retry].map { |id| steps.find { |step| step['id'] == id } }
+    assert_equal [2, 2], [first['timeout-minutes'], repeat['timeout-minutes']]
+    explain = steps[steps.index(repeat) + 1]
+    assert_equal "failure() && steps.receipts-download-retry.outcome == 'failure'", explain['if']
+    assert_equal({ 'RECEIPT_ARTIFACT' => '${{ needs.publish.outputs.artifact }}' }, explain['env'])
+    assert_includes explain['run'], '[[ "$artifact" =~ ^[0-9]{1,20}$ ]] || artifact=\'?\''
+    assert_includes explain['run'], 'Receipt artifact $artifact was not downloaded: both attempts failed.'
+    assert_includes explain['run'], 'finalize/artifact_unavailable'
+    assert_equal 'exit 1', explain['run'].strip.lines.last
+    assert_operator steps.index(explain), :<, steps.index { |step| step['id'] == 'finalize' }
+    # A slow repeat that succeeds must still leave the finalizer its whole read budget.
+    budget = File.read(File.join(__dir__, 'staging_cd_finalize.py'))[/^FINALIZE_READ_SECONDS = (\d+)$/, 1].to_i
+    assert_operator budget, :>, 0
+    attempts = [first, repeat].sum { |step| step['timeout-minutes'] * 60 }
+    assert_operator attempts + budget, :<, job['timeout-minutes'] * 60
   end
 
   def test_runtime_canary_interpreter_runs_only_in_changed_runtime_publication

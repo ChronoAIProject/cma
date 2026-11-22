@@ -104,7 +104,7 @@ impl MongoSandboxStore {
     }
 }
 
-async fn checkpoint(
+pub(in crate::store) async fn checkpoint(
     store: &MongoSandboxStore,
     session: &mut ClientSession,
     id: &str,
@@ -134,7 +134,9 @@ async fn checkpoint(
         seq,
         at,
         (seq, sandbox.revision),
-        if funded {
+        if store.usage_capture.is_some() {
+            UsageObservation::CaptureCheckpoint
+        } else if funded {
             UsageObservation::FundedCheckpoint
         } else {
             UsageObservation::Checkpoint

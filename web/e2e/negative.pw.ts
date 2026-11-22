@@ -1,3 +1,4 @@
+import { currentTriggerTarget } from './current-trigger-target';
 import { randomUUID } from 'node:crypto';
 import { test, expect } from './harness';
 import { object } from './environment';
@@ -10,7 +11,7 @@ test('SECURITY-negative visitor cannot create Sandboxes, profiles or Triggers', 
   const identity = await h.get<{ visitor: boolean }>(page, '/auth/session');
   expect(identity.visitor).toBe(true);
   const profile = h.fixture.profiles.sandbox;
-  const requests = [
+  const requests: { path: string; data: unknown }[] = [
     {
       path: '/api/v1/sandboxes',
       data: {
@@ -53,6 +54,45 @@ test('SECURITY-negative visitor cannot create Sandboxes, profiles or Triggers', 
       },
     },
   ];
+  const selected = h.fixture.publicJourneys.owners.owner.image;
+  const image = { id: selected.id, version: selected.version, reference: selected.reference };
+  requests.push(
+    {
+      path: '/api/v1/agents',
+      data: {
+        name: 'Scoped current refusal probe',
+        initial_message: 'Reply once.',
+        image: { id: image.id, version: image.version },
+        profile: {
+          model: h.fixture.publicJourneys.owners.owner.model,
+          reasoning_effort: 'high',
+          permission_mode: 'guarded',
+          skills: [],
+          system_prompt: '',
+          permissions: { services: h.fixture.baselineServices },
+        },
+      },
+    },
+    {
+      path: '/api/v1/triggers',
+      data: {
+        content: {
+          presentation: {
+            title: 'Scoped inline refusal probe',
+            description: '',
+            button_label: 'open_in_cma',
+            theme: 'auto',
+          },
+          target: {
+            inline: currentTriggerTarget(h.fixture, 'owner'),
+          },
+          reuse: { sandbox: 'always_new', workspace: 'always_new', agent: 'always_new' },
+          first_message: 'Reply once.',
+          consent: { always_review: true },
+        },
+      },
+    },
+  );
   for (const probe of requests) {
     const response = await page.request.post(`${h.config.baseURL}${probe.path}`, {
       data: probe.data,

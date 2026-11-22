@@ -38,6 +38,8 @@ use utoipa::OpenApi;
         crate::github::http::lookup,
         http::activity::latest,
         http::activity::stream,
+        http::activity_history::history,
+        http::activity_history::details,
         http::media_responses::list,
         http::outbound::prepare,
         http::outbound::read,
