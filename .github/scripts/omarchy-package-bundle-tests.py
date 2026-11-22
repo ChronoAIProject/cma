@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -58,9 +59,18 @@ class Server:
         self.httpd.server_close()
 
 
+# The fake server only ever answers with these exact header shapes.
+SAFE_HEADERS = {
+    "Content-Range": re.compile(r"bytes [0-9]+-[0-9]+/[0-9]+"),
+    "Location": re.compile(r"http://127\.0\.0\.1:[0-9]+/[A-Za-z0-9._~/?=&%:+-]*"),
+}
+
+
 def send(handler, status, body, headers=()):
     handler.send_response(status)
     for key, value in headers:
+        if key not in SAFE_HEADERS or not SAFE_HEADERS[key].fullmatch(value):
+            raise AssertionError(f"fake server refuses header {key!r}")
         handler.send_header(key, value)
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
@@ -79,7 +89,8 @@ def truncated(handler, payload, length):
 
 def ranged(payload):
     def respond(handler, _):
-        start = int(handler.headers["Range"].split("=")[1].rstrip("-")) if handler.headers.get("Range") else 0
+        match = re.fullmatch(r"bytes=([0-9]{1,12})-", handler.headers.get("Range") or "bytes=0-")
+        start = min(int(match.group(1)), len(payload)) if match else 0
         status = 206 if start else 200
         send(handler, status, payload[start:], [("Content-Range", f"bytes {start}-{len(payload) - 1}/{len(payload)}")] if start else [])
     return respond
@@ -475,7 +486,7 @@ class AbsenceTests(unittest.TestCase):
             with self.subTest(redirected):
                 def respond(handler, _, redirected=redirected):
                     if handler.path.startswith(redirected):
-                        send(handler, 307, b"", [("Location", elsewhere.url + handler.path)])
+                        send(handler, 307, b"", [("Location", elsewhere.url + "/redirected")])
                     elif handler.path.startswith("/token"):
                         send(handler, 200, b'{"token": "bearer"}')
                     else:
