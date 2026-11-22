@@ -74,6 +74,25 @@ fn skill_upgrades_require_an_explicit_strict_boolean() {
     }
 }
 
+#[test]
+fn proxy_replay_principal_writer_requires_explicit_activation() {
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = super::FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == "CHRONO_NYXID_PROXY_REPLAY_PRINCIPAL_ENABLED")
+                .then(|| value.map(str::to_owned))
+                .flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.nyxid_proxy_replay_principal, expected);
+    }
+    for value in ["", "1", "TRUE", " true "] {
+        assert!(super::FeatureFlags::from_lookup(&mut |key| Ok((key
+            == "CHRONO_NYXID_PROXY_REPLAY_PRINCIPAL_ENABLED")
+            .then(|| value.to_owned())))
+        .is_err());
+    }
+}
+
 #[cfg(test)]
 mod silent_sign_in_tests {
     use super::*;

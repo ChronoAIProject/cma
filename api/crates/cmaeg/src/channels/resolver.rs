@@ -179,13 +179,14 @@ impl ChannelResolver {
             .open(&self.inner.keys)
             .map_err(|_| ResolveError::Tampered)?
             .payload;
-        if self
-            .inner
+        self.inner
             .records
             .record_url(pointer.record_id.as_str())
-            .map_err(|_| ResolveError::Invalid)?
-            .as_str()
-            != pointer.record_url
+            .map_err(|_| ResolveError::Invalid)?;
+        if !self
+            .inner
+            .records
+            .names_record(&pointer.record_url, pointer.record_id.as_str())
         {
             return Err(ResolveError::Tampered);
         }
@@ -224,13 +225,14 @@ impl ChannelResolver {
                 _ => ResolveError::Tampered,
             })?;
             let pointer = opened.payload;
-            if self
-                .inner
+            self.inner
                 .records
                 .record_url(pointer.record_id.as_str())
-                .map_err(|_| ResolveError::Invalid)?
-                .as_str()
-                != pointer.record_url
+                .map_err(|_| ResolveError::Invalid)?;
+            if !self
+                .inner
+                .records
+                .names_record(&pointer.record_url, pointer.record_id.as_str())
             {
                 return Err(ResolveError::Tampered);
             }
@@ -483,3 +485,7 @@ impl ChannelResolver {
         .await
     }
 }
+
+#[cfg(test)]
+#[path = "resolver_retained_origin_tests.rs"]
+mod retained_origin_tests;
