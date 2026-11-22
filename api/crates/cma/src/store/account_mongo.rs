@@ -61,10 +61,11 @@ impl MongoAccountStores {
                     .await?,
             ),
             registration: Arc::new(
-                crate::store::MongoRegistrationCapacityStore::open(
+                crate::store::MongoRegistrationCapacityStore::open_with_defaults(
                     &client,
                     name,
                     config.admission_ceilings_writes,
+                    initial_settings,
                 )
                 .await?,
             ),
