@@ -5,6 +5,7 @@ import { appendFileSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmS
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { currentJourneyCases, validatePublicJourneyProof } from './public-journey-evidence.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const digest = /^sha256:[0-9a-f]{64}$/;
@@ -106,11 +107,12 @@ export const requiredCases = [
   ...['oauth', 'api_key', 'device_code'].map((mode) => `J4-${mode} G-T2 missing service connection assistant continues via ${mode}`),
   'J7-retired Trigger cannot admit work',
   'J7-paused orchestration freezes a durable Launch without failing it',
-  'J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and rotation preserve work',
+  currentJourneyCases.j6,
+  currentJourneyCases.compatibility,
   'SECURITY-negative visitor cannot create Sandboxes, profiles or Triggers',
   'SECURITY-csrf cross-site form POST is refused without admitting a Launch',
   'G-T3 fifty explicit clicks admit at most five Launches and expose resource_quota reset',
-  'J5 profiles publish to Marketplace, second owner forks, wizard publishes embeds and stats',
+  currentJourneyCases.j5,
   ...['markdown', 'html', 'javascript', 'react'].map((kind) => `G-T1-${kind} real embed click-through preserves placement attribution`),
 ];
 
@@ -274,7 +276,8 @@ export function validateCampaign(results, journal) {
     assert.equal(results.status, 'passed');
     assert.deepEqual(results.cases.map((row) => row.case).sort(), [...requiredCases].sort());
     for (const row of results.cases) {
-      keys(row, ['case', 'status', 'durationMs']);
+      const current = [currentJourneyCases.j5, currentJourneyCases.j6].includes(row.case);
+      keys(row, ['case', 'status', 'durationMs', ...(current ? ['proof'] : [])]);
       assert.equal(row.status, 'passed');
       assert.ok(Number.isFinite(row.durationMs) && row.durationMs >= 0);
     }
@@ -290,19 +293,33 @@ export function validateCampaign(results, journal) {
       assert.ok(row && typeof row === 'object' && !Array.isArray(row));
       assert.match(row.run, /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
       assert.ok(Number.isFinite(Date.parse(row.at)));
-      assert.ok(['created', 'cancel_requested', 'launch_observed', 'already_absent', 'stop_requested', 'cleanup_accepted', 'cleanup_complete'].includes(row.action));
-      assert.ok(['launches', 'sandboxes', 'workspaces', 'agents', 'agent-profiles', 'workspace-profiles', 'sandbox-profiles', 'triggers'].includes(row.kind));
+      assert.ok(['created', 'cancel_requested', 'launch_observed', 'lifecycle_observed', 'already_absent', 'stop_requested', 'cleanup_accepted', 'cleanup_complete'].includes(row.action));
+      assert.ok(['agent-lifecycle', 'launches', 'sandboxes', 'workspaces', 'agents', 'agent-profiles', 'workspace-profiles', 'sandbox-profiles', 'triggers'].includes(row.kind));
       for (const key of ['id', 'subject']) assert.match(row[key], /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/);
       if (row.action === 'created') { assert.ok(!owned.has(identity(row))); owned.add(identity(row)); }
       else assert.ok(owned.has(identity(row)), 'cleanup cannot precede ownership');
+      if (row.action === 'lifecycle_observed') {
+        assert.equal(row.kind, 'agent-lifecycle');
+        assert.ok(['queued', 'running', 'waiting_for_connection', 'succeeded', 'failed'].includes(row.state));
+        if (row.state === 'succeeded' || row.agent_id !== undefined) {
+          assert.match(row.agent_id, /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/);
+          assert.ok(owned.has(identity({ ...row, kind: 'agents', id: row.agent_id })));
+        }
+      }
     }
     for (const [index, created] of journal.entries()) {
       if (created.action !== 'created') continue;
       assert.ok(journal.slice(index + 1).some((row) => identity(row) === identity(created) && (
-        ['cleanup_complete', 'already_absent'].includes(row.action) ||
-        (created.kind === 'launches' && row.action === 'launch_observed' && ['ready', 'completed', 'cancelled', 'failed_terminal'].includes(row.state))
+        (created.kind !== 'agent-lifecycle' && ['cleanup_complete', 'already_absent'].includes(row.action)) ||
+        (created.kind === 'launches' && row.action === 'launch_observed' && ['ready', 'completed', 'cancelled', 'failed_terminal'].includes(row.state)) ||
+        (created.kind === 'agent-lifecycle' && row.action === 'lifecycle_observed' && ['succeeded', 'failed'].includes(row.state))
       )));
     }
+  });
+  withPhase('campaign_results', () => {
+    for (const row of results.cases)
+      if ([currentJourneyCases.j5, currentJourneyCases.j6].includes(row.case))
+        validatePublicJourneyProof(row.case, row.proof, journal);
   });
 }
 

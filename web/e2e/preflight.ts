@@ -37,7 +37,7 @@ export default async function preflight() {
           ? ['launch_triggers', 'use_own_sandboxes', 'delete_own_sandbox']
           : name === 'owner'
             ? ['create_sandbox', 'manage_own_profiles', 'publish_triggers', 'delete_own_sandbox']
-            : ['manage_own_profiles'];
+            : ['manage_own_profiles', 'publish_triggers'];
         if (
           required.some((capability) => !capabilities.includes(capability)) ||
           (visitor &&
