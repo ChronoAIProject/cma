@@ -18,6 +18,7 @@ mod completed_operation;
 mod lifecycle;
 #[cfg(feature = "real-model-suggestion-samples")]
 mod samples;
+mod terminal;
 mod writer_admission;
 
 struct NoRuntime;

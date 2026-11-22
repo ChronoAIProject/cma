@@ -9,6 +9,8 @@ use crate::{AgentId, Caller, SubjectId};
 mod context;
 mod generation;
 mod quality;
+#[cfg(test)]
+mod tests;
 pub use context::work_is_current;
 pub use context::{authority_digest, work_from_turn, SuggestionContext, MAX_CONTEXT_EVENTS};
 pub use generation::*;
@@ -100,13 +102,9 @@ pub trait SuggestionStore: Send + Sync {
 }
 
 impl SuggestionWork {
-    pub fn reading(&self, current: bool, now_ms: u64) -> SuggestionReading {
+    pub fn reading(&self, current: bool) -> SuggestionReading {
         let status = if !current {
             SuggestionStatus::Expired
-        } else if self.status == SuggestionStatus::Running
-            && self.deadline_ms.is_some_and(|deadline| deadline <= now_ms)
-        {
-            SuggestionStatus::Failed
         } else {
             self.status
         };
