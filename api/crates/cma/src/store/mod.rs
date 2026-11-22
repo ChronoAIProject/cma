@@ -61,6 +61,7 @@ mod agent_worktree_recovery_records;
 mod agent_write_coordination;
 mod agents;
 pub mod auth;
+mod billing_authority;
 mod bindings;
 pub(crate) mod bot_setup_contexts;
 pub(crate) mod bot_setups;

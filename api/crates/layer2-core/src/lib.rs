@@ -12,6 +12,7 @@ pub mod activity_service;
 pub mod admission;
 pub mod agent_ownership;
 pub mod authz;
+pub mod billing_authority;
 pub mod bot_setups;
 pub mod bots;
 pub mod budget;
