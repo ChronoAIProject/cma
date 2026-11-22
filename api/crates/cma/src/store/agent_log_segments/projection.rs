@@ -125,6 +125,15 @@ pub(in crate::store) async fn read(
         .map_err(TransactionLogError::Driver)?
         .ok_or_else(corrupt)?;
     let projection: Projection = bson::deserialize_from_document(row).map_err(|_| corrupt())?;
+    validate_projection(&projection, agent, head)?;
+    Ok(projection.record)
+}
+
+fn validate_projection(
+    projection: &Projection,
+    agent: &Agent,
+    head: &Head,
+) -> Result<(), SandboxStoreError> {
     if projection.agent_id == head.agent_id && projection.incarnation == head.incarnation {
         super::telemetry::lag("projection", projection.through_seq, head.last_seq);
     }
@@ -136,13 +145,13 @@ pub(in crate::store) async fn read(
         || projection.head_revision != head.revision
         || u64::try_from(head.last_seq).ok() != Some(projection.record.through_seq)
     {
-        return Err(corrupt().into());
+        return Err(corrupt());
     }
     projection
         .record
         .validate_aggregate(agent)
         .map_err(SandboxStoreError::Corrupt)?;
-    Ok(projection.record)
+    Ok(())
 }
 
 pub(in crate::store) async fn evidence(
