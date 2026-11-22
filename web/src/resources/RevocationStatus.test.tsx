@@ -88,7 +88,9 @@ function fixture() {
       return Response.json(state.complete ? effective : pending);
     }
     if (url.pathname.endsWith('/share-links'))
-      return Response.json({ items: [{ ...link, revision: state.revision }] });
+      return Response.json({
+        items: [{ ...link, agent_id: url.pathname.split('/')[4], revision: state.revision }],
+      });
     return Response.json({ items: [] });
   });
   const client = createClient({ baseUrl: 'https://fixture.invalid', fetch });
@@ -102,7 +104,7 @@ function fixture() {
         onClose={() => {}}
       />,
     );
-  return { state, writes, reads, draw };
+  return { state, writes, reads, draw, client };
 }
 async function revoke() {
   const user = userEvent.setup();
@@ -179,3 +181,39 @@ it('isolates saved operations by owner and clears them on account changes', asyn
   retainTaskViewer();
   expect(readRevocations('other', 'agent')).toEqual([]);
 });
+
+it.each(['owner', 'agent'] as const)(
+  'retires the previous dialog when its %s changes without relying on a caller key',
+  async (changed) => {
+    const test = fixture();
+    const view = test.draw();
+    await revoke();
+    await screen.findByRole('button', { name: 'Check revocation' });
+    const saved = readRevocations('owner', 'agent');
+    const originalReads = test.reads.length;
+    const redraw = (owner: string, agent: string) =>
+      view.rerender(
+        <AgentShareLinksDialog
+          client={test.client}
+          ownerId={owner}
+          agentId={agent}
+          open
+          onClose={() => {}}
+        />,
+      );
+
+    redraw(changed === 'owner' ? 'other' : 'owner', changed === 'agent' ? 'other' : 'agent');
+    await screen.findByRole('article');
+    expect(screen.queryByLabelText('Revocation status')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Revoke link' })).toBeEnabled();
+    expect(test.reads).toHaveLength(originalReads);
+    expect(test.writes).toHaveLength(1);
+    expect(readRevocations('owner', 'agent')).toEqual(saved);
+
+    redraw('owner', 'agent');
+    await screen.findByRole('button', { name: 'Check revocation' });
+    expect(test.reads).toHaveLength(originalReads + 1);
+    expect(test.writes).toHaveLength(1);
+    expect(readRevocations('owner', 'agent')).toEqual(saved);
+  },
+);

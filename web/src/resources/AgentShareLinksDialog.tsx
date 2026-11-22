@@ -27,19 +27,19 @@ type Intent = { readonly key: string; readonly body: CreateAgentShareLinkRequest
 const failure = (cause: unknown) =>
   cause instanceof Error ? cause.message : 'The share change could not be confirmed. Try again.';
 
-export function AgentShareLinksDialog({
-  client,
-  ownerId,
-  agentId,
-  open,
-  onClose,
-}: {
+interface Props {
   readonly client: ResourceViewsClient;
-  readonly ownerId?: string;
+  readonly ownerId: string | undefined;
   readonly agentId: string;
   readonly open: boolean;
   readonly onClose: () => void;
-}) {
+}
+
+export function AgentShareLinksDialog(props: Props) {
+  return <AgentShareLinksContent key={JSON.stringify([props.ownerId, props.agentId])} {...props} />;
+}
+
+function AgentShareLinksContent({ client, ownerId, agentId, open, onClose }: Props) {
   const [links, setLinks] = useState<readonly AgentShareLink[]>([]);
   const [organizations, setOrganizations] = useState<readonly OrganizationChoice[]>([]);
   const [audience, setAudience] = useState<'public' | 'organization' | 'users'>('public');

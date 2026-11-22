@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 
 test('LOCAL Sandbox revision refusal allows an explicit fresh revoke after reload', async ({
@@ -105,10 +105,16 @@ test('LOCAL Sandbox revision refusal allows an explicit fresh revoke after reloa
 });
 
 // Synthetic HTTP boundaries exercise the real browser; they do not qualify a runtime.
-test('LOCAL revocation preserves the original request through lost reply and reload', async ({
-  page,
-  baseURL,
-}) => {
+for (const entry of ['details', 'header'] as const) {
+  test(`LOCAL ${entry} revocation preserves the original request through lost reply and reload`, async ({
+    page,
+    baseURL,
+  }) => {
+    await agentRevocationRecovery(page, baseURL!, entry);
+  });
+}
+
+async function agentRevocationRecovery(page: Page, baseURL: string, entry: 'details' | 'header') {
   const boundary = new LocalStartup();
   await boundary.route(page, baseURL!);
   const operation = 'a'.repeat(64);
@@ -185,8 +191,10 @@ test('LOCAL revocation preserves the original request through lost reply and rel
     });
   });
   const open = async () => {
-    await page.getByRole('button', { name: 'Show Agent details', exact: true }).click();
-    await page.getByRole('button', { name: 'Manage share links', exact: true }).click();
+    if (entry === 'details') {
+      await page.getByRole('button', { name: 'Show Agent details', exact: true }).click();
+      await page.getByRole('button', { name: 'Manage share links', exact: true }).click();
+    } else await page.getByRole('button', { name: 'Share', exact: true }).click();
   };
   await page.goto('/agents/agt_contract');
   await open();
@@ -220,7 +228,7 @@ test('LOCAL revocation preserves the original request through lost reply and rel
   expect(commands).toHaveLength(2);
   expect(boundary.errors).toEqual([]);
   expect(boundary.unexpected).toEqual([]);
-});
+}
 
 for (const change of ['revoke', 'set_mode'] as const) {
   test(`LOCAL Sandbox ${change} retains the original command and resumes status after reload`, async ({

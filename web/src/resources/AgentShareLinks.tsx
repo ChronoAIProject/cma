@@ -29,7 +29,6 @@ export function AgentShareLinks({
         Manage share links
       </button>
       <AgentShareLinksDialog
-        key={`${ownerId ?? ''}:${agentId}`}
         ownerId={ownerId}
         client={client}
         agentId={agentId}
