@@ -425,6 +425,10 @@ class StagingWorkflowTest < Minitest::Test
       'skipped check' => ->(w) { check.call(w)['if'] = 'false' },
       'check allowed to fail' => ->(w) { check.call(w)['run'] += ' || true' },
       'check warns later' => ->(w) { check.call(w)['run'] += ' --warn-days 0' },
+      'check no longer fails ahead of expiry' => ->(w) { check.call(w)['run'].sub!(' --fail-days 30', '') },
+      'check fails later' => ->(w) { check.call(w)['run'].sub!('--fail-days 30', '--fail-days 7') },
+      'record drift unchecked' => ->(w) { check.call(w)['run'].sub!(' --verify-record', '') },
+      'record rewritten instead of verified' => ->(w) { check.call(w)['run'].sub!('--verify-record', '--refresh') },
       'extra step' => ->(w) { expiry.call(w)['steps'] << { 'run' => 'true' } },
       'extra job' => ->(w) { w['jobs']['extra'] = { 'permissions' => { 'contents' => 'read' }, 'runs-on' => 'ubuntu-24.04', 'steps' => [] } },
     }.each do |label, mutate|

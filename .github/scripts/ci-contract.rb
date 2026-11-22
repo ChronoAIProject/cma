@@ -253,13 +253,16 @@ module CIContract
 
   KEY_EXPIRY_STEPS = [
     { "uses" => "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", "with" => { "persist-credentials" => false } },
-    { "name" => "Check Arch packager key expiry", "run" => "python3 -B .github/scripts/omarchy_key_expiry.py" },
+    { "name" => "Check Arch packager key expiry",
+      "run" => "python3 -B .github/scripts/omarchy_key_expiry.py --verify-record --fail-days 30" },
   ].freeze
 
-  # The weekly key expiry check warns before, and fails by name after, a key
-  # that signs a pinned Omarchy package expires (#3040). It only reads the
-  # committed lock and public package servers, runs on its schedule or an
-  # explicit dispatch, and every step runs so that its failure fails the run.
+  # The weekly key expiry check fails by name once a key that signs a pinned
+  # Omarchy package expires within 30 days, so the failed-run notification
+  # reaches someone (#3040), and fails when the committed signing-key record
+  # no longer matches the one derived from the locked URLs. It only reads the
+  # repository and public package servers, runs on its schedule or an explicit
+  # dispatch, and every step runs so that its failure fails the run.
   def self.omarchy_key_expiry_authority(inputs)
     workflow = inputs.fetch("omarchy-key-expiry")
     events = workflow["on"] || workflow[true]
