@@ -64,7 +64,6 @@ async fn uncertain_claim_and_ack_recover_from_majority_state_with_original_ident
         .finish_delivery(
             &attempt,
             DeliveryOutcome::Accepted(delivery::receipt(&attempt)),
-            None,
         )
         .await;
     admin

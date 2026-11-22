@@ -13,6 +13,8 @@ use axum::{
 use futures_util::TryStreamExt;
 use std::collections::HashMap;
 
+mod cursor;
+
 struct Inbox {
     expected: HashMap<String, Document>,
     receipts: Collection<Document>,
@@ -61,7 +63,16 @@ async fn exchange(
         if let Some(row) = inbox.receipts.find_one(doc! {"_id":id}).await.unwrap() {
             let receipt: Receipt =
                 mongodb::bson::deserialize_from_bson(row.get("receipt").unwrap().clone()).unwrap();
-            return (StatusCode::OK, serde_json::to_string(&receipt).unwrap());
+            return (
+                StatusCode::OK,
+                serde_json::json!({
+                    "receipt":receipt,"processing":{
+                        "validation_status":"waiting_for_predecessor","validation_reason":null,
+                        "owner_status":"owner_unresolved","financial_status":"nonbillable_shadow"
+                    }
+                })
+                .to_string(),
+            );
         }
     } else {
         assert!(uri.path().starts_with("/usage-cursors/"));

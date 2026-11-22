@@ -41,21 +41,18 @@ impl Receipt {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Cursor {
     pub stream_id: String,
     pub contiguous_sequence: String,
     pub validated_sequence: String,
     pub highest_sequence: String,
     pub head_digest: Option<String>,
+    pub validated_head_digest: Option<String>,
     pub missing_ranges: Vec<MissingRange>,
-    pub snapshot: String,
-    pub next_cursor: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct MissingRange {
     pub from: String,
     pub through: String,
@@ -64,23 +61,24 @@ pub(crate) struct MissingRange {
 impl Cursor {
     pub(crate) fn validate(&self, stream: &str) -> Result<u64, TransportError> {
         let contiguous = integer(&self.contiguous_sequence)?;
+        let validated = integer(&self.validated_sequence)?;
         let high = integer(&self.highest_sequence)?;
         if self.stream_id != stream
             || !id(stream)
-            || integer(&self.validated_sequence)? > contiguous
+            || validated > contiguous
             || contiguous > high
             || (contiguous == 0) != self.head_digest.is_none()
             || self
                 .head_digest
                 .as_ref()
                 .is_some_and(|value| !digest(value))
+            || (validated == 0) != self.validated_head_digest.is_none()
+            || self.validated_head_digest.as_ref().is_some_and(|value| {
+                validated == 0
+                    || !digest(value)
+                    || (validated == contiguous && Some(value) != self.head_digest.as_ref())
+            })
             || self.missing_ranges.len() > 512
-            || self.snapshot.is_empty()
-            || self.snapshot.len() > 4096
-            || self
-                .next_cursor
-                .as_ref()
-                .is_some_and(|v| v.is_empty() || v.len() > 4096)
         {
             return Err(TransportError::Invalid);
         }

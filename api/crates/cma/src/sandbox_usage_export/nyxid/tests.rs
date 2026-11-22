@@ -2,6 +2,7 @@ use super::*;
 use crate::producer_token::oauth::tests::{issued, Server};
 use serde_json::json;
 
+mod compatibility;
 mod safety;
 
 fn event() -> FrozenUsageEvent {
@@ -21,9 +22,18 @@ fn event() -> FrozenUsageEvent {
 }
 
 fn receipt(event: &FrozenUsageEvent) -> String {
-    json!({"receipt_id":uuid::Uuid::new_v4().to_string(),"event_id":event.event_id,
+    json!({"receipt":{"receipt_id":uuid::Uuid::new_v4().to_string(),"event_id":event.event_id,
         "stream_id":event.stream_id,"sequence":event.sequence.to_string(),"payload_digest":event.digest,
-        "accepted_at_ms":event.produced_at_ms.to_string(),"custody":"persisted"}).to_string()
+        "accepted_at_ms":event.produced_at_ms.to_string(),"custody":"persisted"},
+        "processing":{"validation_status":"waiting_for_predecessor","validation_reason":null,
+            "owner_status":"owner_unresolved","financial_status":"nonbillable_shadow"}}).to_string()
+}
+
+fn cursor(event: &FrozenUsageEvent) -> serde_json::Value {
+    json!({"stream_id":event.stream_id,"contiguous_custody_sequence":"0",
+        "contiguous_validated_sequence":"0","highest_received_sequence":"2",
+        "custody_chain_head":null,"validated_chain_head":null,
+        "missing_ranges":[{"first":"1","last":"1"}],"next_page":null})
 }
 
 fn transport(server: &Server) -> NyxIdUsageTransport {
@@ -85,7 +95,7 @@ async fn response_identity_and_custody_are_required_for_acknowledgement() {
         "custody",
     ] {
         let mut wrong: serde_json::Value = serde_json::from_str(&receipt(&event)).unwrap();
-        wrong[field] = "wrong".into();
+        wrong["receipt"][field] = "wrong".into();
         let server = Server::new(vec![issued("test", 3600), (201, wrong.to_string())]).await;
         assert!(transport(&server).submit(&event).await.is_err(), "{field}");
     }
@@ -128,9 +138,7 @@ async fn funding_status_never_turns_evidence_into_a_success_or_an_enrollment_ski
 #[tokio::test]
 async fn receipt_and_cursor_reads_use_independent_evidence_routes() {
     let event = event();
-    let cursor = json!({"stream_id":event.stream_id,"contiguous_sequence":"0","validated_sequence":"0",
-        "highest_sequence":"2","head_digest":null,"missing_ranges":[{"from":"1","through":"1"}],
-        "snapshot":"fixture-snapshot","next_cursor":null});
+    let cursor = cursor(&event);
     let server = Server::new(vec![
         issued("test", 3600),
         (404, String::new()),

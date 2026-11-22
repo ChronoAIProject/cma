@@ -1,14 +1,14 @@
 use super::*;
 
 #[tokio::test]
-async fn paginated_holes_require_one_snapshot_and_progressing_pages() {
+async fn paginated_holes_require_consistent_heads_and_progressing_pages() {
     let event = event();
-    let first = json!({"stream_id":event.stream_id,"contiguous_sequence":"0","validated_sequence":"0",
-        "highest_sequence":"5","head_digest":null,"missing_ranges":[{"from":"1","through":"1"}],
-        "snapshot":"fixture snapshot","next_cursor":"page/2"});
+    let mut first = cursor(&event);
+    first["highest_received_sequence"] = "5".into();
+    first["next_page"] = "opaque page/2".into();
     let mut second = first.clone();
-    second["missing_ranges"] = json!([{"from":"3","through":"4"}]);
-    second["next_cursor"] = serde_json::Value::Null;
+    second["missing_ranges"] = json!([{"first":"3","last":"4"}]);
+    second["next_page"] = serde_json::Value::Null;
     let server = Server::new(vec![
         issued("test", 3600),
         (200, first.to_string()),
@@ -21,11 +21,10 @@ async fn paginated_holes_require_one_snapshot_and_progressing_pages() {
         .unwrap()
         .unwrap();
     assert_eq!(cursor.missing_ranges.len(), 2);
-    assert!(cursor.next_cursor.is_none());
     assert!(server.calls.lock().unwrap()[2]
         .0
-        .ends_with("?snapshot=fixture+snapshot&cursor=page%2F2"));
-    second["snapshot"] = "changed".into();
+        .ends_with("?page=opaque+page%2F2"));
+    second["highest_received_sequence"] = "6".into();
     let server = Server::new(vec![
         issued("test", 3600),
         (200, first.to_string()),
@@ -34,7 +33,7 @@ async fn paginated_holes_require_one_snapshot_and_progressing_pages() {
     .await;
     assert_eq!(
         transport(&server).cursor(&event.stream_id).await,
-        Err(TransportError::Prerequisite)
+        Err(TransportError::CursorChanged)
     );
     let server = Server::new(vec![
         issued("test", 3600),
@@ -51,9 +50,13 @@ async fn paginated_holes_require_one_snapshot_and_progressing_pages() {
 #[tokio::test]
 async fn duplicate_fields_future_receipts_and_second_unauthorized_are_rejected() {
     let event = event();
-    let duplicate = receipt(&event).replacen('{', r#"{"custody":"persisted","#, 1);
+    let duplicate = receipt(&event).replacen(
+        r#""custody":"persisted""#,
+        r#""custody":"persisted","custody":"persisted""#,
+        1,
+    );
     let mut future: serde_json::Value = serde_json::from_str(&receipt(&event)).unwrap();
-    future["accepted_at_ms"] = i64::MAX.to_string().into();
+    future["receipt"]["accepted_at_ms"] = i64::MAX.to_string().into();
     for body in [duplicate, future.to_string()] {
         let server = Server::new(vec![issued("test", 3600), (201, body)]).await;
         assert!(transport(&server).submit(&event).await.is_err());

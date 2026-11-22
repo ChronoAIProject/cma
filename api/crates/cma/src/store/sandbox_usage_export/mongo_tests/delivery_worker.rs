@@ -1,5 +1,9 @@
 use super::*;
-use crate::sandbox_usage_export::{Cursor, Receipt, TransportError, UsageExporter, UsageTransport};
+use crate::sandbox_usage_export::{
+    Cursor, MissingRange, Receipt, TransportError, UsageExporter, UsageTransport,
+};
+
+mod compatibility;
 use serde_json::json;
 
 struct Inbox {
@@ -151,10 +155,7 @@ async fn remote_maximum_and_holes_cannot_acknowledge_unreceipted_events() {
     let f = Fixture::new(true).await;
     let stream = delivery::stream(&f, "free-owner").await;
     let inbox = Inbox::new(&f, false);
-    *inbox.cursor.lock().unwrap() = Some(serde_json::from_value(json!({
-        "stream_id":stream,"contiguous_sequence":"0","validated_sequence":"0","highest_sequence":"2",
-        "head_digest":null,"missing_ranges":[{"from":"1","through":"1"}],"snapshot":"fixture","next_cursor":null
-    })).unwrap());
+    *inbox.cursor.lock().unwrap() = Some(observed_cursor(&stream, 0, None));
     UsageExporter::for_test(f.capture(), "a".repeat(64), inbox.clone())
         .sweep(&mut String::new())
         .await
@@ -188,10 +189,11 @@ async fn acknowledged_streams_are_reconciled_and_remote_holes_preserve_receipts(
         .unwrap();
     let filter = doc! {"_id":last.get_str("_id").unwrap()};
     let due = doc! {"$set":{"delivery.due_at":mongodb::bson::DateTime::from_millis(0)}};
-    *inbox.cursor.lock().unwrap() = Some(serde_json::from_value(json!({
-        "stream_id":stream,"contiguous_sequence":"2","validated_sequence":"2","highest_sequence":"2",
-        "head_digest":last.get_str("digest").unwrap(),"missing_ranges":[],"snapshot":"fixture","next_cursor":null
-    })).unwrap());
+    *inbox.cursor.lock().unwrap() = Some(observed_cursor(
+        &stream,
+        2,
+        Some(last.get_str("digest").unwrap().into()),
+    ));
     rows.update_one(filter.clone(), due.clone()).await.unwrap();
     worker.sweep(&mut String::new()).await.unwrap();
     assert_eq!(inbox.submissions.lock().unwrap().len(), 2);
@@ -203,10 +205,7 @@ async fn acknowledged_streams_are_reconciled_and_remote_holes_preserve_receipts(
             .unwrap(),
         "accepted"
     );
-    *inbox.cursor.lock().unwrap() = Some(serde_json::from_value(json!({
-        "stream_id":stream,"contiguous_sequence":"0","validated_sequence":"0","highest_sequence":"2",
-        "head_digest":null,"missing_ranges":[{"from":"1","through":"1"}],"snapshot":"fixture","next_cursor":null
-    })).unwrap());
+    *inbox.cursor.lock().unwrap() = Some(observed_cursor(&stream, 0, None));
     rows.update_one(filter.clone(), due).await.unwrap();
     worker.sweep(&mut String::new()).await.unwrap();
     let held = rows.find_one(filter).await.unwrap().unwrap();
@@ -225,4 +224,23 @@ async fn acknowledged_streams_are_reconciled_and_remote_holes_preserve_receipts(
     worker.sweep(&mut String::new()).await.unwrap();
     assert_eq!(inbox.submissions.lock().unwrap().len(), 2);
     f.db.drop().await.unwrap();
+}
+
+fn observed_cursor(stream: &str, sequence: u64, digest: Option<String>) -> Cursor {
+    Cursor {
+        stream_id: stream.into(),
+        contiguous_sequence: sequence.to_string(),
+        validated_sequence: sequence.to_string(),
+        highest_sequence: "2".into(),
+        head_digest: digest.clone(),
+        validated_head_digest: digest,
+        missing_ranges: if sequence == 0 {
+            vec![MissingRange {
+                from: "1".into(),
+                through: "1".into(),
+            }]
+        } else {
+            vec![]
+        },
+    }
 }

@@ -5,6 +5,8 @@ mod reconcile;
 mod worker;
 
 use crate::store::sandbox_usage_export::FrozenUsageEvent;
+#[cfg(test)]
+pub(crate) use contract::MissingRange;
 pub(crate) use contract::{Cursor, Receipt};
 pub(crate) use worker::UsageExporter;
 
@@ -22,6 +24,7 @@ pub(crate) enum TransportError {
     RateLimited(u64),
     Unauthorized,
     Forbidden,
+    CursorChanged,
     Prerequisite,
     Conflict,
     Invalid,
