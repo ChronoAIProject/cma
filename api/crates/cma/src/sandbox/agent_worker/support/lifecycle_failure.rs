@@ -134,11 +134,14 @@ impl AgentWorker {
         }
         if rebuild && failure.observation.is_none() {
             let typed = failure.typed();
+            let delay = ready_at
+                .duration_since(now)
+                .map_err(|_| SandboxStoreError::Conflict)?;
             return self
                 .publish_lifecycle_work(agent, parents, now, |agent, at, parents| {
                     let typed = typed.clone();
                     async move {
-                        let mutation = self.retry_proposal(agent, typed, at, ready_at)?;
+                        let mutation = self.retry_proposal(agent, typed, at, at + delay)?;
                         self.commit_lifecycle_publication(mutation, parents).await
                     }
                 })
