@@ -66,6 +66,9 @@ pub(super) async fn read(
                 "capabilities": auth.session_entitlements(&caller, authority.as_ref().map(|Extension(authority)| authority)),
                 "visitor": is_visitor(&caller.authorization),
             });
+            if !erasing && authority.is_some() && auth.service_authorization_enabled() {
+                body["service_authorization"] = true.into();
+            }
             if !erasing {
                 let profile = profile
                     .map(|Extension(profile)| profile)
