@@ -281,5 +281,6 @@ async fn terminal_retained_home(runtime_generation: Option<u64>) {
             .unwrap()
     );
     assert_eq!(fixture.wire_events().await.len(), 5);
+    super::delivery_contract::recover_actual_events(&fixture).await;
     fixture.db.drop().await.unwrap();
 }

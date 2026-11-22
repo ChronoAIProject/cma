@@ -97,6 +97,7 @@ async fn source_projection_retries_keep_exact_frozen_bytes_and_stream_epoch() {
     assert_eq!(events.len(), 2);
     assert_eq!(events[0]["kind"], "stream_open");
     assert_eq!(events[1]["facts"], serde_json::json!([]));
+    super::delivery_contract::recover_actual_events(&fixture).await;
     fixture.db.drop().await.unwrap();
 }
 
@@ -275,5 +276,6 @@ async fn bounded_long_projection_survives_source_deletion_restart_and_two_replic
         previous = Some(records::hash(bytes));
         assert_eq!(row.get_str("digest").unwrap(), previous.as_deref().unwrap());
     }
+    super::delivery_contract::recover_actual_events(&fixture).await;
     fixture.db.drop().await.unwrap();
 }
