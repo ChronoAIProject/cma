@@ -102,6 +102,17 @@ impl Fixture {
             .expect("Mongo failpoint count must be an integer")
     }
 
+    pub async fn wait_for_fault(&self, prior: i64) {
+        self.admin
+            .database("admin")
+            .run_command(doc! {
+                "waitForFailPoint": "failCommand", "timesEntered": prior + 1,
+                "maxTimeMS": 5000_i32,
+            })
+            .await
+            .expect("the real ownership fence must reach the injected fault");
+    }
+
     pub async fn clear(&self) -> Vec<Document> {
         self.admin
             .database("admin")
