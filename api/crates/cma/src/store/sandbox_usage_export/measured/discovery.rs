@@ -92,6 +92,20 @@ impl CaptureStore {
                             .session(&mut *session)
                             .await
                             .map_err(Driver)?;
+                        let delivery_key = format!(
+                            "{}{}",
+                            keys::prefix("delivery", &stream.namespace),
+                            stream.id
+                        );
+                        store
+                            .collection(INVENTORY)
+                            .insert_one(
+                                doc! {"_id":keys::id(&delivery_key),"document_schema_version":1_i64,
+                                "stream_id":&stream.id,"source_stream":&stream.source_stream},
+                            )
+                            .session(&mut *session)
+                            .await
+                            .map_err(Driver)?;
                     }
                     authority.after = Some(source.id);
                     count += 1;

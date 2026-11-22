@@ -39,6 +39,25 @@ async fn typed_metadata_pages_use_id_index_and_never_decode_allocated_or_transpo
         }
     }
     assert_eq!(seen.len(), 41);
+    let mut after = String::new();
+    let mut delivery = std::collections::BTreeSet::new();
+    loop {
+        let page = f.store.export_streams(&after).await.unwrap();
+        assert!(page.len() <= 32);
+        if page.is_empty() {
+            break;
+        }
+        for stream in page {
+            assert!(stream > after);
+            after = stream.clone();
+            assert!(delivery.insert(stream));
+        }
+    }
+    assert_eq!(
+        delivery.len(),
+        82,
+        "both bases are discovered in the same bounded ordered scan"
+    );
     assert_eq!(
         super::super::super::schema::pending(&f.db).await.unwrap(),
         0
