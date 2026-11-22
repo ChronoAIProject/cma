@@ -3,7 +3,7 @@ use super::super::reconciliation::fixture::Provider;
 use super::*;
 use wire::EffectOutcome as Outcome;
 
-async fn prepare(fixture: &Fixture) -> EffectRecordV1 {
+pub(super) async fn prepare(fixture: &Fixture) -> EffectRecordV1 {
     let authority = fixture
         .authority("recipient", ResourceCapability::Interact)
         .await;
@@ -74,6 +74,14 @@ async fn prepare(fixture: &Fixture) -> EffectRecordV1 {
 
 async fn finish(fixture: &Fixture, effect: &EffectRecordV1) -> RevocationOperationV1 {
     let operation = fixture.freeze().await;
+    complete(fixture, effect, &operation).await
+}
+
+pub(super) async fn complete(
+    fixture: &Fixture,
+    effect: &EffectRecordV1,
+    operation: &RevocationOperationV1,
+) -> RevocationOperationV1 {
     let row = fixture
         .store
         .record(&effect.permission.intent.registration)
@@ -82,7 +90,7 @@ async fn finish(fixture: &Fixture, effect: &EffectRecordV1) -> RevocationOperati
         .unwrap();
     let directory = Directory::new(std::slice::from_ref(&row));
     let endpoint = directory.endpoint(1);
-    let mut completion = endpoint.completion(&row.barrier_request(&operation).unwrap());
+    let mut completion = endpoint.completion(&row.barrier_request(operation).unwrap());
     let MemberCompletionV1::Execution { receipt } = &mut completion else {
         panic!()
     };
@@ -93,7 +101,7 @@ async fn finish(fixture: &Fixture, effect: &EffectRecordV1) -> RevocationOperati
         worker.reconcile(&operation.key.operation_id).await.unwrap(),
         Progress::Effective
     );
-    final_operation(fixture, &operation).await
+    final_operation(fixture, operation).await
 }
 
 // Provider replies and stop receipts are synthetic; transactions and retained

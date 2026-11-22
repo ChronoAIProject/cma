@@ -59,6 +59,7 @@ pub(super) struct Fixture {
     pub sandbox: MongoSandboxStore,
     pub store: Arc<dyn ResourceExecutionStore>,
     pub coordinator: ResourceExecutionCoordinator,
+    pub access: ResourceAccessService,
     pub target: ResourceTarget,
     pub selector: ResourceSelector,
     pub share: ResourceShare,
@@ -115,13 +116,14 @@ impl Fixture {
             .unwrap();
         let access = ResourceAccessService::new(Arc::new(sandbox.clone()), Arc::new(Organizations))
             .with_execution_policy(policy.clone());
-        let coordinator = ResourceExecutionCoordinator::new(access, policy);
+        let coordinator = ResourceExecutionCoordinator::new(access.clone(), policy);
         Self {
             client,
             name,
             sandbox,
             store,
             coordinator,
+            access,
             target,
             selector,
             share,
