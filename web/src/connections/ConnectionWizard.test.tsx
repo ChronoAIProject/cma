@@ -32,6 +32,7 @@ beforeEach(() => {
   vi.spyOn(window, 'open').mockImplementation(() => popup as unknown as Window);
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.useRealTimers();
   vi.restoreAllMocks();
   sessionStorage.clear();
@@ -65,6 +66,7 @@ function fixture() {
 }
 
 it('reuses the unacknowledged connection intent after a lost start response', async () => {
+  vi.stubEnv('VITE_CONNECTION_INTENT_RECOVERY_ENABLED', 'true');
   const { client, connected } = fixture();
   services.slice(1).forEach((service) => connected.add(service));
   vi.mocked(client.start).mockRejectedValueOnce(new Error('Synthetic start response lost'));

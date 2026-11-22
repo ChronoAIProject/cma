@@ -9,6 +9,7 @@ import { readIntent } from './intent';
 import { connectionClient } from '../connections/client';
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.useRealTimers();
   vi.restoreAllMocks();
   sessionStorage.clear();
@@ -18,6 +19,7 @@ describe('minimal review', () => {
   it.each(['local deadline', 'expired', 'cancelled', 'failed'] as const)(
     'keeps the original Draft unstarted after %s until a new user action',
     async (ending) => {
+      vi.stubEnv('VITE_CONNECTION_INTENT_RECOVERY_ENABLED', 'true');
       vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-11-22T00:00:00.000Z'));
       vi.spyOn(window, 'open').mockReturnValue(null);
@@ -72,6 +74,17 @@ describe('minimal review', () => {
       expect(client.requests.start).not.toHaveBeenCalled();
       expect(client.requests.createOrResume).not.toHaveBeenCalled();
       expect(changed).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4000);
+      });
+      expect(client.requests.start).toHaveBeenCalledOnce();
+      expect(client.requests.start).toHaveBeenCalledWith(
+        record.id,
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(client.requests.createOrResume).not.toHaveBeenCalled();
     },
   );
   it('continues the same Draft through Start once a hosted connection is satisfied', async () => {
@@ -91,7 +104,7 @@ describe('minimal review', () => {
     });
     const changed = vi.fn();
     let connected = false;
-    vi.spyOn(connectionClient, 'check').mockImplementation(async () => ({
+    vi.mocked(connectionClient.check).mockImplementation(async () => ({
       owner: 'owner',
       ready: connected,
       checked_at: record.created_at,
