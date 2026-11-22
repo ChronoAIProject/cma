@@ -9,6 +9,23 @@ use serde_json::json;
 const POD: &str = "/api/v1/namespaces/cma-test/pods/warm-pod";
 
 mod authority_tests;
+
+/// A wall-clock deadline lands either between polls, after a validated pending
+/// read (Pending), or during an outstanding fixture read (TimedOut); a loaded
+/// runner makes the second likelier. `agent_sandbox/claim_guard/tests.rs`
+/// proves that exact classification with a paused clock. Fixture tests assert
+/// a typed not-ready refusal and return the metric label it must record.
+fn not_ready_outcome(error: &AdapterError) -> &'static str {
+    match error {
+        AdapterError::NativeClaimNotReady(super::super::NativeClaimGuardReason::Pending) => {
+            "pending"
+        }
+        AdapterError::NativeClaimNotReady(super::super::NativeClaimGuardReason::TimedOut) => {
+            "timeout"
+        }
+        other => panic!("expected a typed not-ready refusal, got {other:?}"),
+    }
+}
 mod provenance_tests;
 
 async fn fixture(ready: bool) -> (Fixture, NativePoolClaim) {
@@ -200,14 +217,11 @@ async fn authority_acknowledgement_timeout_keeps_published_home_for_replay() {
     .await
     .expect("authority observation must not wait five seconds")
     .unwrap_err();
-    assert_eq!(
-        error,
-        AdapterError::NativeClaimNotReady(super::super::NativeClaimGuardReason::Pending)
-    );
+    let outcome = not_ready_outcome(&error);
     assert!(handle.render().lines().any(|line| {
         line.starts_with("cma_native_claim_guard_total{")
             && line.contains("stage=\"home_authority\"")
-            && line.contains("outcome=\"pending\"")
+            && line.contains(&format!("outcome=\"{outcome}\""))
             && line.ends_with(" 1")
     }));
     let original_authority = fixture.row("sandboxclaims", &claim.name)["metadata"]["annotations"]

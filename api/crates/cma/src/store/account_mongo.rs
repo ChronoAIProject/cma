@@ -93,6 +93,6 @@ impl crate::health::ReadinessProbe for MongoAccountStores {
             .run_command(doc! { "ping": 1 })
             .await
             .map_err(|error| StoreError::Unavailable(format!("ping MongoDB: {error}")))?;
-        Ok(())
+        crate::store::billing_authority::require_legacy_compatible(&self.database).await
     }
 }

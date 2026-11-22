@@ -1,3 +1,4 @@
+import { registerAgentRedesignCases } from './redesign-agent.cases';
 import { test, expect, type Page } from '@playwright/test';
 import { binding, LocalAgentV2 } from './agent-v2.fixture';
 
@@ -272,3 +273,5 @@ for (const reportedStatus of ['pending', 'blocked']) {
     }
   });
 }
+
+registerAgentRedesignCases();

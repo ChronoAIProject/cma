@@ -16,6 +16,66 @@ const user = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('account menu', () => {
+  it('keeps a management credential refusal separate from the grant and does not loop sign-in', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          owner: user.id,
+          status: 'unknown',
+          management_access: 'unsupported_credential',
+        }),
+      ),
+    );
+    const actor = userEvent.setup();
+    render(<ProfileMenu user={{ ...user, serviceAuthorization: true }} onSignOut={vi.fn()} />);
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    await actor.click(screen.getByRole('menuitem', { name: 'Service authorization' }));
+    await screen.findByText(/Signing in again will not change that access/);
+    expect(screen.queryByRole('link', { name: 'Sign in again' })).toBeNull();
+    expect(
+      within(screen.getByRole('dialog', { name: 'Service authorization' })).getByRole('status'),
+    ).toHaveTextContent('The account grant status could not be verified.');
+  });
+  it('keeps the original tab when its query cannot be restored through ordinary sign-in', async () => {
+    window.history.replaceState(null, '', '/event-gateway?unsupported=state');
+    try {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(null, { status: 401 })),
+      );
+      const actor = userEvent.setup();
+      render(<ProfileMenu user={{ ...user, serviceAuthorization: true }} onSignOut={vi.fn()} />);
+      await actor.click(screen.getByRole('button', { name: /account menu/i }));
+      await actor.click(screen.getByRole('menuitem', { name: 'Service authorization' }));
+      const link = await screen.findByRole('link', { name: 'Sign in again' });
+      expect(link).toHaveAttribute('href', '/auth/login');
+      expect(link).toHaveAttribute('target', '_blank');
+    } finally {
+      window.history.replaceState(null, '', '/');
+    }
+  });
+  it.each([401, 403, 503])(
+    'offers ordinary sign-in only for a confirmed 401 (%i)',
+    async (status) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(null, { status })),
+      );
+      const actor = userEvent.setup();
+      render(<ProfileMenu user={{ ...user, serviceAuthorization: true }} onSignOut={vi.fn()} />);
+      await actor.click(screen.getByRole('button', { name: /account menu/i }));
+      await actor.click(screen.getByRole('menuitem', { name: 'Service authorization' }));
+      if (status === 401) {
+        const link = await screen.findByRole('link', { name: 'Sign in again' });
+        expect(link).toHaveAttribute('href', '/auth/login?return_to=%2F');
+        expect(link).toHaveAttribute('target', '_blank');
+      } else {
+        await screen.findByText('The account grant status could not be verified.');
+        expect(screen.queryByRole('link', { name: 'Sign in again' })).toBeNull();
+      }
+    },
+  );
   it('keeps Docs, appearance and sign out without service or developer actions', async () => {
     const onSignOut = vi.fn();
     const onNavigate = vi.fn();
@@ -38,6 +98,18 @@ describe('account menu', () => {
   });
 
   it.each([
+    {
+      status: 'partial',
+      text: 'The account grant is limited to selected services. Other services may need authorization.',
+    },
+    {
+      status: 'expired',
+      text: 'The account grant has expired. Authorize required services from your draft to continue.',
+    },
+    {
+      status: 'not_granted',
+      text: 'No current account grant was found. It may not have been granted or may have been revoked.',
+    },
     { status: 'unknown', text: 'The account grant status could not be verified.' },
     { status: 'revoked', text: 'NyxID confirms the account grant was revoked.' },
   ])(

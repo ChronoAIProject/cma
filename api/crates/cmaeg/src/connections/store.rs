@@ -33,7 +33,20 @@ impl Store {
                 Error::Unavailable
             })?
             .payload;
-        let record = serde_json::from_slice(&bytes).map_err(|_| {
+        let value_json: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| {
+            self.read_failed("decode", "record_decode", None);
+            Error::Unavailable
+        })?;
+        // Other stores (Discord inbox, reaction and fence state) keep records in
+        // this kind under the same owner. A JSON object without this store's tag
+        // is theirs, not a corrupt connection; an unknown tag still fails closed.
+        if value_json
+            .as_object()
+            .is_some_and(|object| !object.contains_key("record_kind"))
+        {
+            return Err(Error::NotFound);
+        }
+        let record = serde_json::from_value(value_json).map_err(|_| {
             self.read_failed("decode", "record_decode", None);
             Error::Unavailable
         })?;

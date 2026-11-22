@@ -21,6 +21,7 @@ mod commands;
 mod composition;
 mod config;
 mod connections;
+mod control_admission;
 #[cfg(test)]
 mod dependency_test_support;
 mod diagnostic_format;
@@ -32,6 +33,7 @@ mod gateway;
 mod health;
 #[allow(dead_code)] // Retention preparation has no qualified production deletion provider.
 mod home_backup_expiry;
+mod http_serving;
 mod media_continuations;
 mod permissions;
 mod producer_token;

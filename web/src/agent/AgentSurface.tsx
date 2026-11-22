@@ -18,8 +18,7 @@ import { OwnerAgentHeader } from './OwnerAgentHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { agentBreadcrumb, agentHeaderMenu, agentHeaderActionHandler } from './headerActions';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
-import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
-import { agentProgress } from '../sandbox/progress';
+import { AgentStatusPanel } from './AgentStatusPanel';
 import type { SteeringMode } from './SteeringMode';
 import {
   AgentOpening,
@@ -227,7 +226,6 @@ export function AgentSurface({
     : state.historyUnavailable
       ? 'Earlier activity could not be loaded. Retrying…'
       : (connectionError ?? connections.error ?? controller.actionError);
-  const preparation = agentProgress({ ...detail, status }, state.sandboxEvents ?? []);
   const observed = controller.progressObservation;
   const setupRoute = setupEnvironmentRoute(
     status,
@@ -319,6 +317,7 @@ export function AgentSurface({
           />
           <AgentSurfaceIssue
             issue={issue}
+            unconfirmed={controller.pendingMessage !== undefined || controller.pendingControl}
             historyIncomplete={historyIncomplete}
             onRetry={connectionError && !readOnly ? connection.retry : undefined}
             onDismiss={() => {
@@ -326,12 +325,6 @@ export function AgentSurface({
               connections.clearError();
               controller.clearActionError();
             }}
-          />
-
-          <AgentCommandNotices
-            controller={controller}
-            unavailable={readOnly || !controlReady}
-            starting={status === 'starting'}
           />
 
           {!readOnly && lifecycleClient !== undefined && viewerId !== undefined ? (
@@ -344,15 +337,6 @@ export function AgentSurface({
         </div>
 
         <div className="agent-surface__conversation">
-          {status === 'starting' ||
-          detail.failure !== undefined ||
-          preparation.some((step) => step.status !== 'Done') ? (
-            <ProvisioningProgress
-              title="Agent preparation"
-              steps={preparation}
-              failure={detail.failure}
-            />
-          ) : null}
           <OwnerMessageStream
             taskAcceptance={accessUncertain ? undefined : detail.taskAcceptance}
             onTaskDeliveryConfirmed={controller.refreshDetail}
@@ -372,6 +356,19 @@ export function AgentSurface({
             approvalReadOnly={readOnly}
             onApproval={(id, decision) => void controller.approve(id, decision)}
           >
+            <AgentCommandNotices
+              key={JSON.stringify([agentId, viewerId])}
+              controller={controller}
+              unavailable={readOnly || !controlReady}
+              starting={status === 'starting'}
+            />
+            <AgentStatusPanel
+              detail={detail}
+              events={state.sandboxEvents}
+              observation={observed}
+              running={running}
+              historyIncomplete={historyIncomplete}
+            />
             {suggestions && !readOnly && verified && !historyIncomplete ? (
               <SuggestedReplies
                 onEdit={editing.admissionAllowed ? editing.edit : undefined}

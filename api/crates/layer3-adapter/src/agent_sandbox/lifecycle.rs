@@ -199,6 +199,14 @@ impl AgentSandboxClient {
 
     pub async fn delete(&self, runtime: &RuntimeHandle) -> Result<()> {
         let object = self.get(runtime).await?;
+        self.delete_observed(runtime, object).await
+    }
+
+    pub(super) async fn delete_observed(
+        &self,
+        runtime: &RuntimeHandle,
+        object: Option<DynamicObject>,
+    ) -> Result<()> {
         let origin = self
             .retirement_pool_origin(runtime, object.as_ref())
             .await?;
@@ -330,7 +338,7 @@ impl AgentSandboxClient {
         Ok(receipt)
     }
 
-    async fn wait_absent(&self, runtime: &RuntimeHandle) -> Result<(String, String)> {
+    pub(super) async fn wait_absent(&self, runtime: &RuntimeHandle) -> Result<(String, String)> {
         let (name, uid) = parse_handle(runtime)?;
         tokio::time::timeout(Duration::from_secs(120), async {
             let started = tokio::time::Instant::now();

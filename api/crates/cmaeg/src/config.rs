@@ -9,6 +9,7 @@ mod origins;
 pub(crate) use origins::validate_origin;
 use origins::{parse_api_advertisement, required_origin, validate_public_api_url};
 
+pub mod activity_history;
 mod cache;
 mod console;
 mod delivery;
@@ -162,6 +163,7 @@ pub struct Config {
     pub cma_service_account: Option<ServiceAccountConfig>,
     pub channel_cache: ChannelCacheConfig,
     pub github_enabled: bool,
+    pub managed_telegram_setup_enabled: bool,
     pub native_bot_mentions_writes_enabled: bool,
     /// Allows new thread contracts only after every reader supports them.
     pub thread_contract_writes_enabled: bool,
@@ -327,6 +329,9 @@ impl Config {
             )?,
             native_telegram_message_events_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED",
+            )?,
+            managed_telegram_setup_enabled: routing::write_flag(
+                "CMAEG_MANAGED_TELEGRAM_SETUP_ENABLED",
             )?,
             native_lark_writes_enabled: routing::write_flag("CMAEG_NATIVE_LARK_WRITES_ENABLED")?,
             native_lark_intake_enabled: routing::write_flag("CMAEG_NATIVE_LARK_INTAKE_ENABLED")?,

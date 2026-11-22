@@ -2,6 +2,7 @@
 //! of execution authority; observing progress never changes a provider turn.
 mod execution;
 pub(crate) mod facts;
+pub mod history;
 mod model;
 mod observer;
 pub(crate) mod public_projection;
