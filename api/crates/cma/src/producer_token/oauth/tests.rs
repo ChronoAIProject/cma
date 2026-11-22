@@ -32,7 +32,7 @@ async fn handler(
     body: Bytes,
 ) -> (StatusCode, String) {
     state.calls.lock().unwrap().push((
-        uri.path().into(),
+        uri.to_string(),
         headers,
         String::from_utf8(body.to_vec()).unwrap(),
     ));
@@ -72,8 +72,13 @@ impl Server {
         Self { url, calls, task }
     }
     pub(crate) fn provider(&self) -> Arc<ClientCredentialsProvider> {
-        ClientCredentialsProvider::new(&self.url, "test client +&".into(), "test secret +&".into())
-            .unwrap()
+        ClientCredentialsProvider::new(
+            &self.url,
+            "test client +&".into(),
+            "test secret +&".into(),
+            ProducerScope::Funding,
+        )
+        .unwrap()
     }
 }
 pub(crate) fn issued(value: &str, ttl: u64) -> (u16, String) {
@@ -147,7 +152,7 @@ async fn endpoint_failures_back_off_and_share_the_failure() {
     let results = futures_util::future::join_all((0..16).map(|_| provider.token())).await;
     assert!(results
         .iter()
-        .all(|result| matches!(result, Err(FundingError::Retryable(_)))));
+        .all(|result| matches!(result, Err(ProducerTokenError::Retryable(_)))));
     assert_eq!(server.calls.lock().unwrap().len(), 3);
     assert!(started.elapsed() >= Duration::from_millis(300));
     assert!(started.elapsed() < Duration::from_secs(3));
@@ -174,7 +179,7 @@ async fn slow_endpoint_has_a_total_deadline_and_no_unbounded_retry() {
     let started = Instant::now();
     assert!(matches!(
         server.provider().token().await,
-        Err(FundingError::Retryable(_))
+        Err(ProducerTokenError::Retryable(_))
     ));
     assert_eq!(server.calls.lock().unwrap().len(), 3);
     assert!(started.elapsed() < Duration::from_secs(8));
@@ -198,7 +203,7 @@ async fn malformed_rejected_and_oversized_responses_are_sanitized() {
     ] {
         let server = Server::new(vec![reply]).await;
         let result = server.provider().token().await;
-        assert!(matches!(result, Err(FundingError::Invalid(_))));
+        assert!(matches!(result, Err(ProducerTokenError::Invalid(_))));
         assert_eq!(server.calls.lock().unwrap().len(), 1);
     }
 }
@@ -280,7 +285,7 @@ async fn expiry_failure_never_reuses_stale_credentials_and_recovers_after_cooldo
     tokio::time::resume();
     assert!(matches!(
         provider.token().await,
-        Err(FundingError::Retryable(_))
+        Err(ProducerTokenError::Retryable(_))
     ));
     assert!(provider.token().await.is_err());
     assert_eq!(server.calls.lock().unwrap().len(), 4);
@@ -308,9 +313,11 @@ async fn replicas_have_independent_caches_and_connection_refusal_is_bounded() {
         .parse()
         .unwrap();
     drop(listener);
-    let unavailable = ClientCredentialsProvider::new(&url, "id".into(), "secret".into()).unwrap();
+    let unavailable =
+        ClientCredentialsProvider::new(&url, "id".into(), "secret".into(), ProducerScope::Funding)
+            .unwrap();
     assert!(matches!(
         unavailable.token().await,
-        Err(FundingError::Retryable(_))
+        Err(ProducerTokenError::Retryable(_))
     ));
 }

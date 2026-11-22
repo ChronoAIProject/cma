@@ -456,16 +456,40 @@ class StagingWorkflowTest < Minitest::Test
 
   def test_exact_artifact_download_layout_matches_the_finalizer
     steps = workflow('staging-release')['jobs']['finalize']['steps']
-    download = steps.find { |step| step['uses'].to_s.start_with?('actions/download-artifact@') }
+    downloads = steps.select { |step| step['uses'].to_s.start_with?('actions/download-artifact@') }
     finalizer = steps.find { |step| step['run'].to_s.include?('staging_cd_finalize.py') }
-    assert_equal '${{ needs.publish.outputs.artifact }}', download.dig('with', 'artifact-ids')
-    refute download['with'].key?('pattern')
-    refute download['with'].key?('name')
-    config = {action: download['uses'], inputs: download['with'],
-              receiptPath: finalizer.dig('env', 'CD_RECEIPTS_PATH')}
-    output, status = Open3.capture2e('node', File.join(__dir__, 'staging_cd_download_layout_tests.cjs'),
-                                    stdin_data: JSON.generate(config))
-    assert status.success?, output
+    assert_equal %w[receipts-download receipts-download-retry], downloads.map { |step| step['id'] }
+    # Both attempts execute the same pinned selection and destination logic.
+    downloads.each do |download|
+      assert_equal '${{ needs.publish.outputs.artifact }}', download.dig('with', 'artifact-ids')
+      refute download['with'].key?('pattern')
+      refute download['with'].key?('name')
+      config = {action: download['uses'], inputs: download['with'],
+                receiptPath: finalizer.dig('env', 'CD_RECEIPTS_PATH')}
+      output, status = Open3.capture2e('node', File.join(__dir__, 'staging_cd_download_layout_tests.cjs'),
+                                      stdin_data: JSON.generate(config))
+      assert status.success?, output
+    end
+  end
+
+  def test_receipt_download_attempts_are_bounded_inside_the_finalize_budget
+    job = workflow('staging-release')['jobs']['finalize']
+    steps = job['steps']
+    first, repeat = %w[receipts-download receipts-download-retry].map { |id| steps.find { |step| step['id'] == id } }
+    assert_equal [2, 2], [first['timeout-minutes'], repeat['timeout-minutes']]
+    explain = steps[steps.index(repeat) + 1]
+    assert_equal "failure() && steps.receipts-download-retry.outcome == 'failure'", explain['if']
+    assert_equal({ 'RECEIPT_ARTIFACT' => '${{ needs.publish.outputs.artifact }}' }, explain['env'])
+    assert_includes explain['run'], '[[ "$artifact" =~ ^[0-9]{1,20}$ ]] || artifact=\'?\''
+    assert_includes explain['run'], 'Receipt artifact $artifact was not downloaded: both attempts failed.'
+    assert_includes explain['run'], 'finalize/artifact_unavailable'
+    assert_equal 'exit 1', explain['run'].strip.lines.last
+    assert_operator steps.index(explain), :<, steps.index { |step| step['id'] == 'finalize' }
+    # A slow repeat that succeeds must still leave the finalizer its whole read budget.
+    budget = File.read(File.join(__dir__, 'staging_cd_finalize.py'))[/^FINALIZE_READ_SECONDS = (\d+)$/, 1].to_i
+    assert_operator budget, :>, 0
+    attempts = [first, repeat].sum { |step| step['timeout-minutes'] * 60 }
+    assert_operator attempts + budget, :<, job['timeout-minutes'] * 60
   end
 
   def test_runtime_canary_interpreter_runs_only_in_changed_runtime_publication
