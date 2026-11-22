@@ -16,6 +16,7 @@ import {
   useAppearance,
 } from '../theme/appearance';
 import { BUILD_INFO } from '../shell/build';
+import { ServiceAuthorizationDialog } from './ServiceAuthorizationDialog';
 import './ProfileMenu.css';
 import {
   SYSTEM_TEXT_SIZES,
@@ -49,6 +50,7 @@ export function initialsFor(user: Pick<User, 'displayName' | 'email' | 'handle'>
 
 export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
+  const [authorizationOwner, setAuthorizationOwner] = useState<string>();
   const appearance = useAppearance();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [avatarBroken, setAvatarBroken] = useState(false);
@@ -72,6 +74,15 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
   const items: MenuEntry[] = [
     { id: 'docs', icon: <IconBrowseOutline16 />, label: 'Docs' },
     { id: 'usage', icon: <IconSettingsOutline16 />, label: 'Usage' },
+    ...(user.serviceAuthorization === true
+      ? [
+          {
+            id: 'service-authorization',
+            icon: <IconSettingsOutline16 />,
+            label: 'Service authorization',
+          },
+        ]
+      : []),
     ...(canOperate
       ? [{ id: 'operations', icon: <IconSettingsOutline16 />, label: 'Operations' }]
       : []),
@@ -118,6 +129,11 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
   ];
 
   const choose = (id: string) => {
+    if (id === 'service-authorization') {
+      setOpen(false);
+      setAuthorizationOwner(user.id);
+      return;
+    }
     const size = SYSTEM_TEXT_SIZES.find((value) => id === `text-${value}`);
     if (size) {
       setTextSize(size);
@@ -213,6 +229,16 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
           </button>
         }
       />
+      {user.serviceAuthorization === true && authorizationOwner === user.id && (
+        <ServiceAuthorizationDialog
+          key={user.id}
+          owner={user.id}
+          onClose={() => {
+            setAuthorizationOwner(undefined);
+            triggerRef.current?.focus();
+          }}
+        />
+      )}
     </>
   );
 }

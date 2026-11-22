@@ -301,6 +301,9 @@ pub(super) async fn save(
         if result.matched_count != 1 {
             return Err(HomeBackupError::Conflict);
         }
+        if backup.state == HomeBackupState::Ready {
+            super::retention::publish(store, &mut backup, &mut session).await?;
+        }
         let result = store
             .backups
             .replace_one(

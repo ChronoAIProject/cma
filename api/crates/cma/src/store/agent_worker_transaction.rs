@@ -36,6 +36,9 @@ mod publication_transaction;
 pub(in crate::store) mod retry_audit;
 mod segmented;
 mod sign_in;
+mod skill_result;
+#[cfg(test)]
+pub(crate) mod skill_result_test_support;
 use super::agent_log_segments::transaction_scope::TransactionScope;
 use publication_log::{final_agent_and_logs, insert_logs};
 mod prepared_open_ready;
@@ -57,6 +60,12 @@ enum ApplyError {
     Driver(mongodb::error::Error),
     PreparedIneligible,
     StaleProposal,
+}
+
+#[derive(Default)]
+struct PublicationGuards<'a> {
+    rebuild_parents: Option<&'a AgentWorkPublicationParents>,
+    skill_result: Option<&'a layer2_core::sandbox::store::AgentSkillResultGuard>,
 }
 
 impl From<TransactionEventError> for ApplyError {
@@ -81,7 +90,17 @@ pub(super) async fn commit_agent_work(
     store: &MongoSandboxStore,
     mutation: AgentWorkMutation,
 ) -> Result<(), SandboxStoreError> {
-    publication_transaction::commit(store, mutation, None, None)
+    publication_transaction::commit(store, mutation, None, None, None)
+        .await
+        .map(|_| ())
+}
+
+pub(super) async fn commit_agent_skill_result(
+    store: &MongoSandboxStore,
+    mutation: AgentWorkMutation,
+    guard: &layer2_core::sandbox::store::AgentSkillResultGuard,
+) -> Result<(), SandboxStoreError> {
+    publication_transaction::commit(store, mutation, None, None, Some(guard))
         .await
         .map(|_| ())
 }
@@ -99,7 +118,7 @@ pub(super) async fn commit_prepared_agent_open_ready(
     mutation: AgentWorkMutation,
     observed: layer2_core::sandbox::store::PreparedAgentOpenContext,
 ) -> Result<bool, SandboxStoreError> {
-    publication_transaction::commit(store, mutation, Some(&observed), None).await
+    publication_transaction::commit(store, mutation, Some(&observed), None, None).await
 }
 
 #[cfg(test)]
@@ -114,7 +133,7 @@ async fn apply_publication(
         None,
         None,
         &mut publication_history::AttemptHistory::default(),
-        None,
+        PublicationGuards::default(),
         scope,
     )
     .await
@@ -124,9 +143,15 @@ pub(super) async fn commit_repeated_failure(
     store: &MongoSandboxStore,
     retry: &layer2_core::sandbox::store::AgentRepeatedFailure,
 ) -> Result<(), SandboxStoreError> {
-    publication_transaction::commit(store, retry.mutation.clone(), None, Some(&retry.marker))
-        .await
-        .map(|_| ())
+    publication_transaction::commit(
+        store,
+        retry.mutation.clone(),
+        None,
+        Some(&retry.marker),
+        None,
+    )
+    .await
+    .map(|_| ())
 }
 
 async fn apply_publication_observed(
@@ -135,7 +160,7 @@ async fn apply_publication_observed(
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
     repeated_marker: Option<&AgentLogEntry>,
     history_cache: &mut publication_history::AttemptHistory,
-    rebuild_parents: Option<&AgentWorkPublicationParents>,
+    guards: PublicationGuards<'_>,
     mut scope: TransactionScope<'_>,
 ) -> Result<PublicationReceipt, ApplyError> {
     let current_row = scope
@@ -144,12 +169,13 @@ async fn apply_publication_observed(
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
-    if let Some(parents) = rebuild_parents {
+    if let Some(parents) = guards.rebuild_parents {
         if current.revision != mutation.expected_agent_revision {
             return Err(ApplyError::StaleProposal);
         }
         rebuild_parents::fence(store, &current, mutation, parents, &mut scope).await?;
     }
+    skill_result::fence(store, &current, mutation, guards.skill_result, &mut scope).await?;
     let segmented = if super::agent_log_segments::read_format(&current_row)
         .map_err(ApplyError::Domain)?
         .is_some()

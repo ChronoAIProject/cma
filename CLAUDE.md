@@ -542,7 +542,10 @@ approval in the `production` environment. It never deploys an image rebuilt for 
 for each component production enables, it promotes the newest published version whose
 source is the merged `develop` commit or one of its ancestors, and only if staging deployment
 evidence recorded that exact image as controller-verified. The same deployment helpers and
-private controller design as staging do the write. Deployment configuration, including
+private controller design as staging do the write. A production release requests its own
+one-hour controller budget, because a production rollout takes far longer than staging's,
+and the deploy job's timeout outlives it; staging's release and bootstrap budgets are
+unchanged. Deployment configuration, including
 which components production enables, is maintained privately.
 Production selects only the application components (`am`, `eg`, `web`), never the
 `runtime` or `runtime-omarchy` images: until a reviewed production runtime-promotion

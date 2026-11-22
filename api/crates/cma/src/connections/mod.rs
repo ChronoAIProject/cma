@@ -9,6 +9,8 @@ mod subscription_tokens;
 mod subscriptions;
 mod targets;
 
+#[cfg(test)]
+pub(crate) use browser::tests::authorization_fixture;
 pub(crate) use browser::{router, BrowserConnections};
 pub(crate) use prerequisite::ConnectionPrerequisite;
 pub(crate) use runtime::RuntimeSubscriptions;

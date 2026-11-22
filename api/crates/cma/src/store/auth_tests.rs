@@ -60,6 +60,7 @@ async fn login_verifier_is_encrypted_and_bound_to_its_attempt() {
             actor_key: "attested-actor-key".into(),
             revision: 3,
         }),
+        service_authorization: None,
         silent: true,
         consent_requested: true,
         custody_reserved: false,
@@ -87,6 +88,47 @@ async fn login_verifier_is_encrypted_and_bound_to_its_attempt() {
         store.login_from_doc(moved),
         Err(StoreError::Malformed(_))
     ));
+}
+
+#[tokio::test]
+async fn service_authorization_custody_keeps_the_bound_intent_encrypted() {
+    use crate::auth::service_authorization::RecoveryIntent;
+    use layer2_core::ServiceId;
+
+    let store = store().await;
+    let service = ServiceId::new("synthetic-service");
+    let intent = RecoveryIntent {
+        subject: SubjectId::new("synthetic-subject"),
+        issuer: "https://issuing.example/".into(),
+        required: [service.clone()].into(),
+        requested: [service].into(),
+        redirect_uri: "https://app.example/auth/service-authorization/callback".into(),
+        return_to: "/agents/draft".into(),
+    };
+    let attempt = LoginAttempt {
+        id: SecretDigest::identify("attempt", "consent"),
+        browser_binding: SecretDigest::identify("browser", "original"),
+        verifier: SecretValue::new("synthetic-verifier".into()),
+        return_to: None,
+        actor_link_intent: None,
+        service_authorization: Some(intent.clone()),
+        silent: false,
+        consent_requested: false,
+        custody_reserved: false,
+        started_at: None,
+        expires_at: SystemTime::UNIX_EPOCH + Duration::from_secs(20),
+    };
+    let document = store.login_to_doc(attempt).unwrap();
+    let view = format!("{document:?}");
+    assert!(!view.contains(intent.subject.as_str()));
+    assert!(!view.contains(&intent.return_to));
+    assert_eq!(
+        store
+            .login_from_doc(document)
+            .unwrap()
+            .service_authorization,
+        Some(intent)
+    );
 }
 
 #[tokio::test]

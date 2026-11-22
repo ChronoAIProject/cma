@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use layer2_core::agent_ownership::{execution_authority, Authority};
-use layer2_core::sandbox::store::SandboxStoreError;
+use layer2_core::sandbox::store::{AgentSkillResultGuard, SandboxStoreError};
 use layer2_core::sandbox::{
     Agent, AgentSkillInstallStatus, AgentStatus, AgentWorkStep, Sandbox, Workspace, Worktree,
 };
@@ -20,11 +20,15 @@ pub(super) struct SkillPublication {
     original: Agent,
     parents: Parents,
     authority: Option<Arc<Authority>>,
+    guard: AgentSkillResultGuard,
 }
 
 impl SkillPublication {
-    pub(super) fn capture(agent: &Agent, context: &AgentContext) -> Self {
-        Self {
+    pub(super) fn capture(
+        agent: &Agent,
+        context: &AgentContext,
+    ) -> Result<Self, SandboxStoreError> {
+        Ok(Self {
             original: agent.clone(),
             parents: Parents {
                 sandbox: context.sandbox.clone(),
@@ -32,7 +36,13 @@ impl SkillPublication {
                 worktree: context.worktree.clone(),
             },
             authority: execution_authority(),
-        }
+            guard: AgentSkillResultGuard::capture(
+                agent,
+                &context.sandbox,
+                &context.workspace,
+                &context.worktree,
+            )?,
+        })
     }
 }
 
@@ -128,7 +138,7 @@ impl AgentWorker {
             // This loop owns only the fixed native result. Conflict denotes a
             // known abort; unknown commit/Unavailable stays with store receipt
             // reconciliation and never authorizes a fresh publication proposal.
-            match self.finish_skill(current, error, at).await {
+            match self.finish_skill(current, error, &observed.guard, at).await {
                 Err(SandboxStoreError::Conflict) if attempt + 1 < MAX_ATTEMPTS => {
                     tokio::task::yield_now().await;
                 }
