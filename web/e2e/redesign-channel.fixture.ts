@@ -69,9 +69,12 @@ interface ActivityBrowserError {
 
 async function captureActivityErrors(page: Page) {
   const errors: ActivityBrowserError[] = [];
-  await page.exposeBinding('__recordActivityBrowserError', (_source, error: ActivityBrowserError) => {
-    errors.push(error);
-  });
+  await page.exposeBinding(
+    '__recordActivityBrowserError',
+    (_source, error: ActivityBrowserError) => {
+      errors.push(error);
+    },
+  );
   await page.addInitScript(() => {
     const record = (error: ActivityBrowserError) =>
       (

@@ -18,7 +18,11 @@ export function registerRedesignChannelCases() {
           page,
           baseURL,
         }, info) => {
-          const { state, view, boundary, browserErrors } = await setupActivity(page, baseURL!, theme);
+          const { state, view, boundary, browserErrors } = await setupActivity(
+            page,
+            baseURL!,
+            theme,
+          );
           await expect(view.getByText('Agent response produced')).toBeVisible();
           await expect(view.getByText('Delivery not confirmed')).toBeVisible();
           await expect(view.getByText(/This doesn’t mean the reply wasn’t sent/)).toBeVisible();
@@ -79,6 +83,30 @@ export function registerRedesignChannelCases() {
       });
     }
   }
+
+  test('LOCAL Activity fixture records uncaught errors and rejects their telemetry', async ({
+    page,
+    baseURL,
+  }) => {
+    const { browserErrors, boundary, state } = await setupActivity(page, baseURL!);
+    await page.evaluate(() => {
+      const script = document.createElement('script');
+      script.textContent = 'throw new Error("Synthetic Activity failure")';
+      document.head.append(script);
+    });
+    await expect
+      .poll(() => browserErrors)
+      .toEqual([
+        expect.objectContaining({
+          type: 'error',
+          message: 'Uncaught Error: Synthetic Activity failure',
+          stack: expect.stringContaining('Synthetic Activity failure'),
+        }),
+      ]);
+    await expect.poll(() => boundary.errors).toEqual(['Synthetic Activity failure']);
+    await expect.poll(() => boundary.unexpected).toEqual(['POST /api/v1/telemetry/browser']);
+    expect(state.writes).toEqual([]);
+  });
 
   test('LOCAL Activity refresh preserves separate consumer and recipient facts with no outbound mutation', async ({
     page,
