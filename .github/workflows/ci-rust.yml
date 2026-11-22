@@ -113,6 +113,10 @@ jobs:
     name: "Tests (${{ matrix.shard }}/3)"
     runs-on: "ubuntu-latest"
     timeout-minutes: 45
+    # The shared archive restore lists and downloads this run's artifact.
+    permissions:
+      contents: "read"
+      actions: "read"
     strategy:
       fail-fast: false
       matrix:
@@ -142,6 +146,10 @@ jobs:
     name: "Timing budgets"
     runs-on: "ubuntu-latest"
     timeout-minutes: 35
+    # The shared archive restore lists and downloads this run's artifact.
+    permissions:
+      contents: "read"
+      actions: "read"
     env:
       BASH_ENV: "${{ github.workspace }}/.github/scripts/backend-resource-env.sh"
       RUST_MIN_STACK: 33554432
@@ -214,6 +222,10 @@ jobs:
     if: "inputs.track == 'am'"
     runs-on: "ubuntu-latest"
     timeout-minutes: 90
+    # The shared archive restore lists and downloads this run's artifact.
+    permissions:
+      contents: "read"
+      actions: "read"
     strategy:
       fail-fast: false
       matrix:
@@ -243,6 +255,10 @@ jobs:
     if: "inputs.track == 'eg'"
     runs-on: "ubuntu-latest"
     timeout-minutes: 90
+    # The shared archive restore lists and downloads this run's artifact.
+    permissions:
+      contents: "read"
+      actions: "read"
     env:
       BASH_ENV: "${{ github.workspace }}/.github/scripts/backend-resource-env.sh"
       RUST_MIN_STACK: 33554432
@@ -307,6 +323,10 @@ jobs:
     name: "Image Manager Mongo isolation"
     runs-on: "ubuntu-latest"
     timeout-minutes: 30
+    # The shared archive restore lists and downloads this run's artifact.
+    permissions:
+      contents: "read"
+      actions: "read"
     env:
       BASH_ENV: "${{ github.workspace }}/.github/scripts/backend-resource-env.sh"
       RUST_MIN_STACK: 33554432

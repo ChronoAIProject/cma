@@ -17,6 +17,7 @@ mod index_inventory;
 mod index_plan;
 mod index_toolkit;
 pub(in crate::store) mod opening_index;
+mod sandbox_usage_capture;
 mod steps;
 use steps::Step;
 mod authority;
@@ -128,6 +129,12 @@ async fn execute(arguments: &[String]) -> Result<Value> {
             None => Ok(
                 json!({"migration": step.id(), "checksum": step.checksum(), "pending_steps": step.inspect(&database).await?.len(), "writes": false, "activation": "refused"}),
             ),
+        };
+    }
+    if step == Step::SandboxUsageCapture {
+        return match identity {
+            Some(identity) => sandbox_usage_capture::apply(&ledger, &database, &identity).await,
+            None => sandbox_usage_capture::inspect(&database).await,
         };
     }
     let indexes = step.inspect(&database).await?;

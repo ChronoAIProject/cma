@@ -18,15 +18,21 @@ pub(super) fn role_for(database: &str, apply: bool, step: Step) -> Document {
             } else {
                 vec!["listIndexes", "find"]
             }
-        } else if step == Step::BindingIndexes {
+        } else if matches!(step, Step::BindingIndexes | Step::SandboxUsageCapture) {
             let mut actions = vec!["listIndexes", "find"];
             if apply {
                 actions.push("createIndex");
+                if step == Step::SandboxUsageCapture {
+                    actions.push("createCollection");
+                }
             }
             actions
         } else if !apply {
             vec!["listIndexes"]
-        } else if matches!(step, Step::Activity | Step::AgentLogSegments) {
+        } else if matches!(
+            step,
+            Step::Activity | Step::AgentLogSegments | Step::SandboxUsageCapture
+        ) {
             vec!["listIndexes", "createIndex", "createCollection"]
         } else {
             vec!["listIndexes", "createIndex"]
@@ -35,7 +41,10 @@ pub(super) fn role_for(database: &str, apply: bool, step: Step) -> Document {
     }
     if matches!(
         step,
-        Step::AgentLogSegments | Step::BindingIndexes | Step::AccountErasureWork
+        Step::AgentLogSegments
+            | Step::BindingIndexes
+            | Step::AccountErasureWork
+            | Step::SandboxUsageCapture
     ) {
         grants
             .push(doc! {"resource":{"db":database,"collection":""},"actions":["listCollections"]});
