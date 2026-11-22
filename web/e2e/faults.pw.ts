@@ -1,5 +1,7 @@
-import { test, expect, type Launch } from './harness';
+import { test, expect } from './harness';
 import { faultNames } from './environment';
+import { ConnectionJourney } from './connection-journey';
+import { assertConnectionReplay, connectionStartPath } from './connection-journey-contract';
 
 for (const name of faultNames) {
   test(`FAULT-${name} records the real fault and preserves command identity`, async ({
@@ -124,61 +126,80 @@ test('FAULT-browser-close durable Launch completes while its browser is closed',
 test('FAULT-popup-blocked connection falls back to the same tab without duplicate handoff', async ({
   harness: h,
 }) => {
+  const journey = new ConnectionJourney(h, 'oauth');
   const page = await h.open('visitor');
   await page.addInitScript(() => {
     window.open = () => null;
   });
   const launch = await h.launch(page, 'missingService');
-  await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(
-    page.getByText(
-      'Your browser blocked the NyxID window. Continue in this tab, then return here.',
-    ),
-  ).toBeVisible();
+  await journey.begin(page, launch);
+  const result = journey.startResult(page);
+  const wizard = page.getByRole('region', { name: journey.wizardName });
+  await wizard.getByRole('button', { name: 'Connect all', exact: true }).click();
+  await result;
+  const fallback = wizard.getByRole('link', { name: 'Continue in NyxID', exact: true });
+  await expect(fallback).toBeVisible();
+  expect([null, '_self']).toContain(await fallback.getAttribute('target'));
+  const tabs = page.context().pages().length;
   await h.capture(page, 'fault-popup-blocked');
   await h.identity(async () => {
-    await page.getByRole('link', { name: 'Continue in NyxID', exact: true }).click();
+    await fallback.click();
+    await page.waitForURL((url) => url.origin !== h.config.baseURL);
+    expect(page.context().pages()).toHaveLength(tabs);
     await h.operators.completeConnection(page, 'oauth');
   });
-  await page.goto(`${h.config.baseURL}/launches/${launch.id}`);
-  await h.ready(page, launch.id);
-  expect(h.commands.filter((row) => row.path === '/api/v1/service-connections')).toHaveLength(1);
+  await journey.returnFromSameTab(page);
+  await page.waitForLoadState('networkidle');
+  await h.flush();
+  await journey.finish(page, 'popup_blocked');
+  expect(page.context().pages()).toHaveLength(tabs);
 });
 
 test('FAULT-handoff-response lost browser response keeps the same unsettled handoff command', async ({
   harness: h,
 }) => {
+  const journey = new ConnectionJourney(h, 'oauth');
   const page = await h.open('visitor');
   const launch = await h.launch(page, 'missingService');
+  await journey.begin(page, launch);
   let intercepted = false;
-  await page.route('**/api/v1/service-connections', async (route) => {
+  await page.route(`**${connectionStartPath}`, async (route) => {
     if (!intercepted && route.request().method() === 'POST') {
       intercepted = true;
       // A lost browser response is local transport-fault evidence, not an upstream outage gate.
       const response = await route.fetch();
       expect(response.ok()).toBe(true);
+      journey.readStart(route.request().postDataJSON(), await response.json());
       await route.abort('connectionfailed');
     } else await route.fallback();
   });
-  await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.locator('.public-connection [role="alert"]')).toBeVisible();
-  const before = h.commands.filter((row) => row.path === '/api/v1/service-connections');
+  const wizard = page.getByRole('region', { name: journey.wizardName });
+  const firstPopup = page.waitForEvent('popup');
+  await wizard.getByRole('button', { name: 'Connect all', exact: true }).click();
+  const opened = await firstPopup;
+  await expect(wizard.getByRole('alert')).toBeVisible();
+  expect(intercepted).toBe(true);
+  const before = [...h.commands];
   await h.identity(async () => {
-    const popup = page.waitForEvent('popup');
-    await page.getByRole('button', { name: 'Connect', exact: true }).click();
-    await h.operators.completeConnection(await popup, 'oauth');
+    const popup = opened.isClosed() ? page.waitForEvent('popup') : Promise.resolve(opened);
+    const result = journey.startResult(page);
+    await wizard.getByRole('button', { name: 'Connect all', exact: true }).click();
+    const [identity] = await Promise.all([popup, result]);
+    assertConnectionReplay(before, h.commands);
+    const verification = journey.verification(page);
+    await Promise.all([h.operators.completeConnection(identity, 'oauth'), verification]);
   });
-  await h.ready(page, launch.id);
-  const after = h.commands.filter((row) => row.path === '/api/v1/service-connections');
-  expect(after.at(-1)).toEqual(before.at(-1));
-  expect((await h.get<Launch>(page, `/api/v1/launches/${launch.id}`)).id).toBe(launch.id);
+  await journey.finish(page, 'start_response_loss');
 });
 
 test('FAULT-nyxid real upstream unavailability preserves handoff command identity', async ({
   harness: h,
 }) => {
+  const journey = new ConnectionJourney(h, 'oauth');
   const page = await h.open('visitor');
   const launch = await h.launch(page, 'missingService');
+  await journey.begin(page, launch);
+  const wizard = page.getByRole('region', { name: journey.wizardName });
   const control = {
     name: 'nyxid_unavailable' as const,
     fixtureOwner: h.fixture.fixtureOwner,
@@ -188,24 +209,28 @@ test('FAULT-nyxid real upstream unavailability preserves handoff command identit
   try {
     const result = page.waitForResponse(
       (response) =>
-        new URL(response.url()).pathname === '/api/v1/service-connections' &&
+        new URL(response.url()).origin === h.config.baseURL &&
+        new URL(response.url()).pathname === connectionStartPath &&
         response.request().method() === 'POST',
     );
-    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    const firstPopup = page.waitForEvent('popup');
+    await wizard.getByRole('button', { name: 'Connect all', exact: true }).click();
+    const opened = await firstPopup;
     expect((await result).status()).toBeGreaterThanOrEqual(500);
-    await expect(page.locator('.public-connection [role="alert"]')).toBeVisible();
-    const original = h.commands.filter((row) => row.path === '/api/v1/service-connections').at(-1);
+    await expect(wizard.getByRole('alert')).toBeVisible();
+    const original = [...h.commands];
     await h.capture(page, 'fault-nyxid-unavailable');
     await h.operators.controlFault({ ...control, phase: 'release' });
     await h.identity(async () => {
-      const popup = page.waitForEvent('popup');
-      await page.getByRole('button', { name: 'Connect', exact: true }).click();
-      await h.operators.completeConnection(await popup, 'oauth');
+      const popup = opened.isClosed() ? page.waitForEvent('popup') : Promise.resolve(opened);
+      const result = journey.startResult(page);
+      await wizard.getByRole('button', { name: 'Connect all', exact: true }).click();
+      const [identity] = await Promise.all([popup, result]);
+      assertConnectionReplay(original, h.commands);
+      const verification = journey.verification(page);
+      await Promise.all([h.operators.completeConnection(identity, 'oauth'), verification]);
     });
-    await h.ready(page, launch.id);
-    expect(h.commands.filter((row) => row.path === '/api/v1/service-connections').at(-1)).toEqual(
-      original,
-    );
+    await journey.finish(page, 'upstream_outage');
   } finally {
     await h.operators.controlFault({ ...control, phase: 'release' });
   }
