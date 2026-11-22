@@ -80,3 +80,6 @@ where
 
 #[cfg(test)]
 pub(in crate::store) mod mongo_tests;
+
+#[cfg(test)]
+mod durable_control_fixture;
