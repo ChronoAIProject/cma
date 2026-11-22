@@ -132,7 +132,9 @@ OMARCHY_RETENTION_STEPS = {
 
 # pacman refuses a pinned package once the key that signed it has expired, so
 # each Omarchy build first warns before, and fails by name after, that date
-# (#3040). The weekly omarchy-key-expiry workflow runs the same check.
+# (#3040). The step stays offline, reading the committed signing-key record,
+# and warn-only until expiry; the weekly omarchy-key-expiry workflow fails
+# earlier and re-derives the record from the locked URLs.
 KEY_EXPIRY_STEP = {
   'name' => 'Arch packager key expiry',
   'run' => "python3 -B .github/scripts/omarchy_key_expiry_tests.py\npython3 -B .github/scripts/omarchy_key_expiry.py\n"
@@ -142,7 +144,7 @@ def check_key_expiry(steps)
   found = steps.select { |s| s['name'] == KEY_EXPIRY_STEP['name'] }
   build = steps.index { |s| s['id'] == 'build' }
   require_check(found == [KEY_EXPIRY_STEP] && build && steps.index(found.first) < build,
-    'Omarchy must check its packager key expiry, unconditionally, before building')
+    'Omarchy must check its packager key expiry offline, warn-only, unconditionally and before building')
 end
 
 def validate(documents, actions)
@@ -622,6 +624,9 @@ key_expiry = ->(d) { omarchy_steps.call(d).find { |s| s['name'] == KEY_EXPIRY_ST
  ->(d) { key_expiry.call(d)['run'] = 'true' },
  ->(d) { key_expiry.call(d)['run'].sub!('omarchy_key_expiry.py', 'omarchy_key_expiry.py || true') },
  ->(d) { key_expiry.call(d)['run'].sub!(/^.*_tests\.py\n/, '') },
+ ->(d) { key_expiry.call(d)['run'].sub!("omarchy_key_expiry.py\n", "omarchy_key_expiry.py --verify-record\n") },
+ ->(d) { key_expiry.call(d)['run'].sub!("omarchy_key_expiry.py\n", "omarchy_key_expiry.py --refresh\n") },
+ ->(d) { key_expiry.call(d)['run'].sub!("omarchy_key_expiry.py\n", "omarchy_key_expiry.py --fail-days 30\n") },
  ->(d) { key_expiry.call(d)['env'] = {'GITHUB_STEP_SUMMARY' => '/dev/null'} }].each { |mutate| mutations << mutate }
 [['ci-images', 'images'], ['ci-omarchy', 'omarchy']].each do |file, job|
   ['removed', 'optional', 'skipped', 'fake-success', 'late'].each do |change|
