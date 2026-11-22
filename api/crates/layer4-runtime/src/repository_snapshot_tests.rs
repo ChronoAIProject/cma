@@ -5,6 +5,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tracing::instrument::WithSubscriber;
 
+#[path = "repository_snapshot_tests/response_hint.rs"]
+mod response_hint;
+
 const PRIVATE_BODY: &str = "PRIVATE_RESPONSE_SENTINEL credential=PRIVATE_CREDENTIAL_SENTINEL";
 
 struct Fixture {
@@ -61,6 +64,21 @@ impl Fixture {
     }
 
     fn serve(&mut self, failure: Option<(&'static str, u16)>) {
+        self.serve_response(failure.map(|(stage, _)| stage), move || {
+            (
+                axum::http::StatusCode::from_u16(failure.unwrap().1).unwrap(),
+                [("x-private", "PRIVATE_HEADER_SENTINEL")],
+                PRIVATE_BODY,
+            )
+                .into_response()
+        });
+    }
+
+    fn serve_response(
+        &mut self,
+        failed_stage: Option<&'static str>,
+        failure: impl Fn() -> axum::response::Response + Clone + Send + Sync + 'static,
+    ) {
         let listener = self.proxy();
         let reads = self.reads.clone();
         let app = Router::new().fallback(get(move |request: Request| {
@@ -72,16 +90,10 @@ impl Fixture {
                 "metadata"
             };
             reads.lock().unwrap().push(stage.into());
+            let failure = failure.clone();
             async move {
-                if let Some((failed_stage, status)) = failure {
-                    if failed_stage == stage {
-                        return (
-                            axum::http::StatusCode::from_u16(status).unwrap(),
-                            [("x-private", "PRIVATE_HEADER_SENTINEL")],
-                            PRIVATE_BODY,
-                        )
-                            .into_response();
-                    }
+                if failed_stage == Some(stage) {
+                    return failure();
                 }
                 match stage {
                     "metadata" => {
