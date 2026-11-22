@@ -257,10 +257,7 @@ export async function connectionWizardFixture(
     assert.ok(links.has(intent));
     if (url.pathname.startsWith('/complete/')) {
       links.set(intent, 'completed');
-      const returnPath =
-        route.request().frame().page() === page
-          ? `/launches/${launch.id}`
-          : '/connection-return?status=completed';
+      const returnPath = '/connection-return?status=completed';
       return route.fulfill({ status: 302, headers: { location: origin + returnPath } });
     }
     return route.fulfill({

@@ -69,8 +69,14 @@ for (const [caseId, variant] of [
         await fallback.click();
         await expect(page).toHaveURL(/https:\/\/identity\.example\.test\/connect\//);
         expect(page.context().pages()).toHaveLength(tabCount);
-        const verification = journey.verification(page);
         await page.getByRole('link', { name: 'Complete connection', exact: true }).click();
+        await expect(page).toHaveURL(/\/connection-return\?status=completed$/);
+        expect(fixture.starts).toBe(0);
+        const returnLink = page.getByRole('link', { name: 'Return to CMA', exact: true });
+        await expect(returnLink).toHaveAttribute('href', `/launches/${launch.id}`);
+        expect([null, '_self']).toContain(await returnLink.getAttribute('target'));
+        const verification = journey.verification(page);
+        await returnLink.click();
         await verification;
       } else {
         const verification = journey.verification(page);
@@ -93,8 +99,10 @@ for (const [caseId, variant] of [
           ({ intent }) => JSON.stringify(intent.target) === JSON.stringify(fixture.target),
         ),
       ).toBe(true);
-      if (variant === 'popup_blocked') expect(page.context().pages()).toHaveLength(tabCount);
-      else await expect.poll(() => popup!.isClosed()).toBe(true);
+      if (variant === 'popup_blocked') {
+        expect(page.context().pages()).toHaveLength(tabCount);
+        expect(fixture.admissions).toHaveLength(1);
+      } else await expect.poll(() => popup!.isClosed()).toBe(true);
       expect(h.violations).toEqual([]);
       expect(fixture.unexpected).toEqual([]);
       expect(fixture.boundary.unexpected).toEqual([]);
