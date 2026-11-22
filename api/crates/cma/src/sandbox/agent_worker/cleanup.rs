@@ -137,12 +137,34 @@ impl AgentWorker {
         }
         let request = close_request(&agent);
         let authority_fence = claimed_fence(&agent, &self.config.holder)?;
-        match self
-            .dependencies
-            .adapter
-            .close_agent(&context.runtime, authority_fence, &request)
-            .await
-        {
+        let (closed, failure) = layer3_adapter::receiver_failure::observe(
+            self.dependencies
+                .adapter
+                .close_agent(&context.runtime, authority_fence, &request),
+        )
+        .await;
+        if let (Some(store), Some(receiver), Some(binding)) = (
+            &self.config.retirement_reporter,
+            failure.and_then(|f| f.into_receiver()),
+            &context.sandbox.runtime,
+        ) {
+            if receiver.owner.agent_id == agent.id.as_str()
+                && context.sandbox.status == layer2_core::sandbox::SandboxStatus::Retiring
+                && context.sandbox.work.step == layer2_core::sandbox::SandboxWorkStep::StopAgents
+            {
+                let observation = crate::store::native_retirement_action::RetirementObservation {
+                    owner: context.sandbox.owner.clone(),
+                    binding: binding.clone(),
+                    receiver,
+                };
+                if let Err(error) = store.note(&context.sandbox, &observation).await {
+                    tracing::debug!(sandbox_id = %context.sandbox.id,
+                        retryable = matches!(error, SandboxStoreError::Unavailable(_)),
+                        "retirement receiver observation was not recorded");
+                }
+            }
+        }
+        match closed {
             Ok(()) => {
                 self.progress(
                     agent,

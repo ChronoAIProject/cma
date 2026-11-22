@@ -11598,6 +11598,559 @@
       "retry_at": null
     }
   ],
+  "CoverageGap": [
+    "legacy_partial",
+    "retention_expired",
+    "unreadable_record",
+    "capture_gap"
+  ],
+  "HistoryCoverage": [
+    {
+      "complete_event_enumeration": true,
+      "gaps": [],
+      "retained_from": "2026-10-21T00:00:00Z",
+      "all_writers_capture_from": "2026-10-21T00:00:00Z",
+      "all_writers_capture_until": "2026-10-28T00:00:00Z",
+      "current_summaries": true
+    },
+    {
+      "complete_event_enumeration": false,
+      "gaps": [
+        "legacy_partial",
+        "retention_expired",
+        "unreadable_record",
+        "capture_gap"
+      ],
+      "retained_from": "2026-10-21T00:00:00Z",
+      "all_writers_capture_from": null,
+      "all_writers_capture_until": null,
+      "current_summaries": true
+    },
+    {
+      "complete_event_enumeration": false,
+      "gaps": [
+        "legacy_partial",
+        "retention_expired",
+        "unreadable_record",
+        "capture_gap"
+      ],
+      "retained_from": "2026-10-21T00:00:00Z",
+      "current_summaries": true
+    }
+  ],
+  "HistoryDetailPart": [
+    {
+      "index": 0,
+      "sha256": "157b946fd1841d72dd3d155f691d9b1bf49af85b8884261c947376ba8f8c727a",
+      "data": "eyJldmVudF9pZCI6ImZpeHR1cmUtZXZlbnQiLCJzb3VyY2UiOnsidHlwZSI6ImN1c3RvbSJ9LCJhY3RvciI6eyJraW5kIjoiaHVtYW4iLCJpZCI6ImZpeHR1cmUtYWN0b3IiLCJkaXNwbGF5X25hbWUiOiJGaXh0dXJlIFVzZXIifSwiY29udmVyc2F0aW9uIjp7ImlkIjoiZml4dHVyZS1jb252ZXJzYXRpb24iLCJraW5kIjoicHJpdmF0ZSIsInRocmVhZF9pZCI6ImZpeHR1cmUtdGhyZWFkIn0sIm9jY3VycmVkX2F0IjoiMjAyNi0xMC0yN1QwMzowMDowMFoiLCJyZWNlaXZlZF9hdCI6IjIwMjYtMTAtMjdUMDM6MDA6MDFaIiwiY29uc3VtZXJzIjpbeyJjb25zdW1lcl9pZCI6ImRlZmF1bHQiLCJzdGF0ZSI6ImNvbXBsZXRlZCIsImRpc3BsYXlfbmFtZSI6IkZpeHR1cmUgQWdlbnQiLCJwcm92aWRlciI6ImNtYSIsImFnZW50X2lkIjoiYWd0XzAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmIiwiY29udmVyc2F0aW9uX2lkIjoiZml4dHVyZS1jb252ZXJzYXRpb24iLCJyZXNwb25zZV9pZCI6ImZpeHR1cmUtcmVzcG9uc2UiLCJkaXNwYXRjaGVkX2F0IjoiMjAyNi0xMC0yN1QwMzowMDowMVoiLCJhY2NlcHRlZF9hdCI6IjIwMjYtMTAtMjdUMDM6MDA6MDJaIiwicHJvZHVjZWRfYXQiOiIyMDI2LTEwLTI3VDAzOjAwOjA0WiIsImNvbXBsZXRlZF9hdCI6IjIwMjYtMTAtMjdUMDM6MDA6MDVaIiwiZGVsaXZlcmllcyI6W3sic3RlcCI="
+    },
+    {
+      "index": 1,
+      "sha256": "e4ca6d0aebf69e39ac9faca072335fdc8c82dcfc69422aefb0c65af763ecbf89",
+      "data": "OiJhbnN3ZXIiLCJkZXN0aW5hdGlvbiI6Im9yaWdpbiIsIm91dGNvbWUiOiJjb25maXJtZWQiLCJvYnNlcnZlZF9hdCI6IjIwMjYtMTAtMjdUMDM6MDA6MDVaIiwiY29uZmlybWVkX2F0IjoiMjAyNi0xMC0yN1QwMzowMDowNVoiLCJwbGF0Zm9ybV9tZXNzYWdlX2lkIjoiZml4dHVyZS1yZXBseSIsInJlY2lwaWVudHMiOlt7ImtpbmQiOiJjdXN0b20iLCJpZCI6ImZpeHR1cmUtcmVjaXBpZW50IiwidGhyZWFkX2lkIjoiZml4dHVyZS10aHJlYWQifV19XSwibWVkaWFfcmVzcG9uc2VzIjpbeyJhdHRhY2htZW50X2luZGV4IjowLCJraW5kIjoidHJhbnNjcmlwdCIsInJlc3BvbnNlX2lkIjoicmVzcF9tZWRpYV9maXh0dXJlIiwicmVzcG9uc2VfdXJsIjoiL2FwaS92Mi9yZXNwb25zZXMvcmVzcF9tZWRpYV9maXh0dXJlIiwic3RhdHVzIjoiY29tcGxldGVkIiwiZGVsaXZlcnkiOiJkZWxpdmVyZWQiLCJvYnNlcnZlZF9hdCI6IjIwMjYtMTAtMjlUMDA6MDA6MDBaIn1dfV0sImtpbmQiOiJldmVudCIsImV2ZW50X3R5cGUiOiJjdXN0b20uYnVpbGQuY29tcGxldGVkIiwic291cmNlX29jY3VycmVkX2F0IjoiMjAyNi0xMC0yN1QwMzowMDowMFoiLCJxdW90ZWRfY29udGV4dCI6eyJjb250ZW50X2tpbmRzIjpbImltYWdlIl0sInJlbGF0aW9uIjoicmVwbHkiLCJ0ZXh0X2F2YWlsYWJsZSI6dHJ1ZSwidGV4dF90cnVuY2F0ZWQiOmZhbHNlfX0="
+    }
+  ],
+  "HistoryDetails": [
+    {
+      "generation": "fixture-generation",
+      "encoding": "base64-json-fragment",
+      "parts": [
+        {
+          "index": 0,
+          "sha256": "157b946fd1841d72dd3d155f691d9b1bf49af85b8884261c947376ba8f8c727a",
+          "data": "eyJldmVudF9pZCI6ImZpeHR1cmUtZXZlbnQiLCJzb3VyY2UiOnsidHlwZSI6ImN1c3RvbSJ9LCJhY3RvciI6eyJraW5kIjoiaHVtYW4iLCJpZCI6ImZpeHR1cmUtYWN0b3IiLCJkaXNwbGF5X25hbWUiOiJGaXh0dXJlIFVzZXIifSwiY29udmVyc2F0aW9uIjp7ImlkIjoiZml4dHVyZS1jb252ZXJzYXRpb24iLCJraW5kIjoicHJpdmF0ZSIsInRocmVhZF9pZCI6ImZpeHR1cmUtdGhyZWFkIn0sIm9jY3VycmVkX2F0IjoiMjAyNi0xMC0yN1QwMzowMDowMFoiLCJyZWNlaXZlZF9hdCI6IjIwMjYtMTAtMjdUMDM6MDA6MDFaIiwiY29uc3VtZXJzIjpbeyJjb25zdW1lcl9pZCI6ImRlZmF1bHQiLCJzdGF0ZSI6ImNvbXBsZXRlZCIsImRpc3BsYXlfbmFtZSI6IkZpeHR1cmUgQWdlbnQiLCJwcm92aWRlciI6ImNtYSIsImFnZW50X2lkIjoiYWd0XzAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmIiwiY29udmVyc2F0aW9uX2lkIjoiZml4dHVyZS1jb252ZXJzYXRpb24iLCJyZXNwb25zZV9pZCI6ImZpeHR1cmUtcmVzcG9uc2UiLCJkaXNwYXRjaGVkX2F0IjoiMjAyNi0xMC0yN1QwMzowMDowMVoiLCJhY2NlcHRlZF9hdCI6IjIwMjYtMTAtMjdUMDM6MDA6MDJaIiwicHJvZHVjZWRfYXQiOiIyMDI2LTEwLTI3VDAzOjAwOjA0WiIsImNvbXBsZXRlZF9hdCI6IjIwMjYtMTAtMjdUMDM6MDA6MDVaIiwiZGVsaXZlcmllcyI6W3sic3RlcCI="
+        }
+      ],
+      "next_cursor": "fixture-next-detail",
+      "detail_incomplete": false,
+      "detail_truncated": false
+    },
+    {
+      "generation": "fixture-generation",
+      "encoding": "base64-json-fragment",
+      "parts": [
+        {
+          "index": 1,
+          "sha256": "e4ca6d0aebf69e39ac9faca072335fdc8c82dcfc69422aefb0c65af763ecbf89",
+          "data": "OiJhbnN3ZXIiLCJkZXN0aW5hdGlvbiI6Im9yaWdpbiIsIm91dGNvbWUiOiJjb25maXJtZWQiLCJvYnNlcnZlZF9hdCI6IjIwMjYtMTAtMjdUMDM6MDA6MDVaIiwiY29uZmlybWVkX2F0IjoiMjAyNi0xMC0yN1QwMzowMDowNVoiLCJwbGF0Zm9ybV9tZXNzYWdlX2lkIjoiZml4dHVyZS1yZXBseSIsInJlY2lwaWVudHMiOlt7ImtpbmQiOiJjdXN0b20iLCJpZCI6ImZpeHR1cmUtcmVjaXBpZW50IiwidGhyZWFkX2lkIjoiZml4dHVyZS10aHJlYWQifV19XSwibWVkaWFfcmVzcG9uc2VzIjpbeyJhdHRhY2htZW50X2luZGV4IjowLCJraW5kIjoidHJhbnNjcmlwdCIsInJlc3BvbnNlX2lkIjoicmVzcF9tZWRpYV9maXh0dXJlIiwicmVzcG9uc2VfdXJsIjoiL2FwaS92Mi9yZXNwb25zZXMvcmVzcF9tZWRpYV9maXh0dXJlIiwic3RhdHVzIjoiY29tcGxldGVkIiwiZGVsaXZlcnkiOiJkZWxpdmVyZWQiLCJvYnNlcnZlZF9hdCI6IjIwMjYtMTAtMjlUMDA6MDA6MDBaIn1dfV0sImtpbmQiOiJldmVudCIsImV2ZW50X3R5cGUiOiJjdXN0b20uYnVpbGQuY29tcGxldGVkIiwic291cmNlX29jY3VycmVkX2F0IjoiMjAyNi0xMC0yN1QwMzowMDowMFoiLCJxdW90ZWRfY29udGV4dCI6eyJjb250ZW50X2tpbmRzIjpbImltYWdlIl0sInJlbGF0aW9uIjoicmVwbHkiLCJ0ZXh0X2F2YWlsYWJsZSI6dHJ1ZSwidGV4dF90cnVuY2F0ZWQiOmZhbHNlfX0="
+        }
+      ],
+      "next_cursor": null,
+      "detail_incomplete": false,
+      "detail_truncated": false
+    },
+    {
+      "generation": "fixture-generation",
+      "encoding": "base64-json-fragment",
+      "parts": [],
+      "detail_incomplete": true,
+      "detail_truncated": true
+    }
+  ],
+  "HistoryItem": [
+    {
+      "history_event_id": "fixture-retained-event",
+      "activity": {
+        "event_id": "fixture-event",
+        "source": {
+          "type": "custom"
+        },
+        "actor": {
+          "kind": "human",
+          "id": "fixture-actor",
+          "display_name": "Fixture User"
+        },
+        "conversation": {
+          "id": "fixture-conversation",
+          "kind": "private",
+          "thread_id": "fixture-thread"
+        },
+        "occurred_at": "2026-10-27T03:00:00Z",
+        "received_at": "2026-10-27T03:00:01Z",
+        "consumers": [
+          {
+            "consumer_id": "default",
+            "state": "completed",
+            "display_name": "Fixture Agent",
+            "provider": "cma",
+            "agent_id": "agt_0123456789abcdef0123456789abcdef",
+            "conversation_id": "fixture-conversation",
+            "response_id": "fixture-response",
+            "dispatched_at": "2026-10-27T03:00:01Z",
+            "accepted_at": "2026-10-27T03:00:02Z",
+            "produced_at": "2026-10-27T03:00:04Z",
+            "completed_at": "2026-10-27T03:00:05Z",
+            "deliveries": [
+              {
+                "step": "answer",
+                "destination": "origin",
+                "outcome": "confirmed",
+                "observed_at": "2026-10-27T03:00:05Z",
+                "confirmed_at": "2026-10-27T03:00:05Z",
+                "platform_message_id": "fixture-reply",
+                "recipients": [
+                  {
+                    "kind": "custom",
+                    "id": "fixture-recipient",
+                    "thread_id": "fixture-thread"
+                  }
+                ]
+              }
+            ],
+            "media_responses": [
+              {
+                "attachment_index": 0,
+                "kind": "transcript",
+                "response_id": "resp_media_fixture",
+                "response_url": "/api/v2/responses/resp_media_fixture",
+                "status": "completed",
+                "delivery": "delivered",
+                "observed_at": "2026-10-29T00:00:00Z"
+              }
+            ]
+          }
+        ],
+        "kind": "event",
+        "event_type": "custom.build.completed",
+        "source_occurred_at": "2026-10-27T03:00:00Z",
+        "quoted_context": {
+          "content_kinds": [
+            "image"
+          ],
+          "relation": "reply",
+          "text_available": true,
+          "text_truncated": false
+        }
+      },
+      "detail_cursor": "fixture-detail-cursor",
+      "detail_incomplete": false,
+      "detail_truncated": false,
+      "legacy_partial": false
+    },
+    {
+      "history_event_id": "fixture-retained-event",
+      "activity": {
+        "event_id": "fixture-event",
+        "source": {
+          "type": "custom"
+        },
+        "actor": {
+          "kind": "human",
+          "id": "fixture-actor",
+          "display_name": "Fixture User"
+        },
+        "conversation": {
+          "id": "fixture-conversation",
+          "kind": "private",
+          "thread_id": "fixture-thread"
+        },
+        "occurred_at": "2026-10-27T03:00:00Z",
+        "received_at": "2026-10-27T03:00:01Z",
+        "consumers": [
+          {
+            "consumer_id": "default",
+            "state": "completed",
+            "display_name": "Fixture Agent",
+            "provider": "cma",
+            "agent_id": "agt_0123456789abcdef0123456789abcdef",
+            "conversation_id": "fixture-conversation",
+            "response_id": "fixture-response",
+            "dispatched_at": "2026-10-27T03:00:01Z",
+            "accepted_at": "2026-10-27T03:00:02Z",
+            "produced_at": "2026-10-27T03:00:04Z",
+            "completed_at": "2026-10-27T03:00:05Z",
+            "deliveries": [
+              {
+                "step": "answer",
+                "destination": "origin",
+                "outcome": "confirmed",
+                "observed_at": "2026-10-27T03:00:05Z",
+                "confirmed_at": "2026-10-27T03:00:05Z",
+                "platform_message_id": "fixture-reply",
+                "recipients": [
+                  {
+                    "kind": "custom",
+                    "id": "fixture-recipient",
+                    "thread_id": "fixture-thread"
+                  }
+                ]
+              }
+            ],
+            "media_responses": [
+              {
+                "attachment_index": 0,
+                "kind": "transcript",
+                "response_id": "resp_media_fixture",
+                "response_url": "/api/v2/responses/resp_media_fixture",
+                "status": "completed",
+                "delivery": "delivered",
+                "observed_at": "2026-10-29T00:00:00Z"
+              }
+            ]
+          }
+        ],
+        "kind": "event",
+        "event_type": "custom.build.completed",
+        "source_occurred_at": "2026-10-27T03:00:00Z",
+        "quoted_context": {
+          "content_kinds": [
+            "image"
+          ],
+          "relation": "reply",
+          "text_available": true,
+          "text_truncated": false
+        }
+      },
+      "detail_cursor": null,
+      "detail_incomplete": true,
+      "detail_truncated": true,
+      "legacy_partial": true
+    },
+    {
+      "history_event_id": "fixture-retained-event",
+      "activity": {
+        "event_id": "fixture-event",
+        "source": {
+          "type": "custom"
+        },
+        "actor": {
+          "kind": "human",
+          "id": "fixture-actor",
+          "display_name": "Fixture User"
+        },
+        "conversation": {
+          "id": "fixture-conversation",
+          "kind": "private",
+          "thread_id": "fixture-thread"
+        },
+        "occurred_at": "2026-10-27T03:00:00Z",
+        "received_at": "2026-10-27T03:00:01Z",
+        "consumers": [
+          {
+            "consumer_id": "default",
+            "state": "completed",
+            "display_name": "Fixture Agent",
+            "provider": "cma",
+            "agent_id": "agt_0123456789abcdef0123456789abcdef",
+            "conversation_id": "fixture-conversation",
+            "response_id": "fixture-response",
+            "dispatched_at": "2026-10-27T03:00:01Z",
+            "accepted_at": "2026-10-27T03:00:02Z",
+            "produced_at": "2026-10-27T03:00:04Z",
+            "completed_at": "2026-10-27T03:00:05Z",
+            "deliveries": [
+              {
+                "step": "answer",
+                "destination": "origin",
+                "outcome": "confirmed",
+                "observed_at": "2026-10-27T03:00:05Z",
+                "confirmed_at": "2026-10-27T03:00:05Z",
+                "platform_message_id": "fixture-reply",
+                "recipients": [
+                  {
+                    "kind": "custom",
+                    "id": "fixture-recipient",
+                    "thread_id": "fixture-thread"
+                  }
+                ]
+              }
+            ],
+            "media_responses": [
+              {
+                "attachment_index": 0,
+                "kind": "transcript",
+                "response_id": "resp_media_fixture",
+                "response_url": "/api/v2/responses/resp_media_fixture",
+                "status": "completed",
+                "delivery": "delivered",
+                "observed_at": "2026-10-29T00:00:00Z"
+              }
+            ]
+          }
+        ],
+        "kind": "event",
+        "event_type": "custom.build.completed",
+        "source_occurred_at": "2026-10-27T03:00:00Z",
+        "quoted_context": {
+          "content_kinds": [
+            "image"
+          ],
+          "relation": "reply",
+          "text_available": true,
+          "text_truncated": false
+        }
+      },
+      "detail_incomplete": true,
+      "detail_truncated": true,
+      "legacy_partial": true
+    }
+  ],
+  "HistoryPage": [
+    {
+      "items": [
+        {
+          "history_event_id": "fixture-retained-event",
+          "activity": {
+            "event_id": "fixture-event",
+            "source": {
+              "type": "custom"
+            },
+            "actor": {
+              "kind": "human",
+              "id": "fixture-actor",
+              "display_name": "Fixture User"
+            },
+            "conversation": {
+              "id": "fixture-conversation",
+              "kind": "private",
+              "thread_id": "fixture-thread"
+            },
+            "occurred_at": "2026-10-27T03:00:00Z",
+            "received_at": "2026-10-27T03:00:01Z",
+            "consumers": [
+              {
+                "consumer_id": "default",
+                "state": "completed",
+                "display_name": "Fixture Agent",
+                "provider": "cma",
+                "agent_id": "agt_0123456789abcdef0123456789abcdef",
+                "conversation_id": "fixture-conversation",
+                "response_id": "fixture-response",
+                "dispatched_at": "2026-10-27T03:00:01Z",
+                "accepted_at": "2026-10-27T03:00:02Z",
+                "produced_at": "2026-10-27T03:00:04Z",
+                "completed_at": "2026-10-27T03:00:05Z",
+                "deliveries": [
+                  {
+                    "step": "answer",
+                    "destination": "origin",
+                    "outcome": "confirmed",
+                    "observed_at": "2026-10-27T03:00:05Z",
+                    "confirmed_at": "2026-10-27T03:00:05Z",
+                    "platform_message_id": "fixture-reply",
+                    "recipients": [
+                      {
+                        "kind": "custom",
+                        "id": "fixture-recipient",
+                        "thread_id": "fixture-thread"
+                      }
+                    ]
+                  }
+                ],
+                "media_responses": [
+                  {
+                    "attachment_index": 0,
+                    "kind": "transcript",
+                    "response_id": "resp_media_fixture",
+                    "response_url": "/api/v2/responses/resp_media_fixture",
+                    "status": "completed",
+                    "delivery": "delivered",
+                    "observed_at": "2026-10-29T00:00:00Z"
+                  }
+                ]
+              }
+            ],
+            "kind": "event",
+            "event_type": "custom.build.completed",
+            "source_occurred_at": "2026-10-27T03:00:00Z",
+            "quoted_context": {
+              "content_kinds": [
+                "image"
+              ],
+              "relation": "reply",
+              "text_available": true,
+              "text_truncated": false
+            }
+          },
+          "detail_cursor": "fixture-detail-cursor",
+          "detail_incomplete": false,
+          "detail_truncated": false,
+          "legacy_partial": false
+        }
+      ],
+      "next_cursor": "fixture-next-page",
+      "has_more": true,
+      "range": {
+        "from": "2026-10-27T00:00:00Z",
+        "until": "2026-10-28T00:00:00Z"
+      },
+      "coverage": {
+        "complete_event_enumeration": true,
+        "gaps": [],
+        "retained_from": "2026-10-21T00:00:00Z",
+        "all_writers_capture_from": "2026-10-21T00:00:00Z",
+        "all_writers_capture_until": "2026-10-28T00:00:00Z",
+        "current_summaries": true
+      }
+    },
+    {
+      "items": [
+        {
+          "history_event_id": "fixture-retained-event",
+          "activity": {
+            "event_id": "fixture-event",
+            "source": {
+              "type": "custom"
+            },
+            "actor": {
+              "kind": "human",
+              "id": "fixture-actor",
+              "display_name": "Fixture User"
+            },
+            "conversation": {
+              "id": "fixture-conversation",
+              "kind": "private",
+              "thread_id": "fixture-thread"
+            },
+            "occurred_at": "2026-10-27T03:00:00Z",
+            "received_at": "2026-10-27T03:00:01Z",
+            "consumers": [
+              {
+                "consumer_id": "default",
+                "state": "completed",
+                "display_name": "Fixture Agent",
+                "provider": "cma",
+                "agent_id": "agt_0123456789abcdef0123456789abcdef",
+                "conversation_id": "fixture-conversation",
+                "response_id": "fixture-response",
+                "dispatched_at": "2026-10-27T03:00:01Z",
+                "accepted_at": "2026-10-27T03:00:02Z",
+                "produced_at": "2026-10-27T03:00:04Z",
+                "completed_at": "2026-10-27T03:00:05Z",
+                "deliveries": [
+                  {
+                    "step": "answer",
+                    "destination": "origin",
+                    "outcome": "confirmed",
+                    "observed_at": "2026-10-27T03:00:05Z",
+                    "confirmed_at": "2026-10-27T03:00:05Z",
+                    "platform_message_id": "fixture-reply",
+                    "recipients": [
+                      {
+                        "kind": "custom",
+                        "id": "fixture-recipient",
+                        "thread_id": "fixture-thread"
+                      }
+                    ]
+                  }
+                ],
+                "media_responses": [
+                  {
+                    "attachment_index": 0,
+                    "kind": "transcript",
+                    "response_id": "resp_media_fixture",
+                    "response_url": "/api/v2/responses/resp_media_fixture",
+                    "status": "completed",
+                    "delivery": "delivered",
+                    "observed_at": "2026-10-29T00:00:00Z"
+                  }
+                ]
+              }
+            ],
+            "kind": "event",
+            "event_type": "custom.build.completed",
+            "source_occurred_at": "2026-10-27T03:00:00Z",
+            "quoted_context": {
+              "content_kinds": [
+                "image"
+              ],
+              "relation": "reply",
+              "text_available": true,
+              "text_truncated": false
+            }
+          },
+          "detail_cursor": null,
+          "detail_incomplete": true,
+          "detail_truncated": true,
+          "legacy_partial": true
+        }
+      ],
+      "next_cursor": null,
+      "has_more": false,
+      "range": {
+        "from": "2026-10-27T00:00:00Z",
+        "until": "2026-10-28T00:00:00Z"
+      },
+      "coverage": {
+        "complete_event_enumeration": false,
+        "gaps": [
+          "legacy_partial",
+          "retention_expired",
+          "unreadable_record",
+          "capture_gap"
+        ],
+        "retained_from": "2026-10-21T00:00:00Z",
+        "all_writers_capture_from": null,
+        "all_writers_capture_until": null,
+        "current_summaries": true
+      }
+    },
+    {
+      "items": [],
+      "has_more": false,
+      "range": {
+        "from": "2026-10-27T00:00:00Z",
+        "until": "2026-10-28T00:00:00Z"
+      },
+      "coverage": {
+        "complete_event_enumeration": false,
+        "gaps": [
+          "legacy_partial",
+          "retention_expired",
+          "unreadable_record",
+          "capture_gap"
+        ],
+        "retained_from": "2026-10-21T00:00:00Z",
+        "current_summaries": true
+      }
+    }
+  ],
+  "HistoryRange": [
+    {
+      "from": "2026-10-27T00:00:00Z",
+      "until": "2026-10-28T00:00:00Z"
+    }
+  ],
   "ConversationReset": [
     {
       "binding_id": "binding-fixture",

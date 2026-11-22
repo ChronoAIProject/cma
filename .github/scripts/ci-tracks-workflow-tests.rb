@@ -123,6 +123,13 @@ def check_merge_group_triggers(workflows)
     'merge-group CI must remain read-only')
 end
 
+# Image builds pin cma-omarchy-packages by digest; the retention contract and
+# its regressions refuse any .github path that deletes a version of it.
+OMARCHY_RETENTION_STEPS = {
+  'Omarchy package bundle retention regressions' => 'ruby .github/scripts/omarchy-package-retention-tests.rb',
+  'Omarchy package bundle is never deleted' => 'ruby .github/scripts/omarchy-package-retention.rb'
+}.freeze
+
 def validate(documents, actions)
   require_runtime_inventory(documents)
   check_component_cache_writers(documents)
@@ -239,6 +246,11 @@ def validate(documents, actions)
   require_check(restore.size == 1 && restore.first['run'] == 'node --test .github/scripts/home-backup/*.test.mjs' &&
     !restore.first.key?('if') && !restore.first.key?('continue-on-error') && !restore.first.key?('env'),
     'home restore evidence suites must run without credentials or optional failure')
+  OMARCHY_RETENTION_STEPS.each do |name, command|
+    found = structure.select { |s| s['name'] == name }
+    require_check(found.size == 1 && found.first == {'name' => name, 'run' => command},
+      "#{name} must run unconditionally in Repository structure")
+  end
   node = structure.index { |s| s.fetch('uses', '').start_with?('actions/setup-node@') }
   require_check(node && node < structure.index(restore.first), 'home restore evidence requires Node setup')
   require_check(structure.none? { |s| s.fetch('name', '').match?(/Release |Skopeo|image reconciliation|image import/i) }, 'release tooling leaked into Repo')
@@ -565,6 +577,15 @@ mutations = [
 synthetic_index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == 'Synthetic authority and observer regressions' }
 restore_index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == 'Synthetic home restore evidence regressions' }
 mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'].delete_at(restore_index) }
+OMARCHY_RETENTION_STEPS.each_key do |name|
+  index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == name }
+  mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'].delete_at(index) }
+  mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'] << d['ci-repo']['jobs']['structure']['steps'][index].dup }
+  [{'if' => 'false'}, {'continue-on-error' => true}, {'run' => 'true'}].each do |bypass|
+    mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][index].merge!(bypass) }
+  end
+  mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][index]['run'] += ' || true' }
+end
 [{'if' => 'false'}, {'continue-on-error' => true}, {'env' => {'CLOUDSDK_CORE_PROJECT' => 'fixture'}},
  {'run' => 'node .github/scripts/home-backup/inventory.mjs fixture'}].each do |bypass|
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][restore_index].merge!(bypass) }

@@ -23,6 +23,7 @@ mod anonymous_public;
 mod auth_mode;
 mod debug;
 mod global_admission;
+mod http_connections;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
 #[cfg(test)]
@@ -58,8 +59,11 @@ mod browser_session;
 mod documents;
 pub(crate) mod report_views;
 mod sandbox_billing;
+mod sandbox_usage_export;
+pub(crate) use sandbox_usage_export::UsageCaptureConfig;
 pub(crate) mod sandbox_metrics;
 mod usage_billing;
+mod usage_transport;
 pub(crate) use bot_father::BotFatherConfig;
 pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use profiles::DefaultProfileConfig;
@@ -67,6 +71,7 @@ pub(crate) use runtime::RuntimeConfig;
 pub(crate) use sandbox_billing::SandboxBillingConfig;
 pub(crate) use sandbox_metrics::MetricsConfig;
 pub(crate) use usage_billing::UsageBillingConfig;
+pub(crate) use usage_transport::UsageExportConfig;
 
 const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
@@ -145,6 +150,7 @@ pub struct Config {
     pub(crate) agent_log_fleet_percent: u8,
     pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
     pub bind: SocketAddr,
+    pub(crate) http_connection_max_age: Option<std::time::Duration>,
     pub metrics_bind: SocketAddr,
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
@@ -190,6 +196,8 @@ pub struct Config {
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub gateway: Option<GatewayConfig>,
     pub usage_billing: Option<UsageBillingConfig>,
+    pub(crate) usage_capture: Option<UsageCaptureConfig>,
+    pub(crate) usage_export: Option<UsageExportConfig>,
     pub(crate) usage_metrics: MetricsConfig,
     pub sandbox_billing: Option<SandboxBillingConfig>,
     pub bot_father: Option<BotFatherConfig>,
@@ -328,6 +336,7 @@ impl Config {
             account_deletion_enabled,
             account_erasure_transaction_drain_seconds,
             bind,
+            http_connection_max_age: http_connections::max_age(&mut lookup)?,
             metrics_bind,
             public_stream_limit: public_streams::from_lookup(&mut lookup)?,
             relay_capacity: RelayCapacityConfig::from_lookup(&mut lookup)?,
@@ -374,6 +383,8 @@ impl Config {
             agent_log_fleet_percent,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
             usage_billing: UsageBillingConfig::from_lookup(&mut lookup)?,
+            usage_capture: UsageCaptureConfig::from_lookup(&mut lookup)?,
+            usage_export: UsageExportConfig::from_lookup(&mut lookup)?,
             usage_metrics: MetricsConfig::from_lookup(&mut lookup)?,
             sandbox_billing: SandboxBillingConfig::from_lookup(&mut lookup)?,
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
