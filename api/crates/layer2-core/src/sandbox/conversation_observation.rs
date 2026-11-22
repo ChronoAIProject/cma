@@ -68,10 +68,14 @@ pub struct AgentUsageCheckpoint {
 pub struct AgentObservations {
     pub metadata: AgentRuntimeMetadata,
     pub usage: Option<AgentUsageCheckpoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_acceptance: Option<super::task_acceptance::TaskAcceptance>,
 }
 
 impl AgentObservations {
     pub fn is_empty(&self) -> bool {
-        self.metadata == AgentRuntimeMetadata::default() && self.usage.is_none()
+        self.metadata == AgentRuntimeMetadata::default()
+            && self.usage.is_none()
+            && self.task_acceptance.is_none()
     }
 }

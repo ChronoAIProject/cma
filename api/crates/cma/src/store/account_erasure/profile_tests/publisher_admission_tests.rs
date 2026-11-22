@@ -1,4 +1,5 @@
 //! Publisher fences also guard new effects whose Profile owners still survive.
+mod cutoff_tests;
 mod effect_tests;
 
 use super::*;

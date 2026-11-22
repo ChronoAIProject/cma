@@ -18,6 +18,8 @@ for (const width of [1440, 390, 320]) {
       fixture.append({ type: 'turn_completed', turn_sequence: 1 });
       try {
         await fixture.route(page, baseURL!);
+        if (process.env.CMA_SUGGESTION_EDIT_BASELINE !== '1')
+          await fixture.suggestReply(page, suggestion);
         await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
           route.fulfill({
             json: {
@@ -115,14 +117,17 @@ for (const width of [1440, 390, 320]) {
           animations: 'disabled',
         });
         let refusal = 0;
+        fixture.revealInputReceipt = false;
         await page.route('**/api/v2/agents/agt_contract/responses', async (route) => {
           refusal += 1;
           if (refusal > 2) return route.fallback();
-          fixture.writes.push({
+          const write = {
             path: '/api/v2/agents/agt_contract/responses',
             body: route.request().postDataJSON(),
             key: route.request().headers()['idempotency-key'],
-          });
+          };
+          fixture.writes.push(write);
+          if (refusal === 2) fixture.admitInput(write);
           await route.fulfill({
             status: refusal === 1 ? 422 : 503,
             json: {
@@ -154,18 +159,21 @@ for (const width of [1440, 390, 320]) {
           animations: 'disabled',
         });
         await field.fill('Keep later input');
+        fixture.revealInputReceipt = true;
         await recover.click();
         await expect(page.getByRole('region', { name: 'Next you can ask' })).toHaveCount(0);
         await expect(field).toHaveValue('Keep later input');
         await expect(attachments).toContainText('budget.txt');
-        expect(fixture.writes).toHaveLength(3);
+        expect(fixture.writes).toHaveLength(2);
         expect(fixture.writes[1]!.body.input).toContain(edited);
         expect(fixture.writes[1]!.body.answer_context).toEqual({
           turn_sequence: 1,
           answer_sequence: 3,
         });
-        expect(fixture.writes[2]!.body).toEqual(fixture.writes[1]!.body);
-        expect(fixture.writes[2]!.key).toBe(fixture.writes[1]!.key);
+        expect(fixture.receiptReads.at(-1)).toEqual({
+          ...fixture.writes[1],
+          path: `${fixture.writes[1]!.path}/receipt`,
+        });
         const bounds = await field.boundingBox();
         expect(bounds!.x).toBeGreaterThanOrEqual(0);
         expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);

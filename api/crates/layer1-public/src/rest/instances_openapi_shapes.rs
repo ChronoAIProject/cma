@@ -405,6 +405,8 @@ pub struct OwnerAgentSummaryView {
     #[schema(value_type = String)]
     pub task_status: layer2_core::sandbox::AgentTaskStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) task_acceptance: Option<super::task_acceptance_shapes::TaskAcceptanceView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub owner_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) runtime_metadata: Option<super::agent_observation_shapes::AgentRuntimeMetadataView>,
@@ -425,6 +427,7 @@ impl From<AgentHierarchySummary> for OwnerAgentSummaryView {
     fn from(value: AgentHierarchySummary) -> Self {
         Self {
             task_status: value.task_status,
+            task_acceptance: value.task_acceptance.map(Into::into),
             task_started_at: value.task_started_at,
             task_activity_at: value.task_activity_at,
             runtime_metadata: value.runtime_metadata.map(Into::into),

@@ -78,6 +78,58 @@ async fn edited_reply_keeps_exact_body_owner_and_identity_in_public_history() {
             assert_eq!(admitted.status(), StatusCode::OK);
             let identity = admitted.headers()["x-cma-command-id"].clone();
             drop(admitted);
+            let receipt_path = if protocol == "agui" {
+                "/api/v1/agui/run/receipt"
+            } else {
+                "/api/v2/agents/agt_edited/responses/receipt"
+            };
+            let read_receipt = |subject, body| {
+                router.clone().oneshot(request(
+                    Method::POST,
+                    receipt_path,
+                    subject,
+                    Some("edited-intent"),
+                    Some(body),
+                ))
+            };
+            let receipt = read_receipt("owner-a", body.clone()).await.unwrap();
+            assert_eq!(receipt.status(), StatusCode::OK);
+            assert_eq!(receipt.headers()["cache-control"], "private, no-store");
+            let receipt: Value = serde_json::from_slice(
+                &axum::body::to_bytes(receipt.into_body(), 16_384)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            if protocol == "agui" {
+                assert_eq!(receipt["threadId"], "agt_edited");
+                assert!(receipt["runId"].is_string());
+            } else {
+                assert_eq!(receipt["receipt"]["command_id"], identity.to_str().unwrap());
+            }
+            assert_eq!(
+                read_receipt("owner-b", body.clone())
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::NOT_FOUND
+            );
+            if scoped {
+                let mut changed_scope = body.clone();
+                let altered = json!({"turn_sequence":3,"answer_sequence":6});
+                if protocol == "agui" {
+                    changed_scope["forwardedProps"]["answerContext"] = altered;
+                } else {
+                    changed_scope["answer_context"] = altered;
+                }
+                assert_eq!(
+                    read_receipt("owner-a", changed_scope)
+                        .await
+                        .unwrap()
+                        .status(),
+                    StatusCode::CONFLICT
+                );
+            }
             let recovered = router
                 .clone()
                 .oneshot(request(
@@ -128,6 +180,9 @@ async fn edited_reply_keeps_exact_body_owner_and_identity_in_public_history() {
                 .collect();
             assert_eq!(messages.len(), 1);
             assert_eq!(messages[0]["threadId"], "agt_edited");
+            if protocol == "agui" {
+                assert_eq!(receipt["runId"], messages[0]["runId"]);
+            }
             assert!(frames
                 .iter()
                 .any(|frame| frame["type"] == "TEXT_MESSAGE_START"

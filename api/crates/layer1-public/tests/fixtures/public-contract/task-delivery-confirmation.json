@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "task-delivery-confirmation-owner",
+      "operation": "POST /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation",
+      "scenario": "deliverable_task_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda/confirmation",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "task_id": "cmd_contract_task"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "task_id": "cmd_contract_task",
+          "turn_sequence": 10,
+          "verdict": {
+            "status": "succeeded"
+          },
+          "unconfirmed_outputs": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "task-delivery-confirmation-repeated",
+      "operation": "POST /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation",
+      "scenario": "deliverable_task_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda/confirmation",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "task_id": "cmd_contract_task"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "task_id": "cmd_contract_task",
+          "turn_sequence": 10,
+          "verdict": {
+            "status": "succeeded"
+          },
+          "unconfirmed_outputs": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "task-delivery-confirmation-foreign",
+      "operation": "POST /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation",
+      "scenario": "deliverable_task_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda/confirmation",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "task_id": "cmd_contract_task"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "task-delivery-confirmation-anonymous",
+      "operation": "POST /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation",
+      "scenario": "deliverable_task_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda/confirmation",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "task_id": "cmd_contract_task"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

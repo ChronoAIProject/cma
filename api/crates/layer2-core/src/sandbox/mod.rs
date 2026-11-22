@@ -26,6 +26,9 @@ pub mod agent_output_index;
 mod agent_preferences;
 mod agent_settings;
 pub mod desktop_creation;
+pub mod task_acceptance;
+#[cfg(test)]
+mod task_acceptance_tests;
 pub mod task_experience;
 pub mod task_template;
 pub use agent_preferences::{AgentInstructionPolicy, AgentPreferences, AgentPreferencesUpdate};
@@ -163,11 +166,16 @@ mod retained_reopen;
 mod retained_reopen_service;
 #[cfg(test)]
 mod retained_reopen_tests;
+mod retained_suspended_reopen;
 pub use retained_reopen::{
     apply_retained_reopen, RetainedReopenAccepted, RetainedReopenProof, RetainedReopenReceipt,
-    RetainedReopenRequest, RetainedReopenSnapshot, RetainedReopenVerifier,
+    RetainedReopenReplay, RetainedReopenRequest, RetainedReopenSnapshot, RetainedReopenVerifier,
 };
-pub use retained_reopen_service::{RetainedReopenError, RetainedReopenService};
+pub use retained_reopen_service::{RetainedReopenError, RetainedReopenPath, RetainedReopenService};
+pub use retained_suspended_reopen::{
+    apply_suspended_reopen, RetainedSuspendedReopenProof, RetainedSuspendedReopenReceipt,
+    RetainedSuspendedReopenRequest,
+};
 mod revive;
 mod rotate;
 mod runtime_generation;

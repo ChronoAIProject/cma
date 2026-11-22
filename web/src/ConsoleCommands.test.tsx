@@ -1,4 +1,3 @@
-import { expandNavigationFilters } from './test/select';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
@@ -125,11 +124,10 @@ it('keeps global New agent unscoped and existing-Sandbox creation in its row men
     ),
   );
   expect(onCreate).toHaveBeenLastCalledWith({ kind: 'new_agent' });
-  await expandNavigationFilters(actor);
   await actor.click(
     within(screen.getByRole('complementary', { name: 'Application navigation' })).getByRole(
       'button',
-      { name: 'Manage environments' },
+      { name: 'Environments' },
     ),
   );
   await actor.click(await screen.findByRole('button', { name: 'Options for Atlas' }));

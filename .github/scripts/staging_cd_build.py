@@ -23,7 +23,7 @@ ALLOWED_ARGUMENTS = {"RUNTIME_DESKTOP", "OMARCHY_CMA_BASE", "CHRONO_WEB_REPLICA_
 PROCESS_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")
 
 
-def command(args, *, cwd=None, env=None, data=None, timeout=3600, progress=None):
+def command(args, *, cwd=None, env=None, data=None, timeout=3600, progress=None, dockerfile=None):
     child = {key: value for key, value in os.environ.items() if key in PROCESS_KEYS}
     if env:
         child.update(env)
@@ -33,7 +33,7 @@ def command(args, *, cwd=None, env=None, data=None, timeout=3600, progress=None)
     result = subprocess.run(args, cwd=cwd, env=child, input=data, capture_output=True,
                             timeout=timeout, check=False)
     if progress is not None:
-        progress.update(summarize(result.stderr))
+        progress.update(summarize(result.stderr, dockerfile=dockerfile))
     if result.returncode != 0:
         # The cause marks transport failures, so only a caller's explicit retry
         # policy can repeat this command; the refusal itself stays fixed text.
@@ -123,7 +123,8 @@ def build(root, reservation, directory, runner=command, *, source=None, cache=No
         args += ["--build-arg", name + "=" + argument]
     if cache is not None:
         args += cache.build_options()
-    options = {"progress": progress} if progress is not None and runner is command else {}
+    # The recipe's Dockerfile binds which test stages may name failing tests.
+    options = {"progress": progress, "dockerfile": value["dockerfile"]} if progress is not None and runner is command else {}
     if cache is not None:
         options["env"] = cache.build_environment()
     runner([*args, str(source)], timeout=14400, **options)

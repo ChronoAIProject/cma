@@ -95,12 +95,11 @@ it('opens Sandbox management through Tasks filters and returns to the selected f
   const task = screen.getByRole('treeitem', { name: /Agent one/ });
   task.focus();
   await user.keyboard('{Enter}');
-  await expandNavigationFilters(user);
-  await user.click(screen.getByRole('button', { name: 'Manage environments' }));
-  expect(screen.getByRole('button', { name: 'Back to tasks' })).toHaveFocus();
+  await user.click(screen.getByRole('button', { name: 'Environments' }));
+  expect(screen.getByRole('button', { name: 'Environments' })).toHaveFocus();
   await user.click(screen.getByRole('link', { name: /Atlas/ }));
   expect(screen.getByRole('treeitem', { name: /^Atlas/ })).toHaveAttribute('aria-selected', 'true');
-  await user.click(screen.getByRole('button', { name: 'Back to tasks' }));
+  await user.click(screen.getByRole('button', { name: 'Tasks' }));
   expect(screen.getByRole('treeitem', { name: /Agent one/ })).toHaveAttribute(
     'aria-selected',
     'true',
@@ -166,7 +165,7 @@ it('restores shared task scope, focus and scroll after browsing a different envi
     const [scope, onScope] = useState('shared');
     const [route, onNavigate] = useState<AppRoute>({ kind: 'agent', agentId: 'agt_shared' });
     return (
-      <div className="sidebar__navigation" data-testid="navigation-scroll">
+      <div className="sidebar__navigation">
         <ManagerNavigation
           {...taskNavigationProps}
           scope={scope}
@@ -190,15 +189,14 @@ it('restores shared task scope, focus and scroll after browsing a different envi
   render(<Navigation />);
   const row = await screen.findByRole('treeitem', { name: /^Shared research/ });
   row.focus();
-  const scrollport = screen.getByTestId('navigation-scroll');
+  const scrollport = row.closest<HTMLElement>('.manager-navigation__list')!;
   scrollport.scrollTop = 240;
-  await expandNavigationFilters(user);
-  await user.click(screen.getByRole('button', { name: 'Manage environments' }));
+  await user.click(screen.getByRole('button', { name: 'Environments' }));
   await expandNavigationFilters(user);
   await chooseOption(user, 'Navigation scope', 'Personal');
   await user.click(screen.getByRole('link', { name: /Atlas/ }));
   scrollport.scrollTop = 0;
-  await user.click(screen.getByRole('button', { name: 'Back to tasks' }));
+  await user.click(screen.getByRole('button', { name: 'Tasks' }));
   expect(screen.getByRole('button', { name: 'Navigation scope' })).toHaveTextContent('Shared');
   expect(await screen.findByRole('treeitem', { name: /^Shared research/ })).toHaveFocus();
   expect(screen.getByRole('treeitem', { name: /^Shared research/ })).toHaveAttribute(

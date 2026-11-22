@@ -35,9 +35,20 @@ class UncertainPush(Refusal):
 # Inventory reads grow with every published tag. At 30 s, hosted runs reached
 # the reservation push with less than the 7 s it requires and failed.
 ALLOCATION_SECONDS = 120
-# A complete ref advertisement and parallel owner readbacks need time after the
-# single remote write, and a push never starts in the final second.
-PUSH_SETTLEMENT_SECONDS = 6
+# GitHub can take longer than 10 s to accept an atomic push of several tags
+# and claims, especially while tag rulesets are evaluated. A client that gives
+# up earlier leaves the server to commit the push after it has stopped
+# listening, so the write gets a longer bound.
+PUSH_SECONDS = 30
+# After a timed-out push, the server may still commit it. Settlement polls the
+# exact refs with waits of 1, 2, 4 and 8 s, then 8 s each, for as long as the
+# allocation budget allows. Every poll starts with this reserve still left: it
+# covers that final read and the parallel owner readbacks of a settled batch.
+VERIFY_RESERVE_SECONDS = 5
+SETTLE_WAITS = (1, 2, 4, 8)
+# A push never starts unless the full ladder of waits and the verification
+# reserve still fit after it has used its whole bound: the guaranteed minimum.
+PUSH_SETTLEMENT_SECONDS = sum(SETTLE_WAITS) + VERIFY_RESERVE_SECONDS
 PUSH_RESERVE_SECONDS = PUSH_SETTLEMENT_SECONDS + 1
 
 
@@ -69,6 +80,11 @@ class AllocationIO:
         code = status.partition(" ")[2].partition(" ")[0] if status.startswith("HTTP/") else ""
         if result.returncode == 1 and (not code or code == "429" or code.startswith("5")):
             raise TransientRead("Allocation read failed")
+        # Git exits 128 for every fatal error. Only its diagnostic tells an
+        # outage (an HTTP 502, a reset connection) from a refusal that persists.
+        if (args[:1] == ["git"] and result.returncode == 128
+                and ci_retry.cli_message(result.stderr) == ci_retry.TRANSIENT):
+            raise TransientRead("Allocation read failed") from ci_retry.cli_cause(result.stderr)
         return result
 
     def read(self, args, **kwargs):
@@ -80,7 +96,7 @@ class AllocationIO:
         available = self.remaining() - (PUSH_SETTLEMENT_SECONDS if push else 0)
         require(available >= PUSH_RESERVE_SECONDS - PUSH_SETTLEMENT_SECONDS if push else available > 0,
                 "Allocation deadline exceeded")
-        kwargs["timeout"] = min(10, available)
+        kwargs["timeout"] = min(PUSH_SECONDS if push else 10, available)
         try:
             return self.runner(args, **kwargs)
         except (OSError, subprocess.SubprocessError):

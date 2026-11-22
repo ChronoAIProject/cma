@@ -263,7 +263,10 @@ jobs:
           # from the default branch, and develop is the default branch, so the
           # layers the merged pull request built are still warm here.
           cache-from: type=gha,scope=${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+          # A layer export is an optimisation. A failed or refused export (a
+          # read-only cache once the Actions budget is reached) must never fail
+          # the release build that already produced the image.
+          cache-to: type=gha,mode=max,ignore-error=true,scope=${{ matrix.component }}
 
       - name: Verify web bundle identity against image metadata
         if: success() && steps.reconcile.outputs.reuse == 'false' && matrix.component == 'web'

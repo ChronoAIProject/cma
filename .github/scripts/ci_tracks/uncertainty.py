@@ -1,7 +1,8 @@
 """Fixed conservative-selection reasons, separate from integrity refusals."""
 
 REASONS = frozenset({'input-analysis-uncertain', 'shallow-history',
-                     'comparison-boundary-not-found', 'unknown-input-path'})
+                     'comparison-boundary-not-found', 'unknown-input-path',
+                     'release-base-unmodeled'})
 
 
 class SelectionIntegrityError(ValueError):

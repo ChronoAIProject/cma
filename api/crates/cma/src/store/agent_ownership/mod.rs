@@ -260,4 +260,6 @@ fn known_aborted(error: &mongodb::error::Error) -> bool {
 }
 
 #[cfg(test)]
+pub(crate) mod command_test_support;
+#[cfg(test)]
 mod fence_error_tests;

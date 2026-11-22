@@ -5,7 +5,14 @@ import { connectionClient } from '../connections/client';
 import { accessRequests } from './accessRequests';
 import { AgentSurface } from './AgentSurface';
 import { useAgentController } from './controller';
-import { accepted, harness, item, json, page } from './transport/controller.fixture';
+import {
+  accepted,
+  harness,
+  item,
+  json,
+  page,
+  completedInputReceipt,
+} from './transport/controller.fixture';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -143,12 +150,14 @@ it.each([false, true])(
       if (recover) {
         const recovery = await screen.findByRole('button', { name: 'Recover pending request' });
         fireEvent.change(composer, { target: { value: 'Keep this separate draft.' } });
+        fixture.inputReceipt.mockImplementationOnce(async () => completedInputReceipt());
         fireEvent.click(recovery);
-        await waitFor(() => expect(fixture.post).toHaveBeenCalledTimes(2));
-        expect(fixture.post.mock.calls[1]![0]!.body).toBe(original.body);
-        expect(new Headers(fixture.post.mock.calls[1]![0]!.headers).get('Idempotency-Key')).toBe(
-          new Headers(original.headers).get('Idempotency-Key'),
-        );
+        await waitFor(() => expect(fixture.inputReceipt).toHaveBeenCalledTimes(2));
+        expect(fixture.post).toHaveBeenCalledOnce();
+        expect(fixture.inputReceipt.mock.lastCall![0]!.body).toBe(original.body);
+        expect(
+          new Headers(fixture.inputReceipt.mock.lastCall![0]!.headers).get('Idempotency-Key'),
+        ).toBe(new Headers(original.headers).get('Idempotency-Key'));
         expect(composer).toHaveValue('Keep this separate draft.');
       } else await act(async () => acknowledge(accepted()));
       await waitFor(() =>
@@ -224,17 +233,20 @@ it('shows a saved generated result after a pending read, reopens it, and recover
   const composer = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(composer, { target: { value: 'Keep my existing notes.' } });
   let acknowledge!: (response: Response) => void;
-  fixture.post
-    .mockRejectedValueOnce(new TypeError('Receipt lost'))
-    .mockImplementationOnce(() => new Promise<Response>((resolve) => (acknowledge = resolve)));
+  fixture.post.mockRejectedValueOnce(new TypeError('Receipt lost'));
   fireEvent.click(restored);
   await screen.findByText('Awaiting confirmation');
   expect(restored).toBeDisabled();
   expect(composer).toHaveValue('Keep my existing notes.');
-  fireEvent.click(screen.getByRole('button', { name: 'Recover pending request' }));
-  await waitFor(() => expect(fixture.post).toHaveBeenCalledTimes(2));
+  const recover = await screen.findByRole('button', { name: 'Recover pending request' });
+  fixture.inputReceipt.mockImplementationOnce(
+    () => new Promise<Response>((resolve) => (acknowledge = resolve)),
+  );
+  fireEvent.click(recover);
+  await waitFor(() => expect(fixture.inputReceipt).toHaveBeenCalledTimes(2));
+  expect(fixture.post).toHaveBeenCalledOnce();
   expect(confirmations()).toEqual([]);
-  await act(async () => acknowledge(accepted()));
+  await act(async () => acknowledge(completedInputReceipt()));
   await waitFor(() => expect(screen.queryByText('Suggested follow-ups')).not.toBeInTheDocument());
   const original = fixture.post.mock.calls[0]![0]!;
   expect(JSON.parse(String(original.body))).toEqual({
@@ -242,8 +254,8 @@ it('shows a saved generated result after a pending read, reopens it, and recover
     stream: true,
     answer_context: saved.set.scope,
   });
-  expect(fixture.post.mock.calls[1]![0]!.body).toBe(original.body);
-  expect(new Headers(fixture.post.mock.calls[1]![0]!.headers).get('Idempotency-Key')).toBe(
+  expect(fixture.inputReceipt.mock.lastCall![0]!.body).toBe(original.body);
+  expect(new Headers(fixture.inputReceipt.mock.lastCall![0]!.headers).get('Idempotency-Key')).toBe(
     new Headers(original.headers).get('Idempotency-Key'),
   );
   expect(composer).toHaveValue('Keep my existing notes.');
