@@ -19,6 +19,22 @@ function nativeLayoutDiagnostic(page: Page) {
   });
 }
 
+async function freshDiagnosticBoundary(page: Page, baseURL: string) {
+  const result = await setupActivity(page, baseURL);
+  await expect.poll(() => result.layoutTelemetry.length).toBe(result.layoutDiagnostics.length);
+  expect(result.layoutDiagnostics.length).toBeLessThanOrEqual(1);
+  expect(result.browserErrors).toEqual([]);
+  expect(result.boundary.errors).toEqual([]);
+  expect(result.boundary.unexpected).toEqual([]);
+  expect(result.boundary.writes).toEqual([]);
+  expect(result.state.writes).toEqual([]);
+  const automaticTelemetry = result.layoutDiagnostics.length === 0 ? 1 : 0;
+  // Validate setup first, then isolate a fresh allowance without resetting app telemetry.
+  result.layoutDiagnostics.length = 0;
+  result.layoutTelemetry.length = 0;
+  return { ...result, automaticTelemetry };
+}
+
 export function registerRedesignChannelCases() {
   for (const theme of ['dark', 'light'] as const) {
     for (const size of [
@@ -182,6 +198,70 @@ export function registerRedesignChannelCases() {
 
   test.describe('narrow error boundary', () => {
     test.use({ viewport: { width: 390, height: 844 } });
+    for (const guard of ['trust', 'phase'] as const) {
+      test(`LOCAL Activity fixture isolates ${guard} rejection at eligible width`, async ({
+        page,
+        baseURL,
+      }) => {
+        const {
+          browserErrors,
+          boundary,
+          state,
+          layoutDiagnostics,
+          layoutTelemetry,
+          setPhase,
+          automaticTelemetry,
+        } = await freshDiagnosticBoundary(page, baseURL!);
+        if (guard === 'trust') {
+          await setPhase('selecting channel');
+          await page.evaluate(() => {
+            window.dispatchEvent(
+              new ErrorEvent('error', {
+                message: 'ResizeObserver loop completed with undelivered notifications.',
+                filename: location.href,
+                lineno: 0,
+                colno: 0,
+              }),
+            );
+          });
+        } else await nativeLayoutDiagnostic(page);
+        await expect.poll(() => layoutDiagnostics.length + browserErrors.length).toBe(1);
+        expect(layoutDiagnostics).toEqual([]);
+        expect(browserErrors).toEqual([
+          expect.objectContaining({
+            message: 'ResizeObserver loop completed with undelivered notifications.',
+            filename: new URL('/event-gateway', baseURL!).href,
+            lineno: 0,
+            colno: 0,
+            trusted: guard === 'phase',
+            hasError: false,
+            stack: undefined,
+            phase: guard === 'trust' ? 'selecting channel' : 'reading Activity',
+          }),
+        ]);
+        await page.evaluate(() =>
+          fetch('/api/v1/telemetry/browser', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kind: 'uncaught_error' }),
+          }),
+        );
+        const attempts = automaticTelemetry + 1;
+        await expect
+          .poll(() => boundary.unexpected)
+          .toEqual(Array.from({ length: attempts }, () => 'POST /api/v1/telemetry/browser'));
+        expect(boundary.writes).toEqual(
+          Array.from({ length: attempts }, () => ({
+            path: '/api/v1/telemetry/browser',
+            body: { kind: 'uncaught_error' },
+            key: undefined,
+          })),
+        );
+        expect(layoutTelemetry).toEqual([]);
+        expect(boundary.errors).toEqual([]);
+        expect(state.writes).toEqual([]);
+      });
+    }
     test('LOCAL Activity fixture rejects later errors and unsolicited telemetry after layout qualification', async ({
       page,
       baseURL,
