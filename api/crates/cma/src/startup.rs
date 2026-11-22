@@ -146,12 +146,25 @@ pub(crate) async fn serve() -> Result<(), String> {
         timing_basis = "serve_entry", outcome = "ok", "API startup serving entry");
     let (http_stop, http_signal) = tokio::sync::watch::channel(false);
     let server_result = {
-        let server = axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .with_graceful_shutdown(signalled(http_signal))
-        .into_future();
+        let server: std::pin::Pin<
+            Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>,
+        > = match config.http_connection_max_age {
+            // Bounded connection age lets long-lived clients rebalance across replicas.
+            Some(age) => Box::pin(crate::http_serving::serve(
+                listener,
+                app,
+                age,
+                signalled(http_signal),
+            )),
+            None => Box::pin(
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .with_graceful_shutdown(signalled(http_signal))
+                .into_future(),
+            ),
+        };
         tokio::pin!(server);
         tokio::select! {
             result = &mut server => result.map_err(|error| format!("HTTP server failed: {error}")),

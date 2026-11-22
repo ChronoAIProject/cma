@@ -151,6 +151,12 @@ export function operatorClient() {
       .fn<OperatorClient['admin']['retireProfile']>()
       .mockResolvedValue({ ...profileRow, retired_at: now }),
     readSettings: vi.fn<OperatorClient['admin']['readSettings']>().mockResolvedValue(stored),
+    readSpend: vi
+      .fn<OperatorClient['admin']['readSpend']>()
+      .mockResolvedValue({ metering_enabled: false, settings_revision: 1 }),
+    recordSpendObservation: vi
+      .fn<OperatorClient['admin']['recordSpendObservation']>()
+      .mockResolvedValue({ metering_enabled: false, settings_revision: 1 }),
     replaceSettings: vi
       .fn<OperatorClient['admin']['replaceSettings']>()
       .mockImplementation(async (body) => ({

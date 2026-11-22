@@ -9,6 +9,7 @@ mod origins;
 pub(crate) use origins::validate_origin;
 use origins::{parse_api_advertisement, required_origin, validate_public_api_url};
 
+pub mod activity_history;
 mod cache;
 mod console;
 mod delivery;
