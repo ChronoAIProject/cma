@@ -12,6 +12,8 @@ use axum::{
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
+mod relogin;
+
 const DRIVE: &str = "00000000-0000-4000-8000-000000000001";
 const GITHUB: &str = "00000000-0000-4000-8000-000000000002";
 struct Peer {
@@ -21,6 +23,7 @@ struct Peer {
     status: Mutex<StatusCode>,
     exchange: Mutex<Vec<BTreeMap<String, String>>>,
     identity: Mutex<Value>,
+    retained_identity: Mutex<Value>,
 }
 struct Fixture {
     auth: Arc<AuthState>,
@@ -42,7 +45,7 @@ fn service(id: &str, slug: &str) -> Value {
         "is_active":true,"credential_source":{"type":"personal"}})
 }
 fn identity() -> Value {
-    json!({"active":true,"sub":"owner","client_id":"cma-fixture","iss":"https://identity.example",
+    json!({"active":true,"sub":"owner","client_id":null,"iss":"https://identity.example",
         "token_type":"access","exp":4102444800_u64,"permissions":["cma:*"]})
 }
 async fn consents(State(peer): State<Arc<Peer>>) -> impl IntoResponse {
@@ -58,6 +61,8 @@ async fn introspect(
     assert_eq!(form["client_id"], "cma-fixture");
     Json(if form["token"] == "exchanged-fixture" {
         peer.identity.lock().await.clone()
+    } else if form["token"] == "retained-fixture" || form["token"] == "refreshed-fixture" {
+        peer.retained_identity.lock().await.clone()
     } else {
         identity()
     })
@@ -76,6 +81,7 @@ impl Fixture {
             status: Mutex::new(StatusCode::OK),
             exchange: Mutex::new(Vec::new()),
             identity: Mutex::new(identity()),
+            retained_identity: Mutex::new(identity()),
         });
         let app =
             Router::new()
@@ -98,12 +104,29 @@ impl Fixture {
                     }),
                 )
                 .route(
+                    "/api/v1/proxy/s/api-github",
+                    get(|headers: axum::http::HeaderMap| async move {
+                        if headers.get("authorization").is_some_and(|value| value == "Bearer new-sign-in-fixture") {
+                            StatusCode::NO_CONTENT
+                        } else {
+                            StatusCode::FORBIDDEN
+                        }
+                    }),
+                )
+                .route(
                     "/oauth/token",
                     post(
                         |State(peer): State<Arc<Peer>>,
                          Form(form): Form<BTreeMap<String, String>>| async move {
+                            let token = if form.get("grant_type").is_some_and(|value| value == "refresh_token") {
+                                "refreshed-fixture"
+                            } else if form.get("redirect_uri").is_some_and(|value| value.ends_with("/auth/callback")) {
+                                "new-sign-in-fixture"
+                            } else {
+                                "exchanged-fixture"
+                            };
                             peer.exchange.lock().await.push(form);
-                            Json(json!({"access_token":"exchanged-fixture"}))
+                            Json(json!({"access_token":token,"refresh_token":"refreshed-refresh-fixture","expires_in":3600}))
                         },
                     ),
                 )

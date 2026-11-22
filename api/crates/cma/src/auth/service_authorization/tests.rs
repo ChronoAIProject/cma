@@ -101,6 +101,9 @@ impl GrantAuthority for SyntheticGrants {
         code: &str,
         verifier: &SecretValue,
     ) -> Result<Option<ConsentIdentity>, StoreError> {
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(StoreError::Unavailable("synthetic outage".into()));
+        }
         assert_eq!(
             *self.challenge.lock().await,
             code_challenge(verifier.expose())
@@ -111,6 +114,7 @@ impl GrantAuthority for SyntheticGrants {
             self.missing.lock().await.clear();
         }
         Ok(Some(ConsentIdentity {
+            missing: self.missing.lock().await.clone(),
             subject: if code == "different-account" {
                 SubjectId::new("someone-else")
             } else {
@@ -274,10 +278,33 @@ async fn partial_grant_requests_only_missing_scope_and_redeems_once_across_repli
     assert!(!accepted.headers().contains_key(header::SET_COOKIE));
     assert_eq!(accepted.headers()[header::REFERRER_POLICY], "no-referrer");
     let page = body(accepted).await;
-    assert!(page.contains("Service authorization verified"));
+    assert!(page.contains("Consent saved. Sign in again"));
+    assert!(page.contains("href=\"/auth/login?return_to=%2F\">Sign in again"));
     assert!(page.contains("href=\"/\">Return to draft"));
     assert!(!page.contains("<form"));
     assert_eq!(f.grants.redemptions.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_complete_grant_offers_explicit_sign_in_without_another_consent_attempt() {
+    let f = Fixture::new().await;
+    f.grants.missing.lock().await.clear();
+    let response = start(
+        &f.a,
+        &f.cookie,
+        "https://app.example",
+        "agent",
+        "/agents/original",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let result: serde_json::Value = serde_json::from_str(&body(response).await).unwrap();
+    assert_eq!(
+        result["hosted_url"],
+        "https://app.example/auth/login?return_to=%2Fagents%2Foriginal"
+    );
+    assert!(f.grants.challenge.lock().await.is_empty());
+    assert_eq!(f.grants.redemptions.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

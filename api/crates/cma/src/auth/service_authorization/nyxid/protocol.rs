@@ -154,7 +154,11 @@ pub(super) fn missing(
         _ => None,
     };
     if grant.is_some_and(|grant| {
-        grant.legacy_unrestricted || !grant.scopes.split_whitespace().any(|scope| scope == "proxy")
+        grant.legacy_unrestricted
+            || !grant
+                .scopes
+                .split_whitespace()
+                .any(|scope| scope == "proxy")
     }) {
         return Err(unavailable());
     }
@@ -200,7 +204,9 @@ impl Introspection {
     pub fn matches(&self, issuer: &Url, client: &str, subject: &SubjectId) -> bool {
         self.active
             && self.sub.as_deref() == Some(subject.as_str())
-            && self.client_id.as_deref() == Some(client)
+            // NyxID omits client_id for ordinary OAuth tokens. The code was
+            // exchanged with this client and its exact redirect/PKCE binding.
+            && self.client_id.as_deref().is_none_or(|issued| issued == client)
             && self.token_type.as_deref() == Some("access")
             && self
                 .iss

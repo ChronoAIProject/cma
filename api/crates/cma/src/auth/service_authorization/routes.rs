@@ -158,15 +158,15 @@ async fn complete(
     if identity.subject != intent.subject || identity.issuer != intent.issuer {
         return Err(RecoveryError::Forbidden);
     }
-    match provider_evidence("required_grant_readback", provider.missing(auth, intent)).await {
-        Some(missing) if missing.is_empty() => Ok(Outcome::Verified),
-        Some(missing) if missing.is_subset(&intent.required) => Ok(Outcome::Incomplete),
+    match identity.missing {
+        missing if missing.is_empty() => Ok(Outcome::SignInRequired),
+        missing if missing.is_subset(&intent.required) => Ok(Outcome::Incomplete),
         _ => Ok(Outcome::Unknown),
     }
 }
 
 enum Outcome {
-    Verified,
+    SignInRequired,
     Incomplete,
     Cancelled,
     Unknown,
@@ -174,8 +174,12 @@ enum Outcome {
 
 impl Outcome {
     fn page(self, return_to: &str) -> Response {
+        let sign_in = matches!(self, Self::SignInRequired);
         let (code, message) = match self {
-            Self::Verified => ("verified", "Service authorization verified"),
+            Self::SignInRequired => (
+                "sign_in_required",
+                "Consent saved. Sign in again to use the authorized services.",
+            ),
             Self::Incomplete => ("incomplete", "Required services still need authorization"),
             Self::Cancelled => ("cancelled", "Service authorization cancelled"),
             Self::Unknown => ("unknown", "Service authorization could not be verified"),
@@ -186,13 +190,19 @@ impl Outcome {
             .replace('"', "&quot;")
             .replace('<', "&lt;")
             .replace('>', "&gt;");
+        let login = if sign_in {
+            let path = login_path(return_to);
+            format!("<p>Your draft has not been submitted. Sign in with the same account, then review and submit it.</p><a href=\"{path}\">Sign in again</a> ")
+        } else {
+            String::new()
+        };
         (
             [
                 (header::CACHE_CONTROL, "private, no-store"),
                 (header::CONTENT_SECURITY_POLICY, "default-src 'none'; base-uri 'none'; frame-ancestors 'none'"),
             ],
             Html(format!(
-                "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><title>{message}</title><main><h1>{message}</h1><a href=\"{target}\">Return to draft</a></main></html>"
+                "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><title>{message}</title><main><h1>{message}</h1>{login}<a href=\"{target}\">Return to draft</a></main></html>"
             )),
         ).into_response()
     }

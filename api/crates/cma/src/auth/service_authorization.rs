@@ -61,6 +61,7 @@ pub(crate) enum GrantStatus {
 pub(crate) struct ConsentIdentity {
     pub subject: SubjectId,
     pub issuer: String,
+    pub missing: BTreeSet<ServiceId>,
 }
 
 /// Only a reviewed provider integration may implement a grant read or issue consent.
@@ -257,6 +258,13 @@ fn return_target(value: &str) -> Result<String, RecoveryError> {
         .ok_or(RecoveryError::Invalid)
 }
 
+fn login_path(return_to: &str) -> String {
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("return_to", return_to)
+        .finish();
+    format!("/auth/login?{query}")
+}
+
 fn provider_url(auth: &AuthState, url: &Url) -> bool {
     url.scheme() == "https"
         && url.username().is_empty()
@@ -321,7 +329,17 @@ pub(crate) async fn begin(
         .filter(|missing| missing.is_subset(&intent.required))
         .ok_or(RecoveryError::Unknown)?;
     if missing.is_empty() {
-        return Err(RecoveryError::Changed);
+        // Consent may cover the services while the retained token still has
+        // its original narrower scope. Only ordinary sign-in replaces custody.
+        live_session(auth, &key, subject).await?;
+        return Ok((
+            [(header::CACHE_CONTROL, "private, no-store")],
+            Json(serde_json::json!({
+                "owner": subject.as_str(),
+                "hosted_url": format!("{origin}{}", login_path(&intent.return_to)),
+            })),
+        )
+            .into_response());
     }
     intent.requested = missing;
     let state = random_token();

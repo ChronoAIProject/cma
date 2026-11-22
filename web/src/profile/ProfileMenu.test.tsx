@@ -16,6 +16,27 @@ const user = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('account menu', () => {
+  it.each([401, 403, 503])(
+    'offers ordinary sign-in only for a confirmed 401 (%i)',
+    async (status) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(null, { status })),
+      );
+      const actor = userEvent.setup();
+      render(<ProfileMenu user={{ ...user, serviceAuthorization: true }} onSignOut={vi.fn()} />);
+      await actor.click(screen.getByRole('button', { name: /account menu/i }));
+      await actor.click(screen.getByRole('menuitem', { name: 'Service authorization' }));
+      if (status === 401) {
+        const link = await screen.findByRole('link', { name: 'Sign in again' });
+        expect(link).toHaveAttribute('href', '/auth/login?return_to=%2F');
+        expect(link).toHaveAttribute('target', '_blank');
+      } else {
+        await screen.findByText('The account grant status could not be verified.');
+        expect(screen.queryByRole('link', { name: 'Sign in again' })).toBeNull();
+      }
+    },
+  );
   it('keeps Docs, appearance and sign out without service or developer actions', async () => {
     const onSignOut = vi.fn();
     const onNavigate = vi.fn();

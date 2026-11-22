@@ -99,12 +99,21 @@ impl Nyxid {
         auth: &AuthState,
         intent: &RecoveryIntent,
     ) -> Result<(Option<Consent>, BTreeMap<ServiceId, Service>), StoreError> {
+        let token = self.token(auth, &intent.subject).await?;
+        self.evidence_with_token(auth, intent, &token).await
+    }
+
+    async fn evidence_with_token(
+        &self,
+        auth: &AuthState,
+        intent: &RecoveryIntent,
+        token: &SecretValue,
+    ) -> Result<(Option<Consent>, BTreeMap<ServiceId, Service>), StoreError> {
         if intent.issuer != self.issuer.as_str() || intent.required.len() > 100 {
             return Err(protocol::unavailable());
         }
-        let token = self.token(auth, &intent.subject).await?;
         let (base, _, _) = self.client(auth)?;
-        let consent = self.consent(auth, &token).await?;
+        let consent = self.consent(auth, token).await?;
         let services: protocol::Services = protocol::read(
             auth.http
                 .get(format!("{base}/api/v1/user-services"))
@@ -250,13 +259,14 @@ impl GrantAuthority for Nyxid {
             return Ok(None);
         }
         // Read back with the exchanged credential; never install it in the original login.
-        let grant = self.consent(auth, &token).await?;
+        let (grant, services) = self.evidence_with_token(auth, intent, &token).await?;
         if grant.is_none() {
             return Ok(None);
         }
         Ok(Some(ConsentIdentity {
             subject: intent.subject.clone(),
             issuer: intent.issuer.clone(),
+            missing: protocol::missing(grant.as_ref(), &services)?,
         }))
     }
 }

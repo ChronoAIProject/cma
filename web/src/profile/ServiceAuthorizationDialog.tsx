@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { accountGrant } from '../auth/serviceAuthorization';
+import { signInPath } from '../auth/nyxid';
 import { Modal } from '../ui/Modal';
 
 const STATUS = {
@@ -12,6 +13,8 @@ const STATUS = {
     'No current account grant was found. It may not have been granted or may have been revoked.',
   revoked: 'NyxID confirms the account grant was revoked.',
   unknown: 'The account grant status could not be verified.',
+  sign_in_required:
+    'Your sign-in is no longer valid. Sign in again with the same account to continue.',
 } as const;
 
 export function ServiceAuthorizationDialog({
@@ -38,6 +41,15 @@ export function ServiceAuthorizationDialog({
   return (
     <Modal open title="Service authorization" onClose={onClose}>
       <p role="status">{grant === undefined ? 'Checking account grant…' : STATUS[grant.status]}</p>
+      {grant?.status === 'sign_in_required' && (
+        <a
+          href={signInPath(window.location.pathname + window.location.search)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Sign in again
+        </a>
+      )}
       {grant?.managementUrl !== undefined && (
         <a href={grant.managementUrl} target="_blank" rel="noreferrer">
           Manage authorized apps in NyxID
