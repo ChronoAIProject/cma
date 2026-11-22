@@ -74,8 +74,10 @@ export async function connectionWizardFixture(
   };
   const target = { type: 'launch' as const, id: launch.id };
   let upstreamUnavailable = false;
+  let independentlyConnected = false;
   const startRequests: { bytes: string; intent: ConnectionIntent }[] = [];
   const admissions: { bytes: string; intent: ConnectionIntent }[] = [];
+  const cancellations: { target: typeof target; active: Omit<ConnectionIntent, 'target'> }[] = [];
   const links = new Map<string, 'pending' | 'completed'>();
   const checks: Record<string, unknown>[] = [];
   const unexpected: string[] = [];
@@ -140,7 +142,9 @@ export async function connectionWizardFixture(
         assert.deepEqual(body.target, target);
         const active = body.active as ConnectionIntent | undefined;
         if (active) assert.equal(active.service_id, selectedService.serviceId);
-        const complete = active !== undefined && links.get(active.intent_id) === 'completed';
+        const complete =
+          independentlyConnected ||
+          (active !== undefined && links.get(active.intent_id) === 'completed');
         return reply({
           owner,
           ready: complete,
@@ -156,6 +160,14 @@ export async function connectionWizardFixture(
             },
           ],
         });
+      }
+      if (path === '/auth/connections/cancel') {
+        assert.equal(request.method, 'POST');
+        assert.deepEqual(body.target, target);
+        assert.equal(body.active.service_id, selectedService.serviceId);
+        assert.ok(links.has(body.active.intent_id));
+        cancellations.push(body);
+        return reply({});
       }
       if (path === '/api/v1/triggers/public/public-fixture/launches') {
         creates += 1;
@@ -181,7 +193,10 @@ export async function connectionWizardFixture(
           },
         });
       if (path === `/api/v1/launches/${launch.id}/start`) {
-        assert.equal([...links.values()].filter((state) => state === 'completed').length, 1);
+        assert.ok(
+          independentlyConnected ||
+            [...links.values()].filter((state) => state === 'completed').length === 1,
+        );
         starts += 1;
         launch = {
           ...launch,
@@ -270,6 +285,7 @@ export async function connectionWizardFixture(
     h,
     boundary,
     admissions,
+    cancellations,
     startRequests,
     providerSubmissions: provider.submissions,
     links,
@@ -284,6 +300,9 @@ export async function connectionWizardFixture(
     },
     set upstreamUnavailable(value: boolean) {
       upstreamUnavailable = value;
+    },
+    set independentlyConnected(value: boolean) {
+      independentlyConnected = value;
     },
     set invalidReply(value: 'owner' | 'intent' | 'service') {
       invalidReply = value;
