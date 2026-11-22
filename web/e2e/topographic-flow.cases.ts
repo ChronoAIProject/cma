@@ -196,6 +196,52 @@ export function registerTopographicFlowCases() {
     await expect.poll(() => fixture.signIns.length).toBe(1);
   });
 
+  test('LOCAL topographic landing ignores a renderer arriving after focus stops playback', async ({
+    page,
+    baseURL,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await installFlowProbe(page);
+    const fixture = await flowFixture(page, baseURL!, 'landing');
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route('**/src/decoration/vendor/**/topographic-surface.ts*', async (route) => {
+      await held;
+      await route.continue();
+    });
+    try {
+      await page.goto('/');
+      const action = page.getByRole('button', { name: 'Get Started', exact: true });
+      await expect(action).toBeEnabled();
+      await expect.poll(() => fixture.chunks.length).toBe(1);
+      const renderer = fixture.chunks[0]!;
+      expect((await flowProbe(page)).contexts).toBe(1);
+      await action.focus();
+      await expect.poll(async () => (await flowProbe(page)).contextReleases).toBe(1);
+      release();
+      // Await the same browser module cache entry to prove its late result settled.
+      await page.evaluate(async (url) => {
+        await import(/* @vite-ignore */ url);
+      }, renderer);
+      await page.waitForTimeout(300);
+      const stopped = await flowProbe(page);
+      expect(stopped.draws).toEqual([]);
+      expect(stopped.allocations).toBe(0);
+      expect(stopped.pendingFrames).toEqual([]);
+      expect(stopped.errors).toEqual([]);
+      expect(stopped.fatal).toEqual([]);
+      expect(fixture.chunks.filter((url) => url === renderer)).toHaveLength(1);
+      expect(fixture.signIns).toEqual([]);
+      expect(fixture.boundary.writes).toEqual([]);
+      await action.press('Enter');
+      await expect.poll(() => fixture.signIns).toEqual(['/agent-manager']);
+    } finally {
+      release();
+    }
+  });
+
   test('LOCAL topographic landing reduced-motion transition permanently stops real draws', async ({
     page,
     baseURL,
