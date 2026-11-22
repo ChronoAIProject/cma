@@ -70,6 +70,17 @@ impl Fixture {
         self.client.database(&self.name)
     }
 
+    pub async fn auth_store(
+        &self,
+        key: &crate::store::AuthEncryptionKey,
+    ) -> Arc<crate::store::MongoAuthStore> {
+        Arc::new(
+            crate::store::MongoAuthStore::open(&self.client, &self.name, "revocation-test", key)
+                .await
+                .unwrap(),
+        )
+    }
+
     pub async fn new() -> Self {
         let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("Mongo replica-set URI required");
         let name = format!("cma_revocation_worker_{}", uuid::Uuid::new_v4().simple());

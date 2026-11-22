@@ -3,6 +3,7 @@ use layer2_core::resource_access::{ResourceAccessStore, ResourceCapability};
 
 mod effects;
 mod fixture;
+mod http;
 mod process;
 mod public_status;
 mod sweep;
