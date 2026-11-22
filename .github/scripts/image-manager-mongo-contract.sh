@@ -102,6 +102,8 @@ contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~tools::threads::ledger::mongo_tests::)'
 contract_nextest am run -E 'package(=cma) and (test(~store::isolation::tests::real_) or test(~store::migrations::tests::segments_runtime::))' \
   --run-ignored only --test-threads 1
+contract_nextest am run -E 'package(=cma) and test(=store::isolation::shared_schema_contract::real_shared_database_bootstrap_preserves_foreign_schemas)' \
+  --run-ignored only --test-threads 1
 
 contract_nextest eg run --run-ignored all --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=management) and test(~binary::compiled_binary_)'

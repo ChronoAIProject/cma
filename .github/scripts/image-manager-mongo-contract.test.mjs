@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const standingPermission = 'auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure';
+const sharedBootstrap = 'package(=cma) and test(=store::isolation::shared_schema_contract::real_shared_database_bootstrap_preserves_foreign_schemas)';
 
 // Independent inventory of every invocation, including replica delivery and
 // the exact owner-key contract. Check complete arguments in source and archive mode.
@@ -23,6 +24,7 @@ const selections = [
   ['package(=cmaeg) and kind(test) and binary(=github_source)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~tools::threads::ledger::mongo_tests::)', 'only', true],
   ['package(=cma) and (test(~store::isolation::tests::real_) or test(~store::migrations::tests::segments_runtime::))', 'only', false],
+  [sharedBootstrap, 'only', false],
   ['package(=cmaeg) and kind(test) and binary(=management) and test(~binary::compiled_binary_)', 'all', true],
   ['package(=cmaeg) and kind(test) and binary(=relay_ingress) and test(~runner_binary::)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=replica_admission_mongo)', 'only', true],
@@ -67,6 +69,10 @@ fs.appendFileSync(log, JSON.stringify({command,args,uri:process.env.CMA_IM_TEST_
   caller:process.env.CHRONO_TEST_MONGODB_URI,failpoint:process.env.CHRONO_TEST_MONGODB_FAILPOINT_URI})+'\\n');
 if (command === 'cargo') {
   if (scenario === 'test-error') process.exit(8);
+  if (args.includes(${JSON.stringify(sharedBootstrap)})) {
+    if (scenario === 'shared-bootstrap-missing') process.exit(4);
+    if (scenario === 'shared-bootstrap-error') process.exit(8);
+  }
 } else if (args[0] === 'run') {
   if (scenario === 'foreign-container') process.exit(9);
   console.log('fixture-container');
@@ -94,7 +100,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 30);
+      assert.equal(selections.length, 31);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];
@@ -130,6 +136,16 @@ for (const reuse of [false, true]) {
       assert.equal(f.calls().filter(row => row.command === 'cargo').length, scenario === 'foreign-container' ? 0 : scenario === 'test-error' ? 1 : selections.length);
     } finally { f.close(); }
   });
+  for (const scenario of ['shared-bootstrap-missing', 'shared-bootstrap-error']) test(`${reuse ? 'archive' : 'source'}: ${scenario} fails and cleans up the owned fixture`, () => {
+    const f = fixture(reuse, scenario);
+    try {
+      assert.throws(() => f.run('am'), error => error.status === (scenario === 'shared-bootstrap-missing' ? 4 : 8));
+      const calls = f.calls();
+      const cargo = calls.filter(row => row.command === 'cargo');
+      assert.equal(cargo.at(-1).args[cargo.at(-1).args.indexOf('-E') + 1], sharedBootstrap);
+      assert.deepEqual(calls.at(-1).args.slice(0, 3), ['rm', '--force', '--volumes']);
+    } finally { f.close(); }
+  });
 }
 
 for (const scenario of ['ci-source', 'empty-mode', 'bad-mode', 'sentinel-mode', 'missing-cargo', 'missing-binaries', 'malformed', 'moved-workspace', 'moved-target', 'moved-build']) test(`reject ${scenario} before fixture allocation`, () => {
@@ -154,14 +170,15 @@ for (const scenario of ['ci-source', 'empty-mode', 'bad-mode', 'sentinel-mode', 
   } finally { f.close(); }
 });
 
-for (const track of ['am', 'eg']) {
-  test(`${track}: authenticated fixture executes only the owning product selections`, () => {
-    const f = fixture(true);
+for (const reuse of [false, true]) for (const track of ['am', 'eg']) {
+  test(`${reuse ? 'archive' : 'source'} ${track}: authenticated fixture executes only the owning product selections`, () => {
+    const f = fixture(reuse);
     try {
       f.run(track);
       const calls = f.calls().filter(row => row.command === 'cargo');
       const expected = selections.filter(([selection]) => selection.includes('package(=cmaeg)') === (track === 'eg'));
       assert.deepEqual(calls.map(row => row.args[row.args.indexOf('-E') + 1]), expected.map(([selection]) => selection));
+      assert.equal(calls.filter(row => row.args.includes(sharedBootstrap)).length, track === 'am' ? 1 : 0);
       assert.ok(calls.length > 0);
     } finally { f.close(); }
   });

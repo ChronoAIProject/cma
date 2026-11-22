@@ -73,7 +73,7 @@
   },
   "store::isolation::shared_schema_contract::real_shared_database_bootstrap_preserves_foreign_schemas": {
     "kind": "fixture",
-    "reason": "Requires authenticated disposable service Mongo fixture."
+    "reason": "Requires authenticated disposable service Mongo fixture; selected explicitly by image-manager-mongo-contract.sh am."
   },
   "store::isolation::tests::real_agent_manager_credential_cannot_read_gateway_or_images": {
     "kind": "fixture",
