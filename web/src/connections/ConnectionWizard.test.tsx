@@ -32,6 +32,7 @@ beforeEach(() => {
   vi.spyOn(window, 'open').mockImplementation(() => popup as unknown as Window);
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.useRealTimers();
   vi.restoreAllMocks();
   sessionStorage.clear();
@@ -63,6 +64,29 @@ function fixture() {
   };
   return { client, connected, report };
 }
+
+it('reuses the unacknowledged connection intent after a lost start response', async () => {
+  vi.stubEnv('VITE_CONNECTION_INTENT_RECOVERY_ENABLED', 'true');
+  const { client, connected } = fixture();
+  services.slice(1).forEach((service) => connected.add(service));
+  vi.mocked(client.start).mockRejectedValueOnce(new Error('Synthetic start response lost'));
+  const ready = vi.fn();
+  render(<ConnectionWizard target={target} client={client} onReady={ready} />);
+  await flush();
+  fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
+  await flush();
+  expect(screen.getByRole('alert')).toHaveTextContent('Synthetic start response lost');
+  expect(client.start).toHaveBeenCalledOnce();
+  expect(ready).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
+  await flush();
+  const calls = vi.mocked(client.start).mock.calls;
+  expect(calls).toHaveLength(2);
+  expect(calls[1]?.[0]).toEqual(calls[0]?.[0]);
+  expect(calls[1]?.[1].service_id).toBe(calls[0]?.[1].service_id);
+  expect(calls[1]?.[1].intent_id).toBe(calls[0]?.[1].intent_id);
+  expect(ready).not.toHaveBeenCalled();
+});
 
 it('verifies a connected session without opening a dialog or taking focus', async () => {
   const { client, connected } = fixture();
