@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import staging_cd_allocate as allocation
+from staging_cd_allocate_progress import allocation_progress
 from staging_cd_allocation_fixture import AllocationServer
 from staging_cd_allocation_snapshot import AllocationConflict, AllocationSnapshot, SnapshotAPI
 from staging_cd_allocation_io import ALLOCATION_SECONDS, AllocationIO
@@ -40,7 +41,8 @@ class AllocationEntrypointTests(unittest.TestCase):
 
         `command(server, args, kwargs, advance)` replaces the git runner of every
         attempt and `failing_read(path)` may return a refusal to raise for an API
-        read. Each attempt gets its own budget on the shared fake clock.
+        read. Each attempt gets its own budget on the shared fake clock, and the
+        progress reporter reads the same clock, so its elapsed seconds are exact.
         """
         server = AllocationServer(0, components=("am", "web"))
         stores, output, events, outputs = [], io.StringIO(), [], {}
@@ -86,6 +88,7 @@ class AllocationEntrypointTests(unittest.TestCase):
                 patch.object(allocation, "event_identity"), patch.object(allocation, "GitHub", return_value=server), \
                 patch.object(allocation, "Reservations", side_effect=store), \
                 patch.object(allocation, "AllocationIO", side_effect=bounded), \
+                patch.object(allocation, "allocation_progress", lambda: allocation_progress(lambda: now[0])), \
                 patch.object(allocation, "RETRY_WAIT_SECONDS", (0, 0)), \
                 patch.object(allocation, "output", side_effect=emit) as emitted:
             status = allocation.main([])
