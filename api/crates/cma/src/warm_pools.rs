@@ -186,8 +186,9 @@ pub(crate) fn deployment_image(uri: String) -> RuntimeImage {
 const SYSTEM_ACTOR: &str = "cma-system";
 /// How long after the newest release older pools of the same kind wait before
 /// retiring, so rollout and bounded pre-selection work can settle. Startup
-/// readiness waits longer than this, because on a full node pool the new
-/// default can only become ready after older spare capacity drains.
+/// readiness waits at most this long. On a full node pool the new default can
+/// only become ready after older spare capacity drains, which the supervisor
+/// continues after a degraded start.
 pub(crate) const RELEASE_SETTLE: Duration = Duration::from_secs(120);
 
 #[derive(Clone)]

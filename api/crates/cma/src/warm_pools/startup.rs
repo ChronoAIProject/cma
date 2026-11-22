@@ -11,15 +11,20 @@ use super::{
 use layer3_adapter::agent_sandbox::NativePoolControl;
 use std::time::Duration;
 
-// Outlast the release settle window plus drain, scheduling and image pull, so a
-// promotion onto a full node pool usually finds warm capacity before serving.
-// An earlier 120 s bound gave up exactly when older capacity first became
-// eligible to drain. Elapsing is not a failure: startup serves `Degraded` and
-// the supervisor keeps filling the pool, since a new image's pull, scheduling
-// and spare drain can take longer than any bound that fits the probe. The 240 s
-// total leaves time for socket bind and sandbox initialization inside the
-// default 300 s startup probe.
-const STARTUP_WARMUP_LIMIT: Duration = Duration::from_secs(super::RELEASE_SETTLE.as_secs() + 120);
+// Wait no longer than the release settle window. Elapsing is not a failure:
+// startup serves `Degraded` while the supervisor keeps draining older spares
+// and filling the pool. A 120 s bound once "always gave up exactly when older
+// capacity became eligible to drain", but that only mattered while giving up
+// meant exiting. A longer wait now buys little and costs three things:
+// - All of startup must fit inside the default 300 s startup probe:
+//   composition and `ensure_default` before this wait, then socket bind,
+//   sandbox initialization, worker start and the first `/ready` after it.
+// - Once the settle window passes, the previous pool may be retired, and
+//   previous pods still serving during the rollout then refuse every new
+//   allocation against it. Waiting longer only keeps them serving longer.
+// - A rolling update starts replicas one after another, and each pays this
+//   wait inside the same rollout deadline.
+const STARTUP_WARMUP_LIMIT: Duration = super::RELEASE_SETTLE;
 
 /// How the bounded startup wait for the default runtime pool ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
