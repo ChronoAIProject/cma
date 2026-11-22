@@ -96,7 +96,13 @@ export function EventGatewayPortal({
         <ServiceBody visible={visible && !consumers}>
           <ServicePage
             service="event-gateway"
-            viewer={state.status === 'authenticated' ? `user:${state.user.id}` : state.status}
+            viewer={
+              state.status === 'authenticated'
+                ? `user:${state.user.id}`
+                : state.status === 'anonymous'
+                  ? 'anonymous'
+                  : undefined
+            }
             renderStatus={(content) => frame(content)}
           >
             {(session, denied, notice) => (

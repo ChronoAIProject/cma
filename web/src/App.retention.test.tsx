@@ -186,12 +186,21 @@ it('mounts the Gateway once its owner is known, so resolving sign-in keeps an op
 
 /** The Gateway's own session, answered for whoever the browser session names. */
 function gatewaySessions(subject: string) {
-  const gateway = { subject, checks: 0 };
+  const gateway: {
+    subject: string;
+    checks: number;
+    failure?: 'unavailable' | 'network' | 'signed out';
+  } = { subject, checks: 0 };
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) => {
       if (!url.endsWith('/auth/session')) return Response.json({ items: [] });
       gateway.checks += 1;
+      if (gateway.failure === 'network') throw new TypeError('Failed to fetch');
+      if (gateway.failure === 'unavailable')
+        return Response.json({ detail: 'Gateway unavailable' }, { status: 503 });
+      if (gateway.failure === 'signed out')
+        return Response.json({ detail: 'Signed out' }, { status: 401 });
       return Response.json({ ...session, subject: gateway.subject });
     }),
   );
@@ -224,6 +233,7 @@ it('keeps a Gateway editor through an identity outage and discards it for anothe
   await identity.answer(identity.owner('mock-subject'));
   await rechecked(before);
   expect(screen.getByRole('textbox', { name: 'Channel name' })).toBe(editor);
+  expect(editor).toBeVisible();
   expect(editor).toHaveValue('outage draft');
 
   // A different known owner does not inherit it.
@@ -255,6 +265,75 @@ it('does not show a draft from an identity outage to another account signed in e
   await identity.answer(identity.owner('second-subject'));
 
   await waitFor(() => expect(editor).not.toBeInTheDocument());
+});
+
+for (const failure of ['unavailable', 'network'] as const) {
+  it(`withholds one account's Gateway work from another while the Gateway is ${failure}`, async () => {
+    window.history.replaceState({}, '', '/event-gateway');
+    const { gateway, rechecked } = gatewaySessions('first-subject');
+    const identity = scriptedIdentity();
+    render(
+      <AuthContextProvider provider={identity.provider}>
+        <CmaClientProvider client={agentClient()}>
+          <App />
+        </CmaClientProvider>
+      </AuthContextProvider>,
+    );
+    await identity.answer({ status: 'error', message: 'identity response was not readable' });
+    const editor = await openChannelDraft('first account draft');
+    const channels = screen.getByRole('region', { name: 'Channels' });
+
+    // Another tab signs in as someone else, and the Gateway cannot confirm its
+    // session when this tab learns of it.
+    gateway.subject = 'second-subject';
+    gateway.failure = failure;
+    const before = gateway.checks;
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    await identity.answer(identity.owner('second-subject'));
+    const hiddenFromSecond = () => {
+      expect(editor).not.toBeVisible();
+      expect(screen.queryByRole('textbox', { name: 'Channel name' })).toBeNull();
+      expect(screen.queryByRole('region', { name: 'Channels' })).toBeNull();
+      expect(channels.closest('[inert]')).not.toBeNull();
+    };
+    hiddenFromSecond();
+    await rechecked(before);
+    hiddenFromSecond();
+    const retry = await screen.findByRole('button', { name: 'Try again' });
+    expect(retry).toBeVisible();
+
+    // Once the Gateway answers, the second account gets its own page.
+    gateway.failure = undefined;
+    fireEvent.click(retry);
+    expect(await screen.findByRole('region', { name: 'Channels' })).not.toBe(channels);
+    expect(editor).not.toBeInTheDocument();
+  });
+}
+
+it('checks the Gateway again when the owner resolves after it refused an unknown viewer', async () => {
+  window.history.replaceState({}, '', '/event-gateway');
+  const { gateway } = gatewaySessions('mock-subject');
+  gateway.failure = 'signed out';
+  const identity = scriptedIdentity();
+  render(
+    <AuthContextProvider provider={identity.provider}>
+      <CmaClientProvider client={agentClient()}>
+        <App />
+      </CmaClientProvider>
+    </AuthContextProvider>,
+  );
+  await identity.answer({ status: 'error', message: 'identity response was not readable' });
+  expect(await screen.findByRole('link', { name: 'Sign in with NyxID' })).toBeVisible();
+
+  gateway.failure = undefined;
+  act(() => {
+    window.dispatchEvent(new Event('online'));
+  });
+  await identity.answer(identity.owner('mock-subject'));
+  expect(await screen.findByRole('region', { name: 'Channel workspace' })).toBeVisible();
+  expect(screen.queryByRole('link', { name: 'Sign in with NyxID' })).toBeNull();
 });
 
 it('closes the narrow Gateway drawer after choosing New channel while keeping its editor reachable', async () => {
