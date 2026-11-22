@@ -21,9 +21,6 @@ mod workspace;
 
 pub mod store;
 
-#[cfg(any(test, feature = "test-support"))]
-pub mod initial_publication_contract;
-
 pub use admin::{
     ProfileAdminQuery, ProfileAdminStore, ProfileAdminSummary, ProfileKind, ProfileLocator,
 };

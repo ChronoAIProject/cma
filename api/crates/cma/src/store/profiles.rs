@@ -309,25 +309,18 @@ pub(super) async fn advance_publication(
     id: &str,
     expected: u64,
     published_at: &str,
-    initial_only: bool,
 ) -> Result<(Document, u32), PublishError> {
-    let mut filter = doc! {
-        "_id": id,
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-        "draft_version": signed(expected, "expected profile draft version")
-            .map_err(ProfileStoreError::Corrupt)
-            .map_err(PublishError::Domain)?,
-        "retired_at": Bson::Null,
-        "account_erasure_fenced": { "$ne": true },
-    };
-    if initial_only {
-        // Same draft version can be published repeatedly by the ordinary API.
-        // Initial creation must consume the unpublished state in this write.
-        filter.insert("last_revision", 0_i64);
-    }
     let profile = collection
         .find_one_and_update(
-            filter,
+            doc! {
+                "_id": id,
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "draft_version": signed(expected, "expected profile draft version")
+                    .map_err(ProfileStoreError::Corrupt)
+                    .map_err(PublishError::Domain)?,
+                "retired_at": Bson::Null,
+                "account_erasure_fenced": { "$ne": true },
+            },
             doc! {
                 "$inc": { "last_revision": 1_i64 },
                 "$set": { "latest_published_at": published_at },
