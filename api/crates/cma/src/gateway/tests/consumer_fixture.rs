@@ -77,6 +77,7 @@ impl ConsumerGateway {
             native_discord_voice_enabled: false,
             native_split_text_refs_enabled: false,
             native_telegram_message_events_writes_enabled: false,
+            managed_telegram_setup_enabled: false,
             native_lark_writes_enabled: false,
         native_lark_intake_enabled: false,
         native_lark_controls_enabled: false,

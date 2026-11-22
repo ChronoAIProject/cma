@@ -3,7 +3,12 @@ import { LocalStartup } from './agent-startup-fixtures';
 import { channelCapabilities, cmaSession, gatewaySession } from '../build/fixtures/eventGateway';
 
 /** `identity` holds the CMA sign-in answer until it settles. */
-export async function setup(page: Page, baseURL: string, identity?: Promise<unknown>) {
+export async function setup(
+  page: Page,
+  baseURL: string,
+  identity?: Promise<unknown>,
+  managedSetup = true,
+) {
   const boundary = new LocalStartup();
   const writes: { body: string | null; key: string | undefined; url: string }[] = [];
   await boundary.route(page, baseURL);
@@ -30,6 +35,16 @@ export async function setup(page: Page, baseURL: string, identity?: Promise<unkn
       return route.fulfill({
         json: {
           ...channelCapabilities,
+          platforms: managedSetup
+            ? [
+                {
+                  id: 'telegram',
+                  label: 'Telegram',
+                  connection_methods: ['existing_credential', 'managed_create'],
+                  optional_capabilities: [],
+                },
+              ]
+            : [],
           relay_authoring: {
             ...channelCapabilities.relay_authoring,
             platforms: channelCapabilities.relay_authoring.platforms.map((platform) => ({
