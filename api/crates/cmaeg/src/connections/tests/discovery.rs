@@ -100,10 +100,25 @@ async fn public_discovery(advertise: bool, console_origin: Option<&str>) {
         assert!(html.contains(&format!("{advertised}{path}")), "{path}");
     }
     assert!(!html.contains("href=\"/docs"));
+    assert!(!html.contains("https://gateway.example.com/event-gateway"));
     if !advertise {
         assert!(!html.contains("https://bot.chrono-ai.fun/event-gateway"));
         assert!(!html.contains("https://cma.nyxid.ai/event-gateway"));
         assert!(html.contains("href=\"https://gateway.example/console\""));
+    }
+    for path in ["/docs/download", "/docs/integration.md"] {
+        let response = client.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let markdown = response.text().await.unwrap();
+        assert!(markdown.contains(&format!("{advertised}/v1")));
+        assert!(markdown.contains(&format!("{advertised}/openapi.json")));
+        assert!(!markdown.contains("https://gateway.example.com/event-gateway"));
+        let console = if advertise {
+            format!("{advertised}/legacy-console")
+        } else {
+            format!("{advertised}/console")
+        };
+        assert!(markdown.contains(&format!("<{console}>")));
     }
     let protocol_destination = format!("{advertised}/docs#protocol");
     let console_destination = format!("{expected_console}/console");

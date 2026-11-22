@@ -842,6 +842,8 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
 | `GET /v1/channels/{channel_id}/activity` | No body | 200 bounded recent activity snapshot with cursor, retention and truncation | 404 absent or other owner; 503 store unavailable |
 | `GET /v1/channels/{channel_id}/activity/stream` | Optional `Last-Event-ID` or `cursor` | SSE `activity`/`reset` full snapshots; initial snapshot on every connection | 400 invalid cursor; 404 absent or other owner |
+| `GET /v1/channels/{channel_id}/activity/history` | UTC `from`, `until`, optional `limit`, or continuation `cursor` | 200 retained receipts, current summaries, coverage and `next_cursor` | 400 invalid range/cursor; 410 expired export; 501 unsupported backend; 503 disabled/unavailable |
+| `GET /v1/channels/{channel_id}/activity/history/events/{event_id}/details` | Required detail `cursor`; opaque history event ID | 200 sealed-generation detail parts and optional `next_cursor` | 400 invalid cursor; 404 absent or other owner; 410 expired export; 503 unavailable |
 | `GET /v1/channels/{channel_id}/partition` | Required `partition_key`; optional `consumer_id` (default `default`) | 200 retained CMA conversation mapping and current Agent status | 400 unsupported affinity; 404 absent/hidden channel or mapping |
 | `POST /v1/channels/{channel_id}/partition/resets` | Required `Idempotency-Key` and owner reset body below | 200 reserved successor receipt; no-store | 409 disabled, ineligible target, changed mapping or reused key; uncertain failures require exact retry |
 | `PUT /v1/channels/{channel_id}` | Complete create policy plus required `expected_version`; optional credential patch | 200 channel response with incremented version | 409 stale version |
@@ -881,6 +883,65 @@ credentials or unknown providers; 401 `not_authenticated`; 404
 backend failures; 500 `internal`. Body extraction failures are reported as
 400. Authentication precedes mutation; no operation grants access based on a
 caller-supplied owner alone.
+
+### Retained activity history
+
+History enumerates captured ingress receipts and their current bounded summaries,
+independently of the recent view's 50-event limit. It is not an immutable archive
+of every processing or delivery transition. The reader and capture switches are
+disabled by default; rolling retention is configurable from 1 to 90 days and
+defaults to **7 days**. Export before the oldest receipt expires. Previously
+evicted receipts cannot be recovered, and delayed weekly exports can be incomplete.
+
+Every history and detail request requires the current owner read grant and current
+channel ownership. A cursor grants no authority; revocation and channel deletion
+apply to subsequent pages. Responses use `Cache-Control: no-store`.
+
+The initial history request supplies UTC RFC3339 `from` (inclusive) and `until`
+(exclusive), with millisecond or coarser precision. The range must be positive,
+at most seven days, and end no later than the current time. `limit` is 1–200,
+default 100. Continue with the opaque `next_cursor`; repeated range or limit
+parameters must match the first request. The recent-view/SSE cursor is invalid here.
+
+The response is `{items,next_cursor,has_more,range,coverage}`. Ordering is
+`received_at` descending, then opaque `history_event_id` ascending. The first page
+freezes membership at a committed channel watermark: later inserts, including
+late arrivals with older receive times, are excluded. Summaries may still advance.
+Pages are bounded to 1 MiB as well as the requested count, so follow `next_cursor`
+even when fewer than `limit` items are returned. `has_more` describes remaining
+retained scan results, including unreadable rows; it does not promise recovery of
+deleted history.
+
+Each item contains `history_event_id`, `activity`, `detail_cursor`,
+`detail_incomplete`, `detail_truncated`, and `legacy_partial`. Large summaries
+leave the ingress receipt in `activity` and provide a detail cursor. Use that
+item's `history_event_id` as the detail route's `event_id`. Detail pages contain
+`generation`, `encoding: "base64-json-fragment"`, `parts`, `next_cursor`, and
+the two detail flags. Each part has `index`, `sha256`, and standard-base64 `data`.
+Verify each decoded part's SHA-256, concatenate in index order across pages, then
+parse the UTF-8 JSON as `ChannelActivity`. Cursors pin one immutable generation;
+summary details are bounded to 1 MiB in at most 32 parts.
+
+Coverage reports `complete_event_enumeration`, `retained_from`, the nullable
+`all_writers_capture_from` and `all_writers_capture_until` boundaries,
+`current_summaries: true`, and `gaps`. The possible gaps are `legacy_partial`,
+`retention_expired`, `capture_gap`, and `unreadable_record`. An unreadable row
+advances paging and records a gap. Completeness requires the attested capture
+interval, retained range, and no observed gaps; it does not establish exhaustive
+transition history or successful delivery.
+
+Cursors expire after at most 15 minutes, or earlier at the earliest retained
+member's expiry. A changed capture boundary also invalidates history paging.
+HTTP 410 `activity_history_cursor_expired` requires restarting the range and
+deduplicating event identities. Tampered, cross-channel, wrong-purpose or
+mismatched cursors return 400 `invalid_activity_history_request`. Disabled history
+returns 503 `activity_history_disabled`; an enabled reader on the legacy remote
+backend returns 501 `unsupported_backend`. Storage or detail failures return a
+typed error, never an empty report claiming completeness. See the
+[integration guide](CMAEG_Integration.md#paged-activity-history) for export usage.
+Operators follow private maintainer guidance for activation procedures.
+
+### Partition inspection
 
 Partition inspection is an owner-authorized, `Cache-Control: no-store` GET for
 the `cma_codex` provider. Supply the exact raw partition key: with
@@ -3705,6 +3766,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/channels/{channel_id}/partition` | `inspectChannelPartition` |
 | `POST /v1/channels/{channel_id}/partition/resets` | `resetChannelPartition` |
 | `GET /v1/channels/{channel_id}/activity` | `getChannelActivity` |
+| `GET /v1/channels/{channel_id}/activity/history` | `getChannelActivityHistory` |
+| `GET /v1/channels/{channel_id}/activity/history/events/{event_id}/details` | `getChannelActivityHistoryDetails` |
 | `GET /v1/channels/{channel_id}/activity/stream` | `streamChannelActivity` |
 | `GET /v1/channels/{channel_id}/events/{event_id}/media-responses` | `getEventMediaResponses` |
 | `POST /v1/event-attestations` | `attestRetainedEvent` |

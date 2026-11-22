@@ -67,6 +67,7 @@ pub async fn verify_with_authority(
             if resource.len() != 2
                 || resource.get_str("db").ok() != Some(db.name())
                 || (!COLLECTIONS.contains(&collection)
+                    && !crate::activity::history::schema::COLLECTIONS.contains(&collection)
                     && ![
                         THREAD_FENCES,
                         WHATSAPP_FLOWS,
@@ -82,7 +83,10 @@ pub async fn verify_with_authority(
             }
             for action in grant.get_array("actions").map_err(|_| invalid())? {
                 let action = action.as_str().ok_or_else(&invalid)?;
-                let allowed = if collection == USES {
+                let allowed = if crate::activity::history::schema::COLLECTIONS.contains(&collection)
+                {
+                    crate::activity::history::schema::runtime_actions(collection)
+                } else if collection == USES {
                     &["find", "insert", "listIndexes"][..]
                 } else if collection == CUTOVERS {
                     &["find", "listIndexes"][..]
