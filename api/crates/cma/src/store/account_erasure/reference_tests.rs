@@ -1,4 +1,5 @@
 //! Real-store compatibility and interleaving contracts for account redaction.
+mod billing_authority_tests;
 mod log_gate_tests;
 
 use super::references::{redact, Redaction};

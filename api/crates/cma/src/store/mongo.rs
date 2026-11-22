@@ -414,7 +414,8 @@ impl MongoStores {
             .run_command(doc! { "ping": 1 })
             .await
             .map_err(|error| StoreError::Unavailable(format!("ping MongoDB: {error}")))?;
-        Ok(())
+        super::billing_authority::require_legacy_compatible(&self.client.database(&self.database))
+            .await
     }
 }
 
