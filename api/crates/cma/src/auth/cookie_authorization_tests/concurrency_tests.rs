@@ -229,7 +229,8 @@ async fn verification_registry_is_bounded_and_never_reuses_a_completed_flight() 
     assert!(first
         .set(Err(ProviderVerificationError::Unavailable(
             "fixture".into()
-        )))
+        )
+        .into()))
         .is_ok());
     let replacement = flights.acquire(&original).await;
     assert!(!Arc::ptr_eq(&first, &replacement));
