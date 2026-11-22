@@ -49,7 +49,6 @@ async fn completed_record_has_ttl_and_no_subject() {
         .await
         .unwrap()
         .unwrap();
-    let revision = claimed.revision;
     claimed.step = ErasureStep::VerifyNoResidue;
     claimed.residue = Some(ResidueReport {
         keys: layer2_core::account_deletion::KeyReceipt {
@@ -59,10 +58,28 @@ async fn completed_record_has_ttl_and_no_subject() {
         ..ResidueReport::default()
     });
     let fence = claimed.work.lease.as_ref().unwrap().fence;
-    let token = claimed.work.lease.as_ref().unwrap().token.clone();
     let event = claimed.complete(fence, &at, retention).unwrap();
+    // Historical wire fixture: production completion needs independent proof.
+    let expiry = claimed.expire_at.as_deref().unwrap();
     store
-        .commit(claimed, vec![event], revision, Some(&token))
+        .records
+        .replace_one(
+            doc! {"_id":claimed.id.as_str()},
+            record_document(&claimed, &[key_hash("first")]).unwrap(),
+        )
+        .await
+        .unwrap();
+    store
+        .events
+        .update_many(
+            doc! {"deletion_id":claimed.id.as_str()},
+            doc! {"$set":{"expire_at":records::date(expiry).unwrap()}},
+        )
+        .await
+        .unwrap();
+    store
+        .events
+        .insert_one(event_document(&event, Some(expiry)).unwrap())
         .await
         .unwrap();
     let row = db

@@ -8,6 +8,7 @@ use mongodb::{
 };
 use std::{collections::BTreeSet, time::Duration};
 
+mod completion_guard;
 mod events;
 mod indexes;
 mod records;

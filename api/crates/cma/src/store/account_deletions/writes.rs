@@ -56,6 +56,7 @@ pub(super) async fn commit(
     claim_at: Option<&str>,
     expected_lease_token: Option<&str>,
 ) -> Result<(), AccountDeletionError> {
+    super::completion_guard::require_pending(&deletion, &events)?;
     for attempt in 0..8 {
         backoff(attempt, expected).await;
         let mut session = store
@@ -120,6 +121,7 @@ async fn once(
         .map_err(AttemptError::Driver)?
         .ok_or(AttemptError::Domain(AccountDeletionError::NotFound))?;
     let old = read_record(row.clone()).map_err(AttemptError::Domain)?;
+    super::completion_guard::preserve_acceptance(&old, deletion).map_err(AttemptError::Domain)?;
     let claimed = claim_at.is_some();
     let expected_next = old
         .work
