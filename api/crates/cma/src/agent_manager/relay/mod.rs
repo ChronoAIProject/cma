@@ -162,16 +162,33 @@ impl Relay {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn authenticated_routes(
         self: &Arc<Self>,
         router: axum::Router,
         auth: Arc<crate::auth::AuthState>,
     ) -> axum::Router {
+        self.authenticated_control_routes(router, auth, None)
+    }
+
+    pub(crate) fn authenticated_control_routes(
+        self: &Arc<Self>,
+        router: axum::Router,
+        auth: Arc<crate::auth::AuthState>,
+        admission: Option<Arc<dyn crate::control_admission::LifecycleAdmissionPolicy>>,
+    ) -> axum::Router {
+        let router = router.layer(axum::middleware::from_fn_with_state(
+            self.clone(),
+            http::route,
+        ));
+        let router = match admission {
+            Some(policy) => router.layer(axum::middleware::from_fn_with_state(
+                policy,
+                crate::control_admission::enforce,
+            )),
+            None => router,
+        };
         router
-            .layer(axum::middleware::from_fn_with_state(
-                self.clone(),
-                http::route,
-            ))
             .layer(axum::middleware::from_fn_with_state(
                 auth,
                 crate::auth::attach_subject,

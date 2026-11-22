@@ -19,7 +19,8 @@ use super::{durability::majority_collection, schema::initialize_collections};
 #[path = "sandbox_mongo_transactions.rs"]
 mod transactions;
 pub(super) use transactions::{
-    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
+    commit_transaction, is_confirmed_body_retry, is_duplicate_key, is_transient, start_transaction,
+    CommitOutcome,
 };
 
 pub use super::profile_mongo::MongoProfileStore;
@@ -68,6 +69,7 @@ use collections::SANDBOX_COLLECTIONS;
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) usage_capture: Option<super::sandbox_usage_export::CaptureStore>,
     pub(super) initial_settings: super::settings_defaults::InitialSettings,
     pub(super) ownership_retry_hints_enabled: bool,
     #[cfg(test)]
@@ -215,6 +217,7 @@ impl MongoSandboxStore {
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
+            usage_capture: None,
             initial_settings,
             empty_discovery: Default::default(),
             agent_connection_observations: None,
