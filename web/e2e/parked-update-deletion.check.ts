@@ -62,7 +62,7 @@ for (const uncertain of [false, true]) {
     await expect(confirmation).toContainText('stop the paused runtime update');
     expect(deletes).toEqual([]);
     await confirmation.getByRole('checkbox').check();
-    await confirmation.getByRole('button', { name: 'Delete Sandbox', exact: true }).click();
+    await confirmation.getByRole('button', { name: 'Request deletion', exact: true }).click();
     if (uncertain) {
       await expect(page.getByRole('dialog', { name: 'Deleting Sandbox' })).toContainText(
         'not been confirmed',
