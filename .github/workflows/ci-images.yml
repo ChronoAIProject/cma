@@ -7,6 +7,7 @@ on:
         required: true
 permissions:
   contents: "read"
+  issues: "read"
 jobs:
   images:
     concurrency:
@@ -168,6 +169,7 @@ jobs:
           restore-keys: cache-trivy-
       -
         name: "Vulnerability scan"
+        if: "matrix.component != 'runtime'"
         uses: "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
         with:
           cache: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
@@ -176,6 +178,28 @@ jobs:
           severity: "HIGH,CRITICAL"
           exit-code: "1"
           ignore-unfixed: true
+      -
+        # Pinned runtime inputs build the same packages while the advisory
+        # database keeps changing; the gate decides which findings this change owns.
+        name: "Runtime vulnerability scan"
+        if: "matrix.component == 'runtime'"
+        uses: "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
+        with:
+          cache: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
+          image-ref: "${{ steps.image-name.outputs.name }}:ci"
+          format: "json"
+          output: "${{ runner.temp }}/runtime-vulnerabilities.json"
+          severity: "HIGH,CRITICAL"
+          exit-code: "0"
+          ignore-unfixed: true
+      -
+        name: "Runtime vulnerability gate"
+        if: "matrix.component == 'runtime'"
+        timeout-minutes: 5
+        env:
+          BASE_SHA: "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}"
+          GH_TOKEN: "${{ github.token }}"
+        run: "python3 -B .github/scripts/image_vulnerability_gate.py --component runtime --report \"$RUNNER_TEMP/runtime-vulnerabilities.json\" --base \"$BASE_SHA\""
       -
         uses: "actions/setup-node@v6"
         if: "matrix.component == 'runtime'"
