@@ -231,7 +231,7 @@ export function useResourceActions(
         {deletionRequests.map((request, index) => (
           <section
             key={request.key}
-            className="console__navigation-status"
+            className="console__navigation-status deletion-notice"
             aria-label="Deletion request"
           >
             <p role="status">
