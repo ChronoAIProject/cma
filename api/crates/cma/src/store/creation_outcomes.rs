@@ -23,7 +23,7 @@ mod publication;
 mod reads;
 pub(super) use publication::{link_operation, publish_sandbox, refuse_with_operation};
 
-const COLLECTION: &str = "sandbox_creation_proofs";
+pub(super) const COLLECTION: &str = "sandbox_creation_proofs";
 const VERSION: i64 = schema::DOCUMENT_SCHEMA_VERSION;
 const IO_BUDGET: Duration = Duration::from_millis(750);
 

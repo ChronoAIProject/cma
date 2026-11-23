@@ -136,6 +136,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "resource_share_commands",
     "resource_shares",
     "sandbox_admissions",
+    super::creation_outcomes::COLLECTION,
     super::sandbox_mongo::SANDBOX_BILLING,
     super::sandbox_colors::COLLECTION,
     "sandbox_controls",
@@ -183,6 +184,7 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     super::home_backups::BACKUPS_COLLECTION,
     super::allocation_buckets::COLLECTION,
     super::agent_observation::COLLECTION,
+    super::creation_outcomes::COLLECTION,
 ];
 const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
 const MIGRATION_ACTIONS: &[&str] = &["find", "insert", "update", "createCollection"];

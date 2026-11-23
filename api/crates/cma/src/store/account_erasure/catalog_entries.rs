@@ -179,7 +179,7 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("event_worker_profile_revisions", Owner(&["owner"]) => false),
     entry!("command_authorization_audits", Linked(Agents, &["record.agent_id"]) => false, Reference(ReferenceRule::Identities) => false),
     entry!("operation_claims", Owner(&["_id.subject"]) => false),
-    entry!("sandbox_creation_proofs", Owner(&["owner"]) => false),
+    entry!("sandbox_creation_proofs", Owner(&["owner"]) => true),
     entry!("owned_workspace_cleanup_audits_v1", ProvenAbsent(LEGACY_OWNER_PATHS) => false),
     entry!("owned_workspace_cleanup_consents_v1", ProvenAbsent(LEGACY_OWNER_PATHS) => false),
     entry!("owned_workspace_cleanup_jobs_v1", ProvenAbsent(LEGACY_OWNER_PATHS) => false),
