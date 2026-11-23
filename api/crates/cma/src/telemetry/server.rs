@@ -124,11 +124,10 @@ mod tests {
     async fn scrape_router_has_only_metrics_and_does_not_cache() {
         let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
         let cache = super::super::task_cohort::Cache::default();
-        cache.initialize(&["previous_day"]);
-        cache.update(
-            "previous_day",
-            Ok("cma_task_cohort_accepted_tasks{window=\"previous_day\"} 2\n".into()),
-        );
+        cache.initialize();
+        cache.update(Ok(
+            "cma_task_cohort_accepted_tasks{window=\"release\"} 2\n".into()
+        ));
         let app = router(recorder.handle(), cache);
         let response = app
             .clone()
@@ -150,7 +149,7 @@ mod tests {
             .await
             .unwrap();
         let text = std::str::from_utf8(&body).unwrap();
-        assert!(text.contains("cma_task_cohort_accepted_tasks{window=\"previous_day\"} 2"));
+        assert!(text.contains("cma_task_cohort_accepted_tasks{window=\"release\"} 2"));
         assert_eq!(
             text.matches("# TYPE cma_desktop_relay_send_wait_seconds histogram")
                 .count(),

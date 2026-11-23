@@ -42,11 +42,7 @@ impl Entry {
             result: "invalid_record",
         }
     }
-    pub(super) fn from_command(
-        command: &AdmittedAgentCommand,
-        observed: u64,
-        overdue: u64,
-    ) -> Self {
+    pub(super) fn from_command(command: &AdmittedAgentCommand, observed: u64) -> Self {
         let at = layer2_core::seconds_from_rfc3339(&command.receipt.admitted_at).unwrap();
         let age = observed.saturating_sub(at);
         let status = match command.status {
@@ -63,7 +59,7 @@ impl Entry {
             admitted_at: Some(command.receipt.admitted_at.clone()),
             status: Some(status),
             age_seconds: Some(age),
-            overdue: !command.status.is_terminal() && age >= overdue,
+            overdue: false,
             result: "unfinished",
         }
     }

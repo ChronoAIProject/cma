@@ -124,7 +124,7 @@ async fn read(
             if at < from || at >= to {
                 return Err("invalid_snapshot");
             }
-            entry = Entry::from_command(&command, observed, selection.overdue_seconds);
+            entry = Entry::from_command(&command, observed);
             let identity = (command.scope(), command.key_sha256.clone());
             if !keys.insert(identity) {
                 entry.result = "duplicate_admission";

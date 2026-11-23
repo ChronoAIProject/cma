@@ -170,7 +170,7 @@ test('every registered suite reaches the runner without a shared suite-count ass
   assert.ok(requiredPrefixes.length > 0);
   assert.equal(new Set(requiredPrefixes).size, requiredPrefixes.length);
   for (const suite of ['store::migrations::command_cohort_index::tests::',
-    'store::worker_observations::cohort::tests::', 'store::task_audit::tests::']) {
+    'store::task_audit::tests::']) {
     assert.ok(requiredPrefixes.includes(suite), suite);
   }
   assert.ok(line.includes(`not test(=${child})`));

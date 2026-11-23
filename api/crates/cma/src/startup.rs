@@ -126,7 +126,7 @@ pub(crate) async fn serve() -> Result<(), String> {
     shutdown.push(
         composition
             .worker_observations
-            .with_task_cohorts(task_cohorts)
+            .with_task_audit(task_cohorts, config.task_audit)
             .spawn(shutdown.subscribe()),
     );
     shutdown.push(

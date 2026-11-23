@@ -2,8 +2,7 @@
 use super::{
     activity_indexes, activity_page_index, agent_log_segments, agent_log_source_keys,
     agent_owner_index, binding_indexes, collection_indexes, command_cohort_index, opening_index,
-    sandbox_usage_capture,
-    Result,
+    sandbox_usage_capture, Result,
 };
 use mongodb::bson::{doc, Document};
 

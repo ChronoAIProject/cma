@@ -101,12 +101,11 @@ async fn message_selection_is_snapshot_consistent_bounded_and_keeps_bad_rows() {
     assert_eq!(report.classes["invalid_record"], 1);
     assert_eq!(report.exceptions[0].command_id, "bad-message");
     // Exercise the real background/cache wiring. Explicit release selection
-    // replaces relative presets and publishes no identifiers to the scrape.
+    // publishes only the explicit release population, with no identifiers.
     let cache = crate::telemetry::task_cohort::Cache::default();
     let (stop, signal) = tokio::sync::watch::channel(false);
     let worker = crate::store::worker_observations::Observations::new(db.clone())
-        .with_task_cohorts(cache.clone())
-        .with_task_audit(Some(selection.clone()))
+        .with_task_audit(cache.clone(), Some(selection.clone()))
         .spawn(signal);
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
