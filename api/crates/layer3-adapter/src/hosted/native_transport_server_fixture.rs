@@ -1,4 +1,5 @@
 use super::*;
+use tokio::io::AsyncRead;
 
 pub(super) async fn serve_runtime(
     mut stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -252,6 +253,34 @@ pub(super) async fn serve_runtime(
             }
         }
         return;
+    }
+}
+
+async fn read_request(stream: &mut (impl AsyncRead + Unpin)) -> Option<String> {
+    let mut request = Vec::new();
+    let mut buffer = [0; 4096];
+    loop {
+        let count = stream.read(&mut buffer).await.ok()?;
+        if count == 0 {
+            return None;
+        }
+        request.extend_from_slice(&buffer[..count]);
+        assert!(request.len() < 64 * 1024);
+        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&request[..end]);
+            let length = head
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length: ")
+                        .map(str::to_owned)
+                })
+                .map(|s| s.parse::<usize>().unwrap())
+                .unwrap_or(0);
+            if request.len() >= end + 4 + length {
+                return String::from_utf8(request).ok();
+            }
+        }
     }
 }
 

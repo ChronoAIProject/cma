@@ -2,6 +2,9 @@ use super::*;
 use crate::agent_sandbox::{RuntimeCapacityReason, RuntimePermitKind, RuntimeWorkloadClass};
 use crate::hosted::HostedControlTransport;
 
+#[path = "native_close_effect_tests.rs"]
+mod close_effect;
+
 #[path = "native_http_reserve_tests.rs"]
 mod session_reserve;
 
