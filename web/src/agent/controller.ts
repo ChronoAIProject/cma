@@ -24,7 +24,7 @@ import { useRetainedAgentState } from './retainedState';
 import { reopenAgent } from './reopenAgent';
 import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
-import { IdentityChangedError, isIdentityChanged } from './transport/identity';
+import { useAgentActionError, useAgentIdentityChange } from './actionError';
 import { useControlStatus } from './transport/controlStatus';
 import { useQueuedInputs } from './transport/queuedInputsStatus';
 import { usePresentedAgent, usePresentedRetainedInputs } from './presentation';
@@ -89,7 +89,7 @@ export function useAgentController(
     state.detail.id === agentId &&
     state.conversation.activeRunId !== undefined;
   const [pending, setPending] = useState<AgentCommand>();
-  const [actionError, setActionError] = useState<string>();
+  const [actionError, setActionError, recoverInputError] = useAgentActionError();
   const [streamError, setStreamError] = useState<string>();
   const [keys] = useState(() => new CommandKeys());
   const actionAbortRef = useRef<AbortController | undefined>(undefined);
@@ -97,28 +97,21 @@ export function useAgentController(
   const replayAbortRef = useRef<AbortController | undefined>(undefined);
   const liveCursor = useRef(0);
   const hydration = useRef(new ConversationHydration());
-  const onIdentityChange = useCallback(
-    (error: unknown) => {
-      if (!isIdentityChanged(error)) return false;
-      actionAbortRef.current?.abort();
-      replayAbortRef.current?.abort();
-      setPending(undefined);
-      setActionError(undefined);
-      setStreamError(undefined);
-      setState({ status: 'error', message: new IdentityChangedError().message });
-      return true;
-    },
-    [setState],
+  const onIdentityChange = useAgentIdentityChange(
+    actionAbortRef,
+    replayAbortRef,
+    setPending,
+    setActionError,
+    setStreamError,
+    setState,
   );
   const hierarchyChanged = useRef(options.onHierarchyChange);
   useEffect(() => {
     hierarchyChanged.current = options.onHierarchyChange;
   }, [options.onHierarchyChange]);
-
   const summary = options.summary;
   const detail = state.status === 'ready' ? state.detail : undefined;
   useAgentSummary(agentId, detail, summary, setState);
-
   const applyLive = useCallback(
     (event: AgentLiveEvent) => {
       if (agentId === undefined) return;
@@ -262,6 +255,7 @@ export function useAgentController(
     lineage,
     publishHistory,
     revision,
+    setActionError,
     setState,
     stateRef,
     suspended,
@@ -426,7 +420,13 @@ export function useAgentController(
     suspended ? undefined : agentId,
     options.viewerId,
   );
-  const retainedInputs = usePresentedRetainedInputs(v2, legacy, pending, onIdentityChange);
+  const retainedInputs = usePresentedRetainedInputs(
+    v2,
+    legacy,
+    pending,
+    onIdentityChange,
+    recoverInputError,
+  );
   const controlNotice = useControlStatus(v2, onIdentityChange);
   const queuedInputs = useQueuedInputs(
     v2,

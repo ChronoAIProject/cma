@@ -150,6 +150,7 @@ export class AgentV2Session {
     signal?: AbortSignal,
     onReceiptObserved?: (receipt: V2ResponseReceipt) => void,
     answerContext?: AnswerContext,
+    onRetained?: (key: string) => void,
   ) {
     return this.withRecovery(signal, async (recovery) => {
       await recovery.retry(() => this.checkIdentity(this.inputUser, recovery.signal));
@@ -159,6 +160,7 @@ export class AgentV2Session {
           onAccepted(receipt);
         },
         onReceiptObserved,
+        onRetained,
         answerContext,
         signal: recovery.signal,
         recovery,

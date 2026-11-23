@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import type { AgentActionOptions } from './actionOptions';
+import type { InputErrorOwner } from './actionError';
 import type { AgentCommand, ApprovalDecision } from './controller';
 import type { MessageAcceptance } from './controllerTypes';
 import { ApiError, type AnswerContext } from '@cma/client';
@@ -120,6 +121,7 @@ export function useAgentActions({
       let accepted = false;
       let recoveringInput = false;
       let legacyKey: string | undefined;
+      let retainedInput: InputErrorOwner | undefined;
       try {
         if (session !== undefined) {
           const sendInput = (text: string) => {
@@ -137,6 +139,9 @@ export function useAgentActions({
                   onReceiptObserved?.(receipt);
               },
               answerContext,
+              (key) => {
+                retainedInput = { session, key };
+              },
             );
           };
           if (approving) {
@@ -307,7 +312,7 @@ export function useAgentActions({
               : undefined,
           );
         if (!controller.signal.aborted && !onIdentityChange(error))
-          setActionError(errorMessage(error));
+          setActionError(errorMessage(error), retainedInput);
       } finally {
         if (actionAbortRef.current === controller) {
           actionAbortRef.current = undefined;
