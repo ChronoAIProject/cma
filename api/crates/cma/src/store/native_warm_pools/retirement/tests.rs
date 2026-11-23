@@ -414,6 +414,8 @@ async fn frozen_lane_retains_candidate_until_provider_work_settles() {
     candidate.id = "candidate".into();
     candidate.activated_at = None;
     candidate.binding = None;
+    candidate.lease = None;
+    candidate.lease_until = DateTime::from_millis(0);
     candidate.plan.config_sha256 = "c".repeat(64);
     candidate.plan.spec.image.uri = candidate_image;
     let mut session = lanes.session().await.unwrap();

@@ -237,8 +237,6 @@ async fn compatible_first_claim_preserves_its_legacy_dispatch_pin_after_worker_l
     let now = layer2_core::now_rfc3339();
     let until =
         layer2_core::rfc3339_at(std::time::SystemTime::now() + std::time::Duration::from_secs(60));
-    let after_expiry =
-        layer2_core::rfc3339_at(std::time::SystemTime::now() + std::time::Duration::from_secs(61));
     let successor_until =
         layer2_core::rfc3339_at(std::time::SystemTime::now() + std::time::Duration::from_secs(120));
     let mut sandbox = crate::store::sandbox_maintenance::mongo_integration_tests::active_sandbox(
@@ -255,9 +253,15 @@ async fn compatible_first_claim_preserves_its_legacy_dispatch_pin_after_worker_l
         .unwrap()
         .unwrap();
 
+    expire_work_lease(&database, &sandbox.id).await;
     let successor = compatible.with_managed_runtime_version(image('b'));
     let resumed = successor
-        .claim_sandbox_work(&sandbox.id, "successor", after_expiry, successor_until)
+        .claim_sandbox_work(
+            &sandbox.id,
+            "successor",
+            layer2_core::now_rfc3339(),
+            successor_until,
+        )
         .await
         .unwrap()
         .unwrap();
@@ -305,9 +309,10 @@ async fn lost_legacy_warm_runtime_binds_the_reserved_replacement_generation() {
     claimed.lifecycle.runtime_generation_high_water = 2;
     claimed.revision += 1;
     writer.save_sandbox(expected, claimed).await.unwrap();
+    expire_work_lease(&database, &warm.id).await;
     let restarted = writer.with_managed_runtime_version(image('b'));
     let successor = restarted
-        .claim_sandbox_work(&warm.id, "successor", at(61), at(120))
+        .claim_sandbox_work(&warm.id, "successor", at(0), at(120))
         .await
         .unwrap()
         .unwrap();
@@ -325,4 +330,19 @@ async fn lost_legacy_warm_runtime_binds_the_reserved_replacement_generation() {
         Err(SandboxStoreError::Conflict)
     ));
     database.drop().await.unwrap();
+}
+
+async fn expire_work_lease(database: &Database, sandbox: &layer2_core::SandboxId) {
+    let past = "2026-09-05T00:00:00Z";
+    let result = database
+        .collection::<mongodb::bson::Document>("sandboxes")
+        .update_one(
+            doc! {"_id": sandbox.as_str()},
+            doc! {"$set": {
+                "work_lease_expires_at": past, "record.work.lease.expires_at": past,
+            }},
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.matched_count, 1);
 }
