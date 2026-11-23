@@ -107,7 +107,7 @@ impl MongoAgentOwnership {
 
     /// A write in the effect's own transaction creates a conflict with takeover.
     /// A preceding read, even a majority read, would leave a TOCTOU gap.
-    /// Callers without their own bounded retry keep the historical classification.
+    #[cfg(test)]
     pub(crate) async fn fence_transaction(
         &self,
         token: &OwnershipToken,
