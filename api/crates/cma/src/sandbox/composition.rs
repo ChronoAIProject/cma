@@ -67,7 +67,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
-    pub runtime_version: String,
+    pub released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
     pub title_model: String,
 }
 
@@ -136,12 +136,12 @@ impl SandboxLifecycleComposition {
         .with_background_resumption(config.sandbox_reconciliation_reserved_lane)
         .with_runtime_loss_bounded_proof(config.runtime_loss_bounded_proof_enabled)
         .with_profile_agents(Arc::clone(&dependencies.agents))
-        .with_runtime_version(config.runtime_version.clone())
+        .with_released_runtime(config.released.clone())
         .with_platform_spend(dependencies.store.clone())
         .with_failed_runtime_recovery(Arc::new(
-            layer2_core::sandbox::SandboxRuntimeUpdateService::new(
+            layer2_core::sandbox::SandboxRuntimeUpdateService::with_released(
                 dependencies.store.clone(),
-                config.runtime_version.clone(),
+                config.released.clone(),
             )
             .with_unpublished_recovery(Arc::new(
                 super::unpublished_recovery::UnpublishedRuntimeRecovery::new(
@@ -239,9 +239,10 @@ impl SandboxLifecycleComposition {
         let mut sandbox_config = SandboxWorkerConfig::with_policy_source(
             format!("{}:sandbox", config.holder),
             config.deployment_id,
-            config.runtime_version,
+            config.released.snapshot().agent,
             dependencies.policy,
         )
+        .with_released_runtime(config.released.clone())
         .with_execution(config.execution)
         .with_replicas(config.renewable_work)
         .with_work_retry_policy(config.work_retry_policy_enabled)

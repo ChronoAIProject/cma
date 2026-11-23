@@ -180,8 +180,8 @@ impl SandboxStore for InMemorySandboxStore {
         unpublished_recovery::retained_snapshot(&self.lock(), id)
     }
 
-    fn managed_runtime_version(&self) -> Option<&str> {
-        self.managed_runtime_version.as_deref()
+    fn managed_runtime_version(&self) -> Option<String> {
+        self.managed_runtime_version.clone()
     }
 
     async fn unpublished_runtime_recovery_snapshot(

@@ -47,10 +47,15 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .with_global_sandbox_limit(config.global_sandbox_limit)
             .with_launch_admission_policy(config.features.launch_admission_policy()),
     );
+    // One released-default authority, shared by every consumer of new work.
+    stores.released_runtime = Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+        config.runtime.sandbox_image.clone(),
+        config.runtime.machine_sandbox_image.clone(),
+    ));
     stores.sandbox_model = Arc::new(
         (*stores.sandbox_model)
             .clone()
-            .with_machine_runtime_version(config.runtime.machine_sandbox_image.clone()),
+            .with_released_runtime(stores.released_runtime.clone()),
     );
     stores.sandbox_model = Arc::new(
         (*stores.sandbox_model)
