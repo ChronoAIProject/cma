@@ -7,6 +7,7 @@ import {
   useState,
   type Ref,
 } from 'react';
+import { RetiredAgentRow } from './PersonalAgentTree';
 import { DeletionProgressList } from './DeletionProgressList';
 import { runtimeAttention, type RuntimeAttention } from './runtimeAttention';
 import { SkeletonRows } from '../ui/Skeleton';
@@ -26,6 +27,31 @@ import { useNavigationFilterState } from './navigationFilterState';
 
 export interface EnvironmentNavigationHandle {
   openEnvironments(options?: { readonly scope?: 'personal'; readonly sandboxId?: string }): void;
+}
+
+export function useEnvironmentNavigation(
+  navigation: NavigationState,
+  accepted: ReadonlySet<string>,
+  unknown: ReadonlySet<string>,
+) {
+  const ref = useRef<EnvironmentNavigationHandle>(null);
+  const attention = runtimeAttention(navigation, { accepted, unknown });
+  return {
+    ref,
+    attention,
+    home: {
+      attention,
+      onEnvironments: () => ref.current!.openEnvironments({ scope: 'personal' }),
+      onReviewRuntime: () =>
+        ref.current!.openEnvironments({
+          scope: 'personal',
+          sandboxId:
+            attention.failedSandboxes.length === 1
+              ? attention.failedSandboxes[0]?.sandboxId
+              : undefined,
+        }),
+    },
+  };
 }
 
 export function ManagerNavigation(props: Parameters<typeof ViewerNavigation>[0]) {
@@ -220,76 +246,83 @@ function ViewerNavigation({
       }
       onNavigate={onNavigate}
       personal={
-        navigation.status === 'ready' ? (
-          <>
-            {navigation.refreshError ? (
-              <Button size="sm" onClick={navigation.refresh}>
-                Try again
-              </Button>
-            ) : null}
-            <Tree
-              selectedRetired={retired}
-              onShowAll={() => filters.select('agent', 'all')}
-              attention={observedAttention}
-              showDeletionProgress={false}
-              currentTask={
-                currentAgent && (currentActivity !== undefined || currentTurnId !== undefined)
-                  ? { agent: currentAgent, status: currentActivity, turnId: currentTurnId }
-                  : undefined
-              }
-              active={panelView === view}
-              resourceClient={client}
-              viewerId={viewerId}
-              view={panelView}
-              statusFilter={
-                panelView === 'agent' && view === 'sandbox'
-                  ? taskReturn.status
-                  : statuses[panelView]
-              }
-              items={navigation.items.map((item) => ({
-                ...item,
-                workspaces: item.workspaces.map((workspace) => ({
-                  ...workspace,
-                  agents: workspace.agents.map((summary) =>
-                    (() => {
-                      const current =
-                        currentAgent !== undefined && sameAgent(currentAgent, summary)
-                          ? currentAgent
-                          : undefined;
-                      return current
-                        ? {
-                            ...summary,
-                            status: current.status,
-                            title: current.title,
-                            ownerTitle: current.ownerTitle,
-                            runtimeMetadata: current.runtimeMetadata,
-                            taskStatus: summary.taskStatus,
-                          }
-                        : summary;
-                    })(),
-                  ),
-                })),
-              }))}
-              refreshError={navigation.refreshError}
-              lifecycleBusy={pending}
-              busySandboxIds={busySandboxIds}
-              deletingSandboxIds={deletingSandboxIds}
-              onViewDeletion={onViewDeletion}
-              route={route}
-              permissions={permissions}
-              onNavigate={onNavigate}
-              onAgentIntent={onAgentIntent}
-              onAction={onAction}
-            />
-          </>
-        ) : navigation.status === 'loading' ? (
-          <SkeletonRows rows={4} label="Loading tasks" />
-        ) : (
-          <div className="console__navigation-status" role="alert">
-            <p>{navigation.message}</p>
-            <Button onClick={navigation.refresh}>Try again</Button>
-          </div>
-        )
+        <>
+          {navigation.status === 'ready' ? (
+            <>
+              {navigation.refreshError ? (
+                <Button size="sm" onClick={navigation.refresh}>
+                  Try again
+                </Button>
+              ) : null}
+              <Tree
+                selectedRetired={retired}
+                onShowAll={() => filters.select('agent', 'all')}
+                attention={observedAttention}
+                showDeletionProgress={false}
+                currentTask={
+                  currentAgent && (currentActivity !== undefined || currentTurnId !== undefined)
+                    ? { agent: currentAgent, status: currentActivity, turnId: currentTurnId }
+                    : undefined
+                }
+                active={panelView === view}
+                resourceClient={client}
+                viewerId={viewerId}
+                view={panelView}
+                statusFilter={
+                  panelView === 'agent' && view === 'sandbox'
+                    ? taskReturn.status
+                    : statuses[panelView]
+                }
+                items={navigation.items.map((item) => ({
+                  ...item,
+                  workspaces: item.workspaces.map((workspace) => ({
+                    ...workspace,
+                    agents: workspace.agents.map((summary) =>
+                      (() => {
+                        const current =
+                          currentAgent !== undefined && sameAgent(currentAgent, summary)
+                            ? currentAgent
+                            : undefined;
+                        return current
+                          ? {
+                              ...summary,
+                              status: current.status,
+                              title: current.title,
+                              ownerTitle: current.ownerTitle,
+                              runtimeMetadata: current.runtimeMetadata,
+                              taskStatus: summary.taskStatus,
+                            }
+                          : summary;
+                      })(),
+                    ),
+                  })),
+                }))}
+                refreshError={navigation.refreshError}
+                lifecycleBusy={pending}
+                busySandboxIds={busySandboxIds}
+                deletingSandboxIds={deletingSandboxIds}
+                onViewDeletion={onViewDeletion}
+                route={route}
+                permissions={permissions}
+                onNavigate={onNavigate}
+                onAgentIntent={onAgentIntent}
+                onAction={onAction}
+              />
+            </>
+          ) : navigation.status === 'loading' ? (
+            <SkeletonRows rows={4} label="Loading tasks" />
+          ) : (
+            <div className="console__navigation-status" role="alert">
+              <p>{navigation.message}</p>
+              <Button onClick={navigation.refresh}>Try again</Button>
+            </div>
+          )}
+          {panelView === 'agent' && navigation.status !== 'ready' && retired ? (
+            <div role="tree" aria-label="Personal Agents" className="agent-navigation">
+              <RetiredAgentRow detail={retired} onNavigate={onNavigate} />
+            </div>
+          ) : null}
+        </>
       }
     />
   );

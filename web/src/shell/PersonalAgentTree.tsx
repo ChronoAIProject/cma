@@ -22,7 +22,7 @@ import { taskPresentation } from './taskPresentation';
 import { IconDataOutline16 } from '../ui/icons';
 import { sandboxChildStatus } from '../sandbox/lifecycle';
 import { taskTitle } from './taskTitle';
-import type { AgentSummary, SandboxDetail } from '../api/types';
+import type { AgentDetail, AgentSummary, SandboxDetail } from '../api/types';
 import { setupEnvironmentRoute, SETUP_ENVIRONMENT_NOTICE } from '../agent/setupEnvironment';
 
 interface AgentCard {
@@ -121,7 +121,8 @@ export function PersonalAgentTree({
   const observedAttention = attention ?? runtimeAttention({ status: 'ready', items, refreshError });
   const failedIds = new Set(observedAttention.failedSandboxes.map((sandbox) => sandbox.sandboxId));
   const collapsedCards = cards.filter(
-    ({ sandbox, presentation }) =>
+    ({ sandbox, presentation, agent }) =>
+      agent.id !== selectedRetired?.id &&
       failedIds.has(sandbox.id) &&
       presentation.group === 'Needs attention' &&
       presentation.status !== 'failed' &&
@@ -263,20 +264,7 @@ export function PersonalAgentTree({
         );
       })}
       {selectedRetired ? (
-        <div role="group" aria-label="Retired">
-          <h3 className="task-group__heading">Retired</h3>
-          <TreeRow
-            nodeId={`agent:${selectedRetired.id}`}
-            level={1}
-            label={taskTitle(selectedRetired)}
-            accessibleLabel={`${taskTitle(selectedRetired)}, Retired`}
-            icon={<CharacterAvatar pose="paused" still size={24} />}
-            route={{ kind: 'agent', agentId: selectedRetired.id }}
-            selected
-            meta={<span>Shown because you’re viewing it.</span>}
-            onNavigate={onNavigate}
-          />
-        </div>
+        <RetiredAgentRow detail={selectedRetired} onNavigate={onNavigate} />
       ) : null}
       {normalCards.length === 0 && collapsedCards.length === 0 ? (
         <p className="resource-tree__empty">
@@ -292,6 +280,31 @@ export function PersonalAgentTree({
           ) : null}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+export function RetiredAgentRow({
+  detail,
+  onNavigate,
+}: {
+  readonly detail: AgentDetail;
+  readonly onNavigate: TreeProps['onNavigate'];
+}) {
+  return (
+    <div role="group" aria-label="Retired">
+      <h3 className="task-group__heading">Retired</h3>
+      <TreeRow
+        nodeId={`agent:${detail.id}`}
+        level={1}
+        label={taskTitle(detail)}
+        accessibleLabel={`${taskTitle(detail)}, Retired`}
+        icon={<CharacterAvatar pose="paused" still size={24} />}
+        route={{ kind: 'agent', agentId: detail.id }}
+        selected
+        meta={<span>Shown because you’re viewing it.</span>}
+        onNavigate={onNavigate}
+      />
     </div>
   );
 }

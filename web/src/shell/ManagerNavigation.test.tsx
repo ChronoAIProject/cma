@@ -123,7 +123,9 @@ it('shows visible task states alongside characters and respects parent lifecycle
     expect(character).toHaveAttribute('aria-hidden', 'true');
     expect(row.getAttribute('aria-label')).not.toMatch(/\d{4}-\d\d-\d\dT/);
     expect(row.querySelector('.task-running__dot') !== null).toBe(taskWord === 'Working');
-    if (taskWord !== 'Working') expect(row.querySelector('time')).toHaveAttribute('dateTime');
+    if (taskWord === 'Preparing')
+      expect(row.querySelector('.task-ready')).toHaveTextContent('Preparing');
+    else if (taskWord !== 'Working') expect(row.querySelector('time')).toHaveAttribute('dateTime');
   }
   const user = userEvent.setup();
   await expandNavigationFilters(user);
