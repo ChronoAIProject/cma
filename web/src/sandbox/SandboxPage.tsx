@@ -22,6 +22,7 @@ import {
 } from './lifecycle';
 import { Badge } from '../ui/Badge';
 import { SandboxRuntimeUpdate } from './SandboxRuntimeUpdate';
+import { sandboxHasParkedRuntimeUpdate } from './parkedRuntimeUpdate';
 import { SandboxRetainedRecovery } from './SandboxRetainedRecovery';
 import { SandboxAdvanced } from './SandboxAdvanced';
 import { SandboxAlerts } from './SandboxAlerts';
@@ -107,6 +108,7 @@ export function SandboxPage({
     return () => resumeCheck?.controller.abort();
   }, [canResume, request, resumeCheck]);
   const [advanced, setAdvanced] = useState(false);
+  const runtimePanel = useRef<HTMLDivElement>(null);
   const sharingClient = stale ? undefined : client.resourceViews;
   const sharingAllowed = useSharingAllowed(sharingClient, { kind: 'sandbox', id: sandboxId });
   // Opened for one client, so a changed or withdrawn client closes the dialog.
@@ -168,11 +170,13 @@ export function SandboxPage({
                 sandboxPollKey(sandbox),
                 sandbox.workspaces.map((row) => row.status),
               ]),
-              sandbox.workspaces.some(
-                (workspace) => workspace.status === 'preparing' || workspace.status === 'removing',
-              )
-                ? 1500
-                : sandboxRefreshDelay(sandbox),
+              sandboxRefreshDelay(
+                sandbox,
+                sandbox.workspaces.some(
+                  (workspace) =>
+                    workspace.status === 'preparing' || workspace.status === 'removing',
+                ),
+              ),
             ),
           );
         })
@@ -266,38 +270,40 @@ export function SandboxPage({
   };
   const runtime =
     sandbox.runtimeUpdate !== undefined && viewerId !== undefined && sandbox.owner === viewerId ? (
-      <SandboxRuntimeUpdate
-        client={client}
-        sandboxId={sandboxId}
-        ownerId={viewerId}
-        revision={sandbox.revision}
-        update={sandbox.runtimeUpdate}
-        sandboxStatus={sandbox.status}
-        technicalDetails="disclosure"
-        stale={stale}
-        busy={busy}
-        onAccepted={(receipt) => {
-          const cached = views?.sandboxes.get(sandboxId);
-          if (cached !== undefined && cached.sandbox.revision <= receipt.revision)
-            views?.sandboxes.put(sandboxId, {
-              ...cached,
-              sandbox: { ...cached.sandbox, ...receipt },
+      <div ref={runtimePanel} tabIndex={-1}>
+        <SandboxRuntimeUpdate
+          client={client}
+          sandboxId={sandboxId}
+          ownerId={viewerId}
+          revision={sandbox.revision}
+          update={sandbox.runtimeUpdate}
+          sandboxStatus={sandbox.status}
+          technicalDetails="disclosure"
+          stale={stale}
+          busy={busy}
+          onAccepted={(receipt) => {
+            const cached = views?.sandboxes.get(sandboxId);
+            if (cached !== undefined && cached.sandbox.revision <= receipt.revision)
+              views?.sandboxes.put(sandboxId, {
+                ...cached,
+                sandbox: { ...cached.sandbox, ...receipt },
+              });
+            setStored((previous) => {
+              if (
+                previous?.request !== request ||
+                previous.state.status !== 'ready' ||
+                previous.state.sandbox.owner !== viewerId ||
+                previous.state.sandbox.revision > receipt.revision
+              )
+                return previous;
+              return {
+                ...previous,
+                state: { ...previous.state, sandbox: { ...previous.state.sandbox, ...receipt } },
+              };
             });
-          setStored((previous) => {
-            if (
-              previous?.request !== request ||
-              previous.state.status !== 'ready' ||
-              previous.state.sandbox.owner !== viewerId ||
-              previous.state.sandbox.revision > receipt.revision
-            )
-              return previous;
-            return {
-              ...previous,
-              state: { ...previous.state, sandbox: { ...previous.state.sandbox, ...receipt } },
-            };
-          });
-        }}
-      />
+          }}
+        />
+      </div>
     ) : undefined;
   return (
     <section className="sandbox-page">
@@ -320,6 +326,17 @@ export function SandboxPage({
         meta={<span>Shared environment for your Agents</span>}
         actions={
           <>
+            {runtime !== undefined && sandboxHasParkedRuntimeUpdate(sandbox) ? (
+              <Button
+                size="sm"
+                onClick={() => {
+                  selectTab('overview');
+                  requestAnimationFrame(() => runtimePanel.current?.focus());
+                }}
+              >
+                Review runtime update
+              </Button>
+            ) : null}
             {permissions.pauseSandbox ? (
               <Button
                 size="sm"

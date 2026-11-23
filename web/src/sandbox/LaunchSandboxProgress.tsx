@@ -4,6 +4,7 @@ import { useCmaClient } from '../api/context';
 import type { SandboxDetail } from '../api/types';
 import { sandboxProgressCopy as copy } from '../vocabulary/sandboxProgress';
 import { LifecycleProgress } from './LifecycleProgress';
+import { sandboxHasParkedRuntimeUpdate } from './parkedRuntimeUpdate';
 
 export function LaunchSandboxProgress({ sandboxId }: { readonly sandboxId: string }) {
   const client = useCmaClient();
@@ -16,9 +17,14 @@ export function LaunchSandboxProgress({ sandboxId }: { readonly sandboxId: strin
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let inFlight = false;
+    let retryAt = 0;
     const poll = async () => {
       if (abort.signal.aborted || document.hidden || inFlight) return;
       clearTimeout(timer);
+      if (Date.now() < retryAt) {
+        timer = setTimeout(() => void poll(), retryAt - Date.now());
+        return;
+      }
       inFlight = true;
       let delay = 1500;
       try {
@@ -29,13 +35,16 @@ export function LaunchSandboxProgress({ sandboxId }: { readonly sandboxId: strin
           throw new Error('Sandbox identity mismatch');
         }
         setObservation({ sandbox, observedAt: new Date().toISOString() });
+        if (sandboxHasParkedRuntimeUpdate(sandbox)) delay = 5000;
         setError(false);
+        retryAt = 0;
       } catch (cause) {
         if (abort.signal.aborted) return;
         if (cause instanceof ApiError && [401, 403, 404].includes(cause.status))
           setObservation(undefined);
         setError(true);
-        delay = 5000;
+        delay = Math.max(5000, cause instanceof ApiError ? (cause.retryAfterMs ?? 0) : 0);
+        retryAt = Date.now() + delay;
       } finally {
         inFlight = false;
         if (!abort.signal.aborted) timer = setTimeout(() => void poll(), delay);
