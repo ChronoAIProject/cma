@@ -129,6 +129,11 @@ jobs:
           - { name: visitor, script: migration_visitor_fixture.py, overlay: --visitor-fixture }
           - { name: rate, script: migration_rate_fixture.py, overlay: --rate-fixture }
           - { name: warm-pool, script: migration_warm_pool_fixture.py, overlay: --warm-pool-fixture }
+          - { name: directory, script: migration_directory_fixture.py, overlay: --directory-fixture }
+          # Usage only runs composed; the composite also covers the trigger fixture.
+          - { name: trigger-usage, script: migration_composite_fixture.py, overlay: '' }
+          - { name: event-worker, script: migration_event_worker_fixture.py, overlay: '' }
+          - { name: report-rows, script: migration_report_rows_fixture.py, overlay: '' }
     steps:
       - uses: actions/checkout@v5
         with:
