@@ -276,3 +276,51 @@ it('keeps the selected file stable while its save is pending', async () => {
   await waitFor(() => expect(screen.getByRole('button', { name: 'hello.txt' })).toBeEnabled());
   expect(screen.getByRole('textbox', { name: 'Contents of hello.txt' })).toHaveValue('saved draft');
 });
+
+it.each(['../qa2.txt', 'folder/file.txt', 'folder\\file.txt', '.', '..', 'bad\u0001name', '   '])(
+  'rejects invalid names before submit and allows correction: %j',
+  async (name) => {
+    const { client } = fixture();
+    await screen.findByRole('button', { name: 'hello.txt' });
+    await userEvent.click(screen.getByRole('button', { name: 'New file' }));
+    const input = screen.getByRole('textbox', { name: 'File name' });
+    fireEvent.change(input, { target: { value: name } });
+    const submit = screen.getByRole('button', { name: /^Create$/ });
+    expect(submit).toBeDisabled();
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input).toHaveAccessibleDescription(
+      'Enter a file or folder name without path separators.',
+    );
+    fireEvent.submit(submit.closest('form')!);
+    expect(client.write).not.toHaveBeenCalled();
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: 'valid-note.txt' } });
+    expect(submit).toBeEnabled();
+    expect(input).not.toHaveAttribute('aria-invalid', 'true');
+    await userEvent.click(submit);
+    await waitFor(() =>
+      expect(client.write).toHaveBeenCalledExactlyOnceWith(
+        'agent-one',
+        { path: 'valid-note.txt', content_base64: '', directory: false },
+        expect.any(Object),
+      ),
+    );
+  },
+);
+
+it('keeps invalid names disabled after a server rejection without losing the editable name', async () => {
+  const { client } = fixture(false, {
+    write: vi.fn().mockRejectedValue(new AgentFileError('Name already exists.', 409)),
+  });
+  await screen.findByRole('button', { name: 'hello.txt' });
+  await userEvent.click(screen.getByRole('button', { name: 'New folder' }));
+  const input = screen.getByRole('textbox', { name: 'Folder name' });
+  fireEvent.change(input, { target: { value: 'existing' } });
+  await userEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+  await screen.findByText('Name already exists.');
+  expect(input).toHaveValue('existing');
+  fireEvent.change(input, { target: { value: '../invalid' } });
+  expect(screen.getByRole('button', { name: /^Create$/ })).toBeDisabled();
+  fireEvent.submit(input.closest('form')!);
+  expect(client.write).toHaveBeenCalledTimes(1);
+});
