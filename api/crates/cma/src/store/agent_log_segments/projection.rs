@@ -8,7 +8,6 @@ use layer2_core::sandbox::{
 };
 use mongodb::{
     bson::{self, doc, Document},
-    options::ReadConcern,
     ClientSession,
 };
 use serde::{Deserialize, Serialize};
@@ -126,19 +125,19 @@ pub(in crate::store) async fn read_budgeted(
             .await?
             .ok_or_else(corrupt)?
     } else {
-        let find = projections.find_one(doc! {"_id":&head.agent_id});
         // The head has already established this session's snapshot. Override the
         // collection's majority default, which cannot carry atClusterTime. A
         // transaction session has no snapshot_time and keeps its transaction concern.
-        let find = if session.snapshot_time().is_some() {
-            find.read_concern(ReadConcern::snapshot())
-        } else {
-            find
-        };
-        find.session(session)
-            .await
-            .map_err(TransactionLogError::Driver)?
-            .ok_or_else(corrupt)?
+        let snapshot = session.snapshot_time().is_some();
+        crate::store::stale_turns::find_with_proof_budget(
+            &projections,
+            doc! {"_id":&head.agent_id},
+            session,
+            snapshot,
+        )
+        .await
+        .map_err(TransactionLogError::Driver)?
+        .ok_or_else(corrupt)?
     };
     let projection: Projection = bson::deserialize_from_document(row).map_err(|_| corrupt())?;
     if projection.agent_id == head.agent_id && projection.incarnation == head.incarnation {
@@ -183,15 +182,16 @@ pub(in crate::store) async fn evidence_budgeted(
     let row = if let Some(budget) = budget {
         budget.document(&evidence, doc! {"agent_id":&head.agent_id,"incarnation":&head.incarnation,"evidence_generation":&head.evidence_generation,"kind":kind,"entity_key":key}, None, session).await?
     } else {
-        let find = evidence.find_one(doc! {"agent_id":&head.agent_id,"incarnation":&head.incarnation,"evidence_generation":&head.evidence_generation,"kind":kind,"entity_key":key});
-        let find = if session.snapshot_time().is_some() {
-            find.read_concern(ReadConcern::snapshot())
-        } else {
-            find
-        };
-        find.session(session)
-            .await
-            .map_err(TransactionLogError::Driver)?
+        let snapshot = session.snapshot_time().is_some();
+        crate::store::stale_turns::find_with_proof_budget(
+            &evidence,
+            doc! {"agent_id":&head.agent_id,"incarnation":&head.incarnation,
+            "evidence_generation":&head.evidence_generation,"kind":kind,"entity_key":key},
+            session,
+            snapshot,
+        )
+        .await
+        .map_err(TransactionLogError::Driver)?
     };
     let Some(row) = row else {
         return Ok(None);

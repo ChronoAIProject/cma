@@ -107,12 +107,12 @@ pub(super) async fn validate_unsealed_creation(
     snapshot: bool,
     budget: Option<&mut PreviewBudget>,
 ) -> Result<()> {
-    let source = majority_collection::<RawDocumentBuf>(db, AGENT_LOG);
+    let source = majority_collection::<Document>(db, AGENT_LOG);
     let mut read = crate::store::mongo_read_telemetry::Read::find(source.name());
-    let raw = if let Some(budget) = budget {
+    let row = if let Some(budget) = budget {
         budget
-            .raw(
-                &source.clone_with_type::<Document>(),
+            .document(
+                &source,
                 doc! {"agent_id":agent.id.as_str(),"seq":1_i64},
                 None,
                 session,
@@ -120,20 +120,22 @@ pub(super) async fn validate_unsealed_creation(
             .await?
             .ok_or_else(corrupt)?
     } else {
-        let query = source.find_one(doc! {"agent_id":agent.id.as_str(),"seq":1_i64});
-        let query = if snapshot {
-            query.read_concern(ReadConcern::snapshot())
-        } else {
-            query
-        };
-        query
-            .session(session)
-            .await
-            .map_err(TransactionLogError::Driver)?
-            .ok_or_else(corrupt)?
+        crate::store::stale_turns::find_with_proof_budget(
+            &source,
+            doc! {"agent_id":agent.id.as_str(),"seq":1_i64},
+            session,
+            snapshot,
+        )
+        .await
+        .map_err(TransactionLogError::Driver)?
+        .ok_or_else(corrupt)?
     };
-    read.document(raw.as_bytes().len());
-    let entry = read_entry(&Document::try_from(&raw).map_err(|_| corrupt())?)?;
+    read.document(
+        mongodb::bson::serialize_to_vec(&row)
+            .map_err(|_| corrupt())?
+            .len(),
+    );
+    let entry = read_entry(&row)?;
     if entry.agent_id != agent.id
         || entry.seq != 1
         || !matches!(&entry.kind,
@@ -247,6 +249,13 @@ async fn one(
 ) -> Result<Option<Document>> {
     if let Some(budget) = budget {
         return budget.document(source, filter, sort, session).await;
+    }
+    if projection.is_none() && sort.is_none() {
+        return crate::store::stale_turns::find_with_proof_budget(
+            source, filter, session, snapshot,
+        )
+        .await
+        .map_err(TransactionLogError::Driver);
     }
     let mut find = source.find_one(filter);
     if let Some(projection) = projection {
