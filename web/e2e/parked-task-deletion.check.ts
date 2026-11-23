@@ -100,6 +100,7 @@ for (const purpose of ['image_rotation', 'revive'] as const) {
     });
     await page.goto('/agent-manager');
     await navigation(page, true);
+    await page.locator('.runtime-attention > summary').click();
     const menu = resourceRow(page, 'agent', boundary.agent.id).getByRole('button', {
       name: /^Options for/,
     });

@@ -181,9 +181,11 @@ for (const theme of ['light', 'dark']) {
       await capture('repository');
       await page.getByLabel('Your task').fill('Research the project and summarize the findings.');
       await page.getByRole('button', { name: 'Start task' }).click();
-      await expect(page.getByRole('region', { name: 'Submitted task' })).toBeVisible();
-      await expect(page.getByText('Preparing a cloud computer for your Agent…')).toBeVisible();
-      const details = page.locator('.task-creation__details');
+      await expect(page.getByRole('region', { name: 'Original request' })).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: 'Getting its cloud computer ready' }),
+      ).toBeVisible();
+      const details = page.locator('.preparation__details');
       const summary = details.locator('summary');
       const progress = page.getByRole('region', {
         name: 'Agent provisioning progress',

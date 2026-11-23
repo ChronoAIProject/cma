@@ -31,6 +31,7 @@ export default defineConfig({
     'parked-runtime-status.check.ts',
     'parked-task-deletion.check.ts',
     'home-navigation-simplification.check.ts',
+    'retired-agent.check.ts',
   ],
   workers: 1,
   retries: 0,
