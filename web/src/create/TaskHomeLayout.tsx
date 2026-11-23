@@ -2,6 +2,7 @@ import { useContext, useState, type ReactNode } from 'react';
 import type { NavigationState } from '../shell/navigation';
 import type { AppRoute } from '../routing/routes';
 import type { TaskTemplate } from './taskTemplateModel';
+import type { AssistantReplyPreview } from '../api/replyPreview';
 import { CharacterAvatar } from '../character/CharacterAvatar';
 import { DocsLink } from '../services/DocsLink';
 import { TaskCrew, taskCrewCards } from './TaskCrew';
@@ -12,6 +13,9 @@ export interface TaskHomeOverview {
   readonly scope?: string;
   readonly onRetry?: () => void;
   readonly onNavigate?: (route: AppRoute) => void;
+  readonly onEnvironments?: () => void;
+  readonly onReviewRuntime?: () => void;
+  readonly authEpoch?: number;
 }
 
 export function TaskHomeLayout({
@@ -22,6 +26,7 @@ export function TaskHomeLayout({
   template,
   submitted,
   onNavigate,
+  previews,
   children,
 }: {
   readonly titleId: string;
@@ -31,6 +36,7 @@ export function TaskHomeLayout({
   readonly template?: TaskTemplate;
   readonly submitted: boolean;
   readonly onNavigate: (route: AppRoute) => void;
+  readonly previews?: Readonly<Record<string, AssistantReplyPreview>>;
   readonly children: ReactNode;
 }) {
   const decoration = useContext(TaskHomeDecorationContext);
@@ -81,33 +87,39 @@ export function TaskHomeLayout({
                 </div>
                 <CharacterAvatar pose="idle" size={104} still />
               </div>
-              <span className="task-home__eyebrow">Your first agent starts here</span>
+              <span className="task-home__eyebrow">Your next agent starts here</span>
             </>
           ) : null}
           <h1 id={titleId}>{headline}</h1>
-          <p className="task-home__intro">
-            {submitted
-              ? 'Your original request and its recorded preparation status.'
-              : template
-                ? 'Fill in a few details. Your free-text draft is kept separately.'
-                : hasCrew
-                  ? 'Pick up where you left off, or give another agent a job.'
-                  : 'Describe what you need. Your Agent works in its own cloud computer.'}
-          </p>
+          {template || submitted ? (
+            <p className="task-home__intro">
+              {submitted
+                ? 'Your original request and its recorded preparation status.'
+                : template
+                  ? 'Fill in a few details. Your free-text draft is kept separately.'
+                  : hasCrew
+                    ? 'Pick up where you left off, or give another agent a job.'
+                    : 'Describe what you need. Your Agent works in its own cloud computer.'}
+            </p>
+          ) : null}
           <DocsLink view="start-a-task">Help starting a task</DocsLink>
         </header>
       )}
       {!contextual && !template && !submitted ? (
         <>
           {personal ? (
-            <TaskCrew navigation={navigation} onRetry={home?.onRetry} onNavigate={onNavigate} />
+            <TaskCrew
+              navigation={navigation}
+              onRetry={home?.onRetry}
+              onNavigate={onNavigate}
+              previews={previews}
+            />
           ) : (
             <p className="task-home__context">
               Use the sidebar to browse Agents in the selected scope. New tasks use your personal
               environment.
             </p>
           )}
-          {hasCrew ? <h2 className="task-home__start-heading">Start another</h2> : null}
         </>
       ) : null}
       <div
@@ -115,9 +127,8 @@ export function TaskHomeLayout({
         data-with-mascot={(!contextual && !first && !submitted) || undefined}
       >
         {!contextual && !first && !submitted ? (
-          <aside className="task-home__mascot" aria-label="Next agent">
+          <aside className="task-home__mascot" aria-hidden="true">
             <CharacterAvatar pose="idle" size={80} still />
-            <span>Next agent</span>
           </aside>
         ) : null}
         <div className="task-home__content">{children}</div>

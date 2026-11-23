@@ -1,3 +1,4 @@
+import { selectTaskTemplate } from '../test/taskTemplateSelection';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { TaskHome } from './TaskHome';
@@ -19,7 +20,7 @@ it('preserves compiled template input alongside supported automatic title intent
     createAgentLifecycle: create,
   });
   render(<TaskHome client={client} viewerId="owner" canCreateSandbox onCreated={vi.fn()} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+  selectTaskTemplate('Research a topic');
   fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'Synthetic topic' } });
   const start = screen.getByRole('button', { name: 'Start task' });
   await waitFor(() => expect(start).toBeEnabled());
@@ -159,7 +160,7 @@ it.each([undefined, 'named', 'automatic'] as const)(
         onCreated={vi.fn()}
       />,
     );
-    await screen.findByText('10/10 Sandbox environments used');
+    await screen.findByText('Environment limit reached');
     fireEvent.click(await screen.findByRole('button', { name: 'Recover original task' }));
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
     expect(create.mock.calls[0]?.[0]).toEqual(body);

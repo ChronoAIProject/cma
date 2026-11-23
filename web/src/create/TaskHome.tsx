@@ -20,6 +20,8 @@ import { RunTargetMenu } from './RunTargetMenu';
 import { RepositoryChip } from './RepositoryChip';
 import { RepositoryPreparationHelp } from './RepositoryPreparationHelp';
 import { TaskTemplates } from './TaskTemplates';
+import { selectTaskHomePresentation } from './taskHomePresentation';
+import { useCrewReplyPreviews } from './useCrewReplyPreviews';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { useTaskExperience } from '../taskExperience';
 import { useTaskDraft } from './taskDraft';
@@ -29,6 +31,7 @@ import { useConnectionGate } from '../connections/useConnectionGate';
 import '../ui/Input.css';
 import './AgentLifecycleCard.css';
 import './TaskHome.css';
+import './TaskStartLayout.css';
 import './TaskFeedback.css';
 
 const recoverTask = { label: 'Recover original task', kind: 'recover' } as const;
@@ -175,6 +178,22 @@ function TaskHomeContent({
     !canCreate ||
     titleModeSupported === undefined ||
     supported !== true;
+  const presentation = selectTaskHomePresentation({
+    navigation: home?.navigation,
+    scope: home?.scope,
+    contextual,
+    templateSelected: Boolean(draft.template),
+    submitted: Boolean(intent),
+  });
+  const previews = useCrewReplyPreviews({
+    client,
+    viewerId,
+    authEpoch: home?.authEpoch,
+    scope: home?.scope,
+    navigation: home?.navigation,
+    visibleAgentIds: presentation.crew.map(({ agent }) => agent.id),
+    enabled: !contextual && !draft.template && !intent,
+  });
   return (
     <TaskHomeLayout
       titleId={titleId}
@@ -184,6 +203,7 @@ function TaskHomeContent({
       template={draft.template}
       submitted={Boolean(intent)}
       onNavigate={home?.onNavigate ?? onCreated}
+      previews={previews}
     >
       {policy.settled && !policy.task_home_admission && !intent ? (
         <>
@@ -273,12 +293,25 @@ function TaskHomeContent({
             validation={validation?.message}
             errorId={errorId}
             disabled={submissionDisabled}
+            capacity={
+              !contextual && (!home || !intent?.receipt || quotaFailed) ? (
+                <SandboxCapacityPanel
+                  client={client}
+                  capacity={capacity}
+                  presentation="home"
+                  onEnvironments={home?.onEnvironments}
+                />
+              ) : null
+            }
             onClearTemplate={templateDraft.clear}
             onChange={(text) => {
               setValidation(undefined);
               draft.change(text);
             }}
           >
+            {presentation.templates === 'menu' ? (
+              <TaskTemplates presentation="menu" onSelect={templateDraft.select} />
+            ) : null}
             <RunTargetMenu
               workspaceId={workspaceId}
               sandboxId={sandboxId}
@@ -314,21 +347,14 @@ function TaskHomeContent({
           </TaskComposer>
         </TaskTemplatePanel>
       </form>
-      {!contextual && (!home || !intent?.receipt || quotaFailed) ? (
-        <SandboxCapacityPanel client={client} capacity={capacity} presentation="home" />
-      ) : null}
       {preparing ? (
         <p className="task-home__preparing" role="status">
           <span className="task-home__dot" aria-hidden="true" />
           {contextual ? 'Preparing your Agent…' : 'Preparing a cloud computer for your Agent…'}
         </p>
       ) : null}
-      {!home || !intent?.receipt ? <TaskTemplates onSelect={templateDraft.select} /> : null}
-      {!home || !intent?.receipt ? (
-        <p className="task-home__defaults">
-          <span className="task-home__dot" aria-hidden="true" />
-          GPT-6 · High reasoning · Autonomous
-        </p>
+      {presentation.templates === 'expanded' ? (
+        <TaskTemplates onSelect={templateDraft.select} />
       ) : null}
       {supported === undefined || titleModeSupported === undefined ? (
         <p className="sr-only" role="status">
@@ -357,38 +383,51 @@ function TaskHomeContent({
         pending={lifecycle.pending}
         preparing={preparing}
         resolvedCommit={agent?.workspace.resolvedCommit}
+        recovery={
+          <>
+            {intent && !intent.receipt && !lifecycle.connection ? (
+              <Button
+                variant="outline"
+                placement="task-home__action"
+                disabled={lifecycle.pending || lifecycle.blocked}
+                onClick={() => {
+                  setRecovering(true);
+                  void lifecycle.submit();
+                }}
+              >
+                {recoverTask.label}
+              </Button>
+            ) : null}
+            {lifecycle.connection ? (
+              <Button
+                variant="outline"
+                placement="task-home__action"
+                disabled={lifecycle.pending || lifecycle.blocked || connections.pending}
+                onClick={() => {
+                  if (viewerId && lifecycle.connection)
+                    void connections.checkAndRun(
+                      lifecycle.connection.target,
+                      viewerId,
+                      () => void lifecycle.submit(),
+                    );
+                }}
+              >
+                {continueTask.label}
+              </Button>
+            ) : null}
+            {failure && intent?.receipt ? (
+              <Button
+                variant="outline"
+                placement="task-home__action"
+                onClick={lifecycle.retryStatus}
+              >
+                {retryTaskStatus.label}
+              </Button>
+            ) : null}
+          </>
+        }
       />
-      {intent && !intent.receipt && !lifecycle.connection ? (
-        <Button
-          variant="outline"
-          placement="task-home__action"
-          disabled={lifecycle.pending || lifecycle.blocked}
-          onClick={() => {
-            setRecovering(true);
-            void lifecycle.submit();
-          }}
-        >
-          {recoverTask.label}
-        </Button>
-      ) : null}
       {connections.dialog}
-      {lifecycle.connection ? (
-        <Button
-          variant="outline"
-          placement="task-home__action"
-          disabled={lifecycle.pending || lifecycle.blocked || connections.pending}
-          onClick={() => {
-            if (viewerId && lifecycle.connection)
-              void connections.checkAndRun(
-                lifecycle.connection.target,
-                viewerId,
-                () => void lifecycle.submit(),
-              );
-          }}
-        >
-          {continueTask.label}
-        </Button>
-      ) : null}
       {quotaFailed ? (
         <p role="alert">
           The Sandbox environment limit is now reached. Your task draft is saved. Manage
@@ -418,15 +457,10 @@ function TaskHomeContent({
           {draft.error}
         </p>
       ) : null}
-      {failure ? (
+      {failure && !intent ? (
         <p className="task-home__alert" role="alert">
           {failure}
         </p>
-      ) : null}
-      {failure && intent?.receipt ? (
-        <Button variant="outline" placement="task-home__action" onClick={lifecycle.retryStatus}>
-          {retryTaskStatus.label}
-        </Button>
       ) : null}
       {connections.error ? (
         <p className="task-home__alert" role="alert">

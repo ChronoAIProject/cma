@@ -1,6 +1,7 @@
 import { taskTemplate } from './task-template.js';
 import type { ResolvedConfig } from '../config.js';
 import type { OperationOptions } from '../http.js';
+import { ProtocolError } from '../errors.js';
 import { command, identity, input, read, segment, type CommandOptions } from '../resources.js';
 import { agent } from './types.js';
 import {
@@ -81,6 +82,11 @@ export type AgentLifecycleFailure = Output<typeof agentLifecycleFailure>;
 export const agentLifecycleOperation = object({
   callback_url: optional(nullable(text)),
   id: text,
+  accepted_at: optional((value) => {
+    const time = text(value);
+    if (!Number.isFinite(Date.parse(time))) throw new ProtocolError('invalid acceptance time');
+    return time;
+  }),
   status: enumeration('queued', 'running', 'waiting_for_connection', 'succeeded', 'failed'),
   phase: text,
   agent_id: optional(text),
