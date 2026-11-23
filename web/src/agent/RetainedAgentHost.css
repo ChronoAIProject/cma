@@ -41,3 +41,16 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+.retained-agent__request {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.retained-agent__request pre,
+.retained-agent__request-text {
+  max-height: 240px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

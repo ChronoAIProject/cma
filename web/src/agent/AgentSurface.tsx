@@ -27,6 +27,7 @@ export function AgentSurface(props: AgentSurfaceProps) {
         history={matching ? history : undefined}
         client={props.lifecycleClient}
         exportAllowed={props.permissions?.exportHistory === true}
+        onPersonalHome={props.onPersonalHome ?? (() => props.onNavigate({ kind: 'home' }))}
         viewPosition={props.viewPosition}
         user={props.user}
       />

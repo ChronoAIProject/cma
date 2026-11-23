@@ -9,6 +9,7 @@ import { PageHeader } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import type { MessageUser } from './MessageIdentity';
 import { OwnerMessageStream } from './OwnerMessageStream';
+import { OriginalRequestReuse } from './OriginalRequestReuse';
 import { agentDisplayTitle } from './presentation';
 import type { RetainedAgentRead } from './retainedHistory';
 import type { RetiredAgentPresentation } from './retiredPresentation';
@@ -24,6 +25,7 @@ export function RetainedAgentHost({
   history,
   client,
   exportAllowed,
+  onPersonalHome,
   viewPosition,
   user,
 }: {
@@ -31,6 +33,7 @@ export function RetainedAgentHost({
   readonly history?: RetainedAgentRead;
   readonly client?: CmaWebClient;
   readonly exportAllowed: boolean;
+  readonly onPersonalHome: () => void;
   readonly viewPosition?: AgentViewPosition;
   readonly user?: MessageUser;
 }) {
@@ -96,7 +99,14 @@ export function RetainedAgentHost({
           History shows the records still available. Raw runtime and tool records are not included.
         </p>
         {client ? (
-          <RetainedExport client={client} presentation={presentation} allowed={exportAllowed} />
+          <>
+            <RetainedExport client={client} presentation={presentation} allowed={exportAllowed} />
+            <OriginalRequestReuse
+              client={client}
+              identity={presentation.identity}
+              onImported={onPersonalHome}
+            />
+          </>
         ) : (
           <p>Conversation export is unavailable with this access.</p>
         )}
