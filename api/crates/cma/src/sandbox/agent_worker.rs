@@ -261,25 +261,24 @@ impl AgentWorker {
     }
 
     async fn execute(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
-        if matches!(
+        let started = tokio::time::Instant::now();
+        let claimed = agent.clone();
+        let result = if matches!(
             agent.work.step,
             AgentWorkStep::RemoveHome
                 | AgentWorkStep::RemoveWorktree
                 | AgentWorkStep::EnsureProcessClosed
         ) {
-            let parent = self
-                .dependencies
-                .store
-                .get_sandbox(&agent.sandbox_id)
-                .await?
-                .ok_or(SandboxStoreError::NotFound)?;
-            if parent.retirement_archive_pending() {
-                return Err(SandboxStoreError::Conflict);
+            let preflight = self.prepare_retired_cleanup(&agent).await;
+            let at = now + started.elapsed();
+            match preflight {
+                Ok(Some(parents)) => self.complete_retired_cleanup(&agent, parents, at).await,
+                Ok(None) => self.execute_step(agent, at).await,
+                Err(error) => return self.finish_cleanup_preflight(&agent, error, at).await,
             }
-        }
-        let started = tokio::time::Instant::now();
-        let claimed = agent.clone();
-        let result = self.execute_step(agent, now).await;
+        } else {
+            self.execute_step(agent, now).await
+        };
         let result = self
             .finish_capacity_attempt(&claimed, result, now + started.elapsed())
             .await;
