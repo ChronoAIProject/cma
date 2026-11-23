@@ -244,18 +244,9 @@ impl NativeWarmPools {
         }
         reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing).await
     }
-
-    fn default_config_sha256(&self) -> Option<String> {
-        default_config_sha256(
-            self.adapter.native_pools(),
-            &self.released_images().agent,
-            self.home.as_ref(),
-            &self.default_capacity,
-        )
-    }
 }
 
-fn default_config_sha256(
+pub(super) fn default_config_sha256(
     provider: Option<&dyn layer3_adapter::agent_sandbox::NativePoolControl>,
     image: &RuntimeImage,
     home: Option<&HomeVolumePolicy>,
@@ -277,6 +268,7 @@ impl WarmPoolAdministration for NativeWarmPools {
     async fn list(&self, caller: &Caller) -> Result<WarmPoolList, WarmPoolError> {
         authorize(caller)?;
         let released = self.released_images();
+        let default_config_sha256 = self.default_config_sha256(&released.agent);
         let targets = self.store.list().await?;
         let inventory = match self.adapter.native_pools() {
             Some(provider) if self.home.is_some() => {
@@ -302,7 +294,7 @@ impl WarmPoolAdministration for NativeWarmPools {
             default_image: released.agent.uri,
             default_cpu_millis: self.default_capacity.cpu_millis,
             default_memory_mib: self.default_capacity.memory_mib,
-            default_config_sha256: self.default_config_sha256(),
+            default_config_sha256,
             available,
             machine_image: released.machine.map(|(image, _)| image.uri),
         })
