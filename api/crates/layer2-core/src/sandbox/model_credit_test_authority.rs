@@ -23,6 +23,8 @@ pub(in crate::sandbox) struct LedgerState {
     last_participant: u64,
     pub(in crate::sandbox) begin_reply: Option<BeginReply>,
     pub(in crate::sandbox) begin_barrier: Option<std::sync::Arc<tokio::sync::Barrier>>,
+    pub(in crate::sandbox) settle_barrier: Option<std::sync::Arc<tokio::sync::Barrier>>,
+    pub(in crate::sandbox) read_unavailable: bool,
 }
 
 pub(in crate::sandbox) type Ledger = Mutex<LedgerState>;
@@ -147,8 +149,11 @@ impl ReservationAuthority for Ledger {
     }
 
     async fn read(&self, id: &PhaseId) -> Result<Checkpoint, FundingError> {
-        self.lock()
-            .unwrap()
+        let state = self.lock().unwrap();
+        if state.read_unavailable {
+            return Err(FundingError::Unavailable);
+        }
+        state
             .checkpoints
             .get(id)
             .cloned()
@@ -246,6 +251,11 @@ impl ReservationAuthority for Ledger {
         effect: Effect,
     ) -> Result<Checkpoint, FundingError> {
         tokio::task::yield_now().await;
+        let barrier = self.lock().unwrap().settle_barrier.take();
+        if let Some(barrier) = barrier {
+            barrier.wait().await;
+            barrier.wait().await;
+        }
         let mut state = self.lock().unwrap();
         let reservation = &expected.reservation;
         if expected.state != PhaseState::InFlight

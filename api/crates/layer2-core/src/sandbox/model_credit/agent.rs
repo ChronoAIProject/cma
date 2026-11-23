@@ -213,6 +213,34 @@ impl AgentTurnFunding {
         }
     }
 
+    /// A local dispatch error does not prove that another dispatcher never began.
+    /// Retire Reserved with the same CAS as begin, or return an already final result.
+    pub(in crate::sandbox) async fn resolve_failed_dispatch(
+        &self,
+        message: &FundedAgentMessage,
+    ) -> Result<Effect, FundingError> {
+        let held = self.authority.read(&message.phase).await?;
+        if held.reservation.id != message.phase
+            || held.reservation.command.as_ref() != Some(&message.identity)
+            || held.reservation.request_digest != self.gateway.digest(&message.request(None))
+        {
+            return Err(FundingError::CheckpointChanged);
+        }
+        match held.state {
+            PhaseState::Reserved => {
+                self.credit().settle(&held, Effect::NotStarted).await?;
+                Ok(Effect::NotStarted)
+            }
+            PhaseState::Settled(effect) => match effect {
+                Effect::Finished { spent } if spent > held.reservation.limit.get() => {
+                    Err(FundingError::ReconciliationRequired)
+                }
+                _ => Ok(effect),
+            },
+            PhaseState::InFlight => Err(FundingError::ReconciliationRequired),
+        }
+    }
+
     /// Reconcile against the exact durable command and original payer. A
     /// terminal row lets us fence and settle a hold that never began. A gateway
     /// observation is required once a dispatch has begun, even after cancellation.

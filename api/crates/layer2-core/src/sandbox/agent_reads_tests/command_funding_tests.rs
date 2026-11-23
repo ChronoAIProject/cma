@@ -362,3 +362,6 @@ mod dispatch_recovery;
 
 #[path = "command_funding_binding_tests.rs"]
 mod binding_recovery;
+
+#[path = "command_funding_check_race_tests.rs"]
+mod check_races;
