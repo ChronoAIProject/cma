@@ -38,7 +38,7 @@ pub(super) async fn ensure_indexes(
         })
 }
 
-fn event_id(id: &SandboxId, seq: u64) -> String {
+pub(super) fn event_id(id: &SandboxId, seq: u64) -> String {
     format!("{}:{seq:020}", id.as_str())
 }
 

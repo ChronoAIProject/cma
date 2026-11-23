@@ -428,4 +428,14 @@ pub trait AgentWorkerStore: Send + Sync {
 
     async fn commit_agent_work(&self, mutation: AgentWorkMutation)
         -> Result<(), SandboxStoreError>;
+
+    /// Publish an original startup or connection result with the parent
+    /// revisions observed while proving its native attachment.
+    async fn commit_agent_connection_work(
+        &self,
+        mutation: AgentWorkMutation,
+        _parents: AgentWorkPublicationParents,
+    ) -> Result<(), SandboxStoreError> {
+        self.commit_agent_work(mutation).await
+    }
 }

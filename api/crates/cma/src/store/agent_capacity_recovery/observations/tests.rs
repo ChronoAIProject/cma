@@ -94,3 +94,48 @@ async fn cancelled_discovery_future_records_exactly_one_terminal_outcome() {
     assert!(metrics
         .contains("cma_capacity_recovery_discovery_seconds_count{phase=\"expired_query\"} 1"));
 }
+
+#[test]
+fn cohort_labels_distinguish_refusals_and_replays_from_commits() {
+    use CapacityRecoveryDisposition as D;
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    metrics::with_local_recorder(&recorder, || {
+        for disposition in [D::ContinueOriginalWork, D::CleanupOnly, D::LeaseActive] {
+            preflight(disposition);
+        }
+        commit(Stage::Admitted, &Ok(CommitOutcome::Recorded(())));
+        commit(Stage::Completed, &Ok(CommitOutcome::Recorded(())));
+        cohort(Stage::Completed, Outcome::Replay);
+        commit::<()>(Stage::Completed, &Ok(CommitOutcome::Unknown));
+        commit::<()>(Stage::Admitted, &Ok(CommitOutcome::KnownAbort));
+        commit::<()>(Stage::Admitted, &Err(RecoveryError::Unauthorized));
+    });
+    let rendered = handle.render();
+    let samples: Vec<_> = rendered
+        .lines()
+        .filter(|line| line.starts_with("cma_capacity_recovery_cohort_total{"))
+        .collect();
+    for (stage, outcome, count) in [
+        ("scanned", "observed", 3),
+        ("eligible", "observed", 1),
+        ("skipped", "observed", 1),
+        ("blocked", "refused", 1),
+        ("admitted", "committed", 1),
+        ("completed", "committed", 1),
+        ("completed", "replay", 1),
+        ("blocked", "unknown", 1),
+        ("blocked", "known_abort", 1),
+    ] {
+        assert!(
+            samples.iter().any(|line| {
+                line.contains(&format!("stage=\"{stage}\""))
+                    && line.contains(&format!("outcome=\"{outcome}\""))
+                    && line.ends_with(&format!(" {count}"))
+                    && line.matches('=').count() == 2
+            }),
+            "{rendered}"
+        );
+    }
+    assert_eq!(samples.len(), 9, "{rendered}");
+}
