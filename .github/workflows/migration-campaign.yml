@@ -114,6 +114,7 @@ jobs:
       max-parallel: 2
       matrix:
         fixture:
+          - { name: profile, script: migration_profile_fixture.py, overlay: '' }
           - { name: api-custody, script: migration_api_custody_fixture.py, overlay: --api-custody-fixture }
           # The membership overlay only adds manifests; the base profile fixture drives it.
           - { name: membership, script: migration_profile_fixture.py, overlay: --membership-fixture }
