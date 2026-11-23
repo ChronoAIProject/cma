@@ -127,6 +127,12 @@ impl OwnershipCoordinator {
         let mut owned = self.owned.lock().await;
         if !self.is_ready() {
             authority.revoke();
+            // Drain joins this acquisition before its snapshot. Keep a lease
+            // that committed meanwhile so drain releases it promptly instead of
+            // leaving it to expire.
+            if self.is_draining() {
+                owned.insert(id.clone(), authority);
+            }
             return Err(OwnershipError::Stale);
         }
         owned.insert(id.clone(), authority.clone());
@@ -294,6 +300,9 @@ impl OwnershipCoordinator {
 
     pub async fn begin_drain(&self) -> Vec<Arc<Authority>> {
         self.stop_admission();
+        // Join an in-flight acquisition or activation first, so the snapshot
+        // includes whatever committed before admission closed.
+        let _acquisition = self.acquisition.lock().await;
         let owned: Vec<_> = self.owned.lock().await.values().cloned().collect();
         for authority in &owned {
             authority.revoke();
