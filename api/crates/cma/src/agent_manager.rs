@@ -40,7 +40,9 @@ impl AgentManager {
         capacity: u32,
         cleanup_pacing: bool,
     ) -> Result<Arc<Self>, String> {
-        let coordinator = OwnershipCoordinator::register_with_cleanup_pacing(
+        // Dormant until activation: startup can outlast a lease, and peers must
+        // not place Agents on, or invite claims by, a process not yet serving.
+        let coordinator = OwnershipCoordinator::prepare_with_cleanup_pacing(
             store
                 .agent_ownership
                 .clone()
@@ -58,9 +60,7 @@ impl AgentManager {
                 max_owned_agents: capacity,
             },
             cleanup_pacing,
-        )
-        .await
-        .map_err(|_| "Agent Manager membership registration failed")?;
+        );
         registry.install_ownership(coordinator.clone());
         let manager = Arc::new(Self {
             coordinator,
@@ -73,7 +73,6 @@ impl AgentManager {
             handoffs: Mutex::new(BTreeMap::new()),
             lifecycle: OnceLock::new(),
         });
-        renewal::spawn(&manager);
         Ok(manager)
     }
 
@@ -86,9 +85,19 @@ impl AgentManager {
             .map_err(|_| "Agent Manager lifecycle already registered".into())
     }
 
-    pub fn activate(&self) -> Result<(), String> {
+    /// Register membership and start renewal at serving entry, once startup
+    /// has proved this process can serve the work it would own.
+    pub async fn activate(self: &Arc<Self>) -> Result<(), String> {
         if self.lifecycle.get().is_none() {
             return Err("Agent Manager lifecycle drain is missing".into());
+        }
+        let first = !self.coordinator.is_registered();
+        self.coordinator
+            .activate()
+            .await
+            .map_err(|_| "Agent Manager membership registration failed")?;
+        if first {
+            renewal::spawn(self);
         }
         if !self.coordinator.is_ready() {
             return Err("Agent Manager membership expired during startup".into());
