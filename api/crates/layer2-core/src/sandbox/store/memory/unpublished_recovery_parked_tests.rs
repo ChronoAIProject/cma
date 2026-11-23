@@ -120,3 +120,43 @@ async fn consumed_parked_retry_requires_explicit_consent_and_exact_current_proof
         }
     }
 }
+
+#[tokio::test]
+async fn retrying_a_reopen_parked_on_a_superseded_target_recovers_onto_the_latest_runtime() {
+    // #2257: the owner's Retry sends the pinned target after the latest runtime moved on.
+    for operator in [false, true] {
+        let (store, id) = parked();
+        let before = store
+            .unpublished_runtime_recovery_snapshot(&id)
+            .await
+            .unwrap();
+        assert_eq!(
+            before.sandbox.admitted_runtime_update_target(),
+            Some("image-v2")
+        );
+        let service = SandboxRuntimeUpdateService::new(store.clone(), "image-v3".into())
+            .with_unpublished_recovery(Arc::new(VerifyOriginalProcesses));
+        let caller = crate::Caller {
+            subject: before.sandbox.owner.clone(),
+            authorization: crate::Authorization::new([if operator {
+                crate::Capability::ControlAnySandbox
+            } else {
+                crate::Capability::UseOwnSandboxes
+            }]),
+        };
+        let after = if operator {
+            service.request_as_operator(&caller, &id, "image-v2").await
+        } else {
+            service.request(&caller, &id, "image-v2").await
+        }
+        .unwrap();
+        assert_eq!(after.admitted_runtime_update_target(), Some("image-v3"));
+        assert!(after.lifecycle.unpublished_recovery_attempted);
+        assert!(!after.runtime_update_request().unwrap().automatic);
+        assert_eq!(after.lifecycle.home, before.sandbox.lifecycle.home);
+        assert_eq!(
+            store.lock().agents.values().cloned().collect::<Vec<_>>(),
+            before.agents
+        );
+    }
+}
