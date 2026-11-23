@@ -98,3 +98,61 @@ async fn an_unknown_conflict_body_stays_retryable() {
     assert!(matches!(error, AdapterError::Unavailable(_)));
     server.abort();
 }
+
+#[tokio::test]
+async fn reopen_refusal_rechecks_the_dispatched_epoch_after_either_return_path() {
+    use crate::agent_manager::relay::tests::{acquire, cluster};
+    use layer2_core::agent_ownership::{
+        observed_transport, transport_observation_scope, OwnershipStore,
+    };
+    for remote in [false, true] {
+        let (store, instances) = cluster(2).await;
+        let id = AgentId(format!("agt_reopen_refusal_{remote}"));
+        let (_, owner) = acquire(&store, &instances, &id).await;
+        let refusal = || async {
+            if remote {
+                let (url, server) = serve_once(rejected_response).await;
+                let failure = rejected_from(post(&url).await).await;
+                server.abort();
+                failure
+            } else {
+                CallFailure::Runtime(AdapterError::Rejected("retained output refused".into()))
+            }
+        };
+        let refused = refusal().await;
+        transport_observation_scope(async {
+            assert!(matches!(
+                verify_refused_owner::<()>(store.as_ref(), &owner.token, Err(refused)).await,
+                Err(CallFailure::Runtime(AdapterError::Rejected(_)))
+            ));
+            assert_eq!(observed_transport(&id), Some(owner.token.clone()));
+        })
+        .await;
+
+        let refused = refusal().await;
+        store.release(&owner.token).await.unwrap();
+        let successor = instances
+            .iter()
+            .find(|instance| instance.coordinator.instance_id != owner.token.instance_id)
+            .unwrap();
+        store
+            .heartbeat(&owner.token.instance_id, true)
+            .await
+            .unwrap();
+        let token = store
+            .acquire(&id, &successor.coordinator.instance_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .token;
+        assert!(token.epoch > owner.token.epoch);
+        transport_observation_scope(async {
+            assert!(matches!(
+                verify_refused_owner::<()>(store.as_ref(), &owner.token, Err(refused)).await,
+                Err(CallFailure::Unavailable)
+            ));
+            assert_eq!(observed_transport(&id), None);
+        })
+        .await;
+    }
+}

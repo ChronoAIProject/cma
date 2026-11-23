@@ -1,6 +1,9 @@
 use super::*;
 use layer2_core::sandbox::store::{SandboxImageRotationRequest, SandboxMaintenanceStore};
 
+#[path = "runtime_update_reopen_refusal_tests.rs"]
+mod reopen_refusal;
+
 async fn active() -> (Fixture, Sandbox, SystemTime) {
     let mut f = Fixture::native().await;
     let created = f.harness.create().await;

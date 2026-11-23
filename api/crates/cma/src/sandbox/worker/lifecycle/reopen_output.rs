@@ -8,6 +8,13 @@ use layer2_core::{now_rfc3339, AgentId};
 use layer3_adapter::{AdapterError, ConversationUpdate};
 use tokio::sync::mpsc;
 
+pub(super) const OUTPUT_REFUSED: &str =
+    "durable reopen output was refused: runtime output receipt is not contiguous with its conversation";
+
+pub(super) fn output_refused(error: &AdapterError) -> bool {
+    matches!(error, AdapterError::Rejected(detail) if detail == OUTPUT_REFUSED)
+}
+
 /// Drain before open returns; ACK ownership passes only after a fenced commit.
 pub(super) async fn drain_while<T>(
     operation: impl Future<Output = layer3_adapter::Result<T>>,
@@ -15,6 +22,7 @@ pub(super) async fn drain_while<T>(
     recorder: &dyn AgentUpdateRecorder,
     agent_id: &AgentId,
     guard: &AgentReopenGuard,
+    terminal_discontinuity: bool,
 ) -> layer3_adapter::Result<T> {
     if layer2_core::sandbox::store::WorkAuthority::active() {
         layer2_core::sandbox::store::WorkAuthority::current()
@@ -23,7 +31,14 @@ pub(super) async fn drain_while<T>(
         // A captured wall-clock expiry cannot shorten a renewed long operation.
         return tokio::time::timeout(
             Duration::from_secs(1_800),
-            drain(operation, receiver, recorder, agent_id, guard),
+            drain(
+                operation,
+                receiver,
+                recorder,
+                agent_id,
+                guard,
+                terminal_discontinuity,
+            ),
         )
         .await
         .map_err(|_| AdapterError::Unavailable("reopen output operation timed out".into()))?;
@@ -48,7 +63,14 @@ pub(super) async fn drain_while<T>(
     }
     tokio::time::timeout(
         Duration::from_secs(remaining),
-        drain(operation, receiver, recorder, agent_id, guard),
+        drain(
+            operation,
+            receiver,
+            recorder,
+            agent_id,
+            guard,
+            terminal_discontinuity,
+        ),
     )
     .await
     .map_err(|_| AdapterError::Unavailable("reopen output lifecycle lease expired".into()))?
@@ -60,6 +82,7 @@ pub(super) async fn drain<T>(
     recorder: &dyn AgentUpdateRecorder,
     agent_id: &AgentId,
     guard: &AgentReopenGuard,
+    terminal_discontinuity: bool,
 ) -> layer3_adapter::Result<T> {
     tokio::pin!(operation);
     let mut assembly = AgentMessageAssembly::default();
@@ -81,6 +104,9 @@ pub(super) async fn drain<T>(
                         match recorder.record_reopen_update(agent_id, guard, &mut assembly, update.clone(), now_rfc3339()).await {
                             Ok(_) => break,
                             Err(AgentConversationError::Unavailable(_)) => tokio::time::sleep(Duration::from_secs(1)).await,
+                            Err(AgentConversationError::ReopenOutputDiscontinuity) if terminal_discontinuity => {
+                                return Err(AdapterError::Rejected(OUTPUT_REFUSED.into()));
+                            }
                             Err(error) => return Err(AdapterError::Unavailable(format!("durable reopen output was refused: {error}"))),
                         }
                     }
@@ -102,6 +128,9 @@ pub(super) async fn drain<T>(
                     }
                 };
                 if let Err(error) = recorded {
+                    if output_refused(&error) {
+                        return Err(error);
+                    }
                     return match completed {
                         Some(Err(original)) => Err(original),
                         Some(Ok(_)) => Err(error),

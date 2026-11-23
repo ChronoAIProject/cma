@@ -39,7 +39,8 @@ async fn issue_1164_peer_delete_fences_reconnect_and_settings_dispatch() {
         let inputs = fixture.backend.inputs.lock().unwrap().len();
         let relay = replicas[(owner + 1) % replicas.len()].relay.clone();
         let agent_id = agent.id.clone();
-        let running = tokio::spawn(async move { relay.reopen_agent(&claim, &agent_id).await });
+        let running =
+            tokio::spawn(async move { relay.reopen_agent(&claim, &agent_id, false).await });
         let (entered, release) = if hold_adoption {
             (&pause.entered, &pause.release)
         } else {

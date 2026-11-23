@@ -98,6 +98,7 @@ pub(crate) struct FeatureFlags {
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
+    pub reopen_output_refusal_enabled: bool,
     pub cleanup_continuation_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
@@ -232,6 +233,10 @@ impl FeatureFlags {
             native_create_retry_enabled: flag(
                 lookup,
                 "CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED",
+            )?,
+            reopen_output_refusal_enabled: flag(
+                lookup,
+                "CHRONO_RUNTIME_UPDATE_REOPEN_OUTPUT_REFUSAL_ENABLED",
             )?,
             cleanup_continuation_enabled: flag(
                 lookup,

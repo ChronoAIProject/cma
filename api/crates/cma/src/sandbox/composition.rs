@@ -54,6 +54,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
+    pub reopen_output_refusal_enabled: bool,
     pub cleanup_continuation_enabled: bool,
     pub bounded_live_fragments: bool,
     pub quiet_output: Option<layer2_core::sandbox::AgentOutputCoalescePolicy>,
@@ -262,6 +263,7 @@ impl SandboxLifecycleComposition {
         .with_native_create_retry(config.native_create_retry_enabled)
         .with_home_policy(config.home_policy);
         sandbox_config.retirement_finalizer = Some(retirement_finalizer);
+        sandbox_config.reopen_output_refusal_enabled = config.reopen_output_refusal_enabled;
         let sandbox_worker = SandboxWorker::new_with_funding(
             SandboxWorkerDependencies {
                 store: dependencies.store.clone(),

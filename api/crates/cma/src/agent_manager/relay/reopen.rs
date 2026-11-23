@@ -43,8 +43,9 @@ impl Relay {
         &self,
         sandbox: &Sandbox,
         id: &AgentId,
+        verify_refusal: bool,
     ) -> layer3_adapter::Result<AgentWorkReceipt> {
-        self.reopen_call(sandbox, id)
+        self.reopen_call(sandbox, id, verify_refusal)
             .await
             .map_err(|error| error.into_adapter("Agent owner lifecycle reopen unavailable"))
     }
@@ -53,6 +54,7 @@ impl Relay {
         &self,
         sandbox: &Sandbox,
         id: &AgentId,
+        verify_refusal: bool,
     ) -> Result<AgentWorkReceipt, CallFailure> {
         let deadline = Instant::now() + REOPEN_LIMIT;
         let _permit = self
@@ -66,17 +68,18 @@ impl Relay {
         };
         let reply = if destination.member.instance_id == self.coordinator.instance_id {
             let worker = self.reopen.get().ok_or(())?;
-            let receipt = tokio::time::timeout_at(
+            tokio::time::timeout_at(
                 deadline,
                 destination.authority.run(worker.reopen_at_owner(id, &call)),
             )
             .await
             .map_err(|_| ())?
-            .map_err(|_| ())??;
-            Reply {
+            .map_err(|_| ())?
+            .map(|receipt| Reply {
                 owner: destination.token.clone(),
                 receipt,
-            }
+            })
+            .map_err(CallFailure::from)
         } else {
             let body = serde_json::to_vec(&call).map_err(|_| ())?;
             let uri: axum::http::Uri = format!("{PREFIX}/control/{id}/reopen")
@@ -129,7 +132,12 @@ impl Relay {
                 serde_json::from_slice::<Reply>(&bytes).map_err(|_| CallFailure::Unavailable)
             })
             .await
-            .map_err(|_| ())??
+            .map_err(|_| ())?
+        };
+        let reply = if verify_refusal {
+            verify_refused_owner(self.coordinator.store.as_ref(), &destination.token, reply).await?
+        } else {
+            reply?
         };
         if reply.owner.agent_id != *id
             || reply.owner.instance_id != destination.member.instance_id
@@ -143,6 +151,23 @@ impl Relay {
         layer2_core::agent_ownership::observe_transport(reply.owner).map_err(|_| ())?;
         Ok(reply.receipt)
     }
+}
+
+async fn verify_refused_owner<T>(
+    store: &dyn layer2_core::agent_ownership::OwnershipStore,
+    token: &OwnershipToken,
+    result: Result<T, CallFailure>,
+) -> Result<T, CallFailure> {
+    if matches!(&result, Err(CallFailure::Runtime(error)) if terminal(error)) {
+        // A claim invitation proves no owner epoch. Re-dispatch after the peer
+        // claims a real epoch before using its refusal to settle the Sandbox.
+        if token.epoch == 0 {
+            return Err(CallFailure::Unavailable);
+        }
+        bounded(store.check(token)).await.map_err(|_| ())?;
+        layer2_core::agent_ownership::observe_transport(token.clone()).map_err(|_| ())?;
+    }
+    result
 }
 
 pub(super) async fn serve(
@@ -203,11 +228,14 @@ fn rejected_response() -> Response {
 /// An unknown 409 stays retryable, exactly as before this code existed.
 async fn rejected_from(mut response: reqwest::Response) -> CallFailure {
     let mut bytes = Vec::new();
-    while let Ok(Some(chunk)) = response.chunk().await {
-        if chunk.len() > 4096_usize.saturating_sub(bytes.len()) {
-            return CallFailure::Unavailable;
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) if chunk.len() <= 4096_usize.saturating_sub(bytes.len()) => {
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            _ => return CallFailure::Unavailable,
         }
-        bytes.extend_from_slice(&chunk);
     }
     match serde_json::from_slice::<serde_json::Value>(&bytes) {
         Ok(body) if body["code"] == REJECTED => {

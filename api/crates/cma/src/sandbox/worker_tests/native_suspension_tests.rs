@@ -29,6 +29,7 @@ struct Fixture {
     backend: NativeBackend,
     /// Native retirement admission; the production default is off.
     retirement_admission: std::sync::atomic::AtomicBool,
+    reopen_output_refusal: bool,
 }
 impl Fixture {
     async fn new() -> Self {
@@ -46,6 +47,7 @@ impl Fixture {
             homes,
             backend,
             retirement_admission: std::sync::atomic::AtomicBool::new(true),
+            reopen_output_refusal: false,
         }
     }
     /// Exercise the production default, where finality admission is off.
@@ -96,6 +98,7 @@ impl Fixture {
             SandboxWorkerConfig::new("restarted", "test", image, self.harness.policy.clone())
                 .with_home_policy(Some(self.home_policy()));
         config.retry_delay = Duration::from_secs(5);
+        config.reopen_output_refusal_enabled = self.reopen_output_refusal;
         config.retirement_finalizer = Some(Arc::new(
             crate::sandbox::native_retirement_finalizer::NativeRetirementFinalizer::new(
                 self.harness.store.clone(),
