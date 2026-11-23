@@ -15,7 +15,15 @@ async fn selected(app: Option<String>) -> (Fixture, Agent) {
 async fn wait(barrier: &adoption_probe::Barrier) {
     tokio::time::timeout(Duration::from_secs(40), barrier.reached.notified())
         .await
-        .unwrap();
+        .expect("worker did not reach the admission barrier");
+}
+
+async fn wait_for_commit(barrier: &adoption_probe::Barrier) {
+    // Reaching the commit barrier can require several passes over the full
+    // legacy log on the CI replica set.
+    tokio::time::timeout(Duration::from_secs(120), barrier.reached.notified())
+        .await
+        .expect("worker did not reach the commit barrier");
 }
 
 async fn no_publication(fixture: &Fixture) {
@@ -187,7 +195,7 @@ async fn lost_publication_acknowledgment_replays_after_closure_restart_and_later
                 .await
         }
     });
-    wait(&barrier).await;
+    wait_for_commit(&barrier).await;
     admin.database("admin").run_command(doc! {
         "configureFailPoint": "failCommand", "mode": {"times": 6_i32},
         "data": {"failCommands": ["commitTransaction"], "appName": app,
@@ -382,11 +390,16 @@ async fn unresolved_publication_blocks_replacement_before_and_after_original_lea
             .unwrap();
     let db = fixture.name.clone();
     let barrier = adoption_probe::arm(&db, Boundary::BeforeCommit);
-    let finish = tokio::spawn(async move {
+    let mut finish = tokio::spawn(async move {
         let result = finish_now(&fixture).await;
         (fixture, result)
     });
-    wait(&barrier).await;
+    tokio::select! {
+        () = wait_for_commit(&barrier) => {}
+        result = &mut finish => {
+            panic!("worker finished before the commit failpoint was installed: {:?}", result.unwrap().1);
+        }
+    }
     admin
         .database("admin")
         .run_command(doc! {
