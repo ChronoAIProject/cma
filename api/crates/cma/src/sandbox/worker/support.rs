@@ -387,6 +387,7 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
             WorkerFailure::resource_quota("requested sandbox capacity is unavailable")
         }
         AdapterError::Rejected(_)
+        | AdapterError::DesktopFailed
         | AdapterError::SkillUpgradeRefused(_)
         | AdapterError::OperationIdentityConflict(_)
         | AdapterError::Unsupported(_) => {
