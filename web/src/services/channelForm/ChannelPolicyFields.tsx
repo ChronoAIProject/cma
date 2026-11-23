@@ -88,7 +88,14 @@ export function ChannelPolicyFields({
                 unavailable: partitionKeyUnavailable(discovery, option.value, value.sources),
               }))}
               onChange={(key) =>
-                set('partition', { ...partition, version: partition.version ?? 1, key })
+                set('partition', {
+                  // A separate custom-event grouping applies only beneath a chat grouping.
+                  ...(['conversation_and_sender', 'conversation', 'thread'].includes(key)
+                    ? partition
+                    : optional(partition, 'custom_key', undefined)),
+                  version: partition.version ?? 1,
+                  key,
+                })
               }
             />
             {customGroupingApplies(discovery, value.sources) || partition.custom_key != null ? (

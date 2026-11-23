@@ -13,11 +13,14 @@ import { channelCredentials, defaultSource, type Fields } from './model';
 
 afterEach(() => vi.unstubAllGlobals());
 
-const legacy: RelayDiscovery = { status: 'ready' };
-const extended = {
-  status: 'ready',
-  authoring: { dynamic_sources_writes_enabled: true, platforms: [] },
-} as unknown as RelayDiscovery;
+const advertised = (dynamic: boolean) =>
+  ({
+    status: 'ready',
+    authoring: { dynamic_sources_writes_enabled: dynamic, platforms: [] },
+  }) as unknown as RelayDiscovery;
+const legacy = advertised(false);
+const extended = advertised(true);
+const unknown: RelayDiscovery = { status: 'failed' };
 const custom = defaultSource('custom');
 const relay = defaultSource('nyxid_relay');
 
@@ -135,20 +138,25 @@ it('offers each single-use reply destination once', () => {
 
 it('refuses repeated and missing reply destinations, but keeps a saved empty list', () => {
   const webhook = { type: 'result_webhook', url: 'https://example.test/a', hmac_key_id: 'k' };
-  expect(replyIssue({ auto_final: true, sinks: [{ type: 'source' }, { type: 'source' }] })).toEqual(
-    expect.objectContaining({ path: '/reply/sinks/1' }),
-  );
   expect(
-    replyIssue({ sinks: [webhook, { ...webhook, url: ' https://example.test/a ' }] })?.path,
+    replyIssue({ auto_final: true, sinks: [{ type: 'source' }, { type: 'source' }] }, true),
+  ).toEqual(expect.objectContaining({ path: '/reply/sinks/1' }));
+  expect(
+    replyIssue({ sinks: [webhook, { ...webhook, url: ' https://example.test/a ' }] }, false)?.path,
   ).toBe('/reply/sinks/1');
-  expect(replyIssue({ sinks: [webhook, { ...webhook, url: 'https://example.test/b' }] })).toBe(
-    undefined,
-  );
-  expect(replyIssue({ auto_final: true, sinks: [] })?.path).toBe('/reply/sinks');
-  expect(replyIssue({ auto_final: false, sinks: [] })).toBeUndefined();
-  expect(replyIssue({ auto_final: true, sinks: [] }, { auto_final: true, sinks: [] })).toBe(
-    undefined,
-  );
+  expect(
+    replyIssue({ sinks: [webhook, { ...webhook, url: 'https://example.test/b' }] }, false),
+  ).toBe(undefined);
+  expect(replyIssue({ auto_final: true, sinks: [] }, false)?.path).toBe('/reply/sinks');
+  expect(replyIssue({ auto_final: false, sinks: [] }, false)).toBeUndefined();
+  expect(
+    replyIssue({ auto_final: true, sinks: [] }, false, { auto_final: true, sinks: [] }),
+  ).toBeUndefined();
+  // Chat replies return to their conversation without a listed destination.
+  expect(replyIssue({ auto_final: true, sinks: [] }, true)).toBeUndefined();
+  // Repeats a saved channel already had deliver nothing extra and are not re-judged.
+  const repeated = { auto_final: true, sinks: [{ type: 'source' }, { type: 'source' }] };
+  expect(replyIssue({ ...repeated, ack_after_ms: 10 }, true, repeated)).toBeUndefined();
 });
 
 it('drops HMAC replacement controls and credentials when a Custom source uses an agent key', () => {
@@ -231,4 +239,33 @@ it('re-judges only changed settings when a saved channel is edited', () => {
   expect(() =>
     validateAuthoringRules(legacy, { ...saved, sources: [relay, custom] }, saved),
   ).toThrow('/partition/key: custom sources require fixed, event_subject, or per_event');
+});
+
+it('leaves custom-event grouping to the gateway until it advertises its capabilities', () => {
+  const partition = { version: 1, key: 'conversation', custom_key: 'fixed' };
+  expect(partitionIssue(unknown, partition, [relay, custom])).toBeUndefined();
+  expect(partitionIssue(legacy, partition, [relay, custom])?.path).toBe('/partition/custom_key');
+  // Reader rules still apply: a Custom-only channel cannot use chat grouping.
+  expect(partitionIssue(unknown, { version: 1, key: 'conversation' }, [custom])?.path).toBe(
+    '/partition/key',
+  );
+});
+
+it("keeps the owner's grouping when only the separate custom grouping is invalid", () => {
+  const draft = {
+    sources: [relay, custom],
+    partition: { version: 1, key: 'fixed', custom_key: 'event_subject' },
+  };
+  expect(fitPartition(extended, draft).partition).toEqual({ version: 1, key: 'fixed' });
+});
+
+it('describes automatic chat replies as going to the original conversation', () => {
+  const fetcher = newChannel();
+  fireEvent.click(screen.getByRole('button', { name: 'Remove destination 1' }));
+  const review = within(screen.getByRole('group', { name: 'Review' }));
+  expect(
+    review.getByText('Final answers sent automatically to the original conversation'),
+  ).toBeVisible();
+  expect(review.queryByText(/no reply destination/)).not.toBeInTheDocument();
+  expect(fetcher).not.toHaveBeenCalled();
 });

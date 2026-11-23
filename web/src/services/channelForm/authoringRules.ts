@@ -30,6 +30,14 @@ const hasCustom = (types: readonly string[]) =>
 const hasChat = (types: readonly string[]) => types.some((type) => chatSources.includes(type));
 const extendedWrites = (discovery: RelayDiscovery) =>
   discovery.authoring?.dynamic_sources_writes_enabled === true;
+// Unknown until the gateway advertises its authoring capabilities.
+const extendedWritesOff = (discovery: RelayDiscovery) =>
+  discovery.authoring !== undefined && discovery.authoring.dynamic_sources_writes_enabled !== true;
+
+/** Chat producers, including a managed connection, reply to the original conversation. */
+export function repliesToOrigin(draft: Fields): boolean {
+  return draft.connection_ref !== undefined || hasChat(sourceTypes(draft.sources));
+}
 
 /** The gateway's legacy partition predicate (`PartitionRule::validate_legacy`). */
 function legacyPartitionIssue(key: string, types: readonly string[]): AuthoringIssue | undefined {
@@ -85,7 +93,7 @@ export function partitionIssue(
   const key = text(rule.key);
   const customKey = rule.custom_key === undefined ? undefined : text(rule.custom_key);
   const types = sourceTypes(sources);
-  if (!extendedWrites(discovery)) {
+  if (extendedWritesOff(discovery)) {
     const gated = types.filter((type) => !gateIgnoredSources.includes(type));
     if (customKey !== undefined)
       return {
@@ -115,8 +123,6 @@ export function partitionKeyUnavailable(
     return 'Needs a custom event producer.';
   if (key === 'thread' && !types.some((type) => chatSources.includes(type) && type !== 'whatsapp'))
     return 'Needs a chat producer with threads.';
-  if (chat && key === 'per_event' && extendedWrites(discovery))
-    return 'Chat messages cannot start a new conversation for every event.';
   return undefined;
 }
 
@@ -131,18 +137,26 @@ export function fitPartition(discovery: RelayDiscovery, draft: Fields): Fields {
   const partition = object(draft.partition);
   if (!partitionIssue(discovery, partition, draft.sources)) return draft;
   const types = sourceTypes(draft.sources);
+  const key = text(partition.key);
   const base = { ...without(partition, ['custom_key']), version: partition.version ?? 1 };
-  const candidates: Fields[] = !hasCustom(types)
-    ? [{ ...base, key: 'conversation_and_sender' }]
-    : !hasChat(types)
-      ? [{ ...base, key: 'event_subject' }]
-      : [
-          ...(chatKeys.includes(text(partition.key))
-            ? [{ ...base, key: partition.key, custom_key: 'event_subject' }]
-            : []),
-          { ...base, key: 'conversation_and_sender', custom_key: 'event_subject' },
-          { ...base, key: 'fixed' },
-        ];
+  const extended = extendedWrites(discovery);
+  const candidates: Fields[] = [
+    // Keep the owner's chosen grouping when only the separate custom grouping is invalid.
+    ...(partition.custom_key !== undefined ? [{ ...base, key }] : []),
+    ...(!hasCustom(types)
+      ? [{ ...base, key: 'conversation_and_sender' }]
+      : !hasChat(types)
+        ? [{ ...base, key: 'event_subject' }]
+        : [
+            ...(extended && chatKeys.includes(key)
+              ? [{ ...base, key, custom_key: 'event_subject' }]
+              : []),
+            ...(extended
+              ? [{ ...base, key: 'conversation_and_sender', custom_key: 'event_subject' }]
+              : []),
+            { ...base, key: 'fixed' },
+          ]),
+  ];
   const fitted = candidates.find(
     (candidate) => !partitionIssue(discovery, candidate, draft.sources),
   );
@@ -172,22 +186,30 @@ export function nextSink(sinks: readonly Fields[]): Fields {
   return type ? { type } : { type: 'result_webhook', url: '', hmac_key_id: '' };
 }
 
-export function replyIssue(reply: unknown, previous?: unknown): AuthoringIssue | undefined {
+export function replyIssue(
+  reply: unknown,
+  toOrigin: boolean,
+  previous?: unknown,
+): AuthoringIssue | undefined {
   const value = object(reply);
   const sinks = records(value.sinks);
+  // Repeats a saved channel already had are not re-judged; they deliver nothing extra.
+  const saved = records(object(previous).sinks).map(sinkSignature);
+  const repeatedBefore = (signature: string) =>
+    saved.filter((item) => item === signature).length > 1;
   for (let index = 1; index < sinks.length; index++) {
-    const duplicate = sinks.findIndex(
-      (sink, i) => i < index && sinkSignature(sink) === sinkSignature(sinks[index]!),
-    );
-    if (duplicate >= 0)
+    const signature = sinkSignature(sinks[index]!);
+    const duplicate = sinks.findIndex((sink, i) => i < index && sinkSignature(sink) === signature);
+    if (duplicate >= 0 && !repeatedBefore(signature))
       return {
         path: `/reply/sinks/${index}`,
         message: `Reply destination ${index + 1} repeats destination ${duplicate + 1}. Remove it or choose a different destination.`,
       };
   }
-  // A saved channel that already has no destination keeps its existing behavior.
+  // Chat replies go back to their conversation without a listed destination. A saved
+  // channel that already has no destination keeps its existing behavior.
   const removedLast = previous === undefined || records(object(previous).sinks).length > 0;
-  if (value.auto_final === true && sinks.length === 0 && removedLast)
+  if (value.auto_final === true && sinks.length === 0 && !toOrigin && removedLast)
     return {
       path: '/reply/sinks',
       message:
@@ -222,6 +244,6 @@ export function validateAuthoringRules(discovery: RelayDiscovery, next: Fields, 
     (changed('partition') || changed('sources')
       ? partitionIssue(discovery, next.partition, next.sources)
       : undefined) ??
-    (changed('reply') ? replyIssue(next.reply, previous?.reply) : undefined);
+    (changed('reply') ? replyIssue(next.reply, repliesToOrigin(next), previous?.reply) : undefined);
   if (issue) throw new Error(`${issue.path}: ${issue.message}`);
 }
