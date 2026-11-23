@@ -18,6 +18,8 @@ mod model;
 mod planning;
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(test)]
+pub(crate) use tests::machine_tests::admit_machine_for_pointer_fixture;
 mod tools;
 mod work;
 mod workspace_proof;

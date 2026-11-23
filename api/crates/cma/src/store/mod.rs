@@ -259,3 +259,28 @@ pub(crate) mod sandbox_metric_bindings;
 pub(crate) mod sandbox_metric_rollups;
 pub(crate) mod sandbox_usage_rollups;
 pub(crate) mod usage_reports;
+
+#[cfg(test)]
+pub(crate) async fn open_pointer_fixture_sandbox_store(
+    database: &mongodb::Database,
+    pin: String,
+    released: std::sync::Arc<released_runtimes::StoreReleasedRuntime>,
+) -> Result<MongoSandboxStore, layer2_core::StoreError> {
+    let mut store = MongoSandboxStore::open(database.client(), database.name())
+        .await?
+        .with_managed_runtime_version(pin);
+    store.released_lanes = Some(released.lanes.clone());
+    Ok(store.with_released_runtime(released))
+}
+
+#[cfg(test)]
+pub(crate) async fn open_pointer_fixture_pool_store(
+    database: &mongodb::Database,
+    deployment: &str,
+) -> Result<native_warm_pools::MongoNativeWarmPools, layer2_core::StoreError> {
+    let mut store = native_warm_pools::MongoNativeWarmPools::open(database, deployment).await?;
+    store.released_lanes = Some(released_runtimes::MongoReleasedRuntimes::open(
+        database, deployment,
+    ));
+    Ok(store)
+}

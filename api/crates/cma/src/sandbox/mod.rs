@@ -73,6 +73,11 @@ mod agent_worker_tests;
 mod worker_tests;
 #[cfg(test)]
 pub(crate) use worker_tests::exercise_native_retirement_finality;
+#[cfg(test)]
+pub(crate) use worker_tests::{
+    seed_sandbox_profile_with_capacity, ActionLog, AgentStopRecorder, MemoryCredentials,
+    WorkspaceRecorder,
+};
 
 pub(crate) mod legacy_credentials;
 
