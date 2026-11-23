@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
     Arc,
 };
 use std::time::Duration;
@@ -15,6 +15,8 @@ use super::{
 };
 use crate::AgentId;
 
+#[path = "coordinator_heartbeat.rs"]
+mod heartbeat;
 #[path = "coordinator_renewal.rs"]
 mod renewal;
 #[cfg(test)]
@@ -22,7 +24,8 @@ mod renewal;
 mod renewal_tests;
 
 /// One process incarnation. Membership or authority invariant loss revokes it;
-/// an unavailable renewal cancels only its still-live captured Agent authority.
+/// an unavailable renewal cancels only its still-live captured Agent authority,
+/// and an unavailable member heartbeat skips one tick while membership holds.
 pub struct OwnershipCoordinator {
     pub instance_id: String,
     pub store: Arc<dyn OwnershipStore>,
@@ -30,6 +33,7 @@ pub struct OwnershipCoordinator {
     acquisition: Mutex<()>,
     cancelled_cursor: AtomicUsize,
     member_deadline: std::sync::Mutex<Instant>,
+    skipped_heartbeats: AtomicU32,
     draining: AtomicBool,
     failed: watch::Sender<bool>,
     pub(super) cleanup_pacing: super::cleanup_pacing::CleanupPacing,
@@ -65,6 +69,7 @@ impl OwnershipCoordinator {
             acquisition: Mutex::new(()),
             cancelled_cursor: AtomicUsize::new(0),
             member_deadline: std::sync::Mutex::new(deadline),
+            skipped_heartbeats: AtomicU32::new(0),
             draining: AtomicBool::new(false),
             failed: watch::channel(false).0,
             cleanup_pacing: super::cleanup_pacing::CleanupPacing::new(enabled, capacity),
@@ -85,6 +90,8 @@ impl OwnershipCoordinator {
         self.failed.subscribe()
     }
 
+    /// Returns existing current authority. A new acquisition is declined with
+    /// None, without a store call, while the latest heartbeat tick was skipped.
     pub async fn acquire(&self, id: &AgentId) -> Result<Option<Arc<Authority>>, OwnershipError> {
         if !self.is_ready() {
             return Err(OwnershipError::Stale);
@@ -102,6 +109,11 @@ impl OwnershipCoordinator {
             Some(_) => return Err(OwnershipError::Stale),
             None => None,
         };
+        // A skipped heartbeat may begin an outage that ends in failure: adopt
+        // nothing new until a heartbeat succeeds. Existing authority stays.
+        if self.skipped_heartbeats.load(Ordering::Acquire) > 0 {
+            return Ok(None);
+        }
         let started = Instant::now();
         let membership = bounded(self.store.membership()).await?;
         let Some(lease) = bounded(self.store.acquire(id, &self.instance_id)).await? else {
@@ -152,6 +164,7 @@ impl OwnershipCoordinator {
 
     /// A successful renewal never revives an authority already cancelled locally.
     /// Returns cooperative handoff candidates; callers may defer busy Agents.
+    /// A skipped heartbeat tick renews nothing and returns no candidates.
     pub async fn maintain(&self) -> Result<Vec<Arc<Authority>>, OwnershipError> {
         let result = self.maintain_inner().await;
         if result.is_err() {
@@ -166,13 +179,19 @@ impl OwnershipCoordinator {
         }
         let started = Instant::now();
         let established_deadline = *self.member_deadline.lock().unwrap();
-        let membership = tokio::time::timeout_at(
-            established_deadline,
-            bounded(self.store.heartbeat(&self.instance_id, false)),
-        )
-        .await
-        .map_err(|_| self.maintenance_error("member_local_deadline", None, OwnershipError::Stale))?
-        .map_err(|error| self.maintenance_error("member_heartbeat", None, error))?;
+        let heartbeat = tokio::time::timeout(
+            Duration::from_millis(STORE_DEADLINE_MS),
+            self.store.heartbeat(&self.instance_id, false),
+        );
+        let heartbeat = tokio::time::timeout_at(established_deadline, heartbeat)
+            .await
+            .map_err(|_| {
+                self.maintenance_error("member_local_deadline", None, OwnershipError::Stale)
+            })?;
+        // Neither membership nor any authority is extended by a skipped tick.
+        let Some(membership) = self.heartbeat_membership(heartbeat)? else {
+            return Ok(Vec::new());
+        };
         membership
             .require_compatible()
             .map_err(|error| self.maintenance_error("member_protocol", None, error))?;
@@ -314,10 +333,10 @@ impl OwnershipCoordinator {
         }
         authority.retiring.store(true, Ordering::Release);
         authority.revoke();
-        // Do not shorten the lease if the receiving runtime has not acknowledged
-        // revocation: delayed input/ACK packets could otherwise still be in flight.
+        // Do not shorten the lease until every receiving runtime's cleanup
+        // obligation is settled. Delayed input/ACK packets may be in flight.
         bounded(revoke_transport).await?;
-        // A direct control/drain ACK also ends its retry episode. An old ACK
+        // Cooperative cleanup also ends its retry episode. Old completion
         // must not clear observations belonging to a replacement authority.
         if self
             .owned
@@ -327,7 +346,7 @@ impl OwnershipCoordinator {
             .is_some_and(|current| Arc::ptr_eq(current, authority))
         {
             self.cleanup_pacing
-                .receiver_acknowledged(&authority.token.agent_id);
+                .receiver_cleanup_completed(&authority.token.agent_id);
         }
         bounded(self.store.release(&authority.token)).await?;
         let mut owned = self.owned.lock().await;
@@ -408,7 +427,9 @@ pub async fn bounded<T>(
 ) -> Result<T, OwnershipError> {
     tokio::time::timeout(Duration::from_millis(STORE_DEADLINE_MS), operation)
         .await
-        .map_err(|_| {
-            OwnershipError::Unavailable("ownership operation exceeded its deadline".into())
-        })?
+        .map_err(|_| deadline_exceeded())?
+}
+
+fn deadline_exceeded() -> OwnershipError {
+    OwnershipError::Unavailable("ownership operation exceeded its deadline".into())
 }

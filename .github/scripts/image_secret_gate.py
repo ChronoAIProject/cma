@@ -58,15 +58,55 @@ def require(condition, message="Image secret scan receipt is incomplete, unbound
         raise ScanRefusal(message)
 
 
+def validate_portable_trust(evidence, proof, package_rows):
+    from image_secrets import arch_trust
+    from image_secrets.gate import ARCH_CERTIFICATE_ADVISORY, valid_digest
+
+    # The rebuild-stable catalog names no image identity; the receipt's own
+    # coordinates are the current scan's and the namespace check is mandatory.
+    path = proof["public_path"]
+    require(proof.get("catalog") == "portable" and "repack" not in proof
+            and proof.get("namespace_verified") is True
+            and re.fullmatch(r"sha256:[a-f0-9]{64}", evidence["layer_digest"]))
+    if path == arch_trust.ALIAS:
+        target = package_rows.get(proof["target_finding_id"])
+        require(proof["link_target"] == arch_trust.LINK and evidence["file_sha256"] is None
+                and target is not None and target["classification"] == ARCH_CERTIFICATE_ADVISORY
+                and target["arch_trust"]["public_path"] == arch_trust.TLS
+                and target["arch_trust"].get("catalog") == "portable"
+                and all(target[key] == evidence[key] for key in
+                        ("image", "image_config", "image_manifest", "layer", "layer_digest")))
+        return
+    hashes = proof["der_sha256s"]
+    require(path in arch_trust.FILES and proof["member_sha256"] == evidence["file_sha256"]
+            and len(hashes) == arch_trust.FILES[path] and all(valid_digest(value) for value in hashes)
+            and hashes == sorted(set(hashes)))
+    native = proof.get("native")
+    require((path == arch_trust.GNUPG) == (native is not None))
+    if native is not None:
+        package, pacman = native["package"], native["current_owner"]["pacman"]
+        require(package["authority_type"] == "arch-signature" and package["name"] == "gnupg"
+                and package["artifact_sha256"] == native["package_sha256"]
+                and native["member"]["type"] == "regular" and native["member"]["path"][-1] == path
+                and native["member"]["sha256"] == proof["member_sha256"]
+                and pacman.keys() == {"desc", "files", "mtree"}
+                and all(record["layer"] == evidence["layer"] for record in pacman.values())
+                and pacman["mtree"]["sha256"] == native["mtree_sha256"])
+
+
 def validate_arch_certificate(evidence, package_rows, archive_digest):
     from image_secrets import arch_trust
     from image_secrets.gate import ARCH_CERTIFICATE_ADVISORY, valid_digest
 
     proof = evidence["arch_trust"]
-    path, base = proof["public_path"], proof["base"]
+    path = proof["public_path"]
     require(evidence["platform"] == arch_trust.PLATFORM and evidence["layer"] == arch_trust.LAYER
-            and valid_digest(evidence["proof_sha256"])
-            and evidence["layer_digest"] == arch_trust.physical_layer(proof)
+            and valid_digest(evidence["proof_sha256"]))
+    if "base" not in proof:
+        validate_portable_trust(evidence, proof, package_rows)
+        return
+    base = proof["base"]
+    require(evidence["layer_digest"] == arch_trust.physical_layer(proof)
             and all(re.fullmatch(r"sha256:[a-f0-9]{64}", digest) for digest in base.values()))
     repack = proof.get("repack")
     if repack is not None:
@@ -115,7 +155,10 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
     if package_section is None:
         require("package_evidence" not in report and "package_evidence_sha256" not in policy)
     else:
-        from image_secrets import nested_certificates, package_receipt, reviewed_literals
+        from image_secrets import (
+            elf_nul_key_view, mime_sources, native_json_key_view, nested_certificates, package_receipt,
+            portable_ownership, reviewed_literals,
+        )
         from image_secrets.gate import (
             ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY, DEBIAN_CONTROL_ADVISORY,
             DIGEST_FRAME_ADVISORY, DISTRIBUTION_ADVISORY,
@@ -144,6 +187,22 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                         and evidence["package_member"]["type"] == "regular")
                 if origin["kind"] == "compiled-executable":
                     require(origin["span"]["sha256"] == evidence["candidate_sha256"])
+                if "sources" in origin:
+                    # Native generated index: the scan proved each signed source at this archive's layers.
+                    observed = evidence["current_owner"]["sources"]
+                    pinned = {source["path"]: source["sha256"] for source in origin["sources"]}
+                    require(origin["kind"] == "mime-index" and expected_runtime == "runtime-omarchy"
+                            and [(row["path"], row["sha256"]) for row in observed] == list(pinned.items())
+                            and pinned.get(mime_sources.SOURCE) == origin["input_sha256"])
+            owner = evidence.get("current_owner")
+            if expected_runtime == "runtime-omarchy" and owner is not None:
+                # Signed Arch files name their pacman records, generated indexes their signed sources
+                # and reserved recipe, and CMA producers their reserved inputs.
+                signed = evidence["package"]["authority_type"] == "arch-signature"
+                generated = signed and origin is not None and "sources" in origin
+                expected_owner = {"sources", "build_inputs"} if generated else {"pacman"} if signed else {"build_inputs"}
+                require(owner.keys() == expected_owner
+                        and (signed and not generated or portable_ownership.valid_producer_inputs(owner["build_inputs"])))
             if classification in PACKAGE_ADVISORY_RULES:
                 require(package_advisory_allowed(classification, evidence["rule"], expected_runtime, evidence["member"]))
                 if classification == SELF_TEST_ADVISORY:
@@ -167,6 +226,8 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                             and package_receipt.path_digest(control["installed_path"]) == evidence["outer_path_digest"])
                 elif classification in reviewed_literals.CLASSES:
                     literal = evidence["reviewed_literal"]
+                    # A raw marker receipt and a detector-view receipt are never combined.
+                    require(not {"key_marker_view", "native_json_key_view", "elf_nul_key_view"} & evidence.keys())
                     source_sha256 = origin["input_sha256"] if origin is not None else evidence["outer_file_sha256"]
                     require(literal["archive_sha256"] == archive_digest and bool(literal["spans"])
                             and all(literal[key] == evidence[key] for key in
@@ -174,13 +235,28 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                             and evidence["package_member"]["type"] == "regular"
                             and evidence["package_member"]["sha256"] == source_sha256)
                 elif classification == KEY_MARKER_VIEW_ADVISORY:
-                    key_view = evidence["key_marker_view"]
-                    require(key_view["archive_sha256"] == archive_digest and key_view["original"] == key_view["detector"]
-                            and key_view["original"]["sha256"] == evidence["candidate_sha256"]
+                    views = {"key_marker_view", "native_json_key_view", "elf_nul_key_view"} & evidence.keys()
+                    require(len(views) == 1 and "reviewed_literal" not in evidence)
+                    [kind] = views
+                    key_view = evidence[kind]
+                    original, detector = (key_view[key] for key in ("original", "detector"))
+                    if kind == "native_json_key_view":
+                        require(key_view["encoding"] == native_json_key_view.ENCODING and original != detector)
+                    elif kind == "elf_nul_key_view":
+                        require(key_view["encoding"] == elf_nul_key_view.ENCODING and original != detector
+                                and all(original[key] == detector[key] for key in ("offset", "size")))
+                    else:
+                        require(original == detector)
+                    member_sha256 = evidence["outer_file_sha256"]
+                    if origin is not None:
+                        require(kind in ("native_json_key_view", "key_marker_view") and origin["kind"] == "mime-index")
+                        member_sha256 = origin["input_sha256"]
+                    require(key_view["archive_sha256"] == archive_digest
+                            and detector["sha256"] == evidence["candidate_sha256"]
                             and all(key_view[key] == evidence[key] for key in ("image_config", "image_manifest", "finding_id"))
                             and evidence["package"]["authority_type"] == "arch-signature"
                             and evidence["package_member"]["type"] == "regular"
-                            and evidence["package_member"]["sha256"] == evidence["outer_file_sha256"])
+                            and evidence["package_member"]["sha256"] == member_sha256)
                 elif classification == DISTRIBUTION_ADVISORY:
                     distribution = evidence["distribution_config"]
                     require(distribution["archive_sha256"] == archive_digest
@@ -282,7 +358,7 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component, so
         packet = load_classifications(root, original) if blocking_rules == "credential" and not runtime else None
         content = load_content_policy(root) if blocking_rules == "credential" and component in {
             "web", "am", "eg"} else None
-        evidence = load_package_evidence(root) if runtime else None
+        evidence = load_package_evidence(root, component) if runtime else None
     except (PolicyRefusal, OSError, ValueError, KeyError, TypeError) as error:
         raise ScanRefusal("Image scanner or classification packet differs from the pinned review; publication stopped") from error
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -364,6 +440,7 @@ def resolve_package_scan(archive, output, component, evidence, bundle, *, source
     raw, manifest, review = evidence
     policy = PackageEvidence.load(raw, manifest_sha256=manifest, review_sha256=review,
                                   scanner_manifest_sha256=bundle)
+    require(policy.portable_component in (None, component), "Package evidence belongs to a different component")
     section = package_receipt.build(archive, output, report, component, policy, source=source)
     assess(report, "credential", verified_package_decisions=package_receipt.decisions(section))
     report["package_evidence"] = section

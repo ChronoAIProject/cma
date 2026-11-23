@@ -35,6 +35,22 @@ pub(crate) struct MongoAgentOwnership {
     receiver_diagnostics_enabled: bool,
 }
 
+/// Preserve driver labels until the owning transaction decides whether it can retry.
+pub(in crate::store) enum FenceError {
+    Domain(SandboxStoreError),
+    Driver(mongodb::error::Error),
+}
+
+impl FenceError {
+    /// Callers without their own bounded retry keep the historical classification.
+    pub(in crate::store) fn into_store(self) -> SandboxStoreError {
+        match self {
+            Self::Domain(error) => error,
+            Self::Driver(error) => fence_write_error(error),
+        }
+    }
+}
+
 impl MongoAgentOwnership {
     pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, OwnershipError> {
         let receiver_diagnostics_enabled = failure::diagnostics_enabled(std::env::var(
@@ -91,11 +107,22 @@ impl MongoAgentOwnership {
 
     /// A write in the effect's own transaction creates a conflict with takeover.
     /// A preceding read, even a majority read, would leave a TOCTOU gap.
+    /// Callers without their own bounded retry keep the historical classification.
     pub(crate) async fn fence_transaction(
         &self,
         token: &OwnershipToken,
         session: &mut ClientSession,
     ) -> Result<(), SandboxStoreError> {
+        self.fence_transaction_typed(token, session)
+            .await
+            .map_err(FenceError::into_store)
+    }
+
+    pub(in crate::store) async fn fence_transaction_typed(
+        &self,
+        token: &OwnershipToken,
+        session: &mut ClientSession,
+    ) -> Result<(), FenceError> {
         let member = self
             .members
             .update_one(
@@ -108,24 +135,24 @@ impl MongoAgentOwnership {
             )
             .session(&mut *session)
             .await
-            .map_err(fence_write_error)?;
+            .map_err(FenceError::Driver)?;
         if member.matched_count != 1 {
-            return Err(SandboxStoreError::Conflict);
+            return Err(FenceError::Domain(SandboxStoreError::Conflict));
         }
         let matched = self
             .owners
             .update_one(
-                token_filter(token).map_err(|_| SandboxStoreError::Conflict)?,
+                token_filter(token).map_err(|_| FenceError::Domain(SandboxStoreError::Conflict))?,
                 doc! {"$inc": {"effect_revision": 1_i64}},
             )
             .session(&mut *session)
             .await
-            .map_err(fence_write_error)?
+            .map_err(FenceError::Driver)?
             .matched_count;
         if matched == 1 {
             Ok(())
         } else {
-            Err(SandboxStoreError::Conflict)
+            Err(FenceError::Domain(SandboxStoreError::Conflict))
         }
     }
 }
@@ -259,5 +286,7 @@ fn known_aborted(error: &mongodb::error::Error) -> bool {
     is_transient(error) && !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
 }
 
+#[cfg(test)]
+pub(crate) mod command_test_support;
 #[cfg(test)]
 mod fence_error_tests;

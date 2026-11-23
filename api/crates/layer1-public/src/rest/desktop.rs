@@ -1,4 +1,5 @@
 //! Public desktop discovery and owner-authenticated binary stream.
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,12 +13,14 @@ use axum::{
     routing::get,
     Extension, Json, Router,
 };
-use futures_util::{SinkExt as _, StreamExt as _};
+use futures_util::{Sink, SinkExt as _, Stream, StreamExt as _};
 use layer2_core::{
     sandbox::{DesktopConnection, DesktopError, DesktopFrame, DesktopService},
     AgentId, Caller,
 };
+use tokio::time::Instant;
 
+use crate::desktop_telemetry::{CloseReason, Direction, RelayObservation};
 use crate::AuthenticatedCaller;
 
 #[derive(Clone)]
@@ -68,7 +71,8 @@ async fn describe(
     }
 }
 
-fn permitted_origin(headers: &HeaderMap, origins: &[String]) -> bool {
+/// Apply the desktop browser origin policy before any upgrade.
+pub fn permitted_origin(headers: &HeaderMap, origins: &[String]) -> bool {
     match headers.get(header::ORIGIN) {
         Some(value) => {
             headers.get_all(header::ORIGIN).iter().count() == 1
@@ -123,14 +127,91 @@ async fn relay(
     mut connection: DesktopConnection,
 ) {
     let (mut sink, mut source) = socket.split();
+    let mut observation = RelayObservation::start();
+    let reason = relay_frames(
+        &mut sink,
+        &mut source,
+        &mut DesktopRelay {
+            service: &service,
+            caller: &caller,
+            id: &id,
+            connection: &mut connection,
+        },
+        &mut observation,
+    )
+    .await;
+    observation.finish(reason);
+    service.close_connection(&mut connection).await;
+    drop(connection);
+    let _ = tokio::time::timeout(Duration::from_secs(2), sink.send(Message::Close(None))).await;
+}
+
+/// The frame pump uses the admitted stream's authorization and never manages
+/// renewal or the underlying transport itself.
+trait RelayRuntime {
+    fn still_authorized(&mut self) -> impl Future<Output = bool> + Send;
+    fn send(
+        &mut self,
+        frame: DesktopFrame,
+    ) -> impl Future<Output = Result<(), DesktopError>> + Send;
+    fn recv(&mut self) -> impl Future<Output = Result<Option<DesktopFrame>, DesktopError>> + Send;
+    fn while_authorized<T: Send>(
+        &mut self,
+        operation: impl Future<Output = T> + Send,
+    ) -> impl Future<Output = Result<T, DesktopError>> + Send;
+}
+
+struct DesktopRelay<'a> {
+    service: &'a DesktopService,
+    caller: &'a Caller,
+    id: &'a AgentId,
+    connection: &'a mut DesktopConnection,
+}
+
+impl RelayRuntime for DesktopRelay<'_> {
+    async fn still_authorized(&mut self) -> bool {
+        self.service
+            .still_authorized(self.caller, self.id, self.connection)
+            .await
+    }
+
+    async fn send(&mut self, frame: DesktopFrame) -> Result<(), DesktopError> {
+        self.connection.send(frame).await
+    }
+
+    async fn recv(&mut self) -> Result<Option<DesktopFrame>, DesktopError> {
+        self.connection.recv().await
+    }
+
+    async fn while_authorized<T: Send>(
+        &mut self,
+        operation: impl Future<Output = T> + Send,
+    ) -> Result<T, DesktopError> {
+        self.connection.while_authorized(operation).await
+    }
+}
+
+async fn relay_frames<S, R, E>(
+    sink: &mut S,
+    source: &mut R,
+    runtime: &mut impl RelayRuntime,
+    observation: &mut RelayObservation<'_>,
+) -> CloseReason
+where
+    S: Sink<Message> + Unpin + Send,
+    S::Error: Send,
+    R: Stream<Item = Result<Message, E>> + Unpin,
+{
     let mut authorization = tokio::time::interval(Duration::from_secs(30));
     let lifetime = tokio::time::sleep(Duration::from_secs(30 * 60));
     tokio::pin!(lifetime);
     loop {
         tokio::select! {
-            _ = &mut lifetime => break,
+            _ = &mut lifetime => return CloseReason::Lifetime,
             _ = authorization.tick() => {
-                if !service.still_authorized(&caller, &id, &mut connection).await { break; }
+                if !observation.check_authorization(runtime.still_authorized()).await {
+                    return CloseReason::AuthorizationRefused;
+                }
             },
             incoming = source.next() => {
                 let frame = match incoming {
@@ -138,27 +219,65 @@ async fn relay(
                     Some(Ok(Message::Text(text))) => DesktopFrame::Text(text.to_string()),
                     Some(Ok(Message::Ping(bytes))) => DesktopFrame::Ping(bytes.to_vec()),
                     Some(Ok(Message::Pong(bytes))) => DesktopFrame::Pong(bytes.to_vec()),
-                    _ => break,
+                    Some(Ok(Message::Close(_))) | None => return CloseReason::ClientClosed,
+                    Some(Err(_)) => return CloseReason::ClientError,
                 };
-                if !matches!(tokio::time::timeout(Duration::from_secs(10), connection.send(frame)).await, Ok(Ok(()))) { break; }
+                let bytes = frame_bytes(&frame);
+                let started = Instant::now();
+                let result = tokio::time::timeout(Duration::from_secs(10), runtime.send(frame)).await;
+                observation.send_wait(Direction::Uplink, started.elapsed());
+                match result {
+                    Ok(Ok(())) => observation.forwarded(Direction::Uplink, bytes),
+                    Ok(Err(DesktopError::Unavailable | DesktopError::AuthorityUnavailable)) =>
+                        return CloseReason::AuthorizationRefused,
+                    Ok(Err(_)) => return CloseReason::RuntimeError,
+                    Err(_) => return CloseReason::RuntimeSendTimeout,
+                }
             },
-            outgoing = connection.recv() => {
-                let message = match outgoing {
-                    Ok(Some(DesktopFrame::Binary(bytes))) => Message::Binary(bytes.into()),
-                    Ok(Some(DesktopFrame::Text(text))) => Message::Text(text.into()),
-                    Ok(Some(DesktopFrame::Ping(bytes))) => Message::Ping(bytes.into()),
-                    Ok(Some(DesktopFrame::Pong(bytes))) => Message::Pong(bytes.into()),
-                    _ => break,
+            outgoing = runtime.recv() => {
+                let frame = match outgoing {
+                    Ok(Some(frame)) => frame,
+                    Ok(None) => return CloseReason::RuntimeClosed,
+                    Err(DesktopError::Unavailable | DesktopError::AuthorityUnavailable) =>
+                        return CloseReason::AuthorizationRefused,
+                    Err(_) => return CloseReason::RuntimeError,
                 };
-                if !matches!(connection.while_authorized(
+                let bytes = frame_bytes(&frame);
+                let message = match frame {
+                    DesktopFrame::Binary(bytes) => Message::Binary(bytes.into()),
+                    DesktopFrame::Text(text) => Message::Text(text.into()),
+                    DesktopFrame::Ping(bytes) => Message::Ping(bytes.into()),
+                    DesktopFrame::Pong(bytes) => Message::Pong(bytes.into()),
+                    DesktopFrame::Close => return CloseReason::RuntimeClosed,
+                };
+                let started = Instant::now();
+                let result = runtime.while_authorized(
                     tokio::time::timeout(Duration::from_secs(10), sink.send(message))
-                ).await, Ok(Ok(Ok(())))) { break; }
+                ).await;
+                observation.send_wait(Direction::Downlink, started.elapsed());
+                match result {
+                    Ok(Ok(Ok(()))) => observation.forwarded(Direction::Downlink, bytes),
+                    Ok(Ok(Err(_))) => return CloseReason::ClientError,
+                    Ok(Err(_)) => return CloseReason::ClientSendTimeout,
+                    Err(_) => return CloseReason::AuthorizationRefused,
+                };
             },
         }
     }
-    service.close_connection(&mut connection).await;
-    drop(connection);
-    let _ = tokio::time::timeout(Duration::from_secs(2), sink.send(Message::Close(None))).await;
+}
+
+#[cfg(test)]
+#[path = "desktop/relay_tests.rs"]
+mod relay_tests;
+
+fn frame_bytes(frame: &DesktopFrame) -> usize {
+    match frame {
+        DesktopFrame::Binary(bytes) | DesktopFrame::Ping(bytes) | DesktopFrame::Pong(bytes) => {
+            bytes.len()
+        }
+        DesktopFrame::Text(text) => text.len(),
+        DesktopFrame::Close => 0,
+    }
 }
 
 fn problem(error: DesktopError) -> Response {

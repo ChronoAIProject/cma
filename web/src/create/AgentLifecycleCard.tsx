@@ -136,6 +136,10 @@ function AgentLifecycleForm({
     openTarget,
     viewerId,
   ]);
+  const close = () => {
+    lifecycle.abandon();
+    onClose();
+  };
   const repositoryUrl = repository.trim();
   const repositoryValid = validRepository(repositoryUrl);
   const canCreate = workspaceId !== undefined || sandboxId !== undefined || canCreateSandbox;
@@ -254,7 +258,7 @@ function AgentLifecycleForm({
         onClose={() => {
           if (operation?.status === 'succeeded' || operation?.status === 'failed')
             lifecycle.clear();
-          onClose();
+          close();
         }}
         dismissible={!pending}
         footer={
@@ -264,7 +268,7 @@ function AgentLifecycleForm({
                 onClick={() => {
                   if (operation?.status === 'succeeded' || operation?.status === 'failed')
                     lifecycle.clear();
-                  onClose();
+                  close();
                 }}
               >
                 Close
@@ -296,7 +300,7 @@ function AgentLifecycleForm({
               <p className="agent-lifecycle-note">
                 Includes access to ChronoAI models and the Ornn skill library.
               </p>
-              <Button disabled={pending} onClick={onClose}>
+              <Button disabled={pending} onClick={close}>
                 Cancel
               </Button>
               <Button

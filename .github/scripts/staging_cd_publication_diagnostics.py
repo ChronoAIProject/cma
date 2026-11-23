@@ -4,6 +4,7 @@ import re
 import subprocess
 import urllib.error
 
+from ci_outcome import error_site, report
 from image_secret_gate import ScanRefusal
 from image_scan_evidence import project as project_scan_evidence
 from staging_cd_common import Refusal
@@ -13,6 +14,17 @@ from staging_cd_runtime import SKIPPED, run_private
 STAGES = frozenset({"validate", "resume", "snapshot", "reuse", "build", "registry_preflight",
                     "inspect", "scan", "runtime_smoke", "archive_check", "registry_login", "registry_copy",
                     "registry_verify", "receipt", "cache_restore", "cache_export"})
+# Fixed refusal messages with their own reason; any other refusal is validation_refused.
+REFUSAL_REASONS = {
+    "Reservation owner differs": "reservation_owner_mismatch",
+    "Registry digest differs from the scanned archive": "registry_digest_conflict",
+    "Registry publication outcome is uncertain": "registry_write_uncertain",
+    "Registry copy budget expired": "command_timeout",
+    "Runtime canary cleanup incomplete; retain the campaign receipt": "runtime_cleanup_incomplete",
+}
+REASONS = frozenset({"registry_denied", "build_failed", "command_failed", "build_timeout", "command_timeout",
+                     "scan_refused", "registry_read_failed", "validation_refused", "io_failed", "unexpected_error",
+                     "reservation_superseded", *REFUSAL_REASONS.values()})
 
 
 class ImageCommandRefusal(Refusal):
@@ -31,6 +43,7 @@ class PublicationDiagnostics:
     def __init__(self):
         self.stage = "validate"
         self.reason = "unexpected_error"
+        self.site = None
         self.scan_evidence = None
 
     def mark(self, stage):
@@ -57,15 +70,14 @@ class PublicationDiagnostics:
         if self.stage.startswith("registry_") and isinstance(cause, urllib.error.HTTPError):
             return "registry_denied" if cause.code in (401, 403) else "registry_read_failed"
         if isinstance(error, Refusal):
-            if str(error) == "Reservation owner differs":
-                return "reservation_owner_mismatch"
-            return "validation_refused"
+            return REFUSAL_REASONS.get(str(error), "validation_refused")
         if isinstance(error, OSError):
             return "io_failed"
         return "unexpected_error"
 
 
-def run_publication(operation, *, on_superseded=None):
+def run_publication(operation, *, on_superseded=None, component=None, outcome=None):
+    """Run one publication privately; on failure, record its fixed stage token in `outcome`."""
     diagnostics = PublicationDiagnostics()
 
     def guarded(masker):
@@ -80,19 +92,21 @@ def run_publication(operation, *, on_superseded=None):
                 return SKIPPED
         except Exception as error:
             diagnostics.reason = diagnostics.classify(error)
+            diagnostics.site = error_site(error)
             raise
 
-    status = run_private(guarded, None)
+    status = run_private(guarded, None, subject="publication", explain=False)
     if not status and diagnostics.reason == "reservation_superseded":
         print(f"SKIP publication stage={diagnostics.stage} reason=reservation_superseded")
     if status:
-        # No exception text, paths, identifiers or scanner findings cross here.
+        # No exception text, paths, identifiers or scanner findings cross here:
+        # only fixed tokens and the public source line that failed.
         stage = diagnostics.stage if diagnostics.stage in STAGES else "validate"
-        reasons = {"registry_denied", "build_failed", "command_failed", "build_timeout", "command_timeout",
-                   "scan_refused", "registry_read_failed", "validation_refused", "io_failed", "unexpected_error",
-                   "reservation_owner_mismatch", "reservation_superseded"}
-        reason = diagnostics.reason if diagnostics.reason in reasons else "unexpected_error"
-        print(f"FAIL publication stage={stage} reason={reason}")
+        reason = diagnostics.reason if diagnostics.reason in REASONS else "unexpected_error"
+        if outcome is not None:
+            outcome["stage"] = stage
+        report("publication", reason, subject="publication", stage=stage, site=diagnostics.site,
+               component=component)
         if diagnostics.scan_evidence is not None:
             print("SCAN_EVIDENCE " + json.dumps(diagnostics.scan_evidence, sort_keys=True))
     return status

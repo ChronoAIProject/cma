@@ -1,3 +1,4 @@
+import { ComputerRecoveryPanel } from './environment/ComputerRecoveryPanel';
 import { Modal } from '../ui/Modal';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
@@ -14,6 +15,7 @@ export function DesktopPanel({
   runtimeVersion,
   running,
   onClose,
+  onReturnToConversation,
   preparation,
   embedded = false,
   hidden = false,
@@ -32,6 +34,7 @@ export function DesktopPanel({
   readonly runtimeVersion?: string;
   readonly running: boolean;
   readonly onClose: () => void;
+  readonly onReturnToConversation?: () => void;
   readonly preparation?: DesktopPreparationScope;
   readonly embedded?: boolean;
   readonly hidden?: boolean;
@@ -49,7 +52,7 @@ export function DesktopPanel({
     error?: string;
   }>();
   const [takeoverError, setTakeoverError] = useState<string>();
-  const { screen, phase, error } = useDesktopConnection(
+  const { screen, phase, error, stop } = useDesktopConnection(
     agentId,
     attempt + reconnectRevision,
     control && !running && !controlUnavailable,
@@ -149,7 +152,9 @@ export function DesktopPanel({
                         ? 'You control'
                         : 'Watching'
                     : phase === 'error'
-                      ? 'Unavailable'
+                      ? stop === 'exhausted'
+                        ? 'Disconnected'
+                        : 'Unavailable'
                       : phase === 'waiting'
                         ? 'Waiting'
                         : 'Connecting'}
@@ -273,14 +278,31 @@ export function DesktopPanel({
         </Button>
         {!onStop ? <p role="status">Stopping this Agent is unavailable with this access.</p> : null}
       </Modal>
-      <div className="agent-desktop__viewport" aria-busy={!ready && phase !== 'error'}>
+      <div
+        className="agent-desktop__viewport"
+        data-recovery={phase === 'error' || undefined}
+        aria-busy={!ready && phase !== 'error'}
+      >
         <div
           ref={screen}
           className="agent-desktop__frame"
           data-ready={ready || undefined}
           aria-label="Linux desktop screen"
         />
-        <DesktopFeedback phase={phase} error={error} notice={notice} />
+        {phase === 'error' ? (
+          <ComputerRecoveryPanel
+            stop={stop}
+            error={error}
+            reconnectDisabled={!runtimeReady}
+            onReturnToConversation={onReturnToConversation}
+            onReconnect={() => {
+              setControl(false);
+              setAttempt(attempt + 1);
+            }}
+          />
+        ) : (
+          <DesktopFeedback phase={phase} error={error} notice={notice} />
+        )}
       </div>
     </section>
   );

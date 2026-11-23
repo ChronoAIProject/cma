@@ -181,7 +181,7 @@ pub use runtime_recovery::{
     RuntimeRecovery, RuntimeRecoveryInspection, RuntimeRecoveryInspectionRequest,
     RuntimeRecoveryQuiescence, RuntimeRecoveryQuiescenceRequest,
 };
-pub use runtime_startup::{RuntimeStartupFailure, RuntimeStartupFailureClass};
+pub use runtime_startup::{RuntimeStartupFailure, RuntimeStartupFailureClass, RuntimeStartupProbe};
 pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
 pub use tool_proxy::{ToolProxyRequest, ToolProxyStatus, LOCAL_TOOL_PROXY_URL};
 pub use workspace::{
@@ -209,6 +209,9 @@ pub use agent_filesystem::{
 };
 pub mod owner_control;
 pub mod owner_protocol;
+pub mod receiver_failure;
+mod runtime_retirement;
+pub use runtime_retirement::{RetirementPod, RuntimeRetirement};
 pub mod sandbox_metrics;
 
 // Shared immutable archive locator; core persistence and runtime use one shape.

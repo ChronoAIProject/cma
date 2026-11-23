@@ -63,6 +63,15 @@ jobs:
           python3 .github/scripts/omarchy-close-browser-tests.py
           python3 .github/scripts/omarchy-browser-input-tests.py
           node --test .github/scripts/omarchy-browser-page.test.cjs
+          node --test .github/scripts/desktop-seccomp.test.mjs
+      -
+        # Warns before, and fails by name after, a key that signs a pinned
+        # Arch or Omarchy package expires (#3040). It runs offline from the
+        # committed lock and omarchy-signing-keys.json, which must match it.
+        name: "Arch packager key expiry"
+        run: |
+          python3 -B .github/scripts/omarchy_key_expiry_tests.py
+          python3 -B .github/scripts/omarchy_key_expiry.py
       -
         name: "Ledger image qualification regressions"
         run: "node --test .github/scripts/runtime-ledger-evidence.test.mjs .github/scripts/runtime-ledger-downgrade.test.mjs"
@@ -99,6 +108,10 @@ jobs:
         if: "steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true'"
         run: "rm -rf \"$RUNNER_TEMP/omarchy-layer-cache\""
       -
+        name: "Resolve OS security refresh key"
+        id: "os-refresh"
+        run: "python3 .github/scripts/os_refresh_key.py runtime-omarchy api/crates/layer4-runtime/Dockerfile \"${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\" >> \"$GITHUB_OUTPUT\""
+      -
         name: "Build current-source Omarchy image"
         id: "build"
         uses: "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"
@@ -116,7 +129,7 @@ jobs:
             RUNTIME_DESKTOP=1
             CHRONO_BUILD=${{ steps.identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
             SOURCE_DATE_EPOCH=0
           cache-from: |
             ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}
@@ -135,6 +148,9 @@ jobs:
       -
         name: "Verify Omarchy runtime contract"
         run: "node .github/scripts/omarchy-contract.mjs \"$GITHUB_SHA\" \"$RUNNER_TEMP/omarchy-evidence/runtime-contract.json\""
+      -
+        name: "Verify Omarchy staging qualification profile"
+        run: "CMA_RUNTIME_EVIDENCE_PROFILE=omarchy node .github/scripts/runtime-image-evidence.mjs run cma-runtime-omarchy:ci \"$GITHUB_SHA\" \"$RUNNER_TEMP/omarchy-evidence/staging-qualification.json\""
       -
         name: "Qualify exact Omarchy ledger storage"
         run: "node .github/scripts/runtime-ledger-evidence.mjs cma-runtime-omarchy:ci \"$GITHUB_SHA\" \"$RUNNER_TEMP/omarchy-evidence/ledger-storage.json\""
@@ -187,12 +203,12 @@ jobs:
           retention-days: 90
       -
         name: "Export tested Omarchy image"
-        if: "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
         timeout-minutes: 10
         run: "python3 .github/scripts/export-ci-native-image.py runtime-omarchy \"$GITHUB_SHA\" \"$RUNNER_TEMP/ci-native-image\""
       -
         name: "Retain tested Omarchy image"
-        if: "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
         timeout-minutes: 10
         uses: "actions/upload-artifact@v4"
         with:

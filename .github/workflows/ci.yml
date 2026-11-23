@@ -14,9 +14,19 @@ on:
       - "edited"
       - "labeled"
       - "unlabeled"
+  # Required checks must also report on the develop merge queue's group refs.
+  # Each entry's ref is unique, so a PR or push run never cancels it.
+  merge_group:
+    types:
+      - "checks_requested"
 concurrency:
   group: "ci-${{ github.workflow }}-${{ github.ref }}"
-  cancel-in-progress: true
+  # A develop push run is the only writer of the image and cargo caches every
+  # PR restores, so a newer merge must not cancel it mid-build (14 of 15 were
+  # cancelled on 20 Nov). The group still runs one at a time, and a newer
+  # pending run still replaces an older pending one. PRs and release refs
+  # keep cancelling superseded runs.
+  cancel-in-progress: "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"
 permissions:
   contents: "read"
 jobs:
@@ -89,6 +99,11 @@ jobs:
     uses: "./.github/workflows/ci-rust-archive.yml"
   am:
     name: "Agent Manager checks"
+    # A called workflow cannot hold more than this: its Rust jobs restore the
+    # shared test archive through the artifacts API.
+    permissions:
+      contents: "read"
+      actions: "read"
     needs:
       - "changes"
       - "rust-test-build"
@@ -99,6 +114,11 @@ jobs:
       packages: "${{ needs.changes.outputs.am_packages }}"
   eg:
     name: "Event Gateway checks"
+    # A called workflow cannot hold more than this: its Rust jobs restore the
+    # shared test archive through the artifacts API.
+    permissions:
+      contents: "read"
+      actions: "read"
     needs:
       - "changes"
       - "rust-test-build"

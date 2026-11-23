@@ -19,6 +19,16 @@ pub struct MemoryAuthStore {
     api_bearers: Arc<Mutex<HashMap<SecretDigest, ApiBearerCustody>>>,
     actor_links: Arc<Mutex<HashMap<String, crate::auth::actor_links::ActorLinkRecord>>>,
     proxy_grants: Arc<Mutex<HashMap<[u8; 32], crate::auth::nyxid_proxy::ProxyGrant>>>,
+    #[cfg(test)]
+    refresh_completion: Option<RefreshCompletionGate>,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct RefreshCompletionGate {
+    generation: u64,
+    entered: Arc<tokio::sync::Semaphore>,
+    release: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Default)]
@@ -35,6 +45,21 @@ struct Reservation {
 }
 
 impl MemoryAuthStore {
+    #[cfg(test)]
+    pub(in crate::auth) fn with_refresh_completion_gate(
+        mut self,
+        generation: u64,
+        entered: Arc<tokio::sync::Semaphore>,
+        release: Arc<tokio::sync::Semaphore>,
+    ) -> Self {
+        self.refresh_completion = Some(RefreshCompletionGate {
+            generation,
+            entered,
+            release,
+        });
+        self
+    }
+
     pub fn set_unavailable(&self, unavailable: bool) {
         self.unavailable.store(unavailable, Ordering::SeqCst);
     }
@@ -146,18 +171,26 @@ impl AuthStore for MemoryAuthStore {
     async fn due_actor_links(
         &self,
         renewed_before: u64,
+        after_actor_key: Option<&str>,
         limit: usize,
     ) -> Result<Vec<crate::auth::actor_links::ActorLinkRecord>, StoreError> {
         self.available()?;
-        Ok(self
+        let mut due = self
             .actor_links
             .lock()
             .await
             .values()
-            .filter(|row| row.active && !row.revoked && row.renewed_at <= renewed_before)
-            .take(limit)
+            .filter(|row| {
+                row.active
+                    && !row.revoked
+                    && row.renewed_at <= renewed_before
+                    && after_actor_key.is_none_or(|key| row.actor_key.as_str() > key)
+            })
             .cloned()
-            .collect())
+            .collect::<Vec<_>>();
+        due.sort_by(|left, right| left.actor_key.cmp(&right.actor_key));
+        due.truncate(limit.clamp(1, 100));
+        Ok(due)
     }
     async fn actor_link_for_actor(
         &self,
@@ -400,6 +433,15 @@ impl AuthStore for MemoryAuthStore {
     ) -> Result<bool, StoreError> {
         self.available()?;
         state.validate_replacement(expected_revision)?;
+        #[cfg(test)]
+        if let Some(gate) = self.refresh_completion.as_ref().filter(|gate| {
+            state.refresh_lease.is_none()
+                && state.tokens.is_some()
+                && state.token_generation == gate.generation
+        }) {
+            gate.entered.add_permits(1);
+            gate.release.acquire().await.unwrap().forget();
+        }
         let mut subjects = self.subjects.lock().await;
         if subjects.get(&state.subject).is_none_or(|current| {
             current.incarnation != expected_incarnation || current.revision != expected_revision

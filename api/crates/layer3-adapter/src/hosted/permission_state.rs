@@ -1,5 +1,6 @@
 //! Compact permission retention. Reservations cover requested storage, not RSS.
 
+use crate::ingress_budget::diagnostic::text;
 use std::sync::{
     atomic::{AtomicU8, Ordering},
     Arc, OnceLock,
@@ -158,6 +159,20 @@ fn prompt_scope(id: &str, active: bool) -> [u8; 32] {
 }
 
 impl Entry {
+    pub(super) fn admitted_answer(
+        &self,
+        policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> Result<Option<crate::ingress_budget::SharedOwned<serde_json::Value>>> {
+        if self.selected.load(Ordering::SeqCst) == 0 {
+            return Ok(None);
+        }
+        let storage =
+            policy.reserve(crate::ingress_budget::IngressClass::Control, reply_plan()?)?;
+        Ok(Some(storage.initialize(|| {
+            self.answer().expect("selection never resets")
+        })))
+    }
+
     pub(super) fn select(&self, decision: PermissionDecision) {
         let value = match decision {
             PermissionDecision::Allow => 1,
@@ -194,6 +209,23 @@ impl Entry {
     }
 }
 
+pub(super) fn reply_plan() -> Result<crate::ingress_budget::AllocationPlan> {
+    // Selected answers use six map entries across three objects. Charge a
+    // complete BTree node per entry (eleven pairs, header and twelve edges),
+    // both bounded variable strings, and all fixed keys/literals (under 256).
+    let node = 11 * size_of::<(String, serde_json::Value)>() + 14 * size_of::<usize>();
+    crate::ingress_budget::AllocationPlan::new(
+        "permission control reply",
+        &[
+            6 * node,
+            256,
+            MAX_OPTION_BYTES,
+            256,
+            crate::ingress_budget::sizing::shared_owner_bytes::<serde_json::Value>(),
+        ],
+    )
+}
+
 pub(super) fn validate(options: &[PermissionOption]) -> Result<()> {
     if options.len() > MAX_OPTIONS
         || options
@@ -214,11 +246,13 @@ fn reserve(
 }
 
 fn capacity() -> AdapterError {
-    AdapterError::Unavailable("runtime permission retention capacity exhausted".into())
+    AdapterError::Unavailable(text("runtime permission retention capacity exhausted"))
 }
 
 fn invalid() -> AdapterError {
-    AdapterError::Rejected("runtime permission retention shape exceeds its bounds".into())
+    AdapterError::Rejected(text(
+        "runtime permission retention shape exceeds its bounds",
+    ))
 }
 
 #[cfg(test)]

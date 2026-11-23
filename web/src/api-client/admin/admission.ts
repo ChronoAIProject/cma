@@ -1,3 +1,5 @@
+import { reason } from './reason.js';
+import { pendingHomesObservation } from './pending-homes.js';
 import { ProtocolError } from '../errors.js';
 import {
   array,
@@ -9,17 +11,6 @@ import {
   text,
   type Output,
 } from '../schema.js';
-
-const reason = (value: unknown): string => {
-  const parsed = text(value);
-  if (
-    parsed.trim().length === 0 ||
-    new TextEncoder().encode(parsed).length > 512 ||
-    /\p{Cc}/u.test(parsed)
-  )
-    throw new ProtocolError('reason must contain 1 to 512 bytes without control characters');
-  return parsed;
-};
 
 const operatorStop = object({ since: integer, revision: integer, actor: text, reason });
 export type OperatorAdmissionStop = Output<typeof operatorStop>;
@@ -102,6 +93,7 @@ const capacity = object({
   registrations: nullable(capacityCount),
   retained_homes: nullable(capacityCount),
   pending_launch_homes: optional(integer),
+  pending_homes: optional(pendingHomesObservation),
   active_sessions: nullable(capacityCount),
 });
 const ceilingsHistory = (value: unknown) => {

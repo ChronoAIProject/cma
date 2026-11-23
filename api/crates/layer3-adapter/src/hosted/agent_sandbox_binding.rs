@@ -49,6 +49,30 @@ impl AgentSandboxBackend {
         self.startup_breaker.reset(handle);
     }
 
+    /// Adopts a native VCT runtime from its persisted home attachment rather
+    /// than rediscovering that home through Kubernetes reads.
+    pub(super) async fn adopt_persisted_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeObservation>> {
+        let object = timed(
+            Stage::NativeIdentity,
+            self.client
+                .validate_native_request_with_home(handle, request, home),
+        )
+        .await?;
+        self.bind_adopted(handle, request, &object).await?;
+        // Binding may wait or deliver bootstrap. Its earlier observation cannot
+        // authorize the returned runtime after either boundary completes.
+        timed(
+            Stage::NativeIdentity,
+            self.refreshed_adoption_observation(handle, request, Some(home)),
+        )
+        .await
+    }
+
     pub(super) async fn bind_adopted(
         &self,
         handle: &RuntimeHandle,
@@ -118,10 +142,9 @@ impl AgentSandboxBackend {
         request: &ProviderSandboxRequest,
     ) -> Result<()> {
         let enabled = self.client.runtime_startup_breaker_enabled();
-        let sandbox_id = enabled
+        let identity = enabled
             .then(|| super::super::deployment::provider_request_identity(request).ok())
-            .flatten()
-            .map(|identity| identity.sandbox_id);
+            .flatten();
         let incarnation = enabled
             .then(|| crate::agent_sandbox::startup_incarnation(pod))
             .flatten();
@@ -144,11 +167,12 @@ impl AgentSandboxBackend {
         )
         .await?;
         if assigned.is_some() {
-            if let (Some(incarnation), Some(sandbox_id)) = (incarnation, sandbox_id) {
+            if let (Some(incarnation), Some(identity)) = (incarnation, identity) {
                 self.startup_breaker.delivered(
                     handle,
                     incarnation,
-                    sandbox_id,
+                    identity.sandbox_id,
+                    identity.generation,
                     std::time::SystemTime::now(),
                 );
             }

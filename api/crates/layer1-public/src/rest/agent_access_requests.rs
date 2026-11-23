@@ -238,6 +238,9 @@ fn response(value: Result<AgentAccessRequest, AgentAccessError>) -> Response {
 }
 fn problem(error: AgentAccessError) -> Response {
     let (status, code) = match error {
+        AgentAccessError::AccountDeletionInProgress => {
+            (StatusCode::FORBIDDEN, "account_deletion_in_progress")
+        }
         AgentAccessError::Invalid => (StatusCode::BAD_REQUEST, "agent_access_invalid"),
         AgentAccessError::Forbidden => (StatusCode::FORBIDDEN, "agent_access_forbidden"),
         AgentAccessError::OwnerAuthorityRequired => (

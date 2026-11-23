@@ -122,11 +122,30 @@ pub struct Accepted {
 #[derive(Debug)]
 pub struct TurnStream {
     pub accepted: oneshot::Receiver<Accepted>,
-    pub events: mpsc::Receiver<ResponsesEvent>,
+    pub events: TurnEvents,
     pub(crate) trace:
         Option<std::sync::Arc<std::sync::OnceLock<crate::telemetry::turn_trace::Association>>>,
     /// First successful socket write of this attempt, excluding provider processing.
     pub request_started: Instant,
+}
+
+#[derive(Debug)]
+pub struct TurnEvents(pub(super) mpsc::Receiver<StreamEvent>);
+
+impl TurnEvents {
+    pub async fn recv(&mut self) -> Option<ResponsesEvent> {
+        self.0.recv().await.map(|event| event.event)
+    }
+
+    pub(crate) async fn recv_observed(&mut self) -> Option<StreamEvent> {
+        self.0.recv().await
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct StreamEvent {
+    pub event: ResponsesEvent,
+    pub bound_to_accepted: bool,
 }
 
 /// A provider entry's active HTTP pool and concurrency gate.

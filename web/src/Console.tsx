@@ -53,18 +53,15 @@ import { coalesceDetailReads } from './api/detailReads';
 import { DocsPage } from './services/DocsPage';
 import { useReportOwner } from './usage/metrics/reportOwner';
 import { OperationsRoute } from './operator/OperationsRoute';
-
-export function Console(props: ConsoleProps) {
-  return (
-    <OwnerViewsProvider key={props.user.id} viewerId={props.user.id}>
-      <ConsoleContent {...props} />
-    </OwnerViewsProvider>
-  );
-}
-
+export const Console = (props: ConsoleProps) => (
+  <OwnerViewsProvider key={props.user.id} viewerId={props.user.id}>
+    <ConsoleContent {...props} />
+  </OwnerViewsProvider>
+);
 function ConsoleContent({
   user,
   authEpoch = 0,
+  visible = true,
   route,
   onSignOut,
   onNavigate,
@@ -88,8 +85,10 @@ function ConsoleContent({
   const client = reads.client;
   const computerObservation = useMemo(
     () =>
-      new AgentComputerObservation({ client, subject: user.id, agentId: selectedAgent }, () =>
-        setPanel('activity'),
+      new AgentComputerObservation(
+        { client, subject: user.id, agentId: selectedAgent },
+        () => setPanel('activity'),
+        () => setPanel(undefined),
       ),
     [client, user.id, selectedAgent, setPanel],
   );
@@ -250,6 +249,7 @@ function ConsoleContent({
           viewPosition={viewPosition}
           accessUncertain={accessUncertain}
           accessAuthorized={agentAccess.personalReady && !accessUncertain}
+          firstSendContext={{ authEpoch, visible: visible && !user.visitor }}
           filesOpen={panel !== undefined && panel !== 'details'}
           onFilesOpenChange={(open) => setPanel(open ? 'browser' : undefined)}
           detailsOpen={detailsOpen}
@@ -339,6 +339,12 @@ function ConsoleContent({
         user={user}
         route={route}
         canCreate={canCreateInScope}
+        home={{
+          navigation: scopeReady && navigationScope === '' ? navigation : undefined,
+          scope: navigationScope,
+          onRetry: refreshNavigation,
+          onNavigate,
+        }}
         onCreated={(target) => {
           setRevision((value) => value + 1);
           onNavigate(target);
@@ -433,6 +439,11 @@ function ConsoleContent({
                 navigation={navigation}
                 currentAgent={ready?.detail}
                 currentActivity={ready?.activityStatus}
+                currentTurnId={
+                  ready?.historyLoading || ready?.historyUnavailable
+                    ? undefined
+                    : ready?.conversation.latestTurnId
+                }
                 permissions={permissions}
                 pending={actions.pending}
                 busySandboxIds={actions.busySandboxIds}
@@ -442,6 +453,7 @@ function ConsoleContent({
                   if (next.kind !== 'usage') onSidebarNavigate();
                   onNavigate(next);
                 }}
+                onRestoreTaskRoute={onNavigate}
                 onAgentIntent={navigationScope === '' ? onAgentIntent : undefined}
                 onAction={actions.select}
               />

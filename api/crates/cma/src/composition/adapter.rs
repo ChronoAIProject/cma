@@ -2,6 +2,7 @@ use crate::config::Config;
 use std::sync::Arc;
 
 pub(super) struct ProductionAdapters {
+    pub model_funding: Option<Arc<layer2_core::sandbox::model_credit::AgentTurnFunding>>,
     pub runtime_capacity: Arc<layer3_adapter::agent_sandbox::RuntimeCapacityAuthority>,
     pub owned: Arc<dyn layer3_adapter::SandboxAdapter>,
     pub owner_controls: layer3_adapter::owner_control::ControlRoutes,
@@ -26,6 +27,7 @@ pub(super) async fn production_adapter(
     subscriptions: Arc<crate::connections::CodexSubscriptions>,
     access_tools: Arc<dyn layer3_adapter::hosted::HostedAccessToolSource>,
     provider_tools: Arc<crate::store::MongoProviderToolSource>,
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
 ) -> Result<ProductionAdapters, String> {
     use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
     use layer3_adapter::hosted::{
@@ -34,7 +36,8 @@ pub(super) async fn production_adapter(
     use layer3_adapter::provider::{BatchSandboxReclaimer, SandboxClient};
 
     let mut owner_controls = Vec::new();
-    let subscriptions = crate::connections::RuntimeSubscriptions::new(store.clone(), subscriptions);
+    let subscriptions = crate::connections::RuntimeSubscriptions::new(store.clone(), subscriptions)
+        .with_account_standing(standing);
 
     let mut routing_options = mongodb::options::ClientOptions::parse(&config.mongodb_uri)
         .await
@@ -167,7 +170,8 @@ pub(super) async fn production_adapter(
         .with_bounded_permission_state(config.features.bounded_permission_state)
         .with_bounded_update_relay(config.features.bounded_update_relay)
         .with_output_json_budget(config.features.output_json_budget)
-        .with_shared_runtime_output(config.features.shared_runtime_output);
+        .with_shared_runtime_output(config.features.shared_runtime_output)
+        .with_legacy_receiver_image(config.runtime.legacy_receiver_image.clone());
         let transport = register_owner_control(config, "native", transport, &mut owner_controls);
         backends.agent_sandbox = Some(Arc::new(layer3_adapter::hosted::AgentSandboxBackend::new(
             client, transport,
@@ -232,6 +236,8 @@ pub(super) async fn production_adapter(
         adapter = adapter.with_home_volumes(homes);
     }
     Ok(ProductionAdapters {
+        // None until the model gateway can attest to the paying credential and enforce phase limits.
+        model_funding: None,
         runtime_capacity,
         owner_controls,
         owned: Arc::new(adapter),

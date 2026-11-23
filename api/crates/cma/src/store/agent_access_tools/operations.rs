@@ -25,6 +25,8 @@ impl MongoAgentAccessToolSource {
             &snapshot,
             &RuntimeHandle(record.scope.runtime.runtime_id.clone()),
         )?;
+        self.require_owner_available(&snapshot.resource.lineage.sandbox.owner)
+            .await?;
         if scope != record.scope {
             return Err(Error::Refused);
         }
@@ -263,6 +265,8 @@ impl MongoAgentAccessToolSource {
             &snapshot,
             &RuntimeHandle(record.scope.runtime.runtime_id.clone()),
         )?;
+        self.require_owner_available(&snapshot.resource.lineage.sandbox.owner)
+            .await?;
         if record.scope != scope {
             return Err(Error::Refused);
         }

@@ -66,10 +66,10 @@ pub(crate) async fn serve(
         config.channel_cache.clone(),
         observers.index.clone(),
     );
-    observers.activity = Arc::new(crate::activity::ObservedActivity::new(
-        state.activity.clone(),
-        observers.activity.clone(),
-    ));
+    if config.turns.provider_execution_attribution_enabled {
+        state.activity = Arc::new((*state.activity).clone().with_execution_attribution(true));
+    }
+    activity::configure(&mut state, &mut observers).await?;
     let telegram = Arc::new(telegram::TelegramClient::production(
         config.delivery.reply_timeout,
     )?);
@@ -488,6 +488,9 @@ pub(crate) async fn serve(
 mod listener;
 #[path = "serve_shutdown.rs"]
 mod shutdown;
+
+#[path = "serve_activity.rs"]
+mod activity;
 
 #[path = "serve_record_client.rs"]
 mod record_client_impl;

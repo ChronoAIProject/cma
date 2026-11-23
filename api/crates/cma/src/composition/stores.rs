@@ -26,17 +26,26 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
     )
     .await
     .map_err(|error| format!("durable stores are not usable: {error}"))?;
+    stores.sandbox_model = Arc::new(
+        (*stores.sandbox_model)
+            .clone()
+            .with_usage_capture(config.usage_capture.clone())
+            .await
+            .map_err(|error| format!("usage capture is not ready: {error}"))?,
+    );
     stores = stores
         .configure_admission_ceilings(
             config.global_sandbox_limit,
             config.features.admission_ceilings_writes_enabled,
+            config.features.pending_home_reconciliation,
         )
         .await
         .map_err(|error| format!("admission ceilings are not usable: {error}"))?;
     stores.trigger_definitions = Arc::new(
         (*stores.trigger_definitions)
             .clone()
-            .with_global_sandbox_limit(config.global_sandbox_limit),
+            .with_global_sandbox_limit(config.global_sandbox_limit)
+            .with_launch_admission_policy(config.features.launch_admission_policy()),
     );
     stores.sandbox_model = Arc::new(
         (*stores.sandbox_model)

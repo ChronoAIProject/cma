@@ -26,6 +26,9 @@ pub mod agent_output_index;
 mod agent_preferences;
 mod agent_settings;
 pub mod desktop_creation;
+pub mod task_acceptance;
+#[cfg(test)]
+mod task_acceptance_tests;
 pub mod task_experience;
 pub mod task_template;
 pub use agent_preferences::{AgentInstructionPolicy, AgentPreferences, AgentPreferencesUpdate};
@@ -82,6 +85,7 @@ mod conversation;
 mod conversation_fold;
 mod conversation_observation;
 mod conversation_observation_fold;
+pub mod ingress_ownership;
 pub mod message_feedback;
 pub mod provider_associations;
 pub mod suggestions;
@@ -123,12 +127,19 @@ mod first_message_dispatch;
 mod first_message_service;
 pub use failed_provision::SandboxFailedRuntimeProvision;
 mod hierarchy;
+pub mod task_activity;
 mod task_status;
 pub use task_status::AgentTaskStatus;
 mod home;
+pub mod home_backup;
 mod home_native;
 pub use home_native::SandboxNativePool;
 mod home_recovery;
+mod home_restore;
+pub use home_restore::{
+    SandboxHomeRestore, SandboxHomeRestoreAttestation, SandboxHomeRestoreEvidence,
+    SandboxHomeRestoreEvidenceKind, SandboxHomeRestoreReceipt, SandboxSupersededHome,
+};
 mod idle_evidence;
 mod inactivity;
 pub use idle_evidence::agentless_idle_with_children;
@@ -155,11 +166,16 @@ mod retained_reopen;
 mod retained_reopen_service;
 #[cfg(test)]
 mod retained_reopen_tests;
+mod retained_suspended_reopen;
 pub use retained_reopen::{
     apply_retained_reopen, RetainedReopenAccepted, RetainedReopenProof, RetainedReopenReceipt,
-    RetainedReopenRequest, RetainedReopenSnapshot, RetainedReopenVerifier,
+    RetainedReopenReplay, RetainedReopenRequest, RetainedReopenSnapshot, RetainedReopenVerifier,
 };
-pub use retained_reopen_service::{RetainedReopenError, RetainedReopenService};
+pub use retained_reopen_service::{RetainedReopenError, RetainedReopenPath, RetainedReopenService};
+pub use retained_suspended_reopen::{
+    apply_suspended_reopen, RetainedSuspendedReopenProof, RetainedSuspendedReopenReceipt,
+    RetainedSuspendedReopenRequest,
+};
 mod revive;
 mod rotate;
 mod runtime_generation;
@@ -455,3 +471,4 @@ mod always_on_tests;
 
 mod runtime_capacity;
 pub use runtime_capacity::RuntimeCapacityError;
+pub mod model_credit;

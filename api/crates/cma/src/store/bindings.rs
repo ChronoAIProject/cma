@@ -36,6 +36,7 @@ mod rotation;
 pub(in crate::store) mod schema;
 mod tools;
 pub(crate) use custody::MongoBindingCredentials;
+pub(in crate::store) use retry::BindingTransactionError;
 pub(crate) use tools::MongoProviderToolSource;
 mod documents;
 use documents::*;

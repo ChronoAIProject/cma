@@ -248,15 +248,10 @@ pub(crate) fn github_writes_enabled() -> Result<bool, super::ConfigError> {
     write_flag("CMAEG_GITHUB_ENABLED")
 }
 
-/// Reader-first authoring gate; an unset value never enables a new stored shape.
+/// Reader-first authoring gate. Unset is off unless the gate has graduated
+/// (see `super::graduated`); an explicit `false` always turns it off.
 pub(super) fn write_flag(name: &str) -> Result<bool, super::ConfigError> {
-    match std::env::var(name).as_deref() {
-        Ok("true") => Ok(true),
-        Ok("false") | Err(std::env::VarError::NotPresent) => Ok(false),
-        _ => Err(super::ConfigError::InvalidManagement {
-            detail: format!("{name} must be true or false"),
-        }),
-    }
+    super::graduated::flag(name, &mut |key| std::env::var(key))
 }
 
 #[cfg(test)]
@@ -265,7 +260,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn self_service_custom_writer_defaults_off_and_requires_durable_reader() {
+    fn self_service_custom_writer_requires_durable_reader() {
         let mut config = RoutingConfig::default();
         assert!(!config.custom_durable_execution_enabled);
         config.custom_durable_execution_enabled = true;

@@ -104,6 +104,51 @@ class CacheIdentityTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.identity()
 
+    def test_pinned_stage_argument_default_changes_identity(self):
+        pinned = "ARG SNAPSHOT=2026/10/22\nARG UNRELATED=1\n" + self.recipe.replace(
+            "RUN bash /tmp/install.sh", "ARG SNAPSHOT\nRUN bash /tmp/install.sh \"${SNAPSHOT}\"")
+        self.dockerfile.write_text(pinned)
+        original = self.identity()
+        self.assertEqual(CACHE.manifest(self.root)["arguments"], {"SNAPSHOT": "2026/10/22"})
+        self.dockerfile.write_text(pinned.replace("UNRELATED=1", "UNRELATED=2"))
+        self.assertEqual(original, self.identity())
+        self.dockerfile.write_text(pinned.replace("SNAPSHOT=2026/10/22", "SNAPSHOT=2026/10/23"))
+        self.assertNotEqual(original, self.identity())
+
+    def test_stage_argument_without_pinned_global_default_fails_closed(self):
+        for prefix, declaration in (("", "ARG SNAPSHOT"), ("ARG SNAPSHOT\n", "ARG SNAPSHOT"),
+                                    ("ARG SNAPSHOT=1\n", "ARG SNAPSHOT=2")):
+            with self.subTest(prefix=prefix, declaration=declaration):
+                self.dockerfile.write_text(prefix + self.recipe.replace("RUN bash /tmp/seed.sh",
+                                                                        declaration + "\nRUN bash /tmp/seed.sh"))
+                with self.assertRaisesRegex(ValueError, "pinned global default"):
+                    self.identity()
+
+    def mounted(self, reference="registry.example/packages@sha256:" + "b" * 64, stage=None):
+        stage = stage or "FROM ${PACKAGES} AS packages\n"
+        recipe = self.recipe.replace("FROM archlinux:base@sha256:", stage + "FROM archlinux:base@sha256:", 1).replace(
+            "RUN bash /tmp/install.sh", "RUN --mount=type=bind,from=packages,source=/bundle,target=/run/b,readonly bash /tmp/install.sh")
+        return "ARG PACKAGES=" + reference + "\n" + recipe
+
+    def test_mounted_image_digest_changes_identity(self):
+        self.dockerfile.write_text(self.mounted())
+        original = self.identity()
+        self.assertEqual(CACHE.manifest(self.root)["images"], {"packages": "registry.example/packages@sha256:" + "b" * 64})
+        self.dockerfile.write_text(self.mounted("registry.example/packages@sha256:" + "c" * 64))
+        self.assertNotEqual(original, self.identity())
+
+    def test_mounted_image_must_be_one_digest_pinned_stage(self):
+        for name, recipe in {
+                "tag only": self.mounted("registry.example/packages:latest"),
+                "placeholder": self.mounted("registry.example/packages@sha256:" + "0" * 64),
+                "unpinned argument": self.mounted().replace("ARG PACKAGES=", "ARG OTHER="),
+                "extra instruction": self.mounted(stage="FROM ${PACKAGES} AS packages\nRUN true\n"),
+                "unknown stage": self.mounted().replace("from=packages", "from=elsewhere")}.items():
+            with self.subTest(name):
+                self.dockerfile.write_text(recipe)
+                with self.assertRaises(ValueError):
+                    self.identity()
+
     def test_missing_duplicate_or_unpinned_stage_fails_closed(self):
         for changed in (self.recipe.replace(" AS omarchy-dependencies", " AS other"),
                         self.recipe + self.recipe,
@@ -126,6 +171,9 @@ class CacheIdentityTests(unittest.TestCase):
         self.assertIn("api/crates/layer4-runtime/src/omarchy/build-hyprland.sh", value["inputs"])
         self.assertIn("api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch", value["inputs"])
         self.assertNotIn("api/crates/layer4-runtime/src/omarchy/session.sh", value["inputs"])
+        self.assertRegex(value["arguments"]["ARCH_SNAPSHOT"], r"^[0-9]{4}/[0-9]{2}/[0-9]{2}$")
+        self.assertRegex(value["images"]["omarchy-packages"],
+                         r"^ghcr\.io/chronoaiproject/cma-omarchy-packages@sha256:[0-9a-f]{64}$")
 
 
 if __name__ == "__main__":

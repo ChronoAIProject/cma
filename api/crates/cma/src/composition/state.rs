@@ -1,5 +1,6 @@
 //! Assembled control-plane services and worker handles.
 use super::*;
+use axum::Router;
 mod openapi;
 
 impl ControlPlaneComposition {

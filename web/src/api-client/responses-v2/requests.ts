@@ -2,6 +2,7 @@ import { v2EventContext } from './event-context.js';
 import { answerContext } from '../answer-context.js';
 import { ProtocolError } from '../errors.js';
 import { dictionary, record, text } from '../schema.js';
+import { taskAcceptanceIntent } from '../task-acceptance.js';
 import type { CreateV2AgentResponseRequest } from './types.js';
 
 export function conversationId(value: unknown): string {
@@ -26,6 +27,7 @@ export function v2Request(value: unknown, agent?: string): CreateV2AgentResponse
           'previous_response_id',
           'event_context',
           'answer_context',
+          'task_acceptance',
         ].includes(key),
     )
   )
@@ -72,6 +74,7 @@ export function v2Request(value: unknown, agent?: string): CreateV2AgentResponse
   if (!text(content).length) throw new ProtocolError('input must not be empty');
   if (body.event_context !== undefined) v2EventContext(body.event_context);
   if (body.answer_context !== undefined) answerContext(body.answer_context);
+  if (body.task_acceptance !== undefined) taskAcceptanceIntent(body.task_acceptance);
   if (body.metadata !== undefined && body.metadata !== null) {
     const entries = Object.entries(dictionary(text)(body.metadata));
     if (

@@ -27,6 +27,24 @@ impl NativeRuntimeProof {
     }
 }
 impl AgentSandboxClient {
+    /// Discover no identity from mutable metadata: the persisted home fixes all
+    /// graph names, while the current resources authorize this adoption attempt.
+    pub(crate) async fn validate_native_request_with_home(
+        &self,
+        runtime: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<DynamicObject> {
+        let origin = self.native_runtime_home_origin(runtime, home)?;
+        let (name, _) = parse_handle(runtime)?;
+        let actual = self.pools.prove_native_home(home).await?;
+        let desired = self
+            .pools
+            .runtime_desired_for_member(origin, home, request, name, &actual)?;
+        self.matches(&actual, &desired)?;
+        Ok(actual)
+    }
+
     pub(super) fn native_runtime_home_origin<'a>(
         &self,
         runtime: &RuntimeHandle,

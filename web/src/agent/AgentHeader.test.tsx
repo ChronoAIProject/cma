@@ -5,6 +5,7 @@ import { expect, it, vi } from 'vitest';
 import { AgentHeader } from './AgentHeader';
 import { agentHeaderMenu } from './headerActions';
 import type { TreePermissions } from '../shell/Tree';
+import { sandboxFixture } from '../test/hierarchy';
 
 const permissions: TreePermissions = {
   createWorkspace: true,
@@ -107,7 +108,11 @@ it('retains a reason while access is uncertain and omits unavailable capabilitie
     draw({
       detailsUnavailable: true,
       onDetailsOpenChange,
-      moreActions: agentHeaderMenu('ready', { ...permissions, stopAgent: false }, true, false),
+      moreActions: agentHeaderMenu(
+        'ready',
+        { ...permissions, stopAgent: false },
+        { sandbox: sandboxFixture() },
+      ),
     }),
   );
   const row = screen.getByRole('button', { name: /^Show Agent details/ });
@@ -134,7 +139,8 @@ it('orders all reviewed actions and dispatches configuration separately from his
         { id: 'update-skills', label: 'Update skills' },
       ],
       moreActions: [
-        { id: 'export_history', label: 'Export history' },
+        { id: 'export_history', label: 'Export raw history' },
+        { id: 'export_retained_conversation', label: 'Export retained conversation' },
         { id: 'stop_agent', label: 'Stop agent' },
         { id: 'delete_agent', label: 'Delete task', danger: true },
       ],
@@ -144,21 +150,23 @@ it('orders all reviewed actions and dispatches configuration separately from his
   for (const [label, id] of [
     ['Update system prompt', 'update-prompt'],
     ['Update skills', 'update-skills'],
-    ['Export history', 'export_history'],
+    ['Export raw history', 'export_history'],
+    ['Export retained conversation', 'export_retained_conversation'],
   ] as const) {
     await user.click(screen.getByRole('button', { name: 'More Agent actions' }));
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
       'Rename',
       'Update system prompt',
       'Update skills',
-      'Export history',
+      'Export retained conversation',
+      'Export raw history',
       'View deletion status',
       'Stop agent',
       'Delete task',
     ]);
     expect(screen.getByRole('menu').querySelectorAll('[role="separator"]')).toHaveLength(1);
     await user.click(screen.getByRole('menuitem', { name: label }));
-    expect(id === 'export_history' ? onMoreAction : onMenuSelect).toHaveBeenCalledWith(id);
+    expect(id.startsWith('export_') ? onMoreAction : onMenuSelect).toHaveBeenCalledWith(id);
   }
 });
 
@@ -170,7 +178,7 @@ it.each(['mouse', 'keyboard'] as const)(
     render(
       draw({
         activityStatus: 'completed',
-        moreActions: agentHeaderMenu('ready', permissions, true, false),
+        moreActions: agentHeaderMenu('ready', permissions, { sandbox: sandboxFixture() }),
         onMoreAction,
         onMenuSelect,
       }),
@@ -212,8 +220,10 @@ it.each(['stopped', 'failed', 'runtime-unavailable', 'busy', 'no-permission', 's
           condition === 'shared'
             ? undefined
             : { ...permissions, stopAgent: condition !== 'no-permission' },
-          condition !== 'runtime-unavailable',
-          condition === 'busy',
+          {
+            sandbox: condition === 'runtime-unavailable' ? undefined : sandboxFixture(),
+            busy: condition === 'busy',
+          },
         ),
         onMoreAction,
       }),

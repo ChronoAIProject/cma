@@ -16,6 +16,8 @@ use tokio::sync::{broadcast, Mutex};
 
 #[path = "batch.rs"]
 mod batch;
+#[path = "history_backfill.rs"]
+mod history_backfill;
 #[path = "refresh.rs"]
 mod refresh;
 #[cfg(test)]
@@ -28,6 +30,8 @@ type Contexts = BTreeMap<(String, String), (String, i64)>;
 
 #[derive(Clone)]
 pub struct ActivityStore {
+    pub history: Arc<super::history::ActivityHistory>,
+    execution_attribution_enabled: bool,
     records: RecordClient,
     keys: Arc<MasterKeyRing>,
     writes: Arc<[Mutex<()>; 64]>,
@@ -54,12 +58,22 @@ impl ActivityStore {
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         let (updates, _) = broadcast::channel(256);
         Self {
+            history: Arc::new(super::history::ActivityHistory::new(
+                None,
+                keys.clone(),
+                Default::default(),
+            )),
+            execution_attribution_enabled: false,
             records,
             keys,
             writes: Arc::new(std::array::from_fn(|_| Mutex::new(()))),
             updates,
             contexts: Arc::default(),
         }
+    }
+    pub(crate) fn with_execution_attribution(mut self, enabled: bool) -> Self {
+        self.execution_attribution_enabled = enabled;
+        self
     }
     pub fn subscribe(&self) -> broadcast::Receiver<String> {
         self.updates.subscribe()
@@ -88,6 +102,13 @@ impl ActivityStore {
         });
         has_more |= items.len() > LIMIT;
         items.truncate(LIMIT);
+        for consumer in items.iter_mut().flat_map(|row| &mut row.consumers) {
+            // A projected field is never authoritative storage.
+            consumer.execution_reference = None;
+            if !self.execution_attribution_enabled {
+                consumer.execution_attributions.clear();
+            }
+        }
         let cursor = URL_SAFE_NO_PAD.encode(
             serde_json::to_vec(&Cursor {
                 record: record_hash(record),
@@ -155,14 +176,22 @@ impl ActivityStore {
             (0..RETENTION_DAYS).map(|offset| self.read(owner, record, today() - offset)),
         )
         .await?;
-        if let Some((bucket, _)) = retained.into_iter().flatten().find(|(bucket, _)| {
-            bucket
-                .items
-                .iter()
-                .any(|row| row.event_id == activity.event_id.as_str())
-        }) {
-            day = bucket.day;
-        }
+        let legacy = retained
+            .into_iter()
+            .flatten()
+            .find(|(bucket, _)| {
+                bucket
+                    .items
+                    .iter()
+                    .any(|row| row.event_id == activity.event_id.as_str())
+            })
+            .and_then(|(bucket, _)| {
+                day = bucket.day;
+                bucket
+                    .items
+                    .into_iter()
+                    .find(|row| row.event_id == activity.event_id.as_str())
+            });
         let mut actor = activity.actor.clone();
         actor.id = bounded(&actor.id, 512);
         actor.display_name = actor.display_name.map(|v| bounded(&v, 256));
@@ -192,6 +221,19 @@ impl ActivityStore {
             received_at,
             consumers: Vec::new(),
         };
+        if self.history.capturing() {
+            if let Some(original) = legacy {
+                self.history
+                    .import_legacy(owner, record, original, (day + RETENTION_DAYS) * 86_400_000)
+                    .await
+                    .map_err(history_error)?;
+            } else {
+                self.history
+                    .received(owner, record, row.clone())
+                    .await
+                    .map_err(history_error)?;
+            }
+        }
         self.modify_inner(owner, record, day, move |bucket| {
             if let Some(existing) = bucket.items.iter_mut().find(|r| r.event_id == row.event_id) {
                 for consumer in &row.consumers {
@@ -239,6 +281,9 @@ impl ActivityStore {
         event: &str,
         change: &Change,
     ) -> Result<(), RecordError> {
+        if change.execution_attribution.is_some() && !self.execution_attribution_enabled {
+            return Ok(());
+        }
         let context = self
             .contexts
             .lock()
@@ -246,6 +291,10 @@ impl ActivityStore {
             .get(&(record.into(), event.into()))
             .cloned();
         if let Some((owner, day)) = context.filter(|(_, day)| *day > today() - RETENTION_DAYS) {
+            self.history
+                .change(&owner, record, event, change)
+                .await
+                .map_err(history_error)?;
             return self
                 .modify(&owner, record, day, |bucket| {
                     if let Some(row) = bucket.items.iter_mut().find(|row| row.event_id == event) {
@@ -269,6 +318,10 @@ impl ActivityStore {
         if channel.record_id.as_str() != record {
             return Err(malformed());
         }
+        self.history
+            .change(&channel.owner.subject, record, event, change)
+            .await
+            .map_err(history_error)?;
         for offset in 0..RETENTION_DAYS {
             let day = today() - offset;
             let Some((bucket, _)) = self.read(&channel.owner.subject, record, day).await? else {
@@ -401,6 +454,10 @@ impl ActivityStore {
             "channel activity contention".into(),
         ))
     }
+}
+
+fn history_error(error: super::history::Error) -> RecordError {
+    RecordError::Unavailable(error.to_string())
 }
 
 fn identifier(owner: &str, record: &str, day: i64) -> String {

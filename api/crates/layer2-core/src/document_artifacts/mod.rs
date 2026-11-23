@@ -4,8 +4,10 @@
 mod blob_maintenance;
 mod mutation;
 mod quota;
+mod recipients;
 mod runtime;
 mod service;
+mod standing;
 mod types;
 mod validation;
 pub use blob_maintenance::{
@@ -37,3 +39,7 @@ mod quota_tests;
 
 #[cfg(test)]
 mod blob_maintenance_tests;
+#[cfg(test)]
+mod recipient_tests;
+#[cfg(test)]
+mod standing_tests;

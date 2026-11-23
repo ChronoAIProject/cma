@@ -1,3 +1,4 @@
+use super::repository_connection_tests::RepositoryRefusal;
 use super::*;
 use crate::sandbox::worker::SandboxWorker;
 
@@ -7,12 +8,12 @@ pub(super) async fn drive_environment(
     public_sandbox_id: &SandboxId,
     worker: &SandboxWorker,
     retry: &super::store_retry::StoreRetry,
-    refusal: Option<&str>,
+    refusal: Option<RepositoryRefusal>,
     phase: &mut String,
 ) {
     let agent = harness.stored(agent_id).await;
     assert_public_sandbox(public_sandbox_id, &agent.sandbox_id);
-    let scenario = refusal.unwrap_or("successful preparation");
+    let scenario = refusal.map_or("successful preparation", |refusal| refusal.code);
     // The Sandbox provisioner drives its Workspace inline. A second driver
     // can claim the same child and delay the parent behind its lease.
     loop {
@@ -24,12 +25,12 @@ pub(super) async fn drive_environment(
             .unwrap();
         if matches!(
             sandbox.status,
-            SandboxStatus::Active | SandboxStatus::Failed
+            SandboxStatus::Active | SandboxStatus::Failed | SandboxStatus::Retiring
         ) {
-            let expected = if refusal.is_some() {
-                SandboxStatus::Failed
-            } else {
-                SandboxStatus::Active
+            let expected = match refusal {
+                Some(RepositoryRefusal { sibling: true, .. }) => SandboxStatus::Failed,
+                Some(_) => SandboxStatus::Retiring,
+                None => SandboxStatus::Active,
             };
             assert_eq!(
                 sandbox.status, expected,
@@ -46,7 +47,7 @@ pub(super) async fn drive_environment(
             "Sandbox {:?}, due {}, lease {lease:?}",
             sandbox.work.step, sandbox.work.ready_at
         );
-        if let Some(code) = refusal.filter(|_| {
+        if let Some(refusal) = refusal.filter(|_| {
             matches!(
                 sandbox.work.step,
                 SandboxWorkStep::CreateProfileWorkspace(_)
@@ -55,17 +56,16 @@ pub(super) async fn drive_environment(
             // Preserve the typed refusal if a protected commit needs replay.
             harness.backend.fail_next(
                 WireOperation::PrepareWorkspace,
-                code,
+                refusal.code,
                 "External failure detail must not leak",
             );
         }
         wait_for_due_work(&sandbox.work.ready_at, lease).await;
-        let step = worker.run_one(public_sandbox_id, SystemTime::now()).await;
+        let step = retry.sandbox(harness, worker, public_sandbox_id).await;
         assert!(
-            !matches!(step, Ok(false)),
+            !matches!(step, Some(false)),
             "{scenario}: {phase} did not progress"
         );
-        retry.should_retry(step);
     }
     *phase = String::from("checking committed Workspace result");
     let workspace = harness
@@ -88,7 +88,7 @@ pub(super) async fn drive_environment(
             .failed
             .as_ref()
             .map(|failure| failure.class.as_str()),
-        refusal,
+        refusal.map(|refusal| refusal.code),
     );
 }
 
@@ -102,10 +102,13 @@ pub(super) async fn drive_source_failure(
     public_sandbox_id: &SandboxId,
     worker: &SandboxWorker,
     retry: &super::store_retry::StoreRetry,
-    code: &str,
+    refusal: RepositoryRefusal,
     deadline: tokio::time::Instant,
 ) -> Agent {
     let mut phase = String::from("reading admitted Sandbox");
+    if refusal.sibling {
+        super::repository_connection_tests::retain_another_workspace(harness, agent_id).await;
+    }
     let result = tokio::time::timeout_at(deadline, async {
         drive_environment(
             harness,
@@ -113,38 +116,16 @@ pub(super) async fn drive_source_failure(
             public_sandbox_id,
             worker,
             retry,
-            Some(code),
+            Some(refusal),
             &mut phase,
         )
         .await;
 
-        // Start Agent work after the committed failure, so it cannot spend its
-        // readiness observation budget waiting for the fixture's parent work.
-        loop {
-            let agent = harness.stored(agent_id).await;
-            if agent.status == AgentStatus::Failed {
-                return agent;
-            }
-            let lease = agent
-                .work
-                .lease
-                .as_ref()
-                .map(|lease| lease.expires_at.as_str());
-            phase = format!(
-                "Agent {:?}, due {}, lease {lease:?}",
-                agent.work.step, agent.work.ready_at
-            );
-            wait_for_due_work(&agent.work.ready_at, lease).await;
-            let step = harness.worker.run_one(agent_id, SystemTime::now()).await;
-            assert!(
-                !matches!(step, Ok(false)),
-                "source case {code}: {phase} did not progress"
-            );
-            retry.should_retry(step);
-        }
+        // The durable Sandbox teardown owns subsequent Agent cleanup.
+        harness.stored(agent_id).await
     })
     .await;
-    result.unwrap_or_else(|_| panic!("source case {code}: timed out at {phase}"))
+    result.unwrap_or_else(|_| panic!("source case {}: timed out at {phase}", refusal.code))
 }
 
 async fn wait_for_due_work(ready_at: &str, lease_expires_at: Option<&str>) {

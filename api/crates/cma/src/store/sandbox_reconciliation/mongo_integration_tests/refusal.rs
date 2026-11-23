@@ -133,7 +133,7 @@ async fn runtime_loss_retries_a_concurrent_log_head_and_fences_terminal_agent_ev
                 )
                 .await
                 .unwrap();
-            let result = transaction::apply(&store, &loss(&sandbox), &mut session).await;
+            let result = transaction::apply(&store, &loss(&sandbox), None, &mut session).await;
             assert!(matches!(result, Err(ApplyError::Driver(error)) if is_transient(&error)));
             let _ = session.abort_transaction().await;
             assert_eq!(

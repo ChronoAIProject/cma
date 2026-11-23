@@ -69,7 +69,7 @@ jobs:
           cache-binary: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
       -
         name: "Prepare API Cargo cache identity"
-        if: "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
+        if: "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'merge_group')"
         id: "api-cargo-cache"
         run: "python3 .github/scripts/api-cargo-cache.py prepare"
       -
@@ -95,6 +95,13 @@ jobs:
         id: "build-identity"
         run: "echo \"version=git-${GITHUB_SHA:0:12}\" >> \"$GITHUB_OUTPUT\""
       -
+        name: "Resolve OS security refresh key"
+        id: "os-refresh"
+        env:
+          IMAGE_COMPONENT: "${{ matrix.component }}"
+          PER_BUILD_KEY: "${{ github.run_id }}-${{ github.run_attempt }}"
+        run: "python3 .github/scripts/os_refresh_key.py \"$IMAGE_COMPONENT\" api/crates/layer4-runtime/Dockerfile \"$PER_BUILD_KEY\" >> \"$GITHUB_OUTPUT\""
+      -
         name: "Build image for all target platforms"
         uses: "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"
         with:
@@ -107,10 +114,10 @@ jobs:
             CHRONO_BUILD=${{ steps.build-identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
             RUNTIME_DESKTOP=0
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
             ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
           cache-from: "type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}"
-          cache-to: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,version=2,mode=max,scope={0}', matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component) || '' }}"
+          cache-to: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,version=2,mode=max,ignore-error=true,scope={0}', matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component) || '' }}"
       -
         name: "Load native image for scanning"
         uses: "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"
@@ -126,7 +133,7 @@ jobs:
             CHRONO_BUILD=${{ steps.build-identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
             RUNTIME_DESKTOP=0
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
             ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
           cache-from: "type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}"
       -
@@ -278,14 +285,14 @@ jobs:
           compression-level: 0
       -
         name: "Export tested native image"
-        if: "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
         timeout-minutes: 10
         env:
           IMAGE_COMPONENT: "${{ matrix.component }}"
         run: "python3 .github/scripts/export-ci-native-image.py \"$IMAGE_COMPONENT\" \"$GITHUB_SHA\" \"$RUNNER_TEMP/ci-native-image\""
       -
         name: "Retain tested native image"
-        if: "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
         timeout-minutes: 10
         uses: "actions/upload-artifact@v4"
         with:

@@ -2,7 +2,13 @@ use super::*;
 use layer3_adapter::{AgentHomeRequest, AgentOpenRequest, WorktreeRequest};
 
 pub(crate) async fn hierarchy(store: &MongoSandboxStore) -> (Agent, Sandbox, Workspace, Worktree) {
-    let plan = plan();
+    hierarchy_with_plan(store, plan()).await
+}
+
+pub(crate) async fn hierarchy_with_plan(
+    store: &MongoSandboxStore,
+    plan: NativePreparedPlan,
+) -> (Agent, Sandbox, Workspace, Worktree) {
     store
         .reconcile_native_prepared_target(Some(&plan), 1, NOW)
         .await
@@ -38,6 +44,10 @@ pub(crate) async fn hierarchy(store: &MongoSandboxStore) -> (Agent, Sandbox, Wor
     else {
         panic!("fresh workspace")
     };
+    let previous = parent.revision;
+    parent.status = SandboxStatus::Installing;
+    parent.revision += 1;
+    store.save_sandbox(previous, parent.clone()).await.unwrap();
     workspace.status = WorkspaceStatus::Ready;
     workspace.resolved_commit = record.payload.workspaces[0].resolved_commit.clone();
     workspace.ready_at = Some(NOW.into());

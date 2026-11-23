@@ -33,6 +33,17 @@ class AllocationProgressTests(unittest.TestCase):
                     mark("all", "history")
             self.assertEqual(output.getvalue(), "")
 
+    def test_a_rerun_prints_one_fixed_retry_line_and_nothing_else(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), allocation_progress(lambda: 0) as mark:
+            mark.retry("READ_FAILED", 2, 2, 14.0)
+            for args in (("private\n::warning::payload", 2, 2, 1.0), ("READ_FAILED", 1, 2, 1.0),
+                         ("READ_FAILED", 3, 2, 1.0), ("READ_FAILED", True, 2, 1.0),
+                         ("READ_FAILED", 2, 2, float("nan")), ("READ_FAILED", 2, 2, -1)):
+                with self.subTest(args=args), self.assertRaises(Refusal):
+                    mark.retry(*args)
+        self.assertEqual(output.getvalue(), "RETRY allocation reason=READ_FAILED attempt=2/2 wait=14.0s\n")
+
     def test_progress_arrives_before_completion_without_native_or_child_output(self):
         program = """
 import os, subprocess, sys
@@ -65,7 +76,7 @@ with allocation_progress(lambda: 0) as mark:
                     child.communicate()
             self.assertEqual(child.returncode, 0)
         self.assertEqual(first, "PROGRESS allocation component=am phase=owner-read count=1 elapsed_seconds=0\n")
-        self.assertEqual(stdout, "PROGRESS allocation component=all phase=complete count=1 elapsed_seconds=0\nPASS\n")
+        self.assertEqual(stdout, "PROGRESS allocation component=all phase=complete count=1 elapsed_seconds=0\nPASS allocation\n")
         self.assertEqual(stderr, "")
 
     def test_allocator_reports_each_io_phase_and_keeps_newest_only(self):
@@ -102,7 +113,7 @@ with allocation_progress(lambda: 0) as mark:
             self.assertEqual(allocation.main(), 0)
         self.assertRegex(output.getvalue(),
                          r"^PROGRESS allocation component=web phase=reserve count=1 elapsed_seconds=\d+\n"
-                         r"PROGRESS allocation component=all phase=complete count=1 elapsed_seconds=\d+\nPASS\n$")
+                         r"PROGRESS allocation component=all phase=complete count=1 elapsed_seconds=\d+\nPASS allocation\n$")
 
 
 if __name__ == "__main__":

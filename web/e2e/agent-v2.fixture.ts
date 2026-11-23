@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { isDeepStrictEqual } from 'node:util';
 import type { Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { commandStatus } from './agent-v2-command.fixture';
@@ -28,6 +29,7 @@ export class LocalAgentV2 {
   readonly queued = new LocalQueuedCancellation(this.started);
   readonly items: EventItem[] = [];
   readonly writes: CapturedWrite[] = [];
+  readonly receiptReads: CapturedWrite[] = [];
   readonly reads: string[] = [];
   readonly errors: string[] = [];
   readonly streams = new Set<ServerResponse>();
@@ -35,11 +37,13 @@ export class LocalAgentV2 {
   owner = 'local-owner';
   holdInput = false;
   loseInput = false;
+  revealInputReceipt = true;
   loseControl = false;
   controlConflict = false;
   holdSnapshot = false;
   snapshots = 0;
   private pendingInput?: ServerResponse;
+  private readonly admittedInputs: CapturedWrite[] = [];
   private pendingSnapshot?: ServerResponse;
   private baseURL = '';
   private readonly server = createServer((request, response) => {
@@ -91,6 +95,48 @@ export class LocalAgentV2 {
     this.pendingSnapshot?.destroy();
     this.server.closeAllConnections();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
+  }
+
+  async suggestReply(page: Page, text: string) {
+    await page.route('**/api/v2/ui/task-experience', (route) =>
+      route.fulfill({
+        json: {
+          object: 'cma.ui.task_experience',
+          schema_version: 1,
+          account_id: this.owner,
+          capabilities: {
+            task_home_admission: false,
+            suggested_followup_admission: true,
+            desktop_enable: false,
+            browser_takeover: false,
+            replay_presentation: false,
+          },
+        },
+      }),
+    );
+    await page.route('**/api/v1/agents/agt_contract/suggestions?*', (route) => {
+      const scope = { turn_sequence: 1, answer_sequence: 3 };
+      const query = new URL(route.request().url()).searchParams;
+      if (
+        query.get('turn_sequence') !== String(scope.turn_sequence) ||
+        query.get('answer_sequence') !== String(scope.answer_sequence)
+      )
+        return route.fallback();
+      return route.fulfill({
+        json: {
+          status: 'ready',
+          set: {
+            id: 'local-suggestions',
+            viewerId: this.owner,
+            agentId: agent,
+            answerId: 'event:3',
+            scope,
+            source: { kind: 'template', version: '1' },
+            items: [{ id: 'local-followup', text, rank: 1 }],
+          },
+        },
+      });
+    });
   }
 
   append(
@@ -181,6 +227,11 @@ export class LocalAgentV2 {
     );
   }
 
+  admitInput(write: CapturedWrite) {
+    this.admittedInputs.push(write);
+    this.queued.admit(write.body.input);
+  }
+
   private receipt(response: ServerResponse) {
     response.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -206,14 +257,27 @@ export class LocalAgentV2 {
       let source = '';
       for await (const chunk of request) source += String(chunk);
       const body = JSON.parse(source) as Record<string, unknown>;
-      const key = request.headers['idempotency-key'];
-      this.writes.push({ path, body, key: typeof key === 'string' ? key : undefined });
-      if (
-        this.queued.handle('POST', path, response, body, typeof key === 'string' ? key : undefined)
-      )
-        return;
+      const header = request.headers['idempotency-key'];
+      const key = typeof header === 'string' ? header : undefined;
+      const captured = { path, body, key };
+      if (path === `/api/v2/agents/${agent}/responses/receipt`) {
+        this.receiptReads.push(captured);
+        const admitted = this.admittedInputs.some(
+          (write) =>
+            write.path === `/api/v2/agents/${agent}/responses` &&
+            key &&
+            write.key === key &&
+            isDeepStrictEqual(write.body, body),
+        );
+        return this.json(
+          response,
+          this.revealInputReceipt && admitted ? commandStatus(this.started) : null,
+        );
+      }
+      this.writes.push(captured);
+      if (this.queued.handle('POST', path, response, body, key)) return;
       if (path === `/api/v2/agents/${agent}/responses`) {
-        this.queued.admit(body.input);
+        this.admitInput(captured);
         if (this.loseInput) {
           this.loseInput = false;
           response.writeHead(200, { 'Content-Type': 'text/event-stream' });

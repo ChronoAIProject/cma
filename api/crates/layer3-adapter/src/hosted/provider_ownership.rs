@@ -1,11 +1,12 @@
 //! Receiving leases are renewed only after an unpredictable receiver challenge.
 use super::native_transport::NativeHttpObservation;
 use super::*;
+use crate::agent_sandbox::ReceiverIncarnation;
 use crate::owner_protocol::{
     current_authority, OwnerAcknowledgement, OwnerChallenge, OwnerConfirmation,
     OwnershipExchangeFailure, OwnershipFailure, OwnershipFailureReason as Reason,
-    OwnershipPhase as Phase, TransportAuthority, TransportOwner, OWNER_PROTOCOL_VERSION,
-    RECEIVER_LEASE_MS,
+    OwnershipPhase as Phase, ReceiverCleanup, ReceiverConfirmationCustody, TransportAuthority,
+    TransportOwner, OWNER_PROTOCOL_VERSION, RECEIVER_LEASE_MS,
 };
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -15,11 +16,48 @@ const NEGOTIATION_DEADLINE: Duration = Duration::from_secs(3);
 const RENEW_INTERVAL: Duration = Duration::from_secs(3);
 const RESPONSE_LIMIT: usize = 4_096;
 
-pub(super) struct ReceiverLease(tokio::task::JoinHandle<()>);
+pub(super) struct ReceiverLease {
+    renewal: tokio::task::JoinHandle<()>,
+    authority: Arc<dyn TransportAuthority>,
+    owner: TransportOwner,
+    endpoint: RuntimeEndpoint,
+    state: std::sync::Weak<Mutex<TransportState>>,
+}
+
+/// An Open cannot borrow a lease whose exact authority, link or endpoint changed.
+fn rejected() -> AdapterError {
+    AdapterError::Rejected("runtime ownership negotiation failed or is unsupported".into())
+}
+
+impl ReceiverLease {
+    pub(super) async fn check_open(
+        &self,
+        transport: &ProviderHostedControlTransport,
+        endpoint: &RuntimeEndpoint,
+        agent: &AgentSlot,
+    ) -> crate::Result<()> {
+        let authority = current_authority().ok_or_else(rejected)?;
+        // This is a borrowed capability for one Open, not an authority cache.
+        // Even an equal token from another authority must negotiate for itself.
+        if !Arc::ptr_eq(&authority, &self.authority)
+            || authority.owner() != self.owner
+            || self.owner.agent_id != agent.as_str()
+            || self.renewal.is_finished()
+            || !self.state.ptr_eq(&Arc::downgrade(&transport.state))
+            || self.endpoint.control()? != endpoint.control()?
+            || self.endpoint.control_token() != endpoint.control_token()
+            || self.endpoint.native_identity() != endpoint.native_identity()
+            || self.endpoint.native_binding() != endpoint.native_binding()
+        {
+            return Err(rejected());
+        }
+        authority.check().await
+    }
+}
 
 impl Drop for ReceiverLease {
     fn drop(&mut self) {
-        self.0.abort();
+        self.renewal.abort();
     }
 }
 
@@ -34,6 +72,18 @@ impl ProviderHostedControlTransport {
         let mut template = self.clone();
         template.state = Arc::new(Mutex::new(TransportState::default()));
         let identity = format!("{}:{:?}", endpoint.control()?, endpoint.native_binding());
+        let legacy_incarnation = match tokio::time::timeout(
+            NEGOTIATION_DEADLINE,
+            self.legacy_receiver_incarnation(endpoint),
+        )
+        .await
+        {
+            Ok(Ok(incarnation)) => incarnation,
+            _ => {
+                tracing::debug!("Native receiver image evidence could not be captured");
+                None
+            }
+        };
         authority.register_receiver(Arc::new(ReceiverFence {
             identity: identity.clone(),
             template,
@@ -41,15 +91,19 @@ impl ProviderHostedControlTransport {
             endpoint: endpoint.clone(),
             owner: authority.owner(),
             authority: Arc::downgrade(&authority),
+            legacy_incarnation,
         }))?;
-        self.renew_receiver(endpoint, &authority).await?;
+        self.renew_receiver(endpoint, &authority, &identity).await?;
         authority.receiver_confirmed(&identity);
+        let lease_authority = authority.clone();
+        let lease_endpoint = endpoint.clone();
+        let owner = authority.owner();
         // A live link owns this task; the task must not own the link's state.
         let state = Arc::downgrade(&self.state);
         let mut transport = self.clone();
         transport.state = Arc::new(Mutex::new(TransportState::default()));
         let endpoint = endpoint.clone();
-        Ok(Some(ReceiverLease(tokio::spawn(async move {
+        let renewal = tokio::spawn(async move {
             loop {
                 tokio::select! { biased;
                     _ = authority.revoked() => return,
@@ -58,17 +112,29 @@ impl ProviderHostedControlTransport {
                 let Some(state) = state.upgrade() else { return };
                 let mut current = transport.clone();
                 current.state = state;
-                if current.renew_receiver(&endpoint, &authority).await.is_err() {
+                if current
+                    .renew_receiver(&endpoint, &authority, &identity)
+                    .await
+                    .is_err()
+                {
                     return;
                 }
             }
-        }))))
+        });
+        Ok(Some(ReceiverLease {
+            renewal,
+            authority: lease_authority,
+            owner,
+            endpoint: lease_endpoint,
+            state: Arc::downgrade(&self.state),
+        }))
     }
 
     async fn renew_receiver(
         &self,
         endpoint: &RuntimeEndpoint,
         authority: &Arc<dyn TransportAuthority>,
+        identity: &str,
     ) -> crate::Result<()> {
         let phase = std::sync::Mutex::new(Phase::Challenge);
         let evidence = authority.retry_evidence();
@@ -94,6 +160,7 @@ impl ProviderHostedControlTransport {
             let (challenge, challenge_status): (OwnerChallenge, _) = self
                 .owner_exchange(endpoint, &owner, Phase::Challenge, &owner, &status)
                 .await?;
+            authority.receiver_observed(identity);
             challenge_valid.store(
                 uuid::Uuid::parse_str(&challenge.nonce).is_ok(),
                 std::sync::atomic::Ordering::Release,
@@ -128,6 +195,11 @@ impl ProviderHostedControlTransport {
                 nonce: challenge.nonce,
             };
             *phase.lock().unwrap() = Phase::Confirm;
+            authority
+                .begin_receiver_confirmation(identity)
+                .map_err(|error| {
+                    OwnershipFailure::new(Phase::Confirm, Reason::AuthorityLost).with_error(error)
+                })?;
             if let Some(evidence) = &evidence {
                 evidence.confirmation(receiver.as_ref(), false);
             }
@@ -150,6 +222,14 @@ impl ProviderHostedControlTransport {
             result = tokio::time::timeout(NEGOTIATION_DEADLINE, operation) => result.unwrap_or_else(|_| Err(interrupted(Reason::Deadline))),
         };
         if let Err(failure) = result {
+            if failure.observation.phase == Phase::Challenge
+                && failure
+                    .observation
+                    .http_status
+                    .is_some_and(|status| (200..300).contains(&status))
+            {
+                authority.receiver_observed(identity);
+            }
             if let Some(evidence) = &evidence {
                 evidence.record(
                     authority.owner(),
@@ -208,6 +288,7 @@ impl ProviderHostedControlTransport {
             let status = reply.status.as_u16();
             observed_status.record_status(status);
             if !reply.status.is_success() {
+                self.record_failed_challenge(endpoint, owner, phase, reply.status);
                 return Err(OwnershipFailure::http(phase, status).into());
             }
             (
@@ -231,6 +312,7 @@ impl ProviderHostedControlTransport {
             let status = reply.status().as_u16();
             observed_status.record_status(status);
             if !reply.status().is_success() {
+                self.record_failed_challenge(endpoint, owner, phase, reply.status());
                 return Err(OwnershipFailure::http(phase, status).into());
             }
             let mut bytes = Vec::new();
@@ -302,6 +384,7 @@ struct ReceiverFence {
     endpoint: RuntimeEndpoint,
     owner: TransportOwner,
     authority: std::sync::Weak<dyn TransportAuthority>,
+    legacy_incarnation: Option<ReceiverIncarnation>,
 }
 
 #[async_trait::async_trait]
@@ -311,13 +394,28 @@ impl crate::owner_protocol::ReceiverRevocation for ReceiverFence {
     }
 
     async fn revoke(&self) -> crate::Result<()> {
+        self.settle(ReceiverConfirmationCustody::PossiblyDelivered)
+            .await?;
+        Ok(())
+    }
+
+    async fn settle(&self, custody: ReceiverConfirmationCustody) -> crate::Result<ReceiverCleanup> {
         let status = Arc::new(NativeHttpObservation::default());
         let operation = async {
             let mut transport = self.template.clone();
-            transport.state = self.state.upgrade().ok_or_else(|| {
-                OwnershipFailure::new(Phase::Revoke, Reason::TransportUnavailable)
-            })?;
-            let (reply, status): (OwnerAcknowledgement, _) = transport
+            // A dropped link must not discard custody of a receiver that may
+            // still hold this lease. A native revoke uses independent state
+            // bound to the captured incarnation; its open fences refuse a
+            // replaced Pod or container before anything is sent.
+            transport.state = match self.state.upgrade() {
+                Some(state) => state,
+                None => super::native_pool::revoke_state(&self.endpoint)
+                    .map(|state| Arc::new(Mutex::new(state)))
+                    .ok_or_else(|| {
+                        OwnershipFailure::new(Phase::Revoke, Reason::TransportUnavailable)
+                    })?,
+            };
+            let result: Result<(OwnerAcknowledgement, _), _> = transport
                 .owner_exchange(
                     &self.endpoint,
                     &self.owner,
@@ -325,9 +423,35 @@ impl crate::owner_protocol::ReceiverRevocation for ReceiverFence {
                     &self.owner,
                     &status,
                 )
-                .await?;
-            validate_acknowledgement(&reply, &self.owner, Phase::Revoke, status)
-                .map_err(OwnershipExchangeFailure::from)
+                .await;
+            match result {
+                Ok((reply, status)) => {
+                    validate_acknowledgement(&reply, &self.owner, Phase::Revoke, status)?;
+                    Ok(ReceiverCleanup::Acknowledged)
+                }
+                Err(failure) => {
+                    if custody == ReceiverConfirmationCustody::NeverSent
+                        && failure.observation.reason == Reason::MissingRoute
+                        && failure.observation.http_status == Some(404)
+                        && self.legacy_incarnation.is_some()
+                        && matches!(
+                            transport.legacy_receiver_incarnation(&self.endpoint).await,
+                            Ok(current) if current == self.legacy_incarnation
+                        )
+                    {
+                        use sha2::{Digest, Sha256};
+                        tracing::info!(
+                            stage = "revoke",
+                            http_status = 404_u16,
+                            outcome = "no_receiver_known_incompatible",
+                            receiver_sha256 = %format!("{:x}", Sha256::digest(self.identity.as_bytes())),
+                            "Native receiver cleanup obligation settled"
+                        );
+                        return Ok(ReceiverCleanup::NoReceiver);
+                    }
+                    Err(failure)
+                }
+            }
         };
         let result = tokio::time::timeout(NEGOTIATION_DEADLINE, operation)
             .await
@@ -336,71 +460,21 @@ impl crate::owner_protocol::ReceiverRevocation for ReceiverFence {
                 failure.http_status = status.status();
                 Err(failure.into())
             });
-        if let Err(failure) = result {
-            if let Some(authority) = self.authority.upgrade() {
-                authority.record_failure(failure.observation).await;
+        match result {
+            Ok(outcome) => Ok(outcome),
+            Err(failure) => {
+                if let Some(authority) = self.authority.upgrade() {
+                    authority.record_failure(failure.observation).await;
+                }
+                Err(failure.error)
             }
-            return Err(failure.error);
         }
-        Ok(())
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::super::tests::{json_response, listener, read_request};
-    use super::*;
-    use crate::owner_protocol::{scope, test_support::TestAuthority, ReceiverRevocation};
-    use tokio::io::AsyncWriteExt;
+#[path = "provider_ownership_revocation_tests.rs"]
+mod tests;
 
-    #[tokio::test]
-    async fn first_revocation_failure_is_classified_and_success_has_no_failure() {
-        for refuse in [false, true] {
-            let listener = listener().await;
-            let address = listener.local_addr().unwrap();
-            let endpoint =
-                RuntimeEndpoint::parse("http://fixture.invalid", &format!("http://{address}"))
-                    .unwrap();
-            let transport = ProviderHostedControlTransport::for_retained_opensandbox(
-                SandboxClient::new("http://unused.invalid", "fixture-key"),
-            )
-            .unwrap();
-            let authority = TestAuthority::new(1);
-            let owner = authority.owner();
-            let server = tokio::spawn(async move {
-                for action in ["challenge", "confirm", "revoke"] {
-                    let (mut stream, _) = listener.accept().await.unwrap();
-                    let request = String::from_utf8(read_request(&mut stream).await).unwrap();
-                    assert!(request.contains(&format!("/manager-ownership/{action}")));
-                    let bytes = if action == "revoke" && refuse {
-                        b"HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
-                            .to_vec()
-                    } else if action == "challenge" {
-                        json_response(
-                            &serde_json::json!({"protocol":1,"nonce":uuid::Uuid::new_v4(),"valid_for_ms":10000}),
-                        )
-                    } else {
-                        json_response(&OwnerAcknowledgement {
-                            owner: owner.clone(),
-                            protocol: 1,
-                        })
-                    };
-                    stream.write_all(&bytes).await.unwrap();
-                }
-            });
-            let lease = scope(authority.clone(), transport.receiver_lease(&endpoint))
-                .await
-                .unwrap();
-            assert!(authority.failure.get().is_none());
-            let receiver: Arc<dyn ReceiverRevocation> =
-                authority.receivers.lock().unwrap()[0].clone();
-            assert_eq!(receiver.revoke().await.is_err(), refuse);
-            server.await.unwrap();
-            assert_eq!(
-                authority.failure.get().copied(),
-                refuse.then(|| OwnershipFailure::http(Phase::Revoke, 403))
-            );
-            drop(lease);
-        }
-    }
-}
+#[path = "provider_ownership_retirement.rs"]
+mod retirement;

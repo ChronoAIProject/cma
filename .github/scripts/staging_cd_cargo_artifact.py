@@ -18,19 +18,31 @@ import subprocess
 import time
 import zipfile
 
+import ci_retry
+
 REPO = "ChronoAIProject/cma"
 WORKFLOW = ".github/workflows/staging-cd.yml"
 COMPONENTS = {"am", "eg"}
 FILES = ("manifest.json", "registry.tar.gz", "target.tar.gz")
 MIB = 1024**2
-# The sealed archives are bounded to 1 GiB and the manifest to 4 KiB. Stored
-# (uncompressed) ZIP framing for three members fits in the extra MiB.
-MAX_ARTIFACT_BYTES = 1024**3 + 4096 + MIB
+# Run artifacts carry larger sealed archives than the 1 GiB Actions cache path.
+# On 20 Nov 2026 AM's bundle was 1,015 MiB compressed and 2.56 GiB expanded in
+# about 27k files; every later export was withheld. These bounds leave about 2x
+# headroom, with the compressed bound binding first at that 2.6:1 ratio, while
+# staying within a standard runner's disk. The 200k member bound is unchanged.
+MAX_BUNDLE_BYTES = 2 * 1024**3
+MAX_EXPANDED_BYTES = 6 * 1024**3
+# The manifest is bounded to 4 KiB. Stored (uncompressed) ZIP framing for three
+# members fits in the extra MiB.
+MAX_ARTIFACT_BYTES = MAX_BUNDLE_BYTES + 4096 + MIB
 CANDIDATES = 5
 # Any workflow run may upload an artifact with this name. List enough rows to
 # find the develop producers among them.
 LISTING = 50
-DEADLINE_SECONDS = 240
+# A 2 GiB download needs about 6 MiB/s within DOWNLOAD_SECONDS; the overall
+# deadline leaves room for the provenance reads before it.
+DOWNLOAD_SECONDS = 360
+DEADLINE_SECONDS = 420
 CHUNK = 8 * MIB
 
 
@@ -65,11 +77,15 @@ def github(path, *, timeout, output=None):
     command = ["gh", "api", "--hostname", "github.com", "--method", "GET", path]
     if output is None:
         result = subprocess.run(command, capture_output=True, timeout=timeout, check=False)
-        require(result.returncode == 0 and len(result.stdout) <= 4 * MIB, "read")
+        if result.returncode != 0:
+            # The cause marks a transport failure as repeatable; the reason stays fixed.
+            raise Refused("read") from ci_retry.cli_cause(result.stderr)
+        require(len(result.stdout) <= 4 * MIB, "read")
         return json.loads(result.stdout)
     with output.open("xb") as stream:
-        result = subprocess.run(command, stdout=stream, stderr=subprocess.DEVNULL, timeout=timeout, check=False)
-    require(result.returncode == 0, "download")
+        result = subprocess.run(command, stdout=stream, stderr=subprocess.PIPE, timeout=timeout, check=False)
+    if result.returncode != 0:
+        raise Refused("download") from ci_retry.cli_cause(result.stderr)
     return output
 
 
@@ -169,7 +185,7 @@ FAILURES = (Refused, KeyError, TypeError, ValueError, AttributeError, EOFError, 
             subprocess.SubprocessError, zipfile.BadZipFile, zipfile.LargeZipFile)
 
 
-def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develop):
+def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develop, sleep=time.sleep):
     destination = context(env)
     component = env["CD_COMPONENT"]
     require(not destination.exists() and not destination.is_symlink(), "destination")
@@ -182,9 +198,18 @@ def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develo
         require(left > 0, "deadline")
         return min(cap, left)
 
+    def read(path, cap, output=None):
+        # Every read is a GET; transport failures repeat inside the restore deadline.
+        def attempt():
+            if output is None:
+                return get(path, timeout=remaining(cap))
+            discard(output)  # a repeat never resumes a partial download
+            return get(path, timeout=remaining(cap), output=output)
+        return ci_retry.call(attempt, name="cargo-artifact-read", classify=ci_retry.classify,
+                             deadline=deadline, clock=clock, sleep=sleep)
+
     root = Path.cwd() if root is None else root
-    listing = get(f"repos/{REPO}/actions/artifacts?name={artifact_name(component)}&per_page={LISTING}",
-                  timeout=remaining(10))
+    listing = read(f"repos/{REPO}/actions/artifacts?name={artifact_name(component)}&per_page={LISTING}", 10)
     require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list), "listing")
     rows = [row for row in listing["artifacts"] if isinstance(row, dict)
             and isinstance(row.get("workflow_run"), dict) and row["workflow_run"].get("head_branch") == "develop"
@@ -197,14 +222,12 @@ def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develo
             origin = validate_artifact(artifact, component)
             require(str(origin["id"]) != env["GITHUB_RUN_ID"], "self")
             require(ancestry(root, origin["head_sha"], env["GITHUB_SHA"], remaining(10)), "ancestry")
-            run = get(f"repos/{REPO}/actions/runs/{origin['id']}", timeout=remaining(10))
+            run = read(f"repos/{REPO}/actions/runs/{origin['id']}", 10)
             attempt = run.get("run_attempt") if isinstance(run, dict) else None
             require(type(attempt) is int and attempt > 0, "producer")
-            jobs = get(f"repos/{REPO}/actions/runs/{origin['id']}/attempts/{attempt}/jobs?per_page=100",
-                       timeout=remaining(10))
+            jobs = read(f"repos/{REPO}/actions/runs/{origin['id']}/attempts/{attempt}/jobs?per_page=100", 10)
             producer = validate_producer(run, jobs, artifact, component)
-            discard(download)
-            get(f"repos/{REPO}/actions/artifacts/{artifact['id']}/zip", timeout=remaining(180), output=download)
+            read(f"repos/{REPO}/actions/artifacts/{artifact['id']}/zip", DOWNLOAD_SECONDS, download)
             unpack(download, artifact, destination)
             return {"state": "RESTORED", **producer, "artifact_id": artifact["id"],
                     "artifact_digest": artifact["digest"]}

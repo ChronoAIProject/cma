@@ -6,7 +6,7 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use mongodb::{bson::Document, ClientSession, Collection};
 use uuid::Uuid;
 
-use crate::store::sandbox_mongo::start_transaction;
+use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::start_transaction};
 
 mod page;
 
@@ -39,8 +39,56 @@ impl<'session> TransactionScope<'session> {
     pub(in crate::store) async fn fence_ordinary_work(
         &mut self,
         store: &crate::store::MongoSandboxStore,
-    ) -> Result<(), SandboxStoreError> {
-        crate::store::work_publication::fence(store, self.session).await
+    ) -> Result<(), crate::store::work_publication::FenceError> {
+        crate::store::work_publication::fence_transaction(store, self.session).await
+    }
+
+    pub(in crate::store) async fn live_agents(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        sandbox_id: &layer2_core::SandboxId,
+        workspace_id: &layer2_core::WorkspaceId,
+    ) -> Result<u64, TransactionLogError> {
+        use crate::store::shared_child_capacity::{agents, CapacityError};
+        agents(store, sandbox_id, workspace_id, self.session)
+            .await
+            .map_err(|error| match error {
+                CapacityError::Domain(error) => error.into(),
+                CapacityError::Driver(error) => TransactionLogError::Driver(error),
+            })
+    }
+
+    pub(in crate::store) async fn retained_reopen_view(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        id: &layer2_core::SandboxId,
+        path: layer2_core::sandbox::RetainedReopenPath,
+        policy: crate::store::agent_log_integrity::IntegrityFailurePolicy,
+    ) -> Result<
+        (layer2_core::sandbox::RetainedReopenSnapshot, u64),
+        crate::store::sandbox_unpublished_recovery::transaction::ApplyError,
+    > {
+        use crate::store::sandbox_unpublished_recovery::transaction::NativeFacts;
+        let facts = NativeFacts::capture_reopen(store, id, self).await?;
+        crate::store::retained_reopen::snapshot_in_transaction(
+            store,
+            id,
+            self.session,
+            &facts,
+            path,
+            policy,
+        )
+        .await
+    }
+
+    pub(in crate::store) async fn settle_runtime_loss_budget(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        current: &layer2_core::sandbox::Agent,
+        change: &layer2_core::sandbox::store::SandboxRuntimeLossAgentMutation,
+        at: &str,
+    ) -> Result<(), TransactionLogError> {
+        crate::store::budget::settle_runtime_loss(store, current, change, at, self.session).await
     }
 
     /// Release consumes the scope. The caller may commit/abort and do normal

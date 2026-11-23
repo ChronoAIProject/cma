@@ -38,6 +38,9 @@ async fn pending_home_observation_survives_unset_retained_home_ceiling() {
     }));
     let client = Client::with_options(options).unwrap();
     let name = format!("cma_pending_observation_{}", uuid::Uuid::new_v4().simple());
+    crate::store::MongoRegistrationCapacityStore::open(&client, &name, true)
+        .await
+        .unwrap();
     let store = MongoAdmissionCeilingsStore::open(&client, &name, 0)
         .await
         .unwrap();
@@ -77,7 +80,7 @@ async fn pending_home_observation_survives_unset_retained_home_ceiling() {
         assert_eq!(
             commands.len(),
             1,
-            "pending homes require exactly one point read"
+            "disabled recovery preserves the ordinary pending counter point read"
         );
         assert_eq!(
             commands[0].get_document("filter").unwrap(),

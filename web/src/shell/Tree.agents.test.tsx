@@ -6,6 +6,70 @@ import { activityLabel } from './Tree';
 import { agentSignal } from './treePresentation';
 import { renderTree } from './Tree.test-support';
 
+it.each(['agent', 'sandbox'] as const)(
+  'withholds recovery in the %s view when the Agent identifies a different parent',
+  async (view) => {
+    const onNavigate = vi.fn();
+    const [item] = navigationFixture('paused', 'stopped');
+    const [workspace] = item!.workspaces;
+    renderTree({
+      view,
+      items: [
+        {
+          sandbox: { ...item!.sandbox, owner: 'viewer-one' },
+          workspaces: [
+            {
+              ...workspace!,
+              agents: workspace!.agents.map((agent) => ({ ...agent, sandboxId: 'sbx_other' })),
+            },
+          ],
+        },
+      ],
+      onNavigate,
+    });
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Options for Agent one' }));
+    expect(
+      screen.getByRole('menuitem', { name: /^Delete Sandbox status is unavailable/ }),
+    ).toHaveAttribute('aria-disabled', 'true');
+    expect(
+      screen.queryByRole('menuitem', { name: 'Open Sandbox to resume' }),
+    ).not.toBeInTheDocument();
+    expect(onNavigate).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  ['agent', 'stopped'],
+  ['agent', 'failed'],
+  ['sandbox', 'stopped'],
+  ['sandbox', 'failed'],
+] as const)(
+  'offers navigation only for a %s row with a %s Agent in a paused Sandbox',
+  async (view, status) => {
+    const onAction = vi.fn();
+    const onNavigate = vi.fn();
+    const [item] = navigationFixture('paused', status);
+    renderTree({
+      view,
+      items: [{ ...item!, sandbox: { ...item!.sandbox, owner: 'viewer-one' } }],
+      onAction,
+      onNavigate,
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Options for Agent one' }));
+    const remove = screen.getByRole('menuitem', { name: /^Delete\b/ });
+    expect(remove).toHaveAttribute('aria-disabled', 'true');
+    expect(remove).toHaveTextContent(
+      'Resume the Sandbox before deleting this Agent and its Worktree.',
+    );
+    const resume = screen.getByRole('menuitem', { name: 'Open Sandbox to resume' });
+    expect(resume).toHaveAttribute('href', '/sandboxes/sbx_1');
+    await user.click(resume);
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'sandbox', sandboxId: 'sbx_1' });
+    expect(onAction).not.toHaveBeenCalled();
+  },
+);
+
 describe('Sandbox navigation tree', () => {
   it('uses saved setup provenance for unselected rows without loading their conversations', () => {
     const items = navigationFixture().map((item) => ({
@@ -120,8 +184,18 @@ describe('Flat Agent navigation', () => {
           {
             ...workspace,
             agents: [
-              { ...agent, id: 'older', title: 'Older Agent', updatedAt: '2026-10-20T08:00:00Z' },
-              { ...agent, id: 'newest', title: 'Newest Agent', updatedAt: '2026-10-22T08:00:00Z' },
+              {
+                ...agent,
+                id: 'older',
+                title: 'Older Agent',
+                taskActivityAt: '2026-10-20T08:00:00Z',
+              },
+              {
+                ...agent,
+                id: 'newest',
+                title: 'Newest Agent',
+                taskActivityAt: '2026-10-22T08:00:00Z',
+              },
               { ...agent, id: 'gone', title: 'Deleted Agent', status: 'deleted' as const },
             ],
           },
@@ -135,7 +209,12 @@ describe('Flat Agent navigation', () => {
             id: 'wsp_other',
             name: 'Other Workspace',
             agents: [
-              { ...agent, id: 'middle', title: 'Middle Agent', updatedAt: '2026-10-21T08:00:00Z' },
+              {
+                ...agent,
+                id: 'middle',
+                title: 'Middle Agent',
+                taskActivityAt: '2026-10-21T08:00:00Z',
+              },
             ],
           },
         ],
@@ -177,7 +256,7 @@ describe('Flat Agent navigation', () => {
       'aria-disabled',
       'true',
     );
-    expect(screen.getByRole('menuitem', { name: 'Export history' })).toHaveAttribute(
+    expect(screen.getByRole('menuitem', { name: 'Export retained conversation' })).toHaveAttribute(
       'aria-disabled',
       'false',
     );

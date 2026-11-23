@@ -144,12 +144,19 @@ impl AgentCommandService {
             agent_id: request.envelope.agent_id.clone(),
         };
         source.check(&request.envelope).await?;
+        let funding = self.require_model_credit(&request.envelope.command);
         let result = self
-            .with_authority_bound(
-                &authorized,
-                ResourceCapability::Interact,
-                self.store.reserve_command(request.clone()),
-            )
+            .with_authority_bound(&authorized, ResourceCapability::Interact, async {
+                if let Err(error) = funding {
+                    return self
+                        .store
+                        .get_admitted_command(&request.scope(), &request.key_sha256)
+                        .await?
+                        .map(|record| CommandReservationResult::Existing(Box::new(record)))
+                        .ok_or(CommandAdmissionError::Input(error));
+                }
+                Ok(self.store.reserve_command(request.clone()).await?)
+            })
             .await;
         self.fence(&authorized, &target, ResourceCapability::Interact)
             .await?;

@@ -40,6 +40,7 @@ pub(super) async fn invoke(state: &AccessState, capability: &str, rpc: Rpc) -> R
             Ok(request) => result(id, super::reply::admitted(request)),
             Err(error) => {
                 let message = match error {
+                    AgentAccessError::AccountDeletionInProgress => return auth_error(error),
                     AgentAccessError::Conflict => {
                         "This request key or retry predecessor is already bound to another attempt. Reuse the exact original proposal to observe it. After a failed result, use its next_request with a new request_key and retry_of; never change an existing key's services or reason."
                     }

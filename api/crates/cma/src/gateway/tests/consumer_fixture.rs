@@ -77,6 +77,7 @@ impl ConsumerGateway {
             native_discord_voice_enabled: false,
             native_split_text_refs_enabled: false,
             native_telegram_message_events_writes_enabled: false,
+            managed_telegram_setup_enabled: true,
             native_lark_writes_enabled: false,
         native_lark_intake_enabled: false,
         native_lark_controls_enabled: false,
@@ -159,6 +160,7 @@ impl ConsumerGateway {
             config.management,
             config.channel_cache,
         );
+        state.managed_telegram_setup_enabled = config.managed_telegram_setup_enabled;
         state.telegram = Some(Arc::new(
             cmaeg::telegram::TelegramClient::new(&platform_origin, Duration::from_secs(2)).unwrap(),
         ));

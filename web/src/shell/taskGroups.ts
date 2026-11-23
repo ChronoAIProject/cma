@@ -1,4 +1,5 @@
 import { elapsedTime } from '../agent/workspaceTime';
+import type { AgentSummary } from '../api/types';
 import type { TaskStatus } from './taskStatus';
 export const TASK_GROUPS = [
   'Needs attention',
@@ -8,12 +9,14 @@ export const TASK_GROUPS = [
   'Today',
   'Yesterday',
   'Earlier',
+  'Task time unavailable',
 ] as const;
 export function taskGroup(
   status: TaskStatus,
-  updatedAt: string,
+  taskActivityAt: string | undefined,
   now: Date,
 ): (typeof TASK_GROUPS)[number] {
+  if (status === 'needs_attention') return 'Needs attention';
   if (
     status === 'loading' ||
     status === 'working' ||
@@ -22,16 +25,17 @@ export function taskGroup(
     status === 'waiting_approval'
   )
     return 'Active';
-  const date = new Date(updatedAt);
+  const date = new Date(taskActivityAt ?? '');
+  if (!Number.isFinite(date.getTime())) return 'Task time unavailable';
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
   if (date >= today) return 'Today';
   if (date >= yesterday) return 'Yesterday';
   return 'Earlier';
 }
-export function taskTime(updatedAt: string, now: Date): string {
-  const date = new Date(updatedAt);
-  if (!Number.isFinite(date.getTime())) return '—';
+export function taskTime(taskActivityAt: string | undefined, now: Date): string {
+  const date = new Date(taskActivityAt ?? '');
+  if (!Number.isFinite(date.getTime())) return 'Task time unavailable';
   const today =
     date.getFullYear() === now.getFullYear() &&
     date.getMonth() === now.getMonth() &&
@@ -66,4 +70,9 @@ export function nextTaskTick(starts: readonly number[], now: number) {
     .filter(Number.isFinite)
     .map((start) => start + (Math.max(0, Math.floor((now - start) / 60_000)) + 1) * 60_000);
   return Math.max(1, Math.min(midnight, ...next) - now);
+}
+
+export function taskActivityOrder(agent: Pick<AgentSummary, 'taskActivityAt'>): number {
+  const at = Date.parse(agent.taskActivityAt ?? '');
+  return Number.isFinite(at) ? at : -Infinity;
 }

@@ -29,7 +29,9 @@ export function ComputerScreen({
   mayViewHistory,
   onStopForControl,
   onClose,
+  onReturnToConversation,
 }: {
+  readonly onReturnToConversation?: () => void;
   readonly agentId: string;
   readonly detail?: AgentDetail;
   readonly shared: boolean;
@@ -78,6 +80,7 @@ export function ComputerScreen({
               controlUnavailable={!controlsReady}
               preparation={{ context: detailReadSource(client), owner: subject }}
               onClose={onClose}
+              onReturnToConversation={onReturnToConversation}
               embedded
             />
           ) : null
@@ -106,6 +109,8 @@ export function ComputerScreen({
             name="Browser"
             feature={features.browser}
             onRetry={environment.reload}
+            policyDisabled={policy.confirmed && !policy.desktop_enable}
+            onReturnToConversation={onReturnToConversation}
           />
         ) : !client.files?.environment ? (
           <p role="status">Environment capabilities not reported.</p>

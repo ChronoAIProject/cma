@@ -8,11 +8,17 @@ use layer3_adapter::{
 };
 use std::sync::Mutex;
 
+#[path = "settings_http_tests.rs"]
+mod settings;
+
 #[path = "drain_tests.rs"]
 mod drain;
 
 #[path = "shared_stream_tests.rs"]
 mod shared_streams;
+
+#[path = "preferences_tests.rs"]
+mod preferences;
 
 struct CaptureTransport(Mutex<Vec<OwnershipToken>>);
 #[async_trait::async_trait]

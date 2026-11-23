@@ -1,4 +1,4 @@
-use super::{Bridge, Outcome};
+use super::Bridge;
 use crate::hosted::update_relay::UpdateRelay;
 use crate::PromptIdentity;
 
@@ -18,18 +18,36 @@ pub(super) struct PromptRecovery {
     /// exact native identity carried by that response. `completed` tracks the
     /// latest observed terminal for duplicate suppression, so it must never be
     /// consulted to label this pending result.
-    outcome: Option<(PromptIdentity, Outcome)>,
+    outcome: Option<crate::ConversationUpdate>,
+    _identities: Option<crate::ingress_budget::ReservationBundle>,
 }
 
 impl PromptRecovery {
-    pub(super) fn new(expected: Option<PromptIdentity>) -> Self {
-        Self {
+    pub(super) fn new(
+        expected: Option<PromptIdentity>,
+        policy: Option<&crate::ingress_budget::IngressOwnershipPolicy>,
+    ) -> crate::Result<Self> {
+        // Native prompt identities contain a 13-byte prefix and 64 hex digits.
+        // Three retained slots plus an incoming replacement can coexist.
+        let identities = policy
+            .map(|policy| {
+                policy.reserve(
+                    crate::ingress_budget::IngressClass::Data,
+                    crate::ingress_budget::AllocationPlan::new(
+                        "prompt recovery identities",
+                        &[4 * 77],
+                    )?,
+                )
+            })
+            .transpose()?;
+        Ok(Self {
             active: expected.clone(),
             expected,
             completed: None,
             verified: false,
             outcome: None,
-        }
+            _identities: identities,
+        })
     }
 
     pub(super) fn remember(&mut self, prompt_id: PromptIdentity) {
@@ -85,46 +103,32 @@ impl Bridge {
     pub(in super::super) async fn recover_prompt_result(
         &self,
         id: &str,
-        frame: &serde_json::Value,
+        frame: &crate::hosted::retained_json::JsonFrame,
         updates: &UpdateRelay,
-    ) -> bool {
+    ) -> crate::Result<bool> {
         let mut recovery = self.recovery.lock().await;
         if recovery.expected.as_ref().map(PromptIdentity::as_str) != Some(id) {
-            return false;
+            return Ok(false);
         }
-        let prompt_id = recovery.expected.clone().expect("identity was checked");
+        let outcome = self.terminal_update(frame)?;
         if let Some(state) = &self.permission_state {
             state.lock().await.complete_prompt(id);
         }
         recovery.mark_completed(id);
         recovery.expected = None;
-        let outcome =
-            crate::hosted::acp_turn::turn_outcome_with_policy(frame, self.json_pools.is_some());
         if recovery.verified {
-            updates
-                .send(crate::hosted::acp_turn::scoped_turn_outcome(
-                    outcome,
-                    true,
-                    Some(prompt_id),
-                ))
-                .await;
+            updates.send(outcome).await;
         } else {
-            recovery.outcome = Some((prompt_id, outcome));
+            recovery.outcome = Some(outcome);
         }
-        true
+        Ok(true)
     }
 
     pub(super) async fn release_recovered_prompt(&self, updates: &UpdateRelay) {
         let mut recovery = self.recovery.lock().await;
         recovery.verified = true;
-        if let Some((prompt_id, outcome)) = recovery.outcome.take() {
-            updates
-                .send(crate::hosted::acp_turn::scoped_turn_outcome(
-                    outcome,
-                    true,
-                    Some(prompt_id),
-                ))
-                .await;
+        if let Some(outcome) = recovery.outcome.take() {
+            updates.send(outcome).await;
         }
     }
 }

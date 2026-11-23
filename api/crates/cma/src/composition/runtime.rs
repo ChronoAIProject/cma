@@ -33,11 +33,14 @@ impl RuntimeServices {
             ),
         );
         Self {
-            reopen: Arc::new(layer2_core::sandbox::RetainedReopenService::new(
-                stores.sandbox_model.clone(),
-                inspector.clone(),
-                config.features.retained_reopen_enabled,
-            )),
+            reopen: Arc::new(
+                layer2_core::sandbox::RetainedReopenService::new(
+                    stores.sandbox_model.clone(),
+                    inspector.clone(),
+                    config.features.retained_reopen_enabled,
+                )
+                .with_suspended_admission(config.features.retained_suspended_reopen_enabled),
+            ),
             recovery: Arc::new(layer2_core::sandbox::RetainedRecoveryService::new(
                 stores.sandbox_model.clone(),
                 inspector,
@@ -95,7 +98,9 @@ pub(super) fn lifecycle_config(
         renewable_work: config.agent_manager_replicas.is_some(),
         ownership,
         runtime_loss_bounded_proof_enabled: config.features.runtime_loss_bounded_proof_enabled,
+        native_retirement_finality_enabled: config.features.native_retirement_finality_enabled,
         parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
+        startup_sibling_hold_enabled: config.features.startup_sibling_hold_enabled,
         retry_single_marker_enabled: config.features.retry_single_marker_enabled,
         work_retry_policy_enabled: config.features.work_retry_policy_enabled,
         native_create_retry_enabled: config.features.native_create_retry_enabled,

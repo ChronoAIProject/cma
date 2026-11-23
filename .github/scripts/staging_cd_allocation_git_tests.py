@@ -2,6 +2,7 @@
 import json
 import subprocess
 import unittest
+from unittest.mock import Mock
 
 import staging_cd_git_tests as fixtures
 from staging_cd_allocate import allocate_queue
@@ -10,17 +11,38 @@ from staging_cd_allocation_snapshot import AllocationConflict, AllocationSnapsho
 from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
 from staging_cd_reservations import next_reservation, pending_name
+from staging_cd_resolve import ObsoleteSource, verify
+from staging_cd_versions import DEPLOYABLES
+
+LANES = sorted(DEPLOYABLES)
 
 
 class AllocationGitTests(unittest.TestCase):
     def setUp(self):
+        self.calls, self.ambiguous = [], False
+        self.fresh()
+
+    def fresh(self):
         self.fixture = fixtures.GitPublicationTests()
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
-        self.calls, self.ambiguous = [], False
         self.fixture.api.request = self.request
         self.store = AllocationSnapshot(self.fixture.api, "fixture", self.fixture.work,
                                         AllocationIO(self.runner))
+        return self.fixture
+
+    def successor(self, component):
+        """Reserve a predecessor, then plan its successor for a newer develop merge."""
+        f = self.fresh()
+        first = next_reservation(component, f.source, f.tree, 42, "patch", 1, 1, [], [])
+        f.publisher.insert(first)
+        newer = f.git("commit-tree", f.tree, "-p", f.source, data="Second merge\n")
+        f.git("push", str(f.remote), newer + ":refs/heads/develop")
+        self.store.load()
+        later = next_reservation(component, newer, f.tree, 43, "patch", 2, 1, [], [first])
+        self.store.insert(later)
+        f.publisher.sleep = lambda _seconds: None
+        return f, first, later
 
     def request(self, path, **_kwargs):
         if path.startswith("git/ref/tags/"):
@@ -60,7 +82,9 @@ class AllocationGitTests(unittest.TestCase):
         self.assertEqual(len(pushes), 1)
         self.assertIn("--atomic", pushes[0])
         for push in pushes:
-            self.assertEqual(len([arg for arg in push if ":refs/tags/" in arg]), 5)
+            # Two reservations and their claims; a started predecessor keeps its outcome.
+            self.assertEqual(len([arg for arg in push if ":refs/tags/" in arg]), 4)
+            self.assertFalse(any("cma-allocation-outcome/" in arg for arg in push))
             self.assertNotIn("--force", push)
         self.assertEqual(self.store.list(), values)
 
@@ -75,53 +99,62 @@ class AllocationGitTests(unittest.TestCase):
         self.assertEqual(self.fixture.publisher.list(), self.store.planned)
         self.assertEqual(other.list(), [])
 
-    def test_newer_allocation_during_final_push_prevents_late_final_and_deploy(self):
-        f = self.fixture
-        first = f.reservation()
-        f.publisher.insert(first)
-        newer = f.git("commit-tree", f.tree, "-p", f.source, data="Second merge\\n")
-        f.git("push", str(f.remote), newer + ":refs/heads/develop")
-        self.store.load()
-        next_version = next_reservation("web", newer, f.tree, 43, "patch", 2, 1, [], [first])
-        self.store.insert(next_version)
-        old_receipt = f.receipt(first)
-        new_receipt = f.receipt(next_version)
-        runner = f.publisher.runner
-        def finish_out_of_order(args, **kwargs):
-            if args[1] == "push" and args[-1].endswith(":refs/tags/" + old_receipt["tag"]):
-                self.store.commit()
-                self.assertTrue(f.publisher.finalize(new_receipt, lambda *_: True))
-            return runner(args, **kwargs)
-        f.publisher.runner = finish_out_of_order
-        f.publisher.sleep = lambda _seconds: None
-        with self.assertRaises(Refusal):
-            f.publisher.finalize(old_receipt, lambda *_: True)
-        self.assertEqual([tag["receipt"] for tag in f.api.tags("web")], [new_receipt])
-        self.assertEqual(f.publisher.list(), [first])
-        f.api.require_current_versions({"web": new_receipt})
-        with self.assertRaisesRegex(Refusal, "Final version is absent"):
-            f.api.require_current_versions({"web": old_receipt})
+    def test_overlapping_finalizers_need_a_lane_lock_failure_and_a_late_older_final_never_deploys(self):
+        for component in LANES:
+            with self.subTest(component=component):
+                f, first, next_version = self.successor(component)
+                old_receipt = f.receipt(first)
+                new_receipt = f.receipt(next_version)
+                runner = f.publisher.runner
+                def finish_out_of_order(args, **kwargs):
+                    # Only finalizers overlapping despite the lane lock can interleave like this.
+                    if args[1] == "push" and args[-1].endswith(":refs/tags/" + old_receipt["tag"]):
+                        self.store.commit()
+                        self.assertTrue(f.publisher.finalize(new_receipt, lambda *_: True))
+                    return runner(args, **kwargs)
+                f.publisher.runner = finish_out_of_order
+                # The late push lands, but cleanup sees the higher final and fails finalization.
+                with self.assertRaisesRegex(Refusal, "superseded"):
+                    f.publisher.finalize(old_receipt, lambda *_: True)
+                tags = f.api.tags(component)
+                self.assertCountEqual([tag["receipt"] for tag in tags], [old_receipt, new_receipt])
+                self.assertEqual(f.publisher.list(), [first])
+                f.api.require_current_versions({component: new_receipt})
+                with self.assertRaisesRegex(Refusal, "superseded"):
+                    f.api.require_current_versions({component: old_receipt})
+                registry = Mock()
+                registry.exists.return_value = True
+                registry.manifest.return_value = (old_receipt["digest"], {})
+                with self.assertRaises(ObsoleteSource):
+                    verify(old_receipt, tags, registry, f.api.history(), automatic=True)
 
-    def test_finalize_wins_outcome_then_allocator_replans_from_verified_final(self):
-        f = self.fixture
-        first = f.reservation()
-        f.publisher.insert(first)
-        newer = f.git("commit-tree", f.tree, "-p", f.source, data="Second merge\n")
-        f.git("push", str(f.remote), newer + ":refs/heads/develop")
-        self.store.load()
-        later = next_reservation("web", newer, f.tree, 43, "patch", 2, 1, [], [first])
-        self.store.insert(later)
-        f.publisher.finalize(f.receipt(first), lambda *_: True)
-        with self.assertRaises(AllocationConflict):
-            self.store.commit()
-        self.assertEqual(f.publisher.list(), [])
-        refreshed = AllocationSnapshot(f.api, "fixture", f.work, AllocationIO(self.runner)).load()
-        refreshed.insert(later)
-        refreshed.commit()
-        self.assertEqual(f.publisher.list(), [later])
-        # The newer version has only a pending ref, which is enough to fence the old final.
-        with self.assertRaisesRegex(Refusal, "superseded"):
-            f.api.require_current_versions({"web": f.receipt(first)})
+    def test_started_final_in_every_lane_survives_a_successor_allocation_and_keeps_its_cleanup(self):
+        for component in LANES:
+            for during_push in (True, False):
+                with self.subTest(component=component, during_push=during_push):
+                    f, first, successor = self.successor(component)
+                    old_receipt = f.receipt(first)
+                    runner = f.publisher.runner
+                    def allocate_during_push(args, **kwargs):
+                        if args[1] == "push" and args[-1].endswith(":refs/tags/" + old_receipt["tag"]):
+                            self.store.commit()
+                        return runner(args, **kwargs)
+                    if during_push:
+                        f.publisher.runner = allocate_during_push
+                    self.assertTrue(f.publisher.finalize(old_receipt, lambda *_: True))
+                    if not during_push:
+                        # Allocation never contests the outcome, so it needs no replan.
+                        self.store.commit()
+                    self.assertEqual(self.store.list(), [first, successor])
+                    self.assertEqual([tag["receipt"] for tag in f.api.tags(component)], [old_receipt])
+                    self.assertEqual(f.publisher.list(component), [successor])
+                    # Only the successor's final, never its pending reservation, withholds the old release.
+                    f.api.require_current_versions({component: old_receipt})
+                    f.publisher.runner = runner
+                    self.assertTrue(f.publisher.finalize(f.receipt(successor), lambda *_: True))
+                    self.assertEqual(f.publisher.list(component), [])
+                    with self.assertRaisesRegex(Refusal, "superseded"):
+                        f.api.require_current_versions({component: old_receipt})
 
     def test_first_collision_after_snapshot_stops_without_retry(self):
         values = self.plan_two()

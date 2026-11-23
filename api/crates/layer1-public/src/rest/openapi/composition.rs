@@ -13,10 +13,15 @@ pub fn document() -> utoipa::openapi::OpenApi {
         .extensions
         .get_or_insert_with(Default::default)
         .insert("x-cma-task-templates-v1".into(), serde_json::json!(true));
+    document
+        .extensions
+        .get_or_insert_with(Default::default)
+        .insert("x-cma-agent-title-mode".into(), serde_json::json!(true));
     document.merge(super::super::agent_capacity_recovery::document());
     document.merge(super::super::agent_retained_output::document());
     document.merge(super::super::admin::admission::document());
     document.merge(super::super::admin::spend::document());
+    document.merge(super::super::account_deletion::document());
     document.merge(super::super::browser_telemetry::document());
     document.merge(super::super::documents::document());
     document.merge(super::super::desktop_creation::document());

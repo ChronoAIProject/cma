@@ -5,6 +5,9 @@ import { appendFileSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmS
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { currentJourneyCases, validatePublicJourneyProof } from './public-journey-evidence.mjs';
+import { connectionCaseTitles } from './connection-journey-evidence.mjs';
+import { bindConnectionFixtures, requireConnectionCoverage, validateConnectionCases } from './connection-campaign.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const digest = /^sha256:[0-9a-f]{64}$/;
@@ -41,7 +44,7 @@ export const phases = Object.freeze([
   'invocation', 'plan_reviewed_commit', 'plan_develop_head', 'plan_authority_hash', 'plan_output',
   'environment_policy', 'checkout_commit', 'authority_hash', 'fixture_file', 'fixture_binding', 'observer', 'receipt',
   'fixture_changed', 'attestation_output', 'attestation_files', 'attestations', 'expected_identity', 'campaign_results',
-  'cleanup_journal', 'audit_output', 'inventory_listing', 'inventory_cases', 'unclassified',
+  'cleanup_journal', 'connection_fixtures', 'connection_coverage', 'audit_output', 'inventory_listing', 'inventory_cases', 'unclassified',
 ]);
 const signals = Object.freeze(['SIGTERM', 'SIGINT', 'SIGKILL', 'SIGHUP']);
 export const refusalCodes = Object.freeze([
@@ -96,21 +99,22 @@ export const requiredCases = [
   ...['install_failure', 'clone_failure', 'worktree_conflict', 'agent_start_timeout', 'first_message_ambiguity', 'worker_crash'].map((name) => `FAULT-${name} records the real fault and preserves command identity`),
   'FAULT-nyxid-requirements upstream outage never invents satisfied requirements',
   'FAULT-browser-close durable Launch completes while its browser is closed',
-  'FAULT-popup-blocked connection falls back to the same tab without duplicate handoff',
-  'FAULT-handoff-response lost browser response keeps the same unsettled handoff command',
-  'FAULT-nyxid real upstream unavailability preserves handoff command identity',
+  connectionCaseTitles['FAULT-popup-blocked'],
+  connectionCaseTitles['FAULT-handoff-response'],
+  connectionCaseTitles['FAULT-nyxid'],
   'J0 new account returns to the same Trigger and reaches ready after one CMA click',
   'J1 always-new creates distinct visitor-owned Sandboxes',
   'J2 reuse Sandbox creates a new Workspace each time',
   'J3 reuse both supports ask resume, ask new and resume-existing',
-  ...['oauth', 'api_key', 'device_code'].map((mode) => `J4-${mode} G-T2 missing service connection assistant continues via ${mode}`),
+  ...['oauth', 'api_key', 'device_code'].map((mode) => connectionCaseTitles[`J4-${mode}`]),
   'J7-retired Trigger cannot admit work',
   'J7-paused orchestration freezes a durable Launch without failing it',
-  'J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and rotation preserve work',
+  currentJourneyCases.j6,
+  currentJourneyCases.compatibility,
   'SECURITY-negative visitor cannot create Sandboxes, profiles or Triggers',
   'SECURITY-csrf cross-site form POST is refused without admitting a Launch',
   'G-T3 fifty explicit clicks admit at most five Launches and expose resource_quota reset',
-  'J5 profiles publish to Marketplace, second owner forks, wizard publishes embeds and stats',
+  currentJourneyCases.j5,
   ...['markdown', 'html', 'javascript', 'react'].map((kind) => `G-T1-${kind} real embed click-through preserves placement attribution`),
 ];
 
@@ -274,7 +278,9 @@ export function validateCampaign(results, journal) {
     assert.equal(results.status, 'passed');
     assert.deepEqual(results.cases.map((row) => row.case).sort(), [...requiredCases].sort());
     for (const row of results.cases) {
-      keys(row, ['case', 'status', 'durationMs']);
+      const current = [currentJourneyCases.j5, currentJourneyCases.j6].includes(row.case);
+      const connection = Object.values(connectionCaseTitles).includes(row.case);
+      keys(row, ['case', 'status', 'durationMs', ...(current ? ['proof'] : []), ...(connection ? ['connectionProof'] : [])]);
       assert.equal(row.status, 'passed');
       assert.ok(Number.isFinite(row.durationMs) && row.durationMs >= 0);
     }
@@ -290,19 +296,34 @@ export function validateCampaign(results, journal) {
       assert.ok(row && typeof row === 'object' && !Array.isArray(row));
       assert.match(row.run, /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
       assert.ok(Number.isFinite(Date.parse(row.at)));
-      assert.ok(['created', 'cancel_requested', 'launch_observed', 'already_absent', 'stop_requested', 'cleanup_accepted', 'cleanup_complete'].includes(row.action));
-      assert.ok(['launches', 'sandboxes', 'workspaces', 'agents', 'agent-profiles', 'workspace-profiles', 'sandbox-profiles', 'triggers'].includes(row.kind));
+      assert.ok(['created', 'cancel_requested', 'launch_observed', 'lifecycle_observed', 'already_absent', 'stop_requested', 'cleanup_accepted', 'cleanup_complete'].includes(row.action));
+      assert.ok(['agent-lifecycle', 'launches', 'sandboxes', 'workspaces', 'agents', 'agent-profiles', 'workspace-profiles', 'sandbox-profiles', 'triggers'].includes(row.kind));
       for (const key of ['id', 'subject']) assert.match(row[key], /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/);
       if (row.action === 'created') { assert.ok(!owned.has(identity(row))); owned.add(identity(row)); }
       else assert.ok(owned.has(identity(row)), 'cleanup cannot precede ownership');
+      if (row.action === 'lifecycle_observed') {
+        assert.equal(row.kind, 'agent-lifecycle');
+        assert.ok(['queued', 'running', 'waiting_for_connection', 'succeeded', 'failed'].includes(row.state));
+        if (row.state === 'succeeded' || row.agent_id !== undefined) {
+          assert.match(row.agent_id, /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/);
+          assert.ok(owned.has(identity({ ...row, kind: 'agents', id: row.agent_id })));
+        }
+      }
     }
     for (const [index, created] of journal.entries()) {
       if (created.action !== 'created') continue;
       assert.ok(journal.slice(index + 1).some((row) => identity(row) === identity(created) && (
-        ['cleanup_complete', 'already_absent'].includes(row.action) ||
-        (created.kind === 'launches' && row.action === 'launch_observed' && ['ready', 'completed', 'cancelled', 'failed_terminal'].includes(row.state))
+        (created.kind !== 'agent-lifecycle' && ['cleanup_complete', 'already_absent'].includes(row.action)) ||
+        (created.kind === 'launches' && row.action === 'launch_observed' && ['ready', 'completed', 'cancelled', 'failed_terminal'].includes(row.state)) ||
+        (created.kind === 'agent-lifecycle' && row.action === 'lifecycle_observed' && ['succeeded', 'failed'].includes(row.state))
       )));
     }
+  });
+  withPhase('campaign_results', () => {
+    for (const row of results.cases)
+      if ([currentJourneyCases.j5, currentJourneyCases.j6].includes(row.case))
+        validatePublicJourneyProof(row.case, row.proof, journal);
+    validateConnectionCases(results, journal);
   });
 }
 
@@ -352,6 +373,15 @@ function audit(directory, beforePath, afterPath) {
   const results = withPhase('campaign_results', () => JSON.parse(readFileSync(join(directory, 'results.json'), 'utf8')));
   const journal = withPhase('cleanup_journal', () => readFileSync(join(directory, 'cleanup.ndjson'), 'utf8').trim().split('\n').map((line) => JSON.parse(line)));
   validateCampaign(results, journal);
+  const connectionProofs = withPhase('connection_fixtures', () => {
+    const fixture = JSON.parse(privateFile(process.env.CMA_E2E_FIXTURE_FILE));
+    const proofs = validateConnectionCases(results, journal);
+    assert.equal(fixture.origin, after.request.expected.origin);
+    assert.equal(fixture.fixtureOwner, process.env.CMA_E2E_FIXTURE_OWNER);
+    bindConnectionFixtures(proofs, fixture, after.request.expected.nyxidCommit);
+    return proofs;
+  });
+  withPhase('connection_coverage', () => requireConnectionCoverage(connectionProofs));
   withPhase('audit_output', () => {
     writeFileSync(join(directory, 'attestation.json'), JSON.stringify({ before: before.receipt, after: after.receipt, scope: 'independent-deployment-identity-not-model-proof' }), { flag: 'wx', mode: 0o600 });
     appendFileSync(process.env.GITHUB_OUTPUT, 'publishable=true\n');

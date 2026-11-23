@@ -11,8 +11,8 @@ use mongodb::{Collection, IndexModel};
 
 use super::agent_title_state::{initial_title_fields, preserve_title_fields, record_title_value};
 use super::sandbox_mongo::{
-    i64_field_matches, is_duplicate_key, record_bson, require_version, signed,
-    string_field_matches, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
+    i64_field_matches, record_bson, require_version, signed, string_field_matches,
+    MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 
 mod save;
@@ -315,17 +315,13 @@ impl AgentStore for MongoSandboxStore {
         {
             return Err(SandboxStoreError::Duplicate);
         }
-        self.agents
-            .insert_one(agent_document(&agent)?)
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                if is_duplicate_key(&error) {
-                    SandboxStoreError::Duplicate
-                } else {
-                    SandboxStoreError::Unavailable(error.to_string())
-                }
-            })
+        super::native_retirement_action::insert_child(
+            self,
+            &self.agents,
+            &agent.sandbox_id,
+            agent_document(&agent)?,
+        )
+        .await
     }
 
     async fn get_agent(&self, id: &AgentId) -> Result<Option<Agent>, SandboxStoreError> {

@@ -12,6 +12,10 @@ use super::{
     MongoUserDirectoryStore,
 };
 
+#[path = "account_mongo.rs"]
+mod account;
+pub(crate) use account::MongoAccountStores;
+
 pub(crate) struct MongoConnectionPolicy {
     pub authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     pub agent_manager_replicas: bool,
@@ -22,6 +26,7 @@ pub(crate) struct MongoConnectionPolicy {
 
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
+    pub(crate) account_deletions: Arc<super::account_deletions::MongoAccountDeletionStore>,
     pub(crate) request_limits: Arc<super::request_limits::MongoRequestLimits>,
     pub(crate) document_artifacts: Arc<crate::document_artifacts::MongoDocumentStore>,
     pub(crate) message_feedback: Arc<super::message_feedback::MongoMessageFeedbackStore>,
@@ -61,7 +66,19 @@ impl MongoStores {
         mut self,
         deployment_limit: u16,
         writes_enabled: bool,
+        pending_home_reconciliation: bool,
     ) -> Result<Self, StoreError> {
+        if writes_enabled {
+            self.registration_capacity = Arc::new(
+                super::MongoRegistrationCapacityStore::open_with_defaults(
+                    &self.client,
+                    &self.database,
+                    true,
+                    self.initial_settings,
+                )
+                .await?,
+            );
+        }
         self.admission_ceilings = Arc::new(
             super::MongoAdmissionCeilingsStore::open_with_defaults(
                 &self.client,
@@ -69,14 +86,10 @@ impl MongoStores {
                 deployment_limit,
                 self.initial_settings,
             )
-            .await?,
+            .await?
+            .with_activation(self.registration_capacity.activation_observation())
+            .with_pending_home_reconciliation(pending_home_reconciliation),
         );
-        if writes_enabled {
-            self.registration_capacity = Arc::new(
-                super::MongoRegistrationCapacityStore::open(&self.client, &self.database, true)
-                    .await?,
-            );
-        }
         Ok(self)
     }
 
@@ -239,7 +252,8 @@ impl MongoStores {
         );
         let trigger_definitions = Arc::new(
             MongoTriggerDefinitionStore::open(&client, database, Arc::clone(&sandbox_profiles))
-                .await?,
+                .await?
+                .with_initial_settings(startup.initial_settings),
         );
         let auth = Arc::new(
             MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
@@ -274,6 +288,15 @@ impl MongoStores {
             )
             .await?,
         );
+        let registration_capacity = Arc::new(
+            super::MongoRegistrationCapacityStore::open_with_defaults(
+                &client,
+                database,
+                false,
+                startup.initial_settings,
+            )
+            .await?,
+        );
         let admission_ceilings = Arc::new(
             super::MongoAdmissionCeilingsStore::open_with_defaults(
                 &client,
@@ -281,10 +304,9 @@ impl MongoStores {
                 0,
                 startup.initial_settings,
             )
-            .await?,
+            .await?
+            .with_activation(registration_capacity.activation_observation()),
         );
-        let registration_capacity =
-            Arc::new(super::MongoRegistrationCapacityStore::open(&client, database, false).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let agent_lifecycle =
             Arc::new(super::MongoAgentLifecycleStore::open(&client.database(database)).await?);
@@ -345,10 +367,16 @@ impl MongoStores {
             .ensure_indexes()
             .await
             .map_err(|_| StoreError::Unavailable("initialize document registry".into()))?;
+        let account_deletions = Arc::new(
+            super::account_deletions::MongoAccountDeletionStore::from_database(
+                &client.database(database),
+            ),
+        );
         let request_limits = Arc::new(
             super::request_limits::MongoRequestLimits::open(&client.database(database)).await?,
         );
         let stores = Self {
+            account_deletions,
             request_limits,
             document_artifacts,
             message_feedback,
@@ -386,7 +414,8 @@ impl MongoStores {
             .run_command(doc! { "ping": 1 })
             .await
             .map_err(|error| StoreError::Unavailable(format!("ping MongoDB: {error}")))?;
-        Ok(())
+        super::billing_authority::require_legacy_compatible(&self.client.database(&self.database))
+            .await
     }
 }
 

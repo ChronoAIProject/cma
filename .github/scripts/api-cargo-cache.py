@@ -44,6 +44,13 @@ def authority(env, event):
     require(re.fullmatch(r"[0-9a-f]{40}", env.get("GITHUB_SHA", "")), "full source SHA required")
     if env.get("GITHUB_EVENT_NAME") == "push":
         require(env.get("GITHUB_REF") == "refs/heads/develop", "only develop push can seed the branch cache")
+    elif env.get("GITHUB_EVENT_NAME") == "merge_group":
+        # Queue entries read develop's archive; saving remains develop-push only.
+        group = event.get("merge_group", {})
+        require(group.get("base_ref") == "refs/heads/develop", "merge group base branch differs")
+        require(re.fullmatch(r"refs/heads/gh-readonly-queue/develop/pr-[1-9][0-9]*-[0-9a-f]{40}", env.get("GITHUB_REF", ""))
+                and group.get("head_ref") == env["GITHUB_REF"], "develop merge group ref required")
+        require(group.get("head_sha") == env["GITHUB_SHA"], "merge group commit differs")
     else:
         require(env.get("GITHUB_EVENT_NAME") == "pull_request", "unsupported cache event")
         request = event.get("pull_request", {})
@@ -113,7 +120,7 @@ def validate_incremental_member(member, path):
                 "incompatible incremental hard link")
 
 
-def validate_bundle(directory, prefix, *, family=None):
+def validate_bundle(directory, prefix, *, family=None, max_archive=None, max_content=None):
     require(directory.is_dir() and not directory.is_symlink(), "cache bundle absent")
     require({path.name for path in directory.iterdir()} == {"manifest.json", "registry.tar.gz", "target.tar.gz"},
             "unexpected cache files")
@@ -132,8 +139,11 @@ def validate_bundle(directory, prefix, *, family=None):
     archives = manifest.get("archives")
     require(isinstance(archives, dict) and set(archives) == set(MOUNTS), "missing cache mount")
     size = sum((directory / f"{name}.tar.gz").lstat().st_size for name in MOUNTS)
-    require(size <= MAX_ARCHIVE_BYTES, "compressed cache exceeds 1 GiB")
+    # The Actions cache path keeps MAX_ARCHIVE_BYTES; staging run artifacts pass their own bound.
+    require(size <= (MAX_ARCHIVE_BYTES if max_archive is None else max_archive),
+            "compressed cache exceeds its bound")
     content = count = 0
+    expanded = MAX_CONTENT_BYTES if max_content is None else max_content
     for name in MOUNTS:
         path = directory / f"{name}.tar.gz"
         require(path.is_file() and not path.is_symlink(), "archive must be a regular file")
@@ -144,7 +154,7 @@ def validate_bundle(directory, prefix, *, family=None):
                 require(member.size >= 0, "negative archive member size")
                 count += 1
                 content += member.size
-                require(count <= MAX_MEMBERS and content <= MAX_CONTENT_BYTES, "expanded cache exceeds bounds")
+                require(count <= MAX_MEMBERS and content <= expanded, "expanded cache exceeds bounds")
                 member_path = archive_path(member.name)
                 if family is not None and name == "target":
                     validate_incremental_member(member, member_path.parts)
@@ -156,7 +166,7 @@ def validate_bundle(directory, prefix, *, family=None):
     return manifest
 
 
-def dockerfile(operation):
+def dockerfile(operation, max_content=None):
     names = ("target",) if operation == "inject-target" else tuple(MOUNTS)
     mounts = " ".join(f"--mount=type=cache,id={MOUNTS[name]},target=/cache/{name},sharing=locked"
                       for name in names)
@@ -172,13 +182,14 @@ def dockerfile(operation):
     return header + f"RUN --network=none {mounts} " + (
         "set -euo pipefail; test -n \"$CMA_CACHE_TRANSFER\"; mkdir /out; "
         f"total=$(du -sk /cache/registry /cache/target | awk '{{n += $1}} END {{print n}}'); "
-        f"if [ \"$total\" -gt {MAX_CONTENT_BYTES // 1024} ]; then touch /out/oversize; exit 0; fi; "
+        f"if [ \"$total\" -gt {(MAX_CONTENT_BYTES if max_content is None else max_content) // 1024} ]; "
+        "then touch /out/oversize; exit 0; fi; "
         "tar -C /cache/registry -cf - . | gzip -1 > /out/registry.tar.gz; "
         "tar -C /cache/target -cf - . | gzip -1 > /out/target.tar.gz\n"
         "FROM scratch\nCOPY --from=transfer /out/ /\n")
 
 
-def transfer(operation, directory, builder=None, *, namespace=None):
+def transfer(operation, directory, builder=None, *, namespace=None, timeout=150, max_content=None):
     env = {key: value for key, value in os.environ.items()
            if key in ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")}
     command = ["docker", "buildx", "build", "--platform", "linux/amd64", "--progress=plain",
@@ -189,19 +200,21 @@ def transfer(operation, directory, builder=None, *, namespace=None):
         command += ["--builder", builder]
     if operation in ("inject", "inject-target"):
         command += ["--output", "type=cacheonly", "--file", "-", str(directory)]
-        subprocess.run(command, input=dockerfile(operation), text=True, check=True, timeout=150, env=env)
+        subprocess.run(command, input=dockerfile(operation, max_content), text=True, check=True,
+                       timeout=timeout, env=env)
     else:
         with tempfile.TemporaryDirectory(prefix="cma-cache-context-") as empty:
             command += ["--output", f"type=local,dest={directory}", "--file", "-", empty]
-            subprocess.run(command, input=dockerfile(operation), text=True, check=True, timeout=150, env=env)
+            subprocess.run(command, input=dockerfile(operation, max_content), text=True, check=True,
+                           timeout=timeout, env=env)
 
 
-def seal(directory, prefix, *, family=None):
-    require(not (directory / "oversize").exists(), "expanded cache exceeds 4 GiB")
+def seal(directory, prefix, *, family=None, max_archive=None, max_content=None):
+    require(not (directory / "oversize").exists(), "expanded cache exceeds its bound")
     manifest = {"format": FORMAT, "prefix": prefix,
                 "archives": {name: digest(directory / f"{name}.tar.gz") for name in MOUNTS}}
     (directory / "manifest.json").write_text(json.dumps(manifest))
-    validate_bundle(directory, prefix, family=family)
+    validate_bundle(directory, prefix, family=family, max_archive=max_archive, max_content=max_content)
 
 
 def run(operation, directory):

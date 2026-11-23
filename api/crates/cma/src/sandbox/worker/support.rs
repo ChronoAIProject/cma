@@ -320,7 +320,7 @@ impl WorkerFailure {
         Self::new("service_not_granted", service, false)
     }
 
-    fn new(class: &'static str, detail: &str, retryable: bool) -> Self {
+    pub(super) fn new(class: &'static str, detail: &str, retryable: bool) -> Self {
         Self {
             class,
             detail: safe_detail(detail),
@@ -356,6 +356,9 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     let external = matches!(&error, AdapterError::Unavailable(detail)
         if crate::sandbox::work_retry::replaced_runtime(detail));
     match error {
+        AdapterError::AccessRevoked => {
+            WorkerFailure::terminal_security("current runtime authority was revoked")
+        }
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
         | AdapterError::Unavailable(_) => WorkerFailure::retryable(
@@ -417,6 +420,10 @@ pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
 
 pub(super) fn dependency_failure(error: SandboxDependencyError) -> WorkerFailure {
     match error {
+        SandboxDependencyError::AgentsStopping => {
+            WorkerFailure::retryable("lifecycle dependency unavailable")
+                .with_retry_kind(WorkRetryFailure::Waiting)
+        }
         SandboxDependencyError::Transient(detail) => WorkerFailure::retryable(
             "lifecycle dependency unavailable",
         )

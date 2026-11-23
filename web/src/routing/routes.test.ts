@@ -8,6 +8,10 @@ const ROUTES: readonly AppRoute[] = [
   { kind: 'event_gateway' },
   { kind: 'docs' },
   { kind: 'docs', view: 'event_gateway_protocol' },
+  { kind: 'docs', view: 'start-a-task' },
+  { kind: 'docs', view: 'environments-and-capacity' },
+  { kind: 'docs', view: 'recover-and-continue' },
+  { kind: 'docs', view: 'find-your-outputs' },
   { kind: 'bots' },
   { kind: 'bot_new' },
   { kind: 'bot', botId: 'bot_123' },
@@ -57,6 +61,8 @@ describe('application routes', () => {
     '/profiles/unknown/id',
     '/triggers/manage/id/unknown',
     '/operations/extra',
+    '/docs/unknown-topic',
+    '/docs/start-a-task/extra',
   ])('rejects malformed or unknown path %s', (pathname) => {
     expect(parseRoute(pathname)).toEqual({ kind: 'not_found', pathname });
   });

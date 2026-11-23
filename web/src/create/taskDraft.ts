@@ -3,82 +3,41 @@ import type { AgentLifecycleCreateInput } from '../api/client';
 import {
   compileTaskTemplate,
   emptyTemplate,
-  legacyTemplate,
-  parseTaskTemplate,
   type TaskTemplate,
   type TaskTemplateId,
 } from './taskTemplateModel';
-import { requireTaskStorage } from './taskIdentity';
+import {
+  draftReadError,
+  emptyTaskDraft,
+  keepTaskTemplate,
+  matchesTaskDraft,
+  openTaskDraftStore,
+  remainingTaskDraft,
+  taskDraftStorageKey,
+  type TaskDraft,
+} from './taskDraftStorage';
+export { taskDraftStorageKey, legacyTaskDraftStorageKey } from './taskDraftStorage';
 
-interface TaskDraft {
-  readonly text: string;
-  readonly template?: TaskTemplate;
-  readonly repositoryUrl: string;
-  readonly repositoryRef: string;
-  readonly machineIncluded: boolean;
-}
-const empty: TaskDraft = { text: '', repositoryUrl: '', repositoryRef: '', machineIncluded: false };
-const discarded = new Set<(key: string, body: AgentLifecycleCreateInput) => void>();
-
-export function taskDraftStorageKey(owner?: string, workspaceId?: string, sandboxId?: string) {
-  return `cma:task-draft:${JSON.stringify([location.origin, owner, workspaceId ?? null, sandboxId ?? null])}`;
-}
-
-function parse(raw: string): TaskDraft {
-  const value = JSON.parse(raw) as {
-    version?: unknown;
-    text?: unknown;
-    template?: unknown;
-    repositoryUrl?: unknown;
-    repositoryRef?: unknown;
-    desktop?: unknown;
-    machineIncluded?: unknown;
-  };
-  if (
-    (value.version !== 1 && value.version !== 2) ||
-    typeof value.text !== 'string' ||
-    (value.repositoryUrl !== undefined && typeof value.repositoryUrl !== 'string') ||
-    (value.repositoryRef !== undefined && typeof value.repositoryRef !== 'string') ||
-    (value.desktop !== undefined && typeof value.desktop !== 'boolean') ||
-    (value.machineIncluded !== undefined && typeof value.machineIncluded !== 'boolean')
-  )
-    throw new Error('Invalid task draft');
-  return {
-    text: value.text,
-    template:
-      value.version === 1
-        ? legacyTemplate(value.text)
-        : value.template === undefined
-          ? undefined
-          : parseTaskTemplate(value.template),
-    repositoryUrl: value.repositoryUrl ?? '',
-    repositoryRef: value.repositoryRef ?? '',
-    machineIncluded: value.machineIncluded ?? false,
-  };
-}
-
-function matches(draft: TaskDraft, body: AgentLifecycleCreateInput) {
-  return (
-    (draft.template ? compileTaskTemplate(draft.template).text : draft.text) ===
-      body.initial_message &&
-    JSON.stringify(draft.template) === JSON.stringify(body.template) &&
-    draft.repositoryUrl === (body.repository?.url ?? '') &&
-    draft.repositoryRef === (body.repository?.ref ?? '') &&
-    draft.machineIncluded === (body.machine_included === true)
-  );
-}
+const saveError =
+  'Your task could not be saved. Copy your text and restore browser session storage before starting a task.';
+const discarded = new Set<
+  (key: string, body: AgentLifecycleCreateInput, revision: string) => void
+>();
 
 /** Called only when a confirmed successful creation clears its retained intent. */
-export function discardSubmittedTaskDraft(owner: string, body: AgentLifecycleCreateInput) {
-  if (body.initial_message === undefined) return;
+export function discardSubmittedTaskDraft(
+  owner: string,
+  body: AgentLifecycleCreateInput,
+  revision?: string,
+) {
+  if (body.initial_message === undefined || revision === undefined) return;
   try {
-    requireTaskStorage();
-    const key = taskDraftStorageKey(owner, body.workspace_id, body.sandbox_id);
-    const raw = sessionStorage.getItem(key);
-    if (raw === null || !matches(parse(raw), body)) return;
-    sessionStorage.removeItem(key);
-    // sessionStorage does not emit a storage event in the document that changed it.
-    for (const notify of discarded) notify(key, body);
+    const store = openTaskDraftStore(owner, body.workspace_id, body.sandbox_id);
+    const saved = store.read();
+    if (saved.error || saved.draft.revision !== revision || !matchesTaskDraft(saved.draft, body))
+      return;
+    store.save(remainingTaskDraft(saved.draft));
+    for (const notify of discarded) notify(store.key, body, revision);
   } catch {
     // Draft cleanup must never block access to the successfully created Agent.
   }
@@ -87,63 +46,111 @@ export function discardSubmittedTaskDraft(owner: string, body: AgentLifecycleCre
 export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: string) {
   const key = taskDraftStorageKey(owner, workspaceId, sandboxId);
   const [initial] = useState(() => {
+    const store = openTaskDraftStore(owner, workspaceId, sandboxId);
     try {
-      requireTaskStorage();
-      if (!owner) throw new Error();
-      const raw = sessionStorage.getItem(key);
-      return { draft: raw === null ? empty : parse(raw) };
+      return { store, ...store.read() };
     } catch {
-      return {
-        draft: empty,
-        error:
-          'Your saved task could not be read. Restore browser session storage before starting a task.',
-      };
+      return { store, draft: emptyTaskDraft, recoverable: [], error: draftReadError };
     }
   });
   const [draft, setDraft] = useState(initial.draft);
   const current = useRef(initial.draft);
   const [error, setError] = useState(initial.error);
+  const [recoverable, setRecoverable] = useState(initial.recoverable);
   useEffect(() => {
-    const notify = (discardedKey: string, body: AgentLifecycleCreateInput) => {
-      if (discardedKey !== key || !matches(current.current, body)) return;
-      current.current = empty;
-      setDraft(empty);
-      setError(undefined);
+    if (initial.error || !initial.store.needsSave) return;
+    try {
+      const saved = initial.store.save(current.current);
+      setRecoverable(saved.recoverable);
+    } catch {
+      setError(saveError);
+    }
+  }, [initial]);
+  useEffect(() => {
+    const notify = (discardedKey: string, body: AgentLifecycleCreateInput, revision: string) => {
+      if (
+        discardedKey !== key ||
+        current.current.revision !== revision ||
+        !matchesTaskDraft(current.current, body)
+      )
+        return;
+      const saved = initial.store.read();
+      current.current = saved.draft;
+      setDraft(saved.draft);
+      setRecoverable(saved.recoverable);
+      setError(saved.error);
     };
     discarded.add(notify);
     return () => {
       discarded.delete(notify);
     };
-  }, [key]);
+  }, [initial, key]);
   const persist = (value: TaskDraft) => {
+    if (initial.error) {
+      setError(initial.error);
+      return undefined;
+    }
     try {
-      requireTaskStorage();
-      if (!owner) throw new Error();
-      sessionStorage.setItem(key, JSON.stringify({ version: 2, ...value }));
+      const saved = initial.store.save(value);
+      current.current = saved.draft;
+      setDraft(saved.draft);
+      setRecoverable(saved.recoverable);
       setError(undefined);
-      return true;
-    } catch {
+      return value.revision;
+    } catch (reason) {
       setError(
-        'Your task could not be saved. Copy your text and restore browser session storage before starting a task.',
+        reason instanceof Error && reason.message.startsWith('Another saved draft')
+          ? reason.message
+          : saveError,
       );
-      return false;
+      return undefined;
     }
   };
   const change = (value: TaskDraft) => {
-    current.current = value;
-    setDraft(value);
-    persist(value);
+    const edited = { ...value, revision: crypto.randomUUID() };
+    current.current = edited;
+    setDraft(edited);
+    persist(edited);
   };
+  const switchDraft = (value: TaskDraft) =>
+    Boolean(persist({ ...value, revision: crypto.randomUUID() }));
   return {
     ...draft,
-    selectTemplate: (id: TaskTemplateId) =>
-      change({ ...current.current, template: emptyTemplate(id) }),
-    changeTemplate: (template: TaskTemplate) => change({ ...current.current, template }),
+    recoverable,
+    restoreSavedDraft: (id: string) => {
+      if (initial.error) return false;
+      try {
+        const saved = initial.store.restore(id, current.current);
+        current.current = saved.draft;
+        setDraft(saved.draft);
+        setRecoverable(saved.recoverable);
+        setError(undefined);
+        return true;
+      } catch (reason) {
+        setError(
+          reason instanceof Error && reason.message.startsWith('Another saved draft')
+            ? reason.message
+            : saveError,
+        );
+        return false;
+      }
+    },
+    selectTemplate: (id: TaskTemplateId) => {
+      const draft = current.current;
+      const retained = draft.template ? keepTaskTemplate(draft, draft.template) : draft;
+      return switchDraft(
+        keepTaskTemplate(
+          retained,
+          retained.templates?.find((template) => template.id === id) ?? emptyTemplate(id),
+        ),
+      );
+    },
+    changeTemplate: (template: TaskTemplate) => change(keepTaskTemplate(current.current, template)),
     clearTemplate: () => {
       const template = current.current.template;
       const compiled = template ? compileTaskTemplate(template) : undefined;
-      change({
-        ...current.current,
+      return switchDraft({
+        ...(template ? keepTaskTemplate(current.current, template) : current.current),
         template: undefined,
         text: compiled && !compiled.issue ? compiled.text : current.current.text,
       });
@@ -155,7 +162,7 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
       change({ ...current.current, repositoryUrl: url, repositoryRef: reference });
     },
     error,
-    persist: () => persist(current.current),
+    persist: () => persist({ ...current.current, revision: crypto.randomUUID() }),
     change: (text: string) => {
       change({ ...current.current, text });
     },

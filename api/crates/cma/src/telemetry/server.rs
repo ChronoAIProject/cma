@@ -64,6 +64,9 @@ fn router(handle: PrometheusHandle, cohorts: super::task_cohort::Cache) -> Route
 async fn scrape(
     State((handle, cohorts)): State<(PrometheusHandle, super::task_cohort::Cache)>,
 ) -> ([(header::HeaderName, &'static str); 2], String) {
+    let mut output = handle.render();
+    layer1_public::desktop_telemetry::append_desktop_send_histograms(&mut output);
+    output.push_str(&cohorts.render());
     (
         [
             (
@@ -72,7 +75,7 @@ async fn scrape(
             ),
             (header::CACHE_CONTROL, "no-store"),
         ],
-        handle.render() + &cohorts.render(),
+        output,
     )
 }
 
@@ -143,11 +146,18 @@ mod tests {
             .to_str()
             .unwrap()
             .starts_with("text/plain"));
-        use http_body_util::BodyExt;
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        assert!(std::str::from_utf8(&body)
-            .unwrap()
-            .contains("cma_task_cohort_accepted_tasks{window=\"previous_day\"} 2"));
+        let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .unwrap();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert!(text.contains("cma_task_cohort_accepted_tasks{window=\"previous_day\"} 2"));
+        assert_eq!(
+            text.matches("# TYPE cma_desktop_relay_send_wait_seconds histogram")
+                .count(),
+            1
+        );
+        assert!(text.contains("cma_desktop_relay_send_wait_seconds_count{direction=\"uplink\"}"));
+        assert!(text.contains("cma_desktop_relay_send_wait_seconds_count{direction=\"downlink\"}"));
         assert_eq!(
             app.oneshot(
                 Request::builder()

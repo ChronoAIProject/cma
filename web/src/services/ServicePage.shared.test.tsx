@@ -1,8 +1,13 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ServicePage } from './ServicePage';
+import type { Denied } from './client';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 const session = (subject = 'owner') => ({
   authenticated: true,
   subject,
@@ -32,6 +37,78 @@ it('returns a signed-out visitor through the Agent Manager OAuth entry point', a
     '/auth/login?return_to=%2Fevent-gateway',
   );
   expect(screen.queryByText('private channels')).not.toBeInTheDocument();
+});
+
+it('disarms automatic Event Gateway reads after a session 401 until a fresh mount', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(new Response('{}', { status: 401 }))
+    .mockImplementation(async () => Response.json(session('new-owner')));
+  vi.stubGlobal('fetch', fetcher);
+  const portal = (key: string) => (
+    <ServicePage key={key} service="event-gateway">
+      {(value) => <p>{value.subject} channels</p>}
+    </ServicePage>
+  );
+  const view = render(portal('before-sign-in'));
+  await act(async () => {});
+  expect(screen.getByRole('link', { name: 'Sign in with NyxID' })).toHaveAttribute(
+    'href',
+    '/auth/login?return_to=%2Fevent-gateway',
+  );
+  await act(async () => {
+    fireEvent.focus(window);
+    fireEvent.focus(window);
+    await vi.advanceTimersByTimeAsync(135_000);
+  });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText('new-owner channels')).not.toBeInTheDocument();
+
+  view.rerender(portal('after-sign-in'));
+  await act(async () => {});
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(screen.getByText('new-owner channels')).toBeInTheDocument();
+});
+
+it('aborts a pending Event Gateway session read after protected content reports a 401', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  let resolve!: (response: Response) => void;
+  const promise = new Promise<Response>((complete) => {
+    resolve = complete;
+  });
+  const fetcher = vi
+    .fn<(url: string, options: RequestInit) => Promise<Response>>()
+    .mockResolvedValueOnce(Response.json(session()))
+    .mockImplementationOnce(() => promise);
+  vi.stubGlobal('fetch', fetcher);
+  let reportDenied: Denied | undefined;
+  render(
+    <ServicePage service="event-gateway">
+      {(value, denied) => {
+        reportDenied = denied;
+        return <button onClick={() => denied(401)}>{value.subject} channels</button>;
+      }}
+    </ServicePage>,
+  );
+  await act(async () => {});
+  fireEvent.focus(window);
+  const pending = fetcher.mock.calls[1]?.[1].signal;
+  expect(pending?.aborted).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'owner channels' }));
+  expect(screen.getByRole('link', { name: 'Sign in with NyxID' })).toBeInTheDocument();
+  expect(pending?.aborted).toBe(true);
+  await act(async () => {
+    resolve(Response.json(session('late-owner')));
+    reportDenied?.(403);
+    fireEvent.focus(window);
+    await vi.advanceTimersByTimeAsync(90_000);
+  });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole('button', { name: /channels/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Sign in with NyxID' })).toBeInTheDocument();
 });
 it('keeps authenticated forms mounted and passes a retry notice into the portal frame', async () => {
   const fetcher = vi

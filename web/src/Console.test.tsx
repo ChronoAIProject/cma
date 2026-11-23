@@ -80,8 +80,7 @@ it('removes an accepted deletion from active navigation before cleanup and keeps
   );
   await actor.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
   expect(screen.getByText('Submitting delete request.')).toBeInTheDocument();
-  await expandNavigationFilters(actor);
-  await actor.click(screen.getByRole('button', { name: 'Manage environments' }));
+  await actor.click(screen.getByRole('button', { name: 'Environments' }));
   expect(screen.getByRole('treeitem', { name: /Atlas/ })).toBeInTheDocument();
   await act(async () => accept());
   expect(screen.queryByRole('treeitem', { name: /Atlas/ })).not.toBeInTheDocument();
@@ -146,10 +145,9 @@ it('keeps composer settings available while Details and tree navigation remain u
     'aria-disabled',
     'true',
   );
-  expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeEnabled();
+  expect(screen.getByRole('menuitem', { name: 'Export raw history' })).toBeEnabled();
   await actor.keyboard('{Escape}');
-  await expandNavigationFilters(actor);
-  await actor.click(screen.getByRole('button', { name: 'Manage environments' }));
+  await actor.click(screen.getByRole('button', { name: 'Environments' }));
   const sandbox = screen.getByRole('treeitem', { name: /Atlas/ });
   sandbox.focus();
   await actor.keyboard('{Enter}');

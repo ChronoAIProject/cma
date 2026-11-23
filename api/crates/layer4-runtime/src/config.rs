@@ -6,6 +6,7 @@ const DEFAULT_BIND: &str = "0.0.0.0:9090";
 const DEFAULT_HOME: &str = "/home/cma";
 const DEFAULT_STATE_ROOT: &str = "/var/lib/cma-runtime";
 const DEFAULT_PATH: &str = "/home/cma/.local/bin:/usr/local/bin:/usr/bin:/bin";
+const DESKTOP_STARTUP_FLAG: &str = "CHRONO_RUNTIME_DESKTOP_EXTENDED_STARTUP_ENABLED";
 
 #[derive(Clone, Debug)]
 pub(crate) struct ProxyConfig {
@@ -26,15 +27,19 @@ pub(crate) struct RuntimeConfig {
     pub install_env: BTreeMap<String, String>,
     pub process_env: BTreeMap<String, String>,
     pub model_proxy: Option<ProxyConfig>,
+    pub model_credit_required: bool,
     pub platform_proxy: Option<ProxyConfig>,
     pub tool_proxy: Option<crate::tool_proxy::ToolProxyConfig>,
     pub github_proxy: Option<crate::github_proxy::GithubProxyConfig>,
+    pub desktop_supervision_enabled: bool,
     pub nyxid_url: Option<String>,
     pub allow_local_git: bool,
     /// Set only on a Sandbox whose immutable profile requested a desktop.
     pub machine_included: bool,
+    pub extended_desktop_startup: bool,
     pub capacity_recovery_enabled: bool,
     pub legacy_journal_recovery_enabled: bool,
+    pub preserve_file_mode: bool,
 }
 
 impl RuntimeConfig {
@@ -82,37 +87,16 @@ impl RuntimeConfig {
         {
             return Err("CHRONO_RUNTIME_HOME_IDENTITY must be a canonical home fingerprint".into());
         }
-        let machine_included = match process_env.get("CMA_MACHINE_INCLUDED").map(String::as_str) {
-            None | Some("0") | Some("false") => false,
-            Some("1") | Some("true") => true,
-            Some(_) => return Err("CMA_MACHINE_INCLUDED must be 0, 1, false or true".into()),
-        };
+        let machine_included = env_flag(&process_env, "CMA_MACHINE_INCLUDED")?;
+        let extended_desktop_startup = env_flag(&process_env, DESKTOP_STARTUP_FLAG)?;
+        let capacity_recovery_enabled =
+            env_flag(&process_env, "CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED")?;
+        let legacy_journal_recovery_enabled = env_flag(
+            &process_env,
+            "CHRONO_RUNTIME_LEGACY_JOURNAL_RECOVERY_ENABLED",
+        )?;
 
-        let capacity_recovery_enabled = match process_env
-            .get("CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED")
-            .map(String::as_str)
-        {
-            None | Some("0") | Some("false") => false,
-            Some("1") | Some("true") => true,
-            Some(_) => {
-                return Err(
-                    "CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED must be 0, 1, false or true".into(),
-                )
-            }
-        };
-
-        let legacy_journal_recovery_enabled =
-            match process_env
-                .get("CHRONO_RUNTIME_LEGACY_JOURNAL_RECOVERY_ENABLED")
-                .map(String::as_str)
-            {
-                None | Some("0") | Some("false") => false,
-                Some("1") | Some("true") => true,
-                Some(_) => return Err(
-                    "CHRONO_RUNTIME_LEGACY_JOURNAL_RECOVERY_ENABLED must be 0, 1, false or true"
-                        .into(),
-                ),
-            };
+        let preserve_file_mode = crate::agent_filesystem::preserve_mode_enabled(&process_env)?;
 
         let bind = env_socket(&process_env, "CHRONO_RUNTIME_BIND", DEFAULT_BIND)?;
         process_env.insert("HOME".into(), home.to_string_lossy().into_owned());
@@ -143,6 +127,16 @@ impl RuntimeConfig {
             "CHRONO_UPSTREAM_BASE_URL",
             "model",
         )?;
+        let model_credit_required = match process_env
+            .get("CHRONO_AGENT_MODEL_CREDIT_REQUIRED")
+            .map(String::as_str)
+        {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(_) => {
+                return Err("CHRONO_AGENT_MODEL_CREDIT_REQUIRED must be true or false".into())
+            }
+        };
         let platform_proxy = proxy_from_env(
             &process_env,
             "CHRONO_PLATFORM_PROXY_BIND",
@@ -161,6 +155,8 @@ impl RuntimeConfig {
             platform_proxy.as_ref(),
         )?;
         let checkpoint_root = checkpoint_root(&process_env, &home, home_identity.is_some())?;
+        let desktop_supervision_enabled =
+            crate::desktop_process::supervision_enabled(&process_env)?;
 
         Ok(Self {
             bind,
@@ -173,14 +169,18 @@ impl RuntimeConfig {
             install_env,
             process_env,
             model_proxy,
+            model_credit_required,
             platform_proxy,
             tool_proxy,
             github_proxy,
+            desktop_supervision_enabled,
             nyxid_url,
             allow_local_git: false,
             machine_included,
+            extended_desktop_startup,
             capacity_recovery_enabled,
             legacy_journal_recovery_enabled,
+            preserve_file_mode,
         })
     }
 
@@ -213,14 +213,18 @@ impl RuntimeConfig {
             install_env: env.clone(),
             process_env: env,
             model_proxy: None,
+            model_credit_required: false,
             platform_proxy: None,
             tool_proxy: None,
             github_proxy: None,
+            desktop_supervision_enabled: false,
             nyxid_url: None,
             allow_local_git: true,
             machine_included: false,
+            extended_desktop_startup: false,
             capacity_recovery_enabled: false,
             legacy_journal_recovery_enabled: false,
+            preserve_file_mode: false,
         }
     }
 }
@@ -284,6 +288,14 @@ fn validate_home(home: &Path) -> Result<(), String> {
         return Err("CHRONO_RUNTIME_HOME must be a normalized absolute directory".into());
     }
     Ok(())
+}
+
+fn env_flag(env: &BTreeMap<String, String>, name: &str) -> Result<bool, String> {
+    match env.get(name).map(String::as_str) {
+        None | Some("0" | "false") => Ok(false),
+        Some("1" | "true") => Ok(true),
+        Some(_) => Err(format!("{name} must be 0, 1, false or true")),
+    }
 }
 
 fn env_socket(

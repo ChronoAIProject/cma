@@ -5,7 +5,9 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
+import ci_retry
 import staging_cd_cargo_artifact as transport
 
 REPO = "ChronoAIProject/cma"
@@ -41,7 +43,7 @@ class Remote:
 
     def __call__(self, path, *, timeout, output=None):
         self.paths.append(path)
-        assert 0 < timeout <= 180
+        assert 0 < timeout <= transport.DOWNLOAD_SECONDS
         prefix = f"repos/{REPO}/actions/"
         if path.startswith(prefix + "artifacts?name="):
             assert path == f"{prefix}artifacts?name=cma-cd-cargo-{self.component}&per_page=50"
@@ -192,6 +194,46 @@ class CargoArtifactTests(unittest.TestCase):
         self.assertEqual(result, {"state": "MISS"})
         self.assertFalse(self.accepted.exists())
         self.assertFalse(any("/zip" in path for path in remote.paths))
+
+    def test_transport_failures_repeat_inside_the_deadline_without_partial_bytes(self):
+        remote = Remote(self.root, [self.spec(31)])
+        dropped = transport.Refused("download")
+        dropped.__cause__ = ci_retry.TransientError()
+        failures = {"artifacts?name=": [subprocess.TimeoutExpired("gh", 10)], "/zip": [dropped]}
+        def flaky(path, *, timeout, output=None):
+            for key, pending in failures.items():
+                if key in path and pending:
+                    if output is not None:
+                        output.write_bytes(b"partial")
+                    raise pending.pop(0)
+            return remote(path, timeout=timeout, output=output)
+        sleeps = []
+        result = self.restore(flaky, sleep=sleeps.append)
+        self.assertEqual((result["state"], result["producer_run"]), ("RESTORED", 31))
+        self.assertEqual(len(sleeps), 2)
+        self.assertEqual({p.name: p.read_bytes() for p in self.accepted.iterdir()}, FILES)
+        # A refusal is not transport: the candidate is skipped after one read.
+        remote = Remote(self.root, [self.spec(32)])
+        def refused(path, *, timeout, output=None):
+            if "/runs/" in path:
+                remote.paths.append(path)
+                raise transport.Refused("read")
+            return remote(path, timeout=timeout, output=output)
+        for path in self.accepted.iterdir():
+            path.unlink()
+        self.accepted.rmdir()
+        self.assertEqual(self.restore(refused, sleep=sleeps.append), {"state": "MISS"})
+        self.assertEqual(sum("/runs/" in path for path in remote.paths), 1)
+        self.assertEqual(len(sleeps), 2)
+
+    def test_github_reader_marks_only_transport_failures_as_repeatable(self):
+        for stderr, expected in ((b"read: connection reset by peer", ci_retry.TRANSIENT),
+                                 (b"gh: Not Found (HTTP 404)", ci_retry.PERMANENT)):
+            with self.subTest(stderr=stderr), self.assertRaises(transport.Refused) as raised, \
+                    patch.object(transport.subprocess, "run",
+                                 return_value=subprocess.CompletedProcess([], 1, b"", stderr)):
+                transport.github(f"repos/{REPO}/actions/runs/1", timeout=1)
+            self.assertEqual(ci_retry.classify(raised.exception), expected)
 
     def test_github_reader_only_reads_this_repository(self):
         for path in ("repos/other/cma/actions/artifacts", f"repos/{REPO}/../other"):

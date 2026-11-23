@@ -95,7 +95,7 @@ async fn just_renewed_loss_waits_for_expiry_then_allows_one_successor() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn partition_revokes_old_epoch_and_late_provider_completion_after_takeover() {
+async fn partition_skips_ticks_and_old_epoch_expires_before_takeover_and_late_completion() {
     let store = MemoryOwnershipStore::default();
     let clients: Vec<_> = (0..3).map(|_| store.client()).collect();
     let mut instances = Vec::new();
@@ -113,30 +113,56 @@ async fn partition_revokes_old_epoch_and_late_provider_completion_after_takeover
         async move { old.run(std::future::pending::<()>()).await }
     });
     clients[owner].partition(true);
-    assert!(instances[owner].maintain().await.is_err());
-    assert!(!instances[owner].is_ready());
-    assert_eq!(waiting.await.unwrap(), Err(OwnershipError::Stale));
-    // Healthy peers renew while the isolated owner's lease expires.
-    for _ in 0..6 {
-        tokio::time::advance(Duration::from_secs(5)).await;
-        for (index, instance) in instances.iter().enumerate() {
-            if index != owner {
-                instance.maintain().await.unwrap();
-            }
-        }
-    }
     let healthy: Vec<_> = instances
         .iter()
         .enumerate()
         .filter(|(index, _)| *index != owner)
         .map(|(_, instance)| instance.clone())
         .collect();
-    let new = claim(&healthy, &id).await;
-    assert!(new.token.epoch > old.token.epoch);
+    // The isolated owner skips unavailable heartbeats. It renews nothing, so
+    // its existing deadlines end before any peer can take over the Agent.
+    let partitioned = tokio::time::Instant::now();
+    let mut failed_at = None;
+    let mut new = None;
+    for step in 1..=60 {
+        tokio::time::advance(Duration::from_millis(500)).await;
+        if step % 6 == 0 {
+            for peer in &healthy {
+                peer.maintain().await.unwrap();
+            }
+            match instances[owner].maintain().await {
+                Ok(handoffs) => assert!(handoffs.is_empty() && failed_at.is_none()),
+                Err(_) => {
+                    failed_at.get_or_insert(partitioned.elapsed());
+                }
+            }
+        }
+        if new.is_none() {
+            for peer in &healthy {
+                if let Some(successor) = peer.acquire(&id).await.unwrap() {
+                    assert!(!old.is_current(), "successor overlapped a live owner");
+                    assert!(successor.token.epoch > old.token.epoch);
+                    assert!(new.replace(successor).is_none());
+                }
+            }
+        }
+        if new.is_none() {
+            assert_eq!(store.owner(&id).await.unwrap().unwrap().token, old.token);
+        }
+        assert_eq!(
+            instances[owner].is_ready(),
+            partitioned.elapsed() < Duration::from_millis(DEFAULT_LEASE_MS)
+        );
+    }
+    assert_eq!(failed_at, Some(Duration::from_millis(DEFAULT_LEASE_MS)));
+    assert_eq!(waiting.await.unwrap(), Err(OwnershipError::Stale));
+    let new = new.expect("a healthy peer claims the Agent after expiry");
     clients[owner].partition(false);
     assert_eq!(store.check(&old.token).await, Err(OwnershipError::Stale));
     assert!(instances[owner].acquire(&id).await.is_err());
     assert!(old.run(async { "late provider result" }).await.is_err());
+    assert!(new.is_current());
+    store.check(&new.token).await.unwrap();
 }
 
 #[tokio::test(start_paused = true)]

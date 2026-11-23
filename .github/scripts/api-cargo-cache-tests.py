@@ -76,6 +76,23 @@ class CacheTests(unittest.TestCase):
             with self.subTest(ref=ref), self.assertRaisesRegex(ValueError, "only develop push"):
                 cache.authority(dict(env, GITHUB_REF=ref), self.event)
 
+    def test_develop_merge_queue_entries_may_restore(self):
+        ref = "refs/heads/gh-readonly-queue/develop/pr-12-" + "b" * 40
+        env = dict(self.env, GITHUB_EVENT_NAME="merge_group", GITHUB_REF=ref)
+        event = {"repository": {"full_name": cache.REPOSITORY},
+                 "merge_group": {"base_ref": "refs/heads/develop", "head_ref": ref, "head_sha": "a" * 40}}
+        cache.authority(env, event)
+        main = "refs/heads/gh-readonly-queue/main/pr-12-" + "b" * 40
+        for changes, group in ((dict(GITHUB_REF=main), dict(head_ref=main)), ({}, dict(base_ref="refs/heads/main")),
+                               ({}, dict(head_ref=ref.replace("pr-12", "pr-13"))), ({}, dict(head_sha="c" * 40)),
+                               (dict(GITHUB_REF="refs/heads/develop"), dict(head_ref="refs/heads/develop")),
+                               (dict(GITHUB_REPOSITORY="other/project"), {})):
+            candidate = dict(event, merge_group=dict(event["merge_group"], **group))
+            with self.subTest(changes=changes, group=group), self.assertRaises(ValueError):
+                cache.authority(dict(env, **changes), candidate)
+        with self.assertRaises(ValueError):
+            cache.authority(env, dict(event, repository={"full_name": "fork/project"}))
+
     def test_fork_and_mismatched_event_authority_are_rejected(self):
         for route in (("repository", "full_name"), ("pull_request", "head", "repo", "full_name"),
                       ("pull_request", "base", "repo", "full_name"), ("pull_request", "base", "ref"), ("number",)):
@@ -162,6 +179,33 @@ class CacheTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cache.seal(self.root, self.prefix)
 
+    def test_caller_bound_replaces_only_the_compressed_archive_limit(self):
+        self.bundle()
+        size = sum((self.root / f"{name}.tar.gz").stat().st_size for name in cache.MOUNTS)
+        with patch.object(cache, "MAX_ARCHIVE_BYTES", size - 1):
+            with self.assertRaisesRegex(ValueError, "compressed cache exceeds"):
+                cache.validate_bundle(self.root, self.prefix)
+            cache.validate_bundle(self.root, self.prefix, max_archive=size)
+            with self.assertRaisesRegex(ValueError, "compressed cache exceeds"):
+                cache.seal(self.root, self.prefix)
+            cache.seal(self.root, self.prefix, max_archive=size)
+        for bound in ("MAX_CONTENT_BYTES", "MAX_MEMBERS"):
+            with self.subTest(bound=bound), patch.object(cache, bound, 1), self.assertRaises(ValueError):
+                cache.validate_bundle(self.root, self.prefix, max_archive=2 * size)
+        # The expanded bound is also the caller's to choose; the default stays 4 GiB.
+        with patch.object(cache, "MAX_CONTENT_BYTES", 1):
+            cache.validate_bundle(self.root, self.prefix, max_archive=2 * size, max_content=10 ** 9)
+        with self.assertRaisesRegex(ValueError, "expanded cache exceeds"):
+            cache.validate_bundle(self.root, self.prefix, max_content=1)
+        self.assertIn(f"-gt {4 * 1024 ** 2} ]", cache.dockerfile("extract"))
+        self.assertIn(f"-gt {6 * 1024 ** 2} ]", cache.dockerfile("extract", 6 * 1024 ** 3))
+        with patch.object(cache.subprocess, "run") as run:
+            cache.transfer("inject", self.root)
+            self.assertEqual(run.call_args.kwargs["timeout"], 150)
+            cache.transfer("extract", self.root, timeout=360, max_content=6 * 1024 ** 3)
+            self.assertEqual(run.call_args.kwargs["timeout"], 360)
+            self.assertIn(f"-gt {6 * 1024 ** 2} ]", run.call_args.kwargs["input"])
+
     def test_archive_symlink_and_extra_files_are_rejected(self):
         self.bundle()
         (self.root / "unexpected").touch()
@@ -224,6 +268,41 @@ class CacheTests(unittest.TestCase):
         self.assertIn(f'id={cache.MOUNTS["registry"]},target=/usr/local/cargo/registry,sharing=locked', definition)
         self.assertIn('id=cma-api-target-${TARGETARCH},target=/build/target,sharing=locked', definition)
         self.assertEqual(cache.MOUNTS["target"], "cma-api-target-amd64")
+
+    def test_cache_trim_keeps_the_newest_completed_session_of_every_crate(self):
+        # Each recipe cleans every workspace crate before building, so a crate
+        # whose incremental state the trim drops is compiled from scratch.
+        crates = ("cma-0", "cmaeg-0", "layer1_public-0", "layer2_core-0", "layer3_adapter-0",
+                  "cma_service_auth-0", "build_script_build-0")
+        for recipe in ("api/crates/cma/Dockerfile", "api/crates/cmaeg/Dockerfile"):
+            with self.subTest(recipe=recipe):
+                definition = (cache.ROOT / recipe).read_text()
+                script = definition.split("<<'CACHE_TRIM'\n", 1)[1].split("\nCACHE_TRIM\n", 1)[0]
+                work = self.root / Path(recipe).parent.name
+                release = work / "target/release"
+                for name in ("cma", "deps/libdependency.rlib", ".fingerprint/dependency/lib",
+                             "build/layer3-adapter-0/out/runtime_versions.rs"):
+                    (release / name).parent.mkdir(parents=True, exist_ok=True)
+                    (release / name).write_bytes(b"final or dependency output")
+                (work / "target/.rustc_info.json").write_text("{}")
+                incremental = release / "incremental"
+                for crate in crates:
+                    # Glob order differs from age, so only modification times select.
+                    for stamp, session in ((1000, "s-z-preceding"), (2000, "s-a-newest")):
+                        products = incremental / crate / session / "work-products.bin"
+                        products.parent.mkdir(parents=True)
+                        products.write_bytes(b"compiler session")
+                        os.utime(products, (stamp, stamp))
+                    (incremental / crate / "s-a-newest.lock").write_bytes(b"")
+                    (incremental / crate / "s-m-interrupted-working").mkdir()
+                subprocess.run(["sh", "-c", script], cwd=work, check=True)
+                self.assertEqual([path.name for path in release.iterdir()], ["incremental"])
+                self.assertEqual(sorted(path.name for path in incremental.iterdir()), sorted(crates))
+                for crate in crates:
+                    self.assertEqual(sorted(path.name for path in (incremental / crate).iterdir()),
+                                     ["s-a-newest", "s-a-newest.lock"], crate)
+                    self.assertTrue((incremental / crate / "s-a-newest/work-products.bin").is_file(), crate)
+                self.assertTrue((work / "target/.rustc_info.json").is_file())
 
     def test_transfer_always_executes_and_uses_only_expected_mount_ids(self):
         nonces = []

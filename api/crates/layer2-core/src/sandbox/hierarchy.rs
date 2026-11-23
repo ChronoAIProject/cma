@@ -63,8 +63,10 @@ pub struct SandboxHierarchyRecord<A = Agent> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceHierarchyRecord {
+    pub task_activity_at: std::collections::HashMap<AgentId, String>,
     pub task_started_at: std::collections::HashMap<AgentId, String>,
     pub task_statuses: std::collections::HashMap<AgentId, super::AgentTaskStatus>,
+    pub task_turns: std::collections::HashMap<AgentId, Option<u64>>,
     pub workspace: Workspace,
     pub worktrees: Vec<Worktree>,
     pub agents: Vec<Agent>,
@@ -149,9 +151,13 @@ pub struct WorktreeHierarchySummary {
 #[serde(deny_unknown_fields)]
 pub struct AgentHierarchySummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_activity_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_started_at: Option<String>,
     #[serde(default)]
     pub task_status: super::AgentTaskStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_acceptance: Option<super::task_acceptance::TaskAcceptanceSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -210,6 +216,8 @@ impl HierarchyReadError {
                     ResourceAccessStoreError as S,
                 };
                 match error {
+                    R::AccountDeletionInProgress => "account_deletion_in_progress",
+                    R::Store(S::ShareRecipientUnavailable) => "share_recipient_unavailable",
                     R::Access(A::NotFound) | R::Store(S::NotFound) => "resource_not_found",
                     R::Access(A::Forbidden) | R::Membership(M::NotMember) => "resource_forbidden",
                     R::Access(A::UnsafeInteractiveShare) | R::Store(S::UnsafeInteractiveShare) => {

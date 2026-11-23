@@ -76,6 +76,7 @@ pub(super) async fn configure(
     state.dynamic_sources_writes_enabled = config.dynamic_sources_writes_enabled;
     state.relay_raw_verification_writes_enabled = config.relay_raw_verification_writes_enabled;
     state.lark_resource_writes_enabled = config.lark_resource_writes_enabled;
+    state.managed_telegram_setup_enabled = config.managed_telegram_setup_enabled;
     state.native_lark_intake_enabled = config.native_lark_intake_enabled;
     state.native_lark_controls_enabled = config.native_lark_controls_enabled;
     state.native_lark_forms_enabled = config.native_lark_forms_enabled;

@@ -184,19 +184,83 @@ it('preserves the draft and original request through a lost acknowledgement, rel
   expect(field).toHaveValue('Immediate local message');
   expect(h.post).toHaveBeenCalledOnce();
   const original = h.post.mock.calls[0]![0]!;
+  const reads = h.inputReceipt.mock.calls.length;
   view.unmount();
   render(<Agent />);
   await screen.findByText('Awaiting confirmation');
   expect(bubbles('Immediate local message')).toHaveLength(1);
-  fireEvent.click(screen.getByRole('button', { name: 'Recover pending request' }));
+  const recover = await screen.findByRole('button', { name: 'Recover pending request' });
+  h.inputReceipt.mockImplementationOnce(async () => json(status(1, 'completed')));
+  fireEvent.click(recover);
   await waitFor(() => expect(screen.getByText('Sent')).toBeInTheDocument());
-  expect(h.post).toHaveBeenCalledTimes(2);
-  const recovered = h.post.mock.calls[1]![0]!;
-  expect(recovered.body).toBe(original.body);
-  expect(new Headers(recovered.headers).get('idempotency-key')).toBe(
-    new Headers(original.headers).get('idempotency-key'),
-  );
+  expect(h.post).toHaveBeenCalledOnce();
+  expect(h.inputReceipt.mock.calls.length).toBeGreaterThan(reads);
+  for (const [lookup] of h.inputReceipt.mock.calls) {
+    expect(lookup?.body).toBe(original.body);
+    expect(new Headers(lookup?.headers).get('idempotency-key')).toBe(
+      new Headers(original.headers).get('idempotency-key'),
+    );
+  }
   expect(bubbles('Immediate local message')).toHaveLength(1);
+});
+
+it('restores a committed artifact request after reopen without submitting it again', async () => {
+  const { h, view, Agent } = await setup();
+  const bytes = new TextEncoder().encode('Verified artifact revision');
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const sha256 = Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, '0'),
+  ).join('');
+  const artifact = {
+    id: `art_${'a'.repeat(64)}`,
+    agent_id: 'agt_1',
+    name: 'report.txt',
+    media_type: 'text/plain',
+    sha256,
+    size_bytes: bytes.length,
+    created_at: '2026-09-16T00:00:00Z',
+  };
+  let committed: RequestInit | undefined;
+  let exposeReceipt = false;
+  const revisions: Uint8Array[] = [];
+  h.post.mockImplementationOnce(async (init) => {
+    committed = init;
+    revisions.push(bytes);
+    throw new TypeError('Connection dropped after durable admission');
+  });
+  const receipt = vi.fn(async (init?: RequestInit) => {
+    if (!exposeReceipt || !committed) return json(null);
+    expect(init?.body).toBe(committed.body);
+    expect(new Headers(init?.headers).get('idempotency-key')).toBe(
+      new Headers(committed.headers).get('idempotency-key'),
+    );
+    return json(status(1, 'completed'));
+  });
+  const request = h.fetch.getMockImplementation()!;
+  const download = `/api/v1/agents/agt_1/artifacts/${artifact.id}`;
+  h.fetch.mockImplementation(async (input, init) => {
+    if (String(input) === '/api/v2/agents/agt_1/responses/receipt') return receipt(init);
+    if (String(input) === download && revisions.length === 1) return json(artifact);
+    if (String(input) === `${download}/download` && revisions.length === 1)
+      return new Response(revisions[0]!.slice().buffer, {
+        headers: { 'content-type': 'application/octet-stream' },
+      });
+    return request(input, init);
+  });
+
+  click();
+  await screen.findByText('Awaiting confirmation');
+  expect(h.post).toHaveBeenCalledOnce();
+  view.unmount();
+  exposeReceipt = true;
+  render(<Agent />);
+  await waitFor(() => expect(receipt).toHaveBeenCalled());
+  await waitFor(() => expect(screen.queryByText('Awaiting confirmation')).not.toBeInTheDocument());
+  expect(screen.queryByRole('button', { name: 'Recover pending request' })).not.toBeInTheDocument();
+  expect(h.post).toHaveBeenCalledOnce();
+  expect(revisions).toHaveLength(1);
+  const downloaded = await h.sdk.agents.downloadArtifact('agt_1', artifact.id);
+  expect(Array.from(downloaded)).toEqual(Array.from(bytes));
 });
 
 it('uses observed receipt metadata only to reconcile replay while the acceptance identity check is still pending', async () => {
@@ -416,11 +480,7 @@ it('replaces a discovered then absent admitted message with its expiry explanati
       : originalFetch(url, init),
   );
   fireEvent(window, new Event('focus'));
-  await screen.findByText(
-    'Message expired before it started. Submit it again if still needed.',
-    {},
-    { timeout: 3000 },
-  );
+  await screen.findByText('Expired before starting', {}, { timeout: 3000 });
   expect(bubbles('Immediate local message')).toHaveLength(1);
   expect(screen.queryByText('Sent')).not.toBeInTheDocument();
   expect(h.post).toHaveBeenCalledOnce();

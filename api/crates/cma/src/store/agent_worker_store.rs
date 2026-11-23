@@ -5,7 +5,7 @@ use layer2_core::sandbox::store::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryOutcome,
     AgentConnectionRecoveryRequest, AgentStore, AgentWorkMutation, AgentWorkerStore, Page,
-    PageRequest, SandboxStoreError, MAX_PAGE_SIZE,
+    PageRequest, SandboxStoreError, StartupWorkFilter, MAX_PAGE_SIZE,
 };
 use mongodb::bson::{doc, Bson};
 use std::time::Duration;
@@ -95,6 +95,14 @@ impl AgentWorkerStore for MongoSandboxStore {
     ) -> Result<(), SandboxStoreError> {
         super::agent_worker_transaction::commit_agent_work(self, mutation.clone()).await?;
         super::agent_failure_pacing::record(self, &mutation, &observed).await
+    }
+
+    async fn try_publish_agent_work(
+        &self,
+        mutation: AgentWorkMutation,
+        parents: layer2_core::sandbox::store::AgentWorkPublicationParents,
+    ) -> Result<layer2_core::sandbox::store::AgentWorkPublication, SandboxStoreError> {
+        super::agent_worker_transaction::try_publish_agent_work(self, mutation, parents).await
     }
 
     async fn commit_agent_work_repeated_failure(
@@ -252,23 +260,26 @@ impl AgentWorkerStore for MongoSandboxStore {
         }
     }
 
-    async fn due_agent_work_with_cleanup_holds(
+    async fn due_agent_work_filtered(
         &self,
         now: &str,
         limit: u16,
         holds: &std::collections::BTreeSet<AgentId>,
+        startup: StartupWorkFilter<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
-        if self
-            .empty_discovery
-            .empty(
-                super::empty_discovery::Kind::Agents,
-                &self.agents,
-                doc! {"work_pending":true},
-            )
-            .await
+        let unrestricted = matches!(startup, StartupWorkFilter::All);
+        if unrestricted
+            && self
+                .empty_discovery
+                .empty(
+                    super::empty_discovery::Kind::Agents,
+                    &self.agents,
+                    doc! {"work_pending":true},
+                )
+                .await
         {
             return Ok(Vec::new());
         }
@@ -276,7 +287,7 @@ impl AgentWorkerStore for MongoSandboxStore {
             let ids = if self.ownership_retry_hints_active() {
                 tokio::time::timeout(
                     std::time::Duration::from_secs(2),
-                    self.due_owned_agent_work(now, limit, holds),
+                    self.due_owned_agent_work(now, limit, holds, startup),
                 )
                 .await
                 .map_err(|_| {
@@ -285,17 +296,20 @@ impl AgentWorkerStore for MongoSandboxStore {
                     )
                 })??
             } else {
-                self.due_owned_agent_work(now, limit, holds).await?
+                self.due_owned_agent_work(now, limit, holds, startup)
+                    .await?
             };
-            self.empty_discovery
-                .observed(super::empty_discovery::Kind::Agents, ids.is_empty());
+            if unrestricted {
+                self.empty_discovery
+                    .observed(super::empty_discovery::Kind::Agents, ids.is_empty());
+            }
             return Ok(ids);
         }
         let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
         let mut cursor = self
             .agents
-            .aggregate(super::agent_failure_pacing::discovery::pipeline(
-                self, now, limit, holds,
+            .aggregate(super::agent_failure_pacing::discovery::filtered_pipeline(
+                self, now, limit, holds, startup,
             ))
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
@@ -313,8 +327,10 @@ impl AgentWorkerStore for MongoSandboxStore {
             ));
         }
         read.complete();
-        self.empty_discovery
-            .observed(super::empty_discovery::Kind::Agents, ids.is_empty());
+        if unrestricted {
+            self.empty_discovery
+                .observed(super::empty_discovery::Kind::Agents, ids.is_empty());
+        }
         Ok(ids)
     }
 
@@ -380,6 +396,14 @@ impl AgentWorkerStore for MongoSandboxStore {
             }
         }
         Err(SandboxStoreError::Conflict)
+    }
+
+    async fn commit_agent_skill_result(
+        &self,
+        mutation: AgentWorkMutation,
+        guard: layer2_core::sandbox::store::AgentSkillResultGuard,
+    ) -> Result<(), SandboxStoreError> {
+        super::agent_worker_transaction::commit_agent_skill_result(self, mutation, &guard).await
     }
 
     async fn commit_agent_work(

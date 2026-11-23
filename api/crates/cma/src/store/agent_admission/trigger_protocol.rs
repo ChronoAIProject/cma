@@ -47,5 +47,5 @@ pub(in crate::store) async fn selected(
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
     crate::store::trigger_first_messages::require_launch_binding(&launch, binding.as_ref())
         .map_err(ApplyError::Domain)?;
-    Ok(launch.input_protocol.is_some().then_some(launch))
+    Ok(Some(launch))
 }

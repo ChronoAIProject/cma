@@ -13,14 +13,44 @@ import { outsideRepository } from './environment';
 import { evidenceDirectoryIsReady } from './security';
 
 export default class RedactedReporter implements Reporter {
-  private rows: { case: string; status: string; durationMs: number }[] = [];
+  private rows: {
+    case: string;
+    status: string;
+    durationMs: number;
+    proof?: unknown;
+    connectionProof?: unknown;
+  }[] = [];
   onBegin(_config: FullConfig, suite: Suite) {
     process.stdout.write(`Discovered ${suite.allTests().length} Playwright cases.\n`);
     for (const test of suite.allTests()) process.stdout.write(`CASE ${test.title}\n`);
   }
   onTestEnd(test: TestCase, result: TestResult) {
     // Assertion errors can contain DOM, response bodies and identity-provider URLs.
-    const row = { case: test.title, status: result.status, durationMs: result.duration };
+    const row: (typeof this.rows)[number] = {
+      case: test.title,
+      status: result.status,
+      durationMs: result.duration,
+    };
+    for (const [name, field] of [
+      ['public-journey-proof', 'proof'],
+      ['connection-journey-proof', 'connectionProof'],
+    ] as const) {
+      const proofs = (result.attachments ?? []).filter((item) => item.name === name);
+      if (proofs.length > 0) {
+        row[field] = null;
+        if (
+          proofs.length === 1 &&
+          proofs[0]?.body &&
+          proofs[0].contentType === 'application/json'
+        ) {
+          try {
+            row[field] = JSON.parse(proofs[0].body.toString());
+          } catch {
+            /* Invalid proof remains null and final audit refuses it. */
+          }
+        }
+      }
+    }
     this.rows.push(row);
     process.stdout.write(`${row.status}: ${row.case}\n`);
   }

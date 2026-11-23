@@ -454,6 +454,9 @@ pub(super) fn changed(
     turn_closed: bool,
     appended_at: &str,
 ) -> Result<FoldedConversationUpdate, AgentConversationError> {
+    if let Some(task) = agent.conversation.observations.task_acceptance.as_mut() {
+        task.observe_execution(agent.conversation.active_turn, &logs);
+    }
     agent.conversation.active_turn = active_turn;
     if let Some(status) = status {
         agent

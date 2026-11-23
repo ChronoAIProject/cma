@@ -1,6 +1,9 @@
 //! NyxID #2204 producer transport; no NyxID wire details in lifecycle callers.
-use super::token::{oauth::ClientCredentialsProvider, ProducerTokenProvider, StaticTokenProvider};
 use super::*;
+use crate::producer_token::{
+    oauth::ClientCredentialsProvider, ProducerScope, ProducerTokenError, ProducerTokenProvider,
+    StaticTokenProvider,
+};
 use futures_util::StreamExt;
 
 pub(crate) struct NyxIdFundingProvider {
@@ -26,7 +29,12 @@ impl NyxIdFundingProvider {
                             "producer client credentials reference is unavailable".to_string()
                         })
                 };
-                ClientCredentialsProvider::new(&config.base_url, read(id)?, read(secret)?)?
+                ClientCredentialsProvider::new(
+                    &config.base_url,
+                    read(id)?,
+                    read(secret)?,
+                    ProducerScope::Funding,
+                )?
             }
             None => Arc::new(StaticTokenProvider(config.credential_ref.clone())),
         };
@@ -273,3 +281,12 @@ impl FundingProvider for NyxIdFundingProvider {
 
 #[cfg(test)]
 mod token_tests;
+
+impl From<ProducerTokenError> for FundingError {
+    fn from(error: ProducerTokenError) -> Self {
+        match error {
+            ProducerTokenError::Retryable(detail) => Self::Retryable(detail),
+            ProducerTokenError::Invalid(detail) => Self::Invalid(detail),
+        }
+    }
+}

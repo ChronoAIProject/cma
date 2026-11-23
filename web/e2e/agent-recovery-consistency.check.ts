@@ -1,3 +1,4 @@
+import { registerAgentRedesignCases } from './redesign-agent.cases';
 import { test, expect, type Page } from '@playwright/test';
 import { binding, LocalAgentV2 } from './agent-v2.fixture';
 
@@ -114,6 +115,7 @@ test('LOCAL running reload shows loading until activity is known, then agrees wi
   try {
     await fixture.route(page, baseURL!);
     await page.goto('/agents/agt_contract');
+    await expect.poll(() => fixture.snapshots).toBe(2);
     await expect(page.getByText('Loading conversation activity.', { exact: true })).toBeVisible();
     await expect(task(page)).toHaveAccessibleName(/Loading activity/);
     await expect(header(page)).toHaveAttribute('title', /Loading activity/);
@@ -127,6 +129,7 @@ test('LOCAL running reload shows loading until activity is known, then agrees wi
     await expect(header(page)).toHaveAttribute('title', /Working/);
     fixture.holdSnapshot = true;
     await page.reload();
+    await expect.poll(() => fixture.snapshots).toBe(4);
     await expect(page.getByText('Loading conversation activity.', { exact: true })).toBeVisible();
     await expect(task(page)).toHaveAccessibleName(/Loading activity/);
     await expect.poll(() => fixture.snapshotPending).toBe(true);
@@ -270,3 +273,5 @@ for (const reportedStatus of ['pending', 'blocked']) {
     }
   });
 }
+
+registerAgentRedesignCases();

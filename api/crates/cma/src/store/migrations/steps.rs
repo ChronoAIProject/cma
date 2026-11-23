@@ -2,6 +2,7 @@
 use super::{
     activity_indexes, activity_page_index, agent_log_segments, agent_log_source_keys,
     agent_owner_index, binding_indexes, collection_indexes, command_cohort_index, opening_index,
+    sandbox_usage_capture,
     Result,
 };
 use mongodb::bson::{doc, Document};
@@ -17,10 +18,12 @@ pub(super) enum Step {
     AgentLogSourceKeys,
     BindingIndexes,
     CommandCohort,
+    SandboxUsageCapture,
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 9] = [
+    pub(super) const ALL: [Self; 10] = [
+        Self::SandboxUsageCapture,
         Self::Activity,
         Self::ActivityPage,
         Self::LedgerCollection,
@@ -40,6 +43,7 @@ impl Step {
     pub(super) fn id(self) -> &'static str {
         match self {
             Self::CommandCohort => command_cohort_index::ID,
+            Self::SandboxUsageCapture => sandbox_usage_capture::ID,
             Self::BindingIndexes => binding_indexes::ID,
             Self::Activity => activity_indexes::ID,
             Self::ActivityPage => activity_page_index::ID,
@@ -53,6 +57,7 @@ impl Step {
     pub(super) fn checksum(self) -> String {
         match self {
             Self::CommandCohort => command_cohort_index::checksum(),
+            Self::SandboxUsageCapture => sandbox_usage_capture::checksum(),
             Self::BindingIndexes => binding_indexes::checksum(),
             Self::Activity => activity_indexes::checksum(),
             Self::ActivityPage => activity_page_index::checksum(),
@@ -69,6 +74,7 @@ impl Step {
     pub(super) fn max_changes(self) -> i64 {
         match self {
             Self::CommandCohort => 1,
+            Self::SandboxUsageCapture => crate::store::sandbox_usage_export::schema::MAX_STEPS,
             Self::BindingIndexes => 11,
             Self::Activity => 2,
             Self::ActivityPage => 1,
@@ -79,6 +85,7 @@ impl Step {
     }
     pub(super) fn collections(self) -> &'static [&'static str] {
         match self {
+            Self::SandboxUsageCapture => crate::store::sandbox_usage_export::COLLECTIONS,
             Self::BindingIndexes => crate::store::bindings::schema::COLLECTIONS,
             Self::Activity | Self::ActivityPage => &["activity"],
             Self::LedgerCollection => &collection_indexes::COLLECTIONS,
@@ -91,7 +98,7 @@ impl Step {
     }
     pub(super) fn effect_field(self) -> &'static str {
         match self {
-            Self::AgentLogSegments => "applied_schema_steps",
+            Self::AgentLogSegments | Self::SandboxUsageCapture => "applied_schema_steps",
             Self::Activity
             | Self::ActivityPage
             | Self::LedgerCollection
@@ -112,6 +119,7 @@ impl Step {
                 .into_iter()
                 .map(|index| ("agent_commands", index))
                 .collect()),
+            Self::SandboxUsageCapture => Err("usage migration requires schema-unit inspection"),
             Self::BindingIndexes => binding_indexes::inspect(database).await,
             Self::Activity => Ok(activity_indexes::inspect(database)
                 .await?
@@ -172,6 +180,7 @@ pub(super) fn unsupported() -> Document {
     let allowed: Vec<_> = Step::ALL.into_iter().flat_map(|step| [
         doc! {"kind":"manifest","_id":step.manifest(),"migration":step.id(),"checksum":step.checksum()},
         doc! {"kind":"attempt","migration":step.id(),"checksum":step.checksum()},
+        doc! {"kind":"index_abort","_id":"destructive_ddl","migration":step.id(),"checksum":step.checksum()},
     ]).chain([doc! {"kind":"lease","_id":"runner"}]).collect();
     doc! {"$or":[
         {"schema":{"$ne":1_i64}}, {"schema":{"$not":{"$type":["int","long"]}}},

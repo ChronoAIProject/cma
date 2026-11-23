@@ -1,4 +1,10 @@
 import {
+  pendingHomesReconciliation,
+  reconcilePendingHomesRequest,
+  type ReconcilePendingHomesRequest,
+} from './pending-homes.js';
+export type * from './pending-homes.js';
+import {
   warmPoolList,
   warmPoolView,
   validateWarmPoolTarget,
@@ -291,6 +297,18 @@ export class Administration {
       method: 'POST',
       body: input(spendObservationRequest, body),
     });
+  }
+  reconcilePendingHomes(body: ReconcilePendingHomesRequest, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      '/api/v1/admin/admission/pending-homes/reconcile',
+      pendingHomesReconciliation,
+      {
+        ...options,
+        method: 'POST',
+        body: input(reconcilePendingHomesRequest, body),
+      },
+    );
   }
   readAdmission(options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/admission', admissionControlRead, options);
