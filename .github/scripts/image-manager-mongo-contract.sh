@@ -84,6 +84,10 @@ contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~optional_forms_storage)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~optional_media_continuation_storage)'
+# A cancelled commit or abort must not strand its row locks, and the runtime
+# grant must end its own session (#3299). Failpoints are server-global.
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~transaction_terminal::)'
 # History migration and writer grants require this authenticated replica set.
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~activity::history::mongo_tests::)'
