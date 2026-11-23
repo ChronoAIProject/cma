@@ -126,6 +126,8 @@ pub mod mongo;
 mod mongo_diagnostics;
 pub(crate) mod pending_launch_homes;
 #[cfg(test)]
+pub(crate) mod test_visibility;
+#[cfg(test)]
 pub(crate) use mongo_diagnostics::attach_readiness_fixture;
 pub(crate) mod mongo_latency;
 pub(crate) mod mongo_read_telemetry;
