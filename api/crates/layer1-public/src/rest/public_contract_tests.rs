@@ -177,6 +177,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = super::agent_original_request::tests::contract_scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = super::privacy_export::tests::contract_scenario(name).await {
         return scenario;
     }

@@ -88,6 +88,8 @@ const OPERATIONS: &[(&str, &[&str])] = &[
     ("/api/v1/agents/{id}/share-links", &["get", "post"]),
     ("/api/v1/agents/{id}/share-links/{share_id}", &["delete"]),
     ("/api/v1/agents/{id}/share-recipients", &["get"]),
+    ("/api/v1/agents/{id}/original-request", &["get"]),
+    ("/api/v1/agents/{id}/reply-preview", &["get"]),
     ("/api/v1/agent-share-links/{share_id}/redeem", &["post"]),
     ("/api/v1/agents/{id}/files", &["post", "delete"]),
     ("/api/v1/agents/{id}/files/tree", &["get"]),
