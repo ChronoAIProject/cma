@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { DraftAttachment } from './attachments';
 import {
@@ -65,6 +73,13 @@ export function useAgentDraft(
     };
   });
   const { scope } = stored;
+  const latest = useRef<typeof stored | undefined>(undefined);
+  useLayoutEffect(() => {
+    latest.current = stored;
+    return () => {
+      latest.current = undefined;
+    };
+  }, [stored]);
   const current =
     scope.client === client && scope.viewerId === viewerId && scope.agentId === agentId;
   if (!current) {
@@ -171,17 +186,38 @@ export function useAgentDraft(
       agentId: agentId ?? '',
       message,
       bind: (key, storage) => {
+        const current = latest.current;
+        if (current?.scope !== scope || current.entry.value.revision !== snapshot.revision)
+          return 'superseded';
         try {
           requireDraftIdentity();
           const saved = readAgentDraft(viewerId, agentId!, storage);
-          if (saved.revision === snapshot.revision)
-            saveAgentDraft(viewerId, agentId!, { ...saved, commandKey: key }, storage);
+          if (current.entry.unread || saved.revision !== snapshot.revision)
+            throw new Error(draftWriteError);
+          saveAgentDraft(viewerId, agentId!, { ...saved, commandKey: key }, storage);
+          setStored((previous) =>
+            previous.scope === scope && previous.entry.value.revision === snapshot.revision
+              ? {
+                  ...previous,
+                  entry: {
+                    ...previous.entry,
+                    value: { ...previous.entry.value, commandKey: key },
+                    error:
+                      previous.entry.error === draftWriteError ? undefined : previous.entry.error,
+                  },
+                }
+              : previous,
+          );
+          return 'bound';
         } catch {
           setStored((previous) =>
-            previous.scope === scope
+            previous.scope === scope &&
+            previous.entry.value.revision === snapshot.revision &&
+            !previous.entry.unread
               ? { ...previous, entry: { ...previous.entry, error: draftWriteError } }
               : previous,
           );
+          return 'unavailable';
         }
       },
     });
