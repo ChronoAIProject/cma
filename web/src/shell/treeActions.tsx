@@ -1,6 +1,9 @@
 import type { AgentStatus, SandboxSummary, WorkspaceDetail } from '../api/types';
 import { sandboxChildrenAvailable, sandboxLifecycleAction } from '../sandbox/lifecycle';
-import { sandboxDeletionReason } from '../sandbox/deletionEligibility';
+import {
+  sandboxDeletionReason,
+  sandboxHasParkedRuntimeUpdate,
+} from '../sandbox/deletionEligibility';
 import {
   IconPauseOutline16,
   IconPlayOutline16,
@@ -111,6 +114,9 @@ export interface AgentActionContext {
 export const OPEN_SANDBOX_TO_RESUME = 'open_sandbox_to_resume';
 const ACTION_BUSY = 'Another action is still being confirmed.';
 const REQUIRES_ACTIVE_SANDBOX = 'Available when the Sandbox is active.';
+// A parked failed runtime update never returns the Sandbox to active by itself.
+const PARKED_RUNTIME_UPDATE =
+  'The runtime update failed. Delete the environment, or open it to retry the update.';
 
 export function agentActions(
   status: AgentStatus,
@@ -120,6 +126,8 @@ export function agentActions(
   const { sandbox, viewerId, stale, busy } = context;
   const runtimeAvailable =
     !busy && !stale && sandbox !== undefined && sandboxChildrenAvailable(sandbox);
+  const parked = sandbox !== undefined && sandboxHasParkedRuntimeUpdate(sandbox);
+  const unavailable = parked ? PARKED_RUNTIME_UPDATE : REQUIRES_ACTIVE_SANDBOX;
   const actions: TreeRowAction[] = [];
   if (permissions.stopAgent)
     actions.push({
@@ -129,7 +137,7 @@ export function agentActions(
       disabled:
         !runtimeAvailable ||
         !['starting', 'ready', 'working', 'waiting_approval', 'paused'].includes(status),
-      reason: busy ? ACTION_BUSY : !runtimeAvailable ? REQUIRES_ACTIVE_SANDBOX : undefined,
+      reason: busy ? ACTION_BUSY : !runtimeAvailable ? unavailable : undefined,
     });
   if (permissions.deleteAgent) {
     const terminal = status === 'stopped' || status === 'failed';
@@ -139,7 +147,7 @@ export function agentActions(
       (paused
         ? 'Resume the Sandbox before deleting this Agent and its Worktree.'
         : !runtimeAvailable
-          ? REQUIRES_ACTIVE_SANDBOX
+          ? unavailable
           : !terminal
             ? 'Stop this Agent before deleting it and its Worktree.'
             : undefined);
@@ -160,6 +168,18 @@ export function agentActions(
     actions.push({
       id: 'delete_agent',
       label: 'Delete',
+      icon: <IconTrashOutline16 />,
+      danger: true,
+      disabled: reason !== undefined,
+      reason,
+    });
+  }
+  // The Agent cannot be deleted without its runtime; its environment can.
+  if (permissions.deleteSandbox && sandbox !== undefined && parked) {
+    const reason = sandboxDeletionReason(sandbox, { busy, stale });
+    actions.push({
+      id: 'delete_sandbox',
+      label: 'Delete environment',
       icon: <IconTrashOutline16 />,
       danger: true,
       disabled: reason !== undefined,

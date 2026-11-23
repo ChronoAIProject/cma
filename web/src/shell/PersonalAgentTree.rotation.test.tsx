@@ -116,7 +116,7 @@ describe('Agent navigation during environment updates', () => {
       expect(container.querySelector('[data-pose="preparing"]')).toBeNull();
       const actor = userEvent.setup();
       await actor.click(screen.getByRole('button', { name: 'Options for Agent one' }));
-      expect(screen.getByRole('menuitem', { name: /^Delete/ })).toHaveAttribute(
+      expect(screen.getByRole('menuitem', { name: /^Delete(?! environment)/ })).toHaveAttribute(
         'aria-disabled',
         'true',
       );
@@ -125,6 +125,66 @@ describe('Agent navigation during environment updates', () => {
       expect(onAction).not.toHaveBeenCalled();
     },
   );
+
+  it('offers deleting the environment from the task menu when its runtime update failed', async () => {
+    const onAction = vi.fn();
+    render(tree({ items: items({ status: 'stopped', taskStatus: 'stopped' }), onAction }));
+    const actor = userEvent.setup();
+    await actor.click(screen.getByRole('button', { name: 'Options for Agent one' }));
+    const agentDelete = screen.getByRole('menuitem', { name: /^Delete(?! environment)/ });
+    expect(agentDelete).toHaveAttribute('aria-disabled', 'true');
+    expect(agentDelete).toHaveTextContent(
+      'The runtime update failed. Delete the environment, or open it to retry the update.',
+    );
+    expect(screen.getByRole('menuitem', { name: /^Stop/ })).toHaveTextContent(
+      'The runtime update failed. Delete the environment, or open it to retry the update.',
+    );
+    const environment = screen.getByRole('menuitem', { name: 'Delete environment' });
+    expect(environment).not.toHaveAttribute('aria-disabled', 'true');
+    await actor.click(environment);
+    expect(onAction).toHaveBeenCalledExactlyOnceWith({
+      kind: 'delete_sandbox',
+      sandboxId: 'sbx_1',
+    });
+  });
+
+  it('keeps the active-Sandbox hint and no environment deletion while an update is still running', async () => {
+    render(
+      tree({
+        items: items(
+          { status: 'stopped', taskStatus: 'stopped' },
+          { runtimeUpdate: { ...update, state: 'updating' } },
+        ),
+      }),
+    );
+    const actor = userEvent.setup();
+    await actor.click(screen.getByRole('button', { name: 'Options for Agent one' }));
+    expect(screen.getByRole('menuitem', { name: /^Delete/ })).toHaveTextContent(
+      'Available when the Sandbox is active.',
+    );
+    expect(screen.queryByRole('menuitem', { name: 'Delete environment' })).not.toBeInTheDocument();
+  });
+
+  it('does not offer deleting the environment without the Sandbox deletion permission', async () => {
+    render(
+      tree({
+        items: items({ status: 'stopped', taskStatus: 'stopped' }),
+        permissions: {
+          createWorkspace: true,
+          createAgent: true,
+          pauseSandbox: true,
+          deleteSandbox: false,
+          removeWorkspace: true,
+          stopAgent: true,
+          deleteAgent: true,
+          exportHistory: true,
+        },
+      }),
+    );
+    const actor = userEvent.setup();
+    await actor.click(screen.getByRole('button', { name: 'Options for Agent one' }));
+    expect(screen.queryByRole('menuitem', { name: 'Delete environment' })).not.toBeInTheDocument();
+  });
 
   it.each(['failed', 'stopped'] as const)(
     'keeps historical %s outcomes and their date group',

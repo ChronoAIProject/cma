@@ -13,7 +13,12 @@ export function selectAgentAction(
   id: string,
   agentId: string,
   onAction?: (action: TreeAction) => void,
+  sandboxId?: string,
 ) {
+  if (id === 'delete_sandbox' && sandboxId !== undefined) {
+    onAction?.({ kind: 'delete_sandbox', sandboxId });
+    return;
+  }
   if (
     id === 'stop_agent' ||
     id === 'delete_agent' ||
@@ -69,12 +74,13 @@ export function agentHeaderActionHandler(
   readOnly: boolean,
   onAction: ((action: TreeAction) => void) | undefined,
   onOpenSandbox: () => void,
+  sandboxId?: string,
 ) {
   return readOnly
     ? undefined
     : (id: string) => {
         if (id === OPEN_SANDBOX_TO_RESUME) onOpenSandbox();
-        else selectAgentAction(id, agentId, onAction);
+        else selectAgentAction(id, agentId, onAction, sandboxId);
       };
 }
 

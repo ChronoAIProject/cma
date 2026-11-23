@@ -299,8 +299,12 @@ export function AgentSurface({
           }}
           moreActions={headerMenu}
           onReviewEnvironment={reviewEnvironment}
-          onMoreAction={agentHeaderActionHandler(agentId, readOnly, onAgentAction, () =>
-            onNavigate({ kind: 'sandbox', sandboxId: detail.sandbox.id }),
+          onMoreAction={agentHeaderActionHandler(
+            agentId,
+            readOnly,
+            onAgentAction,
+            () => onNavigate({ kind: 'sandbox', sandboxId: detail.sandbox.id }),
+            detail.sandbox.id,
           )}
         />
 

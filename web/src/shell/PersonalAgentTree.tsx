@@ -214,14 +214,16 @@ export function PersonalAgentTree({
                   onAction={(kind) =>
                     kind === 'view_environment'
                       ? onNavigate({ kind: 'sandbox', sandboxId: sandbox.id })
-                      : onAction({
-                          kind: kind as
-                            | 'stop_agent'
-                            | 'delete_agent'
-                            | 'export_history'
-                            | 'export_retained_conversation',
-                          agentId: agent.id,
-                        })
+                      : kind === 'delete_sandbox'
+                        ? onAction({ kind, sandboxId: sandbox.id })
+                        : onAction({
+                            kind: kind as
+                              | 'stop_agent'
+                              | 'delete_agent'
+                              | 'export_history'
+                              | 'export_retained_conversation',
+                            agentId: agent.id,
+                          })
                   }
                 />
               );
