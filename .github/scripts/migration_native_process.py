@@ -84,8 +84,9 @@ class Command:
         require(isinstance(data, bytes) and len(data) <= 16*1024**2, 'native_command_input_bound')
         require(type(max_bytes) is int and 0 < max_bytes <= 36*1024**2, 'native_command_output_bound')
         number = self.sequence; self.sequence += 1
+        # Input can carry fixture Secret manifests; retain only its size.
         self.record({'type': 'command_intent', 'sequence': number, 'argv': argv,
-                     'stdin_bytes': len(data), 'stdin_sha256': hashlib.sha256(data).hexdigest()})
+                     'stdin_bytes': len(data)})
         group = self.group_factory(); process = None
         output, stderr = bytearray(), bytearray()
         error = None; cleanup = None
