@@ -1,3 +1,9 @@
+import {
+  ackDelayHint,
+  ackDelayMessage,
+  maxAckDelay,
+  supportsVerifiedThreads,
+} from './replyValidation';
 import { useRelayCapabilities } from '../RelayCapabilities';
 import { Button } from '../../ui/Button';
 import { AdmissionFields } from './AdmissionFields';
@@ -18,11 +24,13 @@ export function ChannelPolicyFields({
   onChange,
   hideConnection = false,
   part = 'all',
+  retainedAckDelay,
 }: {
   value: Fields;
   onChange: (v: Fields) => void;
   hideConnection?: boolean;
   part?: 'all' | 'identity' | 'policy';
+  retainedAckDelay?: unknown;
 }) {
   const discovery = useRelayCapabilities();
   const nativeLark = records(value.sources).some((source) => source.type === 'native_lark');
@@ -132,7 +140,15 @@ export function ChannelPolicyFields({
               onChange={(v) => setReply('auto_final', v)}
             />
             <NumberField
+              path="/reply/ack_after_ms"
               label="Acknowledgement delay (ms)"
+              hint={ackDelayHint}
+              max={
+                reply.ack_after_ms === retainedAckDelay && typeof retainedAckDelay === 'number'
+                  ? Math.max(maxAckDelay, retainedAckDelay)
+                  : maxAckDelay
+              }
+              validationMessage={ackDelayMessage(reply.ack_after_ms ?? 0, retainedAckDelay)}
               value={reply.ack_after_ms ?? 0}
               onChange={(v) => setReply('ack_after_ms', v)}
             />
@@ -212,13 +228,17 @@ export function ChannelPolicyFields({
           </Section>
           {!nativeLark || reply.thread_contract != null ? (
             <Section
+              path="/reply/thread_contract"
               title="Native threads"
               description="Keep supported platform threads connected to the same agent conversation."
             >
               <Toggle
                 label="Enable verified thread following"
                 value={reply.thread_contract != null}
-                disabled={(threadWritesDisabled || nativeLark) && reply.thread_contract == null}
+                disabled={
+                  (threadWritesDisabled || !supportsVerifiedThreads(value)) &&
+                  reply.thread_contract == null
+                }
                 onChange={(enabled) =>
                   setReply(
                     'thread_contract',
