@@ -39,9 +39,16 @@ impl AnswerDeliverableService {
             credential: None,
             document_token: None,
         };
-        let result = self
-            .describe(&access, &requester.agent_id, resource)
-            .await?;
+        let result = match resource {
+            DeliverableResource::LiveFile { path } => {
+                self.describe_agent_file(&access, &requester.agent_id, &lineage.worktree, &path)
+                    .await?
+            }
+            resource => {
+                self.describe(&access, &requester.agent_id, resource)
+                    .await?
+            }
+        };
         if auth
             .authenticate(capability)
             .await
@@ -53,6 +60,49 @@ impl AnswerDeliverableService {
         Ok(result)
     }
 }
+
+impl AnswerDeliverableService {
+    /// An Agent works inside its own worktree and is not told that worktree's
+    /// home-relative prefix, so it naturally names a file it produced relative
+    /// to its working directory, as `./name`, or by its absolute path. Accept
+    /// those forms by resolving them to the exact home-relative path. The
+    /// documented home-relative form is tried first and wins when both exist.
+    /// Every candidate stays within the Agent's own home and authority, and the
+    /// verified reference records the resolved path.
+    async fn describe_agent_file(
+        &self,
+        access: &DeliverableAccess<'_>,
+        agent: &AgentId,
+        worktree: &crate::sandbox::Worktree,
+        path: &str,
+    ) -> Result<DeliverableDescription, DeliverableError> {
+        let live = |path: String| DeliverableResource::LiveFile { path };
+        if let Some(home_relative) = path.strip_prefix(SANDBOX_HOME) {
+            return self
+                .describe(access, agent, live(home_relative.to_owned()))
+                .await;
+        }
+        let relative = path.strip_prefix("./").unwrap_or(path);
+        let first = self
+            .describe(access, agent, live(relative.to_owned()))
+            .await;
+        let Some(prefix) = worktree.path.strip_prefix(SANDBOX_HOME) else {
+            return first;
+        };
+        match first {
+            Err(DeliverableError::File(AgentFileError::NotFound))
+                if !relative.is_empty() && !relative.starts_with(&format!("{prefix}/")) =>
+            {
+                self.describe(access, agent, live(format!("{prefix}/{relative}")))
+                    .await
+            }
+            result => result,
+        }
+    }
+}
+
+/// The Sandbox home every Agent file path is relative to.
+const SANDBOX_HOME: &str = "/home/cma/";
 
 fn authority_error(error: AgentAccessError) -> DeliverableError {
     if matches!(error, AgentAccessError::Unavailable) {
