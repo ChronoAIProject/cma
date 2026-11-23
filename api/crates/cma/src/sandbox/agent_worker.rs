@@ -13,6 +13,7 @@ use tokio::sync::Semaphore;
 use super::agent_skills::AgentSkillResolver;
 use super::live_agents::{DurableAgentConnectionLossHandler, LiveAgentRegistry};
 
+mod acquisition_backoff;
 mod attempt;
 mod capacity;
 #[cfg(test)]
@@ -184,6 +185,7 @@ impl AgentWorkerConfig {
 pub(crate) struct AgentWorker {
     dependencies: AgentWorkerDependencies,
     config: AgentWorkerConfig,
+    acquisition_backoff: acquisition_backoff::Backoff,
     startup_holds: Option<startup_holds::StartupHolds>,
     maintenance: reconcile::MaintenanceChecks,
     capacity_restart: Arc<OnceLock<Arc<dyn CapacityRecoveryReconnect>>>,
@@ -208,6 +210,7 @@ impl AgentWorker {
                 .startup_sibling_hold_enabled
                 .then(startup_holds::StartupHolds::default),
             config,
+            acquisition_backoff: acquisition_backoff::Backoff::default(),
             maintenance: reconcile::MaintenanceChecks::default(),
             capacity_restart,
             startup_timings: Mutex::new(HashMap::new()),
