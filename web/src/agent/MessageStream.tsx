@@ -24,6 +24,7 @@ import { messageStreamKey } from './streamTimeline';
 import { acceptanceForTurn } from './taskAcceptance';
 
 interface MessageStreamProps {
+  readonly retained?: boolean;
   readonly conversation: ConversationState;
   readonly taskAcceptance?: TaskAcceptance;
   readonly onTaskDeliveryConfirmed?: () => void;
@@ -48,6 +49,7 @@ interface MessageStreamProps {
 }
 
 export function MessageStream({
+  retained: historyOnly = false,
   conversation,
   taskAcceptance,
   onTaskDeliveryConfirmed,
@@ -68,6 +70,7 @@ export function MessageStream({
   deliverables,
   stopping = false,
 }: MessageStreamProps) {
+  const activeRunId = historyOnly ? undefined : conversation.activeRunId;
   const {
     agentId: deliveryAgent,
     viewerId,
@@ -147,9 +150,7 @@ export function MessageStream({
   return (
     <MessageResources media={mediaAccess} deliverables={deliveryAccess}>
       <div className="message-stream" aria-live="polite" ref={streamRef}>
-        {items.length === 0 &&
-        !optimisticMessages?.length &&
-        conversation.activeRunId === undefined ? (
+        {items.length === 0 && !optimisticMessages?.length && activeRunId === undefined ? (
           <ConversationEmpty message={emptyMessage} status={agentStatus} />
         ) : null}
         {items.map((entry) =>
@@ -166,16 +167,17 @@ export function MessageStream({
                       failed: entry.item.status === 'failed',
                     }
               }
-              activeRunId={conversation.activeRunId}
+              activeRunId={activeRunId}
             />
           ) : (
             <StreamEntry
+              retained={historyOnly}
               key={messageStreamKey(entry)}
               entry={entry}
               approvalBusy={approvalBusy}
               approvalReadOnly={approvalReadOnly}
               onApproval={onApproval}
-              activeRunId={conversation.activeRunId}
+              activeRunId={activeRunId}
               taskAcceptance={
                 entry.kind === 'message' || entry.kind === 'plan'
                   ? acceptanceForTurn(taskAcceptance, entry.item.runId)
@@ -204,7 +206,7 @@ export function MessageStream({
               </p>
             ))}
         </div>
-        <ActiveThinking conversation={conversation} stopping={stopping} />
+        {historyOnly ? null : <ActiveThinking conversation={conversation} stopping={stopping} />}
         {optimisticMessages?.map((message, index) => (
           <article
             className={`message message--user${message.queued ? ' message--queued' : ''}`}

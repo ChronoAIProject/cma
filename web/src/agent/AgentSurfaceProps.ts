@@ -10,6 +10,7 @@ import type { SuggestedReplySet } from './suggestions';
 import type { AgentViewPosition } from './viewPosition';
 
 export interface AgentSurfaceProps {
+  readonly onPersonalHome?: () => void;
   readonly selectedRetired?: SelectedRetiredAgent;
   readonly computerObservation?: AgentComputerObservation;
   readonly onViewDeletionStatus?: () => void;
