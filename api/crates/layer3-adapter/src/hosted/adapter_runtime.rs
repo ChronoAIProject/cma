@@ -12,9 +12,7 @@ impl HostedAdapter {
         request: &crate::RuntimeProvisionRequest,
         operation_id: &str,
     ) -> crate::Result<crate::RuntimeProvisionReceipt> {
-        let mut rendered = self
-            .deployment
-            .render_runtime(&request.spec, request.generation)?;
+        let mut rendered = self.deployment.render_request(request)?;
         rendered.funded_until = request.funded_until;
         self.verify_spec_home(&request.spec).await?;
         if let Some(home) = &request.spec.home_volume {
