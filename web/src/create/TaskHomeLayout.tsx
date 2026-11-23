@@ -81,7 +81,7 @@ export function TaskHomeLayout({
                 </div>
                 <CharacterAvatar pose="idle" size={104} still />
               </div>
-              <span className="task-home__eyebrow">Your first agent starts here</span>
+              <span className="task-home__eyebrow">Your next agent starts here</span>
             </>
           ) : null}
           <h1 id={titleId}>{headline}</h1>

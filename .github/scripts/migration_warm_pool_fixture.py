@@ -42,8 +42,11 @@ class WarmPoolFixture:
 
     @staticmethod
     def stable(value):
-        require(isinstance(value, dict) and set(value) == set(FIELDS) | {
+        # Released readers since 59dbb9d82e also serialize `machine`; these
+        # zero-capacity plans and the system default are never machine pools.
+        require(isinstance(value, dict) and set(value) - {'machine'} == set(FIELDS) | {
             'ready_replicas', 'observed', 'status', 'resource_name', 'error'}, 'pool view fields differ')
+        require(value.get('machine', False) is False, 'pool unexpectedly targets the machine image')
         require(isinstance(value['id'], str) and re.fullmatch(r'wp_[a-f0-9]{64}', value['id']),
                 'invalid target identity')
         require(type(value['revision']) is int and value['revision'] in (1, 2), 'invalid revision')
@@ -60,9 +63,12 @@ class WarmPoolFixture:
 
     def inventory(self):
         value = self.request('GET', ROUTE)
-        require(isinstance(value, dict) and set(value) == {
+        # Released readers since 59dbb9d82e add `machine_image` (string or null).
+        require(isinstance(value, dict) and set(value) - {'machine_image'} == {
             'items', 'default_image', 'default_cpu_millis', 'default_memory_mib',
             'default_config_sha256', 'available'}, 'inventory contract differs')
+        require(value.get('machine_image') is None or isinstance(value['machine_image'], str),
+                'inventory machine image differs')
         require(value['default_image'] == RUNTIME and type(value['available']) is bool,
                 'inventory image or availability differs')
         require(all(type(value[k]) is int and value[k] > 0

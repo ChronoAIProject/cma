@@ -1,7 +1,7 @@
 //! Authenticated peer relay. Public credentials and durable command IDs survive a hop.
 mod authentication;
 mod control;
-pub(crate) use control::prestop;
+pub(crate) use control::{prestop, DRAIN};
 mod environment_diagnostics;
 mod http;
 mod ingress;

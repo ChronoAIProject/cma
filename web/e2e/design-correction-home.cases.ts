@@ -403,10 +403,10 @@ export function registerDesignCorrectionHomeCases() {
         await input.focus();
         await expect(page.locator('.task-home__composer')).toHaveCSS(
           'border-color',
-          theme === 'dark' ? 'rgb(58, 58, 64)' : 'rgb(161, 161, 170)',
+          theme === 'dark' ? 'rgb(200, 245, 66)' : 'rgb(77, 124, 15)',
         );
 
-        await expect(input).toHaveCSS('min-height', '128px');
+        await expect(input).toHaveCSS('min-height', '96px');
         await expect(
           page.getByRole('heading', { name: /^Good (morning|afternoon|evening)\.$/ }),
         ).toHaveCSS('font-size', width === 1440 ? '36px' : '28px');
@@ -416,6 +416,13 @@ export function registerDesignCorrectionHomeCases() {
         await expect(page.getByRole('button', { name: 'Start task' })).toBeDisabled();
         await page.getByRole('button', { name: 'Write a task without a template' }).click();
         const keepDraft = page.getByRole('dialog', { name: 'Keep this template draft?' });
+        await expect(keepDraft).toHaveCount(0);
+        await expect(input).toHaveValue(
+          'Research a topic while retaining this independent task draft.',
+        );
+        await page.getByRole('button', { name: 'Write a document' }).click();
+        await page.getByLabel('Subject', { exact: true }).fill('Keep this partial document draft');
+        await page.getByRole('button', { name: 'Write a task without a template' }).click();
         await expect(keepDraft).toBeVisible();
         await keepDraft.getByRole('button', { name: 'Switch and keep draft' }).click();
         await expect(input).toHaveValue(

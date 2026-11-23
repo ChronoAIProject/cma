@@ -192,3 +192,7 @@ fn message(
     ))
     .map_err(|_| ())
 }
+
+#[cfg(test)]
+#[path = "authentication_tests.rs"]
+mod tests;

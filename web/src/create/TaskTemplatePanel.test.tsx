@@ -23,6 +23,10 @@ it.each([
       </TaskTemplatePanel>,
     );
     expect(screen.getByRole('status')).toHaveTextContent(message);
+    expect(
+      screen.getByRole('status').compareDocumentPosition(screen.getByRole('group')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(screen.getByLabelText('Topic')).toHaveValue('保留研究 موضوع');
     expect(onChange).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'Edited topic' } });
