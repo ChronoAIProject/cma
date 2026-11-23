@@ -30,7 +30,17 @@ pub(super) struct CacheRead {
     all(
         not(test),
         not(all(
-            any(all(target_os = "linux", target_env = "gnu"), target_os = "macos"),
+            any(
+                all(target_os = "linux", target_env = "gnu"),
+                all(
+                    target_os = "linux",
+                    target_env = "musl",
+                    target_vendor = "unknown",
+                    target_pointer_width = "64",
+                    target_endian = "little",
+                ),
+                target_os = "macos",
+            ),
             any(target_arch = "x86_64", target_arch = "aarch64"),
         )),
     ),
