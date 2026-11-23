@@ -226,4 +226,6 @@ pub(in crate::store) fn missing_activity_indexes(
 }
 
 #[cfg(test)]
-pub(in crate::store) use tests::startup_ddl::prepare_bindings_for_test;
+pub(in crate::store) use tests::startup_ddl::{
+    apply_binding_indexes_for_test, prepare_bindings_for_test,
+};

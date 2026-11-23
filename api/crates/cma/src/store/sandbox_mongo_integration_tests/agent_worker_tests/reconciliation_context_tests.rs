@@ -18,6 +18,7 @@ mod cpu_profile;
 mod eligibility_tests;
 #[path = "failure_pacing_tests/mod.rs"]
 mod failure_pacing_tests;
+mod ownership_skip_tests;
 mod transport_migration_tests;
 mod validation_reuse_tests;
 

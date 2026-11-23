@@ -37,7 +37,7 @@ impl<T: SandboxStore + SandboxTransactionStore + Send + Sync> CommandRevivalStor
                 .validate()
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
             let at = crate::now_rfc3339();
-            let command = revival(&current, &at, self.managed_runtime_version());
+            let command = revival(&current, &at, self.managed_runtime_version().as_deref());
             let application = apply_sandbox_lifecycle_command(current, &command)?;
             let SandboxLifecycleCommandApplication::Commit {
                 expected_revision,

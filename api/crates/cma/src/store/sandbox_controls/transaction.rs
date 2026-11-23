@@ -38,7 +38,7 @@ pub(super) async fn apply(
                 record,
                 &snapshot.lineage.sandbox,
                 &at,
-                store.managed_runtime_version.as_deref(),
+                store.managed_agent_release().as_deref(),
             )?;
             let plan = if let SandboxControlPlan::Transition { sandbox, .. } = &plan {
                 if store

@@ -146,7 +146,7 @@ async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
         assert!(stores.sandbox_model.warm_runtime_version.is_none());
         assert!(stores.sandbox_model.warm_home_policy.is_none());
         assert_eq!(
-            stores.sandbox_model.managed_runtime_version.as_deref(),
+            stores.sandbox_model.managed_agent_release().as_deref(),
             Some("runtime-isolation-contract")
         );
     }

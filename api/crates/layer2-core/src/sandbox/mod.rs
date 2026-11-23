@@ -270,6 +270,7 @@ pub use agent_read_types::{
     AgentTranscriptMessage, AgentTranscriptRole, AgentTranscriptTurn, AgentTurnOutcome, AgentUsage,
     AgentUsageReading, SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
 };
+pub use agent_reads::privacy_export;
 pub use agent_reads::{
     AgentBufferedEventRequest, AgentConfigurationRead, AgentDetailReading,
     AgentEventStreamAuthorization, AgentEventStreamHeader, AgentEventStreamSnapshot,

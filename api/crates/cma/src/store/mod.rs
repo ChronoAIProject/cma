@@ -54,7 +54,10 @@ mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
+pub(crate) mod stale_turns;
 pub(crate) mod transaction_barrier;
+#[cfg(test)]
+pub(crate) use agent_worker_transaction::adoption_probe;
 #[cfg(test)]
 pub(crate) use agent_worker_transaction::skill_result_test_support;
 mod agent_worktree_recovery;
@@ -85,6 +88,7 @@ mod durability;
 mod empty_discovery;
 mod encryption;
 mod execution_sections;
+pub(crate) mod legal_consents;
 mod media_uploads;
 pub(crate) mod provenance_progress;
 pub(crate) mod registration_capacity;
@@ -139,6 +143,8 @@ mod profile_documents;
 mod profile_draft_admission;
 #[cfg(test)]
 mod profile_index_tests;
+#[cfg(test)]
+mod profile_initial_publication_mongo_tests;
 mod profile_mongo;
 #[cfg(test)]
 mod profile_operator_mongo_integration_tests;

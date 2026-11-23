@@ -190,6 +190,50 @@ fn account_deletion_config_rejects_non_boolean_values() {
     }
 }
 
+const LEGAL: &str =
+    "2026-11-30 https://legal.example.test/terms https://legal.example.test/privacy";
+
+#[test]
+fn legal_terms_default_off_and_load_from_one_setting() {
+    assert!(configured(&[]).unwrap().legal_terms.is_none());
+    assert!(configured(&[("CHRONO_LEGAL_TERMS", "")])
+        .unwrap()
+        .legal_terms
+        .is_none());
+    let terms = configured(&[("CHRONO_LEGAL_TERMS", LEGAL)])
+        .unwrap()
+        .legal_terms
+        .unwrap();
+    assert_eq!(terms.version(), "2026-11-30");
+    assert_eq!(terms.terms_url(), "https://legal.example.test/terms");
+    assert_eq!(terms.privacy_url(), "https://legal.example.test/privacy");
+}
+
+#[test]
+fn legal_terms_refuse_malformed_or_invalid_settings() {
+    for value in [
+        "2026-11-30 https://legal.example.test/terms",
+        "2026-11-30  https://legal.example.test/terms https://legal.example.test/privacy",
+        " 2026-11-30 https://legal.example.test/terms https://legal.example.test/privacy",
+        "2026-11-30 https://legal.example.test/terms https://legal.example.test/privacy extra",
+    ] {
+        assert!(
+            configured(&[("CHRONO_LEGAL_TERMS", value)])
+                .unwrap_err()
+                .contains("separated by single spaces"),
+            "{value}"
+        );
+    }
+    for value in [
+        "v/1 https://legal.example.test/terms https://legal.example.test/privacy",
+        "1 http://legal.example.test/terms https://legal.example.test/privacy",
+        "1 https://legal.example.test/terms /privacy",
+    ] {
+        let error = configured(&[("CHRONO_LEGAL_TERMS", value)]).unwrap_err();
+        assert!(error.starts_with("CHRONO_LEGAL_TERMS: "), "{error}");
+    }
+}
+
 #[test]
 fn runtime_values_are_required_and_nonblank() {
     for key in REQUIRED_RUNTIME_KEYS {

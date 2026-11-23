@@ -116,6 +116,39 @@ def campaign():
 
 
 class BrowserMigrationHTTPTests(unittest.TestCase):
+    def test_deferred_callback_keeps_admission_sign_in_until_reads_finish(self):
+        with campaign() as (server, factory, state):
+            writer = factory()
+            writer.start('old-write')
+            writer.finish('old-write')
+            saved = json.loads(state.read_text())
+            retained = saved['session_cookies']
+            pending = parse_qs(urlsplit(saved['pending']['authorization']).query)['state'][0]
+            reader = factory()
+            reader.defer_pending_callback = True
+            self.assertEqual(reader.start('new-read-old-write'), retained)
+            self.assertIn(pending, server.attempts)
+            self.assertEqual(reader.check_session(), saved['session'])
+            checks = reader.finish('new-read-old-write')
+            self.assertTrue(checks['consumed_attempt_rejected'])
+            self.assertNotIn(pending, server.attempts)
+            self.assertNotEqual(reader.cookies, retained)
+            self.assertEqual(json.loads(state.read_text()), saved)
+
+    def test_deferred_callback_failure_cannot_be_reported_as_success(self):
+        with campaign() as (server, factory, state):
+            writer = factory()
+            writer.start('new-write')
+            writer.finish('new-write')
+            saved = state.read_bytes()
+            reader = factory()
+            reader.defer_pending_callback = True
+            reader.start('old-read-new-write')
+            server.attempts.clear()
+            with self.assertRaisesRegex(RuntimeError, 'provider_authorization_failed'):
+                reader.finish('old-read-new-write')
+            self.assertEqual(state.read_bytes(), saved)
+
     def test_authorize_rejects_unbound_ambiguous_or_injected_state(self):
         with campaign() as (server, factory, _):
             fixture = factory()
