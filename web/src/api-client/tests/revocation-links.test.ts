@@ -34,6 +34,46 @@ it('recovers the original operation when Fetch combines repeated middleware Link
 });
 
 it.each([
+  `${status.padEnd(2048, ' ')}, ${status.replace(operation, 'b'.repeat(64))}`,
+  `${status}; title="${'x'.repeat(2048)}"`,
+])(
+  'refuses the complete oversized header instead of validating a truncated prefix',
+  async (link) => {
+    const client = createClient({
+      baseUrl: 'https://fixture.invalid',
+      fetch: async () =>
+        Response.json(
+          { code: 'resource_revocation_pending', detail: 'Pending' },
+          { status: 409, headers: { Link: link } },
+        ),
+    });
+    const error: unknown = await client.resourceAccess
+      .revokeShare('agent', 'agent', 'share', 1, { idempotencyKey: 'original-command' })
+      .catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ code: 'resource_revocation_pending', statusLink: undefined });
+    expect(pendingRevocation(error, 'agent', 'agent')).toBeUndefined();
+  },
+);
+
+it('accepts a complete valid header at the capture bound', async () => {
+  const link = `${status}; title="${'x'.repeat(2048 - status.length - '; title=""'.length)}"`;
+  expect(link).toHaveLength(2048);
+  const client = createClient({
+    baseUrl: 'https://fixture.invalid',
+    fetch: async () =>
+      Response.json(
+        { code: 'resource_revocation_pending', detail: 'Pending' },
+        { status: 409, headers: { Link: link } },
+      ),
+  });
+  const error: unknown = await client.resourceAccess
+    .revokeShare('agent', 'agent', 'share', 1, { idempotencyKey: 'original-command' })
+    .catch((value: unknown) => value);
+  expect(pendingRevocation(error, 'agent', 'agent')).toBe(operation);
+});
+
+it.each([
   status,
   `${status}, ${profile}, ${description}`,
   `${profile}, ${status}, ${description}`,
@@ -80,7 +120,7 @@ it.each([
   status.replace('rel="status"', 'rel="\u00a0status"'),
   `${status}\r\n${description}`,
   `${status}; title="${'x'.repeat(8192)}"`,
-  `${Array.from({ length: 32 }, () => profile).join(', ')}, ${status}`,
+  `${Array.from({ length: 32 }, () => '</p>; rel=profile').join(', ')}, ${status}`,
 ])('refuses ambiguous, altered or malformed status references: %s', (link) => {
   expect(pending(link)).toBeUndefined();
 });

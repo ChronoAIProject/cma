@@ -2,7 +2,7 @@
 export function revocationStatusTarget(header: string | undefined): string | undefined {
   if (
     !header ||
-    header.length > 8192 ||
+    header.length > MAX_REVOCATION_LINK_LENGTH ||
     [...header].some((char) => (char < ' ' && char !== '\t') || char === '\u007f')
   )
     return undefined;
@@ -45,3 +45,4 @@ export function revocationStatusTarget(header: string | undefined): string | und
   }
   return undefined;
 }
+export const MAX_REVOCATION_LINK_LENGTH = 2048;

@@ -256,7 +256,6 @@ async function agentRevocationRecovery(
     conflicting = false;
     await page.getByRole('button', { name: 'Revoke link', exact: true }).click();
     await page.getByRole('button', { name: 'Revoke access', exact: true }).click();
-    expect(commands[2]).toEqual(commands[0]);
   }
   if (entry !== 'success')
     await expect(
@@ -269,6 +268,7 @@ async function agentRevocationRecovery(
       page.getByText('Access revoked. Previously submitted external requests may still complete.'),
     ).toBeVisible();
   expect(commands).toHaveLength(expectedWrites);
+  if (entry === 'conflicting') expect(commands[2]).toEqual(commands[0]);
   expect(commands[1]).toEqual(commands[0]);
   expect(commands[0]!.key).toBeTruthy();
   await page.reload();
