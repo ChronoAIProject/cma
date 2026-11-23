@@ -107,7 +107,9 @@ it('does not mistake an older saved revision after a failed edit for a supersede
   set.mockRestore();
   const submission = hook.result.current.beginSubmission!('The current unsaved revision');
   act(() =>
-    expect(() => journal.retain('The current unsaved revision')).toThrow('not sent because its draft'),
+    expect(() => journal.retain('The current unsaved revision')).toThrow(
+      'not sent because its draft',
+    ),
   );
   submission.settled();
   expect(journal.read()).toBeNull();
