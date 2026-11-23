@@ -118,6 +118,8 @@ export function ConsoleContent({
   const located = navigationAgent(navigation, route.kind === 'agent' ? route.agentId : undefined);
   const agent = useAgentController(client, personalAgentId, {
     viewerId: user.id,
+    authEpoch,
+    selectedRetired,
     suspended: accessUncertain,
     authorizedLineage: agentAccess.personalLineage,
     summary: located?.agent,
@@ -130,13 +132,12 @@ export function ConsoleContent({
       }
     },
   });
+  const ready = agent.state.status === 'ready' ? agent.state : undefined;
   useDraftAccess(
     user.id,
     selectedAgent,
     agentAccess.state,
-    agent.state.status === 'ready' &&
-      agent.state.detail.id === selectedAgent &&
-      agent.state.detail.status === 'deleted',
+    ready?.detail.id === selectedAgent && ready?.detail.status === 'deleted',
   );
   useEffect(() => {
     if (!accessUncertain && agent.state.status === 'ready')
@@ -171,6 +172,7 @@ export function ConsoleContent({
   const [commandsOpen, setCommandsOpen] = useState(false);
   const newAgent = useCallback(() => onCreate?.({ kind: 'new_agent' }), [onCreate]);
   const hasAgent = personalAgentId !== undefined || shared !== undefined;
+  const runtimeVisible = !accessUncertain && agent.retained === undefined;
   useDocumentTitle(
     route.kind === 'home' || route.kind === 'agent_manager'
       ? 'Agent Manager'
@@ -179,7 +181,6 @@ export function ConsoleContent({
         : undefined,
     route.kind === 'agent' && hasAgent ? 'inherit' : 'product',
   );
-  const ready = agent.state.status === 'ready' ? agent.state : undefined;
   const content =
     route.kind === 'artifacts' || route.kind === 'document' ? (
       <Suspense fallback={<SkeletonRows rows={3} label="Opening Artifacts" />}>
@@ -358,11 +359,11 @@ export function ConsoleContent({
         phoneTitle="Agent Manager"
         taskLayout
         workspaceDetails={panel !== 'details'}
-        detailsOpen={!accessUncertain && hasAgent && panel !== undefined}
+        detailsOpen={runtimeVisible && hasAgent && panel !== undefined}
         compactDetailsOverlay
         onDetailsClose={() => setPanel(undefined)}
         details={
-          route.kind === 'agent' && !accessUncertain && (personalAgentId || shared) ? (
+          route.kind === 'agent' && runtimeVisible && hasAgent ? (
             <AgentSidePanel
               key={route.agentId}
               agentId={route.agentId}
