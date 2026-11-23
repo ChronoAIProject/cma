@@ -106,7 +106,8 @@ pub(crate) struct SandboxWorkerConfig {
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
-    pub runtime_version: String,
+    /// The released default for new provisioning, read once per Sandbox.
+    pub released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
     pub lease_duration: Duration,
     pub retry_delay: Duration,
     pub policy: Arc<dyn SandboxPolicySource>,
@@ -138,7 +139,10 @@ impl SandboxWorkerConfig {
             execution: Default::default(),
             holder: holder.into(),
             deployment_id: deployment_id.into(),
-            runtime_version: runtime_version.into(),
+            released: Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+                runtime_version.into(),
+                None,
+            )),
             lease_duration: DEFAULT_LEASE,
             retry_delay: DEFAULT_RETRY,
             policy,
@@ -164,6 +168,15 @@ impl SandboxWorkerConfig {
                 layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS + 60,
             ));
         }
+        self
+    }
+
+    /// Share the process's released-default authority instead of a fixed pin.
+    pub(crate) fn with_released_runtime(
+        mut self,
+        released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
+    ) -> Self {
+        self.released = released;
         self
     }
 
