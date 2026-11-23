@@ -147,7 +147,7 @@ function ConsoleContent({
   useEffect(() => {
     if (!accessUncertain && agent.state.status === 'ready')
       agent.state.v2?.journal.reconcileDraft();
-  }, [accessUncertain, agent.state]);
+  }, [accessUncertain, agent.state, draft.recoveryBlocked]);
   const actions = useResourceActions(
     client,
     (target) => {

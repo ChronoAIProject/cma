@@ -25,6 +25,7 @@ export default defineConfig({
     'agent-v2-cjk.check.ts',
     'agent-v2-queued.check.ts',
     'agent-v2-composer.check.ts',
+    'agent-deferred-send.check.ts',
     'agent-terminal-recovery.check.ts',
     'agent-history-export.check.ts',
     'agent-recovery-consistency.check.ts',

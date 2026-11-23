@@ -1,5 +1,15 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { clearDraftRecovery, readDraftRecovery, writeDraftRecovery } from './draftRecovery';
+import {
+  clearDraftRecovery,
+  readDraftRecovery,
+  readDraftRecoverySnapshot,
+  replaceDraftRecovery,
+  type DraftCredentialRecovery,
+} from './draftRecovery';
+
+function writeDraftRecovery(id: string, recovery: DraftCredentialRecovery) {
+  return replaceDraftRecovery(id, readDraftRecoverySnapshot(id), recovery);
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -21,7 +31,7 @@ it('retains the original owner and exact unresolved Start packet per Launch with
   writeDraftRecovery('launch-two', { owner: 'second-owner' });
   expect(readDraftRecovery('launch-one')).toEqual(recovery);
   expect(readDraftRecovery('launch-two')).toEqual({ owner: 'second-owner' });
-  clearDraftRecovery('launch-two');
+  clearDraftRecovery('launch-two', readDraftRecoverySnapshot('launch-two'));
   expect(readDraftRecovery('launch-two')).toBeUndefined();
   expect(readDraftRecovery('launch-one')).toEqual(recovery);
 });
@@ -65,7 +75,9 @@ it('preserves the original body property order through a storage round trip', ()
 });
 
 it('reports an unavailable write before dispatch and never hides an accepted result on cleanup', () => {
+  const snapshot = writeDraftRecovery('launch-one', recovery);
   vi.stubGlobal('sessionStorage', {
+    getItem: () => snapshot.raw,
     setItem: () => {
       throw new Error('unavailable');
     },
@@ -74,5 +86,24 @@ it('reports an unavailable write before dispatch and never hides an accepted res
     },
   });
   expect(() => writeDraftRecovery('launch-one', recovery)).toThrow('unavailable');
-  expect(() => clearDraftRecovery('launch-one')).not.toThrow();
+  expect(() => clearDraftRecovery('launch-one', snapshot)).not.toThrow();
+});
+
+it('fences an older attempt even when the newer one has the identical owner and command', () => {
+  const first = writeDraftRecovery('launch-one', recovery);
+  const second = replaceDraftRecovery('launch-one', first, recovery);
+  expect(second.raw).not.toBe(first.raw);
+  expect(() => replaceDraftRecovery('launch-one', first, { owner: recovery.owner })).toThrow(
+    'Saved request changed',
+  );
+  clearDraftRecovery('launch-one', first);
+  expect(readDraftRecoverySnapshot('launch-one')).toEqual(second);
+  clearDraftRecovery('launch-one', second);
+  expect(() => replaceDraftRecovery('launch-one', first, recovery)).toThrow(
+    'Saved request changed',
+  );
+  expect(() => replaceDraftRecovery('launch-one', second, recovery)).toThrow(
+    'Saved request changed',
+  );
+  expect(readDraftRecovery('launch-one')).toBeUndefined();
 });

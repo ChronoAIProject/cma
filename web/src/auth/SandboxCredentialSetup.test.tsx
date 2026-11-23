@@ -286,6 +286,7 @@ it('keeps Start fresh choice, placement, referrer, owner and retry key through r
     key: expect.any(String),
     owner: PUBLIC_USER.id,
     submitted: true,
+    wireBody: JSON.stringify(original.body),
     credentialRecovery: 'retry',
   });
   expect(retained.key).not.toBe(original.key);
