@@ -108,7 +108,7 @@ mod agent_capacity_recovery_tests;
 mod agent_log_read_tests;
 mod agent_segment_tests;
 mod agent_title_tests;
-mod agent_transaction_tests;
+pub(super) mod agent_transaction_tests;
 mod agent_worker_tests;
 mod checkpoint_capture_tests;
 mod execution_tests;
