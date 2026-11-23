@@ -167,3 +167,21 @@ fn empty_discovery_is_strict_independent_and_default_off() {
         );
     }
 }
+
+#[test]
+fn receiver_housekeeping_containment_is_strict_independent_and_default_off() {
+    const KEY: &str = "CHRONO_RECEIVER_HOUSEKEEPING_CONTAINMENT_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.receiver_housekeeping_containment, expected);
+        assert!(flags.ownership_cleanup_pacing);
+    }
+    for value in ["", "1", "TRUE", " true "] {
+        assert!(
+            FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| value.into()))).is_err()
+        );
+    }
+}

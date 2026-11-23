@@ -1,4 +1,5 @@
 //! One participating process: renew, rebalance, revoke receivers, then release.
+mod containment;
 mod drain;
 mod maintenance;
 pub(crate) mod relay;
@@ -29,6 +30,7 @@ pub(crate) struct AgentManager {
     retired_since: Mutex<BTreeMap<AgentId, Instant>>,
     drain: tokio::sync::Mutex<bool>,
     handoffs: Mutex<BTreeMap<AgentId, Instant>>,
+    contained: containment::ContainedHandoffs,
     lifecycle: OnceLock<crate::agent_lifecycle::LifecycleDrain>,
 }
 
@@ -41,7 +43,9 @@ impl AgentManager {
         cleanup_pacing: bool,
         batch_renewal: bool,
     ) -> Result<Arc<Self>, String> {
-        let coordinator = OwnershipCoordinator::register_with_options(
+        // Dormant until activation: startup can outlast a lease, and peers must
+        // not place Agents on, or invite claims by, a process not yet serving.
+        let coordinator = OwnershipCoordinator::prepare_with_options(
             store
                 .agent_ownership
                 .clone()
@@ -60,9 +64,7 @@ impl AgentManager {
             },
             cleanup_pacing,
             batch_renewal,
-        )
-        .await
-        .map_err(|_| "Agent Manager membership registration failed")?;
+        );
         registry.install_ownership(coordinator.clone());
         let manager = Arc::new(Self {
             coordinator,
@@ -73,10 +75,16 @@ impl AgentManager {
             retired_since: Mutex::default(),
             drain: tokio::sync::Mutex::new(false),
             handoffs: Mutex::new(BTreeMap::new()),
+            contained: Default::default(),
             lifecycle: OnceLock::new(),
         });
-        renewal::spawn(&manager);
         Ok(manager)
+    }
+
+    /// Contain a transient receiver housekeeping failure to that receiver
+    /// instead of stopping the process (#3069). Off unless configured.
+    pub fn enable_receiver_containment(&self) {
+        self.contained.enable();
     }
 
     pub fn register_lifecycle(
@@ -88,9 +96,19 @@ impl AgentManager {
             .map_err(|_| "Agent Manager lifecycle already registered".into())
     }
 
-    pub fn activate(&self) -> Result<(), String> {
+    /// Register membership and start renewal at serving entry, once startup
+    /// has proved this process can serve the work it would own.
+    pub async fn activate(self: &Arc<Self>) -> Result<(), String> {
         if self.lifecycle.get().is_none() {
             return Err("Agent Manager lifecycle drain is missing".into());
+        }
+        let first = !self.coordinator.is_registered();
+        self.coordinator
+            .activate()
+            .await
+            .map_err(|_| "Agent Manager membership registration failed")?;
+        if first {
+            renewal::spawn(self);
         }
         if !self.coordinator.is_ready() {
             return Err("Agent Manager membership expired during startup".into());

@@ -224,7 +224,7 @@ impl Fixture {
             batch_delay: StdMutex::new(Duration::ZERO),
             batch_events: StdMutex::default(),
         });
-        let manager = OwnershipCoordinator::register_with_options(
+        let manager = OwnershipCoordinator::prepare_with_options(
             store.clone(),
             Member {
                 instance_id: "renewal-member".into(),
@@ -237,9 +237,10 @@ impl Fixture {
             },
             false,
             enabled,
-        )
-        .await
-        .unwrap();
+        );
+        assert!(!manager.is_ready());
+        assert!(store.membership().await.unwrap().members.is_empty());
+        manager.activate().await.unwrap();
         let mut owners = Vec::new();
         for index in 0..count {
             owners.push(

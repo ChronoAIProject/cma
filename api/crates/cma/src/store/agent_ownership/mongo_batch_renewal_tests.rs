@@ -294,9 +294,8 @@ async fn batch_renewal_withheld_commit_reply_cancels_only_the_captured_authoriti
     let agent = AgentId("withheld-batch-agent".into());
     let routed = RoutedStore::new(store.clone(), agent.clone()).await;
     let coordinator =
-        OwnershipCoordinator::register_with_options(routed.clone(), member(INSTANCE), false, true)
-            .await
-            .unwrap();
+        OwnershipCoordinator::prepare_with_options(routed.clone(), member(INSTANCE), false, true);
+    coordinator.activate().await.unwrap();
     let owner = coordinator.acquire(&agent).await.unwrap().unwrap();
     let before = store.owner(&agent).await.unwrap().unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
