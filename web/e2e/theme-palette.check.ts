@@ -70,9 +70,9 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(
         nav.locator('.sidebar__actions').getByRole('button', { name: 'Settings', exact: true }),
       ).toHaveCount(0);
-      await expect(nav.getByRole('button', { name: 'Settings', exact: true })).toHaveCount(1);
+      await expect(nav.getByRole('button', { name: 'Settings', exact: true })).toHaveCount(0);
       await expect(
-        nav.locator('.sidebar__account').getByRole('button', { name: 'Settings', exact: true }),
+        nav.locator('.sidebar__account').getByRole('button', { name: /Account menu for/ }),
       ).toBeVisible();
       const filter = nav.getByRole('button', { name: 'Filter', exact: true });
       await filter.click();

@@ -233,7 +233,7 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
   await expect(page.getByLabel('Your task')).toHaveValue('Use the next available environment');
   await capacity.getByRole('button', { name: 'Environments', exact: true }).click();
   const inventory = page.getByRole('complementary', { name: 'Application navigation' });
-  await expect(inventory.locator('[role="treeitem"][aria-level="1"]')).toHaveCount(10);
+  await expect(inventory.getByRole('treeitem', { level: 1 })).toHaveCount(10);
   await page.screenshot({ path: info.outputPath('environment-inventory.png'), fullPage: true });
   await inventory.getByRole('link', { name: /^Environment 00 Live$/ }).click();
   await page.getByRole('button', { name: 'More actions', exact: true }).click();
