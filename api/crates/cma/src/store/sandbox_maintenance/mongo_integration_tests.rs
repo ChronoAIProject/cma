@@ -35,6 +35,7 @@ mod availability;
 mod contention_completion;
 mod contention_tests;
 mod idle_tests;
+mod legacy_log_budget_tests;
 mod operator_audit_tests;
 #[path = "platform_stop_integration_tests.rs"]
 mod platform_stop_integration_tests;

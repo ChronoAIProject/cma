@@ -90,7 +90,9 @@ pub(super) async fn read_only_summary(
     if integrity.head_seq > 0 {
         let raw = point_read(
             store,
-            doc! { "_id": log_id(&agent.id, integrity.head_seq) },
+            // Match the same owner of the log row as the sequence scan before
+            // returning a trusted tail's payload to the integrity validator.
+            doc! { "_id": log_id(&agent.id, integrity.head_seq), "agent_id": agent.id.as_str() },
             false,
             session,
             snapshot,
