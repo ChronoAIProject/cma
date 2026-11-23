@@ -1,5 +1,6 @@
 import {isDeepStrictEqual} from 'node:util';
 import {check, hash, isHash} from '../scale-tests/lib/checks.mjs';
+import {runtimeStorage, usesRetainedVolume} from './native-storage.mjs';
 
 const dns = value => typeof value === 'string' && value.length <= 63
   && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(value);
@@ -23,7 +24,7 @@ export function validateBinding(value) {
     'native_adoption_binding_required');
   check(typeof value.image === 'string' && value.image.length <= 512
     && /^[a-z0-9]+(?:[._:/-][a-z0-9]+)*@sha256:[a-f0-9]{64}$/.test(value.image), 'native_image_pin_required');
-  check(Array.isArray(value.pvcs) && value.pvcs.length > 0 && value.pvcs.length <= 8
+  check(Array.isArray(value.pvcs) && value.pvcs.length === 1
     && value.pvcs.every(pvc => pvc && dns(pvc.name) && dns(pvc.uid) && dns(pvc.volume))
     && new Set(value.pvcs.map(pvc => pvc.name)).size === value.pvcs.length
     && new Set(value.pvcs.map(pvc => pvc.uid)).size === value.pvcs.length,
@@ -76,13 +77,9 @@ export function sandboxEvidence(value, binding) {
   check(Number.isSafeInteger(meta.generation) && meta.generation > 0, 'native_generation_invalid');
   check(['Running', 'Suspended'].includes(value.spec?.operatingMode), 'native_mode_invalid');
   runtimeImage(value.spec.podTemplate?.spec, binding);
-  const volumes = value.spec.podTemplate.spec.volumes;
-  check(Array.isArray(value.spec.volumeClaimTemplates) && value.spec.volumeClaimTemplates.length === 0
-    && Array.isArray(volumes) && volumes.length === binding.pvcs.length
-    && volumes.every(volume => volume?.persistentVolumeClaim?.readOnly === false
-      && binding.pvcs.some(pvc => pvc.name === volume.persistentVolumeClaim.claimName))
-    && new Set(volumes.map(volume => volume.persistentVolumeClaim.claimName)).size === binding.pvcs.length,
-  'native_retained_volumes_changed');
+  check(Array.isArray(value.spec.volumeClaimTemplates) && value.spec.volumeClaimTemplates.length === 0,
+    'native_retained_volumes_changed');
+  runtimeStorage(value.spec.podTemplate.spec, binding);
   const conditions = value.status?.conditions;
   check(Array.isArray(conditions) && conditions.every(condition => condition
     && text(condition.type) && ['True', 'False', 'Unknown'].includes(condition.status)
@@ -129,13 +126,16 @@ export function podEvidence(page, binding, limit) {
       && !names.has(meta.name) && !ids.has(meta.uid), 'native_pod_page_invalid');
     names.add(meta.name); ids.add(meta.uid);
     const owners = ownerReferences(pod);
-    const related = owners.some(owner => owner.uid === binding.sandbox.uid
+    // A Pod using the original disk cannot be declared unrelated just because
+    // its ownership or tracking labels disappeared. Ambiguity blocks release.
+    const related = usesRetainedVolume(pod.spec, binding) || owners.some(owner => owner.uid === binding.sandbox.uid
       || (owner.kind === 'Sandbox' && owner.name === binding.sandbox.name))
       || meta.labels?.['cma/runtime-name'] === binding.sandbox.name
       || meta.labels?.['agents.x-k8s.io/sandbox-name-hash'] === trackingHash(binding.sandbox.name);
     if (!related) continue;
     owned(pod, binding);
     runtimeImage(pod.spec, binding);
+    runtimeStorage(pod.spec, binding);
     check(['Pending', 'Running', 'Succeeded', 'Failed', 'Unknown'].includes(pod.status?.phase),
       'native_pod_status_missing');
     // Terminating and completed Pods still disprove release until they disappear.

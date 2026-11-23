@@ -106,6 +106,7 @@ test('a complete Pod page retains terminating and terminal Pods without requirin
   ]);
   const unrelated = structuredClone(data.pod);
   unrelated.metadata = {...unrelated.metadata, name: 'unrelated', uid: 'other', ownerReferences: []};
+  unrelated.spec.volumes[0].persistentVolumeClaim.claimName = 'unrelated-home';
   data.pods.items.push(unrelated);
   assert.equal(podEvidence(data.pods, data.binding, 128).length, 1);
 });
