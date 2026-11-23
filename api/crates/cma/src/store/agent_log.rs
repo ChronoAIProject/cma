@@ -15,6 +15,8 @@ pub(super) use super::agent_log_integrity::{
     scan_complete_log_with_session, scan_complete_log_with_snapshot_session,
 };
 use super::agent_log_reads::{read_window, Window};
+use super::agent_log_segment_reads::transcript_page;
+use super::agent_log_segments::capture::CaptureMode;
 use super::agents::read_agent;
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, require_version, signed, start_transaction,
@@ -417,13 +419,15 @@ impl AgentLogStore for MongoSandboxStore {
         expected: &layer2_core::sandbox::Agent,
         request: &layer2_core::sandbox::AgentTranscriptPageRequest,
     ) -> Result<Option<layer2_core::sandbox::AgentTranscriptPage>, SandboxStoreError> {
-        let mut session = self
-            .client
-            .start_session()
-            .snapshot(true)
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-        super::agent_log_segment_reads::transcript_page(self, expected, &mut session, request).await
+        transcript_page(self, expected, request, CaptureMode::Snapshot).await
+    }
+
+    async fn agent_log_export_page(
+        &self,
+        expected: &layer2_core::sandbox::Agent,
+        request: &layer2_core::sandbox::AgentTranscriptPageRequest,
+    ) -> Result<Option<layer2_core::sandbox::AgentTranscriptPage>, SandboxStoreError> {
+        transcript_page(self, expected, request, CaptureMode::PrivacyExport).await
     }
 
     async fn agent_log_final_answer(
