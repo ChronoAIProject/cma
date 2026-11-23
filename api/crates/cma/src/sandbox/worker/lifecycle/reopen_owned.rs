@@ -1,6 +1,6 @@
 //! Reopen under the owner epoch and activate only after durable publication.
 use super::super::SandboxWorker;
-use super::reopen_output::drain_while;
+use super::reopen_output::{drain_while, drain_while_held, RELAYED_REOPEN_LIMIT};
 use crate::sandbox::{live_agents::LiveAgentAttachment, runtime_capabilities, runtime_options};
 use layer2_core::{
     agent_ownership::execution_authority,
@@ -128,29 +128,28 @@ impl SandboxWorker {
             None,
         );
         let (updates, mut receiver) = tokio::sync::mpsc::channel(256);
-        let channel = drain_while(
-            self.dependencies.adapter.reconnect_agent(
-                &runtime,
-                agent.work.next_fence,
-                &request,
-                &conversation,
-                updates,
-            ),
-            &mut receiver,
-            self.dependencies.updates.as_ref(),
-            id,
-            &guard,
-        )
-        .await
-        .map_err(reopen_failed(id, "reconnect"))?;
+        let channel = self
+            .drain_reopen(
+                self.dependencies.adapter.reconnect_agent(
+                    &runtime,
+                    agent.work.next_fence,
+                    &request,
+                    &conversation,
+                    updates,
+                ),
+                &mut receiver,
+                id,
+                &guard,
+            )
+            .await
+            .map_err(reopen_failed(id, "reconnect"))?;
         if channel.conversation_id.as_deref() != Some(&conversation) {
             return Err(refused(id, "conversation_mismatch"));
         }
         if let Some(settings) = &agent.conversation.settings {
-            drain_while(
+            self.drain_reopen(
                 channel.input.send(settings.runtime_input()),
                 &mut receiver,
-                self.dependencies.updates.as_ref(),
                 id,
                 &guard,
             )
@@ -233,7 +232,10 @@ impl SandboxWorker {
                             }
                         }
                         match parent {
-                            Ok(Some(parent)) if guard.sandbox.matches(&parent) => {}
+                            // The caller renews its lease in place; end with
+                            // that durable lease, not with its call snapshot.
+                            Ok(Some(parent))
+                                if guard.sandbox.matches(&parent) && lease_live(&parent) => {}
                             Ok(_) => return,
                             Err(_) => (),
                         }
@@ -241,13 +243,8 @@ impl SandboxWorker {
                         delay = (delay * 2).min(Duration::from_secs(5));
                     }
                 };
-                let expires = layer2_core::seconds_from_rfc3339(&call_expiry(&guard)).unwrap_or(0);
-                let now = layer2_core::seconds_from_rfc3339(&now_rfc3339()).unwrap_or(u64::MAX);
                 let _ = authority
-                    .run(tokio::time::timeout(
-                        Duration::from_secs(expires.saturating_sub(now)),
-                        watching,
-                    ))
+                    .run(tokio::time::timeout(RELAYED_REOPEN_LIMIT, watching))
                     .await;
                 // Drop rolls back only this exact staged nonce, never a published
                 // entry or a newer owner attachment, including cancellation.
@@ -258,13 +255,49 @@ impl SandboxWorker {
     }
 }
 
-fn call_expiry(guard: &AgentReopenGuard) -> String {
-    guard
-        .sandbox
+impl SandboxWorker {
+    /// A same-process owner keeps the caller's renewed `WorkAuthority`. A
+    /// relayed owner has none, so it is bounded by the caller's durable lease
+    /// (#3244) instead of the lease snapshot carried by the call.
+    async fn drain_reopen<T>(
+        &self,
+        operation: impl std::future::Future<Output = layer3_adapter::Result<T>>,
+        receiver: &mut tokio::sync::mpsc::Receiver<layer3_adapter::ConversationUpdate>,
+        id: &AgentId,
+        guard: &AgentReopenGuard,
+    ) -> layer3_adapter::Result<T> {
+        let updates = self.dependencies.updates.as_ref();
+        if layer2_core::sandbox::store::WorkAuthority::active() {
+            return drain_while(operation, receiver, updates, id, guard).await;
+        }
+        drain_while_held(operation, receiver, updates, id, guard, || {
+            self.caller_lease_held(&guard.sandbox)
+        })
+        .await
+    }
+
+    /// Whether the caller's exact lifecycle lease is still held durably.
+    async fn caller_lease_held(&self, guard: &SandboxMutationGuard) -> bool {
+        match self.dependencies.store.get_sandbox(&guard.sandbox_id).await {
+            Ok(Some(current)) => guard.matches(&current) && lease_live(&current),
+            Ok(None) => false,
+            // A failed read proves no loss. Durable writes stay fenced at the
+            // write, and RELAYED_REOPEN_LIMIT still bounds the work.
+            Err(_) => true,
+        }
+    }
+}
+
+/// The sandbox's durable work lease has not expired.
+fn lease_live(sandbox: &layer2_core::sandbox::Sandbox) -> bool {
+    let now = layer2_core::seconds_from_rfc3339(&now_rfc3339());
+    sandbox
+        .work
         .lease
         .as_ref()
-        .map(|lease| lease.expires_at.clone())
-        .unwrap_or_default()
+        .and_then(|lease| layer2_core::seconds_from_rfc3339(&lease.expires_at))
+        .zip(now)
+        .is_some_and(|(expires, now)| expires > now)
 }
 
 struct StagedReopen {

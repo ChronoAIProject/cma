@@ -54,6 +54,51 @@ pub(super) async fn drain_while<T>(
     .map_err(|_| AdapterError::Unavailable("reopen output lifecycle lease expired".into()))?
 }
 
+/// Kept below the caller's 60 s relay timeout, so the owner returns a typed
+/// refusal instead of being cut off mid-operation.
+pub(super) const RELAYED_REOPEN_LIMIT: Duration = Duration::from_secs(55);
+
+/// A relayed owner has no caller `WorkAuthority`, and the caller's 15 s work
+/// lease is renewed in place where the owner cannot see it (#3244). Bound the
+/// reopen by that durable lease instead of its snapshot: continue while `held`
+/// confirms the caller's exact lease is still held, refuse as soon as it is
+/// not, and never exceed `RELAYED_REOPEN_LIMIT`. Every durable reopen write
+/// remains fenced by `guard` at the write; this bound only stops the work.
+pub(super) async fn drain_while_held<T, H, Held>(
+    operation: impl Future<Output = layer3_adapter::Result<T>>,
+    receiver: &mut mpsc::Receiver<ConversationUpdate>,
+    recorder: &dyn AgentUpdateRecorder,
+    agent_id: &AgentId,
+    guard: &AgentReopenGuard,
+    mut held: H,
+) -> layer3_adapter::Result<T>
+where
+    H: FnMut() -> Held,
+    Held: Future<Output = bool>,
+{
+    let lost = || AdapterError::Unavailable("reopen output lifecycle lease expired".into());
+    // Refuse before polling, so a lapsed lease cannot begin the operation.
+    if !held().await {
+        return Err(lost());
+    }
+    let watch = async {
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            if !held().await {
+                return;
+            }
+        }
+    };
+    tokio::select! {
+        biased;
+        () = watch => Err(lost()),
+        result = tokio::time::timeout(
+            RELAYED_REOPEN_LIMIT,
+            drain(operation, receiver, recorder, agent_id, guard),
+        ) => result.map_err(|_| AdapterError::Unavailable("reopen output operation timed out".into()))?,
+    }
+}
+
 async fn drain<T>(
     operation: impl Future<Output = layer3_adapter::Result<T>>,
     receiver: &mut mpsc::Receiver<ConversationUpdate>,
