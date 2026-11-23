@@ -96,3 +96,54 @@ async fn concurrent_begin_loser_preserves_the_winners_unconfirmed_effect() {
     assert_eq!(gateway.requests.load(Ordering::SeqCst), 1);
     assert_eq!(*ledger.lock().unwrap().available(&binding), 2);
 }
+
+#[tokio::test]
+async fn in_flight_dispatch_keeps_original_funding_when_credential_certification_changes() {
+    for certification_unavailable in [false, true] {
+        let ledger = Ledger::default();
+        let gateway = Gateway::default();
+        let selected = credential(CredentialSource::Managed);
+        let binding = payer(selected.clone());
+        ledger.lock().unwrap().add(&binding, 5);
+        let credit = ModelCredit::new(&ledger, &gateway);
+        let held = credit
+            .reserve("retained-funding".into(), &selected, units(5), &3)
+            .await
+            .unwrap();
+        let id = &held.reservation.id;
+        gateway.ambiguous_reply.store(true, Ordering::SeqCst);
+        assert_eq!(
+            credit.dispatch(id, &selected, 3).await,
+            Err(FundingError::ReconciliationRequired)
+        );
+        let pending = ledger.read(id).await.unwrap();
+        let rotated = CredentialBinding {
+            generation: units(2),
+            ..selected
+        };
+        gateway
+            .certification_unavailable
+            .store(certification_unavailable, Ordering::SeqCst);
+        assert_eq!(
+            credit.dispatch(id, &rotated, 3).await,
+            Err(FundingError::ReconciliationRequired)
+        );
+        assert_eq!(
+            credit.dispatch(id, &rotated, 4).await,
+            Err(FundingError::CheckpointChanged)
+        );
+        assert_eq!(ledger.read(id).await.unwrap(), pending);
+        assert_eq!(gateway.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(*ledger.lock().unwrap().available(&binding), 0);
+
+        let settled = credit.reconcile(id).await.unwrap();
+        assert_eq!(settled.reservation.binding, binding);
+        assert_eq!(
+            settled.state,
+            PhaseState::Settled(Effect::Finished { spent: 3 })
+        );
+        assert_eq!(credit.reconcile(id).await.unwrap(), settled);
+        assert_eq!(gateway.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(*ledger.lock().unwrap().available(&binding), 2);
+    }
+}

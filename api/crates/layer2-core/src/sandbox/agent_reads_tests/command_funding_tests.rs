@@ -15,6 +15,8 @@ use std::sync::atomic::AtomicBool;
 
 struct Gateway {
     lose_reply: bool,
+    selection_unavailable: AtomicBool,
+    certification_unavailable: AtomicBool,
     verified_effect: AtomicBool,
     lookup_unavailable: AtomicBool,
     credential_generation: std::sync::atomic::AtomicU64,
@@ -28,6 +30,9 @@ impl AgentModelGateway for Gateway {
         _: &Agent,
         _: &Sandbox,
     ) -> Result<CredentialBinding, FundingError> {
+        if self.selection_unavailable.load(Ordering::SeqCst) {
+            return Err(FundingError::Unavailable);
+        }
         Ok(CredentialBinding {
             generation: units(self.credential_generation.load(Ordering::SeqCst)),
             ..credential(CredentialSource::Managed)
@@ -48,6 +53,9 @@ impl FundedModelGateway for Gateway {
     type Request = ModelPhaseRequest;
 
     async fn certify(&self, selected: &CredentialBinding) -> Result<PayerBinding, FundingError> {
+        if self.certification_unavailable.load(Ordering::SeqCst) {
+            return Err(FundingError::Unavailable);
+        }
         Ok(payer(selected.clone()))
     }
 
@@ -86,6 +94,8 @@ impl FundedModelGateway for Gateway {
 fn gateway(lose_reply: bool) -> Arc<Gateway> {
     Arc::new(Gateway {
         lose_reply,
+        selection_unavailable: AtomicBool::new(false),
+        certification_unavailable: AtomicBool::new(false),
         verified_effect: AtomicBool::new(false),
         lookup_unavailable: AtomicBool::new(false),
         credential_generation: std::sync::atomic::AtomicU64::new(1),
@@ -349,3 +359,6 @@ mod admission_recovery;
 
 #[path = "command_funding_dispatch_tests.rs"]
 mod dispatch_recovery;
+
+#[path = "command_funding_binding_tests.rs"]
+mod binding_recovery;
