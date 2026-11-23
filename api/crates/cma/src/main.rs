@@ -402,3 +402,4 @@ mod public_signup_abuse_tests;
 #[cfg(test)]
 #[path = "main_tests.rs"]
 mod tests;
+// Draft exercise of the runtime vulnerability gate; never merged.
