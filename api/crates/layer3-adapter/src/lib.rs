@@ -56,6 +56,7 @@ pub mod ingress_budget;
 mod prompt_identity;
 mod provider_finality;
 pub mod recovery_diagnostics;
+mod released_runtime;
 pub mod resource_execution_protocol;
 mod runtime;
 pub mod runtime_bootstrap;
@@ -163,6 +164,9 @@ pub use prompt_identity::PromptIdentity;
 pub use provider_finality::{
     provider_request_digest, RuntimeFinalityReceipt, RuntimeProviderIncarnation,
     RuntimeProvisionReceipt,
+};
+pub use released_runtime::{
+    PinnedReleasedRuntime, ReleasedRuntime, ReleasedRuntimeSource, StaleReleasedRuntime,
 };
 pub use runtime::{
     CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,

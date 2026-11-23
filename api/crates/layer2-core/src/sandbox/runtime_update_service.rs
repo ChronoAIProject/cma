@@ -24,15 +24,31 @@ pub enum SandboxRuntimeUpdateError {
 
 pub struct SandboxRuntimeUpdateService {
     store: Arc<dyn SandboxStore>,
-    latest_version: String,
+    released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
     recovery: Option<Arc<dyn SandboxUnpublishedRecoveryVerifier>>,
 }
 
 impl SandboxRuntimeUpdateService {
+    /// A service whose latest managed runtime is this fixed agent-lane pin.
     pub fn new(store: Arc<dyn SandboxStore>, latest_version: String) -> Self {
+        Self::with_released(
+            store,
+            Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+                latest_version,
+                None,
+            )),
+        )
+    }
+
+    /// The latest managed runtime is the source's agent-lane release, read
+    /// once per decision so one request never mixes two releases.
+    pub fn with_released(
+        store: Arc<dyn SandboxStore>,
+        released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
+    ) -> Self {
         Self {
             store,
-            latest_version,
+            released,
             recovery: None,
         }
     }
@@ -45,11 +61,16 @@ impl SandboxRuntimeUpdateService {
         self
     }
 
-    pub fn latest_version(&self) -> &str {
-        &self.latest_version
+    pub fn latest_version(&self) -> String {
+        self.released.snapshot().agent
     }
 
     pub fn can_update(&self, sandbox: &Sandbox) -> bool {
+        self.can_update_to(sandbox, &self.latest_version())
+    }
+
+    /// `can_update` against a release the caller already captured.
+    pub fn can_update_to(&self, sandbox: &Sandbox, latest: &str) -> bool {
         if self.recovery.is_some() && sandbox.unpublished_recovery_candidate() {
             return true;
         }
@@ -70,7 +91,7 @@ impl SandboxRuntimeUpdateService {
             SandboxStatus::Active | SandboxStatus::Paused
         ) && sandbox
             .retained_runtime_binding()
-            .is_some_and(|binding| binding.runtime_version != self.latest_version)
+            .is_some_and(|binding| binding.runtime_version != latest)
     }
 
     pub async fn request(
@@ -114,7 +135,7 @@ impl SandboxRuntimeUpdateService {
         let target = sandbox
             .automatic_unpublished_recovery_target()
             .ok_or(SandboxRuntimeUpdateError::NotAvailable)?;
-        if target != self.latest_version
+        if target != self.latest_version()
             || sandbox.lifecycle.unpublished_recovery_attempted
             || sandbox.lifecycle.unpublished_recovery.is_some()
         {
@@ -173,6 +194,7 @@ impl SandboxRuntimeUpdateService {
         owner: Option<&SubjectId>,
     ) -> Result<Sandbox, SandboxRuntimeUpdateError> {
         for _ in 0..8 {
+            let latest = self.latest_version();
             let mut sandbox = self
                 .store
                 .get_sandbox(id)
@@ -183,19 +205,18 @@ impl SandboxRuntimeUpdateService {
             let pinned = sandbox.runtime_update_request().is_some_and(|request| {
                 request.completed_at.is_none() && request.target_version == target_version
             });
-            if target_version != self.latest_version && !pinned {
+            if target_version != latest && !pinned {
                 return Err(SandboxRuntimeUpdateError::TargetChanged);
             }
             if sandbox.unpublished_recovery_candidate() {
                 // A reopen stalled on a superseded pinned runtime cannot succeed there:
                 // the current manager refuses that runtime. Retrying it would park the
                 // Sandbox in the same place again, so recover onto the latest (#2257).
-                let target =
-                    if target_version != self.latest_version && reopens_conversations(&sandbox) {
-                        self.latest_version.as_str()
-                    } else {
-                        target_version
-                    };
+                let target = if target_version != latest && reopens_conversations(&sandbox) {
+                    latest.as_str()
+                } else {
+                    target_version
+                };
                 match self.recover_unpublished(&sandbox, target, false).await {
                     Ok(recovered) => return Ok(recovered),
                     Err(SandboxStoreError::Conflict) => {

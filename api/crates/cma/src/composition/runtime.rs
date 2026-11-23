@@ -57,11 +57,12 @@ impl RuntimeServices {
                     .clone()
                     .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
             )
-            .with_target_fencing(config.agent_manager_replicas.is_some()),
+            .with_target_fencing(config.agent_manager_replicas.is_some())
+            .with_released_runtime(stores.released_runtime.clone()),
             updates: Arc::new(
-                layer2_core::sandbox::SandboxRuntimeUpdateService::new(
+                layer2_core::sandbox::SandboxRuntimeUpdateService::with_released(
                     stores.sandbox_model.clone(),
-                    config.runtime.sandbox_image.clone(),
+                    stores.released_runtime.clone(),
                 )
                 .with_unpublished_recovery(Arc::new(
                     crate::sandbox::unpublished_recovery::UnpublishedRuntimeRecovery::new(
@@ -92,6 +93,7 @@ pub(super) fn lifecycle_config(
     config: &Config,
     holder: String,
     ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    stores: &MongoStores,
 ) -> crate::sandbox::SandboxLifecycleConfig {
     crate::sandbox::SandboxLifecycleConfig {
         renewable_work: config.agent_manager_replicas.is_some(),
@@ -125,7 +127,7 @@ pub(super) fn lifecycle_config(
         execution: config.execution,
         holder,
         deployment_id: config.deployment_id.clone(),
-        runtime_version: config.runtime.sandbox_image.clone(),
+        released: stores.released_runtime.clone(),
         title_model: config.default_profiles.agent_model.clone(),
     }
 }

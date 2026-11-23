@@ -56,6 +56,8 @@ mod agent_worker_store;
 mod agent_worker_transaction;
 pub(crate) mod stale_turns;
 #[cfg(test)]
+pub(crate) use agent_worker_transaction::adoption_probe;
+#[cfg(test)]
 pub(crate) use agent_worker_transaction::skill_result_test_support;
 mod agent_worktree_recovery;
 mod agent_worktree_recovery_records;
