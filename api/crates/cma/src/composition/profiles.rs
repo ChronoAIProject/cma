@@ -35,6 +35,16 @@ pub(super) async fn seed_profiles(
         .map_err(|error| format!("default profiles are not usable: {error}"))
 }
 
+pub(super) fn live_policy(
+    config: &Config,
+    settings: &Arc<layer2_core::PlatformSettingsService>,
+) -> Arc<crate::sandbox::LiveSandboxPolicy> {
+    Arc::new(crate::sandbox::LiveSandboxPolicy::new(
+        Arc::clone(settings),
+        config.baseline_services.clone(),
+    ))
+}
+
 pub(super) fn platform_settings(
     config: &Config,
     stores: &MongoStores,

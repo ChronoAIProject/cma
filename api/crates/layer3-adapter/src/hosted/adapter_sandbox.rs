@@ -170,7 +170,12 @@ impl SandboxAdapter for HostedAdapter {
     }
 
     async fn provision_runtime(&self, request: &RuntimeProvisionRequest) -> Result<RuntimeHandle> {
-        self.provision_runtime_request(request).await
+        self.provision_exact(
+            &request.released_spec(),
+            request.generation,
+            request.funded_until,
+        )
+        .await
     }
 
     async fn runtime_termination(

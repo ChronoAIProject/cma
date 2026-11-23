@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use layer2_core::StoreError;
-use mongodb::{bson::doc, options::ClientOptions, Client};
+use mongodb::{bson::doc, Client};
 
 use super::{
     AuthEncryptionKey, MongoActivityStore, MongoAdmissionControlStore, MongoAuthStore,
@@ -11,6 +11,11 @@ use super::{
     MongoSandboxCredentialStore, MongoSandboxStore, MongoTriggerDefinitionStore,
     MongoUserDirectoryStore,
 };
+
+mod options;
+use options::connection_options;
+#[cfg(test)]
+pub(super) use options::STARTUP_COMMANDS;
 
 #[path = "account_mongo.rs"]
 mod account;
@@ -470,25 +475,6 @@ impl MongoStores {
         super::billing_authority::require_legacy_compatible(&self.client.database(&self.database))
             .await
     }
-}
-
-async fn connection_options(uri: &str) -> Result<ClientOptions, StoreError> {
-    let mut options = ClientOptions::parse(uri)
-        .await
-        .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
-    // Replica ownership changes authority, not the deployment's connection
-    // budget. Preserve explicit URI options and driver defaults in both modes.
-    super::mongo_latency::observe(&mut options);
-    #[cfg(test)]
-    if let Ok(handler) = STARTUP_COMMANDS.try_with(Clone::clone) {
-        options.command_event_handler = Some(handler);
-    }
-    Ok(options)
-}
-
-#[cfg(test)]
-tokio::task_local! {
-    pub(super) static STARTUP_COMMANDS: mongodb::event::EventHandler<mongodb::event::command::CommandEvent>;
 }
 
 #[cfg(test)]

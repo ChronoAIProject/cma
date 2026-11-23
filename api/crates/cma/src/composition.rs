@@ -28,7 +28,7 @@ use crate::{
     profile_policy::profile_route_policy,
     projections::{AdapterAgentHistoryExporter, AdapterSandboxResources, AgentProjectionServices},
     sandbox::{
-        runtime_capabilities, LiveAgentRegistry, LiveSandboxPolicy, PlatformTitleEndpoint,
+        runtime_capabilities, LiveAgentRegistry, PlatformTitleEndpoint,
         SandboxLifecycleComposition, SandboxLifecycleDependencies,
     },
     store::{DefaultProfileSpec, MongoStores},
@@ -58,10 +58,7 @@ impl ControlPlaneComposition {
         profiles::seed_profiles(&stores, config, &profile_policy).await?;
         let sandbox_operators = access::sandbox_operators(&stores, &activity);
         let settings = profiles::platform_settings(config, &stores, &activity);
-        let sandbox_policy = Arc::new(LiveSandboxPolicy::new(
-            Arc::clone(&settings),
-            config.baseline_services.clone(),
-        ));
+        let sandbox_policy = profiles::live_policy(config, &settings);
         let subscriptions =
             crate::connections::CodexSubscriptions::new(stores.codex_subscriptions.clone());
         let access_tools = credentials::agent_access_tools(config, &stores, standing.clone())?;
