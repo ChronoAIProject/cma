@@ -5,6 +5,7 @@ on:
     branches: [develop, main]
     paths:
       - '.github/scripts/migration*'
+      - '.github/scripts/migration-native-assets/**'
       - '.github/scripts/test_migration*'
       - '.github/scripts/multi-am-features/owner/identity.py'
       - '.github/scripts/multi-am-features/test_identity.py'
@@ -13,6 +14,7 @@ on:
     branches: [develop]
     paths:
       - '.github/scripts/migration*'
+      - '.github/scripts/migration-native-assets/**'
       - '.github/scripts/test_migration*'
       - '.github/scripts/multi-am-features/owner/identity.py'
       - '.github/scripts/multi-am-features/test_identity.py'
@@ -56,3 +58,15 @@ jobs:
           .github/scripts/migration-matrix-inventory-files.test.mjs
           .github/scripts/migration_launch_documents.test.cjs
           .github/scripts/migration_sandbox_documents.test.cjs
+          .github/scripts/migration_agent_documents.test.cjs
+          .github/scripts/migration_agent_document_join.test.mjs
+          .github/scripts/migration_agent_journey.test.mjs
+          .github/scripts/migration_agent_http.test.mjs
+          .github/scripts/migration_agent_kubernetes.test.mjs
+          .github/scripts/migration_native_provider.test.mjs
+          .github/scripts/migration_agent_cleanup.test.mjs
+          .github/scripts/migration_agent_session.test.mjs
+          .github/scripts/migration_agent_protocol.test.mjs
+          .github/scripts/migration_agent_session_http.test.mjs
+          .github/scripts/migration_api_custody_documents.test.cjs
+          .github/scripts/migration_membership_documents.test.cjs
