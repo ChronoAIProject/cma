@@ -16,7 +16,7 @@ pub(in crate::store) mod command_worker;
 mod digest;
 mod telemetry;
 pub(in crate::store) mod terminal;
-pub(in crate::store) use digest::{incarnation, incarnation_fields};
+pub(in crate::store) use digest::{incarnation, incarnation_fields, valid_digest};
 mod envelope;
 pub(in crate::store) mod ordinary;
 pub(in crate::store) mod projection;

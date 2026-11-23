@@ -20,6 +20,7 @@ mod effects;
 mod failure;
 mod membership;
 mod records;
+mod renewal_batch;
 mod work_discovery;
 use records::{member_from, owner_from, token_filter};
 
@@ -247,6 +248,17 @@ impl OwnershipStore for MongoAgentOwnership {
 
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError> {
         self.renew_owner(token).await
+    }
+
+    fn supports_batch_renewal(&self) -> bool {
+        true
+    }
+
+    async fn renew_batch(
+        &self,
+        tokens: &[OwnershipToken],
+    ) -> Result<layer2_core::agent_ownership::RenewalBatch, OwnershipError> {
+        self.renew_owner_batch(tokens).await
     }
 
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {

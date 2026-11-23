@@ -351,6 +351,19 @@ impl AgentWorkerStore for MongoSandboxStore {
                 return Ok(None);
             };
             let mut agent = super::agents::read_agent(&row)?;
+            if super::agent_worker_transaction::pending_adoption::witness::blocks_claim(
+                self, &row, &agent,
+            )? {
+                let retired =
+                    super::agent_worker_transaction::pending_adoption::retirement::retire_expired(
+                        self, &row, &agent, &now,
+                    )
+                    .await?;
+                if retired && self.segment_adoption_enabled {
+                    continue;
+                }
+                return Ok(None);
+            }
             if self.ownership_retry_hints_active() {
                 use crate::sandbox::ownership_retry_hint::{AdvisoryDecision, OwnershipRetryHints};
                 if self.preflight(id).await == AdvisoryDecision::Hold {
@@ -411,5 +424,13 @@ impl AgentWorkerStore for MongoSandboxStore {
         mutation: AgentWorkMutation,
     ) -> Result<(), SandboxStoreError> {
         super::agent_worker_transaction::commit_agent_work(self, mutation).await
+    }
+
+    async fn commit_agent_connection_work(
+        &self,
+        mutation: AgentWorkMutation,
+        parents: layer2_core::sandbox::store::AgentWorkPublicationParents,
+    ) -> Result<(), SandboxStoreError> {
+        super::agent_worker_transaction::commit_agent_connection_work(self, mutation, parents).await
     }
 }

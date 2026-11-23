@@ -153,8 +153,9 @@ impl ControlPlaneComposition {
             profile_scanner.clone(),
             stores.agent_lifecycle.clone(),
             Some(stores.sandbox_model.clone()),
-            Some(adapter::desktop_creation(config, adapter.clone())?),
+            Some(adapter::desktop_creation(config, adapter.clone(), &stores)?),
         )
+        .with_released_runtime(stores.released_runtime.clone())
         .with_task_experience(config.task_experience.clone())
         .with_failure_metadata(config.lifecycle_failure_metadata_enabled);
         let lifecycle_drain = inline_lifecycle.drain_handle();
@@ -253,7 +254,7 @@ impl ControlPlaneComposition {
                 skills: agent_skills,
                 funding: runtime::funding(config, &stores, adapter.clone())?,
             },
-            runtime::lifecycle_config(config, worker_holder.clone(), ownership.clone()),
+            runtime::lifecycle_config(config, worker_holder.clone(), ownership.clone(), &stores),
         )?;
         sandbox_lifecycle.register_inline_lifecycle(lifecycle_drain);
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
