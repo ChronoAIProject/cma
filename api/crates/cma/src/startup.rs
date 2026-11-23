@@ -145,10 +145,8 @@ pub(crate) async fn serve() -> Result<(), String> {
         phase = "serving_entry", elapsed_ms = startup_started.elapsed().as_millis(),
         timing_basis = "serve_entry", outcome = "ok", "API startup serving entry");
     let (http_stop, http_signal) = tokio::sync::watch::channel(false);
-    let server_result = {
-        let server: std::pin::Pin<
-            Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>,
-        > = match config.http_connection_max_age {
+    let server: std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>> =
+        match config.http_connection_max_age {
             // Bounded connection age lets long-lived clients rebalance across replicas.
             Some(age) => Box::pin(crate::http_serving::serve(
                 listener,
@@ -165,6 +163,30 @@ pub(crate) async fn serve() -> Result<(), String> {
                 .into_future(),
             ),
         };
+    if config.features.am_failure_containment_enabled {
+        let trigger = async {
+            use agent_manager::DrainCause;
+            match &composition.agent_manager {
+                Some(manager) => tokio::select! {
+                    _ = shutdown::shutdown_signal() => DrainCause::Shutdown,
+                    _ = manager.failed() => DrainCause::OwnershipFailure,
+                },
+                None => {
+                    shutdown::shutdown_signal().await;
+                    DrainCause::Shutdown
+                }
+            }
+        };
+        return shutdown::serve_contained(
+            server,
+            http_stop,
+            trigger,
+            composition.agent_manager.as_deref(),
+            shutdown,
+        )
+        .await;
+    }
+    let server_result = {
         tokio::pin!(server);
         tokio::select! {
             result = &mut server => result.map_err(|error| format!("HTTP server failed: {error}")),

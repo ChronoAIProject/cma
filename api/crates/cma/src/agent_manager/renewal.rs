@@ -9,7 +9,7 @@ struct RenewalFailure {
     error: OwnershipError,
 }
 
-pub(super) fn spawn(manager: &Arc<AgentManager>) -> tokio::task::JoinHandle<()> {
+pub(super) fn spawn(manager: &Arc<AgentManager>) -> tokio::task::JoinHandle<Result<(), ()>> {
     let weak = Arc::downgrade(manager);
     let coordinator = manager.coordinator.clone();
     // Start during composition: dependency startup may exceed a lease.
@@ -22,7 +22,13 @@ pub(super) fn spawn(manager: &Arc<AgentManager>) -> tokio::task::JoinHandle<()> 
             }
         })
         .await;
+        let failed = result.is_err();
         finish(&coordinator, result).await;
+        if failed {
+            Err(())
+        } else {
+            Ok(())
+        }
     })
 }
 

@@ -51,6 +51,8 @@ impl Authority {
         });
         if retired {
             self.retiring.store(true, Ordering::Release);
+            tracing::info!(parent: None, stage = "owner_renewal", outcome = "trusted_retry_expiry",
+                epoch = self.token.epoch, "Expired owner retained for recovery after membership retry");
         }
         retired
     }

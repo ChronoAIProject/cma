@@ -1,6 +1,9 @@
 //! One participating process: renew, rebalance, revoke receivers, then release.
 mod containment;
 mod drain;
+mod drain_contained;
+mod drain_episode;
+pub(crate) use drain_episode::DrainCause;
 mod maintenance;
 pub(crate) mod relay;
 mod renewal;
@@ -29,10 +32,11 @@ pub(crate) struct AgentManager {
     retired_cursor: std::sync::atomic::AtomicUsize,
     retired_since: Mutex<BTreeMap<AgentId, Instant>>,
     drain: tokio::sync::Mutex<bool>,
+    drain_episode: OnceLock<drain_episode::DrainEpisode>,
     handoffs: Mutex<BTreeMap<AgentId, Instant>>,
     lifecycle: OnceLock<crate::agent_lifecycle::LifecycleDrain>,
     containment_times: Mutex<containment::IntentTimes>,
-    supervisor: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    supervisor: tokio::sync::Mutex<Option<tokio::task::JoinHandle<Result<(), ()>>>>,
 }
 
 impl AgentManager {
@@ -93,6 +97,7 @@ impl AgentManager {
             retired_cursor: std::sync::atomic::AtomicUsize::new(0),
             retired_since: Mutex::default(),
             drain: tokio::sync::Mutex::new(false),
+            drain_episode: OnceLock::new(),
             handoffs: Mutex::new(BTreeMap::new()),
             lifecycle: OnceLock::new(),
             containment_times: Mutex::default(),

@@ -125,7 +125,7 @@ impl OwnershipCoordinator {
         match result {
             Ok(settlement) => {
                 attempt.confirmed();
-                tracing::info!(
+                tracing::info!(parent: None,
                     stage = "receiver_housekeeping",
                     outcome = match settlement {
                         Settlement::Released => "released",
@@ -137,7 +137,7 @@ impl OwnershipCoordinator {
                 Ok(Some(settlement))
             }
             Err(OwnershipError::Unavailable(_)) => {
-                tracing::debug!(
+                tracing::debug!(parent: None,
                     stage = "receiver_housekeeping",
                     outcome = "pending",
                     epoch = authority.token.epoch,

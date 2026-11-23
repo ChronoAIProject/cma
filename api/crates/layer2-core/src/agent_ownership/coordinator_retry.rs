@@ -18,6 +18,9 @@ impl OwnershipCoordinator {
         }
         let result = self.retry_step().await;
         if result.is_err() {
+            tracing::warn!(parent: None, stage = "ownership_maintenance",
+                outcome = if Instant::now() >= *self.member_deadline.lock().unwrap() { "confirmed_lease_expired" } else { "fatal" },
+                "Contained ownership maintenance requires shutdown");
             self.fail().await;
         }
         result
@@ -67,15 +70,23 @@ impl OwnershipCoordinator {
                 if !self.is_ready() {
                     return Err(OwnershipError::Stale);
                 }
-                retry.next_at = episode.unavailable(Instant::now());
-                tracing::debug!(
+                let next_at = episode.unavailable(Instant::now());
+                if episode.failures == 1 {
+                    tracing::info!(parent: None, stage = "member_heartbeat", outcome = "retry_started",
+                        remaining_ms = old_until.saturating_duration_since(Instant::now()).as_millis() as u64,
+                        "Membership heartbeat entered bounded retry");
+                }
+                tracing::debug!(parent: None,
                     stage = "member_heartbeat",
                     outcome = "retry",
+                    failures = episode.failures,
+                    elapsed_ms = episode.started.elapsed().as_millis() as u64,
                     remaining_ms = old_until
                         .saturating_duration_since(Instant::now())
                         .as_millis() as u64,
                     "Membership heartbeat retry remains within its confirmed lease"
                 );
+                retry.next_at = next_at;
                 return Ok(MaintenanceStep::RetryAt(retry.next_at));
             }
             Ok(Err(error)) => return Err(error),
@@ -115,6 +126,10 @@ impl OwnershipCoordinator {
                 return Err(OwnershipError::Stale);
             }
             self.skipped_heartbeats.store(0, Ordering::Release);
+        }
+        if proof.is_some() {
+            tracing::info!(parent: None, stage = "member_heartbeat", outcome = "recovered",
+                "Membership heartbeat and exact owners recovered");
         }
         retry.confirmed(now);
         Ok(MaintenanceStep::Confirmed {

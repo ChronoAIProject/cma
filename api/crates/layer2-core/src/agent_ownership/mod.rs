@@ -160,9 +160,13 @@ mod coordinator_race_tests;
 mod receiver_loss_tests;
 
 #[cfg(test)]
+mod containment_diagnostic_tests;
+#[cfg(test)]
 mod containment_test_support;
 #[cfg(test)]
 mod containment_tests;
+#[cfg(test)]
+mod drain_containment_tests;
 #[cfg(test)]
 mod receiver_settlement_containment_tests;
 #[cfg(test)]

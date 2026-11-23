@@ -10,8 +10,9 @@ pub(super) struct RetryState {
 
 pub(super) struct Episode {
     generation: u64,
+    pub started: Instant,
     pub confirmed_until: Instant,
-    failures: u32,
+    pub failures: u32,
     final_attempted: bool,
 }
 
@@ -84,6 +85,7 @@ impl RetryState {
                 .ok_or_else(|| OwnershipError::Invalid("heartbeat episode exhausted".into()))?;
             self.episode = Some(Episode {
                 generation: self.generation,
+                started: Instant::now(),
                 confirmed_until,
                 failures: 0,
                 final_attempted: false,

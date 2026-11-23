@@ -43,6 +43,14 @@ impl AgentManager {
     }
 
     pub async fn drain(&self) -> Result<(), String> {
+        if self.coordinator.contains_failures() {
+            return self
+                .drain_contained(
+                    DrainCause::PreStop,
+                    Instant::now() + Duration::from_secs(23),
+                )
+                .await;
+        }
         self.stop_admission();
         // Include serialization, membership IO, task joins and all receiver IO
         // in one budget below the signed preStop client's 25-second timeout.
