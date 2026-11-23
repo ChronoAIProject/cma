@@ -37,6 +37,7 @@ pub(crate) struct FeatureFlags {
     pub native_retirement_finality_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub ownership_cleanup_pacing: bool,
+    pub batch_ownership_renewal: bool,
     /// Contain one receiver's transient housekeeping failure instead of
     /// stopping the process (#3069). Default off until staging verifies it.
     pub receiver_housekeeping_containment: bool,
@@ -176,6 +177,7 @@ impl FeatureFlags {
             )?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
             ownership_cleanup_pacing: flag(lookup, "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED")?,
+            batch_ownership_renewal: flag(lookup, "CHRONO_AM_BATCH_OWNERSHIP_RENEWAL")?,
             receiver_housekeeping_containment: flag(
                 lookup,
                 "CHRONO_RECEIVER_HOUSEKEEPING_CONTAINMENT_ENABLED",
