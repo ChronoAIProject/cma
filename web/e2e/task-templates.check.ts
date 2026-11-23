@@ -104,7 +104,9 @@ for (const theme of ['light', 'dark']) {
       await expect(preview).toHaveText(
         'Fill in the required fields above to generate the task preview.',
       );
-      await expect(page.getByPlaceholder('What would you like your Agent to do?')).toHaveCount(0);
+      await expect(
+        page.getByPlaceholder('Describe the job. It gets its own cloud computer to do it.'),
+      ).toHaveCount(0);
       await expect(page.getByText(/↵ to run/)).toHaveCount(0);
       if (item.id === 'document')
         await page.screenshot({
