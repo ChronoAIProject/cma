@@ -49,6 +49,8 @@ pub struct MongoStores {
     pub(crate) codex_subscriptions: Arc<super::MongoSubscriptionStore>,
     pub activity: Arc<MongoActivityStore>,
     pub users: Arc<MongoUserDirectoryStore>,
+    /// Legal-document acceptances on the same retained directory rows.
+    pub(crate) legal_consents: Arc<super::legal_consents::MongoLegalConsentStore>,
     pub settings: Arc<MongoPlatformSettingsStore>,
     pub admission_control: Arc<MongoAdmissionControlStore>,
     pub admission_ceilings: Arc<super::MongoAdmissionCeilingsStore>,
@@ -272,6 +274,9 @@ impl MongoStores {
             .await?,
         );
         let users = Arc::new(MongoUserDirectoryStore::open(&client, database).await?);
+        let legal_consents = Arc::new(super::legal_consents::MongoLegalConsentStore::new(
+            &client.database(database),
+        ));
         let settings = Arc::new(
             MongoPlatformSettingsStore::open_with_defaults(
                 &client,
@@ -394,6 +399,7 @@ impl MongoStores {
             codex_subscriptions,
             activity,
             users,
+            legal_consents,
             settings,
             admission_control,
             admission_ceilings,

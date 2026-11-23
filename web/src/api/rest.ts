@@ -79,6 +79,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
   };
   return {
     usageViews: createUsageClient(sdk),
+    legalConsent: sdk.legalConsent,
     deliverables: sdk.agents,
     documents: documentsClient(sdk.documents),
     browser: sdk.agentBrowser,

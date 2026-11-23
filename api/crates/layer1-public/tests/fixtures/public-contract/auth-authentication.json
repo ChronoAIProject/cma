@@ -38,6 +38,47 @@
       "captures": {}
     },
     {
+      "id": "auth-trusted-session-legal-terms",
+      "operation": "GET /auth/session",
+      "scenario": "auth_trusted_legal",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": true,
+          "api_commands": false,
+          "usage_reporting": {
+            "measured_visible": false
+          },
+          "subject": "contract-developer",
+          "capabilities": [
+            "create_sandbox",
+            "use_own_sandboxes",
+            "delete_own_sandbox",
+            "manage_own_profiles",
+            "publish_triggers",
+            "launch_triggers"
+          ],
+          "visitor": false,
+          "legal_terms": {
+            "version": "2026-11-30",
+            "terms_url": "https://legal.example.test/terms",
+            "privacy_url": "https://legal.example.test/privacy"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "auth-trusted-login-return",
       "operation": "GET /auth/login",
       "scenario": "auth_trusted",
@@ -166,6 +207,34 @@
         "body": {
           "authenticated": false,
           "silent_sign_in": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-anonymous-session-legal-terms",
+      "operation": "GET /auth/session",
+      "scenario": "auth_anonymous_legal",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": false,
+          "silent_sign_in": true,
+          "legal_terms": {
+            "version": "2026-11-30",
+            "terms_url": "https://legal.example.test/terms",
+            "privacy_url": "https://legal.example.test/privacy"
+          }
         },
         "bodyKind": "json"
       },
