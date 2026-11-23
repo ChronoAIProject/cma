@@ -99,6 +99,9 @@ pub(super) async fn refuse_unknown_versions(
                 )));
             }
         }
+        if *name == super::settings::SETTINGS {
+            super::billing_authority::require_legacy_compatible(database).await?;
+        }
         if legacy_count > 0 {
             tracing::warn!(
                 parent: None,
@@ -121,7 +124,7 @@ pub(super) fn require_current(version: i64) -> Result<(), StoreError> {
 }
 
 fn unknown_version_filter(collection: &str) -> Document {
-    let versions = if matches!(collection, "agents" | "agent_reuse_bindings") {
+    let versions = if matches!(collection, "agents" | "agent_reuse_bindings" | "bots") {
         vec![1_i64, 2]
     } else if matches!(
         collection,
@@ -135,7 +138,7 @@ fn unknown_version_filter(collection: &str) -> Document {
     } else {
         vec![DOCUMENT_SCHEMA_VERSION]
     };
-    doc! {
+    let unsupported = doc! {
         "$or": [
             { "document_schema_version": { "$nin": versions } },
             {
@@ -145,6 +148,11 @@ fn unknown_version_filter(collection: &str) -> Document {
             },
             { "document_schema_version": { "$type": "array" } },
         ]
+    };
+    if collection == super::settings::SETTINGS {
+        super::billing_authority::exclude_known_envelopes(unsupported)
+    } else {
+        unsupported
     }
 }
 
@@ -303,6 +311,7 @@ mod tests {
             versions("agent_reuse_bindings"),
             mongodb::bson::bson!([1_i64, 2_i64])
         );
+        assert_eq!(versions("bots"), mongodb::bson::bson!([1_i64, 2_i64]));
         assert_eq!(versions("agent_log"), mongodb::bson::bson!([1_i64]));
         assert_eq!(
             versions("sandboxes"),

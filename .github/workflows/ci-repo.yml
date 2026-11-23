@@ -49,18 +49,24 @@ jobs:
         name: "Source files stay within size limits"
         run: ".github/scripts/check-file-size.sh"
       -
+        name: "Pinned image pull retry regressions"
+        run: "bash .github/scripts/pull-pinned-image-tests.sh"
+      -
         uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38" # v6
         with:
           node-version: 26
       -
         name: "Synthetic authority and observer regressions"
-        run: "node --test .github/scripts/staging-authority.test.mjs .github/scripts/public-journey-evidence.test.mjs .github/scripts/deployment-observer.test.mjs"
+        run: "node --test .github/scripts/staging-authority.test.mjs .github/scripts/public-journey-evidence.test.mjs .github/scripts/connection-journey-evidence.test.mjs .github/scripts/connection-campaign.test.mjs .github/scripts/deployment-observer.test.mjs"
       -
         name: "Synthetic home restore evidence regressions"
         run: "node --test .github/scripts/home-backup/*.test.mjs"
       -
         name: "Audit exception policy regressions"
         run: "node --test .github/scripts/audit-policy.test.mjs"
+      -
+        name: "Resource revocation trace contract regressions"
+        run: "node --test .github/scripts/resource-revocation-contracts.test.mjs"
       -
         name: "Public repository boundary regressions"
         run: "ruby .github/scripts/check-public-tree-tests.rb"

@@ -235,7 +235,7 @@ async fn mongo_unpublished_recovery_refuses_a_concurrent_agent_revision() {
     client.database(&name).drop().await.unwrap();
 }
 
-fn home(id: &layer2_core::SandboxId) -> SandboxHome {
+pub(in crate::store) fn home(id: &layer2_core::SandboxId) -> SandboxHome {
     use layer3_adapter::agent_sandbox::*;
     let policy = HomeVolumePolicy {
         mode: HomeVolumeMode::NativeVctFullHomeV2,
@@ -330,6 +330,7 @@ async fn mongo_no_agent_stalled_revival_keeps_retained_source_and_reserved_gener
             sandbox_id: sandbox.id.clone(),
             expected_revision: sandbox.revision,
             expected_runtime: sandbox.runtime.clone(),
+            native_retirement_finality: false,
             retain_runtime: true,
             interruption_cause: Default::default(),
             observed_at: NOW.into(),

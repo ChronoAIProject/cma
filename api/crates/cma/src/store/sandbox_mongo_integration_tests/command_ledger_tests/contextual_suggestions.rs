@@ -15,6 +15,8 @@ use layer2_core::sandbox::{
 use tower::ServiceExt;
 
 mod completed_operation;
+mod completion_contention;
+mod context_contention;
 mod lifecycle;
 #[cfg(feature = "real-model-suggestion-samples")]
 mod samples;

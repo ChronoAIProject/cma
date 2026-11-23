@@ -25,6 +25,31 @@ def require_runtime_inventory(documents)
   end
 end
 
+IMAGE_SCAN_IF = "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
+
+# Staging CD refuses an image whose secret scan leaves a blocking finding. CI
+# runs the same gate on its exported image before retaining it, so a PR or
+# merge group fails first instead of the release after the merge.
+def require_image_secret_scan(documents)
+  [['ci-images', 'images', '"$IMAGE_COMPONENT"', 'Scan tested image as staging publication does', 'Retain tested native image'],
+   ['ci-omarchy', 'omarchy', 'runtime-omarchy', 'Scan tested Omarchy image as staging publication does', 'Retain tested Omarchy image']].each do |file, job, component, name, retain|
+    steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
+    install = steps.index { |step| step['name'] == 'Install pinned image secret scanner' }
+    scan = steps.index { |step| step['name'] == name }
+    export = steps.index { |step| step.fetch('run', '').include?('export-ci-native-image.py') }
+    keep = steps.index { |step| step['name'] == retain }
+    require_check(install && scan && export && keep && export < install && install < scan && scan < keep,
+                  "#{file} must scan the exported image before retaining it")
+    [steps[install], steps[scan]].each do |step|
+      require_check(step['if'] == IMAGE_SCAN_IF && !step.key?('continue-on-error'), "#{file} image secret scan is optional")
+    end
+    require_check(steps[install]['run'] == "bash .github/scripts/staging_cd_transport.sh\nbash .github/scripts/install-image-gitleaks.sh\n" &&
+                  steps[install]['timeout-minutes'] == 5, "#{file} image scanner install differs")
+    command = "python3 -B .github/scripts/ci_image_secret_scan.py #{component} \"$RUNNER_TEMP/ci-native-image\" \"$GITHUB_SHA\""
+    require_check(steps[scan]['run'] == command && steps[scan]['timeout-minutes'] == 30, "#{file} image secret scan command differs")
+  end
+end
+
 def require_pinned_actions(steps, actions, parents = [])
   steps.each do |step|
     reference = step['uses']
@@ -130,8 +155,26 @@ OMARCHY_RETENTION_STEPS = {
   'Omarchy package bundle is never deleted' => 'ruby .github/scripts/omarchy-package-retention.rb'
 }.freeze
 
+# pacman refuses a pinned package once the key that signed it has expired, so
+# each Omarchy build first warns before, and fails by name after, that date
+# (#3040). The step stays offline, reading the committed signing-key record,
+# and warn-only until expiry; the weekly omarchy-key-expiry workflow fails
+# earlier and re-derives the record from the locked URLs.
+KEY_EXPIRY_STEP = {
+  'name' => 'Arch packager key expiry',
+  'run' => "python3 -B .github/scripts/omarchy_key_expiry_tests.py\npython3 -B .github/scripts/omarchy_key_expiry.py\n"
+}.freeze
+
+def check_key_expiry(steps)
+  found = steps.select { |s| s['name'] == KEY_EXPIRY_STEP['name'] }
+  build = steps.index { |s| s['id'] == 'build' }
+  require_check(found == [KEY_EXPIRY_STEP] && build && steps.index(found.first) < build,
+    'Omarchy must check its packager key expiry offline, warn-only, unconditionally and before building')
+end
+
 def validate(documents, actions)
   require_runtime_inventory(documents)
+  require_image_secret_scan(documents)
   check_component_cache_writers(documents)
   check_merge_group_artifacts(documents)
   ci = documents.fetch('ci')
@@ -257,7 +300,7 @@ def validate(documents, actions)
   serialized = JSON.generate(documents)
   require_check(!serialized.include?('continue-on-error":true,"run'), 'product gate bypass')
   synthetic = structure.select { |s| s['name'] == 'Synthetic authority and observer regressions' }
-  command = 'node --test .github/scripts/staging-authority.test.mjs .github/scripts/public-journey-evidence.test.mjs .github/scripts/deployment-observer.test.mjs'
+  command = 'node --test .github/scripts/staging-authority.test.mjs .github/scripts/public-journey-evidence.test.mjs .github/scripts/connection-journey-evidence.test.mjs .github/scripts/connection-campaign.test.mjs .github/scripts/deployment-observer.test.mjs'
   require_check(synthetic.size == 1 && synthetic.first['run'] == command &&
     !synthetic.first.key?('if') && !synthetic.first.key?('continue-on-error'), 'synthetic authority and observer suites must run')
   repo_job = documents.fetch('ci-repo').fetch('jobs').fetch('structure')
@@ -265,6 +308,7 @@ def validate(documents, actions)
   require_check(!serialized.match?(%r{ci-contract\.rb|staging-authority\.mjs|deployment-observer\.mjs|gh workflow run|gh api[^\n]*dispatches|kubectl}),
     'live authority, observer or mutation tooling retained')
   check_omarchy_archive(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'))
+  check_key_expiry(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'))
   check_os_refresh(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'), 'Omarchy')
   check_os_refresh(documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps'), 'Images')
 end
@@ -336,9 +380,8 @@ ARTIFACT_READER = {'contents' => 'read', 'actions' => 'read'}.freeze
 COMPOSITE_KEYS = {'run' => %w[name id if run env continue-on-error working-directory shell],
                   'uses' => %w[name id if uses with env continue-on-error]}.freeze
 DOWNLOAD_MINUTES = 1..10
-# Production publication is owned separately. Its two single unbounded
-# downloads are the follow-up for this rule; the count may only shrink.
-UNBOUNDED_DOWNLOADS = {'publish' => 2}.freeze
+# Every artifact download is bounded; the follow-up count stays empty.
+UNBOUNDED_DOWNLOADS = {}.freeze
 
 def check_artifact_downloads(workflows, actions)
   actions.each do |reference, action|
@@ -475,7 +518,13 @@ run_rule = "staging-deploy/report: gh run download must be bounded by its step's
  [count_rule, ->(w, _) { report_steps.call(w) << {'uses' => pinned, 'with' => {'name' => 'evidence'}} }],
  [count_rule, ->(w, _) { report_steps.call(w) << {'uses' => third_party, 'with' => {'name' => 'evidence'}} }],
  [count_rule, ->(w, _) { w['publish']['jobs']['release']['steps'] << {'uses' => pinned, 'with' => {'name' => 'evidence'}} }],
- [count_rule, ->(w, _) { w['publish']['jobs'].each_value { |job| job.fetch('steps', []).reject! { |s| s.fetch('uses', '').match?(DOWNLOAD_ACTION) } } }],
+ [count_rule, ->(w, _) {
+   steps = w['publish']['jobs']['release']['steps']
+   steps.reject! { |s| s['id'] == 'notes-download-retry' || s['name'] == 'Explain the unavailable release notes artifact' }
+   steps.find { |s| s['id'] == 'notes-download' }.tap { |s| s.delete('timeout-minutes'); s.delete('continue-on-error') }
+ }],
+ ['publish/release: the download repeat must be identical, bounded and able to fail the job',
+  ->(w, _) { w['publish']['jobs']['release']['steps'].find { |s| s['id'] == 'notes-download-retry' }['with']['name'] = 'other' }],
  [run_rule, ->(w, _) { report_steps.call(w) << {'run' => 'gh run download "$GITHUB_RUN_ID" -n evidence'} }],
  [run_rule, ->(w, _) { report_steps.call(w) << {'run' => 'gh run download "$GITHUB_RUN_ID" -n evidence', 'timeout-minutes' => 60} }],
  ['bounded download regressions must run in Repository checks',
@@ -496,6 +545,13 @@ report_steps.call(copy) << {'run' => 'gh run download "$GITHUB_RUN_ID" -n eviden
 check_artifact_downloads(copy, actions)
 before_queue = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
 mutations = [
+  ->(d) { d['ci-images']['jobs']['images']['steps'].reject! { |s| s['name'] == 'Scan tested image as staging publication does' } },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Scan tested image as staging publication does' }['continue-on-error'] = true },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Scan tested image as staging publication does' }['if'] = "github.event_name == 'merge_group'" },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Scan tested image as staging publication does' }['run'] += ' || true' },
+  ->(d) { steps = d['ci-images']['jobs']['images']['steps']; scan = steps.index { |s| s['name'] == 'Scan tested image as staging publication does' }; steps.insert(steps.index { |s| s['name'] == 'Retain tested native image' } + 1, steps.delete_at(scan)) },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].reject! { |s| s['name'] == 'Install pinned image secret scanner' } },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Scan tested Omarchy image as staging publication does' }['timeout-minutes'] = 120 },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].reject! { |s| s['name'] == 'API allocator qualification' } },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'] << d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }.dup },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['continue-on-error'] = true },
@@ -585,7 +641,7 @@ end
  {'run' => 'node .github/scripts/home-backup/inventory.mjs fixture'}].each do |bypass|
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][restore_index].merge!(bypass) }
 end
-%w[staging-authority public-journey-evidence deployment-observer].each do |suite|
+%w[staging-authority public-journey-evidence connection-journey-evidence connection-campaign deployment-observer].each do |suite|
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]['run'].sub!(" .github/scripts/#{suite}.test.mjs", '') }
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]['run'].sub!("#{suite}.test.mjs", "#{suite}.mjs") }
 end
@@ -596,6 +652,20 @@ mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]
 %w[staging-authority.mjs deployment-observer.mjs].each do |tool|
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'] << {'run' => "node .github/scripts/#{tool}"} }
 end
+omarchy_steps = ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'] }
+key_expiry = ->(d) { omarchy_steps.call(d).find { |s| s['name'] == KEY_EXPIRY_STEP['name'] } }
+[->(d) { omarchy_steps.call(d).delete(key_expiry.call(d)) },
+ ->(d) { omarchy_steps.call(d).insert(omarchy_steps.call(d).index { |s| s['id'] == 'build' }, key_expiry.call(d).dup) },
+ ->(d) { step = omarchy_steps.call(d).delete(key_expiry.call(d)); omarchy_steps.call(d).insert(omarchy_steps.call(d).index { |s| s['id'] == 'build' } + 1, step) },
+ ->(d) { key_expiry.call(d)['continue-on-error'] = true },
+ ->(d) { key_expiry.call(d)['if'] = 'false' },
+ ->(d) { key_expiry.call(d)['run'] = 'true' },
+ ->(d) { key_expiry.call(d)['run'].sub!('omarchy_key_expiry.py', 'omarchy_key_expiry.py || true') },
+ ->(d) { key_expiry.call(d)['run'].sub!(/^.*_tests\.py\n/, '') },
+ ->(d) { key_expiry.call(d)['run'].sub!("omarchy_key_expiry.py\n", "omarchy_key_expiry.py --verify-record\n") },
+ ->(d) { key_expiry.call(d)['run'].sub!("omarchy_key_expiry.py\n", "omarchy_key_expiry.py --refresh\n") },
+ ->(d) { key_expiry.call(d)['run'].sub!("omarchy_key_expiry.py\n", "omarchy_key_expiry.py --fail-days 30\n") },
+ ->(d) { key_expiry.call(d)['env'] = {'GITHUB_STEP_SUMMARY' => '/dev/null'} }].each { |mutate| mutations << mutate }
 [['ci-images', 'images'], ['ci-omarchy', 'omarchy']].each do |file, job|
   ['removed', 'optional', 'skipped', 'fake-success', 'late'].each do |change|
     mutations << lambda do |d|

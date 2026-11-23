@@ -45,6 +45,8 @@ pub(super) async fn apply(
     if current.revision != expected_revision {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
+    crate::store::native_retirement_action::preserve_custody(&aggregate, &current, sandbox)
+        .map_err(ApplyError::Domain)?;
     current
         .validate_retirement_archive_successor(sandbox)
         .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;

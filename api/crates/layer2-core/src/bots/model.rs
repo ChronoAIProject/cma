@@ -155,6 +155,24 @@ pub struct BotWork {
     pub generation: u64,
     pub holder: Option<String>,
     pub expires_at: Option<String>,
+    /// Version one reserves every external mutation before sending it. Legacy
+    /// claimed work has no proof that an expired request is terminal.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub effect_protocol: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<BotEffect>,
+}
+
+fn is_zero(value: &u8) -> bool {
+    *value == 0
+}
+
+/// Custody of one possibly accepted mutation. A lease timeout never clears it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BotEffect {
+    pub id: String,
+    pub step: String,
+    pub deadline: String,
 }
 /// Metadata only. Credential bytes are never serializable through the Bot aggregate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

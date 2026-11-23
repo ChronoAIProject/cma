@@ -46,6 +46,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+bash "$repo_root/.github/scripts/pull-pinned-image.sh" "$mongo_image"
 docker run --detach --name "$contract_name" --label "$contract_label" \
   --publish 127.0.0.1::27017 --memory 2g --memory-swap 2g --cpus 2 --pids-limit 256 \
   --tmpfs /data/db:rw,size=1073741824 --tmpfs /data/configdb:rw,size=16777216 \
@@ -83,6 +84,9 @@ contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~optional_forms_storage)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~optional_media_continuation_storage)'
+# History migration and writer grants require this authenticated replica set.
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~activity::history::mongo_tests::)'
 # Owner-key custody needs both real authentication and a replica set. Reuse
 # this owned fixture; exact nextest selection fails if the contract disappears.
 contract_nextest eg run \

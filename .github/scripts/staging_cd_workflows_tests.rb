@@ -78,6 +78,21 @@ class StagingWorkflowTest < Minitest::Test
     refute publication.key?('if'), 'publication must always run and decide the outcome'
   end
 
+  def test_omarchy_releases_check_pinned_signing_keys_before_any_build_work
+    steps = workflow('staging-release')['jobs']['publish']['steps']
+    index = ->(name) { steps.index { |step| step['name'] == name } }
+    check = steps.fetch(index.call('Check pinned Omarchy signing keys'))
+    # The check blocks: an expired key must stop the release with its named cause.
+    refute check.key?('continue-on-error'), 'an expired signing key must fail the release'
+    assert_equal 'python3 -B .github/scripts/omarchy_key_expiry.py --warn-days 14', check['run']
+    assert_equal "inputs.component == 'runtime-omarchy' && steps.ownership.outputs.superseded != 'true'", check['if']
+    assert_includes 1..5, check['timeout-minutes'].to_i
+    assert_operator index.call('Check release ownership'), :<, index.call('Check pinned Omarchy signing keys')
+    assert_operator index.call('Check pinned Omarchy signing keys'), :<,
+                    index.call('Build once, scan every layer, and publish exact bytes')
+    assert File.file?(File.join(ROOT, 'scripts/omarchy_key_expiry.py'))
+  end
+
   def test_all_mutation_paths_share_one_set_lock_without_serializing_publication
     manual = workflow('redeploy-staging')['jobs']['deploy']
     automatic = workflow('staging-promote')['jobs']['deploy']
@@ -397,6 +412,45 @@ class StagingWorkflowTest < Minitest::Test
       mutate.call(copy['omarchy-package-bundle'])
       refute_equal inputs['omarchy-package-bundle'], copy['omarchy-package-bundle'], label
       assert_raises(CIContract::Refusal, label) { CIContract.staging_package_authority(copy) }
+    end
+  end
+
+  def test_key_expiry_check_stays_weekly_read_only_and_required
+    require_relative 'ci-contract'
+    inputs = CIContract.load_inputs
+    CIContract.omarchy_key_expiry_authority(inputs)
+    expiry = ->(w) { w['jobs']['expiry'] }
+    check = ->(w) { expiry.call(w)['steps'].find { |s| s['name'] == 'Check Arch packager key expiry' } }
+    {
+      'schedule removed' => ->(w) { w[true].delete('schedule') },
+      'runs on pull requests' => ->(w) { w[true]['pull_request_target'] = { 'branches' => ['develop'] } },
+      'runs daily' => ->(w) { w[true]['schedule'] = [{ 'cron' => '17 3 * * *' }] },
+      'second schedule' => ->(w) { w[true]['schedule'] << { 'cron' => '17 4 * * 1' } },
+      'workflow write grant' => ->(w) { w['permissions'] = { 'contents' => 'write' } },
+      'job package grant' => ->(w) { expiry.call(w)['permissions']['packages'] = 'read' },
+      'job disabled' => ->(w) { expiry.call(w)['if'] = 'false' },
+      'optional job' => ->(w) { expiry.call(w)['continue-on-error'] = true },
+      'self-hosted runner' => ->(w) { expiry.call(w)['runs-on'] = 'self-hosted' },
+      'unbounded job' => ->(w) { expiry.call(w).delete('timeout-minutes') },
+      'job secret' => ->(w) { expiry.call(w)['env'] = { 'GH_TOKEN' => '${{ secrets.GITHUB_TOKEN }}' } },
+      'mutable checkout' => ->(w) { expiry.call(w)['steps'].first['uses'] = 'actions/checkout@v5' },
+      'persisted checkout credentials' => ->(w) { expiry.call(w)['steps'].first['with'].delete('persist-credentials') },
+      'check removed' => ->(w) { expiry.call(w)['steps'].delete(check.call(w)) },
+      'optional check' => ->(w) { check.call(w)['continue-on-error'] = true },
+      'skipped check' => ->(w) { check.call(w)['if'] = 'false' },
+      'check allowed to fail' => ->(w) { check.call(w)['run'] += ' || true' },
+      'check warns later' => ->(w) { check.call(w)['run'] += ' --warn-days 0' },
+      'check no longer fails ahead of expiry' => ->(w) { check.call(w)['run'].sub!(' --fail-days 30', '') },
+      'check fails later' => ->(w) { check.call(w)['run'].sub!('--fail-days 30', '--fail-days 7') },
+      'record drift unchecked' => ->(w) { check.call(w)['run'].sub!(' --verify-record', '') },
+      'record rewritten instead of verified' => ->(w) { check.call(w)['run'].sub!('--verify-record', '--refresh') },
+      'extra step' => ->(w) { expiry.call(w)['steps'] << { 'run' => 'true' } },
+      'extra job' => ->(w) { w['jobs']['extra'] = { 'permissions' => { 'contents' => 'read' }, 'runs-on' => 'ubuntu-24.04', 'steps' => [] } },
+    }.each do |label, mutate|
+      copy = Marshal.load(Marshal.dump(inputs))
+      mutate.call(copy['omarchy-key-expiry'])
+      refute_equal inputs['omarchy-key-expiry'], copy['omarchy-key-expiry'], label
+      assert_raises(CIContract::Refusal, label) { CIContract.omarchy_key_expiry_authority(copy) }
     end
   end
 

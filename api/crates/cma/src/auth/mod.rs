@@ -141,11 +141,13 @@ pub struct AuthState {
     oauth_api_resource: Option<String>,
     resource_request_enabled: bool,
     silent_sign_in_enabled: bool,
+    pub(super) legal_terms: Option<layer2_core::legal_consent::LegalTerms>,
     browser_session_join_enabled: bool,
     service_authorization: Option<Arc<dyn service_authorization::GrantAuthority>>,
     #[cfg(test)]
     preference_clock: fn() -> SystemTime,
     identity_proxy: Option<nyxid_proxy::jwt::Verifier>,
+    proxy_replay_principal_enabled: bool,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     pub(super) mode: AuthMode,
     /// Browser-facing NyxID origin used for registration handoffs.
@@ -223,11 +225,13 @@ impl AuthState {
             oauth_api_resource: None,
             resource_request_enabled: false,
             silent_sign_in_enabled: false,
+            legal_terms: None,
             browser_session_join_enabled: false,
             service_authorization: None,
             #[cfg(test)]
             preference_clock: SystemTime::now,
             identity_proxy: None,
+            proxy_replay_principal_enabled: false,
             mode,
             nyxid_public_url,
             browser_origins,

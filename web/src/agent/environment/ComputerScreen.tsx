@@ -80,6 +80,7 @@ export function ComputerScreen({
               controlUnavailable={!controlsReady}
               preparation={{ context: detailReadSource(client), owner: subject }}
               onClose={onClose}
+              onReturnToConversation={onReturnToConversation}
               embedded
             />
           ) : null
