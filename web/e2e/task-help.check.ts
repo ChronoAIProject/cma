@@ -153,7 +153,7 @@ test('LOCAL Home, full capacity and uncertain task help preserve the draft and o
   await page.goBack();
   await expect(recover).toBeEnabled();
   expect(writes).toHaveLength(1);
-  await expect(page.getByRole('region', { name: 'Submitted task' })).toContainText(
+  await expect(page.getByRole('region', { name: 'Original request', exact: true })).toContainText(
     'Keep this original task through help and recovery',
   );
   await recover.click();

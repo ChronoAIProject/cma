@@ -4,6 +4,7 @@ import { ApiError } from '@cma/client';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, agentClient } from '../test/agent';
 import type { RetiredAgentPresentation } from './retiredPresentation';
 import { loadRetainedHistory, useRetainedHistory } from './retainedHistory';
+import { conversationFromTranscript } from './conversation';
 
 const presentation: RetiredAgentPresentation = {
   kind: 'retired',
@@ -82,6 +83,36 @@ it('preserves independent failed and interrupted turn outcomes without inferring
   expect(result.recovery).toEqual([
     expect.objectContaining({ runId: '1', title: 'Agent run failed' }),
   ]);
+});
+
+it('keeps recorded failure diagnostics without offering a message to a retired Agent', async () => {
+  const transcript = {
+    ...AGENT_TRANSCRIPT,
+    turns: [
+      {
+        ...AGENT_TRANSCRIPT.turns[0]!,
+        outcome: { type: 'failed', failure: { class: 'upstream_unavailable' } },
+      },
+    ],
+  };
+  const original = structuredClone(transcript);
+  const client = agentClient({ readAgentTranscript: async () => transcript });
+  const result = await loadRetainedHistory(
+    client,
+    presentation.identity,
+    new AbortController().signal,
+  );
+  expect(result.recovery[0]).toMatchObject({
+    title: 'Agent run failed',
+    detail: 'This recorded Agent run failed. Its delivery or task effects may be incomplete.',
+    technicalDetails: { category: 'upstream_unavailable', httpStatus: 503 },
+  });
+  expect(result.recovery[0]?.nextStep).toBeUndefined();
+  expect(result.turnOutcomes).toEqual({ '1': 'failed' });
+  expect(transcript).toEqual(original);
+  expect(conversationFromTranscript(transcript).recovery[0]?.nextStep).toContain(
+    'A new message continues this Agent conversation',
+  );
 });
 
 it('drops an old read immediately on authority loss even if the transport ignores cancellation', async () => {

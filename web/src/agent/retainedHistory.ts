@@ -33,7 +33,20 @@ export async function loadRetainedHistory(
   signal.throwIfAborted();
   if (transcript.agentId !== identity.agentId)
     throw new Error('The retained conversation did not match this Agent.');
-  return conversationFromTranscript(transcript);
+  const conversation = conversationFromTranscript(transcript);
+  return {
+    ...conversation,
+    recovery: conversation.recovery.map((notice) =>
+      notice.runId && conversation.turnOutcomes?.[notice.runId] === 'failed'
+        ? {
+            ...notice,
+            detail:
+              'This recorded Agent run failed. Its delivery or task effects may be incomplete.',
+            nextStep: undefined,
+          }
+        : notice,
+    ),
+  };
 }
 
 /** The controller owns this read; it has no runtime, command or journal capability. */

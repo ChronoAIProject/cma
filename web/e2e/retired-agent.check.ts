@@ -35,6 +35,18 @@ for (const theme of ['dark', 'light']) {
         page.getByRole('group', { name: 'Retired', exact: true }).getByRole('link'),
       ).toHaveCount(1);
       await navigation(page, false);
+      await expect(page.getByText(/A new message continues this Agent conversation/)).toHaveCount(
+        0,
+      );
+      const bounds = await page.locator('.retained-agent').evaluate((host) => {
+        const notice = host.querySelector('.retained-agent__notice')!.getBoundingClientRect();
+        const history = host.querySelector('.agent-surface__conversation')!.getBoundingClientRect();
+        return { noticeBottom: notice.bottom, historyTop: history.top };
+      });
+      expect(bounds.historyTop).toBeGreaterThanOrEqual(bounds.noticeBottom);
+      await page.locator('.agent-surface__conversation').evaluate((element) => {
+        element.scrollTop = 0;
+      });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
         true,
       );

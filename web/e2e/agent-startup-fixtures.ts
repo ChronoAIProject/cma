@@ -138,6 +138,8 @@ export class LocalStartup {
         this.unexpected.push(`${request.method()} ${url.pathname}`);
         return reply({ code: 'unexpected_local_write' }, 500);
       }
+      if (/^\/api\/v1\/agents\/[^/]+\/reply-preview$/.test(url.pathname))
+        return reply({ code: 'not_found', detail: 'Optional capability unavailable.' }, 404);
       if (
         this.createdWorkspace &&
         url.pathname === `/api/v1/workspaces/${this.createdWorkspace.id}`
