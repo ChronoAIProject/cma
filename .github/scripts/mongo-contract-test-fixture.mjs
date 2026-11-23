@@ -9,7 +9,8 @@ const diagnosticsTest = 'store::mongo_diagnostics::mongo_tests::real_mongo_monit
 const scanTest = 'store::agent_log_telemetry::tests::cooperation::benchmark::local_scan_scheduling_abba_reproduction';
 const bsonCeilingTest = 'store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::failures::personal_agent_list_preserves_sources_near_the_bson_document_ceiling';
 const firstResponseTest = 'store::usage_reports::tests::submission::default_day_report_serves_four_hundred_sandboxes_without_polling';
-const isolatedTests = [scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest];
+const historyTest = 'store::usage_reports::tests::history_batch::seven_day_history_generates_and_reuses_complete_421_member_report';
+const isolatedTests = [scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest];
 // On-demand only: neither the listing nor any PR shard selects it.
 const observationTest = 'store::sandbox_mongo_integration_tests::resource_access_tests::history_measurement::observation_budget::observation_one_hundred_observers_on_two_replicas_for_thirty_minutes';
 // The isolated fixtures start many mock subprocesses before ordinary work.
@@ -17,7 +18,7 @@ const observationTest = 'store::sandbox_mongo_integration_tests::resource_access
 const runnerSetupTimeoutMs = 30_000;
 const fixturePredicate = 'not test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure) & not test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors) & not test(=store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison) & not test(=store::usage_reports::tests::hotfix_cpu::native_usage_hotfix_decode_phase_calibration) & not test(=store::usage_reports::tests::hotfix_matrix::native_usage_hotfix_full_report_six_case_matrix) & not test(store::migrations::tests::segments_runtime::) & not test(=sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child) & not test(=store::sandbox_sessions::exclusive::process_tests::desktop_claim_child) & not test(=store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_disabled_services_and_ownerless_receiver_refuse_new_streams) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::retained_legacy_rows_block_until_close_or_expiry_and_cannot_release_successor) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_replica_handoff_and_revocation_use_actual_receiver) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_uncertain_confirm_and_receiver_restart_preserve_fencing) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::delayed_receiver_renewal_ack_cannot_restore_public_authority) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::measurements::matched_public_desktop_connect_windows)';
 const qualificationPredicate = `not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets) or test(=${observationTest}))`;
-const ordinaryPredicate = `not (test(=${scaleTest}) or test(=${ownerTest}) or test(=${auditTest}) or test(=${diagnosticsTest}) or test(=${scanTest}) or test(=${bsonCeilingTest}) or test(=${firstResponseTest})) & ${qualificationPredicate}`;
+const ordinaryPredicate = `not (test(=${scaleTest}) or test(=${ownerTest}) or test(=${auditTest}) or test(=${diagnosticsTest}) or test(=${scanTest}) or test(=${bsonCeilingTest}) or test(=${firstResponseTest}) or test(=${historyTest})) & ${qualificationPredicate}`;
 
 function fixture(scenario, reuse = false) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cma-mongo-runner-test-')));
@@ -79,6 +80,9 @@ if (command === 'cargo') {
     if (!['list-empty', 'list-no-first-response'].includes(scenario)) {
       testcases[${JSON.stringify(firstResponseTest)}] = {ignored:scenario !== 'list-first-response-not-ignored', 'filter-match':{status:'matches'}};
     }
+    if (!['list-empty', 'list-no-history'].includes(scenario)) {
+      testcases[${JSON.stringify(historyTest)}] = {ignored:scenario !== 'list-history-not-ignored', 'filter-match':{status:'matches'}};
+    }
     for (const name of Object.keys(JSON.parse(fs.readFileSync(path.join(process.cwd(), '../.github/scripts/mongo-contract-exceptions.json'))))) {
       testcases[name] = {ignored:true, 'filter-match':{status:'mismatch'}};
     }
@@ -93,6 +97,7 @@ if (command === 'cargo') {
     if (scenario === 'list-duplicate-scan') suites.duplicate = {testcases:{[${JSON.stringify(scanTest)}]:testcases[${JSON.stringify(scanTest)}]}};
     if (scenario === 'list-duplicate-bson') suites.duplicate = {testcases:{[${JSON.stringify(bsonCeilingTest)}]:testcases[${JSON.stringify(bsonCeilingTest)}]}};
     if (scenario === 'list-duplicate-first-response') suites.duplicate = {testcases:{[${JSON.stringify(firstResponseTest)}]:testcases[${JSON.stringify(firstResponseTest)}]}};
+    if (scenario === 'list-duplicate-history') suites.duplicate = {testcases:{[${JSON.stringify(historyTest)}]:testcases[${JSON.stringify(historyTest)}]}};
     console.log(JSON.stringify({'rust-suites':suites}));
     process.exit(0);
   }
@@ -111,25 +116,26 @@ if (command === 'cargo') {
   const scan = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${scanTest})');
   const bson = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${bsonCeilingTest})');
   const firstResponse = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${firstResponseTest})');
-  const isolated = scale || owner || audit || diagnostics || scan || bson || firstResponse;
+  const history = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${historyTest})');
+  const isolated = history || scale || owner || audit || diagnostics || scan || bson || firstResponse;
   const partition = isolated ? 'count:1/1' : args[args.indexOf('--partition') + 1];
   const match = /^count:([1-9][0-9]*)\\/([1-9][0-9]*)$/.exec(partition);
   if (!match) process.exit(8);
-  const index = scale ? 0 : owner ? -1 : audit ? -2 : diagnostics ? -3 : scan ? -4 : bson ? -5 : firstResponse ? -6 : Number(match[1]);
+  const index = scale ? 0 : owner ? -1 : audit ? -2 : diagnostics ? -3 : scan ? -4 : bson ? -5 : firstResponse ? -6 : history ? -7 : Number(match[1]);
   const count = scenario.startsWith('shard') ? 321 : scenario.startsWith('batches') ? 161 : 80;
-  const selected = scale ? [${JSON.stringify(scaleTest)}] : owner ? [${JSON.stringify(ownerTest)}] : audit ? [${JSON.stringify(auditTest)}] : diagnostics ? [${JSON.stringify(diagnosticsTest)}] : scan ? [${JSON.stringify(scanTest)}] : bson ? [${JSON.stringify(bsonCeilingTest)}] : firstResponse ? [${JSON.stringify(firstResponseTest)}] : Array.from({length:count}, (_, i) =>
+  const selected = scale ? [${JSON.stringify(scaleTest)}] : owner ? [${JSON.stringify(ownerTest)}] : audit ? [${JSON.stringify(auditTest)}] : diagnostics ? [${JSON.stringify(diagnosticsTest)}] : scan ? [${JSON.stringify(scanTest)}] : bson ? [${JSON.stringify(bsonCeilingTest)}] : firstResponse ? [${JSON.stringify(firstResponseTest)}] : history ? [${JSON.stringify(historyTest)}] : Array.from({length:count}, (_, i) =>
     'store::usage_reports::tests::ordinary_'+i).filter((_, i) => i % Number(match[2]) === index-1);
   fs.writeFileSync(log+'.selected-'+index, JSON.stringify(selected));
   fs.writeFileSync(log+'.started-'+index, 'started');
   if (scenario === 'batches-cleanup-error' && index === 1) fs.writeFileSync(log+'.failed-cleanup-uri', process.env.CHRONO_TEST_MONGODB_URI);
-  if ((scenario === 'scale-empty' && scale) || (scenario === 'owner-empty' && owner) || (scenario === 'audit-empty' && audit) || (scenario === 'diagnostics-empty' && diagnostics) || (scenario === 'scan-empty' && scan) || (scenario === 'bson-empty' && bson) || (scenario === 'first-response-empty' && firstResponse) || (scenario === 'ordinary-empty' && index === 1)) {
+  if ((scenario === 'scale-empty' && scale) || (scenario === 'owner-empty' && owner) || (scenario === 'audit-empty' && audit) || (scenario === 'diagnostics-empty' && diagnostics) || (scenario === 'scan-empty' && scan) || (scenario === 'bson-empty' && bson) || (scenario === 'first-response-empty' && firstResponse) || (scenario === 'history-empty' && history) || (scenario === 'ordinary-empty' && index === 1)) {
     console.log('Starting 0 tests');
     const option = args.indexOf('--no-tests');
     const policy = option >= 0 ? args[option+1] : process.env.NEXTEST_NO_TESTS;
     fs.writeFileSync(log+'.empty-'+index, policy || 'auto');
     process.exit(policy === 'pass' ? 0 : 4);
   }
-  if ((scenario === 'batches-cleanup-error' && index === 2) || (scenario === 'cancel' && !isolated) || (scenario === 'cancel-scale' && scale) || (scenario === 'cancel-owner' && owner) || (scenario === 'cancel-audit' && audit) || (scenario === 'cancel-diagnostics' && diagnostics) || (scenario === 'cancel-scan' && scan)) { setInterval(() => {}, 1000); }
+  if ((scenario === 'batches-cleanup-error' && index === 2) || (scenario === 'cancel' && !isolated) || (scenario === 'cancel-scale' && scale) || (scenario === 'cancel-owner' && owner) || (scenario === 'cancel-audit' && audit) || (scenario === 'cancel-diagnostics' && diagnostics) || (scenario === 'cancel-scan' && scan) || (scenario === 'cancel-history' && history)) { setInterval(() => {}, 1000); }
   else {
     const deadline = Date.now()+5000;
     while (!scenario.startsWith('shard') && index >= 1 && index <= 2 && !fs.existsSync(log+'.started-'+(3-index))) {
@@ -137,7 +143,7 @@ if (command === 'cargo') {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
     }
     fs.writeFileSync(log+'.finished-'+index, 'finished');
-    process.exit((['test-error','batches-error','shard-error'].includes(scenario) && index === 1) || (scenario === 'scale-error' && scale) || (scenario === 'owner-error' && owner) || (scenario === 'audit-error' && audit) || (scenario === 'diagnostics-error' && diagnostics) || (scenario === 'scan-error' && scan) || (scenario === 'bson-error' && bson) || (scenario === 'first-response-error' && firstResponse) ? 7 : 0);
+    process.exit((['test-error','batches-error','shard-error'].includes(scenario) && index === 1) || (scenario === 'scale-error' && scale) || (scenario === 'owner-error' && owner) || (scenario === 'audit-error' && audit) || (scenario === 'diagnostics-error' && diagnostics) || (scenario === 'scan-error' && scan) || (scenario === 'bson-error' && bson) || (scenario === 'first-response-error' && firstResponse) || (scenario === 'history-error' && history) ? 7 : 0);
   }
 } else {
   const file = name => log+'.container-'+name;
@@ -163,7 +169,7 @@ if (command === 'cargo') {
       const name = args[2];
       const owner = JSON.parse(fs.readFileSync(volume(name))).owner;
       if (name !== owner+'-data' || args.length !== 3) process.exit(20);
-      if (scenario === 'volume-cleanup-error' || (scenario === 'owner-volume-cleanup-error' && fs.existsSync(log+'.finished--1')) || (scenario === 'audit-volume-cleanup-error' && fs.existsSync(log+'.finished--2')) || (scenario === 'diagnostics-volume-cleanup-error' && fs.existsSync(log+'.finished--3')) || (scenario === 'scan-volume-cleanup-error' && fs.existsSync(log+'.finished--4')) || fs.existsSync(file(owner))) process.exit(21);
+      if (scenario === 'volume-cleanup-error' || (scenario === 'owner-volume-cleanup-error' && fs.existsSync(log+'.finished--1')) || (scenario === 'audit-volume-cleanup-error' && fs.existsSync(log+'.finished--2')) || (scenario === 'diagnostics-volume-cleanup-error' && fs.existsSync(log+'.finished--3')) || (scenario === 'scan-volume-cleanup-error' && fs.existsSync(log+'.finished--4')) || (scenario === 'history-volume-cleanup-error' && fs.existsSync(log+'.finished--7')) || fs.existsSync(file(owner))) process.exit(21);
       fs.unlinkSync(volume(name));
     } else process.exit(22);
   } else if (args[0] === 'run') {
@@ -189,7 +195,7 @@ if (command === 'cargo') {
     const name = args.find(value => value.startsWith('label=')).split('=').at(-1);
     console.log(fs.existsSync(file(name)) ? JSON.parse(fs.readFileSync(file(name))).id.slice(0,12) : '');
   } else if (args[0] === 'rm') {
-    if (scenario === 'cleanup-error' || (scenario === 'owner-cleanup-error' && fs.existsSync(log+'.finished--1')) || (scenario === 'audit-cleanup-error' && fs.existsSync(log+'.finished--2')) || (scenario === 'diagnostics-cleanup-error' && fs.existsSync(log+'.finished--3')) || (scenario === 'scan-cleanup-error' && fs.existsSync(log+'.finished--4'))) process.exit(1);
+    if (scenario === 'cleanup-error' || (scenario === 'owner-cleanup-error' && fs.existsSync(log+'.finished--1')) || (scenario === 'audit-cleanup-error' && fs.existsSync(log+'.finished--2')) || (scenario === 'diagnostics-cleanup-error' && fs.existsSync(log+'.finished--3')) || (scenario === 'scan-cleanup-error' && fs.existsSync(log+'.finished--4')) || (scenario === 'history-cleanup-error' && fs.existsSync(log+'.finished--7'))) process.exit(1);
     const files = fs.readdirSync(path.dirname(log)).filter(name => name.startsWith('calls.ndjson.container-'));
     // Match immutable mock identity without reading another concurrently removed file.
     const selected = files.find(name => require('node:crypto').createHash('sha256')
@@ -220,4 +226,4 @@ if (command === 'cargo') {
   };
 }
 
-export { scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, isolatedTests, observationTest, runnerSetupTimeoutMs, fixturePredicate, qualificationPredicate, ordinaryPredicate, fixture };
+export { scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, isolatedTests, observationTest, runnerSetupTimeoutMs, fixturePredicate, qualificationPredicate, ordinaryPredicate, fixture };
