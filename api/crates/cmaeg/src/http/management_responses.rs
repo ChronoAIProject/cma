@@ -185,10 +185,29 @@ pub(super) fn provider_failure_detail(error: &crate::providers::ProviderError) -
     format!("provider request failed: {reason}")
 }
 
+/// Name the provider's answer without echoing arbitrary provider text.
+fn release_refused_detail(status: u16, code: &str) -> String {
+    let named = !code.is_empty()
+        && code.len() <= 64
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+    let answer = if named {
+        format!("HTTP {status} {code}")
+    } else {
+        format!("HTTP {status}")
+    };
+    format!(
+        "The provider refused to release this channel's binding ({answer}). The channel was not deleted and keeps its version. A channel whose creation never became ready cannot process events. The provider must release the binding, or report it absent with 404, before deletion can complete."
+    )
+}
+
 pub(super) fn management_error(error: ManagementError) -> Response {
     use crate::telemetry::http_failure::FailureStage;
     let stage = match &error {
-        ManagementError::Provider(_) => FailureStage::ChannelProvider,
+        ManagementError::Provider(_) | ManagementError::ReleaseRefused { .. } => {
+            FailureStage::ChannelProvider
+        }
         ManagementError::Record(_) | ManagementError::NotFound => FailureStage::ChannelRecord,
         ManagementError::Invalid(_) => FailureStage::RequestValidation,
         _ => FailureStage::ChannelOperation,
@@ -276,6 +295,11 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             ProblemCode::Conflict,
             format!("expected version {expected}, actual {actual:?}"),
         ),
+        ManagementError::ReleaseRefused { status, code } => (
+            StatusCode::CONFLICT,
+            ProblemCode::ProviderRejected,
+            release_refused_detail(status, &code),
+        ),
         ManagementError::Unauthorized => (
             StatusCode::UNAUTHORIZED,
             ProblemCode::NotAuthenticated,
@@ -334,6 +358,30 @@ mod tests {
             assert_eq!(body["code"], "provider_unavailable");
             assert_eq!(body["detail"], detail);
             assert!(!body["detail"].as_str().unwrap().contains("internal.example"));
+        }
+    }
+
+    #[tokio::test]
+    async fn refused_release_is_a_typed_conflict_that_names_only_safe_provider_codes() {
+        for (code, named) in [
+            ("forbidden", "(HTTP 403 forbidden)"),
+            ("See https://internal.example/x", "(HTTP 403)"),
+            ("", "(HTTP 403)"),
+        ] {
+            let response = management_error(ManagementError::ReleaseRefused {
+                status: 403,
+                code: code.into(),
+            });
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["code"], "provider_rejected");
+            let detail = body["detail"].as_str().unwrap();
+            assert!(detail.contains(named), "{detail}");
+            assert!(detail.contains("was not deleted"));
+            assert!(!detail.contains("internal.example"));
         }
     }
 
