@@ -9,6 +9,7 @@ use layer2_core::sandbox::{
 };
 
 type Computation<'a> = AdmittedOperation<'a, Result<SemanticCheckpoint, SandboxStoreError>>;
+type Validation<'a> = AdmittedOperation<'a, Result<(), SandboxStoreError>>;
 
 /// Inputs retain caller custody. This computes a checkpoint, including its
 /// original untrusted fallback; it grants no audit, quarantine or write authority.
@@ -36,6 +37,33 @@ pub(in crate::store::agent_log_integrity) fn checkpoint_from_entries_admitted<'a
                 Ok(checkpoint) => Ok(retained.initialize_owned(|| Ok(checkpoint))),
                 Err(error) => Ok(working.initialize_owned(|| Err(error))),
             }
+        },
+    )
+}
+
+/// Preserve the strict verdict and recognized unfinished boundaries. The caller
+/// retains input custody and any decision to abort, quarantine or write.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "enabled recording awaits complete ingress composition"
+    )
+)]
+pub(in crate::store::agent_log_integrity) fn validate_retained_semantics_admitted<'a>(
+    agent: &'a Agent,
+    entries: &'a [AgentLogEntry],
+    policy: &'a IngressOwnershipPolicy,
+) -> Result<Validation<'a>, AdmittedError> {
+    let plan = ComputationPlan::inspect(agent, entries)?.validation()?;
+    AdmittedOperation::from_owned(
+        policy,
+        IngressClass::Transformation,
+        plan,
+        move |working| async move {
+            Ok(working.initialize_owned(|| {
+                SemanticCheckpoint::validate_retained_semantics(agent, entries)
+            }))
         },
     )
 }
@@ -72,6 +100,18 @@ fn map_pair_bytes<K, V>() -> usize {
 }
 
 impl ComputationPlan {
+    fn validation(self) -> Result<AllocationPlan, AdmissionRefusal> {
+        // The reconstructed Agent queue is temporary during strict comparison.
+        // Its storage still overlaps the observed checkpoint's retained queue.
+        AllocationPlan::checked(
+            "retained semantic validation",
+            &[
+                self.working.requested_bytes(),
+                self.retained.requested_bytes(),
+            ],
+        )
+    }
+
     fn inspect(agent: &Agent, entries: &[AgentLogEntry]) -> Result<Self, AdmissionRefusal> {
         let mut working = Bytes::default();
         let mut retained = Bytes::default();
@@ -191,3 +231,7 @@ impl ComputationPlan {
 #[cfg(test)]
 #[path = "semantic_ingress_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "semantic_validation_ingress_tests.rs"]
+mod validation_tests;
