@@ -203,7 +203,7 @@ it.each([text, 'My next message'])(
   async (newText) => {
     const f = await setup(true);
     fireEvent(window, new Event('blur'));
-    const report = await connectionClient.check();
+    const report = await connectionClient.check({ type: 'agent', id: agent });
     const ready = deferred<ConnectionReport>();
     vi.mocked(connectionClient.check).mockReturnValueOnce(ready.promise);
     send();
