@@ -310,7 +310,7 @@ it.each([
   async ({ name, fields, expected }) => {
     const { create } = setup();
     await ready();
-    fireEvent.click(screen.getByRole('button', { name }));
+    selectTaskTemplate(name);
     for (const [label, value] of fields) fill(label!, value!);
     expect(screen.getByRole('region', { name: 'Task preview · read-only' })).toHaveTextContent(
       expected.replace(/\s+/g, ' '),
