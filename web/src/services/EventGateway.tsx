@@ -163,6 +163,7 @@ function EventGatewayBody({
       {createStarted ? (
         <section className="gateway-detail gateway-detail--create" hidden={!createActive}>
           <PageHeader
+            wrapIdentity
             breadcrumb={[{ label: 'Event Gateway' }, { label: 'New channel' }]}
             title="New channel"
             description="Connect an event source to your agent."
@@ -264,6 +265,7 @@ function ChannelDetail({
   return (
     <>
       <PageHeader
+        wrapIdentity
         breadcrumb={[{ label: 'Event Gateway' }, channelsCrumb, { label: channel.definition.name }]}
         title={channel.definition.name}
         meta={

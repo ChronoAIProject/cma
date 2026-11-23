@@ -39,6 +39,8 @@ pub(super) struct Peer {
     pub rows: Arc<Mutex<BTreeMap<String, Value>>>,
     /// Lose the acknowledgement after committing this expected revision.
     pub lose_ack: Arc<AtomicU64>,
+    /// Answer every binding DELETE with this definite refusal.
+    pub refuse_delete: Arc<Mutex<Option<(StatusCode, &'static str)>>>,
 }
 pub(super) struct Fixture {
     pub peer: Peer,
@@ -155,8 +157,13 @@ async fn provider(
     Path(id): Path<String>,
     method: Method,
     body: Option<Json<Value>>,
-) -> Json<Value> {
+) -> Response {
     peer.calls.lock().unwrap().push(method.to_string());
+    if method == Method::DELETE {
+        if let Some((status, code)) = *peer.refuse_delete.lock().unwrap() {
+            return (status, Json(json!({"code": code}))).into_response();
+        }
+    }
     let value = body.map(|Json(value)| value).unwrap_or(Value::Null);
     if peer.pause.swap(false, Ordering::SeqCst) {
         let (done, wait) = tokio::sync::oneshot::channel();
@@ -179,6 +186,7 @@ async fn provider(
     } else {
         json!({"binding_id":id,"level":"l1","honoured":[],"refused":[]})
     })
+    .into_response()
 }
 fn apply(peer: &Peer, id: &str, method: &Method, value: Value) {
     if method == Method::DELETE {
