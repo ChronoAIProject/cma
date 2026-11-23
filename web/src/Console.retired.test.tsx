@@ -15,7 +15,7 @@ import { WIRE_AGENT } from './test/rest';
 import { chooseOption, expandNavigationFilters } from './test/select';
 import { retainTaskViewer } from './create/taskIdentity';
 import { openTaskDraftStore } from './create/taskDraftStorage';
-import { readAgentDraft } from './agent/draftStorage';
+import { agentDraftKey, readAgentDraft } from './agent/draftStorage';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -118,7 +118,41 @@ it.each(['ready', 'error'] as const)(
   'unmounts runtime panels throughout retained loading/%s/unconfirmed and restores the active selection',
   async (outcome) => {
     const witness: SelectedRetiredAgent = { detail: retired, viewerId: 'owner', authEpoch: 7 };
-    const client = agentClient();
+    const resourceViews = createClient({
+      baseUrl: 'https://cma.test',
+      fetch: async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (path === '/api/v1/organizations') return Response.json({ items: [] });
+        if (path === '/api/v1/agents/agt_1')
+          return Response.json({
+            ...WIRE_AGENT,
+            id: 'agt_1',
+            worktree: { ...WIRE_AGENT.worktree, id: AGENT_DETAIL.worktree.id },
+            workspace: { ...WIRE_AGENT.workspace, id: AGENT_DETAIL.workspace.id },
+            sandbox: { ...WIRE_AGENT.sandbox, id: AGENT_DETAIL.sandbox.id },
+          });
+        if (path.includes('/resource-access/'))
+          return Response.json({
+            owner: { kind: 'person', is_current_person: true },
+            capabilities: ['view_details'],
+            policy_revision: 1,
+            revalidate_at: null,
+          });
+        if (path.endsWith('/channel-usage'))
+          return Response.json({
+            agent_id: 'agt_1',
+            channel_usage: {
+              active: false,
+              has_history: false,
+              first_used_at: null,
+              last_used_at: null,
+            },
+          });
+        throw new Error(`Unexpected request: ${path}`);
+      },
+    });
+    const readAccessible = vi.spyOn(resourceViews.agents, 'readAccessible');
+    const client = agentClient({ resourceViews });
     const transcript = vi.spyOn(client, 'readAgentTranscript');
     const replay = vi.spyOn(client, 'replayAgent');
     const draw = (selectedRetired?: SelectedRetiredAgent, authEpoch = 7) => (
@@ -149,6 +183,7 @@ it.each(['ready', 'error'] as const)(
     expect(screen.getByRole('complementary', { name: selection })).toBeVisible();
     const storedDraft = readAgentDraft('owner', 'agt_1');
     expect(storedDraft.content).toBe('Keep this unsent draft');
+    const storedBytes = sessionStorage.getItem(agentDraftKey('owner', 'agt_1'));
     let resolve!: (value: typeof AGENT_TRANSCRIPT) => void;
     let reject!: (error: Error) => void;
     transcript.mockImplementationOnce(
@@ -166,6 +201,7 @@ it.each(['ready', 'error'] as const)(
       expect.objectContaining({ cache: 'no-store', maxPages: 256 }),
     );
     expect(liveSignal?.aborted).toBe(true);
+    expect(screen.getByText('Loading retained conversation.')).toBeVisible();
     const expectRetained = () => {
       expect(document.querySelector('.agent-side-panel')).toBeNull();
       expect(document.querySelector('.agent-computer')).toBeNull();
@@ -173,6 +209,7 @@ it.each(['ready', 'error'] as const)(
       expect(document.querySelector('.frame')).not.toHaveAttribute('data-details-inline');
       expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
       expect(readAgentDraft('owner', 'agt_1')).toEqual(storedDraft);
+      expect(sessionStorage.getItem(agentDraftKey('owner', 'agt_1'))).toBe(storedBytes);
     };
     expectRetained();
     await act(async () => {
@@ -180,11 +217,20 @@ it.each(['ready', 'error'] as const)(
       else reject(new Error('Retained history unavailable'));
     });
     expectRetained();
+    expect(
+      screen.getByText(
+        outcome === 'ready' ? 'The repository is ready.' : 'Conversation couldn’t be loaded',
+      ),
+    ).toBeVisible();
     const replays = replay.mock.calls.length;
     view.rerender(draw());
     expectRetained();
+    expect(screen.getByText('Checking access to the retained conversation.')).toBeVisible();
     expect(replay).toHaveBeenCalledTimes(replays);
+    const accessReads = readAccessible.mock.calls.length;
     view.rerender(draw(undefined, 8));
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(readAccessible.mock.calls.length).toBeGreaterThan(accessReads));
     await waitFor(() => expect(replay.mock.calls.length).toBeGreaterThan(replays));
     expect(screen.getByRole('complementary', { name: selection })).toBeVisible();
     if (outcome === 'ready')
