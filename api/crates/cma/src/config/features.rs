@@ -1,6 +1,8 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[cfg(test)]
 mod agent_event_page_tests;
+#[cfg(test)]
+mod failure_containment_tests;
 pub(super) mod home_backup;
 #[cfg(test)]
 mod home_backup_expiry_tests;
@@ -35,6 +37,7 @@ pub(crate) struct FeatureFlags {
     pub native_retirement_finality_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub ownership_cleanup_pacing: bool,
+    pub am_failure_containment_enabled: bool,
     pub coordinated_ingress: bool,
     pub retained_json: bool,
     pub bounded_raw_output: bool,
@@ -169,6 +172,10 @@ impl FeatureFlags {
             )?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
             ownership_cleanup_pacing: flag(lookup, "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED")?,
+            am_failure_containment_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED",
+            )?,
             coordinated_ingress: flag(lookup, "CHRONO_INGRESS_COORDINATOR_ENABLED")?,
             retained_json: flag(lookup, "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED")?,
             bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
