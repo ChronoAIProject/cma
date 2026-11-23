@@ -126,7 +126,7 @@ function Entry({
   const [revision, setRevision] = useState(0);
   const owner = state.status === 'authenticated' ? state.user.id : undefined;
   const recoveryBlocked = conflict !== undefined || (owner !== undefined && blockedOwner === owner);
-  const credentialReturnTo = routePath({ kind: 'public_trigger', publicId: route.publicId });
+  const credentialReturnTo = routePath(route);
   const allowed =
     state.status === 'authenticated' && state.user.capabilities.includes('launch_triggers');
   const attempted = useRef(new Set<string>());
