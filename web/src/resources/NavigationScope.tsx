@@ -3,8 +3,20 @@ import type { ResourceViewsClient } from './client';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { scopeRoute, scopeValue } from './scope';
 import { Picker } from '../ui/Picker';
+import type { OrganizationChoice } from '@cma/client';
 
-export function useNavigationScope(client: ResourceViewsClient | undefined, scope: string) {
+export interface NavigationScopeChoices {
+  readonly options: readonly { readonly value: string; readonly label: string }[];
+  readonly selected?: OrganizationChoice;
+  readonly unavailable: boolean;
+  readonly reload?: () => void;
+  readonly loading?: boolean;
+}
+
+export function useNavigationScope(
+  client: ResourceViewsClient | undefined,
+  scope: string,
+): NavigationScopeChoices {
   const read = useMemo(
     () =>
       client === undefined
@@ -31,10 +43,14 @@ export function useNavigationScope(client: ResourceViewsClient | undefined, scop
       value: scopeValue(organization),
       label: 'Selected organization (Organization)',
     });
-  return { options, selected, unavailable: current.state.status === 'error' };
+  return {
+    options,
+    selected,
+    unavailable: current.state.status === 'error',
+    reload: current.reload,
+    loading: current.state.status === 'loading' || current.refreshing,
+  };
 }
-
-export type NavigationScopeChoices = ReturnType<typeof useNavigationScope>;
 
 export function NavigationScopePicker({
   choices,

@@ -39,7 +39,7 @@ pub(super) async fn fence(
         candidate,
         at,
         event,
-        store.managed_runtime_version.as_deref(),
+        store.managed_agent_release().as_deref(),
     )
     .map_err(ApplyError::Domain)?;
     let command_id = proof.command().receipt.envelope.command_id.clone();

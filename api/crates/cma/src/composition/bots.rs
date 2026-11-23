@@ -332,6 +332,7 @@ impl BotComposition {
             default_model: config.default_profiles.agent_model.clone(),
         });
         let service = BotService::new(stores.bots.clone(), profiles, "cma_codex".into())
+            .with_effect_reservations(config.features.bot_effect_reservations)
             .with_inline_profiles(inline_profiles);
         let router = rest::bot_router(BotControl::new(service.clone(), external.clone()));
         let worker = BotWorker::new(
@@ -400,6 +401,9 @@ impl BotComposition {
 fn due(bot: &layer2_core::bots::Bot) -> bool {
     let now = layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339()).unwrap_or_default();
     if let Some(work) = &bot.work {
+        if work.effect.is_some() {
+            return false;
+        }
         work.expires_at
             .as_deref()
             .and_then(layer2_core::seconds_from_rfc3339)

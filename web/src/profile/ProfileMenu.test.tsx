@@ -16,6 +16,61 @@ const user = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('account menu', () => {
+  it('opens the export inventory only when the owner session advertises export', async () => {
+    const fetch = vi.fn(async () =>
+      Response.json({
+        owner_subject: user.id,
+        data_class: 'retained_conversation',
+        agents: [],
+        next: null,
+      }),
+    );
+    vi.stubGlobal('fetch', fetch);
+    const actor = userEvent.setup();
+    const { rerender } = render(<ProfileMenu user={user} onSignOut={vi.fn()} />);
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.queryByRole('menuitem', { name: 'Export account data' })).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+    rerender(<ProfileMenu user={{ ...user, privacyExport: true }} onSignOut={vi.fn()} />);
+    await actor.click(screen.getByRole('menuitem', { name: 'Export account data' }));
+    expect(await screen.findByText('No Agents to export.')).toBeVisible();
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it('opens the published terms and privacy notice in a new tab', async () => {
+    const open = vi.fn();
+    vi.stubGlobal('open', open);
+    const actor = userEvent.setup();
+    const { rerender } = render(<ProfileMenu user={user} onSignOut={vi.fn()} />);
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.queryByRole('menuitem', { name: 'Terms of Service' })).toBeNull();
+    rerender(
+      <ProfileMenu
+        user={{
+          ...user,
+          legalTerms: {
+            version: '2026-11-30',
+            termsUrl: 'https://legal.example.test/terms',
+            privacyUrl: 'https://legal.example.test/privacy',
+          },
+        }}
+        onSignOut={vi.fn()}
+      />,
+    );
+    await actor.click(screen.getByRole('menuitem', { name: 'Privacy Notice' }));
+    expect(open).toHaveBeenCalledWith(
+      'https://legal.example.test/privacy',
+      '_blank',
+      'noopener,noreferrer',
+    );
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    await actor.click(screen.getByRole('menuitem', { name: 'Terms of Service' }));
+    expect(open).toHaveBeenLastCalledWith(
+      'https://legal.example.test/terms',
+      '_blank',
+      'noopener,noreferrer',
+    );
+  });
   it('keeps a management credential refusal separate from the grant and does not loop sign-in', async () => {
     vi.stubGlobal(
       'fetch',

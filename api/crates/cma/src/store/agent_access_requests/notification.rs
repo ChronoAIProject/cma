@@ -52,20 +52,22 @@ impl MongoSandboxStore {
         &self,
         lease: &AgentAccessLease,
     ) -> Result<AgentAccessRecord, AgentAccessError> {
-        transaction!(self, session, { prepare(self, lease, session).await })
+        let at = layer2_core::now_rfc3339();
+        transaction!(self, session, { prepare(self, lease, &at, session).await })
     }
 }
 
 async fn prepare(
     store: &MongoSandboxStore,
     lease: &AgentAccessLease,
+    at: &str,
     session: &mut ClientSession,
 ) -> TxResult<AgentAccessRecord> {
     let mut record = super::worker::leased(store, lease, session).await?;
     if record.phase != AgentAccessPhase::Notifying || record.progress.hot_update.is_none() {
         return Err(AgentAccessError::Conflict.into());
     }
-    let snapshot = validate_lineage(store, &record.requester, session, false).await?;
+    let snapshot = validate_lineage_transaction(store, &record.requester, session, false).await?;
     let agent = snapshot
         .resource
         .lineage
@@ -115,7 +117,7 @@ async fn prepare(
     fence(store, &snapshot, session).await?;
     let revision = record.revision;
     record.revision += 1;
-    record.updated_at = layer2_core::now_rfc3339();
+    record.updated_at = at.to_owned();
     replace_leased(store, lease, revision, &record, session).await?;
     Ok(record)
 }

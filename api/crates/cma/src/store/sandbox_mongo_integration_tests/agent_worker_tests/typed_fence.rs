@@ -1,7 +1,8 @@
 //! The worker publication root must retain typed ownership failures. Native
 //! effects precede this pure transaction; their durable receipts stay exact.
 use super::*;
-use layer2_core::agent_ownership::Authority;
+use crate::store::sandbox_mongo::TRANSACTION_ATTEMPTS;
+use layer2_core::agent_ownership::{Authority, OwnershipStore};
 use std::time::Duration;
 
 mod fixture;
@@ -163,6 +164,26 @@ impl Publication {
     }
 }
 
+#[tokio::test]
+#[ignore = "requires disposable replica set via CHRONO_TEST_MONGODB_FAILPOINT_URI"]
+async fn worker_publication_fence_known_abort_retries_fresh_snapshot() {
+    let p = Publication::new().await;
+    p.fixture
+        .arm(1, &["TransientTransactionError"], false)
+        .await;
+    let result = p.publish().await;
+    let (hits, commands) = p.fixture.clear().await;
+    // Read back before dropping, but clean up even when the old adapter fails.
+    let agent = p.fixture.store.get_agent(&p.before.id).await.unwrap();
+    if result.is_ok() {
+        p.verify(true, &commands, 2).await;
+    }
+    p.fixture.cleanup().await;
+    assert_eq!(hits, 1);
+    result.expect("M3_FENCE_KNOWN_ABORT: a known-aborted fence must retry publication");
+    assert_eq!(agent, Some(p.mutation.agent));
+}
+
 async fn refused(labels: &[&str], failures: usize, attempts: usize) -> SandboxStoreError {
     let p = Publication::new().await;
     p.fixture.arm(failures, labels, false).await;
@@ -172,6 +193,18 @@ async fn refused(labels: &[&str], failures: usize, attempts: usize) -> SandboxSt
     p.fixture.cleanup().await;
     assert_eq!(hits, attempts);
     result.expect_err("a refused ownership fence cannot succeed")
+}
+
+#[tokio::test]
+#[ignore = "requires disposable replica set via CHRONO_TEST_MONGODB_FAILPOINT_URI"]
+async fn worker_publication_fence_exhaustion_is_bounded_without_partial_effects() {
+    let error = refused(
+        &["TransientTransactionError"],
+        TRANSACTION_ATTEMPTS,
+        TRANSACTION_ATTEMPTS,
+    )
+    .await;
+    assert_eq!(error, SandboxStoreError::Conflict);
 }
 
 #[tokio::test]
@@ -194,4 +227,20 @@ async fn worker_publication_fence_unknown_dominates_both_labels() {
     )
     .await;
     assert!(matches!(error, SandboxStoreError::Unavailable(_)));
+}
+
+#[tokio::test]
+#[ignore = "requires disposable replica set via CHRONO_TEST_MONGODB_FAILPOINT_URI"]
+async fn worker_publication_fence_stale_epoch_after_abort_never_publishes() {
+    let p = Publication::new().await;
+    p.fixture.arm(1, &["TransientTransactionError"], true).await;
+    let (result, ()) = tokio::join!(p.publish(), p.fixture.takeover(&p.authority));
+    let (hits, commands) = p.fixture.clear().await;
+    let owner = p.fixture.owners.owner(&p.before.id).await.unwrap().unwrap();
+    p.verify(false, &commands, 2).await;
+    p.fixture.cleanup().await;
+    assert_eq!(hits, 1);
+    assert_eq!(result, Err(SandboxStoreError::Conflict));
+    assert!(owner.token.epoch > p.authority.token.epoch);
+    assert_eq!(owner.token.instance_id, "m3-successor");
 }

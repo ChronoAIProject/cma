@@ -299,3 +299,52 @@ it('replays the original Start after a receipt acknowledgement error without rep
   expect(readDraftRecovery(PUBLIC_TRUST.id)).toBeUndefined();
   expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
 });
+
+it.each([false, true])(
+  'retains a Draft Start through RecoveryRequired and remount until its original receipt arrives (prior uncertainty: %s)',
+  async (priorUncertainty) => {
+    const prefix: Outcome[] = priorUncertainty ? ['lost', 'idempotency_in_flight'] : [];
+    const test = fixture([...prefix, 'idempotency_recovery_required', 'accepted']);
+    vi.mocked(test.client.requests.read).mockResolvedValue(PUBLIC_TRUST);
+    const actor = userEvent.setup();
+    const view = test.mount();
+    await actor.click(screen.getByRole('checkbox'));
+    await clickStart(actor);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled());
+    const retained = readDraftRecovery(PUBLIC_TRUST.id)!;
+    expect(retained.owner).toBe(PUBLIC_USER.id);
+    expect(retained.confirmedDigest).toBe('approved-one');
+    expect(retained.command?.key).toBeTruthy();
+    expect(retained.command?.key).toBe(test.sent[0]?.key);
+    expect(JSON.stringify(retained.command?.body)).toBe(test.sent[0]?.body);
+    for (let attempt = 0; attempt < prefix.length; attempt++) {
+      await clickStart(actor);
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled());
+      expect(readDraftRecovery(PUBLIC_TRUST.id)).toEqual(retained);
+    }
+    await waitFor(() => expect(test.completed).toHaveBeenCalledWith(PUBLIC_TRUST));
+    expect(test.client.requests.read).toHaveBeenCalledExactlyOnceWith(PUBLIC_TRUST.id);
+    expect(test.sent).toHaveLength(prefix.length + 1);
+    expect(screen.getByRole('checkbox')).toBeChecked();
+    expect(screen.getByRole('checkbox')).toBeDisabled();
+    expect(readDraftRecovery(PUBLIC_TRUST.id)).toEqual(retained);
+    view.unmount();
+    test.mount();
+    await screen.findByRole('region', { name: 'CMA sign-in required' });
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeDisabled();
+    expect(screen.getByRole('checkbox')).toBeChecked();
+    expect(screen.getByRole('checkbox')).toBeDisabled();
+    expect(readDraftRecovery(PUBLIC_TRUST.id)).toEqual(retained);
+    await checkAccount(actor);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled());
+    expect(test.sent).toHaveLength(prefix.length + 1);
+    expect(readDraftRecovery(PUBLIC_TRUST.id)).toEqual(retained);
+    await clickStart(actor);
+    await waitFor(() => expect(test.completed).toHaveBeenLastCalledWith(PUBLIC_RECORD));
+    expect(test.sent).toHaveLength(prefix.length + 2);
+    for (const command of test.sent) expect(command).toEqual(test.sent[0]);
+    expect(readDraftRecovery(PUBLIC_TRUST.id)).toBeUndefined();
+    expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(test.client.requests.cancel).not.toHaveBeenCalled();
+  },
+);

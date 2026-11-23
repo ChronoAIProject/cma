@@ -175,8 +175,9 @@ async fn settings_patch_refuses_foreign_principal_and_mixed_rollout() {
         .send()
         .await
         .unwrap();
-    assert!(!off.status().is_success());
-    assert_eq!(replicas[peer].scopes.lock().unwrap().as_slice(), &[None]);
+    assert_eq!(off.status(), StatusCode::SERVICE_UNAVAILABLE);
+    // Disabled routing never runs an ownerless local write on the peer.
+    assert!(replicas[peer].scopes.lock().unwrap().is_empty());
     assert!(replicas[owner].scopes.lock().unwrap().is_empty());
 
     enable(&replicas[peer]);
@@ -186,7 +187,7 @@ async fn settings_patch_refuses_foreign_principal_and_mixed_rollout() {
         .unwrap();
     assert_eq!(mixed.status(), StatusCode::FORBIDDEN);
     assert_eq!(mixed.headers()["cache-control"], "private, no-store");
-    assert_eq!(replicas[peer].scopes.lock().unwrap().as_slice(), &[None]);
+    assert!(replicas[peer].scopes.lock().unwrap().is_empty());
     assert!(replicas[owner].scopes.lock().unwrap().is_empty());
     enable(&replicas[owner]);
 
@@ -203,6 +204,78 @@ async fn settings_patch_refuses_foreign_principal_and_mixed_rollout() {
         .iter()
         .all(|replica| replica.runtime.inputs.lock().unwrap().is_empty()));
     foreign.close().await;
+    for replica in replicas {
+        replica.close().await;
+    }
+    mongo.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
+async fn settings_patch_with_routing_disabled_applies_under_the_local_owner_only() {
+    let (mongo, name, durable) =
+        crate::store::sandbox_maintenance::mongo_integration_tests::database().await;
+    seed(&durable).await;
+    let replicas = [
+        Replica::open(&name, true).await,
+        Replica::open(&name, true).await,
+    ];
+    let (owner, authority) = fixture::acquire(&replicas).await;
+    let peer = 1 - owner;
+    let before = read(&replicas[owner]).await;
+    assert_eq!(before.0, StatusCode::OK);
+    assert_ne!(before.1["model"], "fixture-settings-model");
+
+    // Before #2267 this ran locally without owner authority, and every commit
+    // was fenced until it reported admission_conflict. Now it is a typed,
+    // retryable refusal that writes nothing.
+    let (status, problem) = view(
+        patch(&replicas[peer], "disabled-peer")
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(problem["code"], "agent_owner_unavailable");
+    assert!(replicas[peer].scopes.lock().unwrap().is_empty());
+    assert_eq!(read(&replicas[peer]).await, before);
+
+    let response = patch(&replicas[owner], "disabled-owner")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
+    let expected = json!({
+        "model":"fixture-settings-model", "reasoning_effort":"high",
+        "permission_mode":"guarded", "pending":false
+    });
+    assert_eq!(view(response).await, (StatusCode::OK, expected.clone()));
+    assert_eq!(
+        replicas[owner].scopes.lock().unwrap().as_slice(),
+        &[Some(authority.token.clone())]
+    );
+    assert!(matches!(
+        replicas[owner].runtime.inputs.lock().unwrap().as_slice(),
+        [layer3_adapter::ConversationInput::Configure { model, .. }] if model == "fixture-settings-model"
+    ));
+    assert!(replicas[peer].runtime.inputs.lock().unwrap().is_empty());
+    for replica in &replicas {
+        assert_eq!(read(replica).await, (StatusCode::OK, expected.clone()));
+    }
+    // The refused peer key left no receipt, so retrying it on the owner applies
+    // nothing new and reports the current settings.
+    assert_eq!(
+        view(
+            patch(&replicas[owner], "disabled-peer")
+                .send()
+                .await
+                .unwrap()
+        )
+        .await,
+        (StatusCode::OK, expected)
+    );
+    assert_eq!(replicas[owner].runtime.inputs.lock().unwrap().len(), 1);
     for replica in replicas {
         replica.close().await;
     }

@@ -106,7 +106,8 @@ pub(crate) struct SandboxWorkerConfig {
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
-    pub runtime_version: String,
+    /// The released default for new provisioning, read once per Sandbox.
+    pub released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
     pub lease_duration: Duration,
     pub retry_delay: Duration,
     pub policy: Arc<dyn SandboxPolicySource>,
@@ -138,7 +139,10 @@ impl SandboxWorkerConfig {
             execution: Default::default(),
             holder: holder.into(),
             deployment_id: deployment_id.into(),
-            runtime_version: runtime_version.into(),
+            released: Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+                runtime_version.into(),
+                None,
+            )),
             lease_duration: DEFAULT_LEASE,
             retry_delay: DEFAULT_RETRY,
             policy,
@@ -167,6 +171,15 @@ impl SandboxWorkerConfig {
         self
     }
 
+    /// Share the process's released-default authority instead of a fixed pin.
+    pub(crate) fn with_released_runtime(
+        mut self,
+        released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
+    ) -> Self {
+        self.released = released;
+        self
+    }
+
     pub fn with_home_policy(mut self, policy: Option<layer3_adapter::HomeVolumePolicy>) -> Self {
         self.home_policy = policy;
         self
@@ -189,7 +202,7 @@ pub(crate) struct SandboxWorker {
     funding: Arc<dyn SandboxFundingAdapter>,
     reopen_relay: std::sync::OnceLock<std::sync::Weak<crate::agent_manager::relay::Relay>>,
     reopen_agents: std::sync::OnceLock<Arc<dyn layer2_core::sandbox::store::AgentStore>>,
-    reopen_gate: tokio::sync::Mutex<()>,
+    reopen_gates: std::sync::Mutex<lifecycle::ReopenGates>,
     pending_reopens: std::sync::Mutex<
         std::collections::BTreeMap<layer2_core::AgentId, lifecycle::PendingReopen>,
     >,
@@ -216,7 +229,7 @@ impl SandboxWorker {
             funding,
             reopen_relay: std::sync::OnceLock::new(),
             reopen_agents: std::sync::OnceLock::new(),
-            reopen_gate: tokio::sync::Mutex::new(()),
+            reopen_gates: std::sync::Mutex::default(),
             pending_reopens: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         })
     }
@@ -336,6 +349,16 @@ impl SandboxWorker {
             }
         }
         Ok(true)
+    }
+
+    #[cfg(test)]
+    pub(super) async fn resume_claim_for_test(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        layer2_core::agent_ownership::transport_observation_scope(self.run_claimed(sandbox, now, 0))
+            .await
     }
 
     /// A finished attempt must not leave its long capture lease blocking a retry

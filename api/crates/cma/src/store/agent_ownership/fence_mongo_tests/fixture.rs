@@ -73,6 +73,10 @@ impl Fixture {
         }
     }
 
+    pub fn app(&self) -> &str {
+        &self.app
+    }
+
     pub async fn fault(&self, command: &str, count: i32, unknown: bool, delay: bool) -> i64 {
         self.commands.lock().unwrap().clear();
         let mut data = doc! {
@@ -100,6 +104,17 @@ impl Fixture {
             .get_i64("count")
             .or_else(|_| result.get_i32("count").map(i64::from))
             .expect("Mongo failpoint count must be an integer")
+    }
+
+    pub async fn wait_for_fault(&self, prior: i64) {
+        self.admin
+            .database("admin")
+            .run_command(doc! {
+                "waitForFailPoint": "failCommand", "timesEntered": prior + 1,
+                "maxTimeMS": 5000_i32,
+            })
+            .await
+            .expect("the real ownership fence must reach the injected fault");
     }
 
     pub async fn clear(&self) -> Vec<Document> {

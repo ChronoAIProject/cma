@@ -111,12 +111,15 @@ async fn replicas() -> (Arc<MemoryOwnershipStore>, Vec<Instance>, Vec<Arc<Probe>
     (store, instances, probes)
 }
 
+/// Canonical, so the request context preserves it across the relay.
+const ACCEPTANCE_REQUEST: &str = "00000000-0000-4000-8000-0000000000a1";
+
 fn headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     for (name, value) in [
         ("authorization", "Bearer synthetic-authorized"),
         ("content-type", "application/json"),
-        ("x-request-id", "acceptance-request"),
+        ("x-request-id", ACCEPTANCE_REQUEST),
         ("idempotency-key", "acceptance-operation"),
     ] {
         headers.insert(name, value.parse().unwrap());
@@ -161,7 +164,7 @@ async fn non_owner_acceptance_preserves_authorization_body_and_request_identity(
             assert_eq!(accepted["relayed"], ingress == peer);
             assert_eq!(accepted["uri"], path);
             assert_eq!(accepted["body"], json!(body.to_vec()));
-            assert_eq!(accepted["request"], "acceptance-request");
+            assert_eq!(accepted["request"], ACCEPTANCE_REQUEST);
             assert_eq!(accepted["idempotency"], "acceptance-operation");
             if ingress == peer {
                 relayed.push(elapsed_us);

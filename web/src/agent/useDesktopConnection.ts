@@ -72,14 +72,19 @@ export function useDesktopConnection(
     runtimeReady,
     runtimeVersion,
   });
+  const sameGeneration = generation.agentId === agentId && generation.owner === owner;
+  // A refresh may briefly withhold the version. Treat that as the same admitted
+  // runtime, as the reconnect effect does, so a waiting retry keeps its status.
+  const admittedVersion = sameGeneration
+    ? (runtimeVersion ?? generation.runtimeVersion)
+    : runtimeVersion;
   if (
-    generation.agentId !== agentId ||
-    generation.owner !== owner ||
+    !sameGeneration ||
     generation.attempt !== attempt ||
     generation.runtimeReady !== runtimeReady ||
-    generation.runtimeVersion !== runtimeVersion
+    generation.runtimeVersion !== admittedVersion
   ) {
-    setGeneration({ agentId, owner, attempt, runtimeReady, runtimeVersion });
+    setGeneration({ agentId, owner, attempt, runtimeReady, runtimeVersion: admittedVersion });
     setPhase(runtimeReady ? 'connecting' : 'waiting');
     setError('');
     setStop(undefined);

@@ -71,6 +71,8 @@ pub struct RuntimeUpdateFailureView {
 
 impl SandboxRuntimeUpdateView {
     pub(super) fn new(sandbox: &Sandbox, service: &SandboxRuntimeUpdateService) -> Self {
+        // One release for the whole view, so its fields always agree.
+        let latest_version = service.latest_version();
         let current_version = sandbox
             .retained_runtime_binding()
             .map(|runtime| runtime.runtime_version.clone());
@@ -78,7 +80,7 @@ impl SandboxRuntimeUpdateView {
         let update_available = same_home
             && current_version
                 .as_deref()
-                .is_some_and(|version| version != service.latest_version());
+                .is_some_and(|version| version != latest_version);
         let request = sandbox.runtime_update_request();
         let pending = request.filter(|request| request.completed_at.is_none());
         let state = match pending {
@@ -111,8 +113,8 @@ impl SandboxRuntimeUpdateView {
             None
         };
         Self {
-            current_version, latest_version: service.latest_version().into(), update_available, state,
-            can_update: service.can_update(sandbox), preserves_home: same_home,
+            can_update: service.can_update_to(sandbox, &latest_version),
+            current_version, latest_version, update_available, state, preserves_home: same_home,
             schedule: RuntimeUpdateScheduleView { timezone: "Asia/Singapore".into(), local_time: "02:00".into() },
             blocked_reason, target_version: request.map(|request| request.target_version.clone()),
             requested_at: request.map(|request| request.requested_at.clone()),

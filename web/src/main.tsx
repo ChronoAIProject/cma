@@ -18,6 +18,7 @@ import { createTriggerPublisherClient } from './trigger-publisher/client';
 import { createPublicClient } from './public/client';
 import { clearAgentTransport } from './agent/transport/journal';
 import { prepareHistoryDocument } from './routing/historyDocument';
+import { HomeDecorationProvider } from './decoration/HomeDecorationProvider';
 
 /*
  * Before the first render, so the page never paints in the wrong theme and
@@ -77,7 +78,9 @@ if (prepareHistoryDocument()) {
           publisher={publisher}
           publicClient={publicClient}
         >
-          <App />
+          <HomeDecorationProvider>
+            <App />
+          </HomeDecorationProvider>
         </CmaClientProvider>
       </AuthContextProvider>
     </StrictMode>,

@@ -159,14 +159,24 @@ async fn apply(
 ) -> Result<bool, ClaimError> {
     if let ChildWriterClaim::Agent(agent) = claim {
         store
-            .fence_agent_effect(&agent.id, session)
+            .fence_agent_effect_transaction(&agent.id, session)
             .await
-            .map_err(ClaimError::Domain)?;
+            .map_err(|error| match error {
+                crate::store::agent_ownership::FenceError::Domain(error) => {
+                    ClaimError::Domain(error)
+                }
+                crate::store::agent_ownership::FenceError::Driver(error) => {
+                    ClaimError::Driver(error)
+                }
+            })?;
     }
     let (id, sandbox_id, owner, _) = claim.identity();
-    crate::store::work_publication::fence(store, session)
+    crate::store::work_publication::fence_transaction(store, session)
         .await
-        .map_err(ClaimError::Domain)?;
+        .map_err(|error| match error {
+            super::work_publication::FenceError::Domain(error) => ClaimError::Domain(error),
+            super::work_publication::FenceError::Driver(error) => ClaimError::Driver(error),
+        })?;
     diagnostics.phase = "parent_read";
     let parent = store
         .sandboxes
@@ -241,6 +251,24 @@ async fn apply(
         (claim, current_agent_row.as_ref())
     {
         let current = read_agent(current_row).map_err(ClaimError::Domain)?;
+        if !super::agent_worker_transaction::pending_adoption::witness::fence_replacement(
+            store,
+            current_row,
+            &current,
+            &parent,
+            session,
+        )
+        .await
+        .map_err(|error| match error {
+            super::agent_log_integrity::TransactionLogError::Domain(error) => {
+                ClaimError::Domain(error)
+            }
+            super::agent_log_integrity::TransactionLogError::Driver(error) => {
+                ClaimError::Driver(error)
+            }
+        })? {
+            return Ok(false);
+        }
         if store.ownership_retry_hints_active() {
             use super::agent_failure_pacing::ownership;
             if let Some((row, now)) = ownership::server_row(store, &current.id, session)
@@ -284,6 +312,14 @@ async fn apply(
         doc! { "$exists": false },
     );
     if let ChildWriterClaim::Agent(agent) = claim {
+        let pending = &super::agent_worker_transaction::pending_adoption::witness::FIELD;
+        if super::agent_worker_transaction::pending_adoption::witness::pending_step(agent) {
+            if let Some(marker) = current_agent_row.as_ref().and_then(|row| row.get(*pending)) {
+                filter.insert(*pending, marker.clone());
+            } else {
+                filter.insert(*pending, doc! {"$exists": false});
+            }
+        }
         filter.insert(
             "last_seq",
             signed(agent.conversation.last_seq, "writer claim Agent log head")
