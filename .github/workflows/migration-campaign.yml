@@ -174,7 +174,8 @@ jobs:
             exit 1
           fi
           if ! python3 -B .github/scripts/migration_campaign_summary.py \
-              "$output/kind-evidence.private.json" "${{ matrix.fixture.name }}" >> "$GITHUB_STEP_SUMMARY" || [ "$status" -ne 0 ]; then
+              "$output/kind-evidence.private.json" "${{ matrix.fixture.name }}" | tee -a "$GITHUB_STEP_SUMMARY" \
+              || [ "$status" -ne 0 ]; then
             reason=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("reason", "unknown"))' "$RUNNER_TEMP/runner-result.json" 2>/dev/null || echo unknown)
             echo "::error title=Migration campaign ${{ matrix.fixture.name }}::The campaign did not complete cleanly: ${reason}. The job summary names the stage; raw evidence stays on the runner."
             exit 1
