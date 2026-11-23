@@ -53,6 +53,7 @@ export type { CommandOptions, EventOptions, PageOptions, ResourcePage } from './
 export type * from './agents/types.js';
 export type * from './agents/lifecycle.js';
 export type * from './agents/reply-preview.js';
+export type * from './agents/original-request.js';
 export type * from './agents/desktop.js';
 export type * from './agents/models.js';
 export type * from './agents/skills.js';

@@ -1,5 +1,6 @@
 import { readAgentProjection } from './agents/read-projection.js';
 import { readReplyPreview } from './agents/reply-preview.js';
+import { readOriginalRequest } from './agents/original-request.js';
 import { readRetainedOutput, type RetainedOutputOptions } from './agents/retained-output.js';
 import { CapacityRecovery } from './agents/capacity-recovery.js';
 import {
@@ -120,6 +121,10 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 }
 /** Public Agent REST commands and durable read projections. */
 export class Agents extends AgentDeliverables {
+  originalRequest(id: string, options: OperationOptions = {}) {
+    return readOriginalRequest(this.config, id, options);
+  }
+
   replyPreview(id: string, options: OperationOptions = {}) {
     return readReplyPreview(this.config, id, options);
   }
