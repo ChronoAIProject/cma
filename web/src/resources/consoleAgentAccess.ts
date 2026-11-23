@@ -38,12 +38,18 @@ export function useConsoleAgentAccess(
       : undefined;
   const personalAgentId =
     client.resourceViews === undefined || agentAccess.personalReady ? agentId : undefined;
+  const detail = agentAccess.state.status === 'ready' ? agentAccess.state.value.detail : undefined;
+  const retired = detail?.access !== 'shared' && detail?.sandbox.status === 'retired';
   useOpeningPreparation(
     client,
     agentId,
     viewerId,
     personalAgentId !== undefined && !accessUncertain,
-    opening.retained || shared !== undefined || agentAccess.state.status === 'error',
+    opening.retained ||
+      shared !== undefined ||
+      agentAccess.state.status === 'error' ||
+      (client.resourceViews !== undefined && detail === undefined) ||
+      retired,
     agentAccess.personalLineage,
   );
   return { agentAccess, accessUncertain, shared, personalAgentId };
