@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::{body::Body, http::Request, routing::post, Extension, Json, Router};
@@ -11,12 +11,27 @@ use super::*;
 use crate::auth::{middleware, persistence, profile::Profile};
 
 #[derive(Default)]
-struct Standing(AtomicBool);
+struct Standing {
+    erasing: AtomicBool,
+    reads: AtomicUsize,
+    final_read: Option<StandingGate>,
+}
+
+#[derive(Default)]
+struct StandingGate {
+    reached: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
 
 #[async_trait::async_trait]
 impl AccountStanding for Standing {
     async fn erasing(&self, _: &SubjectId) -> Result<bool, AccountDeletionError> {
-        Ok(self.0.load(Ordering::SeqCst))
+        let read = self.reads.fetch_add(1, Ordering::SeqCst);
+        if let Some(gate) = self.final_read.as_ref().filter(|_| read == 1) {
+            gate.reached.notify_one();
+            gate.release.notified().await;
+        }
+        Ok(self.erasing.load(Ordering::SeqCst))
     }
 }
 
@@ -99,7 +114,7 @@ fn router(auth: Arc<AuthState>, standing: Arc<Standing>) -> Router {
                     let store = store.clone();
                     async move {
                         if request.headers().contains_key("x-fixture-erase") {
-                            standing.0.store(true, Ordering::SeqCst);
+                            standing.erasing.store(true, Ordering::SeqCst);
                         }
                         if request.headers().contains_key("x-fixture-rotate") {
                             let mut replacement = store.subject(&owner.0).await.unwrap().unwrap();
@@ -115,7 +130,7 @@ fn router(auth: Arc<AuthState>, standing: Arc<Standing>) -> Router {
                                 .unwrap());
                         }
                         assert_eq!(owner.0, SubjectId::new("fixture-owner"));
-                        StatusCode::OK
+                        Json(json!({"proof_id":"fixture-proof"}))
                     }
                 },
             ),
@@ -152,7 +167,7 @@ async fn browser_owner_is_required_at_entry_and_before_releasing_evidence() {
             .unwrap();
         assert_eq!(response.status(), expected);
     }
-    standing.0.store(false, Ordering::SeqCst);
+    standing.erasing.store(false, Ordering::SeqCst);
     auth.revoke_browser_login(&session).await.unwrap();
     let response = app
         .oneshot(
@@ -294,4 +309,49 @@ async fn receipt_requires_live_provider_permissions_and_the_same_credential_at_r
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn invalidated_provider_receipt_prevents_release_during_final_standing_read() {
+    let standing = Arc::new(Standing {
+        final_read: Some(StandingGate::default()),
+        ..Standing::default()
+    });
+    let (auth, owner, _provider) = owner_auth(standing.clone()).await;
+    let session = auth.issue_browser_login(owner.clone()).await.unwrap();
+    let saved = auth.store.subject(&owner).await.unwrap().unwrap();
+    let app = router(auth.clone(), standing.clone());
+    let request = Request::post(LOOKUP_PATH)
+        .header("cookie", format!("{AUTH_COOKIE}={session}"))
+        .body(Body::empty())
+        .unwrap();
+    let lookup = tokio::spawn(app.oneshot(request));
+    let gate = standing.final_read.as_ref().unwrap();
+    tokio::time::timeout(Duration::from_secs(2), gate.reached.notified())
+        .await
+        .expect("the final verification reached the standing read");
+
+    auth.identity_store
+        .invalidate_token(saved.tokens.as_ref().unwrap().access_token.expose());
+    gate.release.notify_one();
+
+    let response = lookup.await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = axum::body::to_bytes(response.into_body(), 2048)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(body.get("proof_id").is_none());
+    cookie_authorization::require_current_custody(&auth, &saved)
+        .await
+        .unwrap();
+    assert!(auth
+        .store
+        .browser_login(&persistence::SecretDigest::identify(
+            AUTH_COOKIE_DOMAIN,
+            &session
+        ))
+        .await
+        .unwrap()
+        .is_some());
 }

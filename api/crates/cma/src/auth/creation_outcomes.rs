@@ -102,6 +102,19 @@ impl AuthState {
     }
 
     async fn check_creation_standing(&self, authority: &Authority) -> Result<(), StatusCode> {
+        super::identity_lifetime::scope(
+            self,
+            async {
+                self.verify_creation_standing(authority).await?;
+                Ok(Some(()))
+            },
+            || StatusCode::SERVICE_UNAVAILABLE,
+        )
+        .await
+        .map(|_| ())
+    }
+
+    async fn verify_creation_standing(&self, authority: &Authority) -> Result<(), StatusCode> {
         let unavailable = |_| StatusCode::SERVICE_UNAVAILABLE;
         let owner = &authority.owner;
         if authority.expires_at <= SystemTime::now()

@@ -68,6 +68,7 @@ async fn attach_subject_inner(
             .scope(diagnostics::capture(super::identity_lifetime::scope(
                 &auth,
                 auth.resolve_request(request.headers()),
+                super::identity_retry::unavailable,
             ))),
     )
     .await;
