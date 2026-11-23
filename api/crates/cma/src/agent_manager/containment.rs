@@ -68,8 +68,12 @@ impl ContainedHandoffs {
     ///
     /// An entry whose exact authority the coordinator no longer owns is
     /// dropped: a later acquisition replaced it or its release completed.
-    /// `Ok(true)` drops it, `Ok(false)` and `Unavailable` keep it, and any
-    /// other error is returned to stop the process as before.
+    /// Before each retry, an entry whose token no longer holds a live durable
+    /// lease is forgotten, so this process can acquire the Agent again just as
+    /// a restart would allow. `Ok(true)` drops it, `Ok(false)` and
+    /// `Unavailable` keep it, and any other error is returned to stop the
+    /// process as before. Returned ids have no newer local authority, so their
+    /// per-Agent housekeeping timers can be cleared.
     pub(super) async fn retry<F, Fut>(
         &self,
         coordinator: &OwnershipCoordinator,
@@ -99,14 +103,21 @@ impl ContainedHandoffs {
         for authority in batch {
             let id = authority.token.agent_id.clone();
             let retained = owned.iter().any(|current| Arc::ptr_eq(current, &authority));
-            let done = if retained {
-                match handoff(authority.clone()).await {
-                    Ok(done) => done,
-                    Err(OwnershipError::Unavailable(_)) => false,
+            let done = if !retained {
+                true
+            } else {
+                // Lease custody first: it is checked on every pass, unpaced.
+                match coordinator.forget_unconfirmed_retirement(&authority).await {
+                    Ok(true) => true,
+                    Ok(false) | Err(OwnershipError::Unavailable(_)) => {
+                        match handoff(authority.clone()).await {
+                            Ok(done) => done,
+                            Err(OwnershipError::Unavailable(_)) => false,
+                            Err(error) => return Err(error),
+                        }
+                    }
                     Err(error) => return Err(error),
                 }
-            } else {
-                true
             };
             if done {
                 let mut pending = self.pending.lock().unwrap();
@@ -116,7 +127,12 @@ impl ContainedHandoffs {
                 {
                     pending.remove(&id);
                 }
-                completed.push(id);
+                let newer = owned.iter().any(|current| {
+                    current.token.agent_id == id && !Arc::ptr_eq(current, &authority)
+                });
+                if !newer {
+                    completed.push(id);
+                }
             }
         }
         Ok(completed)

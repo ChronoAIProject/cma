@@ -3,7 +3,7 @@ use layer2_core::agent_ownership::{
     test_support::MemoryOwnershipStore, Member, OwnershipStore, DEFAULT_MAX_OWNED_AGENTS,
     PROTOCOL_VERSION,
 };
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, time::Duration};
 
 async fn coordinator(store: Arc<MemoryOwnershipStore>) -> Arc<OwnershipCoordinator> {
     OwnershipCoordinator::register(
@@ -229,4 +229,53 @@ async fn persistently_failing_receivers_do_not_starve_the_rest() {
     }
     assert_eq!(attempted.lock().unwrap().len(), 6);
     assert_eq!(contained.pending(), 6);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_expired_contained_lease_is_forgotten_so_this_process_can_acquire_again() {
+    let store = Arc::new(MemoryOwnershipStore::default());
+    let coordinator = coordinator(store.clone()).await;
+    let failing = coordinator
+        .acquire(&AgentId("failing".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let contained = ContainedHandoffs::default();
+    contained.enable();
+    let error = failed_handoff(&coordinator, &failing).await;
+    contained
+        .contain("current_handoff", &failing, error)
+        .unwrap();
+    // While the contained token still holds its lease, this process refuses
+    // a new acquisition, exactly as during any unfinished handoff.
+    assert!(matches!(
+        coordinator.acquire(&failing.token.agent_id).await,
+        Err(OwnershipError::Stale)
+    ));
+    // Membership stays live; the retiring owner lease is never renewed.
+    for _ in 0..4 {
+        tokio::time::advance(Duration::from_secs(4)).await;
+        coordinator.maintain().await.unwrap();
+    }
+    assert!(store
+        .owner(&failing.token.agent_id)
+        .await
+        .unwrap()
+        .is_none());
+    let completed = contained
+        .retry(&coordinator, |_| async {
+            panic!("an expired token is forgotten before any retry")
+        })
+        .await
+        .unwrap();
+    assert_eq!(completed, vec![failing.token.agent_id.clone()]);
+    assert_eq!(contained.pending(), 0);
+    let replacement = coordinator
+        .acquire(&failing.token.agent_id)
+        .await
+        .unwrap()
+        .expect("the Agent can be owned again after its lease expired");
+    assert!(replacement.token.epoch > failing.token.epoch);
+    assert!(replacement.is_current());
+    assert!(!failing.is_current());
 }

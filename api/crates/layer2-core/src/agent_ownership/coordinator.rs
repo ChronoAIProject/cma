@@ -390,6 +390,39 @@ impl OwnershipCoordinator {
         Ok(true)
     }
 
+    /// Drop the local custody of a retiring authority whose handoff could not
+    /// confirm revocation, once the store shows its exact token no longer
+    /// holds a live lease: it expired, was released or was replaced. An
+    /// expired owner token cannot be renewed, so this is final for the token
+    /// and equals the takeover a restart would allow. It never releases,
+    /// renews or changes another epoch, and returns false while the token
+    /// still holds the lease.
+    pub async fn forget_unconfirmed_retirement(
+        &self,
+        authority: &Arc<Authority>,
+    ) -> Result<bool, OwnershipError> {
+        if !authority.retiring.load(Ordering::Acquire) || authority.receiver_cancelled() {
+            return Ok(false);
+        }
+        let mut complete = authority.handoff_complete.lock().await;
+        if *complete {
+            return Ok(true);
+        }
+        let owner = bounded(self.store.owner(&authority.token.agent_id)).await?;
+        if owner.is_some_and(|lease| lease.token == authority.token) {
+            return Ok(false);
+        }
+        let mut owned = self.owned.lock().await;
+        if owned
+            .get(&authority.token.agent_id)
+            .is_some_and(|current| Arc::ptr_eq(current, authority))
+        {
+            owned.remove(&authority.token.agent_id);
+        }
+        *complete = true;
+        Ok(true)
+    }
+
     pub async fn fail(&self) {
         self.failed.send_replace(true);
         for authority in self.owned.lock().await.values() {
