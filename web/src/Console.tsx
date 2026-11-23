@@ -156,6 +156,8 @@ function ConsoleContent({
     if (!accessUncertain && agent.state.status === 'ready')
       agent.state.v2?.journal.reconcileDraft();
   }, [accessUncertain, agent.state, draft.recoveryBlocked]);
+  const { canStartNewAgent, canCreateInScope, newAgentUnavailable, permissions } =
+    consoleCreationAccess(user, navigationScope, scopeReady, accessUncertain, Boolean(onCreate));
   const actions = useResourceActions(
     client,
     (target) => {
@@ -166,16 +168,9 @@ function ConsoleContent({
     user.id,
     onNavigate,
     !accessUncertain,
+    permissions,
     settlements,
   );
-  const { canStartNewAgent, canCreateInScope, newAgentUnavailable, permissions } =
-    consoleCreationAccess(
-      user,
-      navigationScope,
-      scopeReady,
-      accessUncertain,
-      onCreate !== undefined,
-    );
   const canOpenTriggers = !user.visitor && user.capabilities.includes('publish_triggers');
   const [commandsOpen, setCommandsOpen] = useState(false);
   const newAgent = useCallback(() => onCreate?.({ kind: 'new_agent' }), [onCreate]);
