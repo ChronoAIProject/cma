@@ -99,7 +99,7 @@ impl SandboxWorker {
                 .ok_or_else(unavailable)?
                 .verify_nonexecuting_recovery(&request)
                 .await
-                .map_err(recovery_failure)?;
+                .map_err(|error| observed_recovery_failure(sandbox, error))?;
             return Ok(SandboxUnpublishedRecoveryQuiescence {
                 operation_id: state.operation_id.clone(),
                 runtime_id: proof.runtime_id.clone(),
@@ -136,7 +136,7 @@ impl SandboxWorker {
             &self.config.deployment_id,
         )
         .await
-        .map_err(recovery_failure)?;
+        .map_err(|error| observed_recovery_failure(sandbox, error))?;
         if !self.lifecycle_state_matches(sandbox).await? {
             return Err(SandboxStoreError::Conflict);
         }
@@ -152,7 +152,7 @@ impl SandboxWorker {
                 provider_plan_sha256: proof.provider_plan_sha256.clone(),
             })
             .await
-            .map_err(recovery_failure)?;
+            .map_err(|error| observed_recovery_failure(sandbox, error))?;
         crate::sandbox::unpublished_recovery::verify_source(
             self.dependencies.adapter.as_ref(),
             sandbox,
@@ -160,7 +160,7 @@ impl SandboxWorker {
             &self.config.deployment_id,
         )
         .await
-        .map_err(recovery_failure)?;
+        .map_err(|error| observed_recovery_failure(sandbox, error))?;
         Ok(SandboxUnpublishedRecoveryQuiescence {
             operation_id: state.operation_id.clone(),
             runtime_id: proof.runtime_id.clone(),
@@ -219,6 +219,23 @@ fn unavailable() -> SandboxStoreError {
 // Keep uncertain transport failures retryable; a refused original-history or
 // identity proof requires outside recovery and uses the smaller retry budget.
 // This internal classification never changes the persisted failure diagnostic.
+/// The mapped store error is deliberately coarse, so a stalled recovery would
+/// otherwise retry with no visible cause. Keep the provider's reason observable.
+fn observed_recovery_failure(sandbox: &Sandbox, error: AdapterError) -> SandboxStoreError {
+    let detail: String = error
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(300)
+        .collect();
+    tracing::warn!(
+        sandbox_id = %sandbox.id,
+        detail,
+        "original runtime recovery step failed; recovery will retry with all data retained"
+    );
+    recovery_failure(error)
+}
+
 fn recovery_failure(error: AdapterError) -> SandboxStoreError {
     match error {
         AdapterError::NativeClaimNotReady(_)
