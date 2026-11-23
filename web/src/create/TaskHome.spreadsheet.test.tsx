@@ -44,13 +44,13 @@ function setup(context: Partial<TaskHomeProps> = {}, overrides: Partial<CmaWebCl
 }
 
 async function chooseTemplate(name: string) {
-  const button = screen.queryByRole('button', { name, exact: true });
+  const button = screen.queryByRole('button', { name });
   if (button) {
     fireEvent.click(button);
     return;
   }
-  fireEvent.click(screen.getByRole('button', { name: 'Templates', exact: true }));
-  fireEvent.click(await screen.findByRole('menuitem', { name, exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Templates' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name }));
 }
 
 async function chooseSpreadsheet() {

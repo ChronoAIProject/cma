@@ -148,14 +148,15 @@ for (const theme of ['light', 'dark']) {
       expect(writes).toHaveLength(1);
       expect(writes[0]!.body).toEqual(body(LINK));
       expect(writes[0]!.key).toBeTruthy();
-      await input.fill('a later invalid draft');
+      const followup = page.getByRole('textbox', { name: 'Follow-up draft', exact: true });
+      await followup.fill('a later invalid draft');
       await page.reload();
       await settle(page);
-      await expect(input).toHaveValue('a later invalid draft');
+      await expect(followup).toHaveValue('a later invalid draft');
       await page.getByRole('button', { name: 'Recover original task' }).click();
       await expect.poll(() => writes.length).toBe(2);
       expect(writes[1]).toEqual(writes[0]);
-      await expect(input).toHaveValue('a later invalid draft');
+      await expect(followup).toHaveValue('a later invalid draft');
       expect(boundary.writes).toEqual([]);
       expect(boundary.unexpected).toEqual([]);
       expect(boundary.errors).toEqual([]);
