@@ -162,7 +162,7 @@ pub(super) async fn read_budgeted(
     if let Some(budget) = budget {
         budget.check()?;
     }
-    if let Some(read) = read {
+    if let Some(read) = read.as_mut() {
         read.complete();
     }
     Ok(entries)

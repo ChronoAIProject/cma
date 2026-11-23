@@ -82,7 +82,7 @@ it('places each visible Sandbox once, excludes deletion progress and preserves e
     for (const name of names) expect(within(region).getByText(`${name} fixture`)).toBeVisible();
   }
   expect(screen.getAllByRole('treeitem')).toHaveLength(9);
-  await actor.click(screen.getByText('Deletion progress (2)'));
+  await actor.click(screen.getByText('Cleaning up 2 sandboxes'));
   expect(screen.getByRole('button', { name: 'View status for retiring fixture' })).toBeVisible();
   expect(
     screen.getByRole('button', { name: 'View status for Deletion requested fixture' }),
@@ -138,7 +138,7 @@ it('moves lifecycle transitions between groups without losing the selected route
   }
   view.rerender(renderStatus('retiring'));
   expect(screen.queryByRole('treeitem')).not.toBeInTheDocument();
-  await actor.click(screen.getByText('Deletion progress (1)'));
+  await actor.click(screen.getByText('Cleaning up 1 sandboxes'));
   expect(screen.getByRole('button', { name: 'View status for Atlas' })).toBeVisible();
 });
 
@@ -187,7 +187,7 @@ it('uses the current rotation for the label and filter while keeping Live and de
   for (const item of within(updating).getAllByRole('treeitem')) {
     expect(item).toHaveTextContent('Updating runtime');
   }
-  expect(screen.getByText('Deletion progress (2)')).toBeVisible();
+  expect(screen.getByText('Cleaning up 2 sandboxes')).toBeVisible();
   view.rerender(<Tree {...input} statusFilter="credential_rotating" />);
   expect(screen.getByRole('treeitem')).toHaveTextContent('Refreshing access');
   expect(screen.getByRole('treeitem')).toHaveTextContent('Updating access');

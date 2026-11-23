@@ -1,6 +1,14 @@
-import { createPortal } from 'react-dom';
-import { NavigationSettingsContext, SidebarContext } from './sidebarContext';
-import { useContext, useLayoutEffect, useRef, useState } from 'react';
+import { SidebarContext } from './sidebarContext';
+import {
+  useContext,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Ref,
+} from 'react';
+import { DeletionProgressList } from './DeletionProgressList';
+import { runtimeAttention, type RuntimeAttention } from './runtimeAttention';
 import { SkeletonRows } from '../ui/Skeleton';
 import type { AgentDetail } from '../api/types';
 import type { AppRoute } from '../routing/routes';
@@ -13,16 +21,23 @@ import type { ActivityStatus } from '../agent/activityStatus';
 import { Tree, type TreeAction, type TreePermissions } from './Tree';
 import type { NavigationState } from './navigation';
 import { NavigationFilters, type NavigationView } from './NavigationFilters';
-import { Menu } from '../ui/Menu';
-import { IconSettingsOutline16, IconComputerOutline16 } from '../ui/icons';
 import { TreeCreationScope } from './treeCreationScope';
 import { useNavigationFilterState } from './navigationFilterState';
 
+export interface EnvironmentNavigationHandle {
+  openEnvironments(options?: { readonly scope?: 'personal'; readonly sandboxId?: string }): void;
+}
+
 export function ManagerNavigation(props: Parameters<typeof ViewerNavigation>[0]) {
-  return <ViewerNavigation key={props.viewerId} {...props} />;
+  return <ViewerNavigation key={`${props.viewerId}:${props.authEpoch ?? 0}`} {...props} />;
 }
 
 function ViewerNavigation({
+  ref,
+  authEpoch = 0,
+  selectedRetired,
+  attention,
+  unknownDeletingSandboxIds,
   client,
   scope,
   choices,
@@ -43,6 +58,15 @@ function ViewerNavigation({
   onAgentIntent,
   onAction,
 }: {
+  readonly ref?: Ref<EnvironmentNavigationHandle>;
+  readonly authEpoch?: number;
+  readonly selectedRetired?: {
+    readonly detail: AgentDetail;
+    readonly viewerId: string;
+    readonly authEpoch: number;
+  };
+  readonly attention?: RuntimeAttention;
+  readonly unknownDeletingSandboxIds?: ReadonlySet<string>;
   readonly client?: ResourceViewsClient;
   readonly scope: string;
   readonly choices: NavigationScopeChoices;
@@ -64,9 +88,7 @@ function ViewerNavigation({
   readonly onAction: (action: TreeAction) => void;
 }) {
   const [view, setView] = useState<NavigationView>('agent');
-  const settingsHost = useContext(NavigationSettingsContext);
   const sidebar = useContext(SidebarContext);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [environmentsOpened, setEnvironmentsOpened] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -109,6 +131,13 @@ function ViewerNavigation({
     }
     setView(next);
   }
+  useImperativeHandle(ref, () => ({
+    openEnvironments(options) {
+      selectView('sandbox');
+      if (options?.scope === 'personal' && scope !== '') onScope('');
+      if (options?.sandboxId) onNavigate({ kind: 'sandbox', sandboxId: options.sandboxId });
+    },
+  }));
   useLayoutEffect(() => {
     if (currentAgent === undefined || navigation.status !== 'ready') return;
     const summary = navigation.items
@@ -135,6 +164,50 @@ function ViewerNavigation({
     if (scrollport.current)
       scrollport.current.scrollTop = view === 'agent' ? taskReturn.scrollTop : 0;
   }, [view, sidebar?.collapsed, taskReturn.scrollTop]);
+  const retired =
+    scope === '' &&
+    selectedRetired?.viewerId === viewerId &&
+    selectedRetired.authEpoch === authEpoch &&
+    route.kind === 'agent' &&
+    route.agentId === selectedRetired.detail.id &&
+    selectedRetired.detail.sandbox.status === 'retired' &&
+    selectedRetired.detail.worktree.agentId === selectedRetired.detail.id &&
+    selectedRetired.detail.worktree.workspaceId === selectedRetired.detail.workspace.id &&
+    selectedRetired.detail.worktree.sandboxId === selectedRetired.detail.sandbox.id
+      ? selectedRetired.detail
+      : undefined;
+  const observedAttention =
+    attention ??
+    runtimeAttention(navigation, {
+      accepted: deletingSandboxIds,
+      unknown: unknownDeletingSandboxIds ?? new Set(),
+    });
+  const deletions = new Map<
+    string,
+    { id: string; name: string; status?: AgentDetail['sandbox']['status']; unknown?: boolean }
+  >();
+  if (scope === '') {
+    for (const id of deletingSandboxIds) deletions.set(id, { id, name: 'Environment' });
+    for (const id of unknownDeletingSandboxIds ?? [])
+      if (!deletions.has(id)) deletions.set(id, { id, name: 'Environment', unknown: true });
+    if (navigation.status === 'ready')
+      for (const { sandbox } of navigation.items) {
+        if (sandbox.status === 'retiring' || deletions.has(sandbox.id))
+          deletions.set(sandbox.id, {
+            ...deletions.get(sandbox.id),
+            id: sandbox.id,
+            name: sandbox.name,
+            status: sandbox.status,
+            unknown: sandbox.status === 'retiring' ? false : deletions.get(sandbox.id)?.unknown,
+          });
+        if (
+          !navigation.refreshError &&
+          sandbox.status === 'retired' &&
+          !deletions.get(sandbox.id)?.unknown
+        )
+          deletions.delete(sandbox.id);
+      }
+  }
   const navigationPanel = (panelView: NavigationView) => (
     <ScopedNavigation
       route={panelView === 'agent' && view === 'sandbox' ? taskReturn.route : route}
@@ -155,6 +228,10 @@ function ViewerNavigation({
               </Button>
             ) : null}
             <Tree
+              selectedRetired={retired}
+              onShowAll={() => filters.select('agent', 'all')}
+              attention={observedAttention}
+              showDeletionProgress={false}
               currentTask={
                 currentAgent && (currentActivity !== undefined || currentTurnId !== undefined)
                   ? { agent: currentAgent, status: currentActivity, turnId: currentTurnId }
@@ -218,42 +295,6 @@ function ViewerNavigation({
   );
   return (
     <div ref={root} className="manager-navigation">
-      <Button
-        variant="ghost"
-        placement="manager-navigation__environments"
-        icon={<IconComputerOutline16 />}
-        onClick={() => selectView('sandbox')}
-      >
-        Manage environments
-      </Button>
-      {settingsHost
-        ? createPortal(
-            <Menu
-              open={settingsOpen}
-              label="Navigation settings"
-              items={[{ id: 'environments', label: 'Manage environments' }]}
-              onClose={() => setSettingsOpen(false)}
-              onSelect={() => {
-                setSettingsOpen(false);
-                selectView('sandbox');
-              }}
-              anchor={
-                <button
-                  type="button"
-                  className="sidebar__toggle"
-                  aria-label="Settings"
-                  title="Settings"
-                  aria-haspopup="menu"
-                  aria-expanded={settingsOpen}
-                  onClick={() => setSettingsOpen((open) => !open)}
-                >
-                  <IconSettingsOutline16 />
-                </button>
-              }
-            />,
-            settingsHost,
-          )
-        : null}
       <NavigationFilters
         scope={
           client === undefined ? undefined : (
@@ -306,6 +347,7 @@ function ViewerNavigation({
           ) : null}
         </TreeCreationScope>
       </div>
+      <DeletionProgressList sandboxes={[...deletions.values()]} onViewStatus={onViewDeletion} />
     </div>
   );
 }
