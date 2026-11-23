@@ -55,14 +55,14 @@ it('keeps accepted cleanup optional across navigation and allows deleting anothe
   await remove();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.queryByRole('treeitem', { name: /first/ })).not.toBeInTheDocument();
-  expect(screen.getByText('Deletion progress (1)')).toBeInTheDocument();
+  expect(screen.getByText('Cleaning up 1 sandboxes')).toBeInTheDocument();
   view.rerender(draw('second'));
   await act(async () => {});
   expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();
   await remove();
   expect(deleteSandbox.mock.calls.map(([id]) => id)).toEqual(['first', 'second']);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.getByText('Deletion progress (2)')).toBeInTheDocument();
+  expect(screen.getByText('Cleaning up 2 sandboxes')).toBeInTheDocument();
   view.unmount();
   render(draw('second'));
   await act(async () => {});
@@ -100,6 +100,6 @@ it('reconciles accepted notices when an existing page read proves retirement aft
   view.rerender(draw(false));
   await act(async () => {});
   expect(screen.queryByText(/Cleanup continues in the background/)).not.toBeInTheDocument();
-  expect(screen.queryByText('Deletion progress (1)')).not.toBeInTheDocument();
+  expect(screen.queryByText('Cleaning up 1 sandboxes')).not.toBeInTheDocument();
   expect(restoreDeletions('owner')).toEqual([]);
 });
