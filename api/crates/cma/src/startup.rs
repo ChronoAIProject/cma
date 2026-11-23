@@ -1,14 +1,21 @@
-//! Start serving only after warm-pool and retained-runtime authority are ready.
+//! Initialize execution authority and manage the API listener.
+mod admission;
+mod early;
+pub(crate) use admission::Admission;
 use std::{
-    future::IntoFuture,
+    future::{Future, IntoFuture},
     net::SocketAddr,
+    pin::Pin,
     time::{Duration, Instant},
 };
+
+use axum::Router;
+use tokio::{net::TcpListener, sync::watch};
 
 use crate::{
     agent_manager,
     composition::{self, ControlPlaneComposition},
-    config::StartupConfig,
+    config::{Config, StartupConfig},
     read_telemetry,
     shutdown::{self, signalled, ShutdownCoordinator},
     startup_timing::{observe, Phase},
@@ -22,7 +29,7 @@ pub(crate) async fn serve() -> Result<(), String> {
     let startup_started = Instant::now();
     let config = StartupConfig::from_env()
         .map_err(|error| format!("configuration is not usable: {error}"))?;
-    let config = match config {
+    let mut config = match config {
         StartupConfig::Execution(config) => *config,
         StartupConfig::BackendFree(config) => {
             return composition::backend_free::serve(*config).await
@@ -33,87 +40,103 @@ pub(crate) async fn serve() -> Result<(), String> {
     }
     let recorder = telemetry::install()?;
     let _metrics_server = telemetry::server::Server::start(config.metrics_bind, recorder).await?;
-    let composition = observe(
+    let mut composition = observe(
         "composition",
         ControlPlaneComposition::build(&config),
         |_| None,
     )
     .await?;
-    let auth_mode = config.auth_mode_name();
-    let app = with_request_context(with_cors(composition.router, config.cors_origins)).layer(
-        axum::Extension(telemetry::http::ContextDiagnosticsEnabled(
-            config.features.context_diagnostics,
-        )),
-    );
+    let app = with_request_context(with_cors(
+        std::mem::take(&mut composition.router),
+        std::mem::take(&mut config.cors_origins),
+    ))
+    .layer(axum::Extension(telemetry::http::ContextDiagnosticsEnabled(
+        config.features.context_diagnostics,
+    )));
+    if config.features.am_startup_health_serving {
+        return early::serve(&config, composition, app, startup_started).await;
+    }
+    serve_after_initialization(&config, composition, app, startup_started).await
+}
 
-    // Do not admit allocations against a newly promoted runtime until its
-    // exact default pool has ready capacity (unless an operator disabled it).
-    // The shared desktop pool is seeded here but fills in the background.
-    let mut shutdown = ShutdownCoordinator::new();
-    let (runtime_writer_ready, booting) = tokio::sync::watch::channel(false);
+async fn warm_pools(
+    composition: &ControlPlaneComposition,
+    admission: Option<&Admission>,
+    shutdown: &mut ShutdownCoordinator,
+) -> Result<watch::Sender<bool>, String> {
+    let (writer_ready, booting) = watch::channel(false);
     if let Some(controller) = &composition.runtime_pointer {
         controller.register_boot().await?;
         shutdown.push(controller.spawn_heartbeat(booting, shutdown.subscribe()));
         if !controller.following_configured() {
-            controller
-                .set_following(false)
-                .await
-                .map_err(|error| error.to_string())?;
+            controller.set_following(false).await.map_err(|error| error.to_string())?;
         }
     }
-    observe(
-        "default_warm_pool_configuration",
-        async {
+    if admission.is_some_and(Admission::is_draining) {
+        return Ok(writer_ready);
+    }
+    observe("default_warm_pool_configuration", async {
+        match &composition.runtime_pointer {
+            Some(controller) => controller.bootstrap().await,
+            None => composition.native_warm_pools.ensure_default().await
+                .map_err(|error| format!("native warm pool default is not usable: {error:?}")),
+        }
+    }, |_| None).await?;
+    if !admission.is_some_and(Admission::is_draining) {
+        observe("default_warm_pool_readiness", async {
             match &composition.runtime_pointer {
-                Some(controller) => controller.bootstrap().await,
-                None => composition
-                    .native_warm_pools
-                    .ensure_default()
-                    .await
-                    .map_err(|error| format!("native warm pool default is not usable: {error:?}")),
+                Some(controller) => controller.await_active_ready(admission).await,
+                None => composition.native_warm_pools.await_default_ready_until(admission).await
+                    .map_err(|error| format!("native warm pool startup readiness failed: {error:?}")),
             }
-        },
-        |_| None,
-    )
-    .await?;
-    observe(
-        "default_warm_pool_readiness",
-        async {
-            match &composition.runtime_pointer {
-                Some(controller) => controller.await_active_ready().await,
-                None => composition
-                    .native_warm_pools
-                    .await_default_ready()
-                    .await
-                    .map_err(|error| {
-                        format!("native warm pool startup readiness failed: {error:?}")
-                    }),
-            }
-        },
-        |_| None,
-    )
-    .await?;
+        }, |_| None).await?;
+    }
+    Ok(writer_ready)
+}
 
-    let listener = observe(
-        "socket_bind",
-        tokio::net::TcpListener::bind(config.bind),
-        |_| Some(1),
-    )
-    .await
-    .map_err(|error| format!("cannot bind {}: {error}", config.bind))?;
+async fn bind(address: SocketAddr) -> Result<TcpListener, String> {
+    observe("socket_bind", TcpListener::bind(address), |_| Some(1))
+        .await
+        .map_err(|error| format!("cannot bind {address}: {error}"))
+}
+
+async fn initialize_sandboxes(
+    composition: &ControlPlaneComposition,
+    admission: Option<&Admission>,
+) -> Result<(), String> {
     observe(
         "sandbox_initialization",
-        composition.sandbox_lifecycle.initialize(),
+        composition
+            .sandbox_lifecycle
+            .initialize(|| admission.is_some_and(Admission::is_draining)),
         |_| None,
     )
-    .await?;
+    .await
+}
+
+fn listening(config: &Config) {
     tracing::info!(
         target: "cma",
         bind = %config.bind,
         public_url = %config.public_url,
-        auth_mode,
+        auth_mode = config.auth_mode_name(),
         "CMA listening"
     );
+}
+
+fn serving_entry(startup_started: Instant) {
+    // Entry into HTTP execution serving is separate from an observed Ready response.
+    tracing::info!(target: "cma_startup", parent: None,
+        phase = "serving_entry", elapsed_ms = startup_started.elapsed().as_millis(),
+        timing_basis = "serve_entry", outcome = "ok", "API startup serving entry");
+}
+
+async fn activate_and_start_workers(
+    composition: ControlPlaneComposition,
+    shutdown: &mut ShutdownCoordinator,
+    admission: Option<&Admission>,
+    writer_ready: watch::Sender<bool>,
+) -> Result<(), String> {
     let workers = Phase::new("worker_start");
     if let Some(manager) = &composition.agent_manager {
         if let Err(error) = manager.activate().await {
@@ -121,11 +144,21 @@ pub(crate) async fn serve() -> Result<(), String> {
             return Err(error);
         }
     }
-    runtime_writer_ready.send_replace(true);
-    if let Some(controller) = composition.runtime_pointer {
+    if admission.is_some_and(Admission::is_draining) {
+        workers.finish("stopped", None);
+        return Ok(());
+    }
+    writer_ready.send_replace(true);
+    if let Some(controller) = composition.runtime_pointer.clone() {
         shutdown.push(controller.spawn(shutdown.subscribe()));
     }
-    composition::activity::spawn(composition.activity_worker, &mut shutdown);
+    start_workers(composition, shutdown);
+    workers.finish("ok", None);
+    Ok(())
+}
+
+fn start_workers(composition: ControlPlaneComposition, shutdown: &mut ShutdownCoordinator) {
+    composition::activity::spawn(composition.activity_worker, shutdown);
     shutdown.push(read_telemetry::spawn(shutdown.subscribe()));
     shutdown.push(
         composition
@@ -168,60 +201,88 @@ pub(crate) async fn serve() -> Result<(), String> {
     shutdown.push(composition.agent_access_worker.spawn(shutdown.subscribe()));
     composition
         .sandbox_lifecycle
-        .spawn(&mut shutdown, &composition.workers);
+        .spawn(shutdown, &composition.workers);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
-    composition.usage.spawn(&mut shutdown);
-    composition.usage_metrics.spawn(&mut shutdown);
-    workers.finish("ok", None);
-    // This is entry into HTTP serving, not an observed HTTP/Kubernetes Ready result.
-    tracing::info!(target: "cma_startup", parent: None,
-        phase = "serving_entry", elapsed_ms = startup_started.elapsed().as_millis(),
-        timing_basis = "serve_entry", outcome = "ok", "API startup serving entry");
-    let (http_stop, http_signal) = tokio::sync::watch::channel(false);
-    let server_result = {
-        let server: std::pin::Pin<
-            Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>,
-        > = match config.http_connection_max_age {
-            // Bounded connection age lets long-lived clients rebalance across replicas.
-            Some(age) => Box::pin(crate::http_serving::serve(
+    composition.usage.spawn(shutdown);
+    composition.usage_metrics.spawn(shutdown);
+}
+
+type HttpServer = Pin<Box<dyn Future<Output = std::io::Result<()>> + Send>>;
+
+fn http_server(
+    listener: TcpListener,
+    app: Router,
+    max_age: Option<Duration>,
+    http_signal: watch::Receiver<bool>,
+) -> HttpServer {
+    match max_age {
+        // Bounded connection age lets long-lived clients rebalance across replicas.
+        Some(age) => Box::pin(crate::http_serving::serve(
+            listener,
+            app,
+            age,
+            signalled(http_signal),
+        )),
+        None => Box::pin(
+            axum::serve(
                 listener,
-                app,
-                age,
-                signalled(http_signal),
-            )),
-            None => Box::pin(
-                axum::serve(
-                    listener,
-                    app.into_make_service_with_connect_info::<SocketAddr>(),
-                )
-                .with_graceful_shutdown(signalled(http_signal))
-                .into_future(),
-            ),
-        };
-        tokio::pin!(server);
-        tokio::select! {
-            result = &mut server => result.map_err(|error| format!("HTTP server failed: {error}")),
-            () = async {
-                match &composition.agent_manager {
-                    Some(manager) => tokio::select! { _ = shutdown::shutdown_signal() => (), _ = manager.failed() => () },
-                    None => shutdown::shutdown_signal().await,
-                }
-            } => {
-                let manager_result = shutdown.drain_agent_manager(composition.agent_manager.as_deref()).await;
-                // Existing streams still need their workers until HTTP finishes.
-                let _ = http_stop.send(true);
-                let http_result = match tokio::time::timeout(HTTP_DRAIN_TIMEOUT, &mut server).await {
-                    Ok(result) => result.map_err(|error| format!("HTTP server failed: {error}")),
-                    Err(_) => Err("HTTP server exceeded its shutdown drain deadline".into()),
-                };
-                manager_result.and(http_result)
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(signalled(http_signal))
+            .into_future(),
+        ),
+    }
+}
+
+fn http_result(result: std::io::Result<()>) -> Result<(), String> {
+    result.map_err(|error| format!("HTTP server failed: {error}"))
+}
+
+async fn drain_http(stop: watch::Sender<bool>, mut server: HttpServer) -> Result<(), String> {
+    // Existing streams still need their workers until HTTP finishes.
+    stop.send_replace(true);
+    match tokio::time::timeout(HTTP_DRAIN_TIMEOUT, &mut server).await {
+        Ok(result) => http_result(result),
+        Err(_) => Err("HTTP server exceeded its shutdown drain deadline".into()),
+    }
+}
+
+async fn serve_after_initialization(
+    config: &Config,
+    composition: ControlPlaneComposition,
+    app: Router,
+    startup_started: Instant,
+) -> Result<(), String> {
+    let mut shutdown = ShutdownCoordinator::new();
+    let writer_ready = warm_pools(&composition, None, &mut shutdown).await?;
+    let listener = bind(config.bind).await?;
+    initialize_sandboxes(&composition, None).await?;
+    listening(config);
+    let manager = composition.agent_manager.clone();
+    activate_and_start_workers(composition, &mut shutdown, None, writer_ready).await?;
+    serving_entry(startup_started);
+    let (http_stop, http_signal) = watch::channel(false);
+    let mut server = http_server(listener, app, config.http_connection_max_age, http_signal);
+    let server_result = tokio::select! {
+        result = &mut server => http_result(result),
+        () = async {
+            match &manager {
+                Some(manager) => tokio::select! { _ = shutdown::shutdown_signal() => (), _ = manager.failed() => () },
+                None => shutdown::shutdown_signal().await,
             }
+        } => {
+            let manager_result = shutdown.drain_agent_manager(manager.as_deref()).await;
+            manager_result.and(drain_http(http_stop, server).await)
         }
     };
-    let manager_result = shutdown
-        .drain_agent_manager(composition.agent_manager.as_deref())
-        .await;
-    let server_result = server_result.and(manager_result);
+    let manager_result = shutdown.drain_agent_manager(manager.as_deref()).await;
+    finish(shutdown, server_result.and(manager_result)).await
+}
+
+async fn finish(
+    shutdown: ShutdownCoordinator,
+    server_result: Result<(), String>,
+) -> Result<(), String> {
     let aborted = shutdown.drain().await;
     match (server_result, aborted) {
         (Err(error), _) => Err(error),
