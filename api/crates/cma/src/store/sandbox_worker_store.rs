@@ -1,5 +1,6 @@
 //! Mongo work discovery, lease claims, and terminal sandbox purge.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt as _;
 use layer2_core::sandbox::store::{
     SandboxStore, SandboxStoreError, SandboxWorkerStore, MAX_PAGE_SIZE,
@@ -221,16 +222,16 @@ impl SandboxWorkerStore for MongoSandboxStore {
             match purge_in_transaction(self, id, expected_revision, &mut session).await {
                 Ok(()) => {}
                 Err(PurgeError::Conflict) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Conflict);
                 }
                 Err(PurgeError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(PurgeError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             }

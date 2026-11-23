@@ -1,5 +1,6 @@
 //! Commit or abort one publication snapshot, including prepared eligibility.
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 use layer2_core::sandbox::store::{AgentWorkPublication, AgentWorkPublicationParents};
 
@@ -117,24 +118,24 @@ async fn run(
         let receipt = match publication {
             Ok(receipt) => receipt,
             Err(ApplyError::PreparedIneligible) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(Completion::PreparedIneligible);
             }
             Err(ApplyError::StaleProposal) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(Completion::KnownAborted);
             }
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if positively_aborted(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error);
                 continue;
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };

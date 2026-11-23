@@ -1,5 +1,6 @@
 //! Gap-free Mongo event stream for sandbox lifecycle changes.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::{SandboxEventStore, SandboxStoreError, MAX_PAGE_SIZE};
 use layer2_core::sandbox::{SandboxEvent, SandboxEventKind};
@@ -307,16 +308,16 @@ impl SandboxEventStore for MongoSandboxStore {
             {
                 Ok(event) => event,
                 Err(TransactionEventError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(TransactionEventError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(TransactionEventError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             };

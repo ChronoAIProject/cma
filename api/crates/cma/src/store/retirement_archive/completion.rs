@@ -23,7 +23,7 @@ impl ArchiveStore {
                 Ok(())
             });
         if result.is_err() {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return result;
         }
         self.commit_or_reconcile(session, request, bytes, Some(&receipt))

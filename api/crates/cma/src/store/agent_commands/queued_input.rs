@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::agent_io::{
     CommandLedgerError, QueuedInputOutcome, QueuedInputReservation,
 };
@@ -28,11 +29,11 @@ pub(super) async fn run(
         let result = match apply::apply(store, &request, &mut session).await {
             Ok(result) => result,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if is_transient(&error) || is_duplicate_key(&error) {
                     tokio::task::yield_now().await;
                     continue;
@@ -41,7 +42,7 @@ pub(super) async fn run(
             }
         };
         if let Err(error) = request.cancellation.command.require_current_authority() {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(error);
         }
         match commit_transaction(&mut session).await {
