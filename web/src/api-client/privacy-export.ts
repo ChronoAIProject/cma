@@ -35,6 +35,12 @@ const transcript = object({
     version: positiveInteger,
     agent_id: text,
     through_seq: integer,
+    window: object({
+      turn: nullable(positiveInteger),
+      after: nullable(integer),
+      through: nullable(positiveInteger),
+      limit: positiveInteger,
+    }),
     coverage: object({
       raw_history: boolean,
       completeness: text,
@@ -93,6 +99,15 @@ export class PrivacyExports {
       page.manifest.version !== 1
     ) {
       throw new ProtocolError('The export page did not match this account or Agent.');
+    }
+    const { window } = page.manifest;
+    if (
+      window.turn !== (cursor?.turn ?? null) ||
+      window.after !== (cursor?.after ?? null) ||
+      window.through !== (cursor?.through ?? null) ||
+      window.limit !== (cursor?.limit ?? 32)
+    ) {
+      throw new ProtocolError('The export response did not match the requested page.');
     }
     await verifyPage(page.manifest, page.payload, new TextEncoder());
     options.signal?.throwIfAborted();

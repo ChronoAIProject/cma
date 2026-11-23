@@ -117,7 +117,7 @@
               "raw_history": false,
               "completeness": "not_certified",
               "retention_window": "not_reported_by_source",
-              "gaps": "see_turn_outcomes; absence_of_gaps_is_not_certified",
+              "gaps": "known_output_gaps_are_marked",
               "includes": [
                 "recorded_user_messages",
                 "recorded_assistant_messages",
@@ -131,11 +131,74 @@
               ]
             },
             "records": 2,
-            "size_bytes": 297,
-            "sha256": "0eb3f544bf99fd1cf36cb9216f3fde8d59d984cc0c6bd022c25478ece7f64462",
-            "next": null
+            "size_bytes": 322,
+            "sha256": "361a90ad2b308455cebbfecf8d424803b0584ea68deb901fd8e8abbcd9c80221",
+            "next": null,
+            "window": {
+              "turn": null,
+              "after": null,
+              "through": null,
+              "limit": 32
+            }
           },
-          "payload": "{\"type\":\"turn\",\"turn_sequence\":3,\"started_at\":\"2026-01-02T03:04:05Z\",\"outcome\":\"failed\",\"finished_at\":\"2026-01-02T03:04:05Z\",\"additional_output_retained\":false}\n{\"type\":\"message\",\"turn_sequence\":3,\"sequence\":5,\"role\":\"user\",\"content\":\"Recorded café message\",\"appended_at\":\"2026-01-02T03:04:05Z\"}\n"
+          "payload": "{\"type\":\"turn\",\"turn_sequence\":3,\"started_at\":\"2026-01-02T03:04:05Z\",\"outcome\":\"failed\",\"finished_at\":\"2026-01-02T03:04:05Z\",\"additional_output_retained\":false,\"known_output_gap\":false}\n{\"type\":\"message\",\"turn_sequence\":3,\"sequence\":5,\"role\":\"user\",\"content\":\"Recorded café message\",\"appended_at\":\"2026-01-02T03:04:05Z\"}\n"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "privacy-export-transcript-known-gap",
+      "operation": "GET /api/v1/account/privacy-export/agents/{id}/transcript",
+      "scenario": "privacy_export_gap",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/privacy-export/agents/agt_shared_read/transcript?limit=32",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "owner_subject": "owner-a",
+          "manifest": {
+            "format": "cma.retained-conversation-page",
+            "version": 1,
+            "agent_id": "agt_shared_read",
+            "through_seq": 9,
+            "coverage": {
+              "raw_history": false,
+              "completeness": "not_certified",
+              "retention_window": "not_reported_by_source",
+              "gaps": "known_output_gaps_are_marked",
+              "includes": [
+                "recorded_user_messages",
+                "recorded_assistant_messages",
+                "turn_outcomes"
+              ],
+              "excludes": [
+                "raw_runtime_records",
+                "tool_records",
+                "unrecorded_output",
+                "private_metadata"
+              ]
+            },
+            "records": 2,
+            "size_bytes": 321,
+            "sha256": "804d012b372ff0ad3cdb78411d69051c061e724f20cc821b4e526b39269f3770",
+            "next": null,
+            "window": {
+              "turn": null,
+              "after": null,
+              "through": null,
+              "limit": 32
+            }
+          },
+          "payload": "{\"type\":\"turn\",\"turn_sequence\":3,\"started_at\":\"2026-01-02T03:04:05Z\",\"outcome\":\"failed\",\"finished_at\":\"2026-01-02T03:04:05Z\",\"additional_output_retained\":false,\"known_output_gap\":true}\n{\"type\":\"message\",\"turn_sequence\":3,\"sequence\":5,\"role\":\"user\",\"content\":\"Recorded café message\",\"appended_at\":\"2026-01-02T03:04:05Z\"}\n"
         },
         "bodyKind": "json"
       },

@@ -24,6 +24,7 @@ pub(super) struct Manifest {
     version: u8,
     agent_id: String,
     through_seq: u64,
+    window: RequestedWindow,
     coverage: Coverage,
     records: usize,
     pub(super) size_bytes: usize,
@@ -50,6 +51,17 @@ struct Continuation {
     limit: u16,
 }
 
+#[derive(Serialize, ToSchema)]
+struct RequestedWindow {
+    #[schema(required = true)]
+    turn: Option<u64>,
+    #[schema(required = true)]
+    after: Option<u64>,
+    #[schema(required = true)]
+    through: Option<u64>,
+    limit: u16,
+}
+
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Record<'a> {
@@ -59,6 +71,7 @@ enum Record<'a> {
         outcome: &'static str,
         finished_at: Option<&'a str>,
         additional_output_retained: bool,
+        known_output_gap: bool,
     },
     Message {
         turn_sequence: u64,
@@ -71,6 +84,7 @@ enum Record<'a> {
 
 pub(super) fn transcript_package<'a>(
     owner_subject: &'a str,
+    request: &AgentTranscriptPageRequest,
     page: &AgentTranscriptPage,
 ) -> Result<TranscriptPackage<'a>, Problem> {
     let transcript = &page.transcript;
@@ -88,6 +102,10 @@ pub(super) fn transcript_package<'a>(
             outcome,
             finished_at,
             additional_output_retained: turn.retained_output.is_some_and(|value| value.available),
+            known_output_gap: matches!(
+                &turn.outcome,
+                AgentTurnOutcome::Failed { failure, .. } if failure.class == "conversation_output_gap"
+            ),
         })?;
         for message in &turn.messages {
             let role = match message.role {
@@ -115,11 +133,17 @@ pub(super) fn transcript_package<'a>(
             version: 1,
             agent_id: transcript.agent_id.to_string(),
             through_seq: transcript.through_seq,
+            window: RequestedWindow {
+                turn: request.turn,
+                after: request.after,
+                through: request.through,
+                limit: request.limit,
+            },
             coverage: Coverage {
                 raw_history: false,
                 completeness: "not_certified",
                 retention_window: "not_reported_by_source",
-                gaps: "see_turn_outcomes; absence_of_gaps_is_not_certified",
+                gaps: "known_output_gaps_are_marked",
                 includes: [
                     "recorded_user_messages",
                     "recorded_assistant_messages",

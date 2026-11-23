@@ -37,6 +37,7 @@ pub(in crate::rest) async fn contract_scenario(
     let source = Arc::new(Source {
         absent: mode == "legacy",
         large: mode == "large",
+        gap: mode == "gap",
         ..Default::default()
     });
     let router = router(Arc::new(PrivacyExport::new(
@@ -65,6 +66,7 @@ struct Source {
     legacy_reads: AtomicUsize,
     absent: bool,
     large: bool,
+    gap: bool,
     blocked: bool,
     entered: Notify,
     resume: Notify,
@@ -131,7 +133,12 @@ impl AgentLogStore for Source {
                     outcome: AgentTurnOutcome::Failed {
                         at: timestamp.into(),
                         failure: TypedFailure {
-                            class: "runtime_failed".into(),
+                            class: if self.gap {
+                                "conversation_output_gap"
+                            } else {
+                                "runtime_failed"
+                            }
+                            .into(),
                             detail: "private-diagnostic".into(),
                         },
                     },
@@ -286,6 +293,44 @@ async fn route_refuses_unsupported_legacy_source_without_full_read() {
     assert_eq!(body["code"], "privacy_export_source_unavailable");
     assert_eq!(source.reads.load(Ordering::SeqCst), 1);
     assert_eq!(source.legacy_reads.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn transcript_marks_known_output_gaps_and_attests_each_requested_window() {
+    let (fixture, _, _, _) = fixture(Reply::Member).await;
+    let source = Arc::new(Source {
+        gap: true,
+        ..Default::default()
+    });
+    let app = router(Arc::new(PrivacyExport::new(
+        fixture.reads(),
+        Arc::new(AvailableAccounts),
+        source,
+    )));
+    let first = response(app.clone(), request(TRANSCRIPT, "owner-a", true))
+        .await
+        .1;
+    assert_eq!(
+        first["manifest"]["window"],
+        serde_json::json!({
+            "turn": null, "after": null, "through": null, "limit": 32,
+        })
+    );
+    let continued = format!("{TRANSCRIPT}?agent=agt_shared_read&turn=3&after=4&through=9&limit=8");
+    let (status, final_page) = response(app, request(&continued, "owner-a", true)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        final_page["manifest"]["window"],
+        serde_json::json!({
+            "turn": 3, "after": 4, "through": 9, "limit": 8,
+        })
+    );
+    assert_eq!(final_page["manifest"]["next"], Value::Null);
+    let payload = final_page["payload"].as_str().unwrap();
+    let turn: Value = serde_json::from_str(payload.lines().next().unwrap()).unwrap();
+    assert_eq!(turn["known_output_gap"], true);
+    assert_eq!(turn["outcome"], "failed");
+    assert!(!payload.contains("private-diagnostic"));
 }
 
 #[tokio::test]

@@ -141,7 +141,8 @@ async fn transcript(
         let reading = service
             .transcript(&caller, Some(authority), &AgentId(id), &request)
             .await?;
-        let package = package::transcript_package(caller.subject.as_str(), &reading.page)?;
+        let package =
+            package::transcript_package(caller.subject.as_str(), &request, &reading.page)?;
         let body = encode(&package)?;
         service.finish_transcript(&caller, reading).await?;
         tracing::debug!(

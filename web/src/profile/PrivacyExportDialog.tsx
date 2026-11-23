@@ -93,6 +93,10 @@ export function PrivacyExportDialog({
         </>
       }
     >
+      <p>
+        Workspace and saved-document exports are handled separately. This download covers only
+        retained Agent conversations.
+      </p>
       {loading && <p role="status">Loading your Agents…</p>}
       {!loading && page?.agents.length === 0 && <p>No Agents to export.</p>}
       {!loading && page !== undefined && page.agents.length > 0 && (
