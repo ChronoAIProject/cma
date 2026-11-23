@@ -102,7 +102,7 @@ async fn commit_conversation_inner(
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
         let applied = Box::pin(scoped::apply(
-            ScanCaller::ConversationPublication,
+            scoped::PublicationSource::Conversation,
             store,
             &mutation,
             None,

@@ -185,6 +185,23 @@ pub(in crate::store) async fn quarantine_row(
     Ok(())
 }
 
+pub(in crate::store) async fn trusted_summary_at_head(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    row: &Document,
+    session: &mut mongodb::ClientSession,
+) -> Result<Option<LogSummary>, TransactionLogError> {
+    // Settlement charges the current tail, so refuse a stale anchor before
+    // the integrity check can read its earlier log row.
+    if !parse_integrity(row)?.is_some_and(|integrity| {
+        integrity.head_seq == agent.conversation.last_seq
+            && integrity.bound_agent_revision == agent.revision
+    }) {
+        return Ok(None);
+    }
+    read_only_summary(store, agent, row, session, false).await
+}
+
 pub(in crate::store) async fn trusted_summary(
     store: &MongoSandboxStore,
     agent: &Agent,
@@ -193,17 +210,6 @@ pub(in crate::store) async fn trusted_summary(
     session: &mut mongodb::ClientSession,
     snapshot: bool,
 ) -> Result<Option<LogSummary>, TransactionLogError> {
-    if caller == ScanCaller::StaleTurnSettlement {
-        // The caller charges the current tail, so refuse a stale anchor
-        // before the integrity check can read its earlier log row.
-        if !parse_integrity(row)?.is_some_and(|integrity| {
-            integrity.head_seq == agent.conversation.last_seq
-                && integrity.bound_agent_revision == agent.revision
-        }) {
-            return Ok(None);
-        }
-        return read_only_summary(store, agent, row, session, snapshot).await;
-    }
     let result = validate_summary(store, agent, row, caller, session, snapshot).await;
     if matches!(
         &result,

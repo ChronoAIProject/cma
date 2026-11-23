@@ -1,5 +1,6 @@
 //! Conversation publication and capacity settlement share one atomic writer.
 use super::*;
+use crate::store::agent_log_integrity::trusted_summary_at_head;
 
 #[cfg(test)]
 pub(super) async fn apply_mutation(
@@ -32,16 +33,26 @@ pub(in crate::store) async fn apply_mutation_with_capacity(
     before(store, &current, mutation, session).await?;
     // These alternative proof futures are large in debug builds. Keep their
     // state off the nested Trigger/conversation publication stack.
-    let (actual_last_seq, latest_turn, log_summary, semantic) = match Box::pin(trusted_summary(
-        store,
-        &current,
-        &current_row,
-        caller,
-        session,
-        false,
-    ))
-    .await?
-    {
+    let summary = if exact_checkpoint.is_some() {
+        Box::pin(trusted_summary_at_head(
+            store,
+            &current,
+            &current_row,
+            session,
+        ))
+        .await?
+    } else {
+        Box::pin(trusted_summary(
+            store,
+            &current,
+            &current_row,
+            caller,
+            session,
+            false,
+        ))
+        .await?
+    };
+    let (actual_last_seq, latest_turn, log_summary, semantic) = match summary {
         Some(summary) => {
             let semantic = summary.semantic().cloned().ok_or_else(|| {
                 ApplyError::Domain(SandboxStoreError::Corrupt(
@@ -55,7 +66,7 @@ pub(in crate::store) async fn apply_mutation_with_capacity(
                 semantic,
             )
         }
-        None if caller == ScanCaller::StaleTurnSettlement => {
+        None if exact_checkpoint.is_some() => {
             // The stale-turn proof budget cannot authorize a full-log audit.
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }

@@ -26,8 +26,14 @@ use mongodb::bson::doc;
 pub(in crate::store) mod adoption;
 pub(in crate::store) mod checkpoint;
 
+pub(in crate::store) enum PublicationSource {
+    Conversation,
+    Checkpoint,
+    StaleTurn,
+}
+
 pub(in crate::store) async fn apply(
-    caller: ScanCaller,
+    source: PublicationSource,
     store: &MongoSandboxStore,
     mutation: &AgentConversationMutation,
     capacity: Option<&AgentConversationCapacitySettlement>,
@@ -40,12 +46,16 @@ pub(in crate::store) async fn apply(
         .await
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    let exact_checkpoint = if caller == ScanCaller::StaleTurnSettlement {
+    let exact_checkpoint = if matches!(source, PublicationSource::StaleTurn) {
         Some(checkpoint.ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?)
     } else {
         None
     };
     if read_format(&row).map_err(ApplyError::Domain)?.is_none() && adoption.is_none() {
+        let caller = match source {
+            PublicationSource::Conversation => ScanCaller::ConversationPublication,
+            PublicationSource::Checkpoint | PublicationSource::StaleTurn => ScanCaller::Checkpoint,
+        };
         return Box::pin(domain::publication::apply_mutation_with_capacity(
             caller,
             store,

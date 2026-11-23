@@ -126,9 +126,9 @@ pub(in crate::store) async fn apply(
         }
         let receipt = Box::pin(super::apply(
             if matches!(authority, Authority::StaleTurn) {
-                ScanCaller::StaleTurnSettlement
+                PublicationSource::StaleTurn
             } else {
-                ScanCaller::Checkpoint
+                PublicationSource::Checkpoint
             },
             store,
             mutation,
