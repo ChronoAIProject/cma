@@ -143,12 +143,13 @@ export function DeletionDialog({
     let agentEvents: DeletionObservation['agentEvents'] = [];
     let reading = false;
     const startedAt = Date.now();
+    const settled = () => completed.current || deletionWasSettled(client, latestRequest.current);
     const poll = () => {
       if (
         reading ||
         controller.signal.aborted ||
         document.hidden ||
-        completed.current ||
+        settled() ||
         backgrounded.current
       )
         return;
@@ -156,6 +157,7 @@ export function DeletionDialog({
       reading = true;
       void Promise.resolve()
         .then(() => {
+          if (controller.signal.aborted || settled()) return;
           if (
             request.stop &&
             !request.accepted &&
@@ -179,14 +181,14 @@ export function DeletionDialog({
           );
         })
         .then((next) => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || !next || (settled() && !next.complete)) return;
           const blocked = stopDeletionBlock(latestRequest.current, next);
           if (blocked) throw new DeletionBlocked(blocked);
           events = next.events;
           agentEvents = next.agentEvents;
           setObservation(next);
           setReadError(undefined);
-          if (next.inProgress && !request.accepted) {
+          if (next.inProgress && !request.accepted && !settled()) {
             const accepted = { ...request, accepted: true };
             persist(accepted);
             setStarted(true);
@@ -203,7 +205,7 @@ export function DeletionDialog({
             timer = setTimeout(poll, request.accepted ? transitionRefreshDelay(startedAt) : 1500);
         })
         .catch((error: unknown) => {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || settled()) return;
           if (
             error instanceof DeletionBlocked ||
             (error instanceof ApiError && [400, 401, 403, 404, 409, 422].includes(error.status))
