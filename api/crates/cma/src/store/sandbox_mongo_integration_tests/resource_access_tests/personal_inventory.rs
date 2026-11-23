@@ -22,6 +22,9 @@ mod failures;
 #[path = "personal_inventory/provenance.rs"]
 mod provenance;
 
+#[path = "personal_inventory/latest_events.rs"]
+mod latest_events;
+
 #[path = "personal_inventory/concurrency.rs"]
 mod concurrency;
 

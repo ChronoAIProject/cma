@@ -8,7 +8,7 @@ use public::request;
 
 const PATH: &str = "/api/v1/agents/provenance";
 
-async fn ready(store: &MongoSandboxStore, index: usize, gap: bool) {
+pub(super) async fn ready(store: &MongoSandboxStore, index: usize, gap: bool) {
     let id = AgentId(format!("agt_list_{index:04}"));
     let mut agent = store.get_agent(&id).await.unwrap().unwrap();
     agent.status = AgentStatus::Ready;
