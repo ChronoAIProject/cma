@@ -424,7 +424,7 @@ async fn connection_options(uri: &str, database: &str) -> Result<ClientOptions, 
         .await
         .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
     // Every transaction opens with a barrier read in this database (#3217).
-    options.default_database = Some(database.to_owned());
+    super::transaction_barrier::bind(&mut options, database);
     // Replica ownership changes authority, not the deployment's connection
     // budget. Preserve explicit URI options and driver defaults in both modes.
     super::mongo_latency::observe(&mut options);

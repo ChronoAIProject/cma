@@ -43,7 +43,7 @@ pub(super) async fn production_adapter(
         .await
         .map_err(|_| "runtime routing database unavailable")?;
     // Every transaction opens with a barrier read in this database (#3217).
-    routing_options.default_database = Some(config.mongodb_database.clone());
+    crate::store::transaction_barrier::bind(&mut routing_options, &config.mongodb_database);
     routing_options.cmap_event_handler = Some(mongodb::event::EventHandler::callback(
         crate::store::mongo_latency::observer(&routing_options, "routing"),
     ));
