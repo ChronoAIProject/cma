@@ -157,13 +157,7 @@ export function ConsoleContent({
     actions.unknownDeletingSandboxIds,
   );
   const { canStartNewAgent, canCreateInScope, newAgentUnavailable, permissions } =
-    consoleCreationAccess(
-      user,
-      navigationScope,
-      scopeReady,
-      accessUncertain,
-      onCreate !== undefined,
-    );
+    consoleCreationAccess(user, navigationScope, scopeReady, accessUncertain, Boolean(onCreate));
   const canOpenTriggers = !user.visitor && user.capabilities.includes('publish_triggers');
   const [commandsOpen, setCommandsOpen] = useState(false);
   const newAgent = useCallback(() => onCreate?.({ kind: 'new_agent' }), [onCreate]);
@@ -340,6 +334,7 @@ export function ConsoleContent({
         home={{
           ...environments.home,
           authEpoch,
+          visible,
           navigation: scopeReady && navigationScope === '' ? navigation : undefined,
           scope: navigationScope,
           onRetry: refreshNavigation,
