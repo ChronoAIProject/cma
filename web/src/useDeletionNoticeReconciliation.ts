@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useState } from 'react';
 import type { CmaWebClient, ReadOptions } from './api/client';
 import type { AgentDetail } from './api/types';
 import { coalesceDetailReads } from './api/detailReads';
+import { agentDetail } from './api/rest/hierarchy';
 import type { DeleteAction, DeletionRequest } from './deletion';
 import { forgetDeletion, restoreDeletions } from './deletionRecovery';
 
@@ -65,6 +66,23 @@ function hasRetiredParent(detail: AgentDetail, id: string) {
   );
 }
 
+function withClientProperty<T extends object, K extends keyof T>(
+  source: T,
+  key: K,
+  value: T[K],
+): T {
+  const methods = new Map<unknown, unknown>();
+  return new Proxy(source, {
+    get(target, property) {
+      if (property === key) return value;
+      const original: unknown = Reflect.get(target, property, target);
+      if (typeof original !== 'function') return original;
+      if (!methods.has(original)) methods.set(original, original.bind(target));
+      return methods.get(original);
+    },
+  });
+}
+
 /** Observe existing reads only; a missing resource is never proof of completed cleanup. */
 function observeAcceptedDeletions(
   source: CmaWebClient,
@@ -74,6 +92,7 @@ function observeAcceptedDeletions(
 ) {
   let active = false;
   let authority: ReadAuthority | undefined;
+  const latestAgentReads = new Map<string, object>();
   const matching = (kind: DeleteAction['kind'], id: string) =>
     restoreDeletions(viewerId).filter(
       (request) => request.action.kind === kind && targetId(request.action) === id,
@@ -101,17 +120,71 @@ function observeAcceptedDeletions(
       if (request && isCurrent(permission, options) && complete(value, id)) settle(request);
       return value;
     };
-  const readAgent = observe(
-    'delete_agent',
-    source.readAgent.bind(source),
-    (value, id) =>
-      value.id === id &&
-      value.status === 'deleted' &&
-      value.worktree.agentId === id &&
-      value.worktree.status === 'removed',
-  );
+  const observeAgent =
+    <T>(
+      read: (id: string, options?: ReadOptions) => Promise<T>,
+      project: (value: T) => AgentDetail | undefined,
+      settleAgent = false,
+    ) =>
+    async (id: string, options?: ReadOptions): Promise<T> => {
+      const permission = authority;
+      const before = restoreDeletions(viewerId);
+      const token = {};
+      latestAgentReads.set(id, token);
+      const current = () => isCurrent(permission, options) && latestAgentReads.get(id) === token;
+      try {
+        const value = await read(id, options);
+        if (current()) {
+          const detail = project(value);
+          const retired = detail !== undefined && hasRetiredParent(detail, id);
+          if (permission?.selectedAgentId === id) onAgent(permission, retired ? detail : undefined);
+          const parent = before.filter(
+            (request) =>
+              request.action.kind === 'delete_sandbox' &&
+              targetId(request.action) === detail?.sandbox.id,
+          );
+          if (retired && parent.length === 1 && parent[0]?.accepted) settle(parent[0]);
+          const agent = before.filter(
+            (request) => request.action.kind === 'delete_agent' && targetId(request.action) === id,
+          );
+          if (
+            settleAgent &&
+            detail?.id === id &&
+            detail.status === 'deleted' &&
+            detail.worktree.agentId === id &&
+            detail.worktree.status === 'removed' &&
+            agent.length === 1 &&
+            agent[0]?.accepted
+          )
+            settle(agent[0]);
+        }
+        return value;
+      } catch (error) {
+        if (current() && permission?.selectedAgentId === id) onAgent(permission);
+        throw error;
+      } finally {
+        if (latestAgentReads.get(id) === token) latestAgentReads.delete(id);
+      }
+    };
+  const resources = source.resourceViews;
+  const resourceViews =
+    resources === undefined
+      ? undefined
+      : withClientProperty(
+          resources,
+          'agents',
+          withClientProperty(
+            resources.agents,
+            'readAccessible',
+            observeAgent(
+              (id, options) => resources.agents.readAccessible(id, options),
+              (value) => (value.access === 'shared' ? undefined : agentDetail(value)),
+            ),
+          ),
+        );
   const client: CmaWebClient = {
     ...source,
+    resourceViews,
     readSandbox: observe(
       'delete_sandbox',
       source.readSandbox.bind(source),
@@ -122,26 +195,7 @@ function observeAcceptedDeletions(
       source.readWorkspace.bind(source),
       (value, id) => value.id === id && value.status === 'removed',
     ),
-    async readAgent(id, options) {
-      const permission = authority;
-      const before = restoreDeletions(viewerId).filter(
-        (request) => request.action.kind === 'delete_sandbox',
-      );
-      try {
-        const detail = await readAgent(id, options);
-        if (isCurrent(permission, options)) {
-          const retired = hasRetiredParent(detail, id);
-          if (permission?.selectedAgentId === id) onAgent(permission, retired ? detail : undefined);
-          const parent = before.filter((request) => targetId(request.action) === detail.sandbox.id);
-          if (retired && parent.length === 1 && parent[0]?.accepted) settle(parent[0]);
-        }
-        return detail;
-      } catch (error) {
-        if (isCurrent(permission, options) && permission?.selectedAgentId === id)
-          onAgent(permission);
-        throw error;
-      }
-    },
+    readAgent: observeAgent(source.readAgent.bind(source), (value) => value, true),
   };
 
   const reads = coalesceDetailReads(client);
