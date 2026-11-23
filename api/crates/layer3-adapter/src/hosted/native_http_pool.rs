@@ -454,6 +454,27 @@ fn identity(state: &TransportState, handle: &RuntimeHandle) -> NativeRuntimeIden
     }
 }
 
+/// Independent state for one revoke after the original link state is gone.
+/// It carries only the endpoint's captured identity, so the slot identity
+/// check and the Pod open fences still bind the request to that incarnation.
+pub(super) fn revoke_state(endpoint: &RuntimeEndpoint) -> Option<TransportState> {
+    let (handle, _) = endpoint.native_binding()?;
+    let captured = endpoint.native_identity()?;
+    let mut state = TransportState::default();
+    state.runtime_epochs.insert(handle.clone(), captured.epoch);
+    if let Some(sandbox_id) = &captured.sandbox_id {
+        state.bindings.insert(
+            handle.clone(),
+            BoundRuntime {
+                sandbox_id: sandbox_id.clone(),
+                request_sha256: captured.request_sha256.clone(),
+                store: None,
+            },
+        );
+    }
+    (identity(&state, handle) == *captured).then_some(state)
+}
+
 pub(super) fn retired() -> AdapterError {
     AdapterError::Unavailable("native runtime transport was retired or rebound".into())
 }

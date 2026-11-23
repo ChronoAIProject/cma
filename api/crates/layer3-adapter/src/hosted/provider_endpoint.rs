@@ -19,6 +19,7 @@ pub(super) struct RuntimeEndpoint {
     control_token: Option<String>,
     native_identity: Option<NativeRuntimeIdentity>,
     native_binding: Option<(crate::RuntimeHandle, crate::agent_sandbox::PodBinding)>,
+    direct_receiver: Option<(crate::RuntimeHandle, crate::RetirementPod)>,
 }
 
 impl RuntimeEndpoint {
@@ -87,6 +88,7 @@ impl RuntimeEndpoint {
             control_token: None,
             native_binding: None,
             native_identity: None,
+            direct_receiver: None,
         })
     }
 
@@ -112,6 +114,30 @@ impl RuntimeEndpoint {
         &self,
     ) -> Option<&(crate::RuntimeHandle, crate::agent_sandbox::PodBinding)> {
         self.native_binding.as_ref()
+    }
+
+    pub(super) fn with_direct_receiver(
+        mut self,
+        handle: &crate::RuntimeHandle,
+        binding: &crate::agent_sandbox::PodBinding,
+    ) -> Self {
+        self.direct_receiver = crate::RetirementPod::try_from(binding)
+            .ok()
+            .map(|pod| (handle.clone(), pod));
+        self
+    }
+
+    pub(super) fn retirement_receiver(
+        &self,
+    ) -> Option<(crate::RuntimeHandle, crate::RetirementPod)> {
+        self.native_binding
+            .as_ref()
+            .and_then(|(handle, binding)| {
+                crate::RetirementPod::try_from(binding)
+                    .ok()
+                    .map(|pod| (handle.clone(), pod))
+            })
+            .or_else(|| self.direct_receiver.clone())
     }
 
     pub(super) fn with_native_identity(mut self, identity: NativeRuntimeIdentity) -> Self {

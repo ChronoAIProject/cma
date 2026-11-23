@@ -2,12 +2,26 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SandboxDetail, SandboxLifecycle, SandboxStatus } from '../api/types';
 import { agentClient } from '../test/agent';
-import { sandboxFixture } from '../test/hierarchy';
+import { sandboxFixture, parkedRuntimeResultFixture } from '../test/hierarchy';
 import { useSandboxInput } from './sandboxInput';
 
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+it('keeps a parked parent input-gated and observes it no sooner than five seconds', async () => {
+  vi.useFakeTimers();
+  const readSandbox = vi.fn(async () => parkedRuntimeResultFixture('revive'));
+  const client = agentClient({ readSandbox });
+  const { result, unmount } = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+  await act(async () => {});
+  expect(result.current.inputAvailability.allowed).toBe(false);
+  await act(() => vi.advanceTimersByTimeAsync(4999));
+  expect(readSandbox).toHaveBeenCalledTimes(1);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(readSandbox).toHaveBeenCalledTimes(2);
+  unmount();
 });
 
 function transitioning(

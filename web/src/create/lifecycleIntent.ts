@@ -1,6 +1,7 @@
 import { refreshSandboxCapacity } from '../sandbox/useSandboxCapacity';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ApiError, ProtocolError } from '@cma/client';
+import { ProtocolError } from '@cma/client';
+import { readGate, retryLifecycleRead } from '../api/readRetry';
 import { AgentLifecycleCreateError } from '../api/client';
 import { discardSubmittedTaskDraft } from './taskDraft';
 import { lifecycleFailure, type LifecycleFailure } from './lifecycleFailure';
@@ -92,10 +93,13 @@ export function useLifecycleIntent(
     let phase: string | undefined;
     let phaseStartedAt = Date.now();
     let retryDelay = 500;
+    const gate = readGate(client, JSON.stringify(['lifecycle', scope, receipt.id]));
     const poll = async () => {
       const readStartedAt = Date.now();
       try {
-        const value = await client.readAgentLifecycle!(receipt.id, { signal: abort.signal });
+        const value = await gate.run(abort.signal, (signal) =>
+          client.readAgentLifecycle!(receipt.id, { signal }),
+        );
         if (!currentRequest()) return;
         if (
           value.id !== receipt.id ||
@@ -125,10 +129,7 @@ export function useLifecycleIntent(
         setFailure(
           lifecycleFailure(error, 'status', current.current?.body.initial_message !== undefined),
         );
-        if (
-          error instanceof ProtocolError ||
-          (error instanceof ApiError && !error.isRetryable && error.status !== 408)
-        ) {
+        if (!retryLifecycleRead(error, abort.signal)) {
           // Lost access or identity invalidates the visible observation, but
           // never erases the retained command or submits a replacement.
           setOperation(undefined);

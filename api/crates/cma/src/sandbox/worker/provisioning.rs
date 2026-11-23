@@ -67,7 +67,7 @@ impl SandboxWorker {
         let runtime_version = spec
             .runtime_image
             .clone()
-            .unwrap_or_else(|| self.config.runtime_version.clone());
+            .unwrap_or_else(|| self.config.released.snapshot().agent);
         let funded_until = match self
             .funding
             .ensure_coverage(&sandbox, SystemTime::now())

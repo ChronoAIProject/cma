@@ -2,6 +2,15 @@ use super::*;
 
 #[async_trait::async_trait]
 impl super::super::HostedControlTransport for super::ProviderHostedControlTransport {
+    async fn challenge_retirement_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        binding: &crate::agent_sandbox::PodBinding,
+        owner: &crate::owner_protocol::TransportOwner,
+    ) -> crate::Result<bool> {
+        self.challenge_native_receiver(handle, binding, owner).await
+    }
+
     fn desktop_ownership(&self) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
         Some(self)
     }
@@ -260,6 +269,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
                 handle,
                 &endpoint,
                 &launch,
+                ownership.as_ref(),
                 &mut timing,
                 if resume_conversation.is_some() || settings.recovered_prompt.is_some() {
                     RuntimeWorkloadClass::Continuity

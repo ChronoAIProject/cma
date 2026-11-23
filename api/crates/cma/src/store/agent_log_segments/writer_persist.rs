@@ -195,7 +195,9 @@ fn aggregate_update(
 }
 
 fn classify(error: mongodb::error::Error) -> TransactionLogError {
-    if is_duplicate_key(&error) {
+    if !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
+        && is_duplicate_key(&error)
+    {
         SandboxStoreError::Conflict.into()
     } else {
         TransactionLogError::Driver(error)

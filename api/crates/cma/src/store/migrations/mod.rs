@@ -9,6 +9,7 @@ mod activity_page_index;
 mod agent_log_segments;
 pub(in crate::store) mod agent_log_source_keys;
 mod agent_owner_index;
+mod billing_authority;
 mod binding_indexes;
 mod collection_indexes;
 pub(in crate::store) mod home_backup_catalog;
@@ -16,6 +17,7 @@ mod index_inventory;
 mod index_plan;
 mod index_toolkit;
 pub(in crate::store) mod opening_index;
+mod sandbox_usage_capture;
 mod steps;
 use steps::Step;
 mod authority;
@@ -56,6 +58,9 @@ pub(crate) async fn run_command_line(arguments: &[String]) {
 }
 
 pub(crate) async fn command(arguments: &[String]) -> Result<Value> {
+    if let Some(result) = billing_authority::command(arguments) {
+        return result;
+    }
     if let Some(result) = home_backup_catalog::command(arguments) {
         return result;
     }
@@ -119,6 +124,12 @@ async fn execute(arguments: &[String]) -> Result<Value> {
         return match identity {
             Some(identity) => agent_log_segments::apply(&ledger, &database, &identity).await,
             None => agent_log_segments::inspect(&database).await,
+        };
+    }
+    if step == Step::SandboxUsageCapture {
+        return match identity {
+            Some(identity) => sandbox_usage_capture::apply(&ledger, &database, &identity).await,
+            None => sandbox_usage_capture::inspect(&database).await,
         };
     }
     let indexes = step.inspect(&database).await?;
@@ -214,4 +225,6 @@ pub(in crate::store) fn missing_activity_indexes(
 }
 
 #[cfg(test)]
-pub(in crate::store) use tests::startup_ddl::prepare_bindings_for_test;
+pub(in crate::store) use tests::startup_ddl::{
+    apply_binding_indexes_for_test, prepare_bindings_for_test,
+};

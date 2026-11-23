@@ -62,15 +62,17 @@ export function InlineTargetStep({
         inline: typeof next === 'function' ? next(current.target.inline!) : next,
       },
     }));
+  // Merge into the latest target: an image resolution may have committed since
+  // this render, and an edit must never restore the unresolved image.
   const updateAgent = (patch: Partial<TriggerInlineTarget['agent']>) =>
-    updateTarget({ ...target, agent: { ...target.agent, ...patch } });
+    updateTarget((current) => ({ ...current, agent: { ...current.agent, ...patch } }));
   const workspace = target.workspace ?? {};
   const repository = workspace.repository;
-  const setRepository = (next: { url: string; reference?: string } | undefined) =>
-    updateTarget({
-      ...target,
+  const setRepository = (next: { url: string; ref?: string } | undefined) =>
+    updateTarget((current) => ({
+      ...current,
       workspace: next === undefined ? undefined : { repository: next },
-    });
+    }));
   return (
     <>
       <div className="trigger-field">
@@ -84,10 +86,10 @@ export function InlineTargetStep({
             const request = ++imageRequest.current;
             if (id === '') {
               setImageFailure(undefined);
-              updateTarget({ ...target, image: undefined });
+              updateTarget((current) => ({ ...current, image: undefined }));
               return;
             }
-            updateTarget({ ...target, image: { id } });
+            updateTarget((current) => ({ ...current, image: { id } }));
             setImageResolving(true);
             setImageFailure(undefined);
             imageController.current?.abort();
@@ -228,19 +230,19 @@ export function InlineTargetStep({
           aria-invalid={errors['target.inline.workspace.repository'] !== undefined}
           onChange={(event) => {
             const url = event.target.value;
-            setRepository(url === '' ? undefined : { url, reference: repository?.reference });
+            setRepository(url === '' ? undefined : { url, ref: repository?.ref });
           }}
         />
         <Input
           aria-label="GitHub repository ref"
-          value={repository?.reference ?? ''}
+          value={repository?.ref ?? ''}
           disabled={disabled || repository === undefined}
           placeholder="main (optional)"
           onChange={(event) =>
             setRepository(
               repository === undefined
                 ? undefined
-                : { url: repository.url, reference: event.target.value || undefined },
+                : { url: repository.url, ref: event.target.value || undefined },
             )
           }
         />

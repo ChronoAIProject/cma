@@ -26,6 +26,13 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
     )
     .await
     .map_err(|error| format!("durable stores are not usable: {error}"))?;
+    stores.sandbox_model = Arc::new(
+        (*stores.sandbox_model)
+            .clone()
+            .with_usage_capture(config.usage_capture.clone())
+            .await
+            .map_err(|error| format!("usage capture is not ready: {error}"))?,
+    );
     stores = stores
         .configure_admission_ceilings(
             config.global_sandbox_limit,
@@ -40,10 +47,15 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .with_global_sandbox_limit(config.global_sandbox_limit)
             .with_launch_admission_policy(config.features.launch_admission_policy()),
     );
+    // One released-default authority, shared by every consumer of new work.
+    stores.released_runtime = Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+        config.runtime.sandbox_image.clone(),
+        config.runtime.machine_sandbox_image.clone(),
+    ));
     stores.sandbox_model = Arc::new(
         (*stores.sandbox_model)
             .clone()
-            .with_machine_runtime_version(config.runtime.machine_sandbox_image.clone()),
+            .with_released_runtime(stores.released_runtime.clone()),
     );
     stores.sandbox_model = Arc::new(
         (*stores.sandbox_model)
@@ -53,6 +65,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .with_renewable_work(config.agent_manager_replicas.is_some())
             .with_title_effect_custody(config.agent_manager_replicas.is_some())
             .with_global_sandbox_limit(config.global_sandbox_limit)
+            .with_public_owner_sandbox_limit(config.public_owner_sandbox_limit)
             .with_platform_counter_shards(config.features.platform_counter_shards)
             .with_agent_control_write_coordination(config.features.agent_control_write_coordination)
             .with_bounded_close_retries(config.features.bounded_close_retries)

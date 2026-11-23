@@ -54,13 +54,18 @@ mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
+pub(crate) mod stale_turns;
+#[cfg(test)]
+pub(crate) use agent_worker_transaction::adoption_probe;
 #[cfg(test)]
 pub(crate) use agent_worker_transaction::skill_result_test_support;
 mod agent_worktree_recovery;
 mod agent_worktree_recovery_records;
 mod agent_write_coordination;
+pub(crate) use agent_write_coordination::CLEANUP_RETRY_DEADLINE;
 mod agents;
 pub mod auth;
+mod billing_authority;
 mod bindings;
 pub(crate) mod bot_setup_contexts;
 pub(crate) mod bot_setups;
@@ -83,6 +88,7 @@ mod durability;
 mod empty_discovery;
 mod encryption;
 mod execution_sections;
+pub(crate) mod legal_consents;
 mod media_uploads;
 pub(crate) mod provenance_progress;
 pub(crate) mod registration_capacity;
@@ -124,10 +130,13 @@ pub mod mongo;
 mod mongo_diagnostics;
 pub(crate) mod pending_launch_homes;
 #[cfg(test)]
+pub(crate) mod test_visibility;
+#[cfg(test)]
 pub(crate) use mongo_diagnostics::attach_readiness_fixture;
 pub(crate) mod mongo_latency;
 pub(crate) mod mongo_read_telemetry;
 pub(crate) mod native_prepared;
+pub(crate) mod native_retirement_action;
 pub mod operation;
 mod operator_profiles;
 mod operator_sandboxes;
@@ -136,6 +145,8 @@ mod profile_documents;
 mod profile_draft_admission;
 #[cfg(test)]
 mod profile_index_tests;
+#[cfg(test)]
+mod profile_initial_publication_mongo_tests;
 mod profile_mongo;
 #[cfg(test)]
 mod profile_operator_mongo_integration_tests;
@@ -166,6 +177,8 @@ pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_normal_c
 #[cfg(test)]
 pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_to as fill_agent_capacity_to_fixture;
 #[cfg(test)]
+pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fingerprint as agent_capacity_fixture_fingerprint;
+#[cfg(test)]
 mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;
 mod sandbox_reconciliation;
@@ -173,6 +186,7 @@ mod sandbox_sessions;
 mod sandbox_transactions;
 mod sandbox_unpublished_recovery;
 pub(crate) mod sandbox_usage;
+pub(crate) mod sandbox_usage_export;
 mod sandbox_worker_store;
 mod sandboxes;
 #[cfg(test)]

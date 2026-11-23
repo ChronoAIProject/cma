@@ -1,5 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { setup } from './channel-setup.fixture';
+import { registerRedesignChannelCases } from './redesign-channel.cases';
+
+registerRedesignChannelCases();
 
 async function completeRequiredFields(page: Page) {
   await page.getByLabel('Channel name', { exact: true }).fill('Validation draft');
@@ -226,7 +229,7 @@ for (const width of [390, 1440]) {
     );
   });
 
-  test(`LOCAL ${width}px unmapped refusals offer a focused review path without a write`, async ({
+  test(`LOCAL ${width}px unmapped refusals keep summary focus and preserve unrelated settings`, async ({
     page,
     baseURL,
   }) => {
@@ -245,6 +248,11 @@ for (const width of [390, 1440]) {
     await page
       .getByLabel('Use an existing CMA-managed Telegram connection', { exact: true })
       .check();
+    const expandedSections = () =>
+      page
+        .locator('details')
+        .evaluateAll((elements) => elements.map((element) => (element as HTMLDetailsElement).open));
+    const managedSections = await expandedSections();
     await page.getByRole('button', { name: 'Create channel', exact: true }).click();
     await expect(page.getByRole('alert')).toContainText(
       'Choose a ready CMA-managed Telegram connection.',
@@ -252,17 +260,23 @@ for (const width of [390, 1440]) {
     await expect(page.getByRole('alert')).toBeFocused();
     expect(requests).toBe(0);
     await page.getByRole('button', { name: 'Review channel fields', exact: true }).click();
-    await expect(page.getByLabel('Channel name', { exact: true })).toBeFocused();
+    await expect(page.getByRole('alert')).toBeFocused();
+    await expect(page.getByLabel('Channel name', { exact: true })).not.toBeFocused();
+    expect(await expandedSections()).toEqual(managedSections);
+    expect(requests).toBe(0);
     await page
       .getByLabel('Use an existing CMA-managed Telegram connection', { exact: true })
       .uncheck();
     await expect(page.getByLabel('NyxID issuer', { exact: true })).not.toBeVisible();
+    const manualSections = await expandedSections();
     await page.getByRole('button', { name: 'Create channel', exact: true }).click();
     await expect(page.getByRole('alert')).toBeFocused();
     await expect(page.getByRole('alert')).toContainText('Provider refused this configuration.');
     await page.getByRole('button', { name: 'Review channel fields', exact: true }).click();
-    await expect(page.getByLabel('NyxID issuer', { exact: true })).toBeVisible();
-    await expect(page.getByLabel('Channel name', { exact: true })).toBeFocused();
+    await expect(page.getByRole('alert')).toBeFocused();
+    await expect(page.getByLabel('NyxID issuer', { exact: true })).not.toBeVisible();
+    await expect(page.getByLabel('Channel name', { exact: true })).not.toBeFocused();
+    expect(await expandedSections()).toEqual(manualSections);
     await expect(page.getByLabel('Channel name', { exact: true })).toHaveValue('Validation draft');
     expect(requests).toBe(1);
   });

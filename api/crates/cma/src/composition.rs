@@ -12,6 +12,7 @@ mod credentials;
 mod desktop;
 mod documents;
 pub(crate) mod event_routing;
+mod legal_consent;
 mod media;
 mod observation;
 mod profiles;
@@ -26,7 +27,6 @@ use crate::{
     profile_authoring::CmaProfileAuthoringSource,
     profile_policy::profile_route_policy,
     projections::{AdapterAgentHistoryExporter, AdapterSandboxResources, AgentProjectionServices},
-    rate_limit::RateLimiters,
     sandbox::{
         runtime_capabilities, LiveAgentRegistry, LiveSandboxPolicy, PlatformTitleEndpoint,
         SandboxLifecycleComposition, SandboxLifecycleDependencies,
@@ -80,7 +80,8 @@ impl ControlPlaneComposition {
         let auth =
             credentials::authentication(config, &stores, &users, &activity, settings.clone())?
                 .with_account_standing(standing.clone())
-                .with_account_deletion_enabled(config.account_deletion_enabled);
+                .with_account_deletion_enabled(config.account_deletion_enabled)
+                .with_privacy_export_enabled(config.features.privacy_export_enabled);
         let broker = credentials::connection_broker(config, auth.clone(), subscriptions.clone())?;
         let connection_prerequisite = crate::connections::ConnectionPrerequisite::new(
             auth.clone(),
@@ -152,8 +153,9 @@ impl ControlPlaneComposition {
             profile_scanner.clone(),
             stores.agent_lifecycle.clone(),
             Some(stores.sandbox_model.clone()),
-            Some(adapter::desktop_creation(config, adapter.clone())?),
+            Some(adapter::desktop_creation(config, adapter.clone(), &stores)?),
         )
+        .with_released_runtime(stores.released_runtime.clone())
         .with_task_experience(config.task_experience.clone())
         .with_failure_metadata(config.lifecycle_failure_metadata_enabled);
         let lifecycle_drain = inline_lifecycle.drain_handle();
@@ -232,11 +234,7 @@ impl ControlPlaneComposition {
             adapter.clone(),
         )?;
         let agent_skills = credentials::agent_skills(config, sandbox_credentials.clone())?;
-        let limits = RateLimiters::from_config(
-            config.rate_limits,
-            config.trusted_proxies.clone(),
-            stores.request_limits.clone(),
-        );
+        let limits = crate::control_admission::limiters(config, stores.request_limits.clone());
         let worker_holder = format!("{}:{}", config.deployment_id, uuid::Uuid::new_v4());
         let mut sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
@@ -256,11 +254,11 @@ impl ControlPlaneComposition {
                 skills: agent_skills,
                 funding: runtime::funding(config, &stores, adapter.clone())?,
             },
-            runtime::lifecycle_config(config, worker_holder.clone(), ownership.clone()),
+            runtime::lifecycle_config(config, worker_holder.clone(), ownership.clone(), &stores),
         )?;
         sandbox_lifecycle.register_inline_lifecycle(lifecycle_drain);
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
-            standing,
+            standing: standing.clone(),
             common_first_messages: config.features.trigger_command_admission,
             agent_reads: projections.reads(),
             credentials: connection_prerequisite.clone(),
@@ -371,8 +369,9 @@ impl ControlPlaneComposition {
             "cma_codex".into(),
         );
         let metadata = routes::agent_metadata(&stores, resource_access.clone(), config);
+        let accounts = routes::accounts(config, &stores, deletions, standing, projections.reads());
         let resource_routes = rest::profiles_router(profiles)
-            .merge(rest::account_deletion_router(deletions))
+            .merge(accounts)
             .merge(rest::answer_deliverables_router(deliverables))
             .merge(media::router(media))
             .merge(rest::documents_router(documents.clone()))
@@ -413,6 +412,7 @@ impl ControlPlaneComposition {
             .merge(layer1_public::rest::admin::router(admin));
         let resource_routes = resource_routes.merge(bindings.router(config.gateway.as_ref())?);
         let resource_routes = routes::stream_budget(resource_routes, config.public_stream_limit);
+        let resource_routes = crate::control_admission::routes(resource_routes, limits.lifecycle());
         let (bot_routes, bots) = bots::BotComposition::build(bots::BotCompositionDependencies {
             config,
             stores: &stores,

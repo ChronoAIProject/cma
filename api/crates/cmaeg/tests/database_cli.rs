@@ -6,6 +6,7 @@ const URI: &str = "CMAEG_MONGODB_URI";
 const LOCAL_URI: &str = "mongodb://127.0.0.1:1/?serverSelectionTimeoutMS=1";
 const COMMANDS: &[&[&str]] = &[
     &["--migrate"],
+    &["--migrate-activity-history"],
     &["--migrate-whatsapp-forms"],
     &["--migrate-media-continuations"],
     &["--import-legacy-records", "SYNTHETIC_PRIVATE_EXPORT_PATH"],

@@ -12,10 +12,11 @@ pub(super) struct ProductionAdapters {
 pub(super) fn desktop_creation(
     config: &Config,
     adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+    stores: &crate::store::MongoStores,
 ) -> Result<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>, String> {
-    layer2_core::sandbox::desktop_creation::DesktopCreationService::new(
+    layer2_core::sandbox::desktop_creation::DesktopCreationService::with_released(
         adapter,
-        config.runtime.sandbox_image.clone(),
+        stores.released_runtime.clone(),
         config.desktop_verified_runtime_image.clone(),
     )
     .map_err(str::to_owned)

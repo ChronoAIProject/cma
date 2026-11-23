@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { ValidationScope } from './ValidationPath';
 import { SetupPolicy, SetupReview, SetupSection } from './SetupSections';
 import type { Denied } from '../client';
@@ -14,6 +15,7 @@ import { ManagedConnectionFields } from './ManagedConnectionFields';
 import { Button } from '../../ui/Button';
 import { ChannelPolicyFields } from './ChannelPolicyFields';
 import { CredentialsFields } from './CredentialsFields';
+import { fitPartition } from './authoringRules';
 import { Choice, Section } from './Fields';
 import { ProfileFields, ProviderFields } from './ProfileFields';
 import { SourceFields } from './SourceFields';
@@ -23,6 +25,7 @@ import {
   hasCustomSource,
 } from './customExecution';
 import {
+  customUsesHmac,
   defaultSource,
   object,
   records,
@@ -41,6 +44,7 @@ export function NodeFields({
   create,
   sourceCount,
   savedCustomExecution,
+  retainedAckDelay,
   denied,
 }: {
   draft: Fields;
@@ -52,9 +56,11 @@ export function NodeFields({
   create: boolean;
   sourceCount: number;
   savedCustomExecution?: boolean;
+  retainedAckDelay?: unknown;
   denied: Denied;
 }) {
   const discovery = useRelayCapabilities();
+  const sourceDrafts = useRef(new Map<number, Map<string, Fields>>());
   const sources = records(draft.sources);
   if (!create && section.kind === 'producer' && section.index === sources.length)
     sources.push(defaultSource('nyxid_relay'));
@@ -63,7 +69,11 @@ export function NodeFields({
     discovery,
     String(object(draft.provider).slug ?? ''),
   );
-  const set = (key: string, next: unknown) => onChange({ ...draft, [key]: next });
+  const set = (key: string, next: unknown) => {
+    const value = { ...draft, [key]: next };
+    // A new channel's grouping follows its producers; saved channels are never rewritten.
+    onChange(create && key === 'sources' ? fitPartition(discovery, value) : value);
+  };
   return (
     <>
       <SetupSection
@@ -76,10 +86,12 @@ export function NodeFields({
             value={draft}
             onChange={onChange}
             hideConnection={create}
+            retainedAckDelay={retainedAckDelay}
             part={create ? 'identity' : 'all'}
           />
         ) : null}
-        {create ? (
+        {create &&
+        (discovery.managedTelegramSetup === true || draft.connection_ref !== undefined) ? (
           <ManagedConnectionFields
             active={active}
             value={draft}
@@ -137,12 +149,17 @@ export function NodeFields({
                         if (option.value === 'discord') return !nativeDiscordUnavailable(discovery);
                         return true;
                       })}
-                      onChange={(type) =>
+                      onChange={(type) => {
+                        const drafts = sourceDrafts.current.get(index) ?? new Map<string, Fields>();
+                        drafts.set(String(source.type), source);
+                        sourceDrafts.current.set(index, drafts);
                         set(
                           'sources',
-                          sources.map((v, i) => (i === index ? defaultSource(type) : v)),
-                        )
-                      }
+                          sources.map((v, i) =>
+                            i === index ? (drafts.get(type) ?? defaultSource(type)) : v,
+                          ),
+                        );
+                      }}
                     />
                   ) : null}
                   <ValidationScope value={`/sources/${index}`}>
@@ -194,7 +211,7 @@ export function NodeFields({
                               ? ['channel_key']
                               : []
                       }
-                      hmac={source.type === 'custom'}
+                      hmac={customUsesHmac(source)}
                     />
                   ) : null}
                 </Section>
@@ -215,7 +232,7 @@ export function NodeFields({
             onChange={onCredentials}
             create
             keys={(draft.connection_ref === undefined ? sources : [])
-              .flatMap((source) => producerCredentialKeys(source.type))
+              .flatMap(producerCredentialKeys)
               .filter(
                 (key) => !['native_lark', 'whatsapp', 'replace_hmac', 'hmac_secrets'].includes(key),
               )
@@ -280,6 +297,6 @@ export function nodeCredentials(values: Fields, section: EditorSection, draft: F
       ? ['agent_key']
       : section.kind === 'channel'
         ? ['replace_hmac', 'hmac_secrets']
-        : producerCredentialKeys(records(draft.sources)[section.index]?.type);
+        : producerCredentialKeys(object(records(draft.sources)[section.index]));
   return Object.fromEntries(Object.entries(values).filter(([key]) => keys.includes(key)));
 }

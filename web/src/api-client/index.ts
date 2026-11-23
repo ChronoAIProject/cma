@@ -1,4 +1,4 @@
-export { retryAfterMilliseconds } from './http.js';
+export { retryAfterMilliseconds, readBytes, errorFromBody } from './http.js';
 /** Typed, repository-only client for CMA's public resource APIs. */
 
 export { Cma, createClient } from './client.js';
@@ -165,3 +165,6 @@ export type { SandboxCapacity } from './instances/capacity.js';
 export { agentLifecycleFailure } from './agents/lifecycle.js';
 
 export * from './account-deletion.js';
+export * from './legal-consent.js';
+export { ResourceRevocations, pendingRevocation } from './resource-revocations.js';
+export type { ResourceRevocationStatus, RevocationRequest } from './resource-revocations.js';

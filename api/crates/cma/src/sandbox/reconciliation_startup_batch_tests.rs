@@ -2,28 +2,61 @@ use super::run;
 use std::{cell::RefCell, rc::Rc, time::Duration};
 use tokio::sync::oneshot;
 
+#[tokio::test]
+async fn shutdown_joins_started_bindings_without_admitting_more() {
+    let stopping = std::cell::Cell::new(false);
+    let started = std::cell::Cell::new(0);
+    let (senders, receivers): (Vec<_>, Vec<_>) = (0..4).map(|_| oneshot::channel()).unzip();
+    let batch = run(
+        receivers,
+        2,
+        || stopping.get(),
+        |receive| async {
+            started.set(started.get() + 1);
+            Ok::<_, ()>(receive.await.unwrap())
+        },
+    );
+    tokio::pin!(batch);
+    assert!(futures_util::poll!(&mut batch).is_pending());
+    assert_eq!(started.get(), 2);
+    stopping.set(true);
+    let mut senders = senders.into_iter();
+    senders.next().unwrap().send(true).unwrap();
+    assert!(futures_util::poll!(&mut batch).is_pending());
+    assert_eq!(started.get(), 2);
+    senders.next().unwrap().send(false).unwrap();
+    let report = batch.await;
+    assert_eq!((report.started, report.settled, report.deferred), (2, 2, 1));
+    assert!(report.error.is_none());
+}
+
 #[tokio::test(start_paused = true)]
 async fn thirty_four_bindings_overlap_at_eight_and_keep_each_chain_in_order() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let counts = Rc::new(RefCell::new((0usize, 0usize)));
     let started = tokio::time::Instant::now();
-    let report = run(0..34, 8, |id| {
-        let events = events.clone();
-        let counts = counts.clone();
-        async move {
-            {
-                let mut counts = counts.borrow_mut();
-                counts.0 += 1;
-                counts.1 = counts.1.max(counts.0);
+    let report = run(
+        0..34,
+        8,
+        || false,
+        |id| {
+            let events = events.clone();
+            let counts = counts.clone();
+            async move {
+                {
+                    let mut counts = counts.borrow_mut();
+                    counts.0 += 1;
+                    counts.1 = counts.1.max(counts.0);
+                }
+                for phase in ["proof", "status", "cas"] {
+                    events.borrow_mut().push((id, phase));
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                counts.borrow_mut().0 -= 1;
+                Ok::<_, ()>(id != 7)
             }
-            for phase in ["proof", "status", "cas"] {
-                events.borrow_mut().push((id, phase));
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-            counts.borrow_mut().0 -= 1;
-            Ok::<_, ()>(id != 7)
-        }
-    })
+        },
+    )
     .await;
     assert_eq!(
         (report.started, report.settled, report.deferred),
@@ -67,20 +100,25 @@ async fn observed_error_closes_admission_and_drains_held_siblings_before_return(
             (Some(send), receive)
         })
         .unzip();
-    let batch = run(receivers.into_iter().enumerate(), 8, |(id, receive)| {
-        let started = started.clone();
-        let cancelled = cancelled.clone();
-        async move {
-            let mut completion = Completion {
-                done: false,
-                cancelled,
-            };
-            started.borrow_mut().push(id);
-            let result = receive.await.unwrap();
-            completion.done = true;
-            result
-        }
-    });
+    let batch = run(
+        receivers.into_iter().enumerate(),
+        8,
+        || false,
+        |(id, receive)| {
+            let started = started.clone();
+            let cancelled = cancelled.clone();
+            async move {
+                let mut completion = Completion {
+                    done: false,
+                    cancelled,
+                };
+                started.borrow_mut().push(id);
+                let result = receive.await.unwrap();
+                completion.done = true;
+                result
+            }
+        },
+    );
     tokio::pin!(batch);
     assert!(futures_util::poll!(&mut batch).is_pending());
     assert_eq!(started.borrow().len(), 8);
@@ -108,19 +146,24 @@ async fn observed_error_closes_admission_and_drains_held_siblings_before_return(
 #[tokio::test]
 async fn serial_fallback_preserves_row_order_and_first_error_boundary() {
     let events = Rc::new(RefCell::new(Vec::new()));
-    let report = run(0..5, 1, |id| {
-        let events = events.clone();
-        async move {
-            events.borrow_mut().push((id, "start"));
-            tokio::task::yield_now().await;
-            events.borrow_mut().push((id, "finish"));
-            if id == 2 {
-                Err("stop")
-            } else {
-                Ok(id != 0)
+    let report = run(
+        0..5,
+        1,
+        || false,
+        |id| {
+            let events = events.clone();
+            async move {
+                events.borrow_mut().push((id, "start"));
+                tokio::task::yield_now().await;
+                events.borrow_mut().push((id, "finish"));
+                if id == 2 {
+                    Err("stop")
+                } else {
+                    Ok(id != 0)
+                }
             }
-        }
-    })
+        },
+    )
     .await;
     assert_eq!(report.error, Some("stop"));
     assert_eq!(report.peak, 1);

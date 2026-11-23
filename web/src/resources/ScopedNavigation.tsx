@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { NavigationScopeChoices } from './NavigationScope';
 import type { ResourceViewsClient } from './client';
 import type { AppRoute } from '../routing/routes';
@@ -7,6 +7,8 @@ import './ScopedNavigation.css';
 import { scopeRoute } from './scope';
 import { SharedAgentNavigation } from './SharedAgentNavigation';
 import { SandboxTree } from './SandboxTree';
+import { AccessStatusPanel } from './AccessStatusPanel';
+import { Button } from '../ui/Button';
 
 export function ScopedNavigation({
   client,
@@ -27,13 +29,31 @@ export function ScopedNavigation({
   readonly choices: NavigationScopeChoices;
   readonly onNavigate: (route: AppRoute) => void;
 }) {
+  const [accessOpen, setAccessOpen] = useState(false);
+  const [accessReviewed, setAccessReviewed] = useState(false);
   if (client === undefined) return personal;
   const { organization, shared } = scopeRoute(scope);
   const { selected, unavailable } = choices;
   return (
     <div className="scoped-navigation">
-      {unavailable ? (
-        <p>Organization choices are unavailable. Personal navigation remains available.</p>
+      {unavailable || accessReviewed ? (
+        <div className="scoped-navigation__access">
+          {unavailable ? (
+            <p>Organization choices are unavailable. Personal navigation remains available.</p>
+          ) : null}
+          <Button
+            size="sm"
+            onClick={() => {
+              setAccessReviewed(true);
+              setAccessOpen(true);
+            }}
+          >
+            Review access
+          </Button>
+        </div>
+      ) : null}
+      {accessOpen ? (
+        <AccessStatusPanel choices={choices} scope={scope} onClose={() => setAccessOpen(false)} />
       ) : null}
       {view === 'agent' && (shared || organization) ? (
         <SharedAgentNavigation

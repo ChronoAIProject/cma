@@ -12,6 +12,7 @@ use std::{
 mod attributes;
 mod directory;
 mod restore;
+mod socket;
 use directory::Directory;
 pub use restore::RestoreTree;
 pub const CHUNK_BYTES: usize = 4 * 1024 * 1024;

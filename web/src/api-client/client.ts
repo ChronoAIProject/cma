@@ -1,4 +1,6 @@
 import { AccountDeletion } from './account-deletion.js';
+import { PrivacyExports } from './privacy-export.js';
+import { LegalConsents } from './legal-consent.js';
 import { reportBrowserFault, type BrowserFault } from './browser-telemetry.js';
 import { Documents } from './documents.js';
 import { TaskExperiencePolicy } from './task-experience.js';
@@ -40,6 +42,7 @@ import { Responses } from './responses.js';
 import { UnsupportedInterfaces } from './unsupported.js';
 import { ProfileAuthoring } from './profile-authoring/index.js';
 import { ResourceAccess } from './resource-access.js';
+import { ResourceRevocations } from './resource-revocations.js';
 import { AgentEventsV2 } from './agent-events-v2/index.js';
 
 /** A configured client for the public CMA resource and discovery APIs. */
@@ -47,6 +50,8 @@ export class Cma {
   readonly #config: ResolvedConfig;
   readonly documents: Documents;
   readonly accountDeletion: AccountDeletion;
+  readonly privacyExports: PrivacyExports;
+  readonly legalConsent: LegalConsents;
   readonly taskExperience: TaskExperiencePolicy;
   readonly usage: SandboxUsage;
   readonly usageMetrics: SandboxMetrics;
@@ -65,6 +70,7 @@ export class Cma {
   readonly agentBrowser: AgentBrowser;
   readonly agentBrowserControl: AgentBrowserControl;
   readonly resourceAccess: ResourceAccess;
+  readonly resourceRevocations: ResourceRevocations;
   readonly sandboxes: Sandboxes;
   readonly workspaces: Workspaces;
   readonly worktrees: Worktrees;
@@ -92,6 +98,8 @@ export class Cma {
     this.#config = resolveConfig(config);
     this.documents = new Documents(this.#config);
     this.accountDeletion = new AccountDeletion(this.#config);
+    this.privacyExports = new PrivacyExports(this.#config);
+    this.legalConsent = new LegalConsents(this.#config);
     this.taskExperience = new TaskExperiencePolicy(this.#config);
     this.usage = new SandboxUsage(this.#config);
     this.usageMetrics = new SandboxMetrics(this.#config);
@@ -110,6 +118,7 @@ export class Cma {
     this.agentBrowser = new AgentBrowser(this.#config);
     this.agentBrowserControl = new AgentBrowserControl(this.#config);
     this.resourceAccess = new ResourceAccess(this.#config);
+    this.resourceRevocations = new ResourceRevocations(this.#config);
     this.sandboxes = new Sandboxes(this.#config);
     this.workspaces = new Workspaces(this.#config);
     this.worktrees = new Worktrees(this.#config);

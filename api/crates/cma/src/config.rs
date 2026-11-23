@@ -18,12 +18,17 @@ mod lifecycle_failure;
 mod startup_schema;
 pub(crate) use startup_schema::StartupSchemaMode;
 mod account_deletion;
+mod control_admission;
+mod legal_terms;
+pub(crate) use control_admission::ControlAdmissionConfig;
 mod admission_log;
 mod anonymous_public;
 mod auth_mode;
 mod debug;
 mod global_admission;
+mod http_connections;
 mod provider_tool_relay;
+mod public_owner_sandbox_limit;
 pub(crate) use access_migration::AgentAccessMigration;
 #[cfg(test)]
 pub(crate) use anonymous_public::AnonymousPublicConfig;
@@ -52,14 +57,19 @@ mod quiet_output;
 mod task_experience;
 pub(crate) use features::home_backup::HomeBackupConfig;
 pub(crate) use features::FeatureFlags;
+mod service_authorization;
 pub(crate) use gateway::GatewayConfig;
+pub(crate) use service_authorization::ServiceAuthorizationConfig;
 mod bot_father;
 mod browser_session;
 mod documents;
 pub(crate) mod report_views;
 mod sandbox_billing;
+mod sandbox_usage_export;
+pub(crate) use sandbox_usage_export::UsageCaptureConfig;
 pub(crate) mod sandbox_metrics;
 mod usage_billing;
+mod usage_transport;
 pub(crate) use bot_father::BotFatherConfig;
 pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use profiles::DefaultProfileConfig;
@@ -67,6 +77,7 @@ pub(crate) use runtime::RuntimeConfig;
 pub(crate) use sandbox_billing::SandboxBillingConfig;
 pub(crate) use sandbox_metrics::MetricsConfig;
 pub(crate) use usage_billing::UsageBillingConfig;
+pub(crate) use usage_transport::UsageExportConfig;
 
 const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
@@ -140,11 +151,15 @@ impl TrustedProxyConfig {
 #[derive(Clone)]
 pub struct Config {
     pub(crate) account_deletion_enabled: bool,
+    /// Published terms and privacy notice; `None` records no consent.
+    pub(crate) legal_terms: Option<layer2_core::legal_consent::LegalTerms>,
     pub(crate) account_erasure_transaction_drain_seconds: u64,
     pub(crate) global_sandbox_limit: u16,
+    pub(crate) public_owner_sandbox_limit: Option<std::num::NonZeroU16>,
     pub(crate) agent_log_fleet_percent: u8,
     pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
     pub bind: SocketAddr,
+    pub(crate) http_connection_max_age: Option<std::time::Duration>,
     pub metrics_bind: SocketAddr,
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
@@ -162,6 +177,7 @@ pub struct Config {
     pub nyxid_proxy_audience: Option<String>,
     pub cors_origins: Vec<HeaderValue>,
     pub rate_limits: RateLimitConfig,
+    pub(crate) control_admission: ControlAdmissionConfig,
     pub(crate) public_stream_limit: usize,
     pub(crate) relay_capacity: RelayCapacityConfig,
     pub trusted_proxies: TrustedProxyConfig,
@@ -185,11 +201,14 @@ pub struct Config {
     pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
     pub(crate) home_backup: HomeBackupConfig,
+    pub(crate) service_authorization: Option<ServiceAuthorizationConfig>,
     pub(crate) agent_manager_replicas: Option<AgentManagerReplicas>,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub gateway: Option<GatewayConfig>,
     pub usage_billing: Option<UsageBillingConfig>,
+    pub(crate) usage_capture: Option<UsageCaptureConfig>,
+    pub(crate) usage_export: Option<UsageExportConfig>,
     pub(crate) usage_metrics: MetricsConfig,
     pub sandbox_billing: Option<SandboxBillingConfig>,
     pub bot_father: Option<BotFatherConfig>,
@@ -267,11 +286,18 @@ impl Config {
             )?,
         )?;
         let features = FeatureFlags::from_lookup(&mut lookup)?;
+        if features.home_backup_expiry_enabled {
+            return Err("CHRONO_HOME_BACKUP_EXPIRY_ENABLED requires a qualified deletion provider; retention preparation cannot be enabled".into());
+        }
         let home_backup = HomeBackupConfig::from_lookup(&mut lookup, features.home_backup_enabled)?;
+        let service_authorization =
+            ServiceAuthorizationConfig::from_lookup(&mut lookup, features.service_authorization)?;
         let account_deletion_enabled = account_deletion::enabled(&mut lookup)?;
+        let legal_terms = legal_terms::from_lookup(&mut lookup)?;
         let account_erasure_transaction_drain_seconds =
             account_deletion::transaction_drain(&mut lookup)?;
         let global_sandbox_limit = global_admission::from_lookup(&mut lookup)?;
+        let public_owner_sandbox_limit = public_owner_sandbox_limit::from_lookup(&mut lookup)?;
         let bounded_admission_agents = admission_log::from_lookup(&mut lookup)?;
         let agent_log_fleet_percent =
             admission_log::fleet_percent(&mut lookup, &bounded_admission_agents)?;
@@ -322,9 +348,12 @@ impl Config {
         }
         Ok(Self {
             global_sandbox_limit,
+            public_owner_sandbox_limit,
             account_deletion_enabled,
+            legal_terms,
             account_erasure_transaction_drain_seconds,
             bind,
+            http_connection_max_age: http_connections::max_age(&mut lookup)?,
             metrics_bind,
             public_stream_limit: public_streams::from_lookup(&mut lookup)?,
             relay_capacity: RelayCapacityConfig::from_lookup(&mut lookup)?,
@@ -343,6 +372,7 @@ impl Config {
             nyxid_proxy_audience: lookup("CHRONO_NYXID_PROXY_AUDIENCE")?,
             cors_origins,
             rate_limits,
+            control_admission: ControlAdmissionConfig::from_lookup(&mut lookup)?,
             trusted_proxies,
             mongodb_uri,
             mongodb_database,
@@ -365,12 +395,15 @@ impl Config {
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
             home_backup,
+            service_authorization,
             agent_manager_replicas,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,
             agent_log_fleet_percent,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
             usage_billing: UsageBillingConfig::from_lookup(&mut lookup)?,
+            usage_capture: UsageCaptureConfig::from_lookup(&mut lookup)?,
+            usage_export: UsageExportConfig::from_lookup(&mut lookup)?,
             usage_metrics: MetricsConfig::from_lookup(&mut lookup)?,
             sandbox_billing: SandboxBillingConfig::from_lookup(&mut lookup)?,
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
