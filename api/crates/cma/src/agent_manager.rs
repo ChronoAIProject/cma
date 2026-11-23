@@ -5,6 +5,7 @@ mod drain_contained;
 #[cfg(test)]
 mod drain_contained_mongo_tests;
 mod drain_episode;
+mod receiver_containment;
 pub(crate) use drain_episode::DrainCause;
 mod maintenance;
 pub(crate) mod relay;
@@ -36,6 +37,7 @@ pub(crate) struct AgentManager {
     drain: tokio::sync::Mutex<bool>,
     drain_episode: OnceLock<drain_episode::DrainEpisode>,
     handoffs: Mutex<BTreeMap<AgentId, Instant>>,
+    contained: receiver_containment::ContainedHandoffs,
     lifecycle: OnceLock<crate::agent_lifecycle::LifecycleDrain>,
     containment_times: Mutex<containment::IntentTimes>,
     supervisor: tokio::sync::Mutex<Option<tokio::task::JoinHandle<Result<(), ()>>>>,
@@ -100,12 +102,21 @@ impl AgentManager {
             drain: tokio::sync::Mutex::new(false),
             drain_episode: OnceLock::new(),
             handoffs: Mutex::new(BTreeMap::new()),
+            contained: Default::default(),
             lifecycle: OnceLock::new(),
             containment_times: Mutex::default(),
             supervisor: tokio::sync::Mutex::new(None),
             supervisor_outcome: OnceLock::new(),
         });
         Ok(manager)
+    }
+
+    /// Contain a transient receiver housekeeping failure to that receiver
+    /// instead of stopping the process (#3069). Off unless configured.
+    pub fn enable_receiver_containment(&self) {
+        if !self.coordinator.contains_failures() {
+            self.contained.enable();
+        }
     }
 
     pub fn register_lifecycle(

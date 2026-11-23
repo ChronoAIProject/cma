@@ -30,6 +30,16 @@ impl AgentManager {
             return self.service_retirements(candidates).await;
         }
         self.retire_inactive().await?;
+        let completed = self
+            .contained
+            .retry(&self.coordinator, |authority| async move {
+                self.handoff_receiver(&authority).await
+            })
+            .await?;
+        for id in completed {
+            self.handoffs.lock().unwrap().remove(&id);
+            self.retired_since.lock().unwrap().remove(&id);
+        }
         let cancelled = self.coordinator.cancelled_receivers().await;
         for authority in cancelled.into_iter().chain(candidates) {
             if authority.receiver_cancelled() {
@@ -72,8 +82,14 @@ impl AgentManager {
                 continue;
             }
             self.registry.detach_owner(&authority.token);
-            if !self.handoff_receiver(&authority).await? {
-                continue;
+            match self.handoff_receiver(&authority).await {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => {
+                    self.contained
+                        .contain("current_handoff", &authority, error)?;
+                    continue;
+                }
             }
             self.handoffs
                 .lock()

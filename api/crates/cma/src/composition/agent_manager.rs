@@ -18,16 +18,20 @@ pub(super) async fn register(
             )
             .await?,
         )),
-        Some(settings) => Ok(Some(
-            crate::agent_manager::AgentManager::register(
+        Some(settings) => {
+            let manager = crate::agent_manager::AgentManager::register(
                 stores.sandbox_model.clone(),
                 live_agents.clone(),
                 settings.relay_address.clone(),
                 settings.max_owned_agents,
                 config.features.ownership_cleanup_pacing,
             )
-            .await?,
-        )),
+            .await?;
+            if config.features.receiver_housekeeping_containment {
+                manager.enable_receiver_containment();
+            }
+            Ok(Some(manager))
+        }
         None => Ok(None),
     }
 }

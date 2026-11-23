@@ -6,6 +6,7 @@ use tokio::time::Instant;
 #[derive(Default)]
 pub(in crate::agent_ownership) struct CleanupState {
     pub settlement: Option<Settlement>,
+    pub legacy_forgotten: bool,
     pub local_quiescent: bool,
     pub observe_next: bool,
 }

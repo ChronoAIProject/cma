@@ -23,7 +23,7 @@ impl OwnershipCoordinator {
         // Serialize exact-token retirement through receiver confirmation and
         // durable release. Cancellation leaves completion false for safe retry.
         let mut complete = authority.cleanup.lock().await;
-        if complete.settlement.is_some() {
+        if complete.settlement.is_some() || complete.legacy_forgotten {
             return Ok(());
         }
         authority.retiring.store(true, Ordering::Release);
@@ -70,7 +70,7 @@ impl OwnershipCoordinator {
             return Ok(false);
         }
         let mut complete = authority.cleanup.lock().await;
-        if complete.settlement.is_some() {
+        if complete.settlement.is_some() || complete.legacy_forgotten {
             return Ok(true);
         }
         let owner = bounded(self.store.owner(&authority.token.agent_id)).await?;
@@ -90,6 +90,37 @@ impl OwnershipCoordinator {
         complete.settlement = Some(super::super::Settlement::Superseded {
             newer_epoch: owner.unwrap().token.epoch,
         });
+        Ok(true)
+    }
+
+    /// Preserve the receiver-only policy's existing expiry handling. The
+    /// combined policy always retains its epoch floor until proved settlement.
+    pub async fn forget_unconfirmed_retirement(
+        &self,
+        authority: &Arc<Authority>,
+    ) -> Result<bool, OwnershipError> {
+        if self.contains_failures()
+            || !authority.retiring.load(Ordering::Acquire)
+            || authority.receiver_cancelled()
+        {
+            return Ok(false);
+        }
+        let mut complete = authority.cleanup.lock().await;
+        if complete.settlement.is_some() || complete.legacy_forgotten {
+            return Ok(true);
+        }
+        let owner = bounded(self.store.owner(&authority.token.agent_id)).await?;
+        if owner.is_some_and(|lease| lease.token == authority.token) {
+            return Ok(false);
+        }
+        let mut owned = self.owned.lock().unwrap();
+        if owned
+            .get(&authority.token.agent_id)
+            .is_some_and(|slot| slot.owns(authority))
+        {
+            owned.remove(&authority.token.agent_id);
+        }
+        complete.legacy_forgotten = true;
         Ok(true)
     }
 }

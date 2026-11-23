@@ -38,6 +38,9 @@ pub(crate) struct FeatureFlags {
     pub command_reconcile_pacing: bool,
     pub ownership_cleanup_pacing: bool,
     pub am_failure_containment_enabled: bool,
+    /// Contain one receiver's transient housekeeping failure instead of
+    /// stopping the process (#3069). Default off until staging verifies it.
+    pub receiver_housekeeping_containment: bool,
     pub coordinated_ingress: bool,
     pub retained_json: bool,
     pub bounded_raw_output: bool,
@@ -74,6 +77,7 @@ pub(crate) struct FeatureFlags {
     pub agent_file_read_timings: bool,
     pub bounded_response_reads: bool,
     pub bounded_transcript_reads: bool,
+    pub privacy_export_enabled: bool,
     pub bounded_usage_reads: bool,
     pub capacity_recovery_enabled: bool,
     pub segment_adoption_enabled: bool,
@@ -176,6 +180,10 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED",
             )?,
+            receiver_housekeeping_containment: flag(
+                lookup,
+                "CHRONO_RECEIVER_HOUSEKEEPING_CONTAINMENT_ENABLED",
+            )?,
             coordinated_ingress: flag(lookup, "CHRONO_INGRESS_COORDINATOR_ENABLED")?,
             retained_json: flag(lookup, "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED")?,
             bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
@@ -277,6 +285,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED",
             )?,
+            privacy_export_enabled: flag(lookup, "CHRONO_ACCOUNT_PRIVACY_EXPORT_ENABLED")?,
             bounded_usage_reads: flag(lookup, "CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED")?,
             capacity_recovery_enabled: flag(lookup, "CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED")?,
             segment_adoption_enabled: flag(lookup, "CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED")?,

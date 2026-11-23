@@ -4,6 +4,11 @@ use crate::store::agent_log::read_entry;
 use layer2_core::sandbox::AgentLogKind;
 use mongodb::bson::RawDocumentBuf;
 
+// Source verification has its own ceiling before the tail query. The download
+// is separately limited after projecting the verified page.
+const EXPORT_TAIL_ENTRIES: i64 = 1_024;
+const EXPORT_TAIL_BYTES: i64 = 8 * 1024 * 1024;
+
 pub(super) async fn read(
     store: &MongoSandboxStore,
     agent: &Agent,
@@ -11,8 +16,21 @@ pub(super) async fn read(
     session: &mut ClientSession,
     context: SourceContext,
     snapshot: bool,
+    export: bool,
 ) -> Result<CapturedLog, TransactionLogError> {
-    let head = super::super::read_head(store, row, session, snapshot).await?;
+    let (head, entry_limit, byte_limit) = if export {
+        let head =
+            reads::read_export_head(store, row, session, EXPORT_TAIL_ENTRIES, EXPORT_TAIL_BYTES)
+                .await?;
+        let count = head.active_count;
+        (head, count, EXPORT_TAIL_BYTES)
+    } else {
+        (
+            super::super::read_head(store, row, session, snapshot).await?,
+            MAX_ENTRIES,
+            MAX_BYTES,
+        )
+    };
     let projection = projection::read(store, agent, &head, session).await?;
     if head.active_ordinal > 0 {
         reads::seal_at(store, &head, head.active_ordinal - 1, session, snapshot)
@@ -22,7 +40,7 @@ pub(super) async fn read(
     let source = store.agent_log.clone_with_type::<RawDocumentBuf>();
     let mut read = crate::store::mongo_read_telemetry::Read::find(source.name());
     let query=source.find(doc! {"agent_id":agent.id.as_str(),"seq":{"$gte":head.active_start_seq,"$lte":head.last_seq}})
-        .sort(doc! {"seq":1}).limit(MAX_ENTRIES+1).batch_size(64);
+        .sort(doc! {"seq":1}).limit(entry_limit+1).batch_size(64);
     let query = if snapshot {
         query.read_concern(ReadConcern::snapshot())
     } else {
@@ -41,6 +59,11 @@ pub(super) async fn read(
         .await
         .map_err(TransactionLogError::Driver)?
     {
+        let length = i64::try_from(raw.as_bytes().len()).map_err(|_| corrupt())?;
+        bytes = bytes
+            .checked_add(length)
+            .filter(|n| *n <= byte_limit && length <= 16 * 1024 * 1024)
+            .ok_or_else(corrupt)?;
         let entry = read_entry(&Document::try_from(&raw).map_err(|_| corrupt())?)?;
         if entry.agent_id != agent.id
             || entry.seq != next as u64
@@ -58,14 +81,6 @@ pub(super) async fn read(
                 return Err(corrupt().into());
             }
         }
-        let length = i64::try_from(raw.as_bytes().len()).map_err(|_| corrupt())?;
-        if length > 16 * 1024 * 1024 {
-            return Err(corrupt().into());
-        }
-        bytes = bytes
-            .checked_add(length)
-            .filter(|n| *n <= MAX_BYTES)
-            .ok_or_else(corrupt)?;
         leaves.extend_from_slice(
             &digest::leaf(agent.id.as_str(), &head.incarnation, next, raw.as_bytes()).bytes,
         );
