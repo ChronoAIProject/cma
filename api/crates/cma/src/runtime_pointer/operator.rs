@@ -11,49 +11,74 @@ pub(crate) async fn set_following(
     follow: bool,
 ) -> Result<(), SandboxStoreError> {
     for lane in [ReleasedLane::Agent, ReleasedLane::Machine] {
-        let Some(current) = lanes.load(lane).await? else {
+        let Some(mut current) = lanes.load(lane).await? else {
             continue;
         };
-        if current.frozen != follow {
-            continue;
+        if !follow && !current.frozen {
+            let mut session = lanes.session().await?;
+            let next = current.freeze().map_err(|_| SandboxStoreError::Conflict)?;
+            commit_lane(lanes, &current, &next, &mut session).await?;
+            current = next;
         }
-        let mut session = lanes.session().await?;
-        let mut next = if follow {
-            current.enable_following()
-        } else {
-            current.freeze()
-        }
-        .map_err(|_| SandboxStoreError::Conflict)?;
-        if !follow {
-            targets
+        if current.frozen && current.candidate.is_some() {
+            let mut session = lanes.session().await?;
+            match targets
                 .clear_candidate(
                     lane == ReleasedLane::Machine,
                     current.candidate.as_ref(),
                     &mut session,
                 )
                 .await
-                .map_err(|_| unavailable())?;
-            next.candidate = None;
-        }
-        lanes
-            .replace(&current, next.clone(), Some(&mut session))
-            .await?;
-        match session.commit_transaction().await {
-            Ok(()) => {}
-            Err(error) if error.contains_label("UnknownTransactionCommitResult") => {
-                if lanes.load(lane).await?.is_none_or(|observed| {
-                    observed.revision != next.revision
-                        || observed.frozen != next.frozen
-                        || observed.candidate != next.candidate
-                }) {
-                    return Err(unavailable());
+            {
+                Ok(()) => {}
+                Err(layer1_public::rest::admin::warm_pools::WarmPoolError::Conflict) if !follow => {
+                    // Freeze is already durable. Preserve the observation until
+                    // its claimed provider effects have passed their bound.
+                    continue;
                 }
+                Err(_) => return Err(unavailable()),
             }
-            Err(_) => return Err(unavailable()),
+            let next = current
+                .clear_frozen_candidate()
+                .map_err(|_| SandboxStoreError::Conflict)?;
+            commit_lane(lanes, &current, &next, &mut session).await?;
+            current = next;
         }
-        tracing::info!(?lane, follow, "runtime pointer following changed");
+        if follow && current.frozen {
+            let mut session = lanes.session().await?;
+            let next = current
+                .enable_following()
+                .map_err(|_| SandboxStoreError::Conflict)?;
+            commit_lane(lanes, &current, &next, &mut session).await?;
+        }
     }
     Ok(())
+}
+
+async fn commit_lane(
+    lanes: &MongoReleasedRuntimes,
+    current: &layer2_core::released_runtime::ReleasedLaneRecord,
+    next: &layer2_core::released_runtime::ReleasedLaneRecord,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), SandboxStoreError> {
+    lanes
+        .replace(current, next.clone(), Some(&mut *session))
+        .await?;
+    match session.commit_transaction().await {
+        Ok(()) => Ok(()),
+        Err(error) if error.contains_label("UnknownTransactionCommitResult") => {
+            if lanes.load(current.lane).await?.is_some_and(|observed| {
+                observed.revision == next.revision
+                    && observed.frozen == next.frozen
+                    && observed.candidate == next.candidate
+            }) {
+                Ok(())
+            } else {
+                Err(unavailable())
+            }
+        }
+        Err(_) => Err(unavailable()),
+    }
 }
 
 pub(crate) async fn command(arguments: &[String]) -> Result<(), String> {
@@ -102,7 +127,9 @@ pub(crate) async fn command(arguments: &[String]) -> Result<(), String> {
             if (command == "freeze" && (!record.frozen || record.candidate.is_some()))
                 || (command == "enable" && record.frozen)
             {
-                return Err("could not confirm the runtime pointer action".into());
+                return Err(format!(
+                    "{lane:?} freeze is durable, but candidate provider work has not settled"
+                ));
             }
             println!(
                 "{}",

@@ -229,6 +229,17 @@ impl ReleasedLaneRecord {
         Ok(next)
     }
 
+    /// Forget a frozen candidate only after the store confirms its target is settled.
+    pub fn clear_frozen_candidate(&self) -> Result<Self, Refusal> {
+        if !self.frozen {
+            return Err(Refusal::Stale);
+        }
+        let mut next = self.clone();
+        next.candidate = None;
+        next.revision = next.revision.checked_add(1).ok_or(Refusal::Invalid)?;
+        Ok(next)
+    }
+
     /// Promote the exact ready candidate the evidence names.
     pub fn promote(
         &self,

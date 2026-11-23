@@ -35,35 +35,41 @@ pub(in crate::store) async fn reserve_initial_runtime_image(
             return Err(SandboxStoreError::Conflict);
         }
     }
-    // An older worker could have dispatched under a preceding lease. Without
-    // its receipt or exact image, a second dispatch can create a different runtime.
-    if sandbox.work.next_fence != 2 || sandbox.work.attempts != 0 {
-        tracing::warn!(sandbox_id = %sandbox.id, generation, "unbound initial runtime dispatch needs reconciliation");
-        return Err(SandboxStoreError::Conflict);
+    // A compatible first claim persists its pin in the claim transaction.
+    // An absent pin here is an unresolved pre-upgrade dispatch.
+    tracing::warn!(sandbox_id = %sandbox.id, generation, "unbound initial runtime dispatch needs reconciliation");
+    Err(SandboxStoreError::Conflict)
+}
+
+pub(in crate::store) fn pin_first_dispatch(
+    store: &MongoSandboxStore,
+    current: &mongodb::bson::Document,
+    parent: &Sandbox,
+    fields: &mut mongodb::bson::Document,
+) -> Result<(), SandboxStoreError> {
+    use layer2_core::sandbox::SandboxWorkStep;
+
+    if store.released_lanes.is_none()
+        || current.contains_key(DISPATCH)
+        || parent.work.step != SandboxWorkStep::ProvisionRuntime
+        || parent.work.next_fence != 1
+        || parent.work.attempts != 0
+        || parent.profile.content.runtime_image.is_some()
+    {
+        return Ok(());
     }
-    let mut filter = filter;
-    filter.insert(
-        "record.work.lease.expires_at",
-        doc! {"$gt": layer2_core::now_rfc3339()},
+    let image = store
+        .managed_runtime_version
+        .as_deref()
+        .ok_or_else(corrupt)?;
+    fields.insert(
+        DISPATCH,
+        doc! {
+            "generation": revision(parent.lifecycle.runtime_generation_high_water.max(1))?,
+            "image": image,
+        },
     );
-    match row.get(DISPATCH) {
-        Some(previous) => filter.insert(DISPATCH, previous.clone()),
-        None => filter.insert(DISPATCH, doc! {"$exists":false}),
-    };
-    let result = store
-        .sandboxes
-        .update_one(
-            filter,
-            doc! {
-                "$set": {DISPATCH: {"generation": generation, "image": image}},
-            },
-        )
-        .await
-        .map_err(unavailable)?;
-    if result.matched_count != 1 {
-        return Err(SandboxStoreError::Conflict);
-    }
-    Ok(image.into())
+    Ok(())
 }
 
 impl MongoReleasedRuntimes {

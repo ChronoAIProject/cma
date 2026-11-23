@@ -31,6 +31,7 @@ struct Writer {
     build_digest: String,
     ready_since: Option<DateTime>,
     expires_at: DateTime,
+    boot_effect_until: Option<DateTime>,
 }
 
 impl MongoReleasedRuntimes {
@@ -97,12 +98,46 @@ impl MongoReleasedRuntimes {
         matched(write.matched_count)
     }
 
+    pub(crate) async fn protect_boot_effect(
+        &self,
+        writer: &BootWriter,
+    ) -> Result<(), SandboxStoreError> {
+        let path = format!("writers.{}", writer.incarnation);
+        let mut filter =
+            doc! {"_id": self.coordination_id(), "document_schema_version": SCHEMA_VERSION};
+        filter.insert(format!("{path}.pod_uid"), writer.pod_uid.to_string());
+        filter.insert(format!("{path}.build_digest"), &writer.build_digest);
+        filter.insert(format!("{path}.ready_since"), mongodb::bson::Bson::Null);
+        filter.insert(
+            "$expr",
+            doc! {"$gt": [format!("${path}.expires_at"), "$$NOW"]},
+        );
+        let mut fields = doc! {};
+        fields.insert(
+            format!("{path}.boot_effect_until"),
+            doc! {"$add":["$$NOW", 60_000_i64]},
+        );
+        fields.insert(
+            format!("{path}.expires_at"),
+            doc! {"$add":["$$NOW", WRITER_LEASE_MS]},
+        );
+        let result = self
+            .coordination()
+            .update_one(filter, vec![doc! {"$set": fields}])
+            .await
+            .map_err(unavailable)?;
+        matched(result.matched_count)
+    }
+
     pub(crate) async fn remove_writer(&self, writer: &BootWriter) -> Result<(), SandboxStoreError> {
         let mut fields = doc! {};
         fields.insert(format!("writers.{}", writer.incarnation), "");
         self.coordination()
             .update_one(
-                doc! {"_id": self.coordination_id()},
+                doc! {"_id": self.coordination_id(), "$expr": {"$lte": [
+                    {"$ifNull": [format!("$writers.{}.boot_effect_until", writer.incarnation), DateTime::from_millis(0)]},
+                    "$$NOW",
+                ]}},
                 doc! {"$unset": fields},
             )
             .await
@@ -201,7 +236,12 @@ impl MongoReleasedRuntimes {
         }
         let mut live = writers
             .iter()
-            .filter(|(_, writer)| writer.expires_at.timestamp_millis() > now)
+            .filter(|(_, writer)| {
+                writer.expires_at.timestamp_millis() > now
+                    || writer
+                        .boot_effect_until
+                        .is_some_and(|until| until.timestamp_millis() > now)
+            })
             .collect::<BTreeMap<_, _>>();
         let mut pods = std::collections::BTreeSet::new();
         let mut holder_ready = false;

@@ -140,18 +140,25 @@ async fn apply(
     }
     let filter =
         crate::store::work_publication::sandbox(filter, sandbox.id.as_str()).map_err(Domain)?;
+    let mut replacement =
+        crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)?;
+    if acquisition.is_some() {
+        crate::store::released_runtimes::pin_first_dispatch(
+            store,
+            &current,
+            &parent,
+            &mut replacement,
+        )
+        .map_err(Domain)?;
+    }
     let updated = store
         .sandboxes
         .update_one(
             crate::store::work_schema::query(filter),
             if acquisition.is_some() {
-                crate::store::work_lease_update::acquisition(
-                    crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)?,
-                )
+                crate::store::work_lease_update::acquisition(replacement)
             } else {
-                crate::store::work_lease_update::replacement(
-                    crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)?,
-                )
+                crate::store::work_lease_update::replacement(replacement)
             },
         )
         .session(&mut *session)

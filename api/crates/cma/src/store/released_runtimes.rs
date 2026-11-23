@@ -13,7 +13,7 @@ use super::durability::majority_collection;
 mod legacy_dispatch;
 mod source;
 mod writers;
-pub(super) use legacy_dispatch::reserve_initial_runtime_image;
+pub(super) use legacy_dispatch::{pin_first_dispatch, reserve_initial_runtime_image};
 pub(crate) use source::StoreReleasedRuntime;
 pub(crate) use writers::{BootWriter, ResolverLease};
 

@@ -6,6 +6,79 @@ use mongodb::ClientSession;
 use super::*;
 
 impl MongoNativeWarmPools {
+    pub(super) async fn authorize_candidate_effect(
+        &self,
+        target: &PoolTarget,
+    ) -> Result<bool, WarmPoolError> {
+        use crate::store::released_runtimes::MongoReleasedRuntimes;
+        use layer2_core::released_runtime::{CandidateState, ReleasedLane};
+
+        let lane = if target.machine {
+            ReleasedLane::Machine
+        } else {
+            ReleasedLane::Agent
+        };
+        let lanes = MongoReleasedRuntimes::open(&self.database, &self.deployment);
+        let current = lanes
+            .load(lane)
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?;
+        let Some(current) = current.filter(|row| !row.frozen) else {
+            return Ok(false);
+        };
+        let Some(candidate) = current.candidate.as_ref().filter(|candidate| {
+            candidate.state == CandidateState::Preparing
+                && candidate.image == target.plan.spec.image.uri
+        }) else {
+            return Ok(false);
+        };
+        let mut session = lanes
+            .session()
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?;
+        lanes
+            .fence_current(&current, &mut session)
+            .await
+            .map_err(|_| WarmPoolError::Conflict)?;
+        let mut filter = fence(target);
+        filter.insert("preparation.observation_id", &candidate.observation_id);
+        self.check_fenced_write(
+            self.targets
+                .update_one(
+                    filter,
+                    vec![doc! {"$set": {
+                        "preparation.effect_until": {"$add": ["$$NOW", 60_000_i64]},
+                    }}],
+                )
+                .session(&mut session)
+                .await,
+        )
+        .await?;
+        session
+            .commit_transaction()
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?;
+        Ok(true)
+    }
+    pub(crate) async fn retain_release_authority(
+        &self,
+        target: &PoolTarget,
+    ) -> Result<(), WarmPoolError> {
+        let mut filter = self.scope();
+        filter.extend(doc! {"_id": &target.id, "activated_at": {"$type": "date"},
+        "retiring": {"$ne": true}, "retired": {"$ne": true}});
+        self.check_fenced_write(
+            self.targets
+                .update_one(
+                    filter,
+                    doc! {
+                        "$set": {"durable_release_authority": true},
+                    },
+                )
+                .await,
+        )
+        .await
+    }
     pub(crate) async fn historical_candidate(
         &self,
         machine: bool,
@@ -89,12 +162,9 @@ impl MongoNativeWarmPools {
     pub(crate) async fn prepare_candidate(
         &self,
         mut target: PoolTarget,
-        previous: Option<&CandidateRelease>,
         candidate: &CandidateRelease,
         session: &mut ClientSession,
     ) -> Result<(), WarmPoolError> {
-        self.clear_candidate(target.machine, previous, session)
-            .await?;
         let mut identity = self.scope();
         identity.extend(doc! {
             "plan.config_sha256": &target.plan.config_sha256,
@@ -160,12 +230,26 @@ impl MongoNativeWarmPools {
             "plan.spec.image.uri": &candidate.image,
             "preparation.observation_id": &candidate.observation_id,
         });
-        self.targets
-            .update_one(scope, doc! {"$unset": {"preparation": ""}})
-            .session(session)
+        let Some(row) = self
+            .targets
+            .find_one(scope.clone())
+            .session(&mut *session)
             .await
-            .map_err(|_| WarmPoolError::Unavailable)?;
-        Ok(())
+            .map_err(|_| WarmPoolError::Unavailable)?
+        else {
+            return Ok(());
+        };
+        scope.extend(doc! {"_id": &row.id, "revision": row.revision,
+            "lease_until": {"$lte": DateTime::now()},
+            "$expr": {"$lte": [{"$ifNull": ["$preparation.effect_until", DateTime::from_millis(0)]}, "$$NOW"]},
+        });
+        self.check_fenced_write(
+            self.targets
+                .update_one(scope, doc! {"$unset": {"preparation": ""}})
+                .session(session)
+                .await,
+        )
+        .await
     }
 
     pub(crate) async fn prepared_candidate(

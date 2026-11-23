@@ -95,6 +95,9 @@ fn validate(target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
 
 #[async_trait]
 impl PoolTargetStore for MongoNativeWarmPools {
+    async fn begin_candidate_effect(&self, target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        self.authorize_candidate_effect(target).await
+    }
     async fn candidate_protected(&self, target: &PoolTarget) -> Result<bool, WarmPoolError> {
         let mut filter = self.scope();
         filter.extend(doc! {"_id": &target.id, "preparation": {"$exists": true}});

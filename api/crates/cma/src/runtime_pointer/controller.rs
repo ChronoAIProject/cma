@@ -138,9 +138,27 @@ impl RuntimePointerController {
             PointerObservation::Verified(image) => (image, None),
             PointerObservation::Refused { image, reason } => (image, Some(reason)),
         };
-        if current.candidate.as_ref().is_some_and(|candidate| {
+        if let Some(candidate) = current.candidate.as_ref().filter(|candidate| {
             candidate.image == image && matches!(candidate.state, CandidateState::Refused { .. })
         }) {
+            if self
+                .targets
+                .prepared_candidate(lane == ReleasedLane::Machine, candidate)
+                .await
+                .map_err(pool_error)?
+                .is_some()
+            {
+                let mut session = self.release.lanes.session().await?;
+                self.release
+                    .lanes
+                    .fence_current(&current, &mut session)
+                    .await?;
+                self.targets
+                    .clear_candidate(lane == ReleasedLane::Machine, Some(candidate), &mut session)
+                    .await
+                    .map_err(pool_error)?;
+                session.commit_transaction().await.map_err(unavailable)?;
+            }
             return Ok(());
         }
         if image == current.active.image && current.candidate.is_none() {
@@ -310,6 +328,17 @@ impl RuntimePointerController {
             .lanes
             .fence_writers(lease, &mut session)
             .await?;
+        if lane == ReleasedLane::Agent
+            && next.candidate.is_some()
+            && refusal.is_none()
+            && self
+                .release
+                .lanes
+                .unresolved_legacy_dispatches(&mut session)
+                .await?
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
         let refusal = match (&next.candidate, refusal) {
             (Some(candidate), None)
                 if self
@@ -322,6 +351,45 @@ impl RuntimePointerController {
             }
             _ => refusal,
         };
+        if let Some(previous) = &current.candidate {
+            match self
+                .targets
+                .clear_candidate(machine, Some(previous), &mut session)
+                .await
+            {
+                Ok(()) => {}
+                Err(layer1_public::rest::admin::warm_pools::WarmPoolError::Conflict)
+                    if matches!(previous.state, CandidateState::Preparing) =>
+                {
+                    // Close admissions before waiting for the old target's
+                    // provider work. A busy candidate must not keep extending
+                    // the effect bound after its pointer moves or times out.
+                    let reason = if next
+                        .candidate
+                        .as_ref()
+                        .is_some_and(|candidate| candidate.image == previous.image)
+                    {
+                        refusal.unwrap_or("superseded")
+                    } else {
+                        "superseded"
+                    };
+                    let quiescing = current
+                        .settle(
+                            &previous.observation_id,
+                            CandidateState::Refused {
+                                reason: reason.into(),
+                            },
+                        )
+                        .map_err(|_| SandboxStoreError::Conflict)?;
+                    self.release
+                        .lanes
+                        .replace(current, quiescing, Some(&mut session))
+                        .await?;
+                    return session.commit_transaction().await.map_err(unavailable);
+                }
+                Err(error) => return Err(pool_error(error)),
+            }
+        }
         match (&next.candidate, refusal) {
             (Some(candidate), Some(reason)) => {
                 next = next
@@ -332,10 +400,6 @@ impl RuntimePointerController {
                         },
                     )
                     .map_err(|_| SandboxStoreError::Conflict)?;
-                self.targets
-                    .clear_candidate(machine, current.candidate.as_ref(), &mut session)
-                    .await
-                    .map_err(pool_error)?;
             }
             (Some(candidate), None) => {
                 let active = self
@@ -348,16 +412,11 @@ impl RuntimePointerController {
                     .candidate_target(&candidate.image, &active)
                     .map_err(pool_error)?;
                 self.targets
-                    .prepare_candidate(target, current.candidate.as_ref(), candidate, &mut session)
+                    .prepare_candidate(target, candidate, &mut session)
                     .await
                     .map_err(pool_error)?;
             }
-            (None, _) => {
-                self.targets
-                    .clear_candidate(machine, current.candidate.as_ref(), &mut session)
-                    .await
-                    .map_err(pool_error)?;
-            }
+            (None, _) => {}
         }
         let candidate = next
             .candidate

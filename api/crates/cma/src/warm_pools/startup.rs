@@ -11,6 +11,31 @@ use std::time::Duration;
 // when older capacity first became eligible to drain, so every runtime
 // promotion restarted the Agent Manager once. The 240 s total leaves time for
 // socket bind and sandbox initialization inside the default 300 s startup probe.
+pub(crate) type StartupWriter<'a> = (
+    &'a crate::store::released_runtimes::MongoReleasedRuntimes,
+    &'a crate::store::released_runtimes::BootWriter,
+);
+
+pub(crate) async fn boot_effect<T>(
+    writer: Option<StartupWriter<'_>>,
+    effect: impl std::future::Future<Output = Result<T, WarmPoolError>>,
+) -> Result<T, WarmPoolError> {
+    if let Some((lanes, writer)) = writer {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        lanes
+            .protect_boot_effect(writer)
+            .await
+            .map_err(|_| WarmPoolError::Conflict)?;
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(deadline) => Err(WarmPoolError::Unavailable),
+            result = effect => result,
+        }
+    } else {
+        effect.await
+    }
+}
+
 const STARTUP_WARMUP_LIMIT: Duration = Duration::from_secs(super::RELEASE_SETTLE.as_secs() + 120);
 
 impl NativeWarmPools {
@@ -23,20 +48,27 @@ impl NativeWarmPools {
     /// machine image's first pull alone can outlast this guard; the supervisor
     /// fills that pool in the background.
     pub async fn await_default_ready(&self) -> Result<(), WarmPoolError> {
+        self.await_default_ready_as(None).await
+    }
+
+    pub(crate) async fn await_default_ready_as(
+        &self,
+        writer: Option<StartupWriter<'_>>,
+    ) -> Result<(), WarmPoolError> {
         // The supervisor that retires superseded pools starts only after this
         // gate, yet on a full node pool the new default schedules only once
         // their spare capacity drains. Retire superseded targets while waiting,
         // so a starting pod frees the room it needs.
         let drain = async {
             loop {
-                if self.retire_superseded().await.is_err() {
+                if self.retire_superseded(writer).await.is_err() {
                     tracing::warn!("superseded native pool retirement during startup will retry");
                 }
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
         };
         tokio::select! {
-            result = self.await_default_plan_ready() => result,
+            result = self.await_default_plan_ready(writer) => result,
             _ = drain => unreachable!("superseded pool draining never completes"),
         }
     }
@@ -45,7 +77,10 @@ impl NativeWarmPools {
     /// generic reconciler's unbound path would configure a freshly inserted
     /// default at zero replicas and empty a pool that release preparation
     /// prewarmed, which `step` deliberately adopts instead.
-    async fn retire_superseded(&self) -> Result<(), WarmPoolError> {
+    async fn retire_superseded(
+        &self,
+        writer: Option<StartupWriter<'_>>,
+    ) -> Result<(), WarmPoolError> {
         let Some(provider) = self.adapter.native_pools() else {
             return Ok(());
         };
@@ -60,14 +95,21 @@ impl NativeWarmPools {
             // Plans are immutable and retirement only advances, so a claimed
             // superseded target is still superseded. A target an earlier pod
             // marked retiring and deferred is resumed, not skipped.
-            if let Some(claimed) = self.store.claim_retirement(&target.id).await? {
-                self.retire_claimed(provider, claimed).await?;
-            }
+            boot_effect(writer, async {
+                if let Some(claimed) = self.store.claim_retirement(&target.id).await? {
+                    self.retire_claimed(provider, claimed).await?;
+                }
+                Ok(())
+            })
+            .await?;
         }
         Ok(())
     }
 
-    async fn await_default_plan_ready(&self) -> Result<(), WarmPoolError> {
+    async fn await_default_plan_ready(
+        &self,
+        writer: Option<StartupWriter<'_>>,
+    ) -> Result<(), WarmPoolError> {
         let provider = self
             .adapter
             .native_pools()
@@ -86,6 +128,7 @@ impl NativeWarmPools {
             &plan,
             STARTUP_WARMUP_LIMIT,
             self.target_fencing,
+            writer,
         )
         .await
     }
@@ -98,7 +141,7 @@ pub(super) async fn await_ready(
     plan: &NativePoolConfiguration,
     limit: Duration,
 ) -> Result<(), WarmPoolError> {
-    await_ready_with_fencing(store, provider, plan, limit, false).await
+    await_ready_with_fencing(store, provider, plan, limit, false, None).await
 }
 
 async fn await_ready_with_fencing(
@@ -107,10 +150,11 @@ async fn await_ready_with_fencing(
     plan: &NativePoolConfiguration,
     limit: Duration,
     target_fencing: bool,
+    writer: Option<StartupWriter<'_>>,
 ) -> Result<(), WarmPoolError> {
     tokio::time::timeout(limit, async {
         loop {
-            match step(store, provider, plan, target_fencing).await {
+            match boot_effect(writer, step(store, provider, plan, target_fencing)).await {
                 Ok(true) => return Ok(()),
                 Ok(false) => {}
                 Err(WarmPoolError::Conflict) => return Err(WarmPoolError::Conflict),

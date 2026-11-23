@@ -66,10 +66,12 @@ impl RuntimePointerController {
                     .map_err(|error| format!("verify {lane:?} runtime release order: {error:?}"))?;
             }
         }
-        self.pools
-            .ensure_default()
-            .await
-            .map_err(|error| format!("ensure active native warm pool: {error:?}"))?;
+        crate::warm_pools::startup::boot_effect(
+            Some((&self.release.lanes, &self.writer)),
+            self.pools.ensure_default(),
+        )
+        .await
+        .map_err(|error| format!("ensure active native warm pool: {error:?}"))?;
         for (lane, image) in [
             (ReleasedLane::Agent, Some(captured.agent)),
             (ReleasedLane::Machine, captured.machine),
@@ -92,6 +94,15 @@ impl RuntimePointerController {
                     let record =
                         ReleasedLaneRecord::bootstrap(lane, image, &layer2_core::now_rfc3339())
                             .map_err(|error| error.to_string())?;
+                    let target = self
+                        .pools
+                        .active_default_target(&record.active.image, lane == ReleasedLane::Machine)
+                        .await
+                        .map_err(|error| format!("locate bootstrap pool: {error:?}"))?;
+                    self.targets
+                        .retain_release_authority(&target)
+                        .await
+                        .map_err(|error| format!("retain bootstrap authority: {error:?}"))?;
                     self.release
                         .lanes
                         .bootstrap(record)
@@ -110,7 +121,10 @@ impl RuntimePointerController {
     pub(crate) async fn await_active_ready(&self) -> Result<(), String> {
         for _ in 0..3 {
             let before = self.release.snapshot();
-            let ready = self.pools.await_default_ready().await;
+            let ready = self
+                .pools
+                .await_default_ready_as(Some((&self.release.lanes, &self.writer)))
+                .await;
             let after = self
                 .release
                 .refresh()

@@ -37,31 +37,60 @@ impl StoreReleasedRuntime {
             refreshed: tokio::sync::Mutex::new(()),
         };
         if !required {
-            // Existing isolated roles may lack the optional collection. Only
-            // permission error 13 may select the legacy path.
+            // Legacy roles may lack the optional collection. The required pool
+            // collection retains a durable floor once a lane starts bootstrapping.
             let read = source
                 .lanes
                 .lanes
                 .find_one(doc! {"_id": source.lanes.id(ReleasedLane::Agent)})
                 .await;
             match read {
-                Ok(None) => return Ok(None),
+                Ok(None) => source.require_never_enabled(database, deployment).await?,
                 Err(error) if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(command) if command.code == 13) => {
-                    return Ok(None)
+                    source.require_never_enabled(database, deployment).await?
                 }
                 Err(_) => {
                     return Err(StoreError::Unavailable(
                         "read durable runtime authority".into(),
                     ))
                 }
-                Ok(Some(_)) => {}
+                Ok(Some(_)) => {
+                    source
+                        .refresh()
+                        .await
+                        .map_err(|error| StoreError::Unavailable(error.to_string()))?;
+                    return Ok(Some(source));
+                }
             }
+            return Ok(None);
         }
         source
             .refresh()
             .await
             .map_err(|error| StoreError::Unavailable(error.to_string()))?;
         Ok(Some(source))
+    }
+
+    async fn require_never_enabled(
+        &self,
+        database: &Database,
+        deployment: &str,
+    ) -> Result<(), StoreError> {
+        let targets: Collection<mongodb::bson::Document> =
+            majority_collection(database, super::super::native_warm_pools::COLLECTION);
+        let footprint = targets
+            .find_one(doc! {"plan.deployment": deployment, "durable_release_authority": true})
+            .projection(doc! {"_id": 1})
+            .await
+            .map_err(|_| {
+                StoreError::Unavailable("verify runtime release authority floor".into())
+            })?;
+        if footprint.is_some() {
+            return Err(StoreError::Unavailable(
+                "deployment has unreadable durable runtime release authority".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) async fn refresh(&self) -> Result<ReleasedRuntime, SandboxStoreError> {
