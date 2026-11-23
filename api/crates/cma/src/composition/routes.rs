@@ -66,6 +66,22 @@ pub(super) fn compose(
             crate::rate_limit::admit,
         ))
         .layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES))
+        .layer(axum::middleware::from_fn(creation_outcome_cache_policy))
+}
+
+async fn creation_outcome_cache_policy(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let lookup = request.uri().path() == layer1_public::rest::creation_outcomes::LOOKUP_PATH;
+    let mut response = next.run(request).await;
+    if lookup {
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("private, no-store"),
+        );
+    }
+    response
 }
 
 /// Bind the public catalogue to owner lineage, exact credential custody and
@@ -153,4 +169,29 @@ pub(super) fn agent_metadata(
         stores.sandbox_model.clone(),
         access,
     )))
+}
+
+pub(super) fn resource_budgets(
+    resources: Router,
+    bindings: &super::bindings::BindingComposition,
+    config: &crate::config::Config,
+    limits: &RateLimiters,
+) -> Result<Router, String> {
+    let resources = resources.merge(bindings.router(config.gateway.as_ref())?);
+    let resources = stream_budget(resources, config.public_stream_limit);
+    Ok(crate::control_admission::routes(
+        resources,
+        limits.lifecycle(),
+    ))
+}
+
+pub(super) fn tools(
+    tools: Router,
+    auth: &Arc<AuthState>,
+    config: &crate::config::Config,
+) -> Result<Router, String> {
+    Ok(tools.merge(crate::auth::service_portal::router(
+        auth.clone(),
+        config.gateway.as_ref(),
+    )?))
 }

@@ -137,6 +137,9 @@ pub(crate) async fn serve() -> Result<(), String> {
         .sandbox_lifecycle
         .spawn(&mut shutdown, &composition.workers);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
+    if let Some(outcomes) = composition.creation_outcomes.clone() {
+        shutdown.push(outcomes.spawn(shutdown.subscribe()));
+    }
     composition.usage.spawn(&mut shutdown);
     composition.usage_metrics.spawn(&mut shutdown);
     workers.finish("ok", None);

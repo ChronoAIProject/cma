@@ -895,4 +895,5 @@ SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both exp
 | `PATCH /api/v1/agents/{id}/preferences` | UpdateAgentPreferencesRequest; key | - | 200 AgentPreferencesView |
 
 | `POST /api/v1/telemetry/browser` | Anonymous, bounded browser diagnostic category; no durable receipt. |
+| `POST /api/v1/sandbox-creation-outcomes/lookup` | Read evidence for an exact owner Sandbox creation. |
 <!-- openapi-operations:end -->

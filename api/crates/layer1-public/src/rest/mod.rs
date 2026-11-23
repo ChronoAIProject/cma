@@ -163,6 +163,7 @@ mod gateway_interactions;
 mod gateway_records;
 pub use gateway_connections::gateway_connection_record_router;
 pub use gateway_interactions::gateway_interaction_router;
+pub mod creation_outcomes;
 #[cfg(test)]
 mod gateway_records_tests;
 mod hierarchy_shared_shapes;

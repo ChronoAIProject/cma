@@ -114,6 +114,7 @@ async fn personal_account_authority_is_not_persisted_in_lifecycle_capabilities()
 
 fn work(record: &crate::store::LifecycleRecord, existing: bool) -> ProvisionInput {
     ProvisionInput {
+        creation_fence: None,
         behavior: record.input.behavior,
         first_message: validation::admitted_first_message(&record.input),
         request: record.input.request.clone(),

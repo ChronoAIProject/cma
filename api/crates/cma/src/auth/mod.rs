@@ -20,6 +20,7 @@ mod browser_login;
 mod browser_origins;
 mod browser_session;
 mod cookie_authorization;
+mod creation_outcomes;
 pub mod deferred_commands;
 mod desktop;
 #[cfg(test)]
@@ -132,6 +133,7 @@ impl std::fmt::Debug for AuthMode {
 }
 
 pub struct AuthState {
+    pub(crate) creation_outcomes_enabled: bool,
     standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
     account_deletion_enabled: bool,
     platform_settings: Option<Arc<layer2_core::PlatformSettingsService>>,
@@ -250,6 +252,7 @@ impl AuthState {
             cookie_verifications: cookie_authorization::VerificationFlights::default(),
             bearer_verifications: bearer_authorization::VerificationFlights::default(),
             signup_options_cache: signup_options::SignupOptionsCache::default(),
+            creation_outcomes_enabled: false,
         })
     }
 

@@ -13,8 +13,8 @@ use super::service_trust::{
     foreign_workspace_setups, validate_sandbox_profile, validate_sandbox_revision,
 };
 use super::store::{
-    SandboxAdmission, SandboxAdmissionName, SandboxAdmissionReplay, SandboxAdmissionResult,
-    SandboxLimitClass,
+    CreationFence, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionReplay,
+    SandboxAdmissionResult, SandboxLimitClass,
 };
 use super::{
     Sandbox, SandboxCredentialState, SandboxLimits, SandboxOrigin, SandboxSignInState,
@@ -53,6 +53,16 @@ impl SandboxService {
         caller: &Caller,
         request: CreateSandbox,
     ) -> Result<Sandbox, SandboxServiceError> {
+        self.create_for_lifecycle_with_fence(caller, request, None)
+            .await
+    }
+
+    pub async fn create_for_lifecycle_with_fence(
+        &self,
+        caller: &Caller,
+        request: CreateSandbox,
+        fence: Option<CreationFence>,
+    ) -> Result<Sandbox, SandboxServiceError> {
         require(caller, Capability::UseOwnSandboxes)?;
         require(caller, Capability::CreateSandbox)?;
         request.origin.validate()?;
@@ -79,7 +89,7 @@ impl SandboxService {
             request,
             profile,
             policy.max_sandboxes_per_owner,
-            SandboxLimitClass::Owner,
+            (SandboxLimitClass::Owner, fence),
             policy,
         )
         .await
@@ -89,6 +99,15 @@ impl SandboxService {
         &self,
         caller: &Caller,
         request: CreateSandbox,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        self.create_with_fence(caller, request, None).await
+    }
+
+    pub async fn create_with_fence(
+        &self,
+        caller: &Caller,
+        request: CreateSandbox,
+        fence: Option<CreationFence>,
     ) -> Result<Sandbox, SandboxServiceError> {
         require(caller, Capability::CreateSandbox)?;
         request.origin.validate()?;
@@ -106,7 +125,7 @@ impl SandboxService {
             request,
             profile,
             policy.max_sandboxes_per_owner,
-            SandboxLimitClass::Owner,
+            (SandboxLimitClass::Owner, fence),
             policy,
         )
         .await
@@ -146,7 +165,7 @@ impl SandboxService {
             }
             _ => unreachable!("launch authority was validated"),
         };
-        self.admit(caller, request, profile, limit, limit_class, policy)
+        self.admit(caller, request, profile, limit, (limit_class, None), policy)
             .await
     }
 
@@ -261,7 +280,7 @@ impl SandboxService {
         request: CreateSandbox,
         profile: ResolvedProfile,
         limit: u16,
-        limit_class: SandboxLimitClass,
+        (limit_class, creation_fence): (SandboxLimitClass, Option<CreationFence>),
         policy: SandboxPolicy,
     ) -> Result<Sandbox, SandboxServiceError> {
         let name = requested_name(request.name, &profile.name)?;
@@ -320,6 +339,7 @@ impl SandboxService {
         let mut admission =
             SandboxAdmission::new(sandbox, name, limit, now).map_err(store_error)?;
         admission.limit_class = limit_class;
+        admission.creation_fence = creation_fence;
         let result = self
             .store
             .admit_catalogue_sandbox(admission)

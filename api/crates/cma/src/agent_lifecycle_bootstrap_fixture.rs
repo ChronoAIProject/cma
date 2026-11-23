@@ -195,6 +195,7 @@ impl Fixture {
 
 pub(super) fn work(record: &crate::store::LifecycleRecord) -> ProvisionInput {
     ProvisionInput {
+        creation_fence: None,
         behavior: record.input.behavior,
         first_message: validation::admitted_first_message(&record.input),
         request: guidance::provisioning_request(

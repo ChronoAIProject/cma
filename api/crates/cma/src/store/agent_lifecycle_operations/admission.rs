@@ -34,6 +34,50 @@ impl MongoAgentLifecycleStore {
             }
             Err(error) => return Err(StoreError::Unavailable(error.to_string()).into()),
         }
+        if let Some(fence) = &record.creation_fence {
+            if !self.supports_creation(fence) {
+                return Err(StoreError::Unavailable(
+                    "creation submission epoch is unsupported".into(),
+                )
+                .into());
+            }
+            let database = self
+                .operations
+                .client()
+                .database(&self.operations.namespace().db);
+            let mut session = database.client().start_session().await.map_err(driver)?;
+            use crate::store::sandbox_mongo as transaction;
+            transaction::start_transaction(&mut session)
+                .await
+                .map_err(driver)?;
+            let linked = super::super::creation_outcomes::link_operation(
+                &database,
+                &record.owner,
+                fence,
+                &record.id,
+                &mut session,
+            )
+            .await
+            .map_err(driver)?;
+            if !linked {
+                session.abort_transaction().await.map_err(driver)?;
+                return Err(StoreError::Unavailable(
+                    "creation submission fence is no longer held".into(),
+                )
+                .into());
+            }
+            self.operations
+                .insert_one(&record)
+                .session(&mut session)
+                .await
+                .map_err(driver)?;
+            return match transaction::commit_transaction(&mut session).await {
+                transaction::CommitOutcome::Committed => Ok(CreateResult::Created(record.id)),
+                transaction::CommitOutcome::Retry(error)
+                | transaction::CommitOutcome::Unknown(error)
+                | transaction::CommitOutcome::Failed(error) => Err(driver(error).into()),
+            };
+        }
         match self.operations.insert_one(&record).await {
             Ok(_) => Ok(CreateResult::Created(record.id)),
             Err(error) if is_duplicate_key(&error) => self
@@ -49,5 +93,32 @@ impl MongoAgentLifecycleStore {
                 }),
             Err(error) => Err(driver(error).into()),
         }
+    }
+
+    pub(crate) async fn fail_fenced_creation(
+        &self,
+        owner: &SubjectId,
+        lease: &LifecycleLease,
+        fence: &layer2_core::sandbox::store::CreationFence,
+        message: &str,
+    ) -> Result<bool, StoreError> {
+        if !self.supports_creation(fence) {
+            return Err(StoreError::Unavailable(
+                "creation submission epoch is unsupported".into(),
+            ));
+        }
+        let database = self
+            .operations
+            .client()
+            .database(&self.operations.namespace().db);
+        super::super::creation_outcomes::refuse_with_operation(
+            &database,
+            owner,
+            fence,
+            &lease.id,
+            &lease.token,
+            message,
+        )
+        .await
     }
 }

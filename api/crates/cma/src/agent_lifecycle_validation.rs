@@ -419,12 +419,13 @@ pub(super) fn operation_error(error: layer2_core::StoreError) -> AgentLifecycleP
     }
 }
 
-pub(super) async fn create_sandbox(
+pub(super) async fn create_sandbox_with_fence(
     service: &layer2_core::sandbox::SandboxService,
     caller: &layer2_core::Caller,
     profile: layer2_core::profiles::SandboxProfileRef,
     agent_name: &str,
     operation_id: &str,
+    creation_fence: Option<layer2_core::sandbox::store::CreationFence>,
 ) -> Result<layer2_core::sandbox::Sandbox, SandboxServiceError> {
     let mut request = layer2_core::sandbox::CreateSandbox {
         profile,
@@ -434,13 +435,18 @@ pub(super) async fn create_sandbox(
             operation_id: operation_id.into(),
         },
     };
-    match service.create_for_lifecycle(caller, request.clone()).await {
+    match service
+        .create_for_lifecycle_with_fence(caller, request.clone(), creation_fence.clone())
+        .await
+    {
         // A pre-update worker may have committed the old name, then lost the
         // response before persisting its child ID. Replay still verifies the
         // exact owner, operation, profile and historical name in the service.
         Err(SandboxServiceError::SandboxOriginConflict) => {
             request.name = Some(legacy_sandbox_name(agent_name));
-            service.create_for_lifecycle(caller, request).await
+            service
+                .create_for_lifecycle_with_fence(caller, request, creation_fence)
+                .await
         }
         result => result,
     }

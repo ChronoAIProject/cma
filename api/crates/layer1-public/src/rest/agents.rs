@@ -129,6 +129,7 @@ pub(crate) async fn create_lifecycle(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     context: Option<Extension<layer2_core::resource_access::CallerContext>>,
     credential: Option<Extension<DelegatedCredential>>,
+    creation: Option<Extension<Arc<dyn super::creation_outcomes::Backend>>>,
     key: IdempotencyKey,
     body: Result<RequestBody<AgentLifecycleCreateRequest>, BodyProblem>,
 ) -> Response {
@@ -144,8 +145,11 @@ pub(crate) async fn create_lifecycle(
         Ok(key) => key,
         Err(error) => return error.into_response(),
     };
-    let request = match body.and_then(|body| body.into_parts().0) {
-        Ok(body) => body,
+    let (request, wire_digest) = match body.and_then(|body| {
+        let digest = body.creation_digest().map(str::to_owned);
+        body.into_parts().0.map(|request| (request, digest))
+    }) {
+        Ok(value) => value,
         Err(error) => return error.into_response(),
     };
     if let Err(error) = request.validate_template() {
@@ -157,15 +161,67 @@ pub(crate) async fn create_lifecycle(
         )
         .into_response();
     }
-    provisioner
-        .create(
+    use super::creation_outcomes::{
+        routes::{begin_submission, problem},
+        Operation, RefusalCode, KEY_PREFIX,
+    };
+    let backend = creation.as_ref().map(|Extension(backend)| backend.as_ref());
+    let new_sandbox = request.sandbox_id.is_none() && request.workspace_id.is_none();
+    if key.starts_with(KEY_PREFIX) && !new_sandbox {
+        return problem(StatusCode::BAD_REQUEST);
+    }
+    if key.starts_with(KEY_PREFIX) && !caller.authorization.allows(Capability::CreateSandbox) {
+        return problem(StatusCode::FORBIDDEN);
+    }
+    let submission = if new_sandbox {
+        match begin_submission(
+            backend,
             &caller,
-            context.as_ref().map(|Extension(value)| value),
-            credential.as_ref().map(|Extension(value)| value.value()),
-            request,
-            &key,
+            Operation::AgentBootstrap,
+            Some(&key),
+            wire_digest.as_deref(),
         )
         .await
+        {
+            Ok(submission) => submission,
+            Err(response) => return response,
+        }
+    } else {
+        None
+    };
+    let context = context.as_ref().map(|Extension(value)| value);
+    let credential = credential.as_ref().map(|Extension(value)| value.value());
+    let fence = submission
+        .as_ref()
+        .and_then(|submission| submission.fence.clone());
+    let result = match submission {
+        Some(submission) => {
+            provisioner
+                .create_with_submission(&caller, context, credential, request, &key, submission)
+                .await
+        }
+        None => {
+            provisioner
+                .create(&caller, context, credential, request, &key)
+                .await
+        }
+    };
+    if let (
+        Err(AgentLifecycleProvisioningError::SandboxLimitReached { .. }),
+        Some(backend),
+        Some(fence),
+    ) = (&result, backend, fence)
+    {
+        if !matches!(
+            backend
+                .refuse_direct(&caller.subject, &fence, RefusalCode::SandboxLimitReached)
+                .await,
+            Ok(true)
+        ) {
+            return problem(StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
+    result
         .map(|receipt| (StatusCode::ACCEPTED, Json(receipt)).into_response())
         .unwrap_or_else(IntoResponse::into_response)
 }

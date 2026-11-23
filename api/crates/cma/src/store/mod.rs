@@ -78,6 +78,7 @@ mod child_writer_claims;
 mod codex_subscriptions;
 mod contention;
 mod cooperative_budget;
+pub(crate) mod creation_outcomes;
 mod default_profiles;
 pub mod directory;
 mod durability;

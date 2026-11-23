@@ -93,6 +93,27 @@ impl InlineAgentLifecycle {
             return Ok(());
         };
         let lease = record.lease()?;
+        let creation_fence = record.creation_fence.clone().map(|mut fence| {
+            fence.lifecycle_lease = Some((lease.id.clone(), lease.token.clone()));
+            fence
+        });
+        if record
+            .key
+            .starts_with(layer1_public::rest::creation_outcomes::KEY_PREFIX)
+            != creation_fence.is_some()
+        {
+            return Err(layer2_core::StoreError::Malformed(
+                "lifecycle creation fence is missing or unsupported".into(),
+            ));
+        }
+        if creation_fence
+            .as_ref()
+            .is_some_and(|fence| !self.operations.supports_creation(fence))
+        {
+            return Err(layer2_core::StoreError::Unavailable(
+                "lifecycle creation epoch is unsupported".into(),
+            ));
+        }
         let attempts = record.attempts;
         let capacity = record.input.captured_capacity(self.bounds);
         let limits = record.input.captured_limits();
@@ -107,6 +128,7 @@ impl InlineAgentLifecycle {
         );
         let work = async {
             let mut input = ProvisionInput {
+                creation_fence: creation_fence.clone(),
                 behavior: record.input.behavior,
                 first_message,
                 request,
@@ -154,6 +176,17 @@ impl InlineAgentLifecycle {
                     .await
             }
             Err(error) => {
+                if let (Some(fence), AgentLifecycleProvisioningError::SandboxLimitReached { .. }) =
+                    (&creation_fence, &error)
+                {
+                    if self
+                        .operations
+                        .fail_fenced_creation(&caller.subject, &lease, fence, &error.to_string())
+                        .await?
+                    {
+                        return Ok(());
+                    }
+                }
                 let failure = self
                     .failure_metadata_enabled
                     .get()

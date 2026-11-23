@@ -19,8 +19,10 @@ mod startup_schema;
 pub(crate) use startup_schema::StartupSchemaMode;
 mod account_deletion;
 mod control_admission;
+mod creation_outcomes;
 mod legal_terms;
 pub(crate) use control_admission::ControlAdmissionConfig;
+pub(crate) use creation_outcomes::CreationOutcomesConfig;
 mod admission_log;
 mod anonymous_public;
 mod auth_mode;
@@ -149,6 +151,8 @@ impl TrustedProxyConfig {
 /// Complete process configuration for the temporary discovery boundary.
 #[derive(Clone)]
 pub struct Config {
+    pub(crate) creation_outcomes: Option<CreationOutcomesConfig>,
+    pub(crate) creation_writer_epoch: Option<String>,
     pub(crate) account_deletion_enabled: bool,
     /// Published terms and privacy notice; `None` records no consent.
     pub(crate) legal_terms: Option<layer2_core::legal_consent::LegalTerms>,
@@ -292,6 +296,8 @@ impl Config {
             ServiceAuthorizationConfig::from_lookup(&mut lookup, features.service_authorization)?;
         let account_deletion_enabled = account_deletion::enabled(&mut lookup)?;
         let legal_terms = legal_terms::from_lookup(&mut lookup)?;
+        let creation_outcomes = CreationOutcomesConfig::from_lookup(&mut lookup)?;
+        let creation_writer_epoch = CreationOutcomesConfig::writer_epoch(&mut lookup)?;
         let account_erasure_transaction_drain_seconds =
             account_deletion::transaction_drain(&mut lookup)?;
         let global_sandbox_limit = global_admission::from_lookup(&mut lookup)?;
@@ -347,6 +353,8 @@ impl Config {
             global_sandbox_limit,
             account_deletion_enabled,
             legal_terms,
+            creation_outcomes,
+            creation_writer_epoch,
             account_erasure_transaction_drain_seconds,
             bind,
             http_connection_max_age: http_connections::max_age(&mut lookup)?,
