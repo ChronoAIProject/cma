@@ -1,5 +1,5 @@
 //! Operator-owned native pool targets; Kubernetes observations never replace durable authority.
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use layer1_public::rest::admin::warm_pools::{
@@ -164,23 +164,7 @@ pub(crate) trait PoolTargetStore: Send + Sync {
 /// Build metadata for the deployment-owned pinned CMA runtime, never a user image.
 /// Both cold allocation and administrated warm pools use this same contract.
 pub(crate) fn deployment_image(uri: String) -> RuntimeImage {
-    RuntimeImage {
-        uri,
-        labels: BTreeMap::from([
-            (
-                layer3_adapter::RUNTIME_CONTRACT_LABEL.into(),
-                layer3_adapter::RUNTIME_CONTRACT_VERSION.to_string(),
-            ),
-            (
-                layer3_adapter::runtime_bootstrap::RUNTIME_BOOTSTRAP_LABEL.into(),
-                "1".into(),
-            ),
-            (
-                layer3_adapter::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL.into(),
-                "2".into(),
-            ),
-        ]),
-    }
+    layer3_adapter::released_image(uri)
 }
 
 const SYSTEM_ACTOR: &str = "cma-system";
