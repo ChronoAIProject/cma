@@ -124,7 +124,9 @@ async fn cluster_with_middleware(
                 )
                 .layer(axum::extract::DefaultBodyLimit::max(MAX_BUFFERED_BODY_BYTES)),
         ).layer(axum::middleware::from_fn(test_auth));
-        let router = wrap(router);
+        // Production serves the relay behind the request context, which
+        // normalizes or assigns the signed request ID before verification.
+        let router = crate::with_request_context(wrap(router));
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });
@@ -160,6 +162,9 @@ pub(crate) async fn acquire(
     (index, authority)
 }
 
+/// A canonical request ID, which the request context preserves end to end.
+const SAME_REQUEST: &str = "00000000-0000-4000-8000-000000000001";
+
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .no_proxy()
@@ -180,7 +185,7 @@ async fn two_and_three_instances_route_to_exact_owner_and_preserve_authorization
                 .get(&url)
                 .header("authorization", "Bearer synthetic-authorized")
                 .header("idempotency-key", "same-operation")
-                .header("x-request-id", "same-request")
+                .header("x-request-id", SAME_REQUEST)
                 .send()
                 .await
                 .unwrap();
@@ -189,7 +194,7 @@ async fn two_and_three_instances_route_to_exact_owner_and_preserve_authorization
             assert_eq!(body["instance"], instances[owner].coordinator.instance_id);
             assert_eq!(body["epoch"], authority.token.epoch);
             assert_eq!(body["idempotency"], "same-operation");
-            assert_eq!(body["request"], "same-request");
+            assert_eq!(body["request"], SAME_REQUEST);
             assert_eq!(
                 client().get(&url).send().await.unwrap().status(),
                 StatusCode::UNAUTHORIZED
@@ -422,7 +427,9 @@ async fn peer_auth_rejects_unsigned_tampered_replayed_and_stale_epoch_requests()
         client().get(&url).send().await.unwrap().status(),
         StatusCode::FORBIDDEN
     );
-    let sign = |token: &OwnershipToken| {
+    let mut signed = HeaderMap::new();
+    signed.insert("x-request-id", SAME_REQUEST.parse().unwrap());
+    let sign_over = |token: &OwnershipToken, headers: &HeaderMap| {
         peer.relay
             .authentication
             .sign(
@@ -430,33 +437,35 @@ async fn peer_auth_rejects_unsigned_tampered_replayed_and_stale_epoch_requests()
                 token,
                 &Method::GET,
                 &uri,
-                &HeaderMap::new(),
+                headers,
                 &[],
             )
             .unwrap()
     };
-    let proof = sign(&authority.token);
-    let accepted = client()
-        .get(&url)
-        .header(PROOF, &proof)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(accepted.status(), StatusCode::OK);
-    drop(accepted);
+    // The receiver's request context assigns a request ID to a request that
+    // arrives without one; a proof that did not sign it is refused (#3261).
     assert_eq!(
         client()
             .get(&url)
-            .header(PROOF, proof)
+            .header(PROOF, sign_over(&authority.token, &HeaderMap::new()))
             .send()
             .await
             .unwrap()
             .status(),
         StatusCode::FORBIDDEN
     );
+    let sign = |token: &OwnershipToken| sign_over(token, &signed);
+    let get = || client().get(&url).header("x-request-id", SAME_REQUEST);
+    let proof = sign(&authority.token);
+    let accepted = get().header(PROOF, &proof).send().await.unwrap();
+    assert_eq!(accepted.status(), StatusCode::OK);
+    drop(accepted);
     assert_eq!(
-        client()
-            .get(&url)
+        get().header(PROOF, proof).send().await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        get()
             .header(PROOF, sign(&authority.token))
             .header("authorization", "changed")
             .send()
@@ -468,8 +477,7 @@ async fn peer_auth_rejects_unsigned_tampered_replayed_and_stale_epoch_requests()
     let mut old = authority.token.clone();
     old.epoch += 1;
     assert_eq!(
-        client()
-            .get(&url)
+        get()
             .header(PROOF, sign(&old))
             .send()
             .await
