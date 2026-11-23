@@ -160,6 +160,7 @@ impl OwnershipCoordinator {
             || owner.token.instance_id.is_empty()
             || owner.token.protocol != PROTOCOL_VERSION
             || owner.token.epoch == 0
+            || owner.expires_at_ms <= 0
         {
             return Err(OwnershipError::Invalid(
                 "invalid successor observation".into(),

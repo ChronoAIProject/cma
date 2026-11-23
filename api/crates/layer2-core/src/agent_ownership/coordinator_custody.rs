@@ -32,11 +32,13 @@ impl OwnershipCoordinator {
             .await;
         // Advertising failure cannot reopen local admission or erase custody.
         let _ = retirement::stage(until, self.store.heartbeat(&self.instance_id, true)).await;
-        acquisitions?;
-        for result in renewals {
-            result?;
+        let mut error = None;
+        for result in std::iter::once(acquisitions).chain(renewals) {
+            if let Err(reason) = result {
+                retain_error(&mut error, reason);
+            }
         }
-        Ok(())
+        error.map_or(Ok(()), Err)
     }
 
     async fn finish_acquisitions(&self, until: Instant) -> Result<(), OwnershipError> {
@@ -124,10 +126,13 @@ impl OwnershipCoordinator {
             .buffer_unordered(4)
             .collect::<Vec<_>>()
             .await;
+        let mut error = None;
         for result in acquisitions.into_iter().chain(renewals) {
-            result?;
+            if let Err(reason) = result {
+                retain_error(&mut error, reason);
+            }
         }
-        Ok(())
+        error.map_or(Ok(()), Err)
     }
 }
 

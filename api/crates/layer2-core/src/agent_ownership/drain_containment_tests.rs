@@ -54,7 +54,7 @@ async fn shutdown_fences_generic_authority_and_requires_local_join_before_receiv
 
 #[tokio::test(start_paused = true)]
 async fn drain_accepts_only_valid_newer_owner_proof_without_ack_or_old_release() {
-    for invalid in [None, Some("agent"), Some("protocol")] {
+    for invalid in [None, Some("agent"), Some("protocol"), Some("deadline")] {
         let store = Arc::new(Store::default());
         let manager = manager(store.clone(), false, 1).await;
         let old = manager
@@ -73,6 +73,7 @@ async fn drain_accepts_only_valid_newer_owner_proof_without_ack_or_old_release()
         match invalid {
             Some("agent") => next.token.agent_id = AgentId("different".into()),
             Some("protocol") => next.token.protocol += 1,
+            Some("deadline") => next.expires_at_ms = 0,
             _ => (),
         }
         *store.observation.lock().unwrap() = Some(Some(next.clone()));
