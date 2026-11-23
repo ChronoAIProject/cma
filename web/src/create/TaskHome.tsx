@@ -1,8 +1,8 @@
 import { useSandboxCapacity } from '../sandbox/useSandboxCapacity';
 import { SandboxCapacityPanel } from '../sandbox/SandboxCapacityPanel';
 import { useEffect, useId, useRef, useState } from 'react';
-import type { CmaWebClient } from '../api/client';
-import type { AppRoute } from '../routing/routes';
+import type { TaskHomeProps } from './TaskHome.types';
+export type { TaskHomeProps } from './TaskHome.types';
 import { Button } from '../ui/Button';
 import { taskSubmission, submitTaskOnShortcut } from './taskSubmission';
 import { useTaskCreationSupport } from './useTaskCreationSupport';
@@ -13,7 +13,7 @@ import { lifecycleFailureMessage } from './lifecycleFailure';
 import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { TaskCreationStatus } from './TaskCreationStatus';
-import { TaskHomeLayout, type TaskHomeOverview } from './TaskHomeLayout';
+import { TaskHomeLayout } from './TaskHomeLayout';
 import { TaskTemplatePanel } from './TaskTemplatePanel';
 import { TaskComposer } from './TaskComposer';
 import { RunTargetMenu } from './RunTargetMenu';
@@ -39,16 +39,6 @@ import './TaskFeedback.css';
 const recoverTask = { label: 'Recover original task', kind: 'recover' } as const;
 const continueTask = { label: 'Continue original task', kind: 'recover' } as const;
 const retryTaskStatus = { label: 'Retry task status', kind: 'status' } as const;
-
-export interface TaskHomeProps {
-  readonly client: CmaWebClient;
-  readonly viewerId?: string;
-  readonly workspaceId?: string;
-  readonly sandboxId?: string;
-  readonly canCreateSandbox: boolean;
-  readonly onCreated: (route: AppRoute) => void;
-  readonly home?: TaskHomeOverview;
-}
 
 export function TaskHome(props: TaskHomeProps) {
   const { client, viewerId, workspaceId, sandboxId } = props;
