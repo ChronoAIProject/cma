@@ -8,6 +8,9 @@ use layer2_core::sandbox_metrics::{
 
 #[async_trait]
 impl MetricsStore for ReportingStore {
+    async fn initial_snapshot_generation(&self, report: &Report) -> Result<u64> {
+        self.verify_initial_snapshot(report).await
+    }
     async fn latest(
         &self,
         scope: &Scope,

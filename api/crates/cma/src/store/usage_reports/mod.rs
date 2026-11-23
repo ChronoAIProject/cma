@@ -8,6 +8,7 @@ mod charts;
 mod control;
 mod controlled_updates;
 mod diagnostics;
+mod initial_snapshot;
 pub(crate) mod inventory;
 mod on_demand_views;
 mod options;

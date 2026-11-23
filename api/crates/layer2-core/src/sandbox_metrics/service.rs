@@ -1,3 +1,4 @@
+mod initial;
 mod view;
 use super::*;
 use crate::{Caller, Capability};
@@ -6,6 +7,11 @@ use std::sync::Arc;
 
 #[async_trait]
 pub trait MetricsStore: Send + Sync {
+    /// Verify the exact complete Ready namespace and return its writer generation.
+    /// This observation alone does not authorize a report or any child read.
+    async fn initial_snapshot_generation(&self, _report: &Report) -> Result<u64> {
+        Err(MetricsError::Unavailable)
+    }
     async fn latest(
         &self,
         _scope: &Scope,
