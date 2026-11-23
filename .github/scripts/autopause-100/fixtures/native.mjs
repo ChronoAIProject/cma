@@ -8,6 +8,7 @@ export function fixture(mode = 'Suspended') {
     namespace: {name: 'fixture', uid: 'namespace-uid'},
     sandbox: {name: 'member', uid: 'member-uid'},
     sandbox_id: 'sbx_fixture', home_identity: 'fixture-home', deployment: 'fixture-manager',
+    home_contract: {kind: 'legacy-detached-v1'},
     home_request_sha256: hash('synthetic-home-request'), native_origin_sha256: hash(origin),
     image: 'example.invalid/runtime@sha256:' + 'a'.repeat(64),
     pvcs: [{name: 'home', uid: 'home-uid', volume: 'volume'}],
