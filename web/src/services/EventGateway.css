@@ -186,11 +186,3 @@
   right: 0;
   padding: 0;
 }
-
-.gateway-detail .page-header h1.page-header__title,
-.gateway-detail .page-header__crumbs a,
-.gateway-detail .page-header__crumbs span {
-  overflow: visible;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
