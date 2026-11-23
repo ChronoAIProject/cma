@@ -1,5 +1,6 @@
 import { useContext, useState, type ReactNode } from 'react';
 import type { NavigationState } from '../shell/navigation';
+import type { RuntimeAttention } from '../shell/runtimeAttention';
 import type { AppRoute } from '../routing/routes';
 import type { TaskTemplate } from './taskTemplateModel';
 import type { AssistantReplyPreview } from '../api/replyPreview';
@@ -7,6 +8,7 @@ import { CharacterAvatar } from '../character/CharacterAvatar';
 import { DocsLink } from '../services/DocsLink';
 import { TaskCrew, taskCrewCards } from './TaskCrew';
 import { TaskHomeDecorationContext } from './TaskHomeDecoration';
+import { HomeRuntimeAttention } from './HomeRuntimeAttention';
 
 export interface TaskHomeOverview {
   readonly navigation?: NavigationState;
@@ -15,6 +17,7 @@ export interface TaskHomeOverview {
   readonly onNavigate?: (route: AppRoute) => void;
   readonly onEnvironments?: () => void;
   readonly onReviewRuntime?: () => void;
+  readonly attention?: RuntimeAttention;
   readonly authEpoch?: number;
 }
 
@@ -108,12 +111,15 @@ export function TaskHomeLayout({
       {!contextual && !template && !submitted ? (
         <>
           {personal ? (
-            <TaskCrew
-              navigation={navigation}
-              onRetry={home?.onRetry}
-              onNavigate={onNavigate}
-              previews={previews}
-            />
+            <>
+              <HomeRuntimeAttention attention={home?.attention} onReview={home?.onReviewRuntime} />
+              <TaskCrew
+                navigation={navigation}
+                onRetry={home?.onRetry}
+                onNavigate={onNavigate}
+                previews={previews}
+              />
+            </>
           ) : (
             <p className="task-home__context">
               Use the sidebar to browse Agents in the selected scope. New tasks use your personal
