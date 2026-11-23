@@ -26,7 +26,11 @@ import { TreeCreationScope } from './treeCreationScope';
 import { useNavigationFilterState } from './navigationFilterState';
 
 export interface EnvironmentNavigationHandle {
-  openEnvironments(options?: { readonly scope?: 'personal'; readonly sandboxId?: string }): void;
+  openEnvironments(options?: {
+    readonly scope?: 'personal';
+    readonly sandboxId?: string;
+    readonly status?: 'failed';
+  }): void;
 }
 
 export function useEnvironmentNavigation(
@@ -45,6 +49,7 @@ export function useEnvironmentNavigation(
       onReviewRuntime: () =>
         ref.current!.openEnvironments({
           scope: 'personal',
+          status: 'failed',
           sandboxId:
             attention.failedSandboxes.length === 1
               ? attention.failedSandboxes[0]?.sandboxId
@@ -161,6 +166,8 @@ function ViewerNavigation({
     openEnvironments(options) {
       selectView('sandbox');
       if (options?.scope === 'personal' && scope !== '') onScope('');
+      if (options?.status)
+        filters.select('sandbox', options.status, options.scope === 'personal' ? '' : scope);
       if (options?.sandboxId) onNavigate({ kind: 'sandbox', sandboxId: options.sandboxId });
     },
   }));
@@ -380,7 +387,11 @@ function ViewerNavigation({
           ) : null}
         </TreeCreationScope>
       </div>
-      <DeletionProgressList sandboxes={[...deletions.values()]} onViewStatus={onViewDeletion} />
+      <DeletionProgressList
+        footer
+        sandboxes={[...deletions.values()]}
+        onViewStatus={onViewDeletion}
+      />
     </div>
   );
 }
