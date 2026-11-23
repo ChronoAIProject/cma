@@ -16,6 +16,7 @@ export function useChannelRecords(
   let records = state.records;
   if (page !== state.page || created !== state.created) {
     const next = new Map(records);
+    const refreshEvidence = new Map(state.refreshEvidence);
     if (created && created !== state.created)
       next.set(created.record_id, mergeChannelEvidence(next.get(created.record_id), created));
     if (page !== state.page) {
@@ -31,6 +32,7 @@ export function useChannelRecords(
           ),
         );
         seen.add(channel.record_id);
+        refreshEvidence.delete(channel.record_id);
       }
     }
     records = next;
@@ -38,7 +40,7 @@ export function useChannelRecords(
       page,
       created,
       records,
-      refreshEvidence: page !== state.page ? new Map() : state.refreshEvidence,
+      refreshEvidence,
     });
   }
   const observe = useCallback((channel: ChannelListItem) => {
