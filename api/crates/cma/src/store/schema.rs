@@ -124,7 +124,7 @@ pub(super) fn require_current(version: i64) -> Result<(), StoreError> {
 }
 
 fn unknown_version_filter(collection: &str) -> Document {
-    let versions = if matches!(collection, "agents" | "agent_reuse_bindings") {
+    let versions = if matches!(collection, "agents" | "agent_reuse_bindings" | "bots") {
         vec![1_i64, 2]
     } else if matches!(
         collection,
@@ -311,6 +311,7 @@ mod tests {
             versions("agent_reuse_bindings"),
             mongodb::bson::bson!([1_i64, 2_i64])
         );
+        assert_eq!(versions("bots"), mongodb::bson::bson!([1_i64, 2_i64]));
         assert_eq!(versions("agent_log"), mongodb::bson::bson!([1_i64]));
         assert_eq!(
             versions("sandboxes"),

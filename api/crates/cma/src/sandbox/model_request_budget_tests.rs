@@ -12,6 +12,7 @@ struct Budget {
     failure: Option<BudgetError>,
     reserved: AtomicUsize,
     settled: Mutex<Vec<RequestUsage>>,
+    holds: Mutex<Vec<RequestHold>>,
 }
 
 #[async_trait::async_trait]
@@ -27,11 +28,13 @@ impl RequestBudget for Budget {
         self.reserved.fetch_add(1, Ordering::SeqCst);
         assert_eq!(request.max_output_tokens, 1024);
         assert!(request.input_bytes > 0);
-        Ok(Some(RequestHold {
+        let hold = RequestHold {
             scope: scope.clone(),
             request: request.clone(),
             input_tokens_bound: request.input_bytes + 64,
-        }))
+        };
+        self.holds.lock().unwrap().push(hold.clone());
+        Ok(Some(hold))
     }
     async fn settle_request(
         &self,
@@ -48,8 +51,12 @@ fn budget(failure: Option<BudgetError>) -> Arc<Budget> {
         failure,
         reserved: AtomicUsize::new(0),
         settled: Mutex::new(Vec::new()),
+        holds: Mutex::new(Vec::new()),
     })
 }
+
+#[path = "model_request_budget_tests/uncertain_http.rs"]
+mod uncertain_http;
 
 fn context(budget: Arc<Budget>, kind: &str) -> RequestBudgetContext {
     RequestBudgetContext {

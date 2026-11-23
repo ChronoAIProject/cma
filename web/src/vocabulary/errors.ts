@@ -20,7 +20,7 @@ export const refusalSentences = {
   idempotency_in_flight:
     'CMA is still processing this request. Your choices are saved; check again in a moment.',
   idempotency_recovery_required:
-    'CMA is checking the result of this request. Your choices are saved; check again in a moment.',
+    'This request needs review. Your choices are saved. Contact your CMA administrator to check its result.',
   idempotency_key_reused:
     'This request has different saved choices. Start over to use the new choices.',
   invalid_launch_cursor: 'Progress could not be updated. Check again in a moment.',

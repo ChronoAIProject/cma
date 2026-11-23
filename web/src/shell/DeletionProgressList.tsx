@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { SandboxSummary } from '../api/types';
 import { Button } from '../ui/Button';
+import { IconWarningOutline16 } from '../ui/icons/IconWarningOutline16';
 import { IconCopyOutline16 } from '../ui/icons/IconCopyOutline16';
 import './DeletionProgressList.css';
 
@@ -24,8 +25,12 @@ function DeletionProgressRow({
         {sandbox.id}
       </code>
       <span className="deletion-progress__state">
+        <IconWarningOutline16 />
         {sandbox.status === 'retiring' ? 'Deleting' : 'Deletion requested'}
       </span>
+      <p className="deletion-progress__note">
+        Still counts toward your environment limit until cleanup is confirmed.
+      </p>
       <div className="deletion-progress__actions">
         <Button
           size="sm"

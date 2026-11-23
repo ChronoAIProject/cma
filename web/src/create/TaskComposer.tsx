@@ -11,6 +11,7 @@ export function TaskComposer({
   template = false,
   invalid = false,
   onChange,
+  onClearTemplate,
   children,
 }: {
   readonly text: string;
@@ -21,6 +22,7 @@ export function TaskComposer({
   readonly template?: boolean;
   readonly invalid?: boolean;
   readonly onChange: (text: string) => void;
+  readonly onClearTemplate?: () => void;
   readonly children: ReactNode;
 }) {
   const modifier = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
@@ -29,7 +31,6 @@ export function TaskComposer({
   const canSubmit = !disabled && !invalid && Boolean(text.trim());
   return (
     <div className="task-home__composer">
-      <div className="task-home__toolbar">{children}</div>
       <div className="task-home__panel">
         {template ? (
           <div className="task-home__preview">
@@ -59,6 +60,12 @@ export function TaskComposer({
           />
         )}
         <div className="task-home__footer">
+          <div className="task-home__toolbar">{children}</div>
+          {template && onClearTemplate ? (
+            <Button variant="ghost" placement="task-home__write" onClick={onClearTemplate}>
+              Write a task without a template
+            </Button>
+          ) : null}
           {!template || canSubmit ? (
             <span className="task-home__shortcut">{modifier} ↵ to run</span>
           ) : null}
@@ -70,7 +77,9 @@ export function TaskComposer({
             aria-keyshortcuts={template && canSubmit ? shortcut : undefined}
             icon={<IconArrowUpOutline16 />}
             disabled={!canSubmit}
-          />
+          >
+            {template ? 'Start task' : undefined}
+          </Button>
         </div>
       </div>
     </div>

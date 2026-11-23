@@ -1,21 +1,7 @@
 use super::*;
 use layer2_core::sandbox::{store::AgentProvenanceSnapshot, SandboxStatus};
 
-pub(in crate::store) async fn validate_lineage(
-    store: &MongoSandboxStore,
-    identity: &AgentAccessRequester,
-    session: &mut ClientSession,
-    require_runtime: bool,
-) -> Result<AgentProvenanceSnapshot, AgentAccessError> {
-    validate_lineage_transaction(store, identity, session, require_runtime)
-        .await
-        .map_err(|error| match error {
-            Error::Domain(error) => error,
-            Error::Driver(_) => AgentAccessError::Unavailable,
-        })
-}
-
-pub(super) async fn validate_lineage_transaction(
+pub(in crate::store) async fn validate_lineage_transaction(
     store: &MongoSandboxStore,
     identity: &AgentAccessRequester,
     session: &mut ClientSession,

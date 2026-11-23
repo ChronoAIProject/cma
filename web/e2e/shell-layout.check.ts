@@ -144,7 +144,10 @@ for (const width of [390, 360, 320]) {
         const settings = form.getByRole('button', { name: /^Agent settings:/ });
         await insideViewport(settings);
         await expect(settings).toHaveAccessibleDescription(
-          'Context: 0. Total tokens: 0 (0 input · 0 output).',
+          'Context: 0. Latest provider observation for one context window. ' +
+            'Total tokens: 0 (0 input · 0 output). ' +
+            'Provider-reported input and output accumulated for this Agent. ' +
+            'Input includes any cache reads. Cache breakdown and billed usage are unavailable here.',
         );
         await expect(form.getByRole('button', { name: 'Context usage', exact: true })).toHaveCount(
           0,
@@ -235,7 +238,7 @@ for (const authenticated of [false, true]) {
     await page.goto('/');
     if (authenticated) {
       await expect(
-        page.getByRole('heading', { name: 'What should your Agent work on?' }),
+        page.getByRole('heading', { name: /^Good (morning|afternoon|evening)\.$/ }),
       ).toBeVisible();
       await expect(
         page
@@ -270,7 +273,7 @@ for (const authenticated of [false, true]) {
       ).toBeVisible();
       await page.getByRole('link', { name: 'CMA home' }).click();
       await expect(
-        page.getByRole('heading', { name: 'What should your Agent work on?' }),
+        page.getByRole('heading', { name: /^Good (morning|afternoon|evening)\.$/ }),
       ).toBeVisible();
       await expect(page.getByLabel('Your task')).toHaveValue(
         'Retain this Home draft across screen sizes.',
