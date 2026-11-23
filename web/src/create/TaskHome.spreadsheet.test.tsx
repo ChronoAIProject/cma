@@ -43,9 +43,19 @@ function setup(context: Partial<TaskHomeProps> = {}, overrides: Partial<CmaWebCl
   return { ...render(<TaskHome {...props} />), props, create, capacity };
 }
 
+async function chooseTemplate(name: string) {
+  const button = screen.queryByRole('button', { name, exact: true });
+  if (button) {
+    fireEvent.click(button);
+    return;
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Templates', exact: true }));
+  fireEvent.click(await screen.findByRole('menuitem', { name, exact: true }));
+}
+
 async function chooseSpreadsheet() {
   await waitFor(() => expect(screen.queryByText('Checking task creation…')).toBeNull());
-  fireEvent.click(screen.getByRole('button', { name: 'Analyze a spreadsheet' }));
+  await chooseTemplate('Analyze a spreadsheet');
   return screen.getByLabelText('Spreadsheet link');
 }
 
@@ -126,20 +136,20 @@ it('keeps invalid drafts independently through template switches, reload and cor
   const view = setup();
   const input = await chooseSpreadsheet();
   fireEvent.change(input, { target: { value: 'not-a-url' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Write a document' }));
+  await chooseTemplate('Write a document');
   fireEvent.change(screen.getByLabelText('Subject'), {
     target: { value: 'Separate document draft' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Analyze a spreadsheet' }));
+  await chooseTemplate('Analyze a spreadsheet');
   expect(screen.getByLabelText('Spreadsheet link')).toHaveValue('not-a-url');
   view.unmount();
   render(<TaskHome {...view.props} />);
   await waitFor(() => expect(screen.queryByText('Checking task creation…')).toBeNull());
   expect(screen.getByLabelText('Spreadsheet link')).toHaveValue('not-a-url');
   expect(screen.getByLabelText('Spreadsheet link')).toHaveAccessibleDescription(ERROR);
-  fireEvent.click(screen.getByRole('button', { name: 'Write a document' }));
+  await chooseTemplate('Write a document');
   expect(screen.getByLabelText('Subject')).toHaveValue('Separate document draft');
-  fireEvent.click(screen.getByRole('button', { name: 'Analyze a spreadsheet' }));
+  await chooseTemplate('Analyze a spreadsheet');
   fireEvent.change(screen.getByLabelText('Spreadsheet link'), { target: { value: VALID_LINK } });
   expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
   expect(view.create).not.toHaveBeenCalled();
