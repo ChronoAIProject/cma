@@ -35,10 +35,36 @@ pub(in crate::store::agent_log_integrity) fn scan_report_only_admitted<'a, F>(
     snapshot: bool,
     policy: &'a IngressOwnershipPolicy,
     read_plan: AllocationPlan,
-    mut visit: F,
+    visit: F,
 ) -> Result<AssessmentRead<'a>, AdmittedError>
 where
     F: FnMut(SharedOwned<AgentLogEntry>) -> Result<(), OwnedWork<SandboxStoreError>> + Send + 'a,
+{
+    scan_report_only_prepared_admitted(
+        caller,
+        input,
+        session,
+        snapshot,
+        policy,
+        read_plan,
+        move || Ok(visit),
+    )
+}
+
+/// Build capture storage only after the original Agent and proof checks pass.
+/// The builder admits its own allocations and returns typed admission failures.
+pub(super) fn scan_report_only_prepared_admitted<'a, F, I>(
+    caller: ScanCaller,
+    input: AssessmentInput<'a>,
+    session: &'a mut mongodb::ClientSession,
+    snapshot: bool,
+    policy: &'a IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
+    prepare: I,
+) -> Result<AssessmentRead<'a>, AdmittedError>
+where
+    F: FnMut(SharedOwned<AgentLogEntry>) -> Result<(), OwnedWork<SandboxStoreError>> + Send + 'a,
+    I: FnOnce() -> Result<F, AdmittedError> + Send + 'a,
 {
     AdmittedOperation::from_owned(
         policy,
@@ -91,6 +117,7 @@ where
                     return Ok(error.map(Err));
                 }
             }
+            let mut visit = prepare()?;
             let result = cursor::scan_collection_admitted(
                 caller,
                 cursor::ScanInput {

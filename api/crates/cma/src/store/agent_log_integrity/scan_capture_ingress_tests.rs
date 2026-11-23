@@ -487,3 +487,6 @@ async fn capture_preserves_original_driver_errors_after_partial_delivery() {
     reader.shutdown().await;
     db.drop().await.unwrap();
 }
+
+#[path = "scan_capture_assessment_ingress_tests.rs"]
+mod assessment;
