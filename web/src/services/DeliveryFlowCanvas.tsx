@@ -7,6 +7,7 @@ import {
   type RefObject,
   type ReactNode,
 } from 'react';
+import { flushSync } from 'react-dom';
 import {
   Background,
   Controls,
@@ -109,22 +110,32 @@ export function DeliveryFlowCanvas({
 }) {
   const container = useRef<HTMLDivElement>(null);
   const [stacked, setStacked] = useState(false);
-  useEffect(() => {
-    const element = container.current;
-    if (!element) return;
-    const observer = new ResizeObserver(() => setStacked(element.clientWidth < 640));
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
   const overlayElement = useRef<HTMLDivElement>(null);
   const [overlayHeight, setOverlayHeight] = useState(0);
   const hasOverlay = overlay !== undefined;
   useEffect(() => {
-    const element = overlayElement.current;
+    const element = container.current;
     if (!element) return;
-    const observer = new ResizeObserver(() => setOverlayHeight(element.clientHeight));
+    const overlay = overlayElement.current;
+    let frame = 0;
+    // Both measurements affect the observed canvas height. Apply them together
+    // before that frame's resize delivery. React Flow's synchronous store updates
+    // can otherwise flush a pending React render partway through that delivery.
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        flushSync(() => {
+          setStacked(element.clientWidth < 640);
+          setOverlayHeight(overlay?.clientHeight ?? 0);
+        });
+      });
+    });
     observer.observe(element);
-    return () => observer.disconnect();
+    if (overlay) observer.observe(overlay);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, [hasOverlay]);
   const padding = useMemo(
     () => ({
