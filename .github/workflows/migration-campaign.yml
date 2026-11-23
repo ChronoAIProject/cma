@@ -112,12 +112,23 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 2
+      # Each entry passed a real local campaign for the pinned pair. Not listed:
+      # gateway (its legacy route was retired before v0.20.0, so it does not
+      # apply to these readers) and share (blocked by product gap #3296).
       matrix:
         fixture:
           - { name: profile, script: migration_profile_fixture.py, overlay: '' }
           - { name: api-custody, script: migration_api_custody_fixture.py, overlay: --api-custody-fixture }
           # The membership overlay only adds manifests; the base profile fixture drives it.
           - { name: membership, script: migration_profile_fixture.py, overlay: --membership-fixture }
+          - { name: bot, script: migration_bot_fixture.py, overlay: --bot-fixture }
+          - { name: sandbox, script: migration_sandbox_fixture.py, overlay: --sandbox-admission-fixture }
+          - { name: sandbox-control, script: migration_sandbox_control_fixture.py, overlay: --sandbox-control-fixture }
+          - { name: launch, script: migration_launch_fixture.py, overlay: --launch-fixture }
+          - { name: admission-policy, script: migration_admission_policy_fixture.py, overlay: --sandbox-admission-fixture }
+          - { name: visitor, script: migration_visitor_fixture.py, overlay: --visitor-fixture }
+          - { name: rate, script: migration_rate_fixture.py, overlay: --rate-fixture }
+          - { name: warm-pool, script: migration_warm_pool_fixture.py, overlay: --warm-pool-fixture }
     steps:
       - uses: actions/checkout@v5
         with:
