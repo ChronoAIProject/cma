@@ -1,3 +1,8 @@
+<!-- Community contribution terms are a draft. Do not assume a project license,
+DCO/CLA requirement, security contact or release scope has been approved.
+Vulnerability details belong only in a verified private reporting channel;
+read .github/SECURITY.md before including potentially sensitive information. -->
+
 ## Change
 
 Describe the concrete problem and resulting behavior. Reference the tracking
@@ -43,3 +48,17 @@ still needs an explicit assessment.
 State the authorized verification plan, expected observations, stop conditions
 and retained-data checks. Distinguish executed evidence from planned checks.
 Do not imply that merge authorizes production writes or closes the issue.
+
+## Third-party materials and contribution terms
+
+- **Dependencies, copied code, fonts or media:** List additions/changes, public
+  provenance and retained notices, or explain why this change has none.
+- **License inventory:** For affected materials, describe the source inventory
+  result and unresolved declarations; keep private evidence outside the PR.
+- **Project license / DCO or CLA:** **[PENDING: owner-approved terms and checks]**.
+  Do not assert acceptance of terms that have not been published.
+- **Release scope and restricted materials:** **[PENDING: owner decision]**.
+  Identify any ReactDrops-derived material touched without claiming relicensing.
+- **Review:** **[PENDING: designated maintainer roles]**. The proposed community
+  process requires a non-author approval and designated review of CI/security
+  changes; this template does not assert that branch rules enforce it today.
