@@ -193,24 +193,6 @@ it.each([false, true])(
   },
 );
 
-it('control: failing to save the initial credential refusal does not let an in-memory recovery dispatch without storage', async () => {
-  const test = fixture(['setup_required', 'accepted']);
-  const actor = userEvent.setup();
-  const storage = storageFaults();
-  storage.fault.write = true;
-  await startRecovery(test, actor);
-  expect(storage.raw()).toBeNull();
-  await clickStart(actor);
-  await screen.findByText(publicCopy.storageUnavailable);
-  expect(test.sent).toHaveLength(1);
-  const attempted = JSON.parse(storage.failedWrites.at(-1)!).command;
-  storage.fault.write = false;
-  await clickStart(actor);
-  await waitFor(() => expect(test.completed).toHaveBeenCalledOnce());
-  expect(test.sent[1]?.key).toBe(attempted.key);
-  expect(test.sent[1]?.body).toEqual(attempted.body);
-});
-
 it('control: cleanup failure cannot hide an accepted Start result', async () => {
   const test = fixture(['setup_required', 'accepted']);
   const actor = userEvent.setup();

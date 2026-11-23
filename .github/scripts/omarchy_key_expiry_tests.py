@@ -399,7 +399,13 @@ class DerivationTests(unittest.TestCase):
     def test_every_download_or_keyring_problem_fails_closed(self):
         lock, cache, _ = self.tree()
         signature = cache / "core/os/x86_64/app-1-1-x86_64.pkg.tar.zst.sig"
-        signature.write_bytes(signature.read_bytes()[:-1] + b"\x00")
+        original = signature.read_bytes()
+        # Invert the last byte. Overwriting it with a constant is a no-op whenever
+        # the freshly generated signature already ends in that byte; the cached
+        # copy then still matches the lock and the check succeeds, failing this
+        # test in roughly one run in 256.
+        signature.write_bytes(original[:-1] + bytes([original[-1] ^ 0xFF]))
+        self.assertNotEqual(signature.read_bytes(), original)
         for mode in ("--refresh", "--verify-record"):
             patch, _ = self.serve(lambda url: b"other bytes")
             with self.subTest(mode), patch:

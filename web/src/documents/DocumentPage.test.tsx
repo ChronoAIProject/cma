@@ -140,16 +140,16 @@ it('pins source reads to the source revision, and retains the exact save key acr
     target: { value: 'Edited' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  await screen.findByRole('button', { name: 'Retry save' });
-  expect(screen.getByRole('textbox', { name: 'Document content' })).toBeDisabled();
+  await screen.findByRole('button', { name: 'Retry same save' });
+  expect(screen.getByRole('textbox', { name: 'Document content' })).toBeEnabled();
   fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
-  expect(screen.getByRole('button', { name: 'Retry save' })).toBeDisabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Retry save' }));
+  expect(screen.getByRole('button', { name: 'Retry same save' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry same save' }));
   act(() => editorCallbacks.save());
   expect(update).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-  expect(screen.getByRole('textbox', { name: 'Document title' })).toBeDisabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Retry save' }));
+  expect(screen.getByRole('textbox', { name: 'Document title' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry same save' }));
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Saved'));
   expect(update.mock.calls[1]?.[1]).toEqual(update.mock.calls[0]?.[1]);
   expect(update.mock.calls[1]?.[2].idempotencyKey).toBe(update.mock.calls[0]?.[2].idempotencyKey);
@@ -182,7 +182,7 @@ it('retains an uncertain save across navigation and reconciles it using its orig
     target: { value: 'Edited' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  await screen.findByRole('button', { name: 'Retry save' });
+  await screen.findByRole('button', { name: 'Retry same save' });
   first.unmount();
   vi.mocked(api.read).mockResolvedValue({
     ...view,
@@ -191,7 +191,7 @@ it('retains an uncertain save across navigation and reconciles it using its orig
     source_revision: 4,
   });
   page(api);
-  fireEvent.click(await screen.findByRole('button', { name: 'Retry save' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Retry same save' }));
   await waitFor(() => expect(update).toHaveBeenCalledTimes(2));
   expect(update.mock.calls[1]?.[2].idempotencyKey).toBe(update.mock.calls[0]?.[2].idempotencyKey);
 });

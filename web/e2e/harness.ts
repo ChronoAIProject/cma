@@ -131,7 +131,17 @@ export class Harness {
       if (url.origin !== this.config.baseURL || !url.pathname.startsWith('/api/')) return;
       const task = (async () => {
         if (!isJsonMediaType(response.headers()['content-type'] ?? '')) return;
-        const text = await response.text();
+        let text: string;
+        try {
+          text = await response.text();
+        } catch (error) {
+          if (
+            response.request().method() === 'GET' &&
+            response.request().failure()?.errorText === 'net::ERR_ABORTED'
+          )
+            return;
+          throw error;
+        }
         assertCredentialFree(text, this.forbidden);
         if (role === 'signup' && account.subject === '' && response.request().method() === 'POST') {
           const current = await context.request.get(`${this.config.baseURL}/auth/session`);
@@ -296,7 +306,8 @@ export class Harness {
       .toBe(true);
     const launch = await this.readLaunch(page, id);
     expect(launch.resolution.agent.id).toBeTruthy();
-    await page.goto(`${this.config.baseURL}/agents/${launch.resolution.agent.id}`);
+    const destination = `${this.config.baseURL}/agents/${launch.resolution.agent.id}`;
+    if (page.url() !== destination) await page.goto(destination);
     await expect(page.locator('#agent-message')).toBeVisible();
     return launch;
   }

@@ -16,8 +16,8 @@ APPROVED_CLASSIFICATIONS: dict[str, tuple[str, str]] = {}
 # (content manifest SHA256, authentic SA-01 review SHA256). Remains disabled
 # until the exact catalog and resolver have received that independent verdict.
 APPROVED_CONTENT_POLICY = (
-    "3cfb89bf19c4ddda0fad950c284078852a88a13e3ec91b44183504b3f306d79e",
-    "9eae89fca11ab926dbf837cd1813dd1468cf83fed418fecf80f629e50d66f8bb",
+    "aafd541c0243e1931a0d2387e4de12d71e1c265f6986c78362f3c246b430233a",
+    "6e6a175226dc22d5f681780e10a4b2b5bbc9aac163859d61a4af1fcf9bb6d818",
 )
 PACKAGE_EVIDENCE = Path(".github/scripts/image-package-evidence.json")
 OMARCHY_PACKAGE_EVIDENCE = Path(".github/scripts/image-omarchy-package-evidence.json")

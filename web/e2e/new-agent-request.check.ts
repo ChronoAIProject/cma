@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { newAgentRequestFixture } from './new-agent-request.fixture';
+import { registerRedesignHomeCases } from './redesign-home.cases';
+
+registerRedesignHomeCases();
 
 for (const status of ['provisioning', 'active'] as const) {
   test(`LOCAL New agent keeps hello independent of a bound ${status} Agent`, async ({

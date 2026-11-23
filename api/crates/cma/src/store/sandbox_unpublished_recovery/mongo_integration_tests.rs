@@ -235,7 +235,7 @@ async fn mongo_unpublished_recovery_refuses_a_concurrent_agent_revision() {
     client.database(&name).drop().await.unwrap();
 }
 
-fn home(id: &layer2_core::SandboxId) -> SandboxHome {
+pub(in crate::store) fn home(id: &layer2_core::SandboxId) -> SandboxHome {
     use layer3_adapter::agent_sandbox::*;
     let policy = HomeVolumePolicy {
         mode: HomeVolumeMode::NativeVctFullHomeV2,

@@ -25,7 +25,15 @@ impl BotDocument {
         bot.validate()?;
         Ok(Self {
             id: bot.bot_id.clone(),
-            document_schema_version: 1,
+            document_schema_version: if bot
+                .work
+                .as_ref()
+                .is_some_and(|work| work.effect_protocol == 1)
+            {
+                2
+            } else {
+                1
+            },
             owner: bot.owner.to_string(),
             creation_key_hash: bot.creation_key_hash.clone(),
             revision: i64::try_from(bot.revision).map_err(|_| BotError::Conflict)?,
@@ -37,7 +45,20 @@ impl BotDocument {
     }
     fn decode(self) -> Result<Bot, BotError> {
         self.bot.validate().map_err(|_| BotError::Unavailable)?;
-        if self.document_schema_version != 1
+        let valid_schema = match self.document_schema_version {
+            1 => self
+                .bot
+                .work
+                .as_ref()
+                .is_none_or(|work| work.effect_protocol == 0),
+            2 => self
+                .bot
+                .work
+                .as_ref()
+                .is_none_or(|work| work.effect_protocol == 1),
+            _ => false,
+        };
+        if !valid_schema
             || self.id != self.bot.bot_id
             || self.owner != self.bot.owner.as_str()
             || self.creation_key_hash != self.bot.creation_key_hash
@@ -152,17 +173,37 @@ impl BotStore for MongoBotStore {
         self.rows(filter, limit).await
     }
     async fn replace(&self, expected: u64, bot: &Bot) -> Result<(), BotError> {
-        let current = self.get(&bot.bot_id).await?.ok_or(BotError::NotFound)?;
+        let document = self
+            .records
+            .find_one(doc! {"_id":&bot.bot_id})
+            .await
+            .map_err(|_| BotError::Unavailable)?
+            .ok_or(BotError::NotFound)?;
+        let schema = document.document_schema_version;
+        let current = document.decode()?;
         if current.revision != expected {
             return Err(BotError::Conflict);
         }
         bot.validate_replacement(&current)?;
+        let mut replacement = BotDocument::new(bot)?;
+        if schema == 2 {
+            // Never lower the format floor after completing work. Old binaries
+            // reject schema two and their schema-one replacement CAS cannot win.
+            if bot
+                .work
+                .as_ref()
+                .is_some_and(|work| work.effect_protocol != 1)
+            {
+                return Err(BotError::Conflict);
+            }
+            replacement.document_schema_version = 2;
+        }
         let revision = i64::try_from(expected).map_err(|_| BotError::Conflict)?;
         let result = self
             .records
             .replace_one(
-                doc! {"_id":&bot.bot_id,"revision":revision,"document_schema_version":1},
-                BotDocument::new(bot)?,
+                doc! {"_id":&bot.bot_id,"revision":revision,"document_schema_version":schema},
+                replacement,
             )
             .await
             .map_err(|_| BotError::Unavailable)?;

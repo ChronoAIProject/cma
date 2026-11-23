@@ -19,6 +19,7 @@ use super::sandbox_mongo::{
 use super::sandboxes::sandbox_replacement_fields;
 use super::workspaces::workspace_replacement_fields;
 
+pub(in crate::store) mod helper_error;
 pub(in crate::store) mod initial_integrity;
 
 pub(in crate::store) mod attribution;
@@ -73,7 +74,11 @@ pub(in crate::store) fn classify_agent_insert(error: mongodb::error::Error) -> A
 }
 
 pub(in crate::store) fn classify_log_insert(error: mongodb::error::Error) -> ApplyError {
-    if is_duplicate_key(&error) {
+    // An unknown commit outcome dominates a duplicate key: the earlier write may
+    // have applied, so it must reconcile rather than report a sequence conflict.
+    if error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT) {
+        ApplyError::Driver(error)
+    } else if is_duplicate_key(&error) {
         ApplyError::Domain(SandboxStoreError::SequenceConflict)
     } else {
         ApplyError::Driver(error)
@@ -82,4 +87,4 @@ pub(in crate::store) fn classify_log_insert(error: mongodb::error::Error) -> App
 
 #[cfg(test)]
 #[path = "agent_admission_mongo_integration_tests.rs"]
-mod mongo_integration_tests;
+pub(in crate::store) mod mongo_integration_tests;

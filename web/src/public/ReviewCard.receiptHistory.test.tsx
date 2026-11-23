@@ -9,11 +9,22 @@ import '../test/connectedAccounts';
 beforeEach(() => {
   vi.stubGlobal(
     'fetch',
-    vi.fn(() => Promise.reject(new Error('Unexpected external fetch'))),
+    vi.fn(async (input) => {
+      if (input !== '/auth/session') throw new Error('Unexpected external fetch');
+      return new Response(
+        JSON.stringify({
+          authenticated: true,
+          subject: 'owner',
+          visitor: true,
+          capabilities: ['launch_triggers'],
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    }),
   );
 });
 afterEach(() => {
-  expect(fetch).not.toHaveBeenCalled();
+  expect(vi.mocked(fetch).mock.calls.every(([input]) => input === '/auth/session')).toBe(true);
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   sessionStorage.clear();
@@ -22,7 +33,13 @@ afterEach(() => {
 async function begin(client: ReturnType<typeof publicClient>) {
   const actor = userEvent.setup();
   render(
-    <ReviewCard client={client} record={PUBLIC_TRUST} onChanged={vi.fn()} onClose={vi.fn()} />,
+    <ReviewCard
+      expectedSubject="owner"
+      client={client}
+      record={PUBLIC_TRUST}
+      onChanged={vi.fn()}
+      onClose={vi.fn()}
+    />,
   );
   await actor.click(screen.getByRole('checkbox'));
   const submit = await screen.findByRole('button', { name: 'Continue' });
@@ -61,7 +78,6 @@ it.each([
     expect(calls[2]?.[1]).toEqual(calls[0]?.[1]);
     expect(calls[2]?.[2].idempotencyKey).toBe(calls[0]?.[2].idempotencyKey);
     expect(client.requests.createOrResume).not.toHaveBeenCalled();
-    expect(fetch).not.toHaveBeenCalled();
   },
 );
 
@@ -75,7 +91,6 @@ it('keeps the original trust selection locked after an unresolved Start retry is
   await waitFor(() => expect(client.requests.start).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled());
   expect(screen.getByRole('checkbox')).toBeDisabled();
-  expect(fetch).not.toHaveBeenCalled();
 });
 
 it('control: unknown then success retains the original command', async () => {
@@ -88,7 +103,6 @@ it('control: unknown then success retains the original command', async () => {
   await waitFor(() => expect(client.requests.start).toHaveBeenCalledTimes(2));
   const calls = vi.mocked(client.requests.start).mock.calls;
   expect(calls[1]).toEqual(calls[0]);
-  expect(fetch).not.toHaveBeenCalled();
 });
 
 it('checks the Launch on RecoveryRequired without replacing the unresolved command', async () => {
@@ -124,7 +138,6 @@ it('control: an initial definite refusal permits a fresh explicit command', asyn
   await waitFor(() => expect(client.requests.start).toHaveBeenCalledTimes(2));
   const calls = vi.mocked(client.requests.start).mock.calls;
   expect(calls[1]?.[2].idempotencyKey).not.toBe(calls[0]?.[2].idempotencyKey);
-  expect(fetch).not.toHaveBeenCalled();
 });
 
 it('control: unknown then HTTP 429 retains the original command through recovery', async () => {
@@ -143,7 +156,6 @@ it('control: unknown then HTTP 429 retains the original command through recovery
   const calls = vi.mocked(client.requests.start).mock.calls;
   expect(calls[1]).toEqual(calls[0]);
   expect(calls[2]).toEqual(calls[0]);
-  expect(fetch).not.toHaveBeenCalled();
 });
 
 it.each([401, 403])(
