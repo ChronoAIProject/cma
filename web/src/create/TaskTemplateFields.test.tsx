@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest';
 import { unavailableClient, type CmaWebClient } from '../api/client';
 import { taskExperience } from '../test/taskExperience';
+import { selectTaskTemplate } from '../test/taskTemplateSelection';
 import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { TaskHome } from './TaskHome';
 import {
@@ -44,7 +45,7 @@ it.each(taskTemplates)(
   async (definition) => {
     const { create } = setup();
     await ready();
-    fireEvent.click(screen.getByRole('button', { name: definition.name }));
+    selectTaskTemplate(definition.name);
     await waitFor(() => expect(screen.getByLabelText(definition.fields[0]!.label)).toHaveFocus());
     const start = screen.getByRole('button', { name: 'Start task' });
     const form = start.closest('form')!;
@@ -59,7 +60,10 @@ it.each(taskTemplates)(
         expect(create).not.toHaveBeenCalled();
         expect(screen.getByLabelText(field.label)).toHaveFocus();
       }
-      fill(field.label, `Synthetic ${field.key}`);
+      fill(
+        field.label,
+        field.key === 'link' ? 'https://example.com/synthetic.csv' : `Synthetic ${field.key}`,
+      );
     }
     expect(start).toBeEnabled();
     expect(screen.getByRole('region', { name: 'Task preview · read-only' })).toBeVisible();
@@ -72,7 +76,12 @@ it.each(taskTemplates)(
     const template = parseTaskTemplate({
       id: definition.id,
       version: 1,
-      fields: Object.fromEntries(definition.fields.map(({ key }) => [key, `Synthetic ${key}`])),
+      fields: Object.fromEntries(
+        definition.fields.map(({ key }) => [
+          key,
+          key === 'link' ? 'https://example.com/synthetic.csv' : `Synthetic ${key}`,
+        ]),
+      ),
     });
     expect(create.mock.calls[0]![0]).toMatchObject({
       template,
@@ -94,7 +103,7 @@ it.each([false, undefined, 'failure'] as const)(
             },
     });
     await ready();
-    fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+    selectTaskTemplate('Research a topic');
     fill('Topic', 'Synthetic topic');
     expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
     fireEvent.submit(screen.getByLabelText('Topic').closest('form')!);
@@ -112,7 +121,7 @@ it('restores fields, isolates owner/context, and returns to free text without gu
   const view = setup();
   await ready();
   fill('Your task', 'Discuss [topic], [1, 2] and [label](https://example.com)');
-  fireEvent.click(screen.getByRole('button', { name: 'Write a document' }));
+  selectTaskTemplate('Write a document');
   fill('Subject', 'Retained subject');
   view.unmount();
   const restored = setup();
@@ -134,7 +143,7 @@ it('restores fields, isolates owner/context, and returns to free text without gu
 it('requires fresh template support when the client changes', async () => {
   const view = setup();
   await ready();
-  fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+  selectTaskTemplate('Research a topic');
   fill('Topic', 'Synthetic topic');
   expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
   const client = {
@@ -153,7 +162,7 @@ it.each(['ctrlKey', 'metaKey'])(
   async (modifier) => {
     const { create } = setup({ readTaskRepositorySupport: async () => true });
     await ready();
-    fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+    selectTaskTemplate('Research a topic');
     fill('Topic', 'Synthetic topic');
     fireEvent.click(screen.getByRole('button', { name: 'Add git repo' }));
     fill('GitHub repository', 'owner/repository');
@@ -188,7 +197,7 @@ it('restores exact untouched version-1 template drafts as unfilled fields', asyn
 it('replays the original body and key after reload without recompiling or clearing a newer draft', async () => {
   const view = setup();
   await ready();
-  fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+  selectTaskTemplate('Research a topic');
   fill('Topic', '  Original topic  ');
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await screen.findByRole('button', { name: 'Recover original task' });
@@ -218,7 +227,7 @@ it.each([false, true])(
   async (edited) => {
     const view = setup();
     await ready();
-    fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+    selectTaskTemplate('Research a topic');
     fill('Topic', 'Synthetic topic');
     fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
     await screen.findByRole('button', { name: 'Recover original task' });
