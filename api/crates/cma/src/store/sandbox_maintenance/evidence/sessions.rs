@@ -7,7 +7,7 @@ use mongodb::{
     ClientSession,
 };
 
-use crate::store::sandbox_sessions::{EXPIRY_INDEX, MAX_SESSION_ID_BYTES};
+use crate::store::sandbox_sessions::{EXPIRY_INDEX, LEGACY_V1_FIELD_COUNT, MAX_SESSION_ID_BYTES};
 
 use super::{ApplyError, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 
@@ -32,11 +32,12 @@ pub(in crate::store::sandbox_maintenance) async fn clear(
         .find(doc! {"sandbox_id": sandbox.as_str()})
         .hint(Hint::Name(EXPIRY_INDEX.into()))
         .limit(MAX_LEASE_ROWS + 1)
-        .projection(
-            doc! {"sandbox_id": 1, "document_schema_version": 1, "lease_expires_at": 1,
+        .projection(doc! {
+            "sandbox_id": 1, "document_schema_version": 1, "lease_expires_at": 1,
             "issued_at_ms": 1, "expires_at_ms": 1, "epoch": 1, "runtime_id": 1, "boot_id": 1,
-            "database_now": "$$NOW"},
-        )
+            "database_now": "$$NOW",
+            "stored_field_count": {"$size": {"$objectToArray": "$$ROOT"}},
+        })
         .session(&mut *session)
         .await
         .map_err(ApplyError::Driver)?;
@@ -76,6 +77,12 @@ fn expired(row: &Document, sandbox: &SandboxId, observed_at_ms: i64) -> Option<b
         _ => return None,
     };
     let expiry = stamp_ms(row.get_str("lease_expires_at").ok()?)?;
+    // A projection can hide unknown fields from the exact legacy shape check.
+    if !versioned
+        && usize::try_from(row.get_i32("stored_field_count").ok()?).ok()? != LEGACY_V1_FIELD_COUNT
+    {
+        return None;
+    }
     let exclusive = [
         "issued_at_ms",
         "expires_at_ms",

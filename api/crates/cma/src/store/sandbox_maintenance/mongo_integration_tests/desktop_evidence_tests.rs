@@ -22,6 +22,7 @@ async fn strict_desktop_evidence_distinguishes_expiry_from_missing_proof() {
         "mixed",
         "legacy_future",
         "legacy_expired",
+        "legacy_extra_field",
         "current_expired",
         "unsupported",
         "partial_exclusive",
@@ -103,6 +104,9 @@ async fn strict_desktop_evidence_distinguishes_expiry_from_missing_proof() {
                 }
                 if case == "partial_exclusive" {
                     row.insert("epoch", 1_i64);
+                }
+                if case == "legacy_extra_field" {
+                    row.insert("unrecognized", true);
                 }
                 row
             })
