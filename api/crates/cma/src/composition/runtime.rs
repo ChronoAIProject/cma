@@ -110,6 +110,7 @@ pub(super) fn lifecycle_config(
         access_transport_migration: config.agent_access_transport_migration.clone(),
         managed_documents_enabled: config.document_storage.is_some(),
         event_driven_reconciliation: config.features.event_driven_reconciliation,
+        stale_turn_reconciliation: config.features.stale_turn_reconciliation,
         sandbox_reconciliation_reserved_lane: config.features.sandbox_reconciliation_reserved_lane,
         home_policy: config
             .runtime
