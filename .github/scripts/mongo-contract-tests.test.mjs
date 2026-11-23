@@ -34,7 +34,8 @@ function fixture(scenario, reuse = false) {
   const scripts = join(root, '.github/scripts');
   mkdirSync(scripts, {recursive: true});
   mkdirSync(join(root, 'api/target/nextest'), {recursive: true});
-  for (const name of ['mongo-contract-tests.sh', 'mongo-contract-registry.py', 'mongo-contract-partitions.py', 'mongo-contract-schedule.py', 'mongo-contract-timings.json', 'mongo-contract-completeness.py', 'mongo-contract-exceptions.json', 'backend-nextest.sh']) {
+  for (const name of ['mongo-contract-tests.sh', 'mongo-contract-registry.py', 'mongo-contract-partitions.py', 'mongo-contract-schedule.py', 'mongo-contract-timings.json', 'mongo-contract-completeness.py', 'mongo-contract-exceptions.json', 'backend-nextest.sh',
+    'pull-pinned-image.sh']) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name));
   }
   cpSync(new URL('mongo-contract-suites', import.meta.url), join(scripts, 'mongo-contract-suites'), {recursive: true});
@@ -205,6 +206,9 @@ if (command === 'cargo') {
     if (!selected) process.exit(10);
     if (scenario === 'batches-cleanup-error' && fs.existsSync(log+'.failed-cleanup-uri') && fs.readFileSync(log+'.failed-cleanup-uri', 'utf8').includes(':'+JSON.parse(fs.readFileSync(path.join(path.dirname(log),selected))).port+'/')) process.exit(1);
     fs.unlinkSync(path.join(path.dirname(log),selected));
+  } else if (args[0] === 'image' && args[1] === 'inspect') {
+    // The pinned fixture image is present; pull-pinned-image.sh's own tests cover pulls.
+    process.exit(0);
   } else process.exit(11);
 }
 `;

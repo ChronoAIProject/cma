@@ -1,6 +1,6 @@
 //! Preserve the exact confirmed upload while revising its text and controls.
 use super::{
-    render::{LiteralText, Renderer},
+    render::{RelayText, Renderer},
     send::Sender,
 };
 use crate::{
@@ -27,7 +27,7 @@ impl Sender {
             buttons: "inline_keyboard".into(),
             ..Capabilities::native_discord()
         };
-        let (parts, _) = LiteralText.render(&card.message, &capabilities);
+        let (parts, _) = RelayText.render(&card.message, &capabilities);
         if parts.len() != 1 {
             return Err(RestError::Rejected);
         }

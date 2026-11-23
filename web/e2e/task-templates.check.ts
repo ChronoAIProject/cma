@@ -1,5 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
+import { registerRedesignTemplateCases } from './redesign-home.cases';
+
+registerRedesignTemplateCases();
 
 const cases = [
   { id: 'research', name: 'Research a topic', fields: [['Topic', 'Synthetic research', 'topic']] },

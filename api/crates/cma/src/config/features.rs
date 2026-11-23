@@ -23,6 +23,7 @@ pub(crate) struct FeatureFlags {
     pub ownership_retry_hints_enabled: bool,
     pub home_backup_enabled: bool,
     pub home_backup_expiry_enabled: bool,
+    pub bot_effect_reservations: bool,
     pub agent_model_discovery_cache: bool,
     pub agent_environment_async: bool,
     pub agent_settings_owner_relay: bool,
@@ -147,6 +148,7 @@ impl FeatureFlags {
             )?,
             home_backup_enabled: flag(lookup, "CHRONO_HOME_BACKUP_ENABLED")?,
             home_backup_expiry_enabled: flag(lookup, "CHRONO_HOME_BACKUP_EXPIRY_ENABLED")?,
+            bot_effect_reservations: flag(lookup, "CHRONO_BOT_EFFECT_RESERVATIONS_ENABLED")?,
             agent_model_discovery_cache: flag(
                 lookup,
                 "CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED",
@@ -419,3 +421,6 @@ mod pending_homes_tests;
 #[cfg(test)]
 #[path = "features/visitor_defaults_tests.rs"]
 mod visitor_defaults_tests;
+
+#[cfg(test)]
+mod bot_effect_tests;

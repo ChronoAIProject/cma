@@ -78,6 +78,21 @@ class StagingWorkflowTest < Minitest::Test
     refute publication.key?('if'), 'publication must always run and decide the outcome'
   end
 
+  def test_omarchy_releases_check_pinned_signing_keys_before_any_build_work
+    steps = workflow('staging-release')['jobs']['publish']['steps']
+    index = ->(name) { steps.index { |step| step['name'] == name } }
+    check = steps.fetch(index.call('Check pinned Omarchy signing keys'))
+    # The check blocks: an expired key must stop the release with its named cause.
+    refute check.key?('continue-on-error'), 'an expired signing key must fail the release'
+    assert_equal 'python3 -B .github/scripts/omarchy_key_expiry.py --warn-days 14', check['run']
+    assert_equal "inputs.component == 'runtime-omarchy' && steps.ownership.outputs.superseded != 'true'", check['if']
+    assert_includes 1..5, check['timeout-minutes'].to_i
+    assert_operator index.call('Check release ownership'), :<, index.call('Check pinned Omarchy signing keys')
+    assert_operator index.call('Check pinned Omarchy signing keys'), :<,
+                    index.call('Build once, scan every layer, and publish exact bytes')
+    assert File.file?(File.join(ROOT, 'scripts/omarchy_key_expiry.py'))
+  end
+
   def test_all_mutation_paths_share_one_set_lock_without_serializing_publication
     manual = workflow('redeploy-staging')['jobs']['deploy']
     automatic = workflow('staging-promote')['jobs']['deploy']

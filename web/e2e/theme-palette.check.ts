@@ -2,6 +2,9 @@ import { test, expect, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { LocalUsageMetrics } from './usage-metrics.fixture';
 import { expectReadableText } from './themeContrast';
+import { registerTopographicFlowCases } from './topographic-flow.cases';
+
+registerTopographicFlowCases();
 
 async function settle(page: Page, width: number) {
   await expect
@@ -52,7 +55,7 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(send).toHaveCSS('color', 'rgb(11, 11, 12)');
       await expect(page.locator('.task-home__composer')).toHaveCSS(
         'background-color',
-        theme === 'light' ? 'rgb(250, 250, 250)' : 'rgb(19, 19, 21)',
+        theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(20, 20, 22)',
       );
       await expect(page.locator('.console__surface')).toHaveCSS(
         'background-color',
