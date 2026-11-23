@@ -14,6 +14,7 @@ import { retainDocumentShareToken } from '../documents/shareToken';
 import { retainAgentShareForSignIn } from '../resources/agentShareToken';
 import { retainTaskViewer } from '../create/taskIdentity';
 import { retainAgentDraftOwner } from '../agent/draftIdentity';
+import { retainPreparationDraftOwner } from '../preparation/preparationDraftIdentity';
 import { releaseNavigationGuard } from '../routing/navigationGuard';
 
 /**
@@ -67,9 +68,11 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         .then((next) => {
           if (live && version === currentRead.current) {
             if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
+            if (next.status === 'authenticated') retainPreparationDraftOwner(next.user.id);
             else if (next.status === 'anonymous') {
               releaseNavigationGuard();
               retainAgentDraftOwner();
+              retainPreparationDraftOwner();
             }
             if (next.status !== 'error') last = next;
             let leavingSilently = false;
@@ -178,7 +181,9 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         if (version !== currentRead.current) return;
         if (next.status === 'authenticated') retainTaskViewer(next.user.id);
         if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
+        if (next.status === 'authenticated') retainPreparationDraftOwner(next.user.id);
         else if (next.status === 'anonymous') retainAgentDraftOwner();
+        if (next.status === 'anonymous') retainPreparationDraftOwner();
         setOutage(undefined);
         setState(next);
       } catch (error: unknown) {
@@ -198,6 +203,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     try {
       retainTaskViewer();
       retainAgentDraftOwner();
+      retainPreparationDraftOwner();
       setState({ status: 'checking' });
       await provider.signOut();
       if (version !== currentRead.current) return;

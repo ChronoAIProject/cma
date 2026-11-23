@@ -74,3 +74,25 @@
 .preparation-message button {
   min-height: 44px;
 }
+.preparation-draft,
+.preparation-draft label {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.preparation-draft textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 96px;
+  padding: var(--space-3);
+  border: 1px solid var(--dsw-alias-border-l4);
+  border-radius: var(--radius-lg);
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-1);
+  font: inherit;
+  resize: vertical;
+}
+.preparation-draft > p {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+}
