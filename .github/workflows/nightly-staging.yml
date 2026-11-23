@@ -110,7 +110,7 @@ jobs:
             ${{ env.CMA_E2E_OUTPUT_DIR }}/provenance.json
             ${{ env.CMA_E2E_OUTPUT_DIR }}/results.json
             ${{ env.CMA_E2E_OUTPUT_DIR }}/smoke-landing.png
-          retention-days: 7
+          retention-days: 21
           if-no-files-found: warn
 
   journeys:
@@ -184,5 +184,5 @@ jobs:
             ${{ env.CMA_E2E_OUTPUT_DIR }}/results.json
             ${{ env.CMA_E2E_OUTPUT_DIR }}/cleanup.ndjson
             ${{ env.CMA_E2E_OUTPUT_DIR }}/*.png
-          retention-days: 7
+          retention-days: 21
           if-no-files-found: error

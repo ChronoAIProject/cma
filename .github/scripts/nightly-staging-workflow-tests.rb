@@ -31,6 +31,20 @@ def validate(workflow, repo)
     require_check((steps[index].keys & %w[if continue-on-error shell working-directory]).empty?,
       'browser setup and smoke cannot skip or tolerate failures')
   end
+  {
+    'smoke' => ['Upload curated evidence only', "always() && steps.harness.outputs.evidence_ready == 'true'"],
+    'journeys' => ['Upload credential-checked screenshots, redacted results and cleanup journal',
+      "always() && steps.audit.outputs.publishable == 'true'"],
+  }.each do |id, (name, condition)|
+    uploads = workflow.fetch('jobs').fetch(id).fetch('steps').select do |step|
+      step['uses'].to_s.start_with?('actions/upload-artifact@')
+    end
+    require_check(uploads.size == 1, "#{id} must retain exactly one curated evidence upload")
+    upload = uploads.first
+    require_check(upload['name'] == name && upload['if'] == condition &&
+      (upload.keys & %w[run continue-on-error]).empty?, "#{id} evidence upload must preserve its audit condition")
+    require_check(upload.dig('with', 'retention-days') == 21, "#{id} evidence must be retained for 21 days")
+  end
   structure = repo.fetch('jobs').fetch('structure')
   require_check(!structure.key?('if') && !structure.key?('continue-on-error'), 'Repository structure must be required')
   checks = structure.fetch('steps').select { |s| s['name'] == 'Nightly smoke workflow regressions' }
@@ -63,6 +77,23 @@ end
 [{'if' => 'false'}, {'continue-on-error' => true}, {'shell' => 'bash {0} || true'}].each do |bypass|
   mutations << ->(w, _) { w['jobs']['smoke']['steps'][install_index].merge!(bypass) }
   mutations << ->(_, r) { r['jobs']['structure']['steps'].find { |s| s['name'] == 'Nightly smoke workflow regressions' }.merge!(bypass) }
+end
+%w[smoke journeys].each do |id|
+  upload_index = workflow['jobs'][id]['steps'].index { |step| step['uses'].to_s.start_with?('actions/upload-artifact@') }
+  [
+    ->(step) { step['with']['retention-days'] = 7 },
+    ->(step) { step['with'].delete('retention-days') },
+    ->(step) { step['uses'] = 'actions/setup-node@v6' },
+    ->(step) { step['name'] = 'Unrelated artifact upload' },
+    ->(step) { step.delete('if') },
+    ->(step) { step['if'] = 'always()' },
+    ->(step) { step['if'] = 'false' },
+    ->(step) { step['continue-on-error'] = true },
+  ].each do |change|
+    mutations << ->(w, _) { change.call(w['jobs'][id]['steps'][upload_index]) }
+  end
+  mutations << ->(w, _) { w['jobs'][id]['steps'].delete_at(upload_index) }
+  mutations << ->(w, _) { w['jobs'][id]['steps'] << Marshal.load(Marshal.dump(w['jobs'][id]['steps'][upload_index])) }
 end
 mutations.each do |mutation|
   changed_workflow, changed_repo = Marshal.load(Marshal.dump([workflow, repo]))
