@@ -180,7 +180,7 @@ impl OwnershipCoordinator {
         id: &AgentId,
         operation: &Arc<LeaseWrite>,
         outcome: WriteOutcome,
-        mut completion: Option<&mut CleanupState>,
+        completion: Option<&mut CleanupState>,
         may_publish: bool,
     ) -> Result<Option<Arc<Authority>>, OwnershipError> {
         let mut owned = self.owned.lock().unwrap();
@@ -257,7 +257,7 @@ impl OwnershipCoordinator {
         } else {
             Authority::unpublished(lease.token.clone(), self.store.clone())
         };
-        if let Some(state) = completion.as_deref_mut() {
+        if let Some(state) = completion {
             if state.settlement.is_none() {
                 state.settlement = Some(Settlement::Superseded {
                     newer_epoch: lease.token.epoch,
