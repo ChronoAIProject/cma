@@ -2,7 +2,12 @@
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use layer2_core::{agent_ownership::OwnershipCoordinator, sandbox::store::SandboxStoreError};
+use layer2_core::{
+    agent_ownership::OwnershipCoordinator,
+    sandbox::store::{SandboxStoreError, StaleTurnSettlement},
+};
+use layer3_adapter::{stale_turn::StaleTurnHold, SandboxAdapter};
+use mongodb::bson::DateTime;
 use tokio::{
     sync::watch,
     task::JoinHandle,
@@ -31,6 +36,7 @@ pub(super) struct Worker {
     store: StaleTurnStore,
     ownership: Arc<OwnershipCoordinator>,
     registry: Arc<LiveAgentRegistry>,
+    terminal_adapter: Option<Arc<dyn SandboxAdapter>>,
     work: BackgroundWork,
     reported: HashMap<Candidate, (&'static str, Instant)>,
 }
@@ -40,11 +46,13 @@ impl Worker {
         store: Arc<MongoSandboxStore>,
         ownership: Arc<OwnershipCoordinator>,
         registry: Arc<LiveAgentRegistry>,
+        terminal_adapter: Option<Arc<dyn SandboxAdapter>>,
     ) -> Self {
         Self {
             store: StaleTurnStore::new(store),
             ownership,
             registry,
+            terminal_adapter,
             work: BackgroundWork::new(background::shared(), NAME, SWEEP_DEADLINE, INTERVAL),
             reported: HashMap::new(),
         }
@@ -132,20 +140,25 @@ impl Worker {
                     continue;
                 }
                 Ok(Ok(Observation::Hold(reason))) => reason,
-                Ok(Ok(Observation::Quiet { target, age })) => {
+                Ok(Ok(Observation::Quiet {
+                    target,
+                    age,
+                    evidence,
+                })) => {
                     oldest = Some(oldest.map_or(age, |previous: u64| previous.max(age)));
-                    match self.ownership.local(&target.agent_id).await {
-                        None => "owner_elsewhere",
-                        Some(authority)
-                            if self
-                                .registry
-                                .owned_target_is_recording(&target, &authority.token) =>
-                        {
-                            // The existing owner recorder already consumes all retained
-                            // frames in order. A second consumer could skip a receipt.
-                            "producer_seal_unavailable"
+                    let terminal = tokio::time::timeout_at(
+                        stop_investigating,
+                        self.try_terminal(&candidate, lease.now, target, evidence),
+                    )
+                    .await;
+                    match terminal {
+                        Ok(Ok(())) => {
+                            self.reported.remove(&candidate);
+                            outcome("terminal_recorded");
+                            continue;
                         }
-                        Some(_) => "recorder_unavailable",
+                        Ok(Err(reason)) => reason,
+                        Err(_) => "terminal_investigation_timeout",
                     }
                 }
                 Ok(Err(error)) => error.outcome(),
@@ -169,6 +182,94 @@ impl Worker {
             outcome("scan_lease_lost");
         }
         Ok(())
+    }
+
+    async fn try_terminal(
+        &self,
+        candidate: &Candidate,
+        now: DateTime,
+        target: super::LiveAgentTarget,
+        evidence: Box<crate::store::stale_turns::QuietTurn>,
+    ) -> Result<(), &'static str> {
+        let authority = self
+            .ownership
+            .local(&target.agent_id)
+            .await
+            .ok_or("owner_elsewhere")?;
+        authority
+            .run(async {
+                if !self
+                    .registry
+                    .owned_target_is_recording(&target, &authority.token)
+                {
+                    return Err("recorder_unavailable");
+                }
+                let adapter = self
+                    .terminal_adapter
+                    .as_ref()
+                    .ok_or("producer_seal_unavailable")?;
+                let expected = StaleTurnSettlement::target(
+                    &evidence.snapshot,
+                    &evidence.parent,
+                    &evidence.command,
+                    &authority.token,
+                )
+                .map_err(|_| "terminal_evidence_unavailable")?;
+                let producer = adapter
+                    .stale_turn_producer(&expected.runtime)
+                    .ok_or("producer_seal_unavailable")?;
+                let seal = producer
+                    .observe_stale_turn_seal(&expected)
+                    .await
+                    .map_err(|hold| match hold {
+                        StaleTurnHold::Unsupported => "producer_seal_unavailable",
+                        StaleTurnHold::Unconfirmed => "producer_seal_unconfirmed",
+                        StaleTurnHold::CanonicalResult => "canonical_result",
+                    })?;
+                if !seal.matches(&expected) {
+                    return Err("producer_seal_unconfirmed");
+                }
+                // Read a new majority snapshot after the probe. Only the attached
+                // recorder can drain retained frames and advance this checkpoint.
+                let fresh = self
+                    .store
+                    .observe(candidate, now)
+                    .await
+                    .map_err(|error| error.outcome())?;
+                let evidence = match fresh {
+                    Observation::Quiet {
+                        target: current,
+                        evidence,
+                        ..
+                    } if current == target => evidence,
+                    Observation::Hold(reason) => return Err(reason),
+                    Observation::Progressing => return Err("progressing"),
+                    Observation::Quiet { .. } => return Err("identity_changed"),
+                };
+                if !self
+                    .registry
+                    .owned_target_is_recording(&target, &authority.token)
+                {
+                    return Err("recorder_unavailable");
+                }
+                let settlement = StaleTurnSettlement::prepare(
+                    evidence.snapshot,
+                    evidence.parent,
+                    evidence.command,
+                    authority.token.clone(),
+                    seal,
+                    layer2_core::now_rfc3339(),
+                )
+                .map_err(|_| "terminal_evidence_unavailable")?;
+                Box::pin(self.store.settle(&settlement))
+                    .await
+                    .map_err(|error| match error {
+                        SandboxStoreError::Conflict => "terminal_conflict",
+                        _ => "terminal_unconfirmed",
+                    })
+            })
+            .await
+            .map_err(|_| "owner_changed")?
     }
 
     fn report_hold(&mut self, candidate: Candidate, reason: &'static str) {

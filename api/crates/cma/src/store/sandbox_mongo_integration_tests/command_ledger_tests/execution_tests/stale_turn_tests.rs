@@ -6,6 +6,8 @@ use crate::{
     store::stale_turns::{Candidate, Observation, StaleTurnStore},
 };
 
+mod settlement;
+
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
 async fn stale_turn_scan_holds_a_silent_dispatch_and_the_recorder_completes_it_once() {
@@ -68,7 +70,7 @@ async fn stale_turn_scan_holds_a_silent_dispatch_and_the_recorder_completes_it_o
     let future = DateTime::from_millis(DateTime::now().timestamp_millis() + 16 * 60 * 1000);
     let candidate = Candidate::from_row(row, future).unwrap();
     match scan.observe(&candidate, future).await.unwrap() {
-        Observation::Quiet { target, age } => {
+        Observation::Quiet { target, age, .. } => {
             assert_eq!(target.agent_id, agent.id);
             assert!(age >= 15 * 60);
         }

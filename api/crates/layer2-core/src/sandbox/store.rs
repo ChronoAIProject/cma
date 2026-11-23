@@ -74,6 +74,8 @@ pub use agent_admission::{
 mod agent_conversation;
 mod agent_conversation_capacity;
 pub use agent_conversation_capacity::AgentConversationCapacitySettlement;
+mod stale_turn_settlement;
+pub use stale_turn_settlement::StaleTurnSettlement;
 mod agent_message_checkpoint;
 mod agent_reopen;
 pub use agent_conversation::{

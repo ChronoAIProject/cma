@@ -16,6 +16,13 @@ use crate::{
 /// Drives the complete lifecycle of one sandbox and the agents inside it.
 #[async_trait::async_trait]
 pub trait SandboxAdapter: Send + Sync {
+    /// Advertise only where the pinned runtime supplies a qualified producer seal.
+    fn stale_turn_producer(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::stale_turn::StaleTurnProducer> {
+        None
+    }
     fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
         None
     }

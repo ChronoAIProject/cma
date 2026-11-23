@@ -6,6 +6,30 @@ use domain::{
 };
 use layer2_core::sandbox::{store::AgentMessageCheckpoint, AgentUpdateOutcome};
 
+pub(in crate::store) async fn apply_stale_turn(
+    store: &MongoSandboxStore,
+    proof: &layer2_core::sandbox::store::StaleTurnSettlement,
+    scope: &mut TransactionScope<'_>,
+) -> Result<(), ApplyError> {
+    let snapshot = proof.snapshot();
+    // The ordinary publication hook writes the current Mongo membership
+    // and owner fences before appending. The root requires that they exist.
+    let (_, published) = Box::pin(apply(
+        store,
+        (&snapshot.agent, None),
+        snapshot.checkpoint.as_ref(),
+        proof.checkpoint(),
+        Some(proof.mutation()),
+        &Authority::Live,
+        scope,
+    ))
+    .await?;
+    if published.is_none() {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
+    Ok(())
+}
+
 pub(in crate::store) async fn apply(
     store: &MongoSandboxStore,
     source: (&Agent, Option<&adoption::Prepared>),

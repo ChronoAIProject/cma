@@ -62,6 +62,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub managed_documents_enabled: bool,
     pub event_driven_reconciliation: bool,
     pub stale_turn_reconciliation: bool,
+    pub stale_turn_terminal: bool,
     pub skip_ineligible_reconciliation: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
@@ -125,6 +126,9 @@ impl SandboxLifecycleComposition {
                     dependencies.store.clone(),
                     ownership.clone(),
                     dependencies.registry.clone(),
+                    config
+                        .stale_turn_terminal
+                        .then(|| dependencies.adapter.clone()),
                 )
             })
         } else {

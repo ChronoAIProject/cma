@@ -2,8 +2,10 @@ use futures_util::TryStreamExt;
 use layer2_core::{
     ids::AgentCommandId,
     sandbox::{
-        agent_io::{AgentOwner, AgentResponseStatus, CommandDispatch},
-        AgentOperationDelivery, AgentOperationKind, AgentStatus, SandboxStatus, SandboxWorkStep,
+        agent_io::{AdmittedAgentCommand, AgentOwner, AgentResponseStatus, CommandDispatch},
+        store::AgentMessageSnapshot,
+        AgentOperationDelivery, AgentOperationKind, AgentStatus, Sandbox, SandboxStatus,
+        SandboxWorkStep,
     },
     seconds_from_rfc3339, AgentId,
 };
@@ -26,6 +28,7 @@ use progress::Progress;
 
 const NO_PROGRESS_SECONDS: u64 = 15 * 60;
 const MAX_DOCUMENT_BYTES: i64 = 128 * 1024;
+pub(super) const MAX_TURN_ROWS: u64 = progress::MAX_ROWS;
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Candidate {
@@ -38,7 +41,17 @@ pub(crate) struct Candidate {
 pub(crate) enum Observation {
     Progressing,
     Hold(&'static str),
-    Quiet { target: LiveAgentTarget, age: u64 },
+    Quiet {
+        target: LiveAgentTarget,
+        age: u64,
+        evidence: Box<QuietTurn>,
+    },
+}
+
+pub(crate) struct QuietTurn {
+    pub snapshot: AgentMessageSnapshot,
+    pub parent: Sandbox,
+    pub command: AdmittedAgentCommand,
 }
 
 impl Candidate {
@@ -206,7 +219,8 @@ impl StaleTurnStore {
             return Ok(Observation::Hold("runtime_identity_unavailable"));
         }
 
-        if let Some(checkpoint) = checkpoint::read(&row)? {
+        let checkpoint = checkpoint::read(&row)?;
+        if let Some(checkpoint) = &checkpoint {
             if !checkpoint.matches(&agent) || !checkpoint.assembly.is_empty() {
                 return Ok(Observation::Hold("output_uncommitted"));
             }
@@ -253,6 +267,11 @@ impl StaleTurnStore {
                 runtime_generation: candidate.generation,
             },
             age,
+            evidence: Box::new(QuietTurn {
+                snapshot: AgentMessageSnapshot { agent, checkpoint },
+                parent,
+                command,
+            }),
         })
     }
 }

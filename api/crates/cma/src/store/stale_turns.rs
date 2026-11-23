@@ -1,4 +1,4 @@
-//! Read-only turn evidence and a separate, resumable discovery cursor.
+//! Resumable stale-turn discovery and sealed terminal settlement.
 
 use std::sync::Arc;
 
@@ -9,8 +9,9 @@ use super::{agent_ownership::OWNERS, durability::majority_collection, MongoSandb
 
 mod evidence;
 mod scan;
+mod settlement;
 
-pub(crate) use evidence::{Candidate, Observation};
+pub(crate) use evidence::{Candidate, Observation, QuietTurn};
 
 pub(crate) struct StaleTurnStore {
     store: Arc<MongoSandboxStore>,
