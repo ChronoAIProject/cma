@@ -141,6 +141,8 @@ mod profile_documents;
 mod profile_draft_admission;
 #[cfg(test)]
 mod profile_index_tests;
+#[cfg(test)]
+mod profile_initial_publication_mongo_tests;
 mod profile_mongo;
 #[cfg(test)]
 mod profile_operator_mongo_integration_tests;

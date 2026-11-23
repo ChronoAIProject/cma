@@ -60,7 +60,6 @@ impl AgentProjectionServices {
         self.reads = self.reads.with_response_logs(reader);
         self
     }
-
     pub(crate) fn with_suggestions(
         mut self,
         store: Arc<dyn layer2_core::sandbox::suggestions::SuggestionStore>,
@@ -75,7 +74,6 @@ impl AgentProjectionServices {
         self.message_feedback = Some(store);
         self
     }
-
     pub(crate) fn with_skill_support(
         mut self,
         support: Arc<dyn layer1_public::rest::AgentSkillRuntimeSupport>,
@@ -83,7 +81,6 @@ impl AgentProjectionServices {
         self.skill_support = Some(support);
         self
     }
-
     pub(crate) fn with_commands(
         mut self,
         commands: Arc<layer2_core::sandbox::agent_io::AgentCommandService>,
@@ -324,6 +321,7 @@ impl AgentHistoryExporter for AdapterAgentHistoryExporter {
                     | AdapterError::RuntimeLedgerHold(_)
                     | AdapterError::AtCapacity(_) => AgentHistoryExportError::Unavailable,
                     AdapterError::Rejected(_)
+                    | AdapterError::DesktopFailed
                     | AdapterError::AccessRevoked
                     | AdapterError::SkillUpgradeRefused(_)
                     | AdapterError::OperationIdentityConflict(_)
@@ -388,6 +386,7 @@ fn resource_failure(sandbox_id: &str, error: AdapterError) -> SandboxResourceRea
             "the runtime does not support resource readings".into(),
         ),
         AdapterError::Rejected(_)
+        | AdapterError::DesktopFailed
         | AdapterError::AccessRevoked
         | AdapterError::SkillUpgradeRefused(_)
         | AdapterError::OperationIdentityConflict(_)
