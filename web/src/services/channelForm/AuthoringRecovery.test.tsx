@@ -55,13 +55,11 @@ it('warns before reload only after edits, retains the draft on cancellation, and
 });
 
 it('clears a rejected editable error when the producer type changes', async () => {
-  const fetcher = vi
-    .fn()
-    .mockResolvedValue(
-      new Response(JSON.stringify({ detail: '/sources/0/bot_id: Invalid bot identity' }), {
-        status: 400,
-      }),
-    );
+  const fetcher = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ detail: '/sources/0/bot_id: Invalid bot identity' }), {
+      status: 400,
+    }),
+  );
   vi.stubGlobal('fetch', fetcher);
   render(<ChannelEditor onDone={vi.fn()} denied={vi.fn()} />);
   choose('Producer 1 connection type', 'Direct Telegram bot');
@@ -94,4 +92,29 @@ it('keeps unknown-write errors and the original request through edits and retry,
   for (const key of ['method', 'body', 'headers'])
     expect(fetcher.mock.calls[1]![1][key]).toEqual(fetcher.mock.calls[0]![1][key]);
   expect(unload()).toBe(false);
+});
+
+it('clears the rejected field validity and description after correction', async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(
+      new Response(JSON.stringify({ detail: '/sources/0/bot_id: Check bot identity.' }), {
+        status: 400,
+      }),
+    );
+  vi.stubGlobal('fetch', fetcher);
+  render(<ChannelEditor onDone={vi.fn()} denied={vi.fn()} />);
+  choose('Producer 1 connection type', 'Direct Telegram bot');
+  change('Bot ID', '123');
+  change('Provider agent key', 'synthetic-provider-value');
+  fireEvent.submit(screen.getByRole('button', { name: 'Create channel' }).closest('form')!);
+  await screen.findByRole('alert');
+  expect(screen.getByLabelText('Bot ID')).toBeInvalid();
+  change('Bot ID', '456');
+  const field = screen.getByLabelText('Bot ID');
+  expect(field).toBeValid();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(field).not.toHaveAccessibleDescription(/Check bot identity/);
+  for (const id of (field.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean))
+    expect(document.getElementById(id)).not.toBeNull();
 });

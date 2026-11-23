@@ -1,3 +1,4 @@
+import { HmacCredentialsScope } from './channelForm/HmacCredentialsScope';
 import { ValidationMessageScope } from './channelForm/ValidationPath';
 import { useDraftReloadWarning } from './channelForm/useDraftReloadWarning';
 import { validateConnectorFields } from './channelForm/connectorValidation';
@@ -280,7 +281,13 @@ export function ChannelEditor({
       {!additional ? (
         <form
           className="service-form"
-          onInvalidCapture={(event) => revealInvalidField(event.target as HTMLElement)}
+          onInvalidCapture={(event) => {
+            const first = event.currentTarget.querySelector<HTMLElement>(
+              'input:invalid, textarea:invalid',
+            );
+            revealInvalidField(first ?? (event.target as HTMLElement));
+            first?.focus();
+          }}
           onSubmit={(e) => {
             e.preventDefault();
             submit('channel');
@@ -288,19 +295,21 @@ export function ChannelEditor({
         >
           <fieldset className="channel-form-section" disabled={pending !== undefined || busy}>
             <ValidationMessageScope value={!pending && !busy ? error : undefined}>
-              <NodeFields
-                active={active}
-                draft={draft}
-                onChange={editDraft}
-                credentials={credentials}
-                onCredentials={editCredentials}
-                section={section}
-                create={create}
-                sourceCount={baseline?.definition.sources.length ?? 0}
-                retainedAckDelay={object(baseline?.definition.reply).ack_after_ms}
-                savedCustomExecution={baseline?.definition.durable_custom_execution}
-                denied={denied}
-              />
+              <HmacCredentialsScope value={credentials} create={create}>
+                <NodeFields
+                  active={active}
+                  draft={draft}
+                  onChange={editDraft}
+                  credentials={credentials}
+                  onCredentials={editCredentials}
+                  section={section}
+                  create={create}
+                  sourceCount={baseline?.definition.sources.length ?? 0}
+                  retainedAckDelay={object(baseline?.definition.reply).ack_after_ms}
+                  savedCustomExecution={baseline?.definition.durable_custom_execution}
+                  denied={denied}
+                />
+              </HmacCredentialsScope>
             </ValidationMessageScope>
           </fieldset>
           {!pending ? (
