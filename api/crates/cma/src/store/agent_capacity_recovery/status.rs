@@ -27,6 +27,7 @@ pub(in crate::store) async fn read(
     id: &AgentId,
     request: Option<&RecoveryRequest>,
     now: &str,
+    observe_cohort: bool,
     scope: &mut TransactionScope<'_>,
 ) -> Result<RecoveryStatus, TransactionLogError> {
     let current = authority::capture(store, authorized, id, scope).await?;
@@ -61,7 +62,7 @@ pub(in crate::store) async fn read(
         // An absent row exposes no phase; it is not a KnownAbort assertion.
     }
     authority::require(authorized)?;
-    if store.segment_adoption_enabled && request.is_none() {
+    if observe_cohort && request.is_none() {
         let database = store.client.database(&store.agents.namespace().db);
         match writer_gate::read_scoped(&database, GateName::CapacityRecovery, scope).await {
             Ok(Some(gate))

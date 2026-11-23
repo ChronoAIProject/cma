@@ -39,9 +39,7 @@ pub(in crate::store) async fn admit(
         .map_err(|_| RecoveryError::Unavailable)?;
     let result = admission::persist_admission(store, input, &mut scope).await;
     let outcome = finish(scope.release(), result).await;
-    if store.segment_adoption_enabled {
-        observations::commit(observations::Stage::Admitted, &outcome);
-    }
+    observations::commit(observations::Stage::Admitted, &outcome);
     outcome
 }
 

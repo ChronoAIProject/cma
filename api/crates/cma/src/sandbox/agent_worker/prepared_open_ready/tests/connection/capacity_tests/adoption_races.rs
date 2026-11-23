@@ -269,7 +269,7 @@ async fn owner_cleanup_supersedes_staged_adoption() {
         let claimed = store.get_agent(&full.id).await.unwrap().unwrap();
         let target = AgentControlTarget::from(&claimed);
         let requested_at = rfc3339_at(SystemTime::now());
-        let AgentControlResult::Scheduled(mut cleanup) = store
+        let AgentControlResult::Scheduled(cleanup) = store
             .schedule_agent_stop(AgentStopRequest {
                 target,
                 requested_at,
@@ -280,8 +280,15 @@ async fn owner_cleanup_supersedes_staged_adoption() {
         else {
             panic!("expected fresh stop");
         };
-        if delete {
-            let stopped = publish_confirmed_stop(&worker, &store, &cleanup).await;
+        let stopped = tokio::time::timeout(
+            Duration::from_secs(30),
+            publish_confirmed_stop(&worker, &store, &cleanup),
+        )
+        .await
+        .expect("stop publication must finish while adoption is paused");
+        assert_eq!(stopped.status, AgentStatus::Stopped);
+        assert_eq!(stopped.work.step, AgentWorkStep::None);
+        let cleanup = if delete {
             let AgentControlResult::Scheduled(deletion) = store
                 .schedule_agent_delete(AgentDeleteRequest {
                     target: AgentControlTarget::from(&stopped),
@@ -292,8 +299,10 @@ async fn owner_cleanup_supersedes_staged_adoption() {
             else {
                 panic!("expected fresh delete");
             };
-            cleanup = deletion;
-        }
+            deletion
+        } else {
+            stopped
+        };
         barrier.resume.notify_one();
         let (fixture, result) = finish.await.unwrap();
         assert!(result.is_err());

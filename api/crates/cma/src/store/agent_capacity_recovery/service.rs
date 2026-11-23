@@ -151,6 +151,7 @@ impl RecoveryService {
             id,
             request,
             &layer2_core::now_rfc3339(),
+            self.features.enabled || self.store.segment_adoption_enabled,
             &mut scope,
         )
         .await;

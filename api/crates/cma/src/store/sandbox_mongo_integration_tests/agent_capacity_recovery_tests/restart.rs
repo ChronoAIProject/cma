@@ -17,6 +17,7 @@ use layer2_core::sandbox::agent_capacity_recovery::{
     state::{
         ConfirmedNativeState, RecoveryClaim, RecoveryConfirmation, RecoveryRequest, RecoveryWork,
     },
+    CapacityRecoveryDisposition,
 };
 use layer2_core::sandbox::{AgentOperationService, DurableAgentUpdateRecorder};
 use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
@@ -96,6 +97,18 @@ impl CapacityRecoveryRuntime for Native {
     }
 }
 
+fn assert_cohort_count(rendered: &str, stage: &str, outcome: &str, count: u64) {
+    assert!(
+        rendered.lines().any(|line| {
+            line.starts_with("cma_capacity_recovery_cohort_total{")
+                && line.contains(&format!("stage=\"{stage}\""))
+                && line.contains(&format!("outcome=\"{outcome}\""))
+                && line.ends_with(&format!(" {count}"))
+        }),
+        "expected {stage}/{outcome} to be {count}\n{rendered}"
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn capacity_completed_mongo_restart_retries_activation_without_republication() {
@@ -104,6 +117,7 @@ async fn capacity_completed_mongo_restart_retries_activation_without_republicati
     let _recorder = metrics::set_default_local_recorder(&recorder);
     let (client, name) = database("capacity_completed_restart").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert!(!store.segment_adoption_enabled);
     let agent = fixture::capacity_fixture(&store).await;
     let caller = Caller::new(
         agent.owner.clone(),
@@ -120,6 +134,15 @@ async fn capacity_completed_mongo_restart_retries_activation_without_republicati
         RecoveryService::new(store.clone(), transactions::access(&store))
             .with_features(CapacityRecoveryFeatures { enabled: true }),
     );
+    let dry_run = service.status(&caller, &agent.id, None).await.unwrap();
+    assert_eq!(
+        dry_run.disposition,
+        CapacityRecoveryDisposition::EvidenceRequired
+    );
+    assert_eq!(dry_run.phase, None);
+    let observed = metrics.render();
+    assert_cohort_count(&observed, "scanned", "observed", 1);
+    assert_cohort_count(&observed, "eligible", "observed", 1);
     let legacy_native = Native::default();
     let legacy_router =
         RecoveryReconnect::new(service.clone(), legacy_native.clone(), "legacy".into());
@@ -194,17 +217,10 @@ async fn capacity_completed_mongo_restart_retries_activation_without_republicati
     for (stage, outcome) in [
         ("completed", "committed"),
         ("completed", "replay"),
+        ("admitted", "committed"),
         ("admitted", "replay"),
     ] {
-        assert!(
-            rendered.lines().any(|line| {
-                line.starts_with("cma_capacity_recovery_cohort_total{")
-                    && line.contains(&format!("stage=\"{stage}\""))
-                    && line.contains(&format!("outcome=\"{outcome}\""))
-                    && line.ends_with(" 1")
-            }),
-            "{rendered}"
-        );
+        assert_cohort_count(&rendered, stage, outcome, 1);
     }
     let native = Native::default();
     let router = Arc::new(RecoveryReconnect::new(
