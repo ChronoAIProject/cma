@@ -54,7 +54,7 @@ import { useReportOwner } from './usage/metrics/reportOwner';
 import { OperationsRoute } from './operator/OperationsRoute';
 export function ConsoleContent({
   settlements,
-  selectedRetired,
+  selectedRetired: observedRetired,
   user,
   authEpoch = 0,
   visible = true,
@@ -102,6 +102,8 @@ export function ConsoleContent({
     personalAgentId,
   } = useConsoleAgentAccess(client, selectedAgent, user.id);
   const accessUncertain = useIdentityUncertain() || agentAccessUncertain;
+  const selectedRetired =
+    personalAgentId === selectedAgent && !accessUncertain ? observedRetired : undefined;
   const onAgentIntent = useNavigationOpeningPreparation(client, user.id, navigationScope === '');
   const operator = useOperatorClient();
   const publisher = usePublisherClient();
@@ -233,6 +235,7 @@ export function ConsoleContent({
     ) : route.kind === 'agent' ? (
       <CharacterColorContext value={located?.sandbox.color}>
         <AgentSurface
+          selectedRetired={selectedRetired}
           computerObservation={computerObservation}
           key={route.agentId}
           user={user}
@@ -424,11 +427,7 @@ export function ConsoleContent({
               <ManagerNavigation
                 ref={environments.ref}
                 authEpoch={authEpoch}
-                selectedRetired={
-                  personalAgentId === selectedAgent && !accessUncertain
-                    ? selectedRetired
-                    : undefined
-                }
+                selectedRetired={selectedRetired}
                 attention={environments.attention}
                 unknownDeletingSandboxIds={actions.unknownDeletingSandboxIds}
                 client={scopeClient}

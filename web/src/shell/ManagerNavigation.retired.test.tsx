@@ -1,4 +1,5 @@
-import { act, render, screen } from '@testing-library/react';
+import { useNavigationFilterState } from './navigationFilterState';
+import { act, render, renderHook, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createRef, useState } from 'react';
 import { expect, it, vi } from 'vitest';
@@ -165,4 +166,19 @@ it('keeps the authorized retired row when navigation fails without inventing an 
   expect(screen.getByRole('group', { name: 'Retired' })).toBeVisible();
   expect(screen.getByRole('alert')).toHaveTextContent('Navigation read unavailable');
   expect(screen.queryByText('No other agents to show.')).not.toBeInTheDocument();
+});
+
+it('targets the personal Environment filter without replacing another scope’s preferences', () => {
+  const view = renderHook(({ scope }) => useNavigationFilterState(viewerId, scope), {
+    initialProps: { scope: 'organization:example' },
+  });
+  act(() => view.result.current.select('agent', 'working'));
+  act(() => view.result.current.select('sandbox', 'paused'));
+  act(() => view.result.current.select('sandbox', 'failed', ''));
+  expect(view.result.current.statuses).toEqual({ agent: 'working', sandbox: 'paused' });
+  view.rerender({ scope: '' });
+  expect(view.result.current.statuses).toEqual({ agent: 'all', sandbox: 'failed' });
+  act(() => view.result.current.select('agent', 'stopped'));
+  view.rerender({ scope: 'organization:example' });
+  expect(view.result.current.statuses).toEqual({ agent: 'working', sandbox: 'paused' });
 });

@@ -107,6 +107,25 @@ for (const width of [1440, 390, 320]) {
         'still',
       );
       await capture(page, info, 'runtime-attention', dark);
+      await sidebar.getByRole('button', { name: 'Environments', exact: true }).click();
+      await sidebar.getByRole('button', { name: 'Filter', exact: true }).click();
+      await sidebar.getByRole('button', { name: 'Sandbox status filter' }).click();
+      await page.getByRole('menuitemradio', { name: 'Paused', exact: true }).click();
+      await sidebar.getByRole('button', { name: 'Tasks', exact: true }).click();
+      await navigation(page, false);
+      await expect(
+        page
+          .getByRole('main')
+          .getByText('2 sandboxes couldn’t update their runtime', { exact: true }),
+      ).toBeVisible();
+      await page.getByRole('main').getByRole('button', { name: 'Review', exact: true }).click();
+      await expect(sidebar.getByRole('tree', { name: 'Needs attention sandboxes' })).toBeVisible();
+      await expect(
+        sidebar
+          .getByRole('tree', { name: 'Needs attention sandboxes' })
+          .locator('[role=treeitem][aria-level=1]'),
+      ).toHaveCount(2);
+      await sidebar.getByRole('button', { name: 'Tasks', exact: true }).click();
       await disclosure
         .getByRole('button', { name: 'Environment without Agents', exact: true })
         .click();
@@ -180,6 +199,17 @@ for (const width of [1440, 390, 320]) {
         await footer.evaluate((element) => element.closest('.manager-navigation__list') === null),
       ).toBe(true);
       await capture(page, info, 'cleanup-footer', dark);
+      if (width === 320) {
+        await page.setViewportSize({ width, height: 480 });
+        expect(
+          await footer.evaluate((element) => {
+            const account = document.querySelector('.sidebar__account')!.getBoundingClientRect();
+            return (
+              element.getBoundingClientRect().bottom <= account.top && account.bottom <= innerHeight
+            );
+          }),
+        ).toBe(true);
+      }
       await navigation(page, false);
       await expect(
         page.getByRole('main').getByText('Environment limit reached', { exact: false }),
