@@ -185,10 +185,33 @@ pub(super) fn provider_failure_detail(error: &crate::providers::ProviderError) -
     format!("provider request failed: {reason}")
 }
 
+/// Name the provider's answer without echoing arbitrary provider text.
+fn release_refused_detail(status: u16, code: &str) -> String {
+    let named = !code.is_empty()
+        && code.len() <= 64
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+    let answer = if named {
+        format!("HTTP {status} {code}")
+    } else {
+        format!("HTTP {status}")
+    };
+    format!(
+        "The provider refused to release this channel's binding ({answer}). The channel was not deleted and keeps its version. A channel whose creation never became ready cannot process events. The provider must release the binding, or report it absent with 404, before deletion can complete."
+    )
+}
+
+#[cfg(test)]
+#[path = "management_release_tests.rs"]
+mod release_tests;
+
 pub(super) fn management_error(error: ManagementError) -> Response {
     use crate::telemetry::http_failure::FailureStage;
     let stage = match &error {
-        ManagementError::Provider(_) => FailureStage::ChannelProvider,
+        ManagementError::Provider(_) | ManagementError::ReleaseRefused { .. } => {
+            FailureStage::ChannelProvider
+        }
         ManagementError::Record(_) | ManagementError::NotFound => FailureStage::ChannelRecord,
         ManagementError::Invalid(_) => FailureStage::RequestValidation,
         _ => FailureStage::ChannelOperation,
@@ -275,6 +298,11 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             StatusCode::CONFLICT,
             ProblemCode::Conflict,
             format!("expected version {expected}, actual {actual:?}"),
+        ),
+        ManagementError::ReleaseRefused { status, code } => (
+            StatusCode::CONFLICT,
+            ProblemCode::ProviderRejected,
+            release_refused_detail(status, &code),
         ),
         ManagementError::Unauthorized => (
             StatusCode::UNAUTHORIZED,

@@ -392,7 +392,9 @@ async fn issue_1164_peer_reopen_stops_when_the_original_claim_expires() {
     fixture.backend.hold_reopen.store(true, Ordering::SeqCst);
     let relay = replicas[(owner + 1) % replicas.len()].relay.clone();
     let agent_id = agent.id.clone();
-    let call = tokio::spawn(async move { relay.reopen_agent(&claim, &agent_id).await });
+    let attempted = claim.clone();
+    let caller = relay.clone();
+    let call = tokio::spawn(async move { caller.reopen_agent(&attempted, &agent_id).await });
     tokio::time::timeout(
         Duration::from_secs(2),
         fixture.backend.reopen_entered.notified(),
@@ -404,6 +406,21 @@ async fn issue_1164_peer_reopen_stops_when_the_original_claim_expires() {
         .unwrap()
         .unwrap()
         .is_err());
+    // A later invocation with that same expired claim must never open a new
+    // channel, even though the Agent's owner and the Sandbox revision match.
+    assert!(tokio::time::timeout(
+        Duration::from_secs(2),
+        relay.reopen_agent(&claim, &agent.id)
+    )
+    .await
+    .unwrap()
+    .is_err());
+    assert!(tokio::time::timeout(
+        Duration::from_millis(50),
+        fixture.backend.reopen_entered.notified(),
+    )
+    .await
+    .is_err());
     fixture.backend.reopen_release.notify_one();
     assert!(!workers[owner]
         .1

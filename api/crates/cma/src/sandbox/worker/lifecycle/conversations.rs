@@ -94,9 +94,12 @@ impl SandboxWorker {
                         receipts.insert(agent.id.clone(), receipt);
                     }
                     Err(failure) => {
+                        tracing::warn!(sandbox_id = %sandbox.id, agent_id = %agent.id,
+                            stage = "relayed_reopen", error = %failure.detail(),
+                            "Lifecycle conversation reopen failed");
                         return self
                             .rollback_reopen(sandbox, attachments, failure, now)
-                            .await
+                            .await;
                     }
                 }
                 continue;
@@ -157,9 +160,12 @@ impl SandboxWorker {
                         .await
                 }
                 Err(failure) => {
+                    tracing::warn!(sandbox_id = %sandbox.id, agent_id = %agent.id,
+                        stage = "reconnect", error = %failure.detail(),
+                        "Lifecycle conversation reopen failed");
                     return self
                         .rollback_reopen(sandbox, attachments, failure, now)
-                        .await
+                        .await;
                 }
             };
             if let Some(settings) = &agent.conversation.settings {

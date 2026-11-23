@@ -276,3 +276,32 @@ it('keeps the selected file stable while its save is pending', async () => {
   await waitFor(() => expect(screen.getByRole('button', { name: 'hello.txt' })).toBeEnabled());
   expect(screen.getByRole('textbox', { name: 'Contents of hello.txt' })).toHaveValue('saved draft');
 });
+it('clears a failed listing alert once refreshing that folder succeeds', async () => {
+  let failing = true;
+  const list = vi.fn(async (_id: string, path: string) => {
+    if (failing) throw new AgentFileError('Files are temporarily unavailable.', 503);
+    return path === '' ? [file] : [];
+  });
+  fixture(false, { list });
+  expect(await screen.findByRole('alert')).toHaveTextContent('temporarily unavailable');
+  failing = false;
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh files' }));
+  await screen.findByRole('button', { name: 'hello.txt' });
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+it('keeps a save failure visible when an unrelated folder refresh succeeds', async () => {
+  const write = vi
+    .fn()
+    .mockRejectedValue(
+      new AgentFileError('The file changed; refresh before saving.', 409, 'file_conflict'),
+    );
+  const { client } = fixture(false, { write });
+  await userEvent.click(await screen.findByRole('button', { name: 'hello.txt' }));
+  const editor = await screen.findByRole('textbox', { name: 'Contents of hello.txt' });
+  fireEvent.change(editor, { target: { value: 'updated' } });
+  await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('file changed');
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh files' }));
+  await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
+  expect(screen.getByRole('alert')).toHaveTextContent('file changed');
+});

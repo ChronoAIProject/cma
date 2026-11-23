@@ -142,6 +142,25 @@ mod shared_output_tests {
 }
 
 #[test]
+fn privacy_export_requires_explicit_opt_in() {
+    let key = "CHRONO_ACCOUNT_PRIVACY_EXPORT_ENABLED";
+    assert!(!configured(&[]).unwrap().features.privacy_export_enabled);
+    assert!(
+        !configured(&[(key, "false")])
+            .unwrap()
+            .features
+            .privacy_export_enabled
+    );
+    assert!(
+        configured(&[(key, "true")])
+            .unwrap()
+            .features
+            .privacy_export_enabled
+    );
+    assert!(configured(&[(key, "TRUE")]).is_err());
+}
+
+#[test]
 fn direct_oauth_resource_is_optional_and_requires_a_fixed_secure_audience() {
     let key = "CHRONO_NYXID_OAUTH_API_RESOURCE";
     assert!(configured(&[]).unwrap().nyxid_oauth_api_resource.is_none());

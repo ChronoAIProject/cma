@@ -48,17 +48,21 @@ impl SandboxWorker {
             })
         };
         let _serial = gate.lock().await;
-        let agents = self.reopen_agents.get().ok_or_else(refused)?.clone();
+        let agents = self
+            .reopen_agents
+            .get()
+            .ok_or_else(|| refuse_at(id, "agents_unavailable"))?
+            .clone();
         let authority = execution_authority()
             .filter(|owner| owner.token.agent_id == *id)
-            .ok_or_else(refused)?;
+            .ok_or_else(|| refuse_at(id, "owner_authority"))?;
         let sandbox = self
             .dependencies
             .store
             .get_sandbox(&call.sandbox_id)
             .await
-            .map_err(|_| refused())?
-            .ok_or_else(refused)?;
+            .map_err(|_| refuse_at(id, "sandbox_read"))?
+            .ok_or_else(|| refuse_at(id, "sandbox_missing"))?;
         if sandbox.revision != call.revision
             || sandbox.work.lease.as_ref().is_none_or(|lease| {
                 lease.holder != call.lease.holder
@@ -66,38 +70,38 @@ impl SandboxWorker {
                     || lease.expires_at < call.lease.expires_at
             })
         {
-            return Err(refused());
+            return Err(refuse_at(id, "caller_lease_changed"));
         }
         let deadline =
             Instant::now() + Duration::from_secs(layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS);
         let agent = agents
             .get_agent(id)
             .await
-            .map_err(|_| refused())?
-            .ok_or_else(refused)?;
+            .map_err(|_| refuse_at(id, "agent_read"))?
+            .ok_or_else(|| refuse_at(id, "agent_missing"))?;
         if !sandbox.restores_agent(&agent) {
-            return Err(refused());
+            return Err(refuse_at(id, "agent_not_restored"));
         }
         let generation = sandbox
             .runtime
             .as_ref()
             .and_then(|runtime| runtime.provision_generation)
-            .ok_or_else(refused)?;
+            .ok_or_else(|| refuse_at(id, "runtime_generation"))?;
         let conversation = agent
             .conversation
             .conversation_id
             .clone()
-            .ok_or_else(refused)?;
+            .ok_or_else(|| refuse_at(id, "conversation_missing"))?;
         if sandbox.retained_home_recovery().is_none()
             && !super::checkpoint::pinned_checkpoint(&sandbox)
-                .map_err(|_| refused())?
+                .map_err(|_| refuse_at(id, "checkpoint_read"))?
                 .conversations
                 .iter()
                 .any(|captured| {
                     captured.agent_id == *id && captured.conversation_id == conversation
                 })
         {
-            return Err(refused());
+            return Err(refuse_at(id, "checkpoint_conversation"));
         }
         let guard = AgentReopenGuard {
             sandbox: SandboxMutationGuard::capture(&sandbox),
@@ -107,7 +111,7 @@ impl SandboxWorker {
         };
         guard
             .validate(&sandbox, &agent, &now_rfc3339())
-            .map_err(|_| refused())?;
+            .map_err(|_| refuse_at(id, "guard_invalid"))?;
         {
             let mut pending = self.pending_reopens.lock().unwrap();
             if let Some(previous) = pending.get(id) {
@@ -124,14 +128,15 @@ impl SandboxWorker {
             .store
             .get_worktree(&agent.worktree_id)
             .await
-            .map_err(|_| refused())?
-            .ok_or_else(refused)?;
+            .map_err(|_| refuse_at(id, "worktree_read"))?
+            .ok_or_else(|| refuse_at(id, "worktree_missing"))?;
         if worktree.status != WorktreeStatus::Ready
             || agent.validate_prerequisites(&worktree).is_err()
         {
-            return Err(refused());
+            return Err(refuse_at(id, "worktree_not_ready"));
         }
-        let runtime = super::super::support::runtime(&sandbox).ok_or_else(refused)?;
+        let runtime = super::super::support::runtime(&sandbox)
+            .ok_or_else(|| refuse_at(id, "runtime_binding"))?;
         let request = AgentOpenRequest::new(
             format!("agent:{id}:open:v1"),
             runtime_options(&agent, &sandbox, &worktree),
@@ -147,7 +152,8 @@ impl SandboxWorker {
                     &sandbox,
                     &self.config.deployment_id,
                 )
-                .await?;
+                .await
+                .map_err(reopen_failed(id, "adopt_runtime"))?;
                 let channel = drain(
                     self.dependencies.adapter.reconnect_agent(
                         &runtime,
@@ -161,10 +167,13 @@ impl SandboxWorker {
                     id,
                     &guard,
                 )
-                .await?;
+                .await
+                .map_err(reopen_failed(id, "reconnect"))?;
                 if channel.conversation_id.as_deref() != Some(&conversation) {
-                    return Err(AdapterError::Rejected(
-                        "runtime returned a different retained conversation identity".into(),
+                    return Err(reopen_failed(id, "conversation_mismatch")(
+                        AdapterError::Rejected(
+                            "runtime returned a different retained conversation identity".into(),
+                        ),
                     ));
                 }
                 if let Some(settings) = &agent.conversation.settings {
@@ -175,15 +184,16 @@ impl SandboxWorker {
                         id,
                         &guard,
                     )
-                    .await?;
+                    .await
+                    .map_err(reopen_failed(id, "settings"))?;
                 }
                 Ok(channel)
             }),
         )
         .await
-        .map_err(|_| refused())??;
+        .map_err(|_| refuse_at(id, "reopen_deadline"))??;
         if !authority.is_current() || Instant::now() >= claim.expires() {
-            return Err(refused());
+            return Err(refuse_at(id, "publication_authority"));
         }
         let attachment = self
             .dependencies
@@ -198,7 +208,7 @@ impl SandboxWorker {
                 receiver,
                 self.dependencies.updates.clone(),
             )
-            .map_err(|_| refused())?;
+            .map_err(|_| refuse_at(id, "registry_attach"))?;
         let receipt = AgentWorkReceipt {
             step: AgentWorkStep::OpenConversation,
             operation_id: request.operation_id,
@@ -319,4 +329,19 @@ impl Drop for StagedReopen {
 
 fn refused() -> AdapterError {
     AdapterError::Unavailable("lifecycle reopen authority changed".into())
+}
+
+fn refuse_at(id: &AgentId, reason: &'static str) -> AdapterError {
+    tracing::warn!(agent_id = %id, reason, "Owner lifecycle reopen refused");
+    refused()
+}
+
+fn reopen_failed<'a>(
+    id: &'a AgentId,
+    stage: &'static str,
+) -> impl FnOnce(AdapterError) -> AdapterError + 'a {
+    move |error| {
+        tracing::warn!(agent_id = %id, stage, error = %error, "Owner lifecycle reopen failed");
+        error
+    }
 }

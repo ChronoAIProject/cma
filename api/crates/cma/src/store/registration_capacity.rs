@@ -363,14 +363,16 @@ fn read_count(document: &Document) -> Result<u64, StoreError> {
 pub(crate) async fn is_public(
     admissions: &Collection<Document>,
     owner: &SubjectId,
-    session: &mut ClientSession,
+    session: Option<&mut ClientSession>,
 ) -> Result<bool, mongodb::error::Error> {
-    admissions
+    let query = admissions
         .find_one(registration_key(owner))
-        .projection(doc! {"_id":1})
-        .session(session)
-        .await
-        .map(|row| row.is_some())
+        .projection(doc! {"_id":1});
+    let receipt = match session {
+        Some(session) => query.session(session).await?,
+        None => query.await?,
+    };
+    Ok(receipt.is_some())
 }
 
 fn unavailable(message: &str) -> StoreError {

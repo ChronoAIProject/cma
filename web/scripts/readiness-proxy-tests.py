@@ -3,6 +3,7 @@
 
 Only upstream addresses and the static root change in the application config.
 This verifies the web fallback hop, not the privately managed edge controller.
+The desktop socket route policy is checked statically from the same file.
 """
 
 import http.client
@@ -138,6 +139,31 @@ server {
         for body in [b"{", b"null", b"[]", b'{}', b'{"status":"ready"}']:
             with self.subTest(body=body):
                 self.assertFalse(ready((200, {"content-type": "application/json"}, body)))
+
+
+class DesktopSocketRoutes(unittest.TestCase):
+    """Static policy for both browser desktop socket routes; no container needed."""
+
+    # Agent Manager closes a desktop relay after 30 minutes. An idle RFB stream can
+    # send nothing for longer than nginx's 60 s default, so the proxy must not cut it.
+    RELAY_LIFETIME_SECONDS = 30 * 60
+
+    def test_both_desktop_socket_routes_upgrade_and_stay_open_while_idle(self):
+        config = (ROOT / "web/nginx.conf").read_text()
+        blocks = re.findall(r"location ~ (\S*/desktop/ws\$) \{(.*?)\n    \}", config, re.S)
+        self.assertEqual(
+            [route for route, _ in blocks],
+            [r"^/api/v1/agents/[^/]+/desktop/ws$",
+             r"^/api/agent-manager/v1/agents/[^/]+/desktop/ws$"],
+        )
+        for route, body in blocks:
+            with self.subTest(route=route):
+                self.assertIn("proxy_set_header Upgrade $desktop_websocket_upgrade;", body)
+                self.assertIn("proxy_set_header Connection $desktop_websocket_connection;", body)
+                self.assertIn("proxy_buffering off;", body)
+                timeout = re.search(r"proxy_read_timeout (\d+)s;", body)
+                self.assertIsNotNone(timeout, "the 60 s default would cut an idle desktop")
+                self.assertGreaterEqual(int(timeout[1]), self.RELAY_LIFETIME_SECONDS)
 
 
 if __name__ == "__main__":

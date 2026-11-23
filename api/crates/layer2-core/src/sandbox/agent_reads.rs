@@ -29,6 +29,8 @@ mod authorized;
 mod composition;
 #[path = "agent_reads/observation.rs"]
 mod observation;
+#[path = "agent_reads/privacy_export.rs"]
+pub mod privacy_export;
 #[path = "agent_reads/recovery.rs"]
 mod recovery;
 #[path = "agent_reads/transcript_pages.rs"]
