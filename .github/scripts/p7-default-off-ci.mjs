@@ -57,11 +57,7 @@ export function configure(original, { web, output, origin }) {
 
 function sourceIdentity(repository) {
   const git = (...args) => execFileSync("git", args, { cwd: repository, encoding: "utf8" }).trim();
-  assert.equal(
-    git("status", "--porcelain", "--", "web", ".github/scripts", ".github/workflows/ci-web.yml"),
-    "",
-    "Source must be clean",
-  );
+  assert.equal(git("status", "--porcelain"), "", "Source must be clean");
   return { revision: git("rev-parse", "HEAD"), tree: git("rev-parse", "HEAD^{tree}") };
 }
 

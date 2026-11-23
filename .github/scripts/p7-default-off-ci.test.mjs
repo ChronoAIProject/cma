@@ -225,6 +225,13 @@ test("a failed build and a local environment file stop before browser execution"
   await assert.rejects(run(other), /cannot inherit/);
 });
 
+test("uncommitted inputs outside web also invalidate checkout qualification", async (t) => {
+  const f = await fixture(t, "");
+  await mkdir(join(f.repository, "api/fixtures"), { recursive: true });
+  await writeFile(join(f.repository, "api/fixtures/contract.json"), "{}");
+  await assert.rejects(run(f), /Source must be clean/);
+});
+
 for (const phase of ["build", "browser"])
   for (const signal of ["SIGINT", "SIGTERM"])
     test(`CLI ${signal} during ${phase} stays failed and cleans owned resources`, async (t) => {
