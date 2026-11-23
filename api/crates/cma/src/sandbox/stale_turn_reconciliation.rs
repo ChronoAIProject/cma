@@ -18,7 +18,7 @@ use super::LiveAgentRegistry;
 use crate::{
     background::{self, BackgroundWork},
     store::{
-        stale_turns::{Candidate, Observation, StaleTurnStore},
+        stale_turns::{Candidate, Observation, ProofBudget, StaleTurnStore},
         MongoSandboxStore,
     },
     worker_supervision::{self, Activity},
@@ -128,9 +128,10 @@ impl Worker {
                 continue;
             }
             investigations += 1;
+            let mut budget = ProofBudget::default();
             let observation = tokio::time::timeout_at(
                 stop_investigating,
-                self.store.observe(&candidate, lease.now),
+                self.store.observe(&candidate, lease.now, &mut budget),
             )
             .await;
             let reason = match observation {
@@ -148,7 +149,7 @@ impl Worker {
                     oldest = Some(oldest.map_or(age, |previous: u64| previous.max(age)));
                     let terminal = tokio::time::timeout_at(
                         stop_investigating,
-                        self.try_terminal(&candidate, lease.now, target, evidence),
+                        self.try_terminal(&candidate, lease.now, target, evidence, &mut budget),
                     )
                     .await;
                     match terminal {
@@ -190,6 +191,7 @@ impl Worker {
         now: DateTime,
         target: super::LiveAgentTarget,
         evidence: Box<crate::store::stale_turns::QuietTurn>,
+        budget: &mut ProofBudget,
     ) -> Result<(), &'static str> {
         let authority = self
             .ownership
@@ -218,22 +220,29 @@ impl Worker {
                 let producer = adapter
                     .stale_turn_producer(&expected.runtime)
                     .ok_or("producer_seal_unavailable")?;
-                let seal = producer
-                    .observe_stale_turn_seal(&expected)
+                let producer_evidence = producer
+                    .observe_stale_turn_seal(&expected, budget.remaining() as usize)
                     .await
                     .map_err(|hold| match hold {
                         StaleTurnHold::Unsupported => "producer_seal_unavailable",
                         StaleTurnHold::Unconfirmed => "producer_seal_unconfirmed",
                         StaleTurnHold::CanonicalResult => "canonical_result",
                     })?;
+                let seal = producer_evidence.seal;
                 if !seal.matches(&expected) {
                     return Err("producer_seal_unconfirmed");
                 }
+                let seal_bytes = serde_json::to_vec(&seal)
+                    .map_err(|_| "producer_seal_unconfirmed")?
+                    .len();
+                let bytes_read = i64::try_from(producer_evidence.bytes_read.max(seal_bytes))
+                    .map_err(|_| "proof_byte_budget")?;
+                budget.charge(bytes_read).map_err(|error| error.outcome())?;
                 // Read a new majority snapshot after the probe. Only the attached
                 // recorder can drain retained frames and advance this checkpoint.
                 let fresh = self
                     .store
-                    .observe(candidate, now)
+                    .observe(candidate, now, budget)
                     .await
                     .map_err(|error| error.outcome())?;
                 let evidence = match fresh {
@@ -261,9 +270,10 @@ impl Worker {
                     layer2_core::now_rfc3339(),
                 )
                 .map_err(|_| "terminal_evidence_unavailable")?;
-                Box::pin(self.store.settle(&settlement))
+                Box::pin(self.store.settle(&settlement, budget))
                     .await
                     .map_err(|error| match error {
+                        _ if budget.remaining() == 0 => "proof_byte_budget",
                         SandboxStoreError::Conflict => "terminal_conflict",
                         _ => "terminal_unconfirmed",
                     })

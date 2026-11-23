@@ -1,4 +1,5 @@
 //! Read-only captured source. Unsupported contexts refuse before any write.
+use futures_util::TryStreamExt;
 use layer2_core::sandbox::{
     store::SandboxStoreError, Agent, AgentLogEntry, AgentLogProjectionState,
 };
@@ -215,6 +216,45 @@ pub(in crate::store) async fn capture_transaction(
         database: store.agents.namespace().db,
     };
     source(store, current, &row, scope.session(), context, false).await
+}
+
+/// Size the exact segment that the conversation writer will hash. Keep the
+/// source rows on the server until their total fits the caller's proof budget.
+pub(in crate::store) async fn stale_turn_segment_bytes(
+    store: &MongoSandboxStore,
+    id: &layer2_core::AgentId,
+    row: &Document,
+    remaining: i64,
+    scope: &mut TransactionScope<'_>,
+) -> Result<i64, TransactionLogError> {
+    let head = super::read_head(store, row, scope.session(), false).await?;
+    if head.active_bytes > remaining || head.active_count == 0 {
+        return Ok(head.active_bytes);
+    }
+    let session = scope.session();
+    let mut cursor = store
+        .agent_log
+        .aggregate([
+            doc! {"$match": {"agent_id": id.as_str(), "seq": {
+                "$gte": head.active_start_seq, "$lte": head.last_seq,
+            }}},
+            doc! {"$group": {"_id": null, "bytes": {"$sum": {"$toLong": {"$bsonSize": "$$ROOT"}}}}},
+        ])
+        .max_time(std::time::Duration::from_secs(1))
+        .session(&mut *session)
+        .await
+        .map_err(TransactionLogError::Driver)?;
+    let totals = cursor
+        .stream(session)
+        .try_next()
+        .await
+        .map_err(TransactionLogError::Driver)?
+        .ok_or_else(super::corrupt)?;
+    let bytes = totals.get_i64("bytes").map_err(|_| super::corrupt())?;
+    if bytes != head.active_bytes {
+        return Err(super::corrupt().into());
+    }
+    Ok(bytes)
 }
 
 pub(in crate::store) async fn points_transaction(

@@ -20,7 +20,7 @@ pub(in crate::store) async fn apply_stale_turn(
         snapshot.checkpoint.as_ref(),
         proof.checkpoint(),
         Some(proof.mutation()),
-        &Authority::Live,
+        &Authority::StaleTurn,
         scope,
     ))
     .await?;
@@ -127,7 +127,11 @@ pub(in crate::store) async fn apply(
                 .map_err(ApplyError::Domain)?;
         }
         let receipt = Box::pin(super::apply(
-            ScanCaller::Checkpoint,
+            if matches!(authority, Authority::StaleTurn) {
+                ScanCaller::StaleTurnSettlement
+            } else {
+                ScanCaller::Checkpoint
+            },
             store,
             mutation,
             capacity,

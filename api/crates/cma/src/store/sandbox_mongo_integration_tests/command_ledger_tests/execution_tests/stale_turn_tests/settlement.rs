@@ -14,11 +14,14 @@ use layer3_adapter::{
     RuntimeOutputSource, SessionUpdate,
 };
 
+mod competing;
+use competing::{Competition, Race};
+
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
 async fn stale_turn_seal_settles_once_and_replays_after_checkpoint_advance() {
     for segmented in [false, true] {
-        Box::pin(exercise_settlement(segmented, None)).await;
+        Box::pin(exercise_settlement(segmented, None, None)).await;
     }
 }
 
@@ -26,10 +29,24 @@ async fn stale_turn_seal_settles_once_and_replays_after_checkpoint_advance() {
 #[ignore = "requires the failpoint URI of a disposable MongoDB replica set"]
 async fn stale_turn_seal_reconciles_an_unknown_commit() {
     let application = format!("stale-turn-commit-{}", uuid::Uuid::new_v4().simple());
-    Box::pin(exercise_settlement(false, Some(&application))).await;
+    Box::pin(exercise_settlement(false, Some(&application), None)).await;
 }
 
-async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>) {
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn stale_turn_seal_loses_to_competing_writers() {
+    for race in [Race::Canonical, Race::Interrupt, Race::Successor] {
+        Box::pin(exercise_settlement(true, None, Some(race))).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn stale_turn_seal_refuses_cumulative_evidence_over_budget() {
+    Box::pin(exercise_settlement(true, None, Some(Race::Oversize))).await;
+}
+
+async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>, race: Option<Race>) {
     let (client, name) = database("stale_turn_terminal").await;
     let mut parent = active_sandbox("sbx_stale_turn");
     parent.lifecycle.home = Some(Box::new(
@@ -113,6 +130,7 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>) {
         update: Some(Box::new(update).into()),
     };
     let mut assembly = AgentMessageAssembly::default();
+    let mut final_cursor = 2;
     owner
         .run(async {
             recorder
@@ -145,6 +163,60 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>) {
                 )
                 .await
                 .unwrap();
+            if race == Some(Race::Oversize) {
+                let mut text = "a".repeat(220 * 1024);
+                for cursor in [3, 5] {
+                    recorder
+                        .record_update(
+                            &agent.id,
+                            1,
+                            &mut assembly,
+                            output(
+                                cursor,
+                                ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(
+                                    ContentChunk::new(ContentBlock::from(std::mem::take(
+                                        &mut text,
+                                    ))),
+                                )),
+                            ),
+                            layer2_core::now_rfc3339(),
+                        )
+                        .await
+                        .unwrap();
+                    recorder
+                        .record_update(
+                            &agent.id,
+                            1,
+                            &mut assembly,
+                            output(
+                                cursor + 1,
+                                ConversationUpdate::Said(SessionUpdate::AvailableCommandsUpdate(
+                                    AvailableCommandsUpdate::new(vec![]),
+                                )),
+                            ),
+                            layer2_core::now_rfc3339(),
+                        )
+                        .await
+                        .unwrap();
+                    text = "b".repeat(220 * 1024);
+                }
+                final_cursor = 7;
+                recorder
+                    .record_update(
+                        &agent.id,
+                        1,
+                        &mut assembly,
+                        output(
+                            final_cursor,
+                            ConversationUpdate::Said(SessionUpdate::AvailableCommandsUpdate(
+                                AvailableCommandsUpdate::new(vec![]),
+                            )),
+                        ),
+                        layer2_core::now_rfc3339(),
+                    )
+                    .await
+                    .unwrap();
+            }
         })
         .await
         .unwrap();
@@ -159,7 +231,9 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>) {
         .unwrap();
     let future = DateTime::from_millis(DateTime::now().timestamp_millis() + 16 * 60 * 1000);
     let candidate = Candidate::from_row(&row, future).unwrap();
-    let Observation::Quiet { evidence, .. } = scan.observe(&candidate, future).await.unwrap()
+    let mut budget = ProofBudget::default();
+    let Observation::Quiet { evidence, .. } =
+        scan.observe(&candidate, future, &mut budget).await.unwrap()
     else {
         panic!("expected a quiet turn with a durable checkpoint");
     };
@@ -175,8 +249,41 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>) {
         prompt_id: target.prompt().as_str().to_owned(),
         target,
         stop_receipt_id: "synthetic-seal".into(),
-        output: SealedOutput::Through { source: source(2) },
+        output: SealedOutput::Through {
+            source: source(final_cursor),
+        },
     };
+    if let Some(race) = race {
+        let proof = StaleTurnSettlement::prepare(
+            evidence.snapshot,
+            evidence.parent,
+            evidence.command,
+            owner.token.clone(),
+            seal,
+            layer2_core::now_rfc3339(),
+        )
+        .unwrap();
+        let result = Competition {
+            client: &peer_client,
+            peer: &peer,
+            name: &name,
+            scan: &scan,
+            owner: &owner,
+            proof: &proof,
+            source: source(final_cursor + 1),
+            budget_before: budget_before.as_ref().unwrap(),
+        };
+        if race == Race::Oversize {
+            assert!(matches!(
+                scan.observe(&candidate, future, &mut budget).await.unwrap(),
+                Observation::Quiet { .. }
+            ));
+        }
+        Box::pin(result.run(race, &mut budget)).await;
+        assert_eq!(sends.load(Ordering::SeqCst), 1);
+        client.database(&name).drop().await.unwrap();
+        return;
+    }
     let mut mismatched = seal.clone();
     mismatched.output = SealedOutput::Through { source: source(3) };
     let prepare = |seal, parent| {
@@ -203,14 +310,18 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>) {
     owner
         .run(async {
             assert_eq!(
-                scan.settle(&stale_parent).await,
+                scan.settle(&stale_parent, &mut ProofBudget::default())
+                    .await,
                 Err(SandboxStoreError::Conflict)
             );
         })
         .await
         .unwrap();
     let proof = prepare(seal, changed).unwrap();
-    assert_eq!(scan.settle(&proof).await, Err(SandboxStoreError::Conflict));
+    assert_eq!(
+        scan.settle(&proof, &mut ProofBudget::default()).await,
+        Err(SandboxStoreError::Conflict)
+    );
     owner
         .run(async {
             if let Some(application) = ambiguous {
@@ -230,7 +341,7 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>) {
                     })
                     .await
                     .unwrap();
-                let result = scan.settle(&proof).await;
+                let result = scan.settle(&proof, &mut ProofBudget::default()).await;
                 let after = admin
                     .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
                     .await
@@ -239,7 +350,12 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>) {
                 result.unwrap();
             } else {
                 // Two clients contend for the same turn with the same qualified writer.
-                let (left, right) = tokio::join!(scan.settle(&proof), other.settle(&proof));
+                let mut local_budget = ProofBudget::default();
+                let mut peer_budget = ProofBudget::default();
+                let (left, right) = tokio::join!(
+                    scan.settle(&proof, &mut local_budget),
+                    other.settle(&proof, &mut peer_budget)
+                );
                 assert!(left.is_ok() || right.is_ok(), "{left:?}, {right:?}");
                 assert!(
                     left.is_ok() || left == Err(SandboxStoreError::Conflict),
@@ -276,7 +392,10 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>) {
                     .as_ref(),
                 Some(proof.checkpoint())
             );
-            other.settle(&proof).await.unwrap();
+            other
+                .settle(&proof, &mut ProofBudget::default())
+                .await
+                .unwrap();
         })
         .await
         .unwrap();

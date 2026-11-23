@@ -1,24 +1,29 @@
-use std::time::Duration;
+use std::{collections::BTreeSet, time::Duration};
 
 use layer2_core::{
     agent_ownership::execution_authority,
     sandbox::{
         store::{SandboxStoreError, StaleTurnSettlement},
-        AgentLogEntry, AgentLogKind, PendingAgentApprovals,
+        AgentLogEntry, AgentLogKind,
     },
 };
 use mongodb::{
-    bson::{doc, Timestamp},
+    bson::{doc, Document, Timestamp},
     options::ReadConcern,
+    Collection,
 };
 
-use super::{evidence::MAX_TURN_ROWS, StaleTurnStore};
+use super::{
+    evidence::{positive, progress, MAX_DOCUMENT_BYTES, MAX_TURN_ROWS},
+    ProofBudget, ScanError, StaleTurnStore,
+};
 use crate::store::{
     agent_commands::records,
     agent_conversation_store::ApplyError,
     agent_log_codec::{log_id, read_entry},
     agent_log_segments::{
-        conversation::checkpoint::apply_stale_turn, transaction_scope::TransactionScope,
+        capture::stale_turn_segment_bytes, conversation::checkpoint::apply_stale_turn,
+        transaction_scope::TransactionScope,
     },
     budget,
     sandbox_mongo::{
@@ -45,6 +50,7 @@ impl StaleTurnStore {
     pub(crate) async fn settle(
         &self,
         proof: &StaleTurnSettlement,
+        budget: &mut ProofBudget,
     ) -> Result<(), SandboxStoreError> {
         let token = proof.ownership();
         if self.store.agent_ownership.is_none()
@@ -54,7 +60,7 @@ impl StaleTurnStore {
         {
             return Err(SandboxStoreError::Conflict);
         }
-        if self.confirm(proof, None).await? {
+        if self.confirm(proof, None, budget).await? {
             return Ok(());
         }
         let _writer = self.store.agent_writes.lock(&token.agent_id).await;
@@ -71,7 +77,7 @@ impl StaleTurnStore {
         let mut scope = TransactionScope::start(&mut session)
             .await
             .map_err(unavailable)?;
-        let applied = Box::pin(self.apply(proof, &mut scope)).await;
+        let applied = Box::pin(self.apply(proof, &mut scope, budget)).await;
         let session = scope.release();
         if let Err(error) = applied {
             if let Err(error) = session.abort_transaction().await {
@@ -93,11 +99,11 @@ impl StaleTurnStore {
                 // progress to confirm a receipt absent from that snapshot.
                 let operation_time = session.operation_time();
                 let confirmed = if let Some(time) = operation_time {
-                    self.confirm(proof, Some(time)).await?
+                    self.confirm(proof, Some(time), budget).await?
                 } else {
                     false
                 };
-                if confirmed || self.confirm(proof, None).await? {
+                if confirmed || self.confirm(proof, None, budget).await? {
                     crate::telemetry::work::published(
                         &proof.checkpoint().outcome.appended,
                         "reconciled",
@@ -116,15 +122,14 @@ impl StaleTurnStore {
         &self,
         proof: &StaleTurnSettlement,
         scope: &mut TransactionScope<'_>,
+        budget: &mut ProofBudget,
     ) -> Result<(), ApplyError> {
         let parent = proof.parent();
         let agent = &proof.snapshot().agent;
         let command = proof.command();
         let id = &command.receipt.envelope.command_id;
-        let row = scope
-            .find_one(&self.store.agent_commands, doc! {"_id": id.as_str()})
-            .await
-            .map_err(ApplyError::Driver)?
+        let row = read_scoped(scope, &self.store.agent_commands, id.as_str(), budget)
+            .await?
             .ok_or(CONFLICT)?;
         if records::read(&row).map_err(|_| CONFLICT)? != *command
             || row.contains_key(RECEIPT)
@@ -132,10 +137,8 @@ impl StaleTurnStore {
         {
             return Err(CONFLICT);
         }
-        let row = scope
-            .find_one(&self.store.sandboxes, doc! {"_id": parent.id.as_str()})
-            .await
-            .map_err(ApplyError::Driver)?
+        let row = read_scoped(scope, &self.store.sandboxes, parent.id.as_str(), budget)
+            .await?
             .ok_or(CONFLICT)?;
         if read_sandbox(&row).map_err(ApplyError::Domain)? != *parent {
             return Err(CONFLICT);
@@ -155,7 +158,7 @@ impl StaleTurnStore {
             return Err(CONFLICT);
         }
         let pending = scope
-            .find_one(
+            .find_projected(
                 &self.store.agent_commands,
                 doc! {
                     "agent_id": agent.id.as_str(),
@@ -163,29 +166,47 @@ impl StaleTurnStore {
                     "status": {"$in": ["queued", "in_progress", "waiting_action"]},
                     "record.receipt.envelope.command.type": {"$ne": "message"},
                 },
+                doc! {"_id": 0, "found": {"$literal": true}},
             )
             .await
             .map_err(ApplyError::Driver)?;
         if pending.is_some() {
             return Err(CONFLICT);
         }
+        let row = read_scoped(scope, &self.store.agents, agent.id.as_str(), budget)
+            .await?
+            .ok_or(CONFLICT)?;
+        let actual_agent = crate::store::agents::read_agent(&row).map_err(ApplyError::Domain)?;
+        let checkpoint = crate::store::agent_conversation_store::checkpoint::read(&row)
+            .map_err(ApplyError::Domain)?;
+        if actual_agent != *agent || checkpoint.as_ref() != proof.snapshot().checkpoint.as_ref() {
+            return Err(CONFLICT);
+        }
+        let ordinary = crate::store::agent_log_segments::read_format(&row)
+            .map_err(ApplyError::Domain)?
+            .is_none();
+        let segment_bytes = if ordinary {
+            0
+        } else {
+            stale_turn_segment_bytes(&self.store, &agent.id, &row, budget.remaining(), scope)
+                .await?
+        };
+        if segment_bytes > 0 {
+            budget.charge(segment_bytes).map_err(proof_read_error)?;
+        }
         let (turn, event) = terminal_event(proof)?;
-        self.require_no_approvals(proof, turn, scope).await?;
+        self.require_no_approvals(proof, turn, scope, budget, segment_bytes == 0)
+            .await?;
         let key = budget::turn_key(agent, turn);
-        let reservation = scope
-            .find_one(&self.store.model_budget, doc! {"_id": &key})
-            .await
-            .map_err(ApplyError::Driver)?;
+        let reservation = read_scoped(scope, &self.store.model_budget, &key, budget).await?;
         if let Some(row) = &reservation {
             // A pending budget stop already has its own failure disposition.
             budget::validate_stale_turn_reservation(row, agent, turn, false)?;
         }
         Box::pin(apply_stale_turn(&self.store, proof, scope)).await?;
         let budget_key = if reservation.is_some() {
-            let row = scope
-                .find_one(&self.store.model_budget, doc! {"_id": &key})
-                .await
-                .map_err(ApplyError::Driver)?
+            let row = read_scoped(scope, &self.store.model_budget, &key, budget)
+                .await?
                 .ok_or(CONFLICT)?;
             budget::validate_stale_turn_reservation(&row, agent, turn, true)?;
             Some(key)
@@ -219,6 +240,8 @@ impl StaleTurnStore {
         proof: &StaleTurnSettlement,
         turn: u64,
         scope: &mut TransactionScope<'_>,
+        budget: &mut ProofBudget,
+        reads_tail: bool,
     ) -> Result<(), ApplyError> {
         let agent = &proof.snapshot().agent;
         let head = agent.conversation.last_seq;
@@ -228,7 +251,7 @@ impl StaleTurnStore {
             .ok_or(CONFLICT)?
             + 1;
         let history = scope
-            .find_page(
+            .find_projected_page(
                 &self.store.agent_log,
                 doc! {
                     "agent_id": agent.id.as_str(),
@@ -239,22 +262,43 @@ impl StaleTurnStore {
                 },
                 doc! {"seq": 1},
                 length as u32,
+                Some(progress::projection()),
             )
             .await
             .map_err(ApplyError::Driver)?;
         if history.len() != length as usize {
             return Err(CONFLICT);
         }
-        let mut approvals = PendingAgentApprovals::default();
+        let mut approvals = BTreeSet::new();
         for (offset, row) in history.iter().enumerate() {
-            let entry = read_entry(row).map_err(ApplyError::Domain)?;
-            if entry.agent_id != agent.id || entry.seq != turn + offset as u64 {
+            budget.charge_row(row).map_err(proof_read_error)?;
+            let kind = row.get_str("kind").map_err(|_| CONFLICT)?;
+            if positive(row, "seq") != Some(turn + offset as u64)
+                || (offset == 0 && kind != "turn_started")
+            {
                 return Err(CONFLICT);
             }
-            approvals.observe(&entry);
+            match kind {
+                "approval_requested" => {
+                    approvals.insert(row.get_str("approval").map_err(|_| CONFLICT)?);
+                }
+                "approval_resolved" => {
+                    approvals.remove(row.get_str("approval").map_err(|_| CONFLICT)?);
+                }
+                "turn_started" if offset == 0 => {}
+                "turn_started" | "turn_completed" | "turn_failed" | "turn_interrupted"
+                | "conversation_gap" => return Err(CONFLICT),
+                _ => {}
+            }
         }
-        if !approvals.into_entries().is_empty() {
+        if !approvals.is_empty() {
             return Err(CONFLICT);
+        }
+        if reads_tail {
+            // The writer validates the tail for an ordinary log or an empty segment.
+            budget
+                .charge_row(history.last().ok_or(CONFLICT)?)
+                .map_err(proof_read_error)?;
         }
         Ok(())
     }
@@ -265,6 +309,7 @@ impl StaleTurnStore {
         &self,
         proof: &StaleTurnSettlement,
         at: Option<Timestamp>,
+        budget: &mut ProofBudget,
     ) -> Result<bool, SandboxStoreError> {
         let (turn, event) = terminal_event(proof).map_err(store_error)?;
         let agent = &proof.snapshot().agent;
@@ -280,11 +325,15 @@ impl StaleTurnStore {
             .store
             .agent_commands
             .find_one(doc! {"_id": id.as_str()})
-            .projection(doc! {RECEIPT: 1})
+            .projection(budget.projection(MAX_DOCUMENT_BYTES))
             .read_concern(ReadConcern::snapshot())
             .max_time(READ_DEADLINE)
             .session(&mut session)
             .await
+            .map_err(unavailable)?;
+        let row = row
+            .map(|row| budget.take_row(row))
+            .transpose()
             .map_err(unavailable)?;
         let Some(value) = row.and_then(|row| row.get(RECEIPT).cloned()) else {
             return Ok(false);
@@ -305,10 +354,15 @@ impl StaleTurnStore {
             .store
             .agent_log
             .find_one(doc! {"_id": log_id(&agent.id, event.seq)})
+            .projection(budget.projection(MAX_DOCUMENT_BYTES))
             .read_concern(ReadConcern::snapshot())
             .max_time(READ_DEADLINE)
             .session(&mut session)
             .await
+            .map_err(unavailable)?;
+        let stored = stored
+            .map(|row| budget.take_row(row))
+            .transpose()
             .map_err(unavailable)?;
         let entry = stored.as_ref().map(read_entry).transpose()?;
         if entry.as_ref().is_none_or(|entry| {
@@ -325,10 +379,15 @@ impl StaleTurnStore {
             .store
             .model_budget
             .find_one(doc! {"_id": &key})
+            .projection(budget.projection(MAX_DOCUMENT_BYTES))
             .read_concern(ReadConcern::snapshot())
             .max_time(READ_DEADLINE)
             .session(&mut session)
             .await
+            .map_err(unavailable)?;
+        let reservation = reservation
+            .map(|row| budget.take_row(row))
+            .transpose()
             .map_err(unavailable)?;
         match (receipt.budget_key, reservation) {
             (Some(_), Some(row)) => {
@@ -344,6 +403,28 @@ impl StaleTurnStore {
         }
         Ok(true)
     }
+}
+
+async fn read_scoped(
+    scope: &mut TransactionScope<'_>,
+    collection: &Collection<Document>,
+    id: &str,
+    budget: &mut ProofBudget,
+) -> Result<Option<Document>, ApplyError> {
+    scope
+        .find_projected(
+            collection,
+            doc! {"_id": id},
+            budget.projection(MAX_DOCUMENT_BYTES),
+        )
+        .await
+        .map_err(ApplyError::Driver)?
+        .map(|row| budget.take_row(row).map_err(proof_read_error))
+        .transpose()
+}
+
+fn proof_read_error(error: ScanError) -> ApplyError {
+    ApplyError::Domain(unavailable(error))
 }
 
 fn terminal_event(proof: &StaleTurnSettlement) -> Result<(u64, &AgentLogEntry), ApplyError> {

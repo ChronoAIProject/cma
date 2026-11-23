@@ -52,6 +52,10 @@ pub(in crate::store) async fn apply_mutation_with_capacity(
                 semantic,
             )
         }
+        None if caller == ScanCaller::StaleTurnSettlement => {
+            // The stale-turn proof budget cannot authorize a full-log audit.
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
         None => {
             let mut entries = Vec::new();
             let summary = Box::pin(scan_complete_log_with_session(

@@ -14,7 +14,7 @@ use mongodb::{
     options::{Hint, ReadConcern},
 };
 
-use super::{scan::QUERY_DEADLINE, ScanError, StaleTurnStore};
+use super::{scan::QUERY_DEADLINE, ProofBudget, ScanError, StaleTurnStore};
 use crate::{
     sandbox::LiveAgentTarget,
     store::{
@@ -23,11 +23,11 @@ use crate::{
     },
 };
 
-mod progress;
+pub(super) mod progress;
 use progress::Progress;
 
 const NO_PROGRESS_SECONDS: u64 = 15 * 60;
-const MAX_DOCUMENT_BYTES: i64 = 128 * 1024;
+pub(super) const MAX_DOCUMENT_BYTES: i64 = 128 * 1024;
 pub(super) const MAX_TURN_ROWS: u64 = progress::MAX_ROWS;
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -110,12 +110,14 @@ impl StaleTurnStore {
         &self,
         candidate: &Candidate,
         now: DateTime,
+        budget: &mut ProofBudget,
     ) -> Result<Observation, ScanError> {
         let mut snapshot = self.store.client.start_session().snapshot(true).await?;
         let Some(command) = self
             .store
             .agent_commands
-            .find_one(bounded_id(candidate.command.as_str()))
+            .find_one(doc! {"_id": candidate.command.as_str()})
+            .projection(budget.projection(MAX_DOCUMENT_BYTES))
             .read_concern(ReadConcern::snapshot())
             .session(&mut snapshot)
             .max_time(QUERY_DEADLINE)
@@ -123,7 +125,7 @@ impl StaleTurnStore {
         else {
             return Ok(Observation::Hold("command_unavailable"));
         };
-        let command = records::read(&command).map_err(|_| ScanError::Invalid)?;
+        let command = records::read(&budget.take_row(command)?).map_err(|_| ScanError::Invalid)?;
         if command.status.is_terminal() {
             return Ok(Observation::Hold("canonical_result"));
         }
@@ -157,7 +159,8 @@ impl StaleTurnStore {
         let Some(row) = self
             .store
             .agents
-            .find_one(bounded_id(candidate.agent.as_str()))
+            .find_one(doc! {"_id": candidate.agent.as_str()})
+            .projection(budget.projection(MAX_DOCUMENT_BYTES))
             .read_concern(ReadConcern::snapshot())
             .session(&mut snapshot)
             .max_time(QUERY_DEADLINE)
@@ -165,6 +168,7 @@ impl StaleTurnStore {
         else {
             return Ok(Observation::Hold("agent_unavailable"));
         };
+        let row = budget.take_row(row)?;
         let agent = read_agent(&row)?;
         let conversation = &agent.conversation;
         if conversation.active_turn != Some(candidate.turn)
@@ -191,7 +195,8 @@ impl StaleTurnStore {
         let Some(parent) = self
             .store
             .sandboxes
-            .find_one(bounded_id(agent.sandbox_id.as_str()))
+            .find_one(doc! {"_id": agent.sandbox_id.as_str()})
+            .projection(budget.projection(MAX_DOCUMENT_BYTES))
             .read_concern(ReadConcern::snapshot())
             .session(&mut snapshot)
             .max_time(QUERY_DEADLINE)
@@ -199,7 +204,7 @@ impl StaleTurnStore {
         else {
             return Ok(Observation::Hold("parent_unavailable"));
         };
-        let parent = read_sandbox(&parent)?;
+        let parent = read_sandbox(&budget.take_row(parent)?)?;
         if parent.owner != agent.owner
             || parent.status != SandboxStatus::Active
             || parent.lifecycle.operation.is_some()
@@ -253,6 +258,7 @@ impl StaleTurnStore {
         let mut progress = Progress::new(candidate.turn, &candidate.command);
         let mut stream = cursor.stream(&mut snapshot);
         while let Some(row) = stream.try_next().await? {
+            budget.charge_row(&row)?;
             progress.observe(&row)?;
         }
         let age = match progress.finish(head, clock_seconds(now)) {
@@ -285,17 +291,13 @@ impl Candidate {
     }
 }
 
-fn positive(document: &Document, field: &str) -> Option<u64> {
+pub(super) fn positive(document: &Document, field: &str) -> Option<u64> {
     let value = match document.get(field)? {
         mongodb::bson::Bson::Int32(value) => i64::from(*value),
         mongodb::bson::Bson::Int64(value) => *value,
         _ => return None,
     };
     u64::try_from(value).ok().filter(|value| *value != 0)
-}
-
-fn bounded_id(id: &str) -> Document {
-    doc! {"_id": id, "$expr": {"$lte": [{"$bsonSize": "$$ROOT"}, MAX_DOCUMENT_BYTES]}}
 }
 
 fn bounded_key(row: &Document, field: &str) -> Option<String> {

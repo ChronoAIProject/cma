@@ -117,15 +117,22 @@ pub enum StaleTurnHold {
     CanonicalResult,
 }
 
+pub struct StaleTurnEvidence {
+    pub seal: StaleTurnSeal,
+    pub bytes_read: usize,
+}
+
 /// Only an adapter that can authenticate the exact producer's durable seal may
 /// implement this capability. Calls are observation only. They cannot dispatch
 /// or cancel input, and a cancelled read cannot leave a detached probe running.
 #[async_trait::async_trait]
 pub trait StaleTurnProducer: Send + Sync {
+    /// Stop reading producer evidence at the supplied cumulative byte bound.
     async fn observe_stale_turn_seal(
         &self,
         target: &StaleTurnTarget,
-    ) -> Result<StaleTurnSeal, StaleTurnHold>;
+        max_evidence_bytes: usize,
+    ) -> Result<StaleTurnEvidence, StaleTurnHold>;
 }
 
 fn valid_stream(value: &str) -> bool {
