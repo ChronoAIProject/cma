@@ -17,6 +17,25 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             symbols: Default::default(),
         });
     }
+    if let Some(mode) = name.strip_prefix("binding_reset_") {
+        let (router, _, _, _) = management::reset::fixture().await;
+        return Some(Scenario {
+            router,
+            subject: if mode == "anonymous" {
+                None
+            } else if mode == "foreign" {
+                Some("foreign-manager")
+            } else {
+                Some("manager")
+            },
+            authorization: if mode == "forbidden" {
+                Authorization::none()
+            } else {
+                management::authority()
+            },
+            symbols: Default::default(),
+        });
+    }
     if let Some(mode) = name.strip_prefix("worker_classifier_") {
         return Some(Scenario {
             router: crate::rest::worker_credentials::tests::fixture(mode).await,

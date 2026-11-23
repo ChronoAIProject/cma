@@ -2,8 +2,8 @@
 
 use futures_util::TryStreamExt;
 use layer2_core::agent_ownership::{
-    Member, Membership, OwnershipError, OwnershipLease, OwnershipStore, OwnershipToken,
-    DEFAULT_LEASE_MS, PROTOCOL_VERSION,
+    Member, Membership, OwnershipError, OwnershipFailure, OwnershipLease, OwnershipStore,
+    OwnershipToken, DEFAULT_LEASE_MS, PROTOCOL_VERSION,
 };
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::AgentId;
@@ -17,6 +17,7 @@ use super::sandbox_mongo::{
 
 mod acquisition;
 mod effects;
+mod failure;
 mod membership;
 mod records;
 mod work_discovery;
@@ -31,16 +32,37 @@ pub(crate) struct MongoAgentOwnership {
     database: Database,
     members: Collection<Document>,
     owners: Collection<Document>,
+    receiver_diagnostics_enabled: bool,
+}
+
+/// Preserve driver labels until the owning transaction decides whether it can retry.
+pub(in crate::store) enum FenceError {
+    Domain(SandboxStoreError),
+    Driver(mongodb::error::Error),
+}
+
+impl FenceError {
+    /// Callers without their own bounded retry keep the historical classification.
+    pub(in crate::store) fn into_store(self) -> SandboxStoreError {
+        match self {
+            Self::Domain(error) => error,
+            Self::Driver(error) => fence_write_error(error),
+        }
+    }
 }
 
 impl MongoAgentOwnership {
     pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, OwnershipError> {
+        let receiver_diagnostics_enabled = failure::diagnostics_enabled(std::env::var(
+            "CHRONO_AGENT_MANAGER_OWNERSHIP_DIAGNOSTICS_ENABLED",
+        ))?;
         let database = client.database(name);
         super::schema::initialize_collections(&database, &[MEMBERS, OWNERS])
             .await
             .map_err(unavailable)?;
         let store = Self {
             client: client.clone(),
+            receiver_diagnostics_enabled,
             members: majority_collection(&database, MEMBERS),
             owners: majority_collection(&database, OWNERS),
             database,
@@ -85,11 +107,22 @@ impl MongoAgentOwnership {
 
     /// A write in the effect's own transaction creates a conflict with takeover.
     /// A preceding read, even a majority read, would leave a TOCTOU gap.
+    /// Callers without their own bounded retry keep the historical classification.
     pub(crate) async fn fence_transaction(
         &self,
         token: &OwnershipToken,
         session: &mut ClientSession,
     ) -> Result<(), SandboxStoreError> {
+        self.fence_transaction_typed(token, session)
+            .await
+            .map_err(FenceError::into_store)
+    }
+
+    pub(in crate::store) async fn fence_transaction_typed(
+        &self,
+        token: &OwnershipToken,
+        session: &mut ClientSession,
+    ) -> Result<(), FenceError> {
         let member = self
             .members
             .update_one(
@@ -102,30 +135,34 @@ impl MongoAgentOwnership {
             )
             .session(&mut *session)
             .await
-            .map_err(fence_write_error)?;
+            .map_err(FenceError::Driver)?;
         if member.matched_count != 1 {
-            return Err(SandboxStoreError::Conflict);
+            return Err(FenceError::Domain(SandboxStoreError::Conflict));
         }
         let matched = self
             .owners
             .update_one(
-                token_filter(token).map_err(|_| SandboxStoreError::Conflict)?,
+                token_filter(token).map_err(|_| FenceError::Domain(SandboxStoreError::Conflict))?,
                 doc! {"$inc": {"effect_revision": 1_i64}},
             )
             .session(&mut *session)
             .await
-            .map_err(fence_write_error)?
+            .map_err(FenceError::Driver)?
             .matched_count;
         if matched == 1 {
             Ok(())
         } else {
-            Err(SandboxStoreError::Conflict)
+            Err(FenceError::Domain(SandboxStoreError::Conflict))
         }
     }
 }
 
 #[async_trait::async_trait]
 impl OwnershipStore for MongoAgentOwnership {
+    fn receiver_diagnostics_enabled(&self) -> bool {
+        self.receiver_diagnostics_enabled
+    }
+
     async fn register(&self, member: Member) -> Result<Membership, OwnershipError> {
         self.register_member(member).await
     }
@@ -211,6 +248,14 @@ impl OwnershipStore for MongoAgentOwnership {
             .ok_or(OwnershipError::Stale)?;
         Ok(())
     }
+
+    async fn record_receiver_failure(
+        &self,
+        token: &OwnershipToken,
+        failure: OwnershipFailure,
+    ) -> Result<(), OwnershipError> {
+        self.record_failure(token, failure).await
+    }
 }
 
 fn unavailable(error: impl std::fmt::Display) -> OwnershipError {
@@ -221,6 +266,8 @@ fn invalid(error: impl std::fmt::Display) -> OwnershipError {
     OwnershipError::Invalid(error.to_string())
 }
 
+#[cfg(test)]
+pub(crate) mod mongo_renewal_faults;
 #[cfg(test)]
 mod mongo_tests;
 
@@ -239,5 +286,7 @@ fn known_aborted(error: &mongodb::error::Error) -> bool {
     is_transient(error) && !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
 }
 
+#[cfg(test)]
+pub(crate) mod command_test_support;
 #[cfg(test)]
 mod fence_error_tests;

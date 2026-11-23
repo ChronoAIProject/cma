@@ -54,10 +54,13 @@ pub(crate) use tasks::{DrainTimeout as LifecycleDrainTimeout, TaskScope as Lifec
 #[path = "agent_lifecycle_workspace.rs"]
 mod workspace;
 
+#[path = "agent_lifecycle_admission.rs"]
+mod admission;
 #[path = "agent_lifecycle_desktop.rs"]
 mod desktop;
 #[path = "agent_lifecycle_image.rs"]
 mod image;
+mod repository_preflight;
 #[path = "agent_lifecycle_policy.rs"]
 mod task_policy;
 pub(crate) use image::{ImageManagerResolver, ImageResolver};
@@ -86,6 +89,8 @@ pub(crate) struct InlineAgentLifecycle {
     desktop: Option<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>>,
     self_ref: OnceLock<Weak<Self>>,
     task_experience: OnceLock<Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>>,
+    failure_metadata_enabled: OnceLock<bool>,
+    repository_preflight: OnceLock<Arc<dyn repository_preflight::RepositoryReadiness>>,
     worker_slots: Arc<tokio::sync::Semaphore>,
     tasks: LifecycleDrain,
 }
@@ -139,30 +144,13 @@ impl InlineAgentLifecycle {
             desktop,
             self_ref: OnceLock::new(),
             task_experience: OnceLock::new(),
+            failure_metadata_enabled: OnceLock::new(),
+            repository_preflight: OnceLock::new(),
             worker_slots: Arc::new(tokio::sync::Semaphore::new(crate::store::DISCOVERY_BATCH)),
             tasks: LifecycleDrain::new(crate::store::DISCOVERY_BATCH + 1),
         });
         let _ = instance.self_ref.set(Arc::downgrade(&instance));
         instance
-    }
-
-    fn authority(
-        &self,
-        caller: &Caller,
-        context: Option<&CallerContext>,
-    ) -> Result<BotOwnerAuthority, AgentLifecycleProvisioningError> {
-        let context = context.ok_or(AgentLifecycleProvisioningError::Forbidden)?;
-        if context.caller.subject != caller.subject || !context.validate_principal() {
-            return Err(AgentLifecycleProvisioningError::Forbidden);
-        }
-        BotOwnerAuthority::new(
-            context.clone(),
-            ResourceOwner::Person {
-                subject: caller.subject.clone(),
-            },
-            None,
-        )
-        .map_err(|_| AgentLifecycleProvisioningError::Forbidden)
     }
 
     async fn provision(
@@ -237,31 +225,8 @@ impl InlineAgentLifecycle {
                 success = admission_result.is_ok(),
                 "inline Agent lifecycle preparation phase completed"
             );
-            let sandbox = match admission_result {
-                Ok(value) => value,
-                Err(SandboxServiceError::ConnectionsRequired { services }) => {
-                    return Err(AgentLifecycleProvisioningError::ConnectionRequired {
-                        services: services
-                            .into_iter()
-                            .map(|service| service.to_string())
-                            .collect(),
-                        connection_target: json!({
-                            "type":"sandbox_profile",
-                            "profile":{"id":sandbox_profile.id.to_string(),"revision":sandbox_profile.revision}
-                        }),
-                    });
-                }
-                Err(SandboxServiceError::CredentialSetupRequired) => {
-                    return Err(AgentLifecycleProvisioningError::ConnectionRequired {
-                        services: vec!["cma-credentials".into()],
-                        connection_target: json!({
-                            "type":"sandbox_profile",
-                            "profile":{"id":sandbox_profile.id.to_string(),"revision":sandbox_profile.revision}
-                        }),
-                    });
-                }
-                Err(error) => return Err(sandbox_error(error)),
-            };
+            let sandbox = admission_result
+                .map_err(|error| admission::sandbox_admission_error(error, &sandbox_profile))?;
             self.operations
                 .mark_sandbox(&lease, sandbox.id.as_str())
                 .await
@@ -313,7 +278,7 @@ impl InlineAgentLifecycle {
                             agent_revision.profile_id.clone(),
                             agent_revision.revision,
                         ),
-                        title: Some(request.name.clone()),
+                        title: validation::initial_title(&request),
                         first_message,
                         origin: AgentOrigin::Lifecycle {
                             operation_id: lease.id.clone(),
@@ -405,21 +370,16 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             return Err(AgentLifecycleProvisioningError::Forbidden);
         }
         let _authority = self.authority(caller, context)?;
-        if let Some(record) = self
-            .operations
-            .replay(&caller.subject, idempotency_key, &request)
-            .await
-            .map_err(validation::operation_error)?
+        // Machine allocation remains cohort-gated when an old operation is replayed.
+        // Recheck before resume_connection/spawn_worker can resume provisioning.
+        if request.machine_included {
+            self.require_task_experience(caller, &request)?;
+        }
+        if let Some(receipt) = self
+            .replay_receipt(caller, &request, idempotency_key)
+            .await?
         {
-            self.operations
-                .resume_connection(&caller.subject, &record.id)
-                .await
-                .map_err(validation::operation_error)?;
-            self.spawn_worker(record.id.clone());
-            return Ok(AgentLifecycleCreateReceipt {
-                id: record.id,
-                status: "provisioning".into(),
-            });
+            return Ok(receipt);
         }
         self.require_task_experience(caller, &request)?;
         if request.sandbox_id.is_some() {
@@ -440,6 +400,12 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             return Err(AgentLifecycleProvisioningError::Invalid(
                 "Machine Included selects the deployment desktop image and cannot be combined with an explicit image".into(),
             ));
+        }
+        if let Some(receipt) = self
+            .check_capacity(caller, &request, idempotency_key)
+            .await?
+        {
+            return Ok(receipt);
         }
         // Resolve the delegated Image Manager reference before persisting the
         // operation. The durable worker then needs no secret after admission.

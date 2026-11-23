@@ -29,6 +29,7 @@ export interface OperationOptions {
 
 /** Options for one HTTP request. */
 export interface RequestOptions extends OperationOptions {
+  readonly cache?: RequestCache;
   readonly method?: string;
   readonly body?: unknown;
   /** Binary body for upload endpoints; mutually exclusive with JSON body. */
@@ -236,6 +237,7 @@ export async function send(
     credentials: config.cookies ? 'include' : 'omit',
     body,
     signal,
+    ...(options.cache === undefined ? {} : { cache: options.cache }),
   });
   throwIfSignalAborted(signal);
   const metadata = await observeResponse(config, response);
@@ -362,6 +364,9 @@ export function errorFromBody(
     requestId,
     retryAfterMilliseconds(response),
     extensions,
+    code === 'resource_revocation_pending' && response.status === 409
+      ? response.headers.get('link')?.slice(0, 2048)
+      : undefined,
   );
 }
 

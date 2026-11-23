@@ -9,6 +9,7 @@ import { MetricDetail } from './MetricDetail';
 import { MetricFilters } from './MetricFilters';
 import { OpsMetricFilters } from './OpsMetricFilters';
 import { MetricSummary } from './MetricSummary';
+import { UsageAllocationOverview } from './UsageAllocationOverview';
 import { MetricTable } from './MetricTable';
 import { MetricsNotice } from './MetricsNotice';
 import { useUsageReport, useUsageVisible } from './useReport';
@@ -20,12 +21,18 @@ import {
 import type { MetricsFailure } from './failure';
 import type { Group, Metric, MetricsClient, Selection } from './model';
 import { allocationSelection } from './selection';
+import { SelectedResourceLabels } from './selectedResourceLabel';
 import './Metrics.css';
 
 export function MetricsDashboard(props: Parameters<typeof MetricsDashboardContent>[0]) {
   return (
     <UsageReportOwnerContext value={props.principal ?? anonymousReportOwner}>
-      <MetricsDashboardContent {...props} />
+      <SelectedResourceLabels
+        key={JSON.stringify([props.principal?.cacheKey, props.principal?.principal, props.admin])}
+        scope={props.api}
+      >
+        <MetricsDashboardContent {...props} />
+      </SelectedResourceLabels>
     </UsageReportOwnerContext>
   );
 }
@@ -86,6 +93,38 @@ function MetricsDashboardContent({
   const safeActions = actions
     ? (row: UsageMetricRow) => actions(row, state.busy || state.stale || !!state.error || !!preview)
     : undefined;
+  const resourceDetails = report && (
+    <>
+      <MetricSummary
+        report={report}
+        measured={measured}
+        selectedMetric={admin ? undefined : metric}
+        onMetric={admin ? undefined : setMetric}
+      />
+      {admin && measured && (
+        <Picker
+          label="Chart grouping"
+          value={group}
+          options={[
+            { value: 'total', label: 'Total' },
+            { value: 'owner', label: 'By owner' },
+            { value: 'sandbox', label: 'By Sandbox' },
+          ]}
+          onChange={setGroup}
+        />
+      )}
+      {measured && (
+        <MetricCharts
+          api={api}
+          report={report}
+          group={admin ? group : 'total'}
+          metric={admin ? undefined : metric}
+          active={visible}
+          onFailure={onFailure}
+        />
+      )}
+    </>
+  );
   return (
     <div
       className="usage-metrics"
@@ -109,6 +148,26 @@ function MetricsDashboardContent({
           admin={admin}
           active={visible}
           onApply={onSelection}
+          sandboxReport={
+            !state.busy &&
+            !state.stale &&
+            !preview &&
+            !state.error &&
+            !failure &&
+            report?.scope.admin === false
+              ? report
+              : undefined
+          }
+          selectionUnavailable={Boolean(
+            state.error ||
+            failure ||
+            (!state.busy &&
+              !state.stale &&
+              !preview &&
+              report &&
+              (report.query.filters.sandbox_id !== effectiveSelection.sandbox ||
+                Number(report.summary?.sandbox_count) === 0)),
+          )}
           agentPicker={
             agentPicker
               ? (draft, update) => {
@@ -117,6 +176,7 @@ function MetricsDashboardContent({
                     !state.busy &&
                     !state.stale &&
                     !preview &&
+                    !state.error &&
                     report?.scope.admin === false &&
                     report.query.filters.sandbox_id === draft.sandbox &&
                     Number(report.summary?.sandbox_count) > 0;
@@ -157,34 +217,8 @@ function MetricsDashboardContent({
       )}
       {report && (
         <section className="usage-report" aria-busy={(state.busy && !preview) || undefined}>
-          <MetricSummary
-            report={report}
-            measured={measured}
-            selectedMetric={admin ? undefined : metric}
-            onMetric={admin ? undefined : setMetric}
-          />
-          {admin && measured && (
-            <Picker
-              label="Chart grouping"
-              value={group}
-              options={[
-                { value: 'total', label: 'Total' },
-                { value: 'owner', label: 'By owner' },
-                { value: 'sandbox', label: 'By Sandbox' },
-              ]}
-              onChange={setGroup}
-            />
-          )}
-          {measured && (
-            <MetricCharts
-              api={api}
-              report={report}
-              group={admin ? group : 'total'}
-              metric={admin ? undefined : metric}
-              active={visible}
-              onFailure={onFailure}
-            />
-          )}
+          {!admin && <UsageAllocationOverview value={report.summary?.allocated_period ?? null} />}
+          {admin && resourceDetails}
           <MetricTable
             key={report.report_id}
             api={api}
@@ -209,6 +243,7 @@ function MetricsDashboardContent({
             onFailure={onFailure}
             actions={safeActions}
           />
+          {!admin && resourceDetails}
           {detail?.report === report.report_id && (
             <MetricDetail
               key={report.report_id + detail.sandbox}

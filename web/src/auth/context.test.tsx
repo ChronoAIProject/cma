@@ -180,6 +180,7 @@ describe('silent sign-in navigation and draft races', () => {
     sessionStorage.setItem('cma:task-viewer', 'owner-a');
     sessionStorage.setItem('cma:task-draft:owner-a', 'unsubmitted input');
     sessionStorage.setItem('cma:agent-creation:owner-a', 'original-command');
+    sessionStorage.setItem('cma:agent-recovery:owner-a', 'original-recovery');
     try {
       render(
         <AuthContextProvider provider={provider(() => true)}>
@@ -193,6 +194,7 @@ describe('silent sign-in navigation and draft races', () => {
       expect(screen.getByText('anonymous')).toBeInTheDocument();
       expect(sessionStorage.getItem('cma:task-draft:owner-a')).toBe('unsubmitted input');
       expect(sessionStorage.getItem('cma:agent-creation:owner-a')).toBe('original-command');
+      expect(sessionStorage.getItem('cma:agent-recovery:owner-a')).toBe('original-recovery');
     } finally {
       vi.useRealTimers();
       sessionStorage.clear();
@@ -202,6 +204,7 @@ describe('silent sign-in navigation and draft races', () => {
   it('does not expose the previous owner draft after a different owner signs in', async () => {
     sessionStorage.setItem('cma:task-viewer', 'owner-a');
     sessionStorage.setItem('cma:task-draft:owner-a', 'private input');
+    sessionStorage.setItem('cma:agent-recovery:owner-a', 'private recovery');
     const current = vi
       .fn<() => Promise<AuthState>>()
       .mockResolvedValueOnce({ status: 'anonymous' })
@@ -221,6 +224,7 @@ describe('silent sign-in navigation and draft races', () => {
     });
     expect(screen.getByText('authenticated')).toBeInTheDocument();
     expect(sessionStorage.getItem('cma:task-draft:owner-a')).toBeNull();
+    expect(sessionStorage.getItem('cma:agent-recovery:owner-a')).toBeNull();
     sessionStorage.clear();
   });
 });
@@ -292,10 +296,12 @@ it('clears private drafts before calling the navigation-producing sign-out provi
   sessionStorage.setItem('cma:task-viewer', 'owner-a');
   sessionStorage.setItem('cma:task-draft:owner-a', 'private input');
   sessionStorage.setItem('cma:agent-creation:owner-a', 'private command');
+  sessionStorage.setItem('cma:agent-recovery:owner-a', 'private recovery');
   let finish = () => {};
   const signOut = vi.fn(() => {
     expect(sessionStorage.getItem('cma:task-draft:owner-a')).toBeNull();
     expect(sessionStorage.getItem('cma:agent-creation:owner-a')).toBeNull();
+    expect(sessionStorage.getItem('cma:agent-recovery:owner-a')).toBeNull();
     expect(sessionStorage.getItem('cma:task-viewer')).toBeNull();
     return new Promise<void>((resolve) => {
       finish = resolve;

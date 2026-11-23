@@ -269,9 +269,12 @@ async fn purge_in_transaction(
     expected_revision: u64,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), PurgeError> {
-    super::work_publication::fence(store, session)
+    super::work_publication::fence_transaction(store, session)
         .await
-        .map_err(|_| PurgeError::Conflict)?;
+        .map_err(|error| match error {
+            super::work_publication::FenceError::Driver(error) => PurgeError::Driver(error),
+            super::work_publication::FenceError::Domain(_) => PurgeError::Conflict,
+        })?;
     let aggregate = store
         .sandboxes
         .find_one(crate::store::work_schema::query(doc! {
@@ -311,12 +314,24 @@ async fn purge_in_transaction(
     let sandbox = read_sandbox(&aggregate).map_err(|_| PurgeError::Conflict)?;
     if sandbox.retirement_archive_pending()
         || sandbox.status != SandboxStatus::Retired
+        || sandbox.runtime.is_some()
         || !sandbox.credential.revoke_debt.is_empty()
     {
         return Err(PurgeError::Conflict);
     }
     if layer2_core::sandbox_usage::Allocation::from_sandbox(&sandbox)
         != layer2_core::sandbox_usage::Allocation::default()
+    {
+        return Err(PurgeError::Conflict);
+    }
+    if super::sandbox_credentials::purge::required(
+        &store.client.database(&store.sandboxes.namespace().db),
+        &aggregate,
+        &sandbox,
+        session,
+    )
+    .await
+    .map_err(PurgeError::Driver)?
     {
         return Err(PurgeError::Conflict);
     }

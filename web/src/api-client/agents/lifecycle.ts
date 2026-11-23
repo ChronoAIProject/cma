@@ -1,3 +1,4 @@
+import { taskTemplate } from './task-template.js';
 import type { ResolvedConfig } from '../config.js';
 import type { OperationOptions } from '../http.js';
 import { command, identity, input, read, segment, type CommandOptions } from '../resources.js';
@@ -19,7 +20,9 @@ import {
 
 export const agentLifecycleCreateRequest = object({
   name: text,
+  title_mode: optional(enumeration('automatic', 'named')),
   initial_message: optional(text),
+  template: optional(taskTemplate),
   desktop: optional(boolean),
   machine_included: optional(boolean),
   workspace_id: optional(text),
@@ -68,6 +71,13 @@ export const agentLifecycleEvent = object({
 });
 export type AgentLifecycleEvent = Output<typeof agentLifecycleEvent>;
 
+export const agentLifecycleFailure = object({
+  code: enumeration('sandbox_limit_reached'),
+  limit: integer,
+  live: integer,
+});
+export type AgentLifecycleFailure = Output<typeof agentLifecycleFailure>;
+
 export const agentLifecycleOperation = object({
   callback_url: optional(nullable(text)),
   id: text,
@@ -75,6 +85,7 @@ export const agentLifecycleOperation = object({
   phase: text,
   agent_id: optional(text),
   error: optional(text),
+  failure: optional(agentLifecycleFailure),
   events: array(agentLifecycleEvent),
   connection: optional(object({ services: array(text), target: agentLifecycleConnectionTarget })),
 });

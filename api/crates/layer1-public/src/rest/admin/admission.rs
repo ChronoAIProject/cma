@@ -32,6 +32,7 @@ pub(super) fn routes() -> Router<Arc<AdminState>> {
         .route("/api/v1/admin/admission/stop", post(stop))
         .route("/api/v1/admin/admission/resume", post(resume))
         .merge(super::ceilings::routes())
+        .merge(super::pending_homes::routes())
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -230,5 +231,6 @@ struct AdmissionApi;
 pub(crate) fn document() -> utoipa::openapi::OpenApi {
     let mut document = AdmissionApi::openapi();
     document.merge(super::ceilings::document());
+    document.merge(super::pending_homes::document());
     document
 }

@@ -1,8 +1,34 @@
 //! Existing supervisor file operations bound to one Agent's retained home.
+use super::acp::shared::Shared;
+use crate::ingress_budget::diagnostic::text;
+use binding::Initial;
 use std::sync::Arc;
 
-mod transport;
+pub(in crate::hosted) mod binding;
+
+pub(in crate::hosted) mod guidance_admission;
+pub(in crate::hosted) mod instructions_admission;
+mod receipt;
+pub(in crate::hosted) mod receipt_admission;
+pub(in crate::hosted) mod transport;
+pub(in crate::hosted) mod transport_admission;
 mod transport_goal;
+mod transport_goal_admission;
+
+#[cfg(test)]
+#[path = "managed_context/receipt_tests.rs"]
+mod receipt_tests;
+
+#[cfg(test)]
+#[path = "managed_context/binding_storage_tests.rs"]
+mod binding_storage_tests;
+
+#[cfg(test)]
+#[path = "managed_context/binding_membership_tests.rs"]
+mod binding_membership_tests;
+
+#[cfg(test)]
+pub(in crate::hosted) mod binding_fixture;
 
 use base64::Engine as _;
 use sha2::{Digest as _, Sha256};
@@ -12,9 +38,9 @@ use crate::wire::{RequestFrame, ResponseFrame};
 use crate::{AdapterError, RuntimeHandle, RuntimeStatus, RuntimeStatusRequest};
 
 #[derive(Clone)]
-pub struct HostedContextRefresh(Arc<Binding>);
+pub struct HostedContextRefresh(Shared<Binding>);
 struct Binding {
-    backend: Arc<dyn HostedBackend>,
+    backend: Shared<dyn HostedBackend>,
     handle: RuntimeHandle,
     identity: RuntimeStatusRequest,
     path: String,
@@ -22,12 +48,12 @@ struct Binding {
     tools: Vec<serde_json::Value>,
     installed_transport: std::sync::RwLock<Option<transport::ToolTransport>>,
     access: Option<(
-        Arc<dyn super::HostedAccessToolSource>,
-        super::HostedAccessToolBinding,
+        Shared<dyn super::HostedAccessToolSource>,
+        Initial<super::HostedAccessToolBinding>,
     )>,
     provider: Option<(
-        Arc<dyn super::HostedProviderToolSource>,
-        super::HostedProviderToolBinding,
+        Shared<dyn super::HostedProviderToolSource>,
+        Initial<super::HostedProviderToolBinding>,
     )>,
 }
 impl std::fmt::Debug for HostedContextRefresh {
@@ -39,7 +65,7 @@ impl std::fmt::Debug for HostedContextRefresh {
 }
 impl PartialEq for HostedContextRefresh {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        self.0.ptr_eq(&other.0)
     }
 }
 impl Eq for HostedContextRefresh {}
@@ -57,13 +83,13 @@ impl HostedContextRefresh {
             .strip_prefix("/home/")
             .filter(|p| crate::valid_agent_file_path(p))
             .ok_or_else(|| {
-                AdapterError::Unsupported(
-                    "Agent instructions require a retained complete home".into(),
-                )
+                AdapterError::Unsupported(text(
+                    "Agent instructions require a retained complete home",
+                ))
             })?;
         identity.validate()?;
-        Ok(Self(Arc::new(Binding {
-            backend,
+        Ok(Self(Shared::Legacy(Arc::new(Binding {
+            backend: Shared::Legacy(backend),
             handle,
             identity,
             path: format!("{path}/AGENTS.md"),
@@ -72,7 +98,7 @@ impl HostedContextRefresh {
             installed_transport: std::sync::RwLock::new(None),
             access: None,
             provider: None,
-        })))
+        }))))
     }
 
     pub(super) fn with_access(
@@ -80,9 +106,7 @@ impl HostedContextRefresh {
         source: Arc<dyn super::HostedAccessToolSource>,
         binding: super::HostedAccessToolBinding,
     ) -> Self {
-        Arc::get_mut(&mut self.0)
-            .expect("new context binding is uniquely owned")
-            .access = Some((source, binding));
+        self.legacy_mut().access = Some((Shared::Legacy(source), Initial::Legacy(binding)));
         self
     }
     pub(super) fn cwd(&self) -> &str {
@@ -94,10 +118,15 @@ impl HostedContextRefresh {
         source: Arc<dyn super::HostedProviderToolSource>,
         binding: super::HostedProviderToolBinding,
     ) -> Self {
-        Arc::get_mut(&mut self.0)
-            .expect("new context binding is uniquely owned")
-            .provider = Some((source, binding));
+        self.legacy_mut().provider = Some((Shared::Legacy(source), Initial::Legacy(binding)));
         self
+    }
+
+    fn legacy_mut(&mut self) -> &mut Binding {
+        let Shared::Legacy(binding) = &mut self.0 else {
+            panic!("admitted context bindings are immutable")
+        };
+        Arc::get_mut(binding).expect("new context binding is uniquely owned")
     }
     pub(super) fn tools(&self) -> Vec<serde_json::Value> {
         self.tools_for_transport(None)
@@ -124,9 +153,9 @@ impl HostedContextRefresh {
         };
         status.validate_for(&self.0.identity)?;
         if !status.agent_filesystem || !status.credential_ready || status.restore_pending {
-            return Err(AdapterError::Unsupported(
-                "runtime is not ready for managed context refresh".into(),
-            ));
+            return Err(AdapterError::Unsupported(text(
+                "runtime is not ready for managed context refresh",
+            )));
         }
         Ok(status)
     }
@@ -158,25 +187,11 @@ impl HostedContextRefresh {
             return Err(AdapterError::unexpected_reply("retained instructions read"));
         };
         if file.path != self.0.path || file.content()? != expected.as_bytes() {
-            return Err(AdapterError::OperationIdentityConflict(
-                "retained instructions do not match the pending settings operation".into(),
-            ));
+            return Err(AdapterError::OperationIdentityConflict(text(
+                "retained instructions do not match the pending settings operation",
+            )));
         }
         Ok(())
-    }
-    fn receipt(&self, status: &RuntimeStatus, session: &str, sequence: u64) -> String {
-        let exact = serde_json::json!([
-            "managed-context-v1",
-            self.0.handle.0,
-            status.sandbox_id,
-            status.generation,
-            status.home_identity,
-            status.boot_id,
-            self.0.path,
-            session,
-            sequence
-        ]);
-        format!("{:x}", Sha256::digest(exact.to_string().as_bytes()))
     }
     /// Add only the managed block. The supervisor's existing descriptor-confined
     /// compare-and-swap preserves edits and rejects replacement boots or paths.
@@ -189,15 +204,15 @@ impl HostedContextRefresh {
         previous: &[String],
     ) -> crate::Result<()> {
         if guidance.is_empty() || guidance.len() > 16 * 1024 || guidance.contains('\0') {
-            return Err(AdapterError::Unsupported(
-                "managed guidance is invalid".into(),
-            ));
+            return Err(AdapterError::Unsupported(text(
+                "managed guidance is invalid",
+            )));
         }
         let status = self.status().await?;
         if sequence == 0 || self.receipt(&status, session, sequence) != readiness_receipt {
-            return Err(AdapterError::OperationIdentityConflict(
-                "managed context readiness belongs to another runtime identity".into(),
-            ));
+            return Err(AdapterError::OperationIdentityConflict(text(
+                "managed context readiness belongs to another runtime identity",
+            )));
         }
         // This is control-plane maintenance, not shared filesystem access. The
         // binding fixes the owning runtime and exact Agent-home path before any
@@ -220,7 +235,7 @@ impl HostedContextRefresh {
             return Err(AdapterError::unexpected_reply("managed instructions path"));
         }
         let original = String::from_utf8(file.content()?)
-            .map_err(|_| AdapterError::Rejected("Agent instructions are not UTF-8".into()))?;
+            .map_err(|_| AdapterError::Rejected(text("Agent instructions are not UTF-8")))?;
         let Some(updated) = replace_managed_prefix(&original, guidance, previous)? else {
             return Ok(());
         };
@@ -246,9 +261,9 @@ impl HostedContextRefresh {
             || receipt.sha256 != sha
             || receipt.size_bytes != updated.len() as u64
         {
-            return Err(AdapterError::Rejected(
-                "runtime did not confirm managed instructions".into(),
-            ));
+            return Err(AdapterError::Rejected(text(
+                "runtime did not confirm managed instructions",
+            )));
         }
         Ok(())
     }
@@ -264,9 +279,9 @@ fn replace_managed_prefix(
             .iter()
             .any(|prefix| prefix.is_empty() || prefix.len() > 16 * 1024 || prefix.contains('\0'))
     {
-        return Err(AdapterError::Unsupported(
-            "managed guidance history is invalid".into(),
-        ));
+        return Err(AdapterError::Unsupported(text(
+            "managed guidance history is invalid",
+        )));
     }
     let owner = previous
         .iter()
@@ -284,15 +299,20 @@ fn replace_managed_prefix(
         })
         .max_by_key(|(len, _)| *len)
         .map_or(original, |(_, owner)| owner);
-    let updated = if owner.is_empty() {
-        guidance.to_owned()
-    } else {
-        format!("{guidance}\n\n{owner}")
+    let bytes = guidance
+        .len()
+        .checked_add(owner.len())
+        .and_then(|bytes| bytes.checked_add(if owner.is_empty() { 0 } else { 2 }));
+    let Some(bytes) = bytes.filter(|bytes| *bytes <= 32 * 1024) else {
+        return Err(AdapterError::Unsupported(text(
+            "Agent instructions have no capacity for managed guidance",
+        )));
     };
-    if updated.len() > 32 * 1024 {
-        return Err(AdapterError::Unsupported(
-            "Agent instructions have no capacity for managed guidance".into(),
-        ));
+    let mut updated = String::with_capacity(bytes);
+    updated.push_str(guidance);
+    if !owner.is_empty() {
+        updated.push_str("\n\n");
+        updated.push_str(owner);
     }
     Ok((updated != original).then_some(updated))
 }

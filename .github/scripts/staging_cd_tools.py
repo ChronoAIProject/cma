@@ -9,6 +9,8 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
+import ci_retry
+from cd_target import controller
 from staging_cd_cache import cached, warm, wheels
 from staging_cd_clock import remaining
 from staging_cd_checkout import checkout_path
@@ -47,10 +49,13 @@ def environment(env):
             "PATH": str(root / "bin") + os.pathsep + env["PATH"]}
 
 
-def download(url, digest):
-    with urllib.request.urlopen(url, timeout=60) as response:
-        require(response.status == 200, "Deployment tool download failed")
-        data = response.read(128 * 1024 * 1024 + 1)
+def download(url, digest, *, retry=None):
+    def fetch():
+        with urllib.request.urlopen(url, timeout=60) as response:
+            require(response.status == 200, "Deployment tool download failed")
+            return response.read(128 * 1024 * 1024 + 1)
+    # A pinned release download is an idempotent read; the checksum below stays the authority.
+    data = ci_retry.call(fetch, name="tool-download", classify=ci_retry.classify, **(retry or {}))
     require(len(data) <= 128 * 1024 * 1024 and hashlib.sha256(data).hexdigest() == digest,
             "Deployment tool checksum differs")
     return data
@@ -97,7 +102,10 @@ def install(env, fetch=download, runner=subprocess.run):
 
 def install_requirements(env, runner=subprocess.run):
     root = tools_path(env)
-    staging = checkout_path(env) / "staging"
+    staging = checkout_path(env)
+    for part in controller(env):  # staging/, or prod/chrono-cd/ for production
+        staging = staging / part
+        require(not staging.is_symlink(), "Private controller requirements are unavailable")
     requirements = staging / "requirements.txt"
     require(staging.is_dir() and not staging.is_symlink() and requirements.is_file()
             and not requirements.is_symlink() and requirements.stat().st_size <= 4096,
@@ -141,11 +149,11 @@ def main():
         if command in (["install"], ["requirements"]):
             # Bound the entire setup process, including slow streamed downloads,
             # by the original admission clock. No deploy credential exists here.
-            left = remaining(env.get("CD_STARTED_AT"))
+            left = remaining(env.get("CD_STARTED_AT"), mode=env.get("CD_DEPLOY_MODE", "release"))
             child_env = {key: env[key] for key in ("PATH", "LANG", "LC_ALL", "RUNNER_TEMP",
                          "GITHUB_WORKSPACE", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT") if key in env}
             code = run_process([sys.executable, "-B", __file__, "_" + command[0]], child_env, left)
-            remaining(env.get("CD_STARTED_AT"))
+            remaining(env.get("CD_STARTED_AT"), mode=env.get("CD_DEPLOY_MODE", "release"))
             return code == 0
         if command == ["_install"]:
             return install(env, lambda url, digest: cached(env, url, digest, download))
@@ -154,7 +162,7 @@ def main():
         if command == ["cleanup"]:
             return cleanup(env)
         return False
-    return run_private(operation, None)
+    return run_private(operation, None, subject="deploy-tools")
 
 
 if __name__ == "__main__":

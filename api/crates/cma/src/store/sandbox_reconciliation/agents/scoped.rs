@@ -76,6 +76,9 @@ pub(in crate::store::sandbox_reconciliation) async fn publish_agent(
         .map_err(ApplyError::Domain)?,
         appended_at: request.observed_at.clone(),
     };
+    scope
+        .settle_runtime_loss_budget(store, current, change, &request.observed_at)
+        .await?;
     let recorded = writer_commit::publish_captured(
         store,
         scope,

@@ -1,30 +1,17 @@
 """Exercise real keyboard and pointer input through the authenticated runtime stream."""
-import base64
-import hashlib
 import os
-import socket
 import struct
 import subprocess
 import threading
 import time
 
+from desktop_ownership_probe import ProtectedDesktop
+
 
 class Stream:
     def __init__(self):
-        self.socket = socket.create_connection(("127.0.0.1", 9090), timeout=10)
-        self.socket.settimeout(10)
-        key = base64.b64encode(os.urandom(16)).decode()
-        token = os.environ["CMA_DESKTOP_TEST_TOKEN"]
-        self.socket.sendall(("GET /runtime/desktop HTTP/1.1\r\nHost: localhost\r\n"
-            "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"
-            f"Sec-WebSocket-Key: {key}\r\nx-cma-runtime-token: {token}\r\n\r\n").encode())
-        headers = bytearray()
-        while not headers.endswith(b"\r\n\r\n"):
-            headers.extend(self.raw(1))
-            assert len(headers) < 16384
-        assert headers.startswith(b"HTTP/1.1 101 "), headers.splitlines()[0]
-        expected = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest())
-        assert expected in headers
+        self.transport = ProtectedDesktop.from_env()
+        self.socket = self.transport.socket
         self.buffer = bytearray()
         self.writer = threading.Lock()
 
@@ -167,12 +154,10 @@ def main():
     finally:
         stopped.set()
         try:
-            stream.socket.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-        stream.socket.close()
-        if reader:
-            reader.join(timeout=1)
+            stream.transport.close()
+        finally:
+            if reader:
+                reader.join(timeout=1)
 
 
 if __name__ == '__main__':

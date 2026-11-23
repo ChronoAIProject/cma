@@ -38,7 +38,7 @@ pub(super) async fn request(
     let body = to_bytes(response.into_body(), 1_000_000).await.unwrap();
     (status, serde_json::from_slice(&body).unwrap())
 }
-async fn measured_fixture(store: &ReportingStore, state: &SandboxUsage, from: u64) {
+pub(super) async fn measured_fixture(store: &ReportingStore, state: &SandboxUsage, from: u64) {
     let holder = uuid::Uuid::new_v4().to_string();
     assert!(store.lease("rollups", &holder, 70).await.unwrap());
     let a = Aggregate {

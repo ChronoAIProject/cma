@@ -20,76 +20,105 @@ use tokio::{sync::Mutex, time::Instant};
 pub(super) struct Snapshot {
     at: Instant,
     heads: BTreeMap<String, Head>,
+    lanes: BTreeSet<String>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
             at: Instant::now() - std::time::Duration::from_secs(1),
             heads: BTreeMap::new(),
+            lanes: BTreeSet::new(),
         }
     }
 }
 pub(super) type Cache = Arc<Mutex<Snapshot>>;
 
 impl Partitions {
+    #[cfg(test)]
     pub(super) async fn active_heads(&self) -> Result<BTreeMap<String, Head>, Error> {
+        Ok(self.active_snapshot().await?.0)
+    }
+
+    async fn active_snapshot(&self) -> Result<(BTreeMap<String, Head>, BTreeSet<String>), Error> {
         let mut snapshot = self.snapshot.lock().await;
         if snapshot.at.elapsed() < std::time::Duration::from_millis(100) {
-            return Ok(snapshot.heads.clone());
+            return Ok((snapshot.heads.clone(), snapshot.lanes.clone()));
         }
         let mut heads = BTreeMap::new();
+        let mut lanes = BTreeSet::new();
         let mut active = BTreeSet::new();
-        let mut cursor = None;
-        loop {
-            let rows = self
-                .store
-                .active_entries::<Head>(
-                    ReplicaKind::Partition,
-                    &self.membership.deployment,
-                    cursor.as_deref(),
-                    128,
-                )
-                .await
-                .inspect_err(|&error| {
+        for ephemeral in [false, true] {
+            let mut cursor = None;
+            loop {
+                let rows = self
+                    .store
+                    .active_entries_in::<Head>(
+                        ReplicaKind::Partition,
+                        &self.membership.deployment,
+                        cursor.as_deref(),
+                        128,
+                        ephemeral,
+                    )
+                    .await
+                    .inspect_err(|&error| {
+                        self.isolation
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .report(&ScanError::new(error, Stage::HeadRead, None));
+                    })?;
+                let count = rows.len();
+                for entry in rows {
+                    let id = entry.id;
+                    cursor = Some(id.clone());
+                    let duplicate = !active.insert(id.clone());
+                    let checked = entry
+                        .value
+                        .map_err(|error| ScanError::new(error, Stage::HeadDecode, Some(&id)))
+                        .and_then(|head| {
+                            head.validate(&id, &self.membership.deployment, &head.owner)
+                                .map_err(|error| {
+                                    ScanError::new(error, Stage::HeadValidate, Some(&id))
+                                })?;
+                            if head.queue.is_empty() {
+                                return Err(ScanError::new(
+                                    Class::Corrupt,
+                                    Stage::Front,
+                                    Some(&id),
+                                ));
+                            }
+                            Ok(head)
+                        });
+                    let mut isolation = self.isolation.lock().unwrap_or_else(|e| e.into_inner());
+                    if duplicate {
+                        heads.remove(&id);
+                        lanes.remove(&id);
+                        isolation.failed(
+                            &id,
+                            &ScanError::new(Error::Corrupt, Stage::HeadValidate, Some(&id)),
+                        );
+                        continue;
+                    }
+                    match checked {
+                        Ok(head) => {
+                            heads.insert(id.clone(), head);
+                            isolation.valid_head(&id);
+                            if ephemeral {
+                                lanes.insert(id.clone());
+                            }
+                        }
+                        Err(error) => isolation.failed(&id, &error),
+                    }
+                }
+                if heads.len() > 4096 {
                     self.isolation
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
-                        .report(&ScanError::new(error, Stage::HeadRead, None));
-                })?;
-            let count = rows.len();
-            for entry in rows {
-                let id = entry.id;
-                cursor = Some(id.clone());
-                active.insert(id.clone());
-                let checked = entry
-                    .value
-                    .map_err(|e| ScanError::new(e, Stage::HeadDecode, Some(&id)))
-                    .and_then(|head| {
-                        head.validate(&id, &self.membership.deployment, &head.owner)
-                            .map_err(|e| ScanError::new(e, Stage::HeadValidate, Some(&id)))?;
-                        if head.queue.is_empty() {
-                            return Err(ScanError::new(Class::Corrupt, Stage::Front, Some(&id)));
-                        }
-                        Ok(head)
-                    });
-                let mut isolation = self.isolation.lock().unwrap_or_else(|e| e.into_inner());
-                match checked {
-                    Ok(head) => {
-                        isolation.valid_head(&id);
-                        heads.insert(id, head);
-                    }
-                    Err(error) => isolation.failed(&id, &error),
+                        .report(&ScanError::new(Error::Capacity, Stage::HeadRead, None));
+                    return Err(Error::Capacity);
                 }
-            }
-            if heads.len() > 4096 {
-                self.isolation
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .report(&ScanError::new(Error::Capacity, Stage::HeadRead, None));
-                return Err(Error::Capacity);
-            }
-            if count < 128 {
-                break;
+                if count < 128 {
+                    break;
+                }
             }
         }
         self.isolation
@@ -98,16 +127,56 @@ impl Partitions {
             .retain(&active);
         snapshot.at = Instant::now();
         snapshot.heads = heads.clone();
-        Ok(heads)
+        snapshot.lanes = lanes.clone();
+        Ok((heads, lanes))
     }
 
-    pub(super) async fn assigned(&self, id: &str) -> Result<bool, Error> {
-        let heads = self.active_heads().await?;
-        let mut keys: Vec<_> = heads.into_keys().collect();
+    pub(super) async fn assignments(
+        &self,
+        heads: &BTreeMap<String, Head>,
+        lanes: &BTreeSet<String>,
+    ) -> Result<BTreeMap<String, String>, Error> {
+        let mut assigned = self
+            .membership
+            .assignments(heads.keys().filter(|id| !lanes.contains(*id)).cloned())?;
+        let lane_keys: Vec<_> = heads
+            .keys()
+            .filter(|id| lanes.contains(*id))
+            .cloned()
+            .collect();
+        if !lane_keys.is_empty() {
+            match self
+                .membership
+                .lane_assignments(&self.store, lane_keys)
+                .await
+            {
+                Ok(lane_assigned) => assigned.extend(lane_assigned),
+                Err(error) => {
+                    self.isolation
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .report(&ScanError::new(error, Stage::Placement, None));
+                }
+            }
+        }
+        Ok(assigned)
+    }
+
+    pub(super) async fn assigned_custody(&self, id: &str, lane: bool) -> Result<bool, Error> {
+        let (heads, lanes) = self.active_snapshot().await?;
+        let mut keys: Vec<_> = heads
+            .into_keys()
+            .filter(|key| lanes.contains(key) == lane)
+            .collect();
         if !keys.iter().any(|key| key == id) {
             keys.push(id.into());
         }
-        Ok(self.membership.assignments(keys)?.get(id) == Some(&self.membership.instance))
+        let assigned = if lane {
+            self.membership.lane_assignments(&self.store, keys).await?
+        } else {
+            self.membership.assignments(keys)?
+        };
+        Ok(assigned.get(id) == Some(&self.membership.instance))
     }
 }
 
@@ -122,15 +191,15 @@ impl RecoverySource for Frontier {
         after: Option<&'a str>,
     ) -> BoxFuture<'a, Result<RecoveryPage, ScanError>> {
         Box::pin(async move {
-            let heads = self
+            let (heads, lanes) = self
                 .partitions
-                .active_heads()
+                .active_snapshot()
                 .await
                 .map_err(|e| ScanError::new(e, Stage::HeadRead, None))?;
             let assigned = self
                 .partitions
-                .membership
-                .assignments(heads.keys().cloned())
+                .assignments(&heads, &lanes)
+                .await
                 .map_err(|e| ScanError::new(e, Stage::Placement, None))?;
             let selected: Vec<_> = heads
                 .iter()

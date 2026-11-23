@@ -1,8 +1,14 @@
 use super::*;
 use layer2_core::agent_ownership::{candidates, DEFAULT_MAX_OWNED_AGENTS};
 
+#[path = "mongo_containment_tests.rs"]
+mod containment;
 #[path = "mongo_effect_tests.rs"]
 mod effects;
+#[path = "mongo_failure_tests.rs"]
+mod failure;
+#[path = "mongo_heartbeat_tests.rs"]
+mod heartbeat;
 #[path = "mongo_renewal_tests.rs"]
 mod renewal;
 #[path = "mongo_two_manager_tests.rs"]
@@ -205,3 +211,6 @@ async fn capacity_is_bounded_and_expired_members_cannot_resurrect() {
     );
     store.database.drop().await.unwrap();
 }
+
+#[path = "fence_mongo_tests.rs"]
+mod transaction_fence;

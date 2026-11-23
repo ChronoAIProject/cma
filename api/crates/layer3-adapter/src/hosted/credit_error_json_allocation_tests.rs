@@ -37,8 +37,8 @@ fn admitted_error_string_cannot_materialize_an_unreserved_embedded_tree() {
         peaks[0] > 128 * 1024 * 1024,
         "fixture must expose the original unaccounted tree"
     );
-    // This fixture needs only the existing diagnostic String copy; its unknown
-    // container consists of unescaped primitive values and allocates no tree.
+    // Unknown containers use bounded scratch rather than materializing an
+    // embedded tree; the terminal message itself is borrowed.
     assert!(peaks[1] <= encoded.len() + 64 * 1024);
 }
 

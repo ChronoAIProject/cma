@@ -2,6 +2,96 @@ use super::*;
 use crate::agent_sandbox::{RuntimeCapacityReason, RuntimePermitKind, RuntimeWorkloadClass};
 use crate::hosted::HostedControlTransport;
 
+#[path = "native_http_reserve_tests.rs"]
+mod session_reserve;
+
+#[path = "native_http_pool/telemetry/tests.rs"]
+mod telemetry_tests;
+
+#[tokio::test]
+async fn native_pool_measurements_distinguish_idle_cache_from_busy_checkout() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let metrics = recorder.handle();
+    let _recorder = metrics::set_default_local_recorder(&recorder);
+    let fixture = Fixture::start(Mode::Persistent, NativeRuntimeTransport::KubernetesExec).await;
+    fixture
+        .transport
+        .bind_native_runtime(&handle(), "sandbox-metrics", &"a".repeat(64))
+        .await
+        .unwrap();
+    let endpoint = fixture.endpoint().await;
+    for _ in 0..2 {
+        fixture
+            .transport
+            .control(&endpoint, &RequestFrame::Resources)
+            .await
+            .unwrap();
+    }
+    let rendered = metrics.render();
+    for (kind, value) in [
+        ("slots", 1),
+        ("cached_connections", 1),
+        ("busy", 0),
+        ("waiting", 0),
+    ] {
+        assert!(
+            rendered.contains(&format!(
+                "cma_adapter_native_http_pool{{pool=\"native\",kind=\"{kind}\"}} {value}"
+            )),
+            "{rendered}"
+        );
+    }
+    assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.transport.runtime_capacity.available_requests(), 32);
+    fixture.transport.retire(&handle()).await.unwrap();
+    fixture.drained().await;
+    let rendered = metrics.render();
+    for kind in ["slots", "cached_connections", "busy", "waiting"] {
+        assert!(
+            rendered.contains(&format!(
+                "cma_adapter_native_http_pool{{pool=\"native\",kind=\"{kind}\"}} 0"
+            )),
+            "{rendered}"
+        );
+    }
+    assert!(!rendered.contains("sandbox-metrics"));
+    assert!(!rendered.contains("agent-sandbox:"));
+}
+
+#[tokio::test]
+async fn session_reserve_does_not_bypass_a_busy_control_lane_for_authorized_close() {
+    use crate::owner_protocol::{scope, test_support::TestAuthority, TransportAuthority};
+
+    let (fixture, handles, mut held) = session_reserve::busy_fixture(2).await;
+    let authority = TestAuthority::new(7);
+    let request = RequestFrame::CloseAgent(crate::wire::FencedRequest::new(
+        7,
+        crate::AgentCloseRequest::new("close-held-native-agent", crate::AgentSlot::new("agent-1")),
+    ));
+    let mut close = Box::pin(scope(
+        authority.clone(),
+        fixture.transport.exchange(&handles[0], request),
+    ));
+    // This records a pre-existing activation limit, not a control-SLO pass:
+    // ownership negotiation succeeds, but CloseAgent still waits on Control.
+    assert!(tokio::time::timeout(Duration::from_secs(1), close.as_mut())
+        .await
+        .is_err());
+    assert!(authority.is_current());
+    assert!(fixture.state.ownership_confirmations.load(Ordering::SeqCst) > 0);
+    assert!(held.try_join_next().is_none());
+    assert!(!fixture
+        .state
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|request| request.contains("close-held-native-agent")));
+    drop(close);
+    assert_eq!(fixture.transport.runtime_capacity.available_requests(), 18);
+    session_reserve::finish(&fixture, handles, held).await;
+}
+
 #[tokio::test]
 async fn last_request_permit_opens_a_new_connection_once_and_idle_reuse_holds_none() {
     for mode in [

@@ -15,6 +15,7 @@ export default defineConfig({
     'operations-usage.check.ts',
     'usage-settings.check.ts',
     'usage-redesign.check.ts',
+    'usage-coverage.check.ts',
     'usage-backoff.check.ts',
     'usage-ranges.check.ts',
     'spend-controls.check.ts',

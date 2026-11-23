@@ -206,6 +206,9 @@ mod index_hooks;
 #[path = "management/creation.rs"]
 mod creation;
 
+#[path = "management/recovery.rs"]
+mod recovery;
+
 #[path = "management/reconciliation.rs"]
 mod reconciliation;
 
@@ -231,6 +234,9 @@ mod write_gate;
 
 #[path = "management/routing.rs"]
 mod routing;
+
+#[path = "management/retained_origins.rs"]
+mod retained_origins;
 
 #[tokio::test]
 async fn channel_endpoints_use_the_advertised_base_in_both_rollout_phases() {
@@ -280,3 +286,6 @@ mod custom_execution;
 
 #[path = "management/organization_channels.rs"]
 mod organization_channels;
+
+#[path = "management/partition_resets.rs"]
+mod partition_resets;

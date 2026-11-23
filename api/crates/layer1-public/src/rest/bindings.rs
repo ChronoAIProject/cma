@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 pub(super) mod inspection;
+pub(super) mod reset;
+pub use reset::binding_conversation_reset_router;
 mod native_endpoints;
 use native_endpoints::validate_native_endpoint;
 pub(super) mod preparation;
@@ -94,6 +96,7 @@ pub(super) struct BindingRouteState {
     native_endpoint: Option<String>,
     native_advertisement_aliases: Vec<String>,
     preparation_enabled: bool,
+    reset_enabled: bool,
 }
 
 pub fn binding_router(service: Arc<BindingService>) -> Router {
@@ -102,6 +105,7 @@ pub fn binding_router(service: Arc<BindingService>) -> Router {
         native_endpoint: None,
         native_advertisement_aliases: vec![],
         preparation_enabled: false,
+        reset_enabled: false,
     })
 }
 
@@ -159,6 +163,7 @@ pub fn binding_router_with_native_tools_aliases_and_preparation(
         native_endpoint: Some(endpoint.into()),
         native_advertisement_aliases: advertisement_aliases.to_vec(),
         preparation_enabled,
+        reset_enabled: false,
     }))
 }
 
@@ -328,15 +333,21 @@ async fn put_conversation(
         .ensure_conversation_at_generation(&caller, &id, &conversation, generation)
         .await
     {
-        Ok((value, created)) => (
-            if created {
-                StatusCode::CREATED
-            } else {
-                StatusCode::OK
-            },
-            Json(BindingConversationView::from(value)),
-        )
-            .into_response(),
+        Ok((value, created)) => {
+            let mut view = BindingConversationView::from(value);
+            if view.conversation_id.starts_with("inc_") {
+                view.conversation_id = conversation;
+            }
+            (
+                if created {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::OK
+                },
+                Json(view),
+            )
+                .into_response()
+        }
         Err(value) => error(value),
     }
 }
@@ -442,6 +453,7 @@ impl From<BindingConversation> for BindingConversationView {
 }
 fn error(error: BindingError) -> Response {
     let (status, code) = match &error {
+        BindingError::ResetRefused(code) => (StatusCode::CONFLICT, *code),
         BindingError::AdmissionPaused => return super::admission_problem::paused(),
         BindingError::GlobalCapacityReached => return super::admission_problem::home_capacity(),
         BindingError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),

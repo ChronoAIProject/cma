@@ -1,6 +1,7 @@
 """Resolve local inputs through Docker stages; reject ambiguous recipes."""
 
 import fnmatch
+from functools import lru_cache
 import json
 from pathlib import PurePosixPath
 import re
@@ -80,6 +81,8 @@ def stage_sources(text, target, build_args):
             while value.startswith('--'):
                 flag, _, value = value.partition(' ')
                 key, sep, val = flag[2:].partition('=')
+                if key == 'link' and (not sep or val in {'true', 'false'}):
+                    continue
                 if not sep or key not in {'from', 'chown', 'chmod'}:
                     raise ValueError('unsupported Docker copy flag')
                 flags[key] = val
@@ -157,25 +160,48 @@ def pattern_regex(pattern):
     return output
 
 
+@lru_cache(maxsize=1024)
+def compiled_pattern(pattern):
+    # A comparison applies the same small rule set to thousands of paths.
+    # Cache only pure string calculations, never filesystem observations.
+    return re.compile('^' + pattern_regex(pattern) + '$')
+
+
+@lru_cache(maxsize=16384)
+def path_parts(path):
+    parts = path.split('/')
+    return tuple(parts), tuple('/'.join(parts[:n]) for n in range(1, len(parts) + 1))
+
+
 def matches(path, pattern):
     pattern = pattern.strip('/')
     if pattern == '.':
         return True
-    regex = re.compile('^' + pattern_regex(pattern) + '$')
+    if '*' not in pattern and '?' not in pattern and '[' not in pattern:
+        return path == pattern or path.startswith(pattern + '/')
+    regex = compiled_pattern(pattern)
     # A matching directory includes its descendants; '*' itself cannot cross
     # a slash, while '**' follows Docker's recursive directory semantics.
-    parts = path.split('/')
-    return any(regex.fullmatch('/'.join(parts[:n])) for n in range(1, len(parts) + 1))
+    return any(regex.fullmatch(prefix) for prefix in path_parts(path)[1])
 
 
-def ignored(path, text):
-    result = False
+@lru_cache(maxsize=128)
+def ignore_patterns(text):
+    patterns = []
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith('#') or line == '.':
             continue
         negate = line.startswith('!')
         pattern = line[1:] if negate else line
-        if matches(path, pattern) or ('/' not in pattern and any(fnmatch.fnmatchcase(part, pattern) for part in path.split('/'))):
+        patterns.append((negate, pattern))
+    return tuple(patterns)
+
+
+def ignored(path, text):
+    result = False
+    parts = path_parts(path)[0]
+    for negate, pattern in ignore_patterns(text):
+        if matches(path, pattern) or ('/' not in pattern and any(fnmatch.fnmatchcase(part, pattern) for part in parts)):
             result = not negate
     return result

@@ -21,6 +21,7 @@ class GateTests(unittest.TestCase):
         self.archive = self.root / "image.tar"
         self.archive.write_bytes(b"opaque image archive; scanner transport is injected")
         self.output = self.root / "report"
+        self.real_verify = gate.verify_bundle
         bundle = patch.object(gate, "verify_bundle")
         bundle.start()
         self.addCleanup(bundle.stop)
@@ -28,7 +29,7 @@ class GateTests(unittest.TestCase):
     def receipt(self, **changes):
         report = {"schema": "image-secret-scan-v1", "complete": True, "status": "CLEAN", "exit_code": 0,
                   "findings": [], "allowlisted": [], "archive_sha256": gate.checksum(self.archive),
-                  "gitleaks_version": "8.30.1", "scanner_version": "1.0.3", "blocking_rules": "all",
+                  "gitleaks_version": "8.30.1", "scanner_version": "1.0.4", "blocking_rules": "all",
                   "blocking_findings": [], "advisory_findings": [], "reviewed_classifications": [],
                   "counts": {"detected": 0, "blocking": 0, "advisory": 0, "reviewed": 0, "allowlisted": 0},
                   "policy": {"allowlist_sha256": hashlib.sha256(gate.EMPTY_POLICY.encode()).hexdigest(),
@@ -36,6 +37,24 @@ class GateTests(unittest.TestCase):
         report.update(changes)
         self.output.mkdir()
         (self.output / "REPORT.json").write_text(json.dumps(report))
+
+    def detector_receipt(self):
+        from runtime_image_hygiene import readers
+
+        archive_type, budget_type, _ = readers()
+        scanner = gate.SCANNER.parent
+        files = [gate.SCANNER, scanner / "scan_image_secrets.py"]
+        files += sorted((scanner / "image_secrets").glob("*.py"))
+        with archive_type(self.archive, self.root, budget_type(1024 * 1024, 100)) as archive:
+            kind, images = archive.images()
+        inventory = {"archive_format": kind, "images": [], "layers": []}
+        for index, image in enumerate(images):
+            inventory["images"].append({"index": index, "config_digest": image["config_digest"],
+                                        "manifest": image["manifest"], "layers": len(image["layers"])})
+            inventory["layers"].extend({"image": index, "index": layer, "diff_id": digest}
+                                       for layer, digest in enumerate(image["diff_ids"]))
+        self.receipt(blocking_rules="credential", input_kind="archive", inventory=inventory,
+                     scanner_files={str(path.relative_to(scanner)): gate.checksum(path) for path in files})
 
     def test_exact_archive_and_empty_exception_policy(self):
         def scan(*args):
@@ -63,6 +82,16 @@ class GateTests(unittest.TestCase):
                 gate.scan_archive(self.archive, self.output, scan)
             (self.output / "REPORT.json").unlink()
             self.output.rmdir()
+
+    def test_publication_gets_manifest_checked_by_gate(self):
+        def scan(*_args):
+            self.receipt(blocking_rules="credential")
+        with patch.object(gate, "verify_bundle", wraps=self.real_verify) as check:
+            archive, (version, bundle) = gate.verified_staging_scan(self.archive, self.output, scan, component="web")
+        self.assertEqual(archive, gate.checksum(self.archive))
+        self.assertEqual(version, "1.0.4")
+        self.assertEqual(bundle, gate.checksum(gate.SCANNER.parent / "SOURCE-MANIFEST.json"))
+        self.assertEqual(check.call_args.kwargs["manifest_sha256"], bundle)
 
     def test_staging_explicitly_records_entropy_as_advisory(self):
         entropy = {"finding_id": "a" * 64, "rule": "gitleaks.image-high-entropy"}
@@ -97,6 +126,96 @@ class GateTests(unittest.TestCase):
                 gate.scan_archive(self.archive, self.output, scan, blocking_rules=mode)
             (self.output / "REPORT.json").unlink()
             self.output.rmdir()
+
+    def test_certificate_advisory_requires_bound_direct_layer_evidence(self):
+        digest = "a" * 64
+        source = {"scope": "layer", "image": 0, "layer": 1, "entry": 9, "path": "path-sha256:" + "b" * 64,
+                  "rule": "path.key-or-certificate", "public_certificate_sha256": digest}
+        for valid, changes in ((True, {}), (True, {"file_sha256": digest, "candidate_sha256": digest}),
+                               (False, {"rule": "content.binary-private-key"}), (False, {"member": "0"}),
+                               (False, {"scope": "config"}), (False, {"entry": -1}), (False, {"path": "raw"}),
+                               (False, {"file_sha256": digest}), (False, {"public_certificate_sha256": "bad"}),
+                               (False, {"file_sha256": "c" * 64, "candidate_sha256": digest})):
+            row = dict(source, **changes)
+            row["finding_id"] = hashlib.sha256(json.dumps(row, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            data = {"blocking_rules": "credential", "findings": [row],
+                    "advisory_findings": [dict(row, classification="public-material")],
+                    "counts": {"detected": 1, "blocking": 0, "advisory": 1, "reviewed": 0, "allowlisted": 0}}
+            self.receipt(**data)
+            report = json.loads((self.output / "REPORT.json").read_bytes())
+            report["policy"]["staging_runtime_component"] = "runtime"
+            with self.subTest(changes=changes):
+                if valid:
+                    gate.validate_receipt(report, gate.checksum(self.archive), "credential", None, component="runtime")
+                    report["findings"][0]["finding_id"] = "0" * 64
+                with self.assertRaises(gate.ScanRefusal):
+                    gate.validate_receipt(report, gate.checksum(self.archive), "credential", None, component="runtime")
+            (self.output / "REPORT.json").unlink()
+            self.output.rmdir()
+
+    def test_runtime_option_and_receipt_binding_follow_the_callers_component(self):
+        from runtime_image_hygiene_tests import docker_image, final_entries, layer
+
+        docker_image(self.archive, [layer(final_entries())])
+        for component in ("runtime", "runtime-omarchy", "web", None):
+            self.output = self.root / (component or "unspecified")
+            runtime = component in ("runtime", "runtime-omarchy")
+            def scanner(*args):
+                self.assertEqual("--staging-runtime-component" in args, runtime)
+                if runtime:
+                    self.assertEqual(args[args.index("--staging-runtime-component") + 1], component)
+                self.detector_receipt()
+                path = self.output / "REPORT.json"
+                report = json.loads(path.read_bytes())
+                if runtime:
+                    report["policy"]["staging_runtime_component"] = component
+                path.write_text(json.dumps(report))
+            gate.scan_archive(self.archive, self.output, scanner, blocking_rules="credential", component=component)
+            path = self.output / "REPORT.json"
+            report = json.loads(path.read_bytes())
+            section = report.get("package_evidence")
+            self.assertEqual(section is not None, runtime)
+            if runtime:
+                self.assertEqual(section["component"], component)
+                self.assertEqual(section["archive_sha256"], gate.checksum(self.archive))
+            gate.validate_receipt(report, gate.checksum(self.archive), "credential", None,
+                                  component=component, package_section=section)
+            report["policy"]["staging_runtime_component"] = "runtime-omarchy" if component == "runtime" else "runtime"
+            with self.assertRaises(gate.ScanRefusal):
+                gate.validate_receipt(report, gate.checksum(self.archive), "credential", None,
+                                      component=component, package_section=section)
+            path.unlink()
+            self.output.rmdir()
+
+    def test_runtime_package_evidence_rejects_missing_or_changed_detector_binding(self):
+        from runtime_image_hygiene_tests import docker_image, final_entries, layer
+
+        docker_image(self.archive, [layer(final_entries())])
+        for component in ("runtime", "runtime-omarchy"):
+            for field in ("input_kind", "scanner_files", "inventory"):
+                for changed in (False, True):
+                    self.output = self.root / f"{component}-{field}-{changed}"
+                    def scanner(*_args):
+                        self.detector_receipt()
+                        path = self.output / "REPORT.json"
+                        report = json.loads(path.read_bytes())
+                        report["policy"]["staging_runtime_component"] = component
+                        if not changed:
+                            report.pop(field)
+                        elif field == "input_kind":
+                            report[field] = "image"
+                        elif field == "scanner_files":
+                            report[field]["scan_image_secrets.py"] = "0" * 64
+                        else:
+                            report[field]["layers"][0]["diff_id"] = "sha256:" + "0" * 64
+                        path.write_text(json.dumps(report))
+                    with self.subTest(component=component, field=field, changed=changed), \
+                         self.assertRaises(gate.ScanRefusal) as caught:
+                        gate.scan_archive(self.archive, self.output, scanner,
+                                          blocking_rules="credential", component=component)
+                    self.assertEqual(caught.exception.outcome, "content_refused")
+                    report = json.loads((self.output / "REPORT.json").read_bytes())
+                    self.assertNotIn("package_evidence", report)
 
     def test_advisory_partition_and_counts_cannot_omit_or_duplicate_findings(self):
         entropy = {"finding_id": "a" * 64, "rule": "gitleaks.image-high-entropy"}

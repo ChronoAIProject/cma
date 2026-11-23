@@ -190,7 +190,12 @@ async fn apply(
     {
         return Err(AgentAccessError::Conflict.into());
     }
-    let lineage = access::validate_lineage(store, &record.requester, session, false).await?;
+    let lineage = access::validate_lineage_transaction(store, &record.requester, session, false)
+        .await
+        .map_err(|error| match error {
+            access::Error::Domain(error) => Error::Access(error),
+            access::Error::Driver(error) => driver(error),
+        })?;
     let document = store
         .sandboxes
         .find_one(doc! { "_id": record.requester.sandbox_id.as_str() })

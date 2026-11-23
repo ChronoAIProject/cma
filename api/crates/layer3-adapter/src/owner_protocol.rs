@@ -2,23 +2,83 @@
 use serde::{Deserialize, Serialize};
 use std::{future::Future, sync::Arc};
 
+#[path = "hosted/provider_ownership_failure.rs"]
+mod failure;
+pub(crate) use failure::OwnershipExchangeFailure;
+pub use failure::{OwnershipFailure, OwnershipFailureReason, OwnershipPhase};
+
+#[path = "hosted/provider_ownership_evidence.rs"]
+mod evidence;
+pub use evidence::{FirstOwnershipFailure, OwnershipEvidence, OwnershipReceiver};
+
 #[async_trait::async_trait]
 pub trait ReceiverRevocation: Send + Sync {
     fn identity(&self) -> String;
     async fn revoke(&self) -> crate::Result<()>;
+    /// Compatibility can satisfy one cleanup obligation only when the owner
+    /// has closed confirmation admission and this receiver could not install it.
+    async fn settle(
+        &self,
+        _custody: ReceiverConfirmationCustody,
+    ) -> crate::Result<ReceiverCleanup> {
+        self.revoke().await?;
+        Ok(ReceiverCleanup::Acknowledged)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiverConfirmationCustody {
+    NeverSent,
+    ReceiverObserved,
+    PossiblyDelivered,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiverCleanup {
+    Acknowledged,
+    NoReceiver,
 }
 
 #[async_trait::async_trait]
 pub trait TransportAuthority: Send + Sync {
+    fn retry_evidence(&self) -> Option<Arc<OwnershipEvidence>> {
+        None
+    }
     fn owner(&self) -> TransportOwner;
     fn is_current(&self) -> bool;
     fn register_receiver(&self, receiver: Arc<dyn ReceiverRevocation>) -> crate::Result<()>;
+    /// A successful challenge response contradicts a receiver-less image proof.
+    fn receiver_observed(&self, _identity: &str) {}
+    /// Record custody before dispatch, even if confirmation is then cancelled
+    /// or its reply is lost. A retired authority must refuse this transition.
+    fn begin_receiver_confirmation(&self, identity: &str) -> crate::Result<()>;
+    /// Advisory observation only, after an exact-owner confirmation succeeds.
+    fn receiver_confirmed(&self, _identity: &str) {}
     async fn check(&self) -> crate::Result<()>;
+    async fn check_for_phase(&self, _phase: OwnershipPhase) -> crate::Result<()> {
+        self.check().await
+    }
     /// Must renew the exact durable owner only after receiving a fresh runtime
     /// challenge. Never confirm a challenge when this call fails or is cancelled.
     async fn renew_for_challenge(&self) -> crate::Result<()>;
+    /// Retain the first safe cause before signalling cancellation of the caller.
+    async fn record_failure(&self, failure: OwnershipFailure);
+    /// Finish a bounded diagnostic attempt before cancellation. Dropping the
+    /// callback must still revoke, including when a live link aborts renewal.
+    async fn record_failure_and_revoke(&self, failure: OwnershipFailure) {
+        let _revoke = RevokeOnDrop(self);
+        self.record_failure(failure).await;
+    }
     async fn revoked(&self);
     fn revoke(&self);
+}
+
+struct RevokeOnDrop<'a, T: TransportAuthority + ?Sized>(&'a T);
+
+impl<T: TransportAuthority + ?Sized> Drop for RevokeOnDrop<'_, T> {
+    fn drop(&mut self) {
+        self.0.revoke();
+    }
 }
 
 tokio::task_local! {

@@ -132,7 +132,11 @@ impl DeliverySink for ShardedScheduler {
     }
     fn terminal(&self, turn: Arc<LaunchRequest>, outcome: TurnOutcome) {
         // A stalled delivery sink must not keep a timed-out turn alive indefinitely.
-        let command = DeliveryCommand::StreamOutcome { turn, outcome };
+        let command = DeliveryCommand::StreamOutcome {
+            turn,
+            outcome,
+            answer_response_id: None,
+        };
         if let Err(refusal) = self.try_submit(command) {
             let command = *refusal.command;
             tracing::warn!(

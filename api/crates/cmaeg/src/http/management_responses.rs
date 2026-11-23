@@ -157,6 +157,34 @@ pub(super) fn service_authorized(headers: &HeaderMap, expected: &str) -> bool {
     token.as_bytes().ct_eq(expected.as_bytes()).into()
 }
 
+/// Why a provider request failed. Only closed phrases and an HTTP status leave
+/// the gateway: transport text can name internal addresses.
+pub(super) fn provider_failure_detail(error: &crate::providers::ProviderError) -> String {
+    use crate::providers::ProviderError;
+    let reason = match error {
+        ProviderError::Capacity => {
+            "the gateway's provider concurrency is exhausted; retry later".to_owned()
+        }
+        ProviderError::ConversationMissing => "the provider conversation is missing".to_owned(),
+        ProviderError::Unavailable(detail) => match detail.as_str() {
+            "provider request timed out" => "the provider request timed out".to_owned(),
+            "provider transport failed" => "the provider was unreachable".to_owned(),
+            other => match other
+                .strip_prefix("provider returned HTTP ")
+                .and_then(|status| status.parse::<u16>().ok())
+                .filter(|status| (100..=599).contains(status))
+            {
+                Some(status) => format!("the provider answered HTTP {status}"),
+                None => "the provider or its service credential was unavailable".to_owned(),
+            },
+        },
+        ProviderError::ResponseMalformed(_) => "the provider response is malformed".to_owned(),
+        ProviderError::Sse(_) => "the provider stream ended before a terminal answer".to_owned(),
+        _ => return "provider request failed".to_owned(),
+    };
+    format!("provider request failed: {reason}")
+}
+
 pub(super) fn management_error(error: ManagementError) -> Response {
     use crate::telemetry::http_failure::FailureStage;
     let stage = match &error {
@@ -185,13 +213,13 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             if code == "binding_skill_version_update_unsupported" => (
             StatusCode::CONFLICT,
             ProblemCode::Conflict,
-            "The selected skill version cannot be changed on an existing channel Agent. Create a replacement channel with the requested profile.".into(),
+            "The selected skill version cannot be changed through a channel profile update. Keep the channel profile unchanged and use the existing Agent's skills endpoint (POST /api/v1/agents/{id}/skills) when upgrades are enabled and supported.".into(),
         ),
         ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 409, code })
             if code == "binding_reconfiguration_unsupported" => (
             StatusCode::CONFLICT,
             ProblemCode::ProviderRejected,
-            "This channel's existing agent configuration is pinned. Changing its service scope, skills, prompt, model, environment, or conversation affinity through a channel update is not supported. The provider binding, credentials, and retained work have not been changed. Keep the current profile to save other channel settings, and rotate credentials separately using that profile. Retrying with the same key will not apply this change.".into(),
+            "This channel's existing agent configuration is pinned. Changing its service scope, skills, prompt, model, environment, or conversation affinity through a channel update is not supported. To use a different service scope, create a new binding with the required scope. The provider binding, credentials, and retained work have not been changed. Keep the current profile to save other channel settings, and rotate credentials separately using that profile. Retrying with the same key will not apply this change.".into(),
         ),
         ManagementError::Provider(crate::providers::ProviderError::Rejected { status: 404, code })
             if code == "binding_not_found" => (
@@ -221,10 +249,11 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             ProblemCode::ProviderBusy,
             format!("provider is busy; retry_after={retry_after:?}"),
         ),
-        ManagementError::Provider(_) => (
+        // Closed details only: a transport error can name internal addresses.
+        ManagementError::Provider(error) => (
             StatusCode::SERVICE_UNAVAILABLE,
             ProblemCode::ProviderUnavailable,
-            "provider request failed".into(),
+            provider_failure_detail(&error),
         ),
         ManagementError::Record(crate::records::RecordError::Conflict { expected, actual }) => (
             StatusCode::CONFLICT,
@@ -266,6 +295,49 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn provider_failures_name_their_class_without_transport_text() {
+        use crate::providers::ProviderError;
+        for (error, detail) in [
+            (
+                ProviderError::Unavailable("provider returned HTTP 502".into()),
+                "provider request failed: the provider answered HTTP 502",
+            ),
+            (
+                ProviderError::Unavailable("provider request timed out".into()),
+                "provider request failed: the provider request timed out",
+            ),
+            (
+                ProviderError::Unavailable("provider transport failed".into()),
+                "provider request failed: the provider was unreachable",
+            ),
+            (
+                ProviderError::Unavailable(
+                    "error sending request for url (http://internal.example.svc/token)".into(),
+                ),
+                "provider request failed: the provider or its service credential was unavailable",
+            ),
+            (
+                ProviderError::Capacity,
+                "provider request failed: the gateway's provider concurrency is exhausted; retry later",
+            ),
+            (
+                ProviderError::Sse("frame too large".into()),
+                "provider request failed: the provider stream ended before a terminal answer",
+            ),
+        ] {
+            let response = management_error(ManagementError::Provider(error));
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["code"], "provider_unavailable");
+            assert_eq!(body["detail"], detail);
+            assert!(!body["detail"].as_str().unwrap().contains("internal.example"));
+        }
+    }
+
+    #[tokio::test]
     async fn known_removed_binding_has_actionable_conflict_instead_of_generic_bad_gateway() {
         let response = management_error(ManagementError::Provider(
             crate::providers::ProviderError::Rejected {
@@ -298,7 +370,10 @@ mod tests {
             .unwrap();
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["code"], "conflict");
-        assert!(body["detail"].as_str().unwrap().contains("skill version"));
+        assert_eq!(
+            body["detail"],
+            "The selected skill version cannot be changed through a channel profile update. Keep the channel profile unchanged and use the existing Agent's skills endpoint (POST /api/v1/agents/{id}/skills) when upgrades are enabled and supported."
+        );
     }
 
     #[tokio::test]
@@ -323,6 +398,7 @@ mod tests {
         assert_eq!(body["status"], 409);
         let detail = body["detail"].as_str().unwrap();
         assert!(detail.contains("service scope"));
+        assert!(detail.contains("create a new binding with the required scope"));
         assert!(detail.contains("have not been changed"));
         assert!(detail.contains("Keep the current profile"));
     }

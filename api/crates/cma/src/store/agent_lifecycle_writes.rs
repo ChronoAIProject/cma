@@ -200,6 +200,37 @@ impl MongoAgentLifecycleStore {
         .await
     }
 
+    /// Pin the original probe result before allocating or building profiles.
+    pub(crate) async fn pin_repository_commit(
+        &self,
+        lease: &LifecycleLease,
+        commit: &str,
+    ) -> Result<(), StoreError> {
+        let mut filter = lease.filter();
+        filter.insert("sandbox_id", Bson::Null);
+        filter.insert(
+            "repository_commit",
+            doc! { "$in": [Bson::Null, Bson::String(commit.into())] },
+        );
+        let result = self
+            .operations
+            .update_one(
+                filter,
+                doc! {
+                    "$set": { "repository_commit": commit, "updated_at": DateTime::now() },
+                },
+            )
+            .await
+            .map_err(driver)?;
+        if result.matched_count != 1 {
+            return Err(StoreError::RevisionConflict {
+                expected: 0,
+                actual: 1,
+            });
+        }
+        Ok(())
+    }
+
     pub(crate) async fn mark_agent(
         &self,
         lease: &LifecycleLease,
@@ -253,8 +284,26 @@ impl MongoAgentLifecycleStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) async fn fail(&self, lease: &LifecycleLease, error: &str) -> Result<(), StoreError> {
-        self.write(lease, doc! { "$set": { "status": "failed", "phase": "failed", "error": error,
-            "lease_token": Bson::Null, "lease_expires_at": Bson::Null, "updated_at": DateTime::now() } }).await
+        self.fail_with_metadata(lease, error, None).await
+    }
+
+    pub(crate) async fn fail_with_metadata(
+        &self,
+        lease: &LifecycleLease,
+        error: &str,
+        failure: Option<layer1_public::rest::AgentLifecycleFailure>,
+    ) -> Result<(), StoreError> {
+        let mut fields = doc! { "status": "failed", "phase": "failed", "error": error,
+        "lease_token": Bson::Null, "lease_expires_at": Bson::Null, "updated_at": DateTime::now() };
+        if let Some(failure) = failure {
+            fields.insert(
+                "failure",
+                mongodb::bson::serialize_to_bson(&failure)
+                    .map_err(|error| StoreError::Malformed(error.to_string()))?,
+            );
+        }
+        self.write(lease, doc! {"$set": fields}).await
     }
 }

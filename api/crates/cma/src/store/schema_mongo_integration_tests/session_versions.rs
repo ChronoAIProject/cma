@@ -122,6 +122,7 @@ async fn session_writer_persists_version_and_restart_succeeds() {
 async fn old_writer_reproduces_old_startup_refusal_but_known_v1_lease_reopens() {
     let (client, name) = database().await;
     let db = client.database(&name);
+    crate::store::migrations::prepare_bindings_for_test(&db).await;
     let rows = db.collection::<Document>(SANDBOX_SESSIONS);
     let legacy = old_writer_document();
     rows.insert_one(legacy.clone()).await.unwrap();

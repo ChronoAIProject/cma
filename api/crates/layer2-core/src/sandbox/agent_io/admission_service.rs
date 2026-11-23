@@ -8,7 +8,9 @@ use crate::resource_access::{
     AccessError, AccessPurpose, AuthorizedResource, CallerContext, ResourceAccessError,
     ResourceAccessService, ResourceCapability, ResourceTarget,
 };
-use crate::sandbox::{store::SandboxMutationGuard, AgentOperationError};
+use crate::sandbox::{
+    store::SandboxMutationGuard, task_acceptance::permits_admission, AgentOperationError,
+};
 use crate::{rfc3339_at, AgentId};
 
 use super::*;
@@ -16,6 +18,14 @@ use super::*;
 pub(super) const IO_BOUND: Duration = Duration::from_secs(15);
 const QUEUE_LIFETIME: Duration = Duration::from_secs(300);
 const CREATION_ADMISSION_ATTEMPTS: usize = 3;
+
+#[path = "admission_authority.rs"]
+mod authority;
+#[path = "admission_ownership.rs"]
+mod ownership;
+
+#[path = "admission_model_credit.rs"]
+mod model_credit;
 
 /// Selected by a trusted interface adapter, separately from client intent.
 #[derive(Debug, Clone, Copy)]
@@ -47,11 +57,15 @@ pub enum CommandAdmissionError {
     ModelMismatch,
 }
 
+#[derive(Clone)]
 pub struct AgentCommandService {
     pub(super) store: Arc<dyn AgentCommandStore>,
     pub(super) access: Arc<ResourceAccessService>,
     authority: Arc<dyn AgentCommandAdmissionAuthority>,
     task_experience: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
+    ownership: Option<Arc<crate::agent_ownership::OwnershipCoordinator>>,
+    model_credit_required: bool,
+    model_funding: Option<Arc<crate::sandbox::model_credit::AgentTurnFunding>>,
 }
 
 impl AgentCommandService {
@@ -65,18 +79,9 @@ impl AgentCommandService {
             access,
             authority,
             task_experience: Default::default(),
-        })
-    }
-
-    pub fn with_task_experience(
-        self: Arc<Self>,
-        policy: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            store: self.store.clone(),
-            access: self.access.clone(),
-            authority: self.authority.clone(),
-            task_experience: policy,
+            ownership: None,
+            model_credit_required: false,
+            model_funding: None,
         })
     }
 
@@ -84,36 +89,6 @@ impl AgentCommandService {
         &self,
     ) -> Arc<crate::sandbox::task_experience::TaskExperiencePolicy> {
         self.task_experience.clone()
-    }
-
-    /// Revalidate operation visibility before returning an older adapter's
-    /// exact receipt. Input validation and execution custody are deliberately
-    /// separate: a historical validation/refusal receipt is still replayable.
-    pub async fn authorize_intent(
-        &self,
-        context: &CallerContext,
-        credential: &str,
-        agent_id: &AgentId,
-        command: &AgentCommand,
-    ) -> Result<(), CommandAdmissionError> {
-        if !context.validate_principal() || context.actor.ordinary_subject().is_none() {
-            return Err(ResourceAccessError::Access(AccessError::NotFound).into());
-        }
-        let target = ResourceTarget::Agent {
-            agent_id: agent_id.clone(),
-        };
-        let capability = command_capability(command);
-        let authorized = bounded(self.access.authorize(
-            context,
-            Some(credential),
-            &target,
-            capability,
-            AccessPurpose::Mutation {
-                started_at: SystemTime::now(),
-            },
-        ))
-        .await??;
-        self.fence(&authorized, &target, capability).await
     }
 
     /// Current access and durable credential custody precede reservation. No
@@ -178,15 +153,20 @@ impl AgentCommandService {
             agent_id: request.envelope.agent_id.clone(),
         };
         let capability = command_capability(&request.envelope.command);
-        if AnswerContext::from_command(&request.envelope.command)?.is_some()
+        let requires_funding = self
+            .require_model_credit(&request.envelope.command)
+            .is_err();
+        let policy_refused = (AnswerContext::from_command(&request.envelope.command)?.is_some()
             && !self.task_experience.allows(&context.caller.subject,
-                crate::sandbox::task_experience::TaskExperienceCapability::SuggestedFollowupAdmission)
-        {
+                crate::sandbox::task_experience::TaskExperienceCapability::SuggestedFollowupAdmission))
+            || !permits_admission(&self.task_experience, context, &request.envelope);
+        if requires_funding || policy_refused {
             let existing = self
                 .with_authority_bound(
                     &authorized,
                     capability,
-                    self.store.get_admitted_command(&request.scope(), &request.key_sha256),
+                    self.store
+                        .get_admitted_command(&request.scope(), &request.key_sha256),
                 )
                 .await;
             self.fence(&authorized, &target, capability).await?;
@@ -196,7 +176,9 @@ impl AgentCommandService {
                 };
                 return Ok(CommandStatusView::from_record(&record));
             }
-            return Err(ResourceAccessError::Access(AccessError::Forbidden).into());
+            if policy_refused {
+                return Err(ResourceAccessError::Access(AccessError::Forbidden).into());
+            }
         }
         let expected = request.clone();
         let lineage = &authorized.snapshot.lineage;
@@ -218,12 +200,8 @@ impl AgentCommandService {
             });
         for attempt in 0..CREATION_ADMISSION_ATTEMPTS {
             let result = self
-                .with_authority_bound(&authorized, capability, self.store.reserve_command(request))
-                .await;
-            // Admission can be durable even if this final fence refuses the reply.
-            // Never refresh past a failed policy fence or an ambiguous result.
-            self.fence(&authorized, &target, capability).await?;
-            let result = result?;
+                .reserve_with_model_credit(&authorized, &target, request, requires_funding)
+                .await?;
             if matches!(result, Err(CommandLedgerError::Conflict))
                 && retry_creation
                 && attempt + 1 < CREATION_ADMISSION_ATTEMPTS
@@ -302,6 +280,9 @@ impl AgentCommandService {
         let Some(record) = result?? else {
             return Ok(None);
         };
+        if record.receipt.envelope.source.kind != request.envelope.source.kind {
+            return Ok(None);
+        }
         let CommandReservationResult::Existing(record) = request.replay(record)? else {
             return Err(CommandLedgerError::Corrupt.into());
         };
@@ -436,46 +417,6 @@ impl AgentCommandService {
             )?),
         };
         Ok((authorized, request))
-    }
-
-    pub(super) async fn fence(
-        &self,
-        authorized: &AuthorizedResource,
-        target: &ResourceTarget,
-        capability: ResourceCapability,
-    ) -> Result<(), CommandAdmissionError> {
-        self.with_authority_bound(
-            authorized,
-            capability,
-            self.access
-                .validate_read_result(authorized, target, capability),
-        )
-        .await??;
-        Ok(())
-    }
-
-    pub(super) async fn with_authority_bound<T>(
-        &self,
-        authorized: &AuthorizedResource,
-        capability: ResourceCapability,
-        work: impl std::future::Future<Output = T>,
-    ) -> Result<T, CommandAdmissionError> {
-        authorized
-            .decision
-            .require(capability)
-            .map_err(ResourceAccessError::from)?;
-        let deadline = authorized
-            .decision
-            .revalidation_deadline(capability)
-            .map_or(tokio::time::Instant::now() + IO_BOUND, |deadline| {
-                deadline.min(tokio::time::Instant::now() + IO_BOUND)
-            });
-        let result = tokio::time::timeout_at(deadline, work).await;
-        authorized
-            .decision
-            .require(capability)
-            .map_err(ResourceAccessError::from)?;
-        result.map_err(|_| CommandLedgerError::Unavailable.into())
     }
 }
 

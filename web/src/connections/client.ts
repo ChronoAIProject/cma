@@ -34,6 +34,33 @@ export interface ConnectionReport {
   readonly checked_at: string;
   readonly services: readonly ConnectionRow[];
   readonly active_state?: 'pending' | 'satisfied' | 'expired' | 'cancelled' | 'failed';
+  readonly service_authorization_recovery?: boolean;
+}
+
+/** An action cannot rely on readiness from a partial or inconsistent response. */
+export function isConnectionReport(value: unknown): value is ConnectionReport {
+  if (typeof value !== 'object' || value === null) return false;
+  const report = value as Partial<ConnectionReport>;
+  return (
+    typeof report.owner === 'string' &&
+    report.owner !== '' &&
+    typeof report.ready === 'boolean' &&
+    typeof report.checked_at === 'string' &&
+    Number.isFinite(Date.parse(report.checked_at)) &&
+    Array.isArray(report.services) &&
+    report.services.every(
+      (row) =>
+        row !== null &&
+        typeof row === 'object' &&
+        typeof row.service === 'string' &&
+        typeof row.display_name === 'string' &&
+        ['nyxid', 'codex'].includes(row.kind) &&
+        ['hosted', 'manual', 'unknown'].includes(row.connection_mode) &&
+        (report.ready
+          ? row.state === 'satisfied'
+          : ['satisfied', 'inactive', 'missing', 'unknown'].includes(row.state)),
+    )
+  );
 }
 
 export interface StartedConnection extends ActiveConnection {

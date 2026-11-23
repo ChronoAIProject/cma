@@ -1,0 +1,11 @@
+import { defineConfig } from '@playwright/test';
+import credentialRecovery from './credential-setup.config';
+
+export default defineConfig({
+  ...credentialRecovery,
+  testMatch: [
+    'review-receipt-recovery.check.ts',
+    'review-recovery-custody.check.ts',
+    'review-acceptance-order.check.ts',
+  ],
+});

@@ -76,14 +76,14 @@ async fn a_lost_transaction_reply_is_reconciled_by_fresh_state_without_replaying
     );
 }
 
-async fn reserve(reconciler: &SandboxReconciler, index: usize, reason: &'static str) {
+pub(super) async fn reserve(reconciler: &SandboxReconciler, index: usize, reason: &'static str) {
     let row = sandbox(index);
     drop(reconciler.binding_holds.begin(&row, &[]).unwrap());
     reconciler.binding_holds.failed(&row.id, reason);
     tokio::time::advance(Duration::from_secs(30)).await;
 }
 
-async fn bindings(reconciler: &SandboxReconciler, count: usize) {
+pub(super) async fn bindings(reconciler: &SandboxReconciler, count: usize) {
     let mut sweep = Sweep {
         phase: Phase::Bindings,
         ..Default::default()
@@ -324,3 +324,6 @@ async fn cancelled_loss_reports_one_identified_outcome_and_keeps_binding_protect
     assert!(results[0].contains("sandbox_id=sbx_000"));
     assert!(results[0].contains("outcome=\"cancelled\""));
 }
+
+#[path = "reconciliation_prelude_tests.rs"]
+mod prelude_tests;

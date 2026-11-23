@@ -462,7 +462,8 @@ owner to manually restart an Agent after deployment.
 | Branch | Purpose | Rules |
 |---|---|---|
 | `develop` | daily development; **default branch** | protected; no force push; accepts PRs from any branch |
-| `main` | production; each merge is a release | protected; no force push; accepts PRs **only** from `develop` |
+| `main` | production; each merge is a release | protected; no force push; accepts PRs **only** from `develop` or from a `release/<name>` branch |
+| `release/<name>` | one frozen release candidate | cut from a commit on `develop`'s first-parent history; never receives commits of its own |
 
 ### CI gates on every PR into `develop`
 
@@ -484,14 +485,17 @@ owner to manually restart an Agent after deployment.
 
 **Cross-cutting**
 - Secret scanning — **gitleaks**. No credential, secret, or sensitive value may exist anywhere in the repository, including tests and fixtures. **Nothing may be allowlisted or bypassed.** If a test string trips gitleaks, change the string — never add an exception.
-- Docker build for all five images — `api`, `web`, `runtime`, `cmaeg`, `image-manager`
+- Docker build for all five images — `api`, `web`, `runtime`, `cmaeg`, `runtime-omarchy`
 - Image vulnerability scan
 - Repository structure — root contains only the allowed entries; the public-tree guard enforces private-path and manifest exclusions; layer dependency rule holds
 
 ### Additional gates on a PR from `develop` into `main`
 
+A release PR's head is `develop` or a `release/<name>` branch. A release branch freezes one `develop` commit, so the release candidate stops moving while the merge queue keeps advancing `develop`; CI and the release gate then run once on exactly what is released. Its head must be a commit on `develop`'s first-parent history, with no commits of its own, and it must contain `main`. A fix goes to `develop` first, and a new release branch is cut from it.
+
 Everything above, plus:
 
+- The PR is merged with a merge commit, never squashed or rebased. Production CD treats the merge's second parent as the released `develop` commit and refuses a merge whose tree differs from it.
 - Exactly one of the labels `release:major`, `release:minor`, `release:patch`. The merge derives the version from it; a PR that declares nothing cannot be released.
 - A mandatory `## Release Notes` section in the PR body, in exactly this shape:
 
@@ -520,21 +524,27 @@ That section, and only that section, becomes the annotated tag message and the r
 
 The merge is the release. Nothing is tagged or published before it, and nothing further is required after it:
 
-- The five images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{api,web,runtime,cmaeg,image-manager}`, tagged with the version and with the short commit SHA. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk; matching labels and platform shape are validation, not provenance.
-- After all five current GHCR digests pass the writer/history verification, each exact root digest is exported as
-  an OCI archive plus JSON metadata in a one-day Actions transfer artifact.
-  These unencrypted archives are an additional, ephemeral distribution
-  surface: anyone who can download this internal repository's Actions
-  artifacts can receive the private images, and that audience is not assumed
-  to equal the GHCR package ACL. Retention limits duration, not readership.
-  The artifacts are not release assets, are never committed, and contain no
-  standalone client package.
+- Nothing is rebuilt. For each of the five images, `ghcr.io/chronoaiproject/cma-{agent-manager,web,runtime,event-gateway,runtime-omarchy}`, the release selects the newest published component version whose source is the merged `develop` commit or one of its ancestors on `develop`'s first-parent history, and only if staging deployment evidence recorded that exact digest as controller-verified. For the components production deploys this is the selection `prod-cd.yml` makes; the runtime images are recorded the same way but not deployed by it. Each image is therefore built and scanned once, by the reviewed staging publication gate, and a release holding an image staging never verified is refused.
+- Each selected digest receives the release merge's short commit SHA tag and then the version tag through a digest-preserving copy; the image still records the `develop` commit it was built from. The runtime image contract runs again against the promoted runtime digest before any tag is assigned, and no version tag is written until all five short-SHA tags exist, so a release that fails earlier claims no version. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. A tag that already names the selected digest is reused and one that names anything else refuses the release. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk. No image is exported as an Actions artifact.
 - An annotated tag `vX.Y.Z` and a GitHub release are created. An active, GET-verified `v*` tag ruleset must reject updates and deletions without a bypass. The release carries the notes under their version heading, the image references and their GHCR package links, and the source archives GitHub generates for the tag.
 
 The tag is the version of record. `api/Cargo.toml` and `web/package.json` are not bumped: a bot writing to `main` would put it ahead of `develop` for no gain, and the version those files carry is not what anything deploys.
 
-Publishing is not deploying. Deployment configuration is maintained privately; a new image
-becomes live only when someone changes a manifest to name it.
+Publishing is not deploying. `prod-cd.yml` deploys a release, and only after a required
+approval in the `production` environment. Neither it nor the release rebuilds an image:
+for each component production enables, it promotes the newest published version whose
+source is the merged `develop` commit or one of its ancestors, and only if staging deployment
+evidence recorded that exact image as controller-verified. The same deployment helpers and
+private controller design as staging do the write. A production release requests its own
+one-hour controller budget, because a production rollout takes far longer than staging's,
+and the deploy job's timeout outlives it; staging's release and bootstrap budgets are
+unchanged. Deployment configuration, including
+which components production enables, is maintained privately.
+Production selects only the application components (`am`, `eg`, `web`), never the
+`runtime` or `runtime-omarchy` images: until a reviewed production runtime-promotion
+design exists, runtime images stay pinned in Agent Manager's privately maintained
+configuration, and an approved release set that holds one is refused rather than
+narrowed. Staging still deploys runtime images together with Agent Manager.
 `CHRONO_SANDBOX_IMAGE` is the single released default for new allocations,
 managed-runtime updates and owner-requested revival under §5. It is pinned to a
 verified CI artifact by explicit release promotion; publishing a CI tag alone

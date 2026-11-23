@@ -15,6 +15,9 @@ mod lifecycle_dispatch;
 #[path = "composer_admission_tests.rs"]
 mod composer_admission;
 
+#[path = "command_funding_tests.rs"]
+mod funding;
+
 async fn grant(store: &InMemorySandboxStore, mode: ShareMode) -> ResourceShare {
     let snapshot = store
         .resource_access_snapshot(&ResourceTarget::Sandbox {
@@ -96,6 +99,7 @@ async fn claim(store: &InMemorySandboxStore, agent: &Agent, actor: &str) -> Admi
                 correlation_id: "test".into(),
                 request_fingerprint: command.fingerprint().unwrap(),
                 authorization: AgentAuthorizationRevision {
+                    replay_principal: None,
                     authority_id: "actual-admin-custody".into(),
                     policy_revision: 1,
                     grant_revision: None,

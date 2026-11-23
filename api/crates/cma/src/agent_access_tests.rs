@@ -25,6 +25,7 @@ impl PersonalCommandAdmissionAuthority for Authority {
             return Err(CommandAuthorizationError::Revoked);
         }
         Ok(AgentAuthorizationRevision {
+            replay_principal: None,
             authority_id: "personal:fixture-owner-login".into(),
             policy_revision: 7,
             grant_revision: None,

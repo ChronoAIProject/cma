@@ -1,12 +1,17 @@
 import { Presence } from '../ui/Presence';
+import { useConversationFocus } from './environment/useConversationFocus';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { AgentStatus } from '../api/types';
+import type { ConnectionReport } from '../connections/client';
 import { Button } from '../ui/Button';
-import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
+import { IconSendOutline16 } from '../ui/icons';
 import type { SandboxInputAvailability } from './sandboxInput';
 import type { TriggerQuickMessage } from '@cma/client';
 import { QuickMessages } from './QuickMessages';
 import type { AgentDraft } from './draft';
+import { ComposerDraftNotice } from './ComposerDraftNotice';
+import { canMessage, placeholder, FirstTextSendNotice } from './composerPresentation';
+import type { FirstTextSend } from './useFirstTextSend';
 import {
   attachmentMessage,
   transferredFiles,
@@ -20,6 +25,8 @@ import { useComposerCommands } from './ComposerCommands';
 import { commandRefusal, type SessionCommand } from './slashCommands';
 import { SteeringModePicker, type SteeringMode } from './SteeringMode';
 import './Composer.css';
+import type { ResponseControlAvailability } from './controlReadiness';
+import { ResponseStop, useResponseStop } from './ResponseStop';
 import {
   ComposerSuggestionEditor,
   type ComposerSuggestionEditorHandle,
@@ -40,6 +47,7 @@ interface ComposerProps {
   readonly queueWhileStarting?: boolean;
   readonly starting?: boolean;
   readonly controlsUnavailable?: boolean;
+  readonly responseControls?: ResponseControlAvailability;
   readonly requestPending?: boolean;
   readonly acceptedMessage?: string;
   readonly acceptedSteeringMessage?: string;
@@ -48,27 +56,15 @@ interface ComposerProps {
   readonly busy: boolean;
   readonly quickMessages?: readonly TriggerQuickMessage[];
   readonly uploadAttachment?: UploadAttachment;
-  readonly onSend: (content: string, onAccepted: () => void) => Promise<void> | void;
+  readonly firstTextSend?: FirstTextSend;
+  readonly onSend: (
+    content: string,
+    onAccepted: () => void,
+    verified?: ConnectionReport,
+  ) => Promise<void> | void;
   readonly onStop: () => Promise<void> | void;
   /** The interrupt request is pending; the active turn remains server-authoritative. */
   readonly stopping?: boolean;
-}
-
-function canMessage(status: AgentStatus): boolean {
-  return status === 'ready' || status === 'working' || status === 'paused';
-}
-
-function placeholder(status: AgentStatus): string {
-  if (status === 'paused') return 'Reply to Chrono Agent…';
-  // Startup is represented by the lifecycle progress surface and the
-  // disabled/queued controls. Keep the composer quiet so it never adds a
-  // second visible "starting" notification to the conversation area.
-  if (status === 'starting') return 'Message Agent';
-  if (status === 'waiting_approval') return 'Resolve the approval to continue.';
-  if (status === 'stopped') return 'This Agent has stopped.';
-  if (status === 'deleted') return 'This Agent was deleted.';
-  if (status === 'failed') return 'This Agent is unavailable.';
-  return 'Reply to Chrono Agent…';
 }
 
 export function Composer({
@@ -86,6 +82,7 @@ export function Composer({
   queueWhileStarting = false,
   starting = false,
   controlsUnavailable = false,
+  responseControls,
   requestPending = false,
   acceptedMessage,
   acceptedSteeringMessage,
@@ -94,6 +91,7 @@ export function Composer({
   busy,
   quickMessages = [],
   uploadAttachment,
+  firstTextSend,
   onSend,
   onStop,
   stopping = false,
@@ -114,8 +112,17 @@ export function Composer({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sending = useRef(false);
   const composing = useRef(false);
+  const [inputFocused, setInputFocused] = useState(false);
+  const [inputComposing, setInputComposing] = useState(false);
+  const stopControl = useResponseStop({
+    running,
+    availability: responseControls ?? (controlsUnavailable ? 'unbound' : 'available'),
+    busy,
+    stopping,
+    onStop,
+  });
   const noticeId = useId();
-  const inputBlocked = !inputAvailability.allowed;
+  const inputBlocked = !inputAvailability.allowed || draft?.recoveryBlocked === true;
   const preparing = status === 'starting' && queueWhileStarting;
   const notice = inputAvailability.notice ?? pausedNotice;
   const hasNotice = notice !== undefined || inputAvailability.savingStartedAt !== undefined;
@@ -123,8 +130,7 @@ export function Composer({
   const attachmentEnabled =
     (status === 'ready' || status === 'working') && !inputBlocked && !starting && !busy;
   const attachments = useComposerAttachments(draft, uploadAttachment, attachmentEnabled);
-  // Retain the original draft while its outgoing row owns the presentation.
-  // A failed/uncertain request reveals it again unless the owner has edited.
+  // Hide the draft during handoff and retain it if sending fails.
   const visibleContent = handoff === undefined ? content : '';
   const visibleAttachments =
     handoff === undefined
@@ -133,13 +139,27 @@ export function Composer({
           (item) => !handoff.attachments.some(({ key }) => key === item.key),
         );
   const messageContent = attachmentMessage(visibleContent, visibleAttachments);
+  const canPrepareFirstSend =
+    firstTextSend?.available === true &&
+    attachments.items.length === 0 &&
+    !messageContent.startsWith('/') &&
+    draft?.recoveryBlocked !== true;
   // Outside a turn both steering modes send ordinary input, so the choice is
   // only offered while there is a turn to queue behind or interrupt.
   const steering = running && queueWhileRunning && onSteeringModeChange !== undefined;
+  const sendLabel = running
+    ? steeringMode === 'queue'
+      ? 'Queue message'
+      : 'Interrupt with message'
+    : 'Send message';
+  const canEdit = usable && !inputBlocked && !busy && !submitting && !requestPending;
+  const controlsBlocked =
+    running && (!queueWhileRunning || (steeringMode === 'interrupt' && controlsUnavailable));
+  useConversationFocus(inputRef, canEdit && !controlsBlocked && !starting);
   const commands = useComposerCommands(
     visibleContent,
     availableCommands,
-    usable && !inputBlocked && !busy && !submitting && !requestPending,
+    canEdit,
     inputRef,
     (value) => {
       editorRef?.current?.discardUndo();
@@ -162,6 +182,7 @@ export function Composer({
     previousInterruption.current = acceptedInterruptionMessage;
     // A receipt from an earlier visit cannot own text newly typed on this visit.
     if (submitted.current === undefined && editVersion.current !== 0) return;
+    if (draft?.beginSubmission) return;
     for (const accepted of changed) {
       if (
         submitted.current !== undefined &&
@@ -181,6 +202,7 @@ export function Composer({
     content,
     setContent,
     attachments,
+    draft,
   ]);
 
   useEffect(() => {
@@ -191,9 +213,9 @@ export function Composer({
   }, [usable]);
 
   useComposerResize(inputRef, visibleContent);
-
   const submit = (quickMessage?: string) => {
     const message = quickMessage ?? messageContent;
+    const prepare = quickMessage === undefined && canPrepareFirstSend;
     if (
       message === '' ||
       composing.current ||
@@ -202,7 +224,7 @@ export function Composer({
       (running && !queueWhileRunning) ||
       (running && steeringMode === 'interrupt' && controlsUnavailable) ||
       starting ||
-      inputBlocked ||
+      (inputBlocked && !prepare) ||
       requestPending ||
       (quickMessage === undefined && attachments.blocked) ||
       sending.current
@@ -215,31 +237,51 @@ export function Composer({
     const originalContent = content;
     const submittedAttachments = attachments.items;
     const version = editVersion.current;
-    const pending = { attachments: submittedAttachments };
-    submitted.current = { message, version, clearsDraft: quickMessage === undefined };
-    sending.current = true;
-    setSubmitting(true);
-    if (quickMessage === undefined) setHandoff(pending);
-    const finish = () => {
-      setHandoff((current) => (current === pending ? undefined : current));
-      sending.current = false;
-      setSubmitting(false);
-    };
-    try {
-      const sendingRequest = onSend(message, () => {
-        if (quickMessage === undefined) {
-          if (editVersion.current === version) {
-            setContent((current) => (current === originalContent ? '' : current));
-            attachments.accept(submittedAttachments);
+    const send = (verified?: ConnectionReport) => {
+      const pending = { attachments: submittedAttachments };
+      const submission = quickMessage === undefined ? draft?.beginSubmission?.(message) : undefined;
+      submitted.current = {
+        message,
+        version,
+        clearsDraft: quickMessage === undefined,
+      };
+      sending.current = true;
+      setSubmitting(true);
+      if (quickMessage === undefined) setHandoff(pending);
+      const finish = () => {
+        submission?.settled();
+        setHandoff((current) => (current === pending ? undefined : current));
+        sending.current = false;
+        setSubmitting(false);
+      };
+      try {
+        const accepted = () => {
+          if (quickMessage === undefined) {
+            if (editVersion.current === version) {
+              if (submission) submission.accepted();
+              else {
+                setContent((current) => (current === originalContent ? '' : current));
+                attachments.accept(submittedAttachments);
+              }
+            }
+            setHandoff((current) => (current === pending ? undefined : current));
           }
-          setHandoff((current) => (current === pending ? undefined : current));
-        }
-      });
-      void Promise.resolve(sendingRequest).then(finish, finish);
-    } catch {
-      // The parent owns delivery errors; never lose a draft to a synchronous refusal.
-      finish();
-    }
+        };
+        const sendingRequest = verified
+          ? onSend(message, accepted, verified)
+          : onSend(message, accepted);
+        void Promise.resolve(sendingRequest).then(finish, finish);
+      } catch {
+        // The parent owns delivery errors; never lose a draft to a synchronous refusal.
+        finish();
+      }
+    };
+    if (prepare)
+      firstTextSend.start(
+        () => editVersion.current === version && inputRef.current?.value === originalContent,
+        send,
+      );
+    else send();
   };
 
   return (
@@ -268,7 +310,10 @@ export function Composer({
         editorRef={editorRef}
         inputRef={inputRef}
         content={content}
+        hasAttachments={attachments.items.length > 0}
+        restoreDisabled={!usable || inputBlocked || submitting || requestPending}
         onChange={(text) => {
+          firstTextSend?.cancel();
           editVersion.current += 1;
           setCommandError(undefined);
           setHandoff(undefined);
@@ -289,6 +334,8 @@ export function Composer({
         onSend={submit}
       />
       {commands.panel}
+      <ComposerDraftNotice draft={draft} />
+      {firstTextSend?.pending && <FirstTextSendNotice onCancel={firstTextSend.cancel} />}
       <Presence>
         {commandError ? (
           <p className="agent-composer__notice" role="alert">
@@ -351,6 +398,7 @@ export function Composer({
                   : placeholder(status)
             }
             onChange={(event) => {
+              firstTextSend?.cancel();
               editorRef?.current?.discardUndo();
               editVersion.current += 1;
               setCommandError(undefined);
@@ -360,15 +408,22 @@ export function Composer({
             }}
             onCompositionStart={() => {
               composing.current = true;
+              setInputComposing(true);
             }}
             onCompositionEnd={() => {
               composing.current = false;
+              setInputComposing(false);
             }}
             onBlur={() => {
               composing.current = false;
+              setInputComposing(false);
+              setInputFocused(false);
               commands.onBlur();
             }}
-            onFocus={commands.onFocus}
+            onFocus={() => {
+              setInputFocused(true);
+              commands.onFocus();
+            }}
             onKeyDown={(event) => {
               // Safari can end composition before the confirming Enter and reports keyCode 229.
               if (
@@ -378,9 +433,9 @@ export function Composer({
               )
                 return;
               if (commands.onKeyDown(event)) return;
-              if (event.key === 'Escape' && running && !busy && !controlsUnavailable) {
+              if (event.key === 'Escape' && stopControl.enabled && !event.defaultPrevented) {
                 event.preventDefault();
-                void onStop();
+                stopControl.stop();
                 return;
               }
               if (event.key === 'Enter' && !event.shiftKey) {
@@ -389,10 +444,6 @@ export function Composer({
               }
             }}
           />
-          {/*
-            Every control lives in one row inside the box, placed by grid area
-            so a row that wraps on a narrow screen keeps Send at the far end.
-          */}
           <div className="agent-composer__controls" data-steering={steering ? '' : undefined}>
             {uploadAttachment === undefined ? null : (
               <span className="agent-composer__attach">
@@ -414,27 +465,15 @@ export function Composer({
                   variant="primary"
                   type="submit"
                   icon={<IconSendOutline16 />}
-                  aria-label={
-                    running
-                      ? steeringMode === 'queue'
-                        ? 'Queue message'
-                        : 'Interrupt with message'
-                      : 'Send message'
-                  }
-                  title={
-                    running
-                      ? steeringMode === 'queue'
-                        ? 'Queue message'
-                        : 'Interrupt with message'
-                      : 'Send message'
-                  }
+                  aria-label={sendLabel}
+                  title={sendLabel}
                   disabled={
                     !usable ||
                     (running && !queueWhileRunning) ||
                     busy ||
                     submitting ||
                     starting ||
-                    inputBlocked ||
+                    (inputBlocked && !canPrepareFirstSend) ||
                     requestPending ||
                     messageContent === '' ||
                     attachments.blocked ||
@@ -444,26 +483,12 @@ export function Composer({
                 />
               ) : null}
               {running && (messageContent === '' || !queueWhileRunning) ? (
-                <>
-                  <span className="agent-composer__stop-hint">
-                    {stopping ? 'Stopping…' : 'Esc to stop'}
-                  </span>
-                  <Button
-                    placement="agent-composer__submit agent-composer__submit--stop"
-                    variant="primary"
-                    icon={<IconStopFill16 />}
-                    aria-label={stopping ? 'Stopping response' : 'Stop response'}
-                    title={
-                      stopping
-                        ? 'Stopping response…'
-                        : controlsUnavailable
-                          ? 'This turn does not support response controls.'
-                          : 'Stop response (Esc)'
-                    }
-                    disabled={stopping || busy || controlsUnavailable}
-                    onClick={() => void onStop()}
-                  ></Button>
-                </>
+                <ResponseStop
+                  control={stopControl}
+                  shortcut={
+                    stopControl.enabled && inputFocused && !inputComposing && !commands.open
+                  }
+                />
               ) : null}
             </div>
           </div>

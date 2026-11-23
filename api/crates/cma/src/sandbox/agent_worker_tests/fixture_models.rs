@@ -1,10 +1,12 @@
 use super::*;
 
+pub(super) const DEPLOYMENT_ID: &str = "lifecycle-test";
+
 pub(super) fn sandbox(id: &SandboxId, owner: SubjectId, stamp: &str) -> Sandbox {
     Sandbox {
         id: id.clone(),
         owner,
-        name: "research".into(),
+        name: format!("research-{id}"),
         origin: SandboxOrigin::Manual,
         profile: SandboxProfileSnapshot {
             id: SandboxProfileId::generate(),

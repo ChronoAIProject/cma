@@ -3,9 +3,10 @@
 use futures_util::TryStreamExt;
 use layer2_core::ids::{SandboxId, WorkspaceId};
 use layer2_core::sandbox::store::{
-    Page, PageRequest, SandboxStoreError, WorkspaceStore, MAX_PAGE_SIZE,
+    Page, PageRequest, SandboxStoreError, SandboxTransaction, SandboxTransactionStore,
+    WorkspaceStore, MAX_PAGE_SIZE,
 };
-use layer2_core::sandbox::{Workspace, WorkspaceOrigin};
+use layer2_core::sandbox::{SandboxEventKind, Workspace, WorkspaceOrigin, WorkspaceStatus};
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
@@ -215,17 +216,13 @@ impl WorkspaceStore for MongoSandboxStore {
         if workspace.revision != 1 {
             return Err(SandboxStoreError::Conflict);
         }
-        self.workspaces
-            .insert_one(workspace_document(&workspace)?)
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                if is_duplicate_key(&error) {
-                    SandboxStoreError::Duplicate
-                } else {
-                    SandboxStoreError::Unavailable(error.to_string())
-                }
-            })
+        super::native_retirement_action::insert_child(
+            self,
+            &self.workspaces,
+            &workspace.sandbox_id,
+            workspace_document(&workspace)?,
+        )
+        .await
     }
 
     async fn get_workspace(
@@ -264,6 +261,35 @@ impl WorkspaceStore for MongoSandboxStore {
                 .ok_or(SandboxStoreError::Conflict)?
         {
             return Err(SandboxStoreError::Conflict);
+        }
+        if workspace.status == WorkspaceStatus::Ready {
+            if workspace.owner != current.owner || workspace.sandbox_id != current.sandbox_id {
+                return Err(SandboxStoreError::Conflict);
+            }
+            if current.status != WorkspaceStatus::Ready {
+                let event_at =
+                    workspace
+                        .ready_at
+                        .clone()
+                        .ok_or(SandboxStoreError::InvalidTransaction(
+                            "ready workspace timestamp missing",
+                        ))?;
+                let resolved_commit = workspace.resolved_commit.clone().ok_or(
+                    SandboxStoreError::InvalidTransaction("ready workspace commit missing"),
+                )?;
+                return self
+                    .commit(SandboxTransaction::SaveWorkspaceAndAppend {
+                        repository_runtime: None,
+                        expected_revision,
+                        event_at,
+                        event: SandboxEventKind::WorkspaceReady {
+                            workspace_id: workspace.id.clone(),
+                            resolved_commit,
+                        },
+                        workspace: Box::new(workspace),
+                    })
+                    .await;
+            }
         }
         if layer2_core::sandbox::store::WorkAuthority::active() {
             return super::work_publication::workspace::save(self, expected_revision, &workspace)

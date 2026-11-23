@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex};
 struct Commands {
     finds: Vec<String>,
     point_reads: usize,
+    source_key_probes: usize,
+    index_inventories: usize,
     writes: usize,
 }
 
@@ -22,6 +24,8 @@ impl Commands {
                 "{collection}: one capture check plus each retained point-read check"
             );
         }
+        assert_eq!(self.source_key_probes, 2 * (1 + self.point_reads));
+        assert_eq!(self.index_inventories, 1 + self.point_reads);
         assert_eq!(self.writes, 0);
     }
 }
@@ -35,7 +39,18 @@ async fn observed_store(name: &str) -> (MongoSandboxStore, Arc<Mutex<Commands>>)
     options.command_event_handler = Some(EventHandler::callback(move |event| {
         if let CommandEvent::Started(event) = event {
             let mut observed = observed.lock().unwrap();
+            if event.command.get_str("listIndexes").ok() == Some("agent_log") {
+                observed.index_inventories += 1;
+            }
             if let Ok(collection) = event.command.get_str("find") {
+                if collection == "agent_log"
+                    && event
+                        .command
+                        .get_document("projection")
+                        .is_ok_and(|p| p.contains_key("found"))
+                {
+                    observed.source_key_probes += 1;
+                }
                 observed.finds.push(collection.to_owned());
                 if collection == "agent_log"
                     && event
@@ -109,7 +124,8 @@ async fn projections_capture_head_once_with_equal_results_and_fewer_find_command
         assert_eq!(usage, baseline);
         assert_eq!(usage.usage.output_tokens, 8);
         after.assert_capture_and_point_checks();
-        let saved = if closed == 0 { 4 } else { 3 };
+        // The redundant dispatch head also performs both source-key probes.
+        let saved = if closed == 0 { 6 } else { 5 };
         assert_eq!(before.finds.len(), after.finds.len() + saved);
         eprintln!(
             "projection_capture closed={closed} usage_find_before={} after={} saved={saved}",

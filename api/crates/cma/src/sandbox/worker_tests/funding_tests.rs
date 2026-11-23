@@ -48,7 +48,10 @@ fn funded_worker(h: &Harness) -> (Arc<SandboxWorker>, Arc<Funding>) {
     });
     (worker_with_funding(h, funding.clone()), funding)
 }
-fn worker_with_funding(h: &Harness, funding: Arc<dyn SandboxFundingAdapter>) -> Arc<SandboxWorker> {
+pub(super) fn worker_with_funding(
+    h: &Harness,
+    funding: Arc<dyn SandboxFundingAdapter>,
+) -> Arc<SandboxWorker> {
     let dependencies = SandboxWorkerDependencies {
         store: h.store.clone(),
         adapter: h.adapter.clone(),
@@ -80,7 +83,16 @@ async fn unfunded_provisioning_never_creates_runtime_and_publishes_failure() {
     assert!(h.adapter.runtime_inventory().await.unwrap().is_empty());
     assert!(h.stored(&sandbox.id).await.runtime.is_none());
     let events = h.store.sandbox_events(&sandbox.id, 0, 20).await.unwrap();
-    assert!(events.iter().any(|e| matches!(&e.kind,SandboxEventKind::WorkStepFailed {failure,..} if failure.detail.contains("prepaid"))));
+    assert_eq!(
+        h.stored(&sandbox.id).await.status,
+        SandboxStatus::Provisioning
+    );
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event.kind, SandboxEventKind::Failed { .. })));
+    assert!(
+        matches!(&events.last().unwrap().kind, SandboxEventKind::WorkStepFailed { failure, .. } if failure.class == "resource_quota" && failure.detail.contains("prepaid"))
+    );
 }
 #[tokio::test]
 async fn unfunded_retirement_still_tears_down_and_retries_settlement_store_failure() {

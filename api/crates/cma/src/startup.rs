@@ -8,7 +8,7 @@ use std::{
 use crate::{
     agent_manager,
     composition::{self, ControlPlaneComposition},
-    config::Config,
+    config::StartupConfig,
     read_telemetry,
     shutdown::{self, signalled, ShutdownCoordinator},
     startup_timing::{observe, Phase},
@@ -20,8 +20,14 @@ const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(660);
 
 pub(crate) async fn serve() -> Result<(), String> {
     let startup_started = Instant::now();
-    let config =
-        Config::from_env().map_err(|error| format!("configuration is not usable: {error}"))?;
+    let config = StartupConfig::from_env()
+        .map_err(|error| format!("configuration is not usable: {error}"))?;
+    let config = match config {
+        StartupConfig::Execution(config) => *config,
+        StartupConfig::BackendFree(config) => {
+            return composition::backend_free::serve(*config).await
+        }
+    };
     if std::env::args().nth(1).as_deref() == Some("--agent-manager-drain") {
         return agent_manager::relay::prestop(&config).await;
     }
@@ -34,10 +40,15 @@ pub(crate) async fn serve() -> Result<(), String> {
     )
     .await?;
     let auth_mode = config.auth_mode_name();
-    let app = with_request_context(with_cors(composition.router, config.cors_origins));
+    let app = with_request_context(with_cors(composition.router, config.cors_origins)).layer(
+        axum::Extension(telemetry::http::ContextDiagnosticsEnabled(
+            config.features.context_diagnostics,
+        )),
+    );
 
     // Do not admit allocations against a newly promoted runtime until its
     // exact default pool has ready capacity (unless an operator disabled it).
+    // The shared desktop pool is seeded here but fills in the background.
     observe(
         "default_warm_pool_configuration",
         composition.native_warm_pools.ensure_default(),
@@ -135,12 +146,25 @@ pub(crate) async fn serve() -> Result<(), String> {
         timing_basis = "serve_entry", outcome = "ok", "API startup serving entry");
     let (http_stop, http_signal) = tokio::sync::watch::channel(false);
     let server_result = {
-        let server = axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .with_graceful_shutdown(signalled(http_signal))
-        .into_future();
+        let server: std::pin::Pin<
+            Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>,
+        > = match config.http_connection_max_age {
+            // Bounded connection age lets long-lived clients rebalance across replicas.
+            Some(age) => Box::pin(crate::http_serving::serve(
+                listener,
+                app,
+                age,
+                signalled(http_signal),
+            )),
+            None => Box::pin(
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .with_graceful_shutdown(signalled(http_signal))
+                .into_future(),
+            ),
+        };
         tokio::pin!(server);
         tokio::select! {
             result = &mut server => result.map_err(|error| format!("HTTP server failed: {error}")),

@@ -13,6 +13,8 @@ export interface Command {
   readonly meta?: string;
   /** A trailing word such as a status. Searched as well as shown. */
   readonly hint?: string;
+  /** Explicit lookup terms, such as canonical resource IDs, that are not displayed. */
+  readonly searchTerms?: readonly string[];
   readonly icon?: ReactNode;
   readonly run: () => void;
 }
@@ -26,7 +28,13 @@ export function filterCommands(commands: readonly Command[], query: string): Com
     words.length === 0
       ? commands
       : commands.filter((command) => {
-          const text = [command.label, command.meta, command.hint, command.group]
+          const text = [
+            command.label,
+            command.meta,
+            command.hint,
+            command.group,
+            ...(command.searchTerms ?? []),
+          ]
             .filter(Boolean)
             .join(' ')
             .toLowerCase();

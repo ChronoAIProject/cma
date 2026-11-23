@@ -9,11 +9,13 @@ mod origins;
 pub(crate) use origins::validate_origin;
 use origins::{parse_api_advertisement, required_origin, validate_public_api_url};
 
+pub mod activity_history;
 mod cache;
 mod console;
 mod delivery;
 mod duration;
 use duration::positive_duration;
+mod graduated;
 mod ingress;
 mod management;
 pub use management::ManagementConfig;
@@ -32,7 +34,7 @@ pub use cache::*;
 pub use console::*;
 pub use delivery::*;
 pub use ingress::*;
-pub(crate) use management::channel_mutation_custody_enabled;
+pub(crate) use management::{channel_mutation_custody_enabled, cma_record_origin_aliases};
 pub use media::{
     MediaConfig, MediaToolProviders, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
     CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_LINK_TTL_SECONDS,
@@ -62,6 +64,7 @@ pub const CMAEG_ADVERTISE_PUBLIC_API_URL: &str = "CMAEG_ADVERTISE_PUBLIC_API_URL
 pub const CMAEG_MASTER_KEYS: &str = "CMAEG_MASTER_KEYS";
 pub const CMAEG_MASTER_KEYS_FILE: &str = "CMAEG_MASTER_KEYS_FILE";
 pub const CMAEG_CMA_BASE_URL: &str = "CMAEG_CMA_BASE_URL";
+pub const CMAEG_CMA_RECORD_ORIGIN_ALIASES: &str = "CMAEG_CMA_RECORD_ORIGIN_ALIASES";
 pub const CMAEG_CMA_SERVICE_TOKEN: &str = "CMAEG_CMA_SERVICE_TOKEN";
 pub const CMAEG_CMA_SERVICE_TOKEN_FILE: &str = "CMAEG_CMA_SERVICE_TOKEN_FILE";
 pub const CMAEG_NYXID_BASE_URL: &str = "CMAEG_NYXID_BASE_URL";
@@ -160,6 +163,7 @@ pub struct Config {
     pub cma_service_account: Option<ServiceAccountConfig>,
     pub channel_cache: ChannelCacheConfig,
     pub github_enabled: bool,
+    pub managed_telegram_setup_enabled: bool,
     pub native_bot_mentions_writes_enabled: bool,
     /// Allows new thread contracts only after every reader supports them.
     pub thread_contract_writes_enabled: bool,
@@ -284,29 +288,12 @@ impl Config {
             cma_service_account: ServiceAccountConfig::from_env()?,
             channel_cache: ChannelCacheConfig::from_env()?,
             github_enabled: github_writes_enabled()?,
-            native_bot_mentions_writes_enabled: match env::var(
+            native_bot_mentions_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED",
-            ) {
-                Err(env::VarError::NotPresent) => false,
-                Ok(value) if value == "false" => false,
-                Ok(value) if value == "true" => true,
-                _ => {
-                    return Err(ConfigError::InvalidManagement {
-                        detail: "CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED must be true or false"
-                            .into(),
-                    });
-                }
-            },
-            thread_contract_writes_enabled: match env::var("CMAEG_THREAD_CONTRACT_WRITES_ENABLED") {
-                Err(env::VarError::NotPresent) => false,
-                Ok(value) if value == "false" => false,
-                Ok(value) if value == "true" => true,
-                _ => {
-                    return Err(ConfigError::InvalidManagement {
-                        detail: "CMAEG_THREAD_CONTRACT_WRITES_ENABLED must be true or false".into(),
-                    });
-                }
-            },
+            )?,
+            thread_contract_writes_enabled: routing::write_flag(
+                "CMAEG_THREAD_CONTRACT_WRITES_ENABLED",
+            )?,
             multi_consumer_writes_enabled: routing::write_flag(
                 "CMAEG_MULTI_CONSUMER_WRITES_ENABLED",
             )?,
@@ -342,6 +329,9 @@ impl Config {
             )?,
             native_telegram_message_events_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED",
+            )?,
+            managed_telegram_setup_enabled: routing::write_flag(
+                "CMAEG_MANAGED_TELEGRAM_SETUP_ENABLED",
             )?,
             native_lark_writes_enabled: routing::write_flag("CMAEG_NATIVE_LARK_WRITES_ENABLED")?,
             native_lark_intake_enabled: routing::write_flag("CMAEG_NATIVE_LARK_INTAKE_ENABLED")?,

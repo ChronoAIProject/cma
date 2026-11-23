@@ -1,6 +1,6 @@
 import { Presence } from '../ui/Presence';
 import { SkeletonRows } from '../ui/Skeleton';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '@cma/client';
 import type { CmaWebClient } from '../api/client';
 import { detailReadSource } from '../api/detailReads';
@@ -43,7 +43,8 @@ export function SandboxPage({
   sandboxId,
   revision,
   permissions,
-  busy,
+  busy: submitting,
+  lifecycleBusy = false,
   onAction,
   onNavigate,
   viewerId,
@@ -54,11 +55,13 @@ export function SandboxPage({
   readonly revision: number;
   readonly permissions: TreePermissions;
   readonly busy: boolean;
-  readonly onAction: (action: TreeAction) => void;
+  readonly lifecycleBusy?: boolean;
+  readonly onAction: (action: TreeAction, eligibility?: AbortSignal) => void;
   readonly onNavigate: (route: AppRoute) => void;
   readonly viewerId?: string;
   readonly accessUncertain?: boolean;
 }) {
+  const busy = submitting || lifecycleBusy;
   const views = useOwnerViews();
   const [retry, setRetry] = useState(0);
   const request = useMemo(
@@ -89,6 +92,20 @@ export function SandboxPage({
       viewerId !== undefined &&
       state.sandbox.owner !== undefined &&
       state.sandbox.owner !== viewerId);
+  const canResume =
+    !stale &&
+    permissions.pauseSandbox &&
+    state.status === 'ready' &&
+    state.sandbox.status === 'paused' &&
+    state.sandbox.lifecycle?.revive.allowed === true;
+  const [resumeCheck, setResumeCheck] = useState<{
+    request: typeof request;
+    controller: AbortController;
+  }>();
+  useLayoutEffect(() => {
+    if (!canResume || resumeCheck?.request !== request) resumeCheck?.controller.abort();
+    return () => resumeCheck?.controller.abort();
+  }, [canResume, request, resumeCheck]);
   const [advanced, setAdvanced] = useState(false);
   const sharingClient = stale ? undefined : client.resourceViews;
   const sharingAllowed = useSharingAllowed(sharingClient, { kind: 'sandbox', id: sandboxId });
@@ -230,8 +247,14 @@ export function SandboxPage({
   const needsConnections =
     viewerId !== undefined && sandbox.owner === viewerId && !connectionsReady;
   const lifecycleAction = sandboxLifecycleAction(sandbox, pollError);
+  const lifecycleAllowed =
+    lifecycleAction.kind === 'revive_sandbox' ? canResume : lifecycleAction.allowed;
+  // An explicit attempt keeps the connection UI while the Paused page observes its outcome.
+  const resumeOwnsConnections =
+    canResume || (resumeCheck?.request === request && (sandbox.status === 'paused' || busy));
+  const verifyConnectionsOnOpen = needsConnections && !stale && !resumeOwnsConnections;
   const lifecycleReason = permissions.pauseSandbox ? lifecycleAction.reason : undefined;
-  const actionContext = { busy, stale, needsConnections };
+  const actionContext = { busy: submitting, lifecycleBusy, stale, needsConnections };
   const childReason = sandboxCreateReason(sandbox, actionContext);
   const createReason = permissions.createAgent ? childReason : undefined;
   if (firstTab === undefined)
@@ -306,16 +329,19 @@ export function SandboxPage({
                     <IconPauseOutline16 />
                   )
                 }
-                disabled={
-                  busy ||
-                  stale ||
-                  !lifecycleAction.allowed ||
-                  (needsConnections && lifecycleAction.kind === 'revive_sandbox')
-                }
+                disabled={busy || stale || !lifecycleAllowed}
                 aria-describedby={
                   lifecycleAction.reason === undefined ? undefined : lifecycleReasonId
                 }
-                onClick={() => onAction({ kind: lifecycleAction.kind, sandboxId })}
+                onClick={() => {
+                  if (lifecycleAction.kind === 'pause_sandbox') {
+                    onAction({ kind: 'pause_sandbox', sandboxId });
+                  } else {
+                    const controller = new AbortController();
+                    setResumeCheck({ request, controller });
+                    onAction({ kind: 'revive_sandbox', sandboxId }, controller.signal);
+                  }
+                }}
               >
                 {lifecycleAction.label}
               </Button>
@@ -341,7 +367,7 @@ export function SandboxPage({
           )}
         </div>
       )}
-      {needsConnections && !stale ? (
+      {verifyConnectionsOnOpen ? (
         <ConnectionWizard
           target={{ type: 'sandbox', id: sandboxId }}
           presentation="dialog"

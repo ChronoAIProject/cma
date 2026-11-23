@@ -3,6 +3,20 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { AgentHeader } from './AgentHeader';
+import { agentHeaderMenu } from './headerActions';
+import type { TreePermissions } from '../shell/Tree';
+import { sandboxFixture } from '../test/hierarchy';
+
+const permissions: TreePermissions = {
+  createWorkspace: true,
+  createAgent: true,
+  pauseSandbox: true,
+  deleteSandbox: true,
+  removeWorkspace: true,
+  stopAgent: true,
+  deleteAgent: true,
+  exportHistory: true,
+};
 
 function draw(overrides: Partial<Parameters<typeof AgentHeader>[0]> = {}) {
   return (
@@ -94,13 +108,18 @@ it('retains a reason while access is uncertain and omits unavailable capabilitie
     draw({
       detailsUnavailable: true,
       onDetailsOpenChange,
-      moreActions: [{ id: 'stop_agent', label: 'Stop agent' }],
+      moreActions: agentHeaderMenu(
+        'ready',
+        { ...permissions, stopAgent: false },
+        { sandbox: sandboxFixture() },
+      ),
     }),
   );
   const row = screen.getByRole('button', { name: /^Show Agent details/ });
   expect(row).toBeDisabled();
   await user.click(row);
   expect(onDetailsOpenChange).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'More Agent actions' }));
   expect(screen.queryByRole('menuitem', { name: 'Stop agent' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Share' })).not.toBeInTheDocument();
 });
@@ -120,7 +139,9 @@ it('orders all reviewed actions and dispatches configuration separately from his
         { id: 'update-skills', label: 'Update skills' },
       ],
       moreActions: [
-        { id: 'export_history', label: 'Export history' },
+        { id: 'export_history', label: 'Export raw history' },
+        { id: 'export_retained_conversation', label: 'Export retained conversation' },
+        { id: 'stop_agent', label: 'Stop agent' },
         { id: 'delete_agent', label: 'Delete task', danger: true },
       ],
     }),
@@ -129,19 +150,102 @@ it('orders all reviewed actions and dispatches configuration separately from his
   for (const [label, id] of [
     ['Update system prompt', 'update-prompt'],
     ['Update skills', 'update-skills'],
-    ['Export history', 'export_history'],
+    ['Export raw history', 'export_history'],
+    ['Export retained conversation', 'export_retained_conversation'],
   ] as const) {
     await user.click(screen.getByRole('button', { name: 'More Agent actions' }));
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
       'Rename',
       'Update system prompt',
       'Update skills',
-      'Export history',
+      'Export retained conversation',
+      'Export raw history',
       'View deletion status',
+      'Stop agent',
       'Delete task',
     ]);
     expect(screen.getByRole('menu').querySelectorAll('[role="separator"]')).toHaveLength(1);
     await user.click(screen.getByRole('menuitem', { name: label }));
-    expect(id === 'export_history' ? onMoreAction : onMenuSelect).toHaveBeenCalledWith(id);
+    expect(id.startsWith('export_') ? onMoreAction : onMenuSelect).toHaveBeenCalledWith(id);
   }
 });
+
+it.each(['mouse', 'keyboard'] as const)(
+  'dispatches the authorized Ready/Completed Stop action by %s and restores focus',
+  async (input) => {
+    const onMoreAction = vi.fn();
+    const onMenuSelect = vi.fn();
+    render(
+      draw({
+        activityStatus: 'completed',
+        moreActions: agentHeaderMenu('ready', permissions, { sandbox: sandboxFixture() }),
+        onMoreAction,
+        onMenuSelect,
+      }),
+    );
+    const user = userEvent.setup();
+    const more = screen.getByRole('button', { name: 'More Agent actions' });
+    await user.click(more);
+    const stop = screen.getByRole('menuitem', { name: 'Stop agent' });
+    expect(stop).not.toHaveAttribute('aria-disabled', 'true');
+    expect(stop.querySelector('svg')).not.toBeNull();
+    const remove = screen.getByRole('menuitem', { name: /^Delete task/ });
+    expect(remove).toHaveAttribute('aria-disabled', 'true');
+    expect(remove).toHaveTextContent('Stop this Agent before deleting it and its Worktree.');
+    if (input === 'mouse') await user.click(stop);
+    else {
+      await user.keyboard('{Home}');
+      for (let index = 0; index < 8 && document.activeElement !== stop; index++)
+        await user.keyboard('{ArrowDown}');
+      expect(stop).toHaveFocus();
+      await user.keyboard('{Enter}');
+    }
+    expect(onMoreAction).toHaveBeenCalledExactlyOnceWith('stop_agent');
+    expect(onMenuSelect).not.toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(more).toHaveFocus();
+  },
+);
+
+it.each(['stopped', 'failed', 'runtime-unavailable', 'busy', 'no-permission', 'shared'] as const)(
+  'preserves sidebar Stop eligibility for %s',
+  async (condition) => {
+    const onMoreAction = vi.fn();
+    const status = condition === 'stopped' || condition === 'failed' ? condition : 'ready';
+    render(
+      draw({
+        status,
+        moreActions: agentHeaderMenu(
+          status,
+          condition === 'shared'
+            ? undefined
+            : { ...permissions, stopAgent: condition !== 'no-permission' },
+          {
+            sandbox: condition === 'runtime-unavailable' ? undefined : sandboxFixture(),
+            busy: condition === 'busy',
+          },
+        ),
+        onMoreAction,
+      }),
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'More Agent actions' }));
+    const stop = screen.queryByRole('menuitem', { name: /^Stop agent/ });
+    if (condition === 'shared' || condition === 'no-permission')
+      expect(stop).not.toBeInTheDocument();
+    else {
+      expect(stop).toHaveAttribute('aria-disabled', 'true');
+      if (condition === 'busy')
+        expect(stop).toHaveTextContent('Another action is still being confirmed.');
+      if (condition === 'runtime-unavailable')
+        expect(stop).toHaveTextContent('Available when the Sandbox is active.');
+      await user.click(stop!);
+    }
+    expect(onMoreAction).not.toHaveBeenCalled();
+    if (condition === 'stopped' || condition === 'failed')
+      expect(screen.getByRole('menuitem', { name: 'Delete task' })).not.toHaveAttribute(
+        'aria-disabled',
+        'true',
+      );
+  },
+);

@@ -9,6 +9,10 @@ permissions:
   contents: "read"
 jobs:
   images:
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'cma-develop-cache-readers' || format('ci-image-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.component) }}
+      queue: max
+      cancel-in-progress: false
     name: "Image (${{ matrix.component }})"
     runs-on: "ubuntu-24.04"
     timeout-minutes: 60
@@ -30,10 +34,15 @@ jobs:
         run: |
           bash .github/secret-scanner-build-tests.sh
           bash .github/image-metadata-tests.sh
+          python3 -B .github/scripts/runtime_image_layers_tests.py
+          python3 -B .github/scripts/runtime_image_metadata_tests.py
+          python3 -B .github/scripts/runtime_image_hygiene_tests.py
+          python3 -B .github/scripts/runtime_image_machine_id_tests.py
       -
         uses: "actions/setup-node@v6"
         with:
           node-version: "24.15.0"
+          package-manager-cache: false
       -
         name: "Local Gateway release gate regressions"
         run: "python3 -B .github/scripts/prepare-cmaeg-release-dockerfile-tests.py"
@@ -45,18 +54,22 @@ jobs:
       -
         name: "Ledger image qualification regressions"
         run: "node --test .github/scripts/runtime-ledger-evidence.test.mjs .github/scripts/runtime-ledger-downgrade.test.mjs"
-        if: "matrix.component == 'runtime' || matrix.component == 'runtime-desktop'"
+        if: "matrix.component == 'runtime'"
       -
         name: "Migration matrix evidence regressions"
         run: "node --test .github/scripts/migration-matrix.test.mjs"
-        if: "matrix.component == 'runtime' || matrix.component == 'runtime-desktop'"
+        if: "matrix.component == 'runtime'"
       -
         uses: "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130"
+        with:
+          cache-image: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
       -
         uses: "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f"
+        with:
+          cache-binary: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
       -
         name: "Prepare API Cargo cache identity"
-        if: "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
+        if: "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'merge_group')"
         id: "api-cargo-cache"
         run: "python3 .github/scripts/api-cargo-cache.py prepare"
       -
@@ -82,37 +95,47 @@ jobs:
         id: "build-identity"
         run: "echo \"version=git-${GITHUB_SHA:0:12}\" >> \"$GITHUB_OUTPUT\""
       -
+        name: "Resolve OS security refresh key"
+        id: "os-refresh"
+        env:
+          IMAGE_COMPONENT: "${{ matrix.component }}"
+          PER_BUILD_KEY: "${{ github.run_id }}-${{ github.run_attempt }}"
+        run: "python3 .github/scripts/os_refresh_key.py \"$IMAGE_COMPONENT\" api/crates/layer4-runtime/Dockerfile \"$PER_BUILD_KEY\" >> \"$GITHUB_OUTPUT\""
+      -
         name: "Build image for all target platforms"
         uses: "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"
         with:
           context: "."
-          file: "${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || matrix.component == 'image-manager' && 'api/crates/cma-image-manager/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}"
+          file: "${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}"
           platforms: "${{ matrix.component == 'web' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}"
           push: false
           outputs: "type=cacheonly"
           build-args: |
             CHRONO_BUILD=${{ steps.build-identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
-            RUNTIME_DESKTOP=${{ matrix.component == 'runtime-desktop' && '1' || '0' }}
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
-          cache-from: "type=gha,scope=${{ matrix.component }}"
-          cache-to: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,mode=max,scope={0}', matrix.component) || '' }}"
+            RUNTIME_DESKTOP=0
+            OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
+            ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
+          cache-from: "type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}"
+          cache-to: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,version=2,mode=max,ignore-error=true,scope={0}', matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component) || '' }}"
       -
         name: "Load native image for scanning"
         uses: "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"
         with:
           context: "."
-          file: "${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || matrix.component == 'image-manager' && 'api/crates/cma-image-manager/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}"
+          file: "${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}"
           platforms: "linux/amd64"
           push: false
           load: true
+          outputs: "${{ matrix.component == 'runtime' && 'type=docker,rewrite-timestamp=true' || '' }}"
           tags: "${{ steps.image-name.outputs.name }}:ci"
           build-args: |
             CHRONO_BUILD=${{ steps.build-identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
-            RUNTIME_DESKTOP=${{ matrix.component == 'runtime-desktop' && '1' || '0' }}
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
-          cache-from: "type=gha,scope=${{ matrix.component }}"
+            RUNTIME_DESKTOP=0
+            OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
+            ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
+          cache-from: "type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}"
       -
         name: "Extract API Cargo cache before pruning"
         if: "github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'"
@@ -130,9 +153,24 @@ jobs:
           test "$(docker image inspect "${IMAGE_NAME}:ci" --format '{{.Id}}')" = "$native_image_id"
           df -h .
       -
+        name: "Verify every runtime image layer"
+        if: "matrix.component == 'runtime'"
+        timeout-minutes: 20
+        run: "python3 -B .github/scripts/runtime_image_hygiene.py --image cma-runtime:ci --component runtime --output \"$RUNNER_TEMP/runtime-layer-hygiene.json\""
+      -
+        name: "Restore Trivy databases"
+        if: "github.event_name != 'push' || github.ref != 'refs/heads/develop'"
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ github.workspace }}/.cache/trivy
+          # Trivy uses daily keys. Restore the newest eligible database and let the scanner refresh it.
+          key: cache-trivy-readonly
+          restore-keys: cache-trivy-
+      -
         name: "Vulnerability scan"
         uses: "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
         with:
+          cache: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
           image-ref: "${{ steps.image-name.outputs.name }}:ci"
           format: "table"
           severity: "HIGH,CRITICAL"
@@ -143,18 +181,25 @@ jobs:
         if: "matrix.component == 'runtime'"
         with:
           node-version: 26
+          package-manager-cache: false
       -
         name: "Execute built runtime image contract"
         if: "matrix.component == 'runtime'"
         timeout-minutes: 10
         run: "node .github/scripts/runtime-image-evidence.mjs run cma-runtime:ci \"$GITHUB_SHA\" \"$RUNNER_TEMP/runtime-image-evidence.json\""
       -
+        name: "Check machine IDs on two read-only runtime boots"
+        if: "matrix.component == 'runtime'"
+        run: "python3 -B .github/scripts/runtime_image_startup_identity.py cma-runtime:ci"
+      -
         name: "Retain runtime image evidence"
         if: "always() && matrix.component == 'runtime'"
         uses: "actions/upload-artifact@v4"
         with:
           name: "runtime-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}"
-          path: "${{ runner.temp }}/runtime-image-evidence.json"
+          path: |
+            ${{ runner.temp }}/runtime-image-evidence.json
+            ${{ runner.temp }}/runtime-layer-hygiene.json
           if-no-files-found: "error"
           retention-days: 90
       -
@@ -162,34 +207,15 @@ jobs:
         if: "always() && matrix.component == 'runtime'"
         run: "node .github/scripts/runtime-image-evidence.mjs verify cma-runtime:ci \"$GITHUB_SHA\" \"$RUNNER_TEMP/runtime-image-evidence.json\""
       -
-        uses: "actions/setup-node@v6"
-        if: "matrix.component == 'runtime-desktop'"
-        with:
-          node-version: 26
-      -
-        name: "Execute desktop image contract"
-        if: "matrix.component == 'runtime-desktop'"
-        timeout-minutes: 5
-        run: "node .github/scripts/desktop-runtime-evidence.mjs cma-runtime-desktop:ci \"$GITHUB_SHA\" \"$RUNNER_TEMP/desktop-runtime-evidence.json\""
-      -
-        name: "Retain desktop image evidence"
-        if: "always() && matrix.component == 'runtime-desktop'"
-        uses: "actions/upload-artifact@v4"
-        with:
-          name: "desktop-runtime-evidence-${{ github.run_id }}-${{ github.run_attempt }}"
-          path: "${{ runner.temp }}/desktop-runtime-evidence.json*"
-          if-no-files-found: "error"
-          retention-days: 90
-      -
         name: "Qualify exact runtime ledger storage"
-        if: "matrix.component == 'runtime' || matrix.component == 'runtime-desktop'"
+        if: "matrix.component == 'runtime'"
         env:
           IMAGE_COMPONENT: "${{ matrix.component }}"
           IMAGE_NAME: "${{ steps.image-name.outputs.name }}"
         run: "node .github/scripts/runtime-ledger-evidence.mjs \"${IMAGE_NAME}:ci\" \"$GITHUB_SHA\" \"$RUNNER_TEMP/ledger-storage.json\""
       -
         name: "Retain ledger storage evidence"
-        if: "always() && (matrix.component == 'runtime' || matrix.component == 'runtime-desktop')"
+        if: "always() && (matrix.component == 'runtime')"
         uses: "actions/upload-artifact@v4"
         with:
           name: "ledger-storage-${{ matrix.component }}-${{ github.run_id }}-${{ github.run_attempt }}"
@@ -205,6 +231,7 @@ jobs:
         if: "matrix.component == 'web'"
         with:
           node-version: "24.15.0"
+          package-manager-cache: false
       -
         name: "Install web image browser harness"
         if: "matrix.component == 'web'"
@@ -258,14 +285,14 @@ jobs:
           compression-level: 0
       -
         name: "Export tested native image"
-        if: "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
         timeout-minutes: 10
         env:
           IMAGE_COMPONENT: "${{ matrix.component }}"
         run: "python3 .github/scripts/export-ci-native-image.py \"$IMAGE_COMPONENT\" \"$GITHUB_SHA\" \"$RUNNER_TEMP/ci-native-image\""
       -
         name: "Retain tested native image"
-        if: "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
         timeout-minutes: 10
         uses: "actions/upload-artifact@v4"
         with:

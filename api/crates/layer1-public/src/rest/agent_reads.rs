@@ -217,13 +217,11 @@ pub(crate) async fn history(
         .reads
         .finish_history_read(reading)
         .await
-        .map_err(InstanceProblem::from)?;
-    let bytes = bytes.map_err(|error| match error {
-        super::AgentHistoryExportError::Capacity => {
-            InstanceProblem::RuntimeCapacity(layer2_core::sandbox::RuntimeCapacityError::Request)
-        }
-        _ => InstanceProblem::Unavailable,
-    })?;
+        .map_err(|error| {
+            tracing::warn!(parent: None, stage = "authority_revalidation", reason = error.code(), "Agent raw history export withheld");
+            InstanceProblem::from(error)
+        })?;
+    let bytes = bytes.map_err(InstanceProblem::HistoryExport)?;
     let mut response = Response::new(Body::from(bytes));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -329,6 +327,13 @@ fn public_event(entry: AgentVisibleLogEntry) -> Result<AgentEventView, InstanceP
             detail,
             runtime_locator: None,
         },
+        AgentLogKind::TurnFailed {
+            turn_sequence,
+            failure,
+        } => AgentLogKind::TurnFailed {
+            turn_sequence,
+            failure: layer2_core::sandbox::public_agent_turn_failure(&failure),
+        },
         kind => kind,
     };
     Ok(AgentEventView {
@@ -339,7 +344,8 @@ fn public_event(entry: AgentVisibleLogEntry) -> Result<AgentEventView, InstanceP
     })
 }
 
-fn public_transcript(value: AgentTranscript) -> Result<AgentTranscriptView, InstanceProblem> {
+fn public_transcript(mut value: AgentTranscript) -> Result<AgentTranscriptView, InstanceProblem> {
+    layer2_core::sandbox::sanitize_agent_transcript(&mut value);
     let turns = value
         .turns
         .into_iter()
@@ -407,6 +413,10 @@ fn public_resources(value: AgentResourceReading) -> AgentResourcesView {
         sent_bytes: reading.sent_bytes,
     }
 }
+
+#[cfg(test)]
+#[path = "agent_failure_projection_tests.rs"]
+mod provider_failure_tests;
 
 #[cfg(test)]
 mod tests {

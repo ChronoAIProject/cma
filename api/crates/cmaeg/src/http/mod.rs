@@ -1,6 +1,7 @@
 //! HTTP projections for CMAEG management operations.
 
 pub mod activity;
+pub mod activity_history;
 pub mod callbacks;
 pub mod channel_nodes;
 mod chat_dispatch;
@@ -24,6 +25,7 @@ pub mod message_effects;
 pub mod metrics;
 pub mod native_lark;
 pub mod outbound;
+pub mod partition_resets;
 pub mod partitions;
 pub mod problems;
 pub(crate) mod public_urls;

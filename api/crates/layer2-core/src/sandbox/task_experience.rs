@@ -9,6 +9,7 @@ pub enum TaskExperienceCapability {
     DesktopEnable,
     BrowserTakeover,
     ReplayPresentation,
+    TaskAcceptanceAdmission,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]

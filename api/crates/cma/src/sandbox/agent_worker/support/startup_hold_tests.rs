@@ -10,10 +10,10 @@ fn startup_hold_is_transient_for_starting_and_cleanup_work_without_runtime_text(
             RuntimeStartupFailureClass::OutOfMemory,
             RuntimeStartupFailureClass::Terminated,
         ] {
-            let failure = map(AdapterError::RuntimeStartupHold(RuntimeStartupFailure {
+            let failure = map(AdapterError::RuntimeStartupHold(RuntimeStartupFailure::new(
                 class,
-                consecutive: u32::MAX,
-            })
+                u32::MAX,
+            ))
             .context("unretained context"));
             assert!(failure.retryable);
             assert_eq!(failure.retry_kind, WorkRetryFailure::Transient);

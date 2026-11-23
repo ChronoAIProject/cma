@@ -58,9 +58,12 @@ impl ResourceAccessService {
         access.validate(&proof).await.map_err(binding_error)?;
         let decision = AccessDecision::binding(&proof, false);
         decision.require(capability)?;
+        self.require_owner_available(&snapshot.scope(target)?.owner, false)
+            .await?;
         Ok(AuthorizedResource {
             snapshot,
             decision,
+            caller: context.caller.clone(),
             binding: Some(proof),
         })
     }
@@ -95,6 +98,7 @@ fn binding_error(error: BindingError) -> ResourceAccessError {
     match error {
         BindingError::NotFound | BindingError::Forbidden => AccessError::NotFound.into(),
         BindingError::Conflict
+        | BindingError::ResetRefused(_)
         | BindingError::SkillVersionUpdateUnsupported { .. }
         | BindingError::ReconfigurationUnsupported => ResourceAccessStoreError::Conflict.into(),
         BindingError::Corrupt(_) | BindingError::InvalidRequest(_) => {

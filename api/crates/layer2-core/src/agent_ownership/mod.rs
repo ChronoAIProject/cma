@@ -7,13 +7,16 @@ mod placement;
 pub use placement::candidates;
 mod authority;
 pub use authority::{execution_authority, execution_owner, Authority};
+mod cleanup_pacing;
 mod coordinator;
 mod observations;
+mod receiver_binding;
 mod transport;
 pub use coordinator::{bounded, OwnershipCoordinator};
 pub use observations::{observe_transport, observed_transport, transport_observation_scope};
 
 use crate::AgentId;
+pub use layer3_adapter::owner_protocol::OwnershipFailure;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 // The receiver starts its shorter monotonic deadline before this lease is
@@ -98,6 +101,11 @@ pub enum OwnershipError {
 /// owner row retains its epoch forever; acquisition must never reset that counter.
 #[async_trait::async_trait]
 pub trait OwnershipStore: Send + Sync {
+    /// Independent rollout control; disabling diagnostics never disables fencing.
+    fn receiver_diagnostics_enabled(&self) -> bool {
+        false
+    }
+
     async fn register(&self, member: Member) -> Result<Membership, OwnershipError>;
     /// Expired membership cannot be resurrected. A restarted process uses a new ID.
     async fn heartbeat(
@@ -121,6 +129,17 @@ pub trait OwnershipStore: Send + Sync {
     /// Call only after revoking local and receiving-runtime authority.
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError>;
     async fn check(&self, token: &OwnershipToken) -> Result<(), OwnershipError>;
+    /// Atomically retain the first diagnostic for this exact, live owner token.
+    /// This must not renew/release authority or change Agent work or retry state.
+    async fn record_receiver_failure(
+        &self,
+        _token: &OwnershipToken,
+        _failure: OwnershipFailure,
+    ) -> Result<(), OwnershipError> {
+        Err(OwnershipError::Unavailable(
+            "receiver diagnostics are not supported".into(),
+        ))
+    }
 }
 
 #[cfg(test)]

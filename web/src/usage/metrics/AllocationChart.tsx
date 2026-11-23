@@ -9,6 +9,9 @@ import { AllocationLabel } from './AllocationLabel';
 import { Picker } from '../../ui/Picker';
 import { Table, TableCell } from '../../ui/Table';
 import { displayQuantity, type Metric } from './model';
+import { sandboxCount } from './sandboxCount';
+import { combineAllocationCoverage } from './allocationCoverage';
+import { AllocationCoverageNote, AllocationCoverageStatus } from './AllocationCoverageStatus';
 
 const resources = {
   cpu: { label: 'CPU', unit: 'core-hours', field: 'cpu_core_hours' },
@@ -17,7 +20,15 @@ const resources = {
 } as const;
 
 export function allocationComparisons(rows: readonly UsageMetricRow[], metric: Metric) {
-  const groups = new Map<string, { id: string; name: string; value: number; complete: boolean }>();
+  const groups = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      value: number;
+      history: ReturnType<typeof combineAllocationCoverage>;
+    }
+  >();
   for (const row of rows) {
     const id = row.sandbox_id;
     const existing = groups.get(id);
@@ -25,7 +36,9 @@ export function allocationComparisons(rows: readonly UsageMetricRow[], metric: M
       id,
       name: row.name || 'Unnamed Sandbox',
       value: (existing?.value ?? 0) + Number(row.allocated_period[resources[metric].field]),
-      complete: (existing?.complete ?? true) && row.allocated_period.complete,
+      history: combineAllocationCoverage(
+        existing ? [existing.history, row.allocated_period] : [row.allocated_period],
+      ),
     });
   }
   return [...groups.values()].sort((a, b) => b.value - a.value || a.id.localeCompare(b.id));
@@ -64,8 +77,7 @@ export function AllocationChart({
         <div>
           <h3>Allocation by {group === 'owner' && admin ? 'owner' : 'Sandbox'}</h3>
           <p id={id} hidden={byOwner || !page}>
-            {page?.items.length ?? 0} of {displayQuantity(page?.total_count)} Sandboxes on this
-            page.
+            {page?.items.length ?? 0} of {sandboxCount(page?.total_count)} on this page.
             {rows.length > 8 ? ' Largest 8 shown; all page values are in the data table.' : ''}
           </p>
         </div>
@@ -180,12 +192,10 @@ export function AllocationChart({
               </ResponsiveContainer>
             </div>
           </div>
-          {rows.some((row) => !row.complete) && (
-            <p className="usage-metric-coverage">
-              Partial history: bars show recorded allocation only, including any extension from the
-              last known state. Missing history is excluded.
-            </p>
-          )}
+          <AllocationCoverageNote
+            scope="Plotted Sandboxes"
+            value={combineAllocationCoverage(plotted.map((row) => row.history))}
+          />
           <details
             className="usage-chart-data"
             onToggle={(event) => setTableOpen(event.currentTarget.open)}
@@ -198,7 +208,7 @@ export function AllocationChart({
                 columns={[
                   { header: 'Sandbox' },
                   { header: `${resource.label} (${resource.unit})`, align: 'end' },
-                  { header: 'History' },
+                  { header: 'Coverage' },
                 ]}
               >
                 {rows.map((row) => (
@@ -207,7 +217,9 @@ export function AllocationChart({
                       <span title={row.id}>{row.name}</span>
                     </TableCell>
                     <TableCell align="end">{displayQuantity(row.value)}</TableCell>
-                    <TableCell>{row.complete ? 'Complete' : 'Partial'}</TableCell>
+                    <TableCell>
+                      <AllocationCoverageStatus value={row.history} />
+                    </TableCell>
                   </tr>
                 ))}
               </Table>

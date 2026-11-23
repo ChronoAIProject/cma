@@ -237,3 +237,117 @@ async fn task_titles_authorized_reads_restore_task_source_and_manual_name_after_
     ));
     client.database(&name).drop().await.unwrap();
 }
+
+struct TitleReply(Option<&'static str>);
+
+#[async_trait::async_trait]
+impl layer2_core::sandbox::AgentTitleGenerator for TitleReply {
+    async fn generate(
+        &self,
+        _: layer2_core::sandbox::AgentTitleGenerationRequest,
+    ) -> Result<
+        layer2_core::sandbox::AgentTitleGenerationResponse,
+        layer2_core::sandbox::AgentTitleGenerationError,
+    > {
+        match self.0 {
+            Some(title) => Ok(layer2_core::sandbox::AgentTitleGenerationResponse::new(
+                title,
+            )),
+            None => Err(layer2_core::sandbox::AgentTitleGenerationError::unavailable()),
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn task_titles_persist_generated_titles_and_bounded_fallback_after_provider_failures() {
+    use layer2_core::sandbox::{AgentTitleGenerationContext, AgentTitleServiceError};
+    use std::time::{Duration, SystemTime};
+    let (client, name) = database("task_title_provider").await;
+    let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    for (index, reply) in [Some("Tool comparison"), Some(""), Some("***"), None]
+        .into_iter()
+        .enumerate()
+    {
+        let mut agent = agent_for_worker(&format!("agt_title_provider_{index}"), NOW);
+        agent.title = None;
+        store.create_agent(agent.clone()).await.unwrap();
+        for kind in [
+            AgentLogKind::TurnStarted {
+                model: None,
+                turn_sequence: 1,
+                origin_key: None,
+            },
+            AgentLogKind::OwnerMessage {
+                content: "Compare tools".into(),
+            },
+            AgentLogKind::AgentMessage {
+                content: "Here is the comparison".into(),
+            },
+            AgentLogKind::TurnCompleted { turn_sequence: 1 },
+        ] {
+            store
+                .append_agent_log(&agent.id, NOW.into(), kind)
+                .await
+                .unwrap();
+        }
+        let context =
+            AgentTitleGenerationContext::new("synthetic-model", "synthetic-authorization").unwrap();
+        let now = SystemTime::now();
+        for attempt in 0..3 {
+            let reopened = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+            let service = AgentTitleService::new(reopened, "restarted-title-worker").unwrap();
+            let result = service
+                .generate_agent_title_at(
+                    &agent.id,
+                    Some(&context),
+                    Some(&TitleReply(reply)),
+                    now + Duration::from_secs(attempt * 3600),
+                )
+                .await;
+            if index == 0 {
+                assert_eq!(result.unwrap(), AgentTitleOutcome::Generated);
+                break;
+            } else if attempt < 2 {
+                assert!(matches!(
+                    result,
+                    Err(AgentTitleServiceError::GenerationUnavailable)
+                ));
+            } else {
+                assert_eq!(result.unwrap(), AgentTitleOutcome::Fallback);
+            }
+        }
+        let reopened = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+        let service = AgentTitleService::new(reopened, "reader").unwrap();
+        let title = service.title(&agent.id).await.unwrap().unwrap();
+        assert_eq!(
+            title.title.as_str(),
+            if index == 0 {
+                "Tool comparison"
+            } else {
+                "Compare tools"
+            }
+        );
+        assert_eq!(
+            title.source,
+            if index == 0 {
+                AgentTitleSource::Generated
+            } else {
+                AgentTitleSource::Fallback
+            }
+        );
+        assert_eq!(
+            service
+                .generate_agent_title_at(
+                    &agent.id,
+                    Some(&context),
+                    Some(&TitleReply(reply)),
+                    now + Duration::from_secs(10_800)
+                )
+                .await
+                .unwrap(),
+            AgentTitleOutcome::Skipped
+        );
+    }
+    client.database(&name).drop().await.unwrap();
+}

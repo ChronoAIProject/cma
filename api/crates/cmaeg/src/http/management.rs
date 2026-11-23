@@ -30,12 +30,24 @@ pub fn management_router(state: ManagementState) -> Router {
             get(super::partitions::inspect),
         )
         .route(
+            "/v1/channels/{channel_id}/partition/resets",
+            post(super::partition_resets::reset),
+        )
+        .route(
             "/v1/channels/{channel_id}/activity",
             get(super::activity::latest),
         )
         .route(
             "/v1/channels/{channel_id}/activity/stream",
             get(super::activity::stream),
+        )
+        .route(
+            "/v1/channels/{channel_id}/activity/history",
+            get(super::activity_history::history),
+        )
+        .route(
+            "/v1/channels/{channel_id}/activity/history/events/{event_id}/details",
+            get(super::activity_history::details),
         )
         .merge(super::outbound::routes())
         .route(

@@ -1,18 +1,20 @@
 use super::*;
+use crate::store::bindings::BindingTransactionError;
 use layer2_core::CoreError;
 use mongodb::ClientSession;
 
 impl MongoSandboxCredentialStore {
-    /// Read the existing generation inside the caller's parent-fenced
-    /// transaction. Recovery must never create or replace missing custody.
-    pub(crate) async fn current_binding_credential(
+    /// Read existing custody inside the caller's parent-fenced transaction.
+    /// Preserve driver failures for bounded retry; recovery cannot create or
+    /// replace missing custody or change the original credential identity.
+    pub(in crate::store) async fn current_binding_credential_transaction(
         &self,
         database: &str,
         sandbox: &layer2_core::sandbox::Sandbox,
         session: &mut ClientSession,
-    ) -> Result<layer2_core::sandbox::binding::ProvidedCredential, CoreError> {
+    ) -> Result<layer2_core::sandbox::binding::ProvidedCredential, BindingTransactionError> {
         if self.collection.namespace().db != database {
-            return Err(corrupt());
+            return Err(corrupt().into());
         }
         let authority = sandbox.credential.current.as_ref().ok_or_else(corrupt)?;
         let document = self
@@ -20,7 +22,7 @@ impl MongoSandboxCredentialStore {
             .find_one(doc! {"_id": credential_id(&sandbox.id, authority.generation)})
             .session(&mut *session)
             .await
-            .map_err(unavailable)?
+            .map_err(BindingTransactionError::Driver)?
             .ok_or_else(corrupt)?;
         let material = self.material(document).map_err(|_| corrupt())?;
         if material.sandbox_id != sandbox.id
@@ -28,10 +30,10 @@ impl MongoSandboxCredentialStore {
             || material.source != sandbox.credential.source
             || material.authority != *authority
         {
-            return Err(corrupt());
+            return Err(corrupt().into());
         }
         layer2_core::sandbox::binding::ProvidedCredential::new(material.value.expose().to_owned())
-            .map_err(|_| corrupt())
+            .map_err(|_| BindingTransactionError::Domain(corrupt()))
     }
 
     pub(crate) async fn retain_binding_material(
@@ -40,7 +42,7 @@ impl MongoSandboxCredentialStore {
         material: &CredentialMaterial,
         session: &mut ClientSession,
     ) -> Result<(), CoreError> {
-        if self.collection.namespace().db != database {
+        if self.collection.namespace().db != database || material.source.is_managed() {
             return Err(corrupt());
         }
         let document = self.document(material).map_err(|_| corrupt())?;

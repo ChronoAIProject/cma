@@ -111,17 +111,19 @@ async fn malformed_or_missing_intent_refuses_another_post() {
         .await
         .unwrap();
     let retry = fixture.issue(1);
-    super::acknowledgements::prepare_only(&mut fixture).await;
     assert!(matches!(
         retry.await.unwrap().unwrap(),
         Err(CredentialError::Unavailable(_))
     ));
+    assert_eq!(
+        fixture.peer.count(),
+        3,
+        "missing custody refuses before provider preparation"
+    );
     assert_eq!(fixture.peer.count_route("POST", "/api/v1/api-keys"), 1);
-    assert!(fixture
-        .custody
-        .issuance(&fixture.claim)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(matches!(
+        fixture.custody.issuance(&fixture.claim).await,
+        Err(crate::sandbox::CredentialCustodyError::Unavailable(_))
+    ));
     fixture.cleanup().await;
 }

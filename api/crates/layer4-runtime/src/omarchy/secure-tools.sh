@@ -1,11 +1,12 @@
 #!/bin/bash
 # Rebuild the two bundled Go utilities with patched, checksum-pinned inputs.
 set -euo pipefail
-build_dir=$(mktemp -d /tmp/cma-omarchy-tools.XXXXXX)
+build_dir=/tmp/cma-omarchy-tools
+mkdir "$build_dir"
 trap 'rm -rf "$build_dir"' EXIT
 cd "$build_dir"
-curl -fsSL https://go.dev/dl/go1.26.10.linux-amd64.tar.gz -o go.tar.gz
-echo 'ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5  go.tar.gz' | sha256sum -c -
+curl -fsSL https://go.dev/dl/go1.26.11.linux-amd64.tar.gz -o go.tar.gz
+echo '9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec  go.tar.gz' | sha256sum -c -
 tar xzf go.tar.gz
 export PATH="$build_dir/go/bin:$PATH" GOTOOLCHAIN=local CGO_ENABLED=0
 export GOPATH="$build_dir/modules" GOCACHE="$build_dir/cache"

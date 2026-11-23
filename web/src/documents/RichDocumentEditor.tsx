@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EditorContent, useEditor, useEditorState, type Editor } from '@tiptap/react';
+import type { EditorView } from '@tiptap/pm/view';
 import { documentExtensions, safeDocumentImage } from './DocumentExtensions';
 import { Button } from '../ui/Button';
 import { Menu } from '../ui/Menu';
@@ -9,6 +10,14 @@ import { Input } from '../ui/Input';
 import { Alert } from '../ui/Alert';
 import { IconPlusOutline16 } from '../ui/icons';
 import { DocumentOutline } from './DocumentOutline';
+
+function preventEditableLinkNavigation(view: EditorView, event: MouseEvent) {
+  if (!view.editable || event.button > 1) return false;
+  const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
+  if (!link || !view.dom.contains(link)) return false;
+  event.preventDefault();
+  return true;
+}
 
 function uploadImage(file: File, editor: Editor, failure: (message: string) => void) {
   if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type) || file.size > 600 * 1024) {
@@ -58,6 +67,11 @@ export default function RichDocumentEditor({
         role: 'textbox',
         'aria-label': 'Document content',
         'aria-multiline': 'true',
+      },
+      handleClick: (view, _pos, event) => preventEditableLinkNavigation(view, event),
+      handleDOMEvents: {
+        click: preventEditableLinkNavigation,
+        auxclick: preventEditableLinkNavigation,
       },
       handlePaste: (_view, event) => {
         const files = Array.from(event.clipboardData?.files ?? []).filter((file) =>

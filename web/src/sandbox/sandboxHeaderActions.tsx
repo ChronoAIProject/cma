@@ -8,11 +8,14 @@ import {
   IconTrashOutline16,
 } from '../ui/icons';
 import { sandboxChildrenAvailable } from './lifecycle';
+import { sandboxDeletionReason } from './deletionEligibility';
 
 /** What the page knows besides the Sandbox record when it offers an action. */
 export interface SandboxActionContext {
   /** Another action on this Sandbox is still being submitted or confirmed. */
   readonly busy: boolean;
+  /** An accepted lifecycle request has not finished executing. */
+  readonly lifecycleBusy?: boolean;
   /** The last read failed or is being revalidated, so eligibility is not current. */
   readonly stale: boolean;
   /** The owner's service connections have not been confirmed yet. */
@@ -37,21 +40,8 @@ export function sandboxCreateReason(
   if (sandbox.lifecycle?.operation !== undefined) return WAIT;
   if (!sandboxChildrenAvailable(sandbox))
     return 'Agents and Workspaces can start when the Sandbox is active.';
-  if (context.busy) return WAIT;
+  if (context.busy || context.lifecycleBusy) return WAIT;
   if (context.needsConnections) return 'Checking your service connections.';
-  return undefined;
-}
-
-function deleteReason(sandbox: SandboxSummary, context: SandboxActionContext) {
-  if (sandbox.status === 'retired') return 'This Sandbox has been deleted.';
-  if (sandbox.status === 'retiring') return 'Deletion is already in progress.';
-  if (context.stale) return CHECKING;
-  if (
-    context.busy ||
-    sandbox.lifecycle?.checkpoint !== undefined ||
-    sandbox.lifecycle?.operation !== undefined
-  )
-    return WAIT;
   return undefined;
 }
 
@@ -101,7 +91,7 @@ export function sandboxHeaderMenu(
     icon: <IconSettingsOutline16 />,
   });
   if (permissions.deleteSandbox) {
-    const reason = deleteReason(sandbox, context);
+    const reason = sandboxDeletionReason(sandbox, context);
     entries.push(
       { type: 'separator', id: 'before-delete' },
       {

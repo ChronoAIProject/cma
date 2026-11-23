@@ -3,8 +3,8 @@
 use super::{
     resource_access::{fence_lineage, ReadError},
     sandbox_mongo::{
-        commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
-        MongoSandboxStore, TRANSACTION_ATTEMPTS,
+        commit_transaction, is_confirmed_body_retry, is_transient, start_transaction,
+        CommitOutcome, MongoSandboxStore, TRANSACTION_ATTEMPTS,
     },
 };
 use layer2_core::{
@@ -21,10 +21,12 @@ use mongodb::{
     ClientSession,
 };
 
+mod reconciliation;
 mod records;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read_snapshot as read_inventory_snapshot;
-use records::{event_document, read_event, read_snapshot, state_document};
+use records::{event_document, read_snapshot, state_document};
+pub(super) use records::{read_event, read_state};
 
 #[derive(Debug)]
 pub(super) enum UsageError {
@@ -75,14 +77,13 @@ impl AgentChannelUsageStore for MongoSandboxStore {
         id: &AgentId,
     ) -> Result<AgentChannelUsageSnapshot, SandboxStoreError> {
         for _ in 0..TRANSACTION_ATTEMPTS {
-            let mut session = self
-                .client
-                .start_session()
-                .await
-                .map_err(|_| unavailable())?;
-            start_transaction(&mut session)
-                .await
-                .map_err(|_| unavailable())?;
+            let mut session = match begin(self).await {
+                Ok(session) => session,
+                // A known-aborted start (including the work fence) retries
+                // from a fresh transaction under the same bounded budget.
+                Err(error) if known_abort(&error) => continue,
+                Err(_) => return Err(unavailable()),
+            };
             let result = read_snapshot(self, id, &mut session).await;
             let _ = session.abort_transaction().await;
             match result {
@@ -100,19 +101,16 @@ impl AgentChannelUsageStore for MongoSandboxStore {
     ) -> Result<ChannelUsageEvent, SandboxStoreError> {
         request.validate()?;
         for _ in 0..TRANSACTION_ATTEMPTS {
-            let mut session = self
-                .client
-                .start_session()
-                .await
-                .map_err(|_| unavailable())?;
-            start_transaction(&mut session)
-                .await
-                .map_err(|_| unavailable())?;
+            let mut session = match begin(self).await {
+                Ok(session) => session,
+                // A known-aborted start (including the work fence) retries
+                // from a fresh transaction under the same bounded budget.
+                Err(error) if known_abort(&error) => continue,
+                Err(_) => return Err(unavailable()),
+            };
             let (event, replay) = match apply(self, &request, &mut session).await {
                 Ok(result) => result,
-                Err(UsageError::Driver(error))
-                    if is_transient(&error) || is_duplicate_key(&error) =>
-                {
+                Err(UsageError::Driver(error)) if is_confirmed_body_retry(&error) => {
                     let _ = session.abort_transaction().await;
                     continue;
                 }
@@ -127,9 +125,11 @@ impl AgentChannelUsageStore for MongoSandboxStore {
             }
             match commit_transaction(&mut session).await {
                 CommitOutcome::Committed => return Ok(event),
-                // An uncertain commit replays the exact immutable event. The
-                // original timestamp is retained and the summary is not applied twice.
-                CommitOutcome::Retry(_) | CommitOutcome::Unknown(_) => continue,
+                CommitOutcome::Retry(_) => continue,
+                CommitOutcome::Unknown(_) => {
+                    return reconciliation::verify(self, &request, event, session.operation_time())
+                        .await;
+                }
                 CommitOutcome::Failed(_) => return Err(unavailable()),
             }
         }
@@ -143,14 +143,13 @@ impl AgentChannelUsageStore for MongoSandboxStore {
     ) -> Result<(AgentChannelUsageSnapshot, Page<ChannelUsageEvent>), SandboxStoreError> {
         layer2_core::sandbox::store::channel_usage_cursor(page)?;
         for _ in 0..TRANSACTION_ATTEMPTS {
-            let mut session = self
-                .client
-                .start_session()
-                .await
-                .map_err(|_| unavailable())?;
-            start_transaction(&mut session)
-                .await
-                .map_err(|_| unavailable())?;
+            let mut session = match begin(self).await {
+                Ok(session) => session,
+                // A known-aborted start (including the work fence) retries
+                // from a fresh transaction under the same bounded budget.
+                Err(error) if known_abort(&error) => continue,
+                Err(_) => return Err(unavailable()),
+            };
             let result = records::read_history(self, id, page, &mut session).await;
             let _ = session.abort_transaction().await;
             match result {
@@ -161,6 +160,17 @@ impl AgentChannelUsageStore for MongoSandboxStore {
         }
         Err(unavailable())
     }
+}
+
+/// Unknown outcome dominates a transient label: only a known abort retries.
+fn known_abort(error: &mongodb::error::Error) -> bool {
+    !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT) && is_transient(error)
+}
+
+async fn begin(store: &MongoSandboxStore) -> Result<ClientSession, mongodb::error::Error> {
+    let mut session = store.client.start_session().await?;
+    start_transaction(&mut session).await?;
+    Ok(session)
 }
 
 /// Composes with authorized Bridge transactions so binding and accepted-command

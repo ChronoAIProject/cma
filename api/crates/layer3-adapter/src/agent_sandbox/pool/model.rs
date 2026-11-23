@@ -28,7 +28,7 @@ impl NativePoolSpec {
                 .labels
                 .get(crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL)
                 .map(String::as_str)
-                != Some("2")
+                != Some(crate::runtime_versions::RUNTIME_HOME_LAYOUT_VERSION)
         {
             return Err(rejected("image does not support full /home initialization"));
         }

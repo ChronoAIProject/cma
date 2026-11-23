@@ -63,6 +63,55 @@ NyxID forwards the caller's bearer. An agent key also needs access to the user's
 gateway connection under NyxID's key policy; use that connection's ID from `/keys`,
 not the global catalog ID, when assigning an explicit service grant.
 
+## Paged activity history
+
+When the operator enables history, `GET /v1/channels/{channel_id}/activity/history`
+exports durable ingress receipts with their current bounded summaries. It uses the
+same owner read grant and current channel ownership as the recent activity API.
+Every request reauthorizes, including continuation and detail requests.
+
+The initial query supplies UTC RFC3339 `from` (inclusive), `until` (exclusive), and
+optional `limit` (1–200, default 100). Timestamp precision is milliseconds or
+coarser; a range is at most seven days and must end at or before the current time.
+Request consecutive ranges for longer reports. Continue with the opaque `cursor`
+from `next_cursor`; if range/limit are repeated they must match the original query.
+Do not pass the SSE watermark to this endpoint.
+
+The response has `items`, `next_cursor`, `has_more`, `range`, and `coverage`.
+Ordering is first gateway receipt time descending, then opaque history event ID
+ascending. A transactional channel sequence freezes membership on the first page:
+later inserts, including delayed events with older timestamps, are excluded.
+Current processing summaries may advance between pages. This does not archive
+every intermediate transition or imply successful delivery without a receipt.
+Pages are bounded by both count and 1 MiB, so a nonterminal page can be shorter
+than `limit`. `has_more` describes remaining retained scan results, including
+unreadable records; it is separate from missing historical coverage.
+
+`coverage.complete_event_enumeration` requires an operator-attested all-writer
+capture interval, retention coverage, and no observed gaps. `legacy_partial`,
+`retention_expired`, `capture_gap`, and `unreadable_record` explain incomplete
+coverage. An unreadable row advances the cursor without hiding the gap. Receipts
+already evicted by the recent view cannot be recovered. The history retention
+setting defaults to 7 rolling days; inspect `coverage.retained_from` rather than
+assuming a delayed weekly report is available. Export before the oldest receipt
+expires; the seven-day default cannot cover a combined two-week report.
+
+Each item has `history_event_id`, `activity`, detail coverage flags, and an optional
+`detail_cursor`. For a large summary, `activity` contains the small ingress receipt;
+fetch `/v1/channels/{channel_id}/activity/history/events/{history_event_id}/details?cursor=...`.
+Detail pages pin one immutable generation. Decode each part's standard-base64
+`data`, check its SHA-256, concatenate parts in `index` order across pages, then
+parse the UTF-8 JSON as `ChannelActivity`. A summary can be up to 1 MiB in 32 sealed
+parts. `detail_incomplete` and `detail_truncated` remain explicit; history never
+stores message text or raw event bodies.
+
+Cursors expire after at most 15 minutes, or earlier when any retained member of the
+export can expire. HTTP 410 `activity_history_cursor_expired` requires restarting
+the same range and deduplicating by event identity. Tampered, mismatched, or
+cross-channel cursors return 400. Disabled history returns 503; an enabled reader
+using the legacy remote backend returns 501 `unsupported_backend`. Storage failure
+returns a safe typed error, never an empty complete report.
+
 ## Live channel activity
 
 `GET /v1/channels/{channel_id}/activity` reads the owner's recent channel
@@ -97,7 +146,10 @@ they do not load or decrypt the complete snapshots. No client polling is require
 
 Activity names the source, actor, source conversation/thread, selected consumer,
 provider and provider conversation. Consumer display names and native agent IDs
-are present only when recorded authority supplies them. `occurred_at` is the
+are present only when recorded authority supplies them. An optional
+`execution_reference` identifies the executor for that response through a
+verified provider receipt. It is independent of the native provider Agent ID
+and any worker that delivered the reply. `occurred_at` is the
 normalized event timestamp: the source timestamp when supplied, or the gateway
 time at normalization for custom CloudEvents without `time`. The fallback leaves
 the original CloudEvent's `time` absent; `occurred_at` alone does not establish
@@ -106,6 +158,12 @@ timestamp.
 `dispatched_at` starts an attempt, `accepted_at` records actual provider
 acceptance, `produced_at` records committed response output, and `completed_at`
 records terminal response observation or recovered processing completion.
+When exact production time is unavailable, `produced_by` gives the earliest
+confirmation time for an Answer receipt bound to the consumer's current
+`response_id`. The receipt records that binding as `answer_response_id`.
+`produced_by` is an upper bound on production time. Leave it out of exact
+processing and delivery latency calculations. Older receipts without a verified
+response binding may have neither production time.
 `failed` means a provider reported failure or incomplete output. A completed
 processing checkpoint alone never proves a successful response: recovery retains
 the recorded terminal outcome, or reports `unknown` when that evidence is absent.
@@ -128,15 +186,44 @@ connection lifetime. Channel deletion or failed revalidation closes the stream.
 
 | Your system | What to implement |
 | --- | --- |
-| A CMA user connecting a Telegram Bot | Use CMA's Bot settings and an Event Worker Profile revision. CMA coordinates the channel, credentials and provider binding. |
+| A CMA user connecting a messaging channel | Complete an Event Gateway connection, then create a consumer with inline Agent settings. Follow [Create a CMA consumer](#create-a-cma-consumer). |
 | A backend sending business events to an agent | Create a custom channel, sign CloudEvents, then consume streamed results or a result webhook. |
 | An agent using event reply tools | Connect native MCP with the channel's agent key; use the event reference supplied with the turn. |
 | A new downstream agent execution provider | Implement the binding, conversation, Responses and context endpoints below; arrange operator registration of your provider. |
 
-An **EventWorkerProfile** is the complete worker configuration: model, permissions,
-instructions, skills, tools and optional environment. It is distinct from CMA's
-narrower Agent Profile. The v1 JSON field remains `profile`. The gateway validates
-its common shape, while the provider reports which fields it honours or refuses.
+An **EventWorkerProfile** is the complete provider-neutral worker configuration:
+model, permissions, instructions, skills, tools and optional environment. The v1
+JSON field remains `profile`. The gateway validates its common shape, while the
+provider reports which fields it honours or refuses. This API configuration does
+not require a saved CMA Profile revision.
+
+## Create a CMA consumer
+
+Sign in to CMA with an account that can create consumers. Use the connection
+types and setup actions offered by your Event Gateway. Telegram availability
+depends on the gateway's supported connections and enabled setup capabilities.
+
+1. Open **Event Gateway** and complete your channel connection setup. The
+   connection must be ready before you can select it for a new consumer.
+2. Open **Consumers**, then **New consumer**. Enter a **Consumer name** and select
+   the ready **Event Gateway connection**. If the list is empty, select
+   **Open Event Gateway** to finish setup, then **Refresh Event Gateway connections**.
+3. Continue to **Configure the Agent inline**. Choose a **Runtime image** and,
+   optionally, a **GitHub repository workspace**. Set **Model**, **Reasoning effort**,
+   **Permission level**, **System prompt**, **Skills**, and **Agent key scope**.
+   Connect any selected services in NyxID so the Agent can use them.
+4. Continue to **Choose message rules**. Choose who can talk to the consumer,
+   whether to send the Agent's final answer automatically, and an acknowledgement
+   delay. Group replies are visible to the group.
+5. Check **Review and create**, then select **Create consumer**. If creation is
+   unconfirmed, use **Recover creation** to reconcile the same request. Wait for
+   the consumer's setup to complete before testing messages and replies.
+
+CMA's Profile authoring pages are retired. New consumers use the connection and
+inline settings above. Saved Profile definitions and revisions remain readable
+for compatibility with existing consumers and recovery of historical creation
+requests. You do not need to create an Agent, Workspace, Sandbox, or Event Worker
+Profile revision to follow this guide.
 
 ## Authentication by operation
 

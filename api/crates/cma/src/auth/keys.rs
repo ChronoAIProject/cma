@@ -227,6 +227,7 @@ impl KeyIssuer {
     }
 
     /// Mint one exact, expiring credential for an opaque resource identifier.
+    #[cfg(test)]
     pub async fn mint(
         &self,
         credential_id: &str,

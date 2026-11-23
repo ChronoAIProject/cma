@@ -230,13 +230,9 @@ impl Gateway {
                 }
             }
         }
-        // One bounded tick handles at most 16 channels. The owner/kind/_id
-        // index scopes recovery; no process scans another owner's deliveries.
-        for channel_state in dispatch.channels.iter_mut().take(16) {
+        for index in dispatch_batch(&dispatch.channels, now) {
+            let channel_state = &mut dispatch.channels[index];
             if authority_retry || authority.is_none() {
-                continue;
-            }
-            if channel_state.status != "pending" || channel_state.next_attempt_at > now {
                 continue;
             }
             channel_state.attempts = channel_state.attempts.saturating_add(1);
@@ -371,27 +367,20 @@ impl Gateway {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::super::retryable_problem;
-    use cmaeg_core::problem::{Problem, ProblemCode};
-
-    #[test]
-    fn provider_refusals_retry_but_definitive_route_refusals_settle() {
-        assert!(retryable_problem(&Problem::new(
-            ProblemCode::ProviderUnavailable,
-            503,
-            "provider unavailable",
-        )));
-        assert!(retryable_problem(&Problem::new(
-            ProblemCode::RateLimited,
-            429,
-            "busy",
-        )));
-        assert!(!retryable_problem(&Problem::new(
-            ProblemCode::AdmissionRefused,
-            422,
-            "route removed",
-        )));
-    }
+fn dispatch_batch(channels: &[DispatchChannel], now: i64) -> Vec<usize> {
+    let mut due: Vec<_> = channels
+        .iter()
+        .enumerate()
+        .filter(|(_, channel)| channel.status == "pending" && channel.next_attempt_at <= now)
+        .map(|(index, _)| index)
+        .collect();
+    // Persisted retry deadlines move failed attempts behind older pending work,
+    // including when recovery restarts or ticks arrive after every deadline.
+    due.sort_by_key(|&index| channels[index].next_attempt_at);
+    due.truncate(16);
+    due
 }
+
+#[cfg(test)]
+#[path = "receiver_dispatch_tests.rs"]
+mod tests;

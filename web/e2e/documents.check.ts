@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import './documents.autolink';
 import { LocalDocuments, documentId } from './documents.fixture';
 for (const width of [1600, 390]) {
   for (const theme of ['light', 'dark']) {
@@ -54,7 +55,9 @@ for (const width of [1600, 390]) {
       const outline = page.getByRole('navigation', { name: 'On this page' });
       await outline.getByRole('button', { name: /Product brief$/ }).click();
       await expect(content.getByRole('heading', { name: /Product brief$/ })).toBeInViewport();
-      await expect(page.locator('.document-workspace__save-status')).toHaveText('Unsaved changes');
+      await expect(page.locator('.document-workspace__save-status')).toHaveText(
+        'Unsaved changes · Switch to Edit to save',
+      );
       expect(fixture.writes).toHaveLength(0);
       await page.screenshot({
         animations: 'disabled',
@@ -83,10 +86,23 @@ for (const width of [1600, 390]) {
       });
       await comments.getByRole('button', { name: 'Close comments' }).click();
       await page.getByRole('button', { name: 'Share', exact: true }).click();
-      await page.getByRole('textbox', { name: 'Recipient user ID' }).fill('reviewer');
-      await page.getByRole('button', { name: 'Add person' }).click();
+      const search = page.getByRole('textbox', { name: 'Find share recipients' });
+      const add = page.getByRole('button', { name: 'Add person' });
+      const select = page.getByRole('button', { name: 'Select Local Reviewer (Reviewer-A)' });
+      await search.fill('unresolved');
+      await expect(page.getByText('No matching people.')).toBeVisible();
+      await expect(add).toBeDisabled();
+      await search.fill('reviewer');
+      await select.click();
+      await expect(page.getByRole('list', { name: 'Selected recipients' })).toContainText(
+        'Reviewer-A',
+      );
+      await search.fill('review');
+      await expect(add).toBeDisabled();
+      await select.click();
+      await add.click();
       await expect(page.getByRole('list', { name: 'People with access' })).toContainText(
-        'reviewer',
+        'Reviewer-A',
       );
       await page.screenshot({
         animations: 'disabled',
@@ -120,6 +136,12 @@ test('LOCAL shared document keeps fragment in headers and disables content editi
     'false',
   );
   await expect(page.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'Document title' })).toBeDisabled();
+  await expect(page.getByRole('group', { name: 'Document mode' })).toHaveCount(0);
+  const content = page.getByRole('textbox', { name: 'Document content', exact: true });
+  await content.click();
+  await page.keyboard.press('Control+s');
+  await page.keyboard.press('Meta+s');
   expect(page.url()).not.toContain('#token');
   expect(
     fixture.reads
@@ -129,6 +151,151 @@ test('LOCAL shared document keeps fragment in headers and disables content editi
   await page.getByRole('button', { name: 'Comments', exact: true }).click();
   await expect(page.getByText('You have view access to this document.')).toBeVisible();
   expect(fixture.writes).toHaveLength(0);
+  expect(fixture.boundary.errors).toEqual([]);
+  expect(fixture.boundary.unexpected).toEqual([]);
+});
+
+for (const shortcut of ['Control+s', 'Meta+s']) {
+  test(`LOCAL Preview blocks title focus and ${shortcut} while retaining drafts through navigation`, async ({
+    page,
+    baseURL,
+  }) => {
+    const fixture = new LocalDocuments();
+    fixture.markdown = '# Product brief\n\nSaved body.\n';
+    await fixture.route(page, baseURL!);
+    await page.goto(`/artifacts/${documentId}`);
+    const title = page.getByRole('textbox', { name: 'Document title' });
+    const content = page.getByRole('textbox', { name: 'Document content', exact: true });
+    const status = page.locator('.document-workspace__save-status');
+    const save = page.getByRole('button', { name: 'Save', exact: true });
+    const edit = page.getByRole('button', { name: 'Edit', exact: true });
+    const preview = page.getByRole('button', { name: 'Preview', exact: true });
+    const back = page.getByRole('button', { name: 'Back to artifacts' });
+    await expect(content).toBeVisible();
+    await preview.click();
+    await expect(title).toBeDisabled();
+    await expect(content).toHaveAttribute('contenteditable', 'false');
+    await expect(save).toBeDisabled();
+    await back.focus();
+    await title.evaluate((node: HTMLInputElement) => node.focus());
+    await expect(back).toBeFocused();
+    await page.keyboard.type('AccidentalTitle');
+    await page.keyboard.press('Tab');
+    await expect(edit).toBeFocused();
+    await expect(title).toHaveValue('Product brief');
+    const cleanBody = await content.textContent();
+    await content.click();
+    await page.keyboard.type('Accidental body');
+    await page.keyboard.press(shortcut);
+    await expect(content).toHaveText(cleanBody!);
+    await expect(status).toHaveText('Saved');
+    expect(fixture.writes).toHaveLength(0);
+    await page.reload();
+    await expect(title).toHaveValue('Product brief');
+    await expect(content).toHaveText(cleanBody!);
+
+    await edit.click();
+    await title.fill('Draft title');
+    await content.click();
+    await content.press('ControlOrMeta+End');
+    await content.press('Enter');
+    await page.keyboard.type('Retained draft body.');
+    await preview.click();
+    await expect(title).toHaveValue('Draft title');
+    await expect(title).toBeDisabled();
+    await expect(content).toContainText('Retained draft body.');
+    await expect(status).toHaveText('Unsaved changes · Switch to Edit to save');
+    await expect(save).toBeDisabled();
+    await save.dispatchEvent('click');
+    await content.click();
+    await page.keyboard.press(shortcut);
+    await content.dispatchEvent('keydown', {
+      key: 's',
+      ctrlKey: shortcut === 'Control+s',
+      metaKey: shortcut === 'Meta+s',
+    });
+    expect(fixture.writes).toHaveLength(0);
+
+    await back.click();
+    await page.getByRole('button', { name: 'Leave without saving', exact: true }).click();
+    await page.getByRole('link', { name: /Product brief/ }).click();
+    await expect(title).toHaveValue('Draft title');
+    await expect(title).toBeEditable();
+    await expect(content).toContainText('Retained draft body.');
+    await expect(content).toHaveAttribute('contenteditable', 'true');
+    expect(fixture.writes).toHaveLength(0);
+    await content.click();
+    await page.keyboard.press(shortcut);
+    await expect(status).toHaveText('Saved');
+    expect(fixture.writes).toHaveLength(1);
+    expect(fixture.writes[0]).toMatchObject({
+      method: 'PATCH',
+      path: `/api/v1/documents/${documentId}`,
+      body: {
+        title: 'Draft title',
+        markdown: expect.stringContaining('Retained draft body.'),
+        expected_revision: 3,
+      },
+      key: expect.any(String),
+    });
+    await preview.click();
+    await content.click();
+    await page.keyboard.press(shortcut);
+    await page.reload();
+    await expect(title).toHaveValue('Draft title');
+    await expect(content).toContainText('Retained draft body.');
+    await expect(status).toHaveText('Saved');
+    await back.click();
+    await page.getByRole('link', { name: /Draft title/ }).click();
+    await expect(title).toHaveValue('Draft title');
+    await expect(content).toContainText('Retained draft body.');
+    expect(fixture.writes).toHaveLength(1);
+    expect(fixture.boundary.errors).toEqual([]);
+    expect(fixture.boundary.unexpected).toEqual([]);
+  });
+}
+
+test('LOCAL Preview refuses an uncertain save retry and Edit retains its exact body and key', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalDocuments();
+  fixture.markdown = '# Saved body';
+  fixture.saveFailures = 1;
+  await fixture.route(page, baseURL!);
+  await page.goto(`/artifacts/${documentId}`);
+  const content = page.getByRole('textbox', { name: 'Document content', exact: true });
+  const title = page.getByRole('textbox', { name: 'Document title' });
+  await expect(content).toBeVisible();
+  await title.fill('Unconfirmed title');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  const retry = page.getByRole('button', { name: 'Retry same save', exact: true });
+  await expect(retry).toBeEnabled();
+  expect(fixture.writes).toHaveLength(1);
+  const original = fixture.writes[0];
+  expect(original?.key).toBeTruthy();
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await expect(title).toBeDisabled();
+  await expect(content).toHaveAttribute('contenteditable', 'false');
+  await expect(retry).toBeDisabled();
+  await retry.dispatchEvent('click');
+  await content.dispatchEvent('keydown', { key: 's', ctrlKey: true });
+  await content.dispatchEvent('keydown', { key: 's', metaKey: true });
+  await expect(page.locator('.document-workspace__save-status')).toHaveText(
+    'Save not confirmed · Switch to Edit to save',
+  );
+  expect(fixture.writes).toHaveLength(1);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(title).toBeEnabled();
+  await expect(retry).toBeEnabled();
+  await retry.click();
+  await expect(page.locator('.document-workspace__save-status')).toHaveText('Saved');
+  expect(fixture.writes).toHaveLength(2);
+  expect(fixture.writes[1]).toEqual(original);
+  await expect(title).toHaveValue('Unconfirmed title');
+  await expect(title).toBeEditable();
+  expect(fixture.boundary.errors).toEqual([]);
+  expect(fixture.boundary.unexpected).toEqual([]);
 });
 
 test('LOCAL create, formatting commands and image paste survive save and reopen', async ({

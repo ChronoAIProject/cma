@@ -1,20 +1,162 @@
-"""Allocate under the short global lock; build and deployment use no global lock."""
+"""Allocate component versions from develop ancestry using insert-only successor claims."""
 import json
 import os
 from pathlib import Path
+import random
+import sys
+import time
 
+import ci_retry
+from ci_outcome import error_site, report
 from staging_cd_admission import event_identity
-from staging_cd_common import matches, require
-from staging_cd_github import GitHub
+from staging_cd_baselines import durable_baselines
+from staging_cd_compatibility import GROUP
+from staging_cd_transition import complete_group
+from staging_cd_allocate_progress import allocation_progress
+from staging_cd_allocation_io import AllocationGitHub as GitHub, AllocationIO, parallel_read
+from staging_cd_allocation_snapshot import AllocationConflict, AllocationSnapshot as Reservations, SnapshotAPI
+from staging_cd_common import Refusal, matches, require
+from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical
-from staging_cd_reservations import Reservations, next_reservation, reserve
+from staging_cd_reservations import next_reservation
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
-from staging_cd_versions import DEPLOYABLES, label_level, merged_pr
+from staging_cd_promotion import proven_components
+from staging_cd_versions import DEPLOYABLES, label_level, merged_pr, version_tuple
+
+REFUSAL_CODES = {
+    "Reservation owner run could not be read": "RESERVATION_OWNER_UNREADABLE",
+    "Reservation run identity is invalid": "RESERVATION_OWNER_INVALID",
+    "Reservation run liveness is uncertain": "RESERVATION_OWNER_UNCERTAIN",
+    "Reservation run and attempt disagree": "RESERVATION_OWNER_INCONSISTENT",
+    "Release queue is invalid": "QUEUE_INVALID",
+    "Release change identity is invalid": "CHANGE_INVALID",
+    "Source already has conflicting final versions": "FINAL_VERSION_CONFLICT",
+    "Source must belong to exactly one merged develop PR": "MERGED_PR_NOT_UNIQUE",
+    "Merged PR identity changed": "MERGED_PR_IDENTITY_CHANGED",
+    "Merged PR must carry exactly one supported version-upgrade label": "VERSION_LABEL_REQUIRED",
+    "Version labels are malformed": "VERSION_LABELS_INVALID",
+    "Release source is not on verified develop first-parent history": "SOURCE_HISTORY_INVALID",
+    # Split by its cause in github_read_code; this is the code of no known cause.
+    "GitHub API request failed": "GITHUB_READ_FAILED",
+    "GitHub API response is invalid": "GITHUB_RESPONSE_INVALID",
+    "GitHub read budget expired": "DEADLINE_EXCEEDED",
+    "Version reservation collision limit exceeded": "RESERVATION_COLLISION_LIMIT",
+    "Reservation push failed without a collision": "RESERVATION_PUSH_FAILED",
+    "Reservation push was not verified": "RESERVATION_VERIFY_FAILED",
+    "Reservation push was rejected": "RESERVATION_PUSH_REJECTED",
+    "Terminal reservation settlement is uncertain": "FINAL_SETTLEMENT_UNCERTAIN",
+    "Terminal reservation differs from final receipt": "FINAL_SETTLEMENT_CONFLICT",
+    "Allocation deadline exceeded": "DEADLINE_EXCEEDED",
+    "Allocation read failed": "READ_FAILED",
+    "Allocation write settlement is uncertain": "WRITE_UNCERTAIN",
+    "Allocation claim owner differs": "INVENTORY_CLAIM_CONFLICT",
+    "Allocation claim has no durable version": "INVENTORY_CLAIM_ORPHANED",
+    "Allocation reservation collision": "RESERVATION_COLLISION",
+    "Allocation planned a duplicate reservation": "RESERVATION_PLAN_INVALID",
+    "Unknown reservation component": "RESERVATION_PLAN_INVALID",
+    "Allocation tag inventory is incomplete": "INVENTORY_INCOMPLETE",
+    "Allocation tag inventory exceeds 16 MiB": "INVENTORY_TOO_LARGE",
+    "Allocation reservation readback differs": "RESERVATION_VERIFY_FAILED",
+    "Allocation reservation readback is unavailable": "RESERVATION_NOT_VISIBLE",
+}
+FALLBACK_CODES = frozenset({"UNEXPECTED_ERROR", "UNCLASSIFIED_REFUSAL"})
+# Codes a failed GitHub read takes from its cause rather than its message.
+GITHUB_READ_CAUSES = frozenset({"GITHUB_READ_TRANSIENT", "GITHUB_READ_DENIED"})
+# The codes ci_outcomes.json catalogues as transient; a test keeps them equal.
+# Such a refusal stops allocation at its settlement gate, the step catch-up
+# re-runs a head run for, once. Every other refusal fails the allocation step.
+TRANSIENT_CODES = frozenset({
+    "RESERVATION_OWNER_UNREADABLE", "RESERVATION_OWNER_UNCERTAIN", "MERGED_PR_IDENTITY_CHANGED",
+    "VERSION_LABELS_INVALID", "GITHUB_READ_TRANSIENT", "GITHUB_RESPONSE_INVALID", "RESERVATION_COLLISION_LIMIT",
+    "RESERVATION_PUSH_FAILED", "RESERVATION_VERIFY_FAILED", "FINAL_SETTLEMENT_UNCERTAIN", "DEADLINE_EXCEEDED",
+    "READ_FAILED", "WRITE_UNCERTAIN", "INVENTORY_INCOMPLETE", "INVENTORY_CLAIM_ORPHANED", "RESERVATION_COLLISION",
+    "RESERVATION_NOT_VISIBLE",
+})
+# A transient refusal raised before the reservation push started left nothing
+# on the remote, so the whole allocation runs once more in the same job, with
+# a fresh budget and inventory after a short jittered wait, or longer when
+# GitHub asked for up to the longest wait. A longer request, such as a spent
+# primary rate limit, is left to the gate and catch-up: an early rerun would
+# only repeat every tag read. Two attempts and the wait take at most 260 s of
+# the allocate job's 25 minute timeout.
+ALLOCATION_ATTEMPTS = 2
+RETRY_WAIT_SECONDS = (10, 20)
+# WRITE_UNCERTAIN says a write may have committed. It never reruns
+# allocation, whatever the push flag says.
+RETRIED_CODES = TRANSIENT_CODES - {"WRITE_UNCERTAIN"}
+
+
+def github_read_code(error):
+    """Name a failed GitHub read by the cause its refusal carries."""
+    if ci_retry.classify(error) == ci_retry.TRANSIENT:
+        # A 5xx, 408 or 429 response, a rate-limited 403, or a transport failure.
+        return "GITHUB_READ_TRANSIENT"
+    # Without rate-limit headers, a 401 or 403 is the token's standing answer.
+    return "GITHUB_READ_DENIED" if getattr(error, "status", None) in (401, 403) else "GITHUB_READ_FAILED"
+
+
+def refusal_code(error):
+    """The fixed public code of an allocation failure."""
+    if not isinstance(error, Refusal):
+        return "UNEXPECTED_ERROR"
+    code = REFUSAL_CODES.get(str(error), "UNCLASSIFIED_REFUSAL")
+    return github_read_code(error) if code == "GITHUB_READ_FAILED" else code
+
+
+def run_allocation(operation, env=None):
+    # Never echo exception text or private output. Only this closed vocabulary
+    # crosses the existing output boundary; unknown failures remain generic.
+    reason, site = "UNEXPECTED_ERROR", None
+
+    def guarded(masker):
+        nonlocal reason, site
+        try:
+            return operation(masker)
+        except Exception as error:
+            site = error_site(error)
+            reason = refusal_code(error)
+            raise
+
+    status = run_private(guarded, None, subject="allocation", explain=False)
+    if status and reason in TRANSIENT_CODES:
+        # No matrix is emitted, so nothing downstream runs. The step succeeds
+        # so that its settlement gate, the next step, reports the refusal and
+        # fails the job: that is the stop catch-up re-runs.
+        env = os.environ if env is None else env
+        output(env, "transient", "true")
+        output(env, "refused", reason)
+        if site is not None:
+            output(env, "site", site)
+        return 0
+    if status:
+        report("allocation", reason, subject="allocation", site=site)
+    return status
+
+
+def require_settled(code, site):
+    """Fail the job for the transient refusal the allocation step recorded."""
+    report("allocation", code if code in TRANSIENT_CODES else "UNCLASSIFIED_REFUSAL", subject="allocation",
+           site=site or None)
+    return 1
 
 
 def run_active(api, reservation):
-    run = api.request(f"actions/runs/{reservation['run_id']}/attempts/{reservation['run_attempt']}")
+    path = f"actions/runs/{reservation['run_id']}"
+    try:
+        run = api.request(path + f"/attempts/{reservation['run_attempt']}", allow_not_found=True)
+    except GitHubNotFound:
+        try:
+            api.request(path, allow_not_found=True)
+        except GitHubNotFound:
+            # ABANDONED-BURNED: retain this reservation in the watermark.
+            # Allocation creates a new version; it never resumes this one.
+            return False
+        except Refusal as error:
+            raise Refusal("Reservation owner run could not be read") from error
+        raise Refusal("Reservation run and attempt disagree")
+    except Refusal as error:
+        raise Refusal("Reservation owner run could not be read") from error
     require(isinstance(run, dict) and run.get("id") == reservation["run_id"]
             and run.get("run_attempt") == reservation["run_attempt"]
             and run.get("event") == "push" and run.get("head_branch") == "develop"
@@ -26,70 +168,221 @@ def run_active(api, reservation):
     return run["status"] != "completed"
 
 
-def allocate_queue(queue, api, reservations, run_id, attempt):
+def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, mark=lambda _component, _phase: None):
     require(isinstance(queue, dict) and matches(r"[0-9a-f]{40}", queue.get("head"))
             and isinstance(queue.get("changes"), list), "Release queue is invalid")
-    finals, pending = api.tags(), reservations.list()
+    mark("all", "final-inventory")
+    finals = api.tags()
+    mark("all", "pending-inventory")
+    pending = reservations.list()
+    mark("all", "history")
     history = api.history()
     jobs, seen = [], set()
+    # A durable newer reservation/final makes an older source obsolete without
+    # deleting its burned version. Reconcile in ancestry order, never input order.
     for change in queue["changes"]:
-        source, tree, deployables = change["source"], change["tree"], change["deployables"]
+        require(isinstance(change, dict), "Release change identity is invalid")
+        source, tree, deployables = (change.get(key) for key in ("source", "tree", "deployables"))
         require(matches(r"[0-9a-f]{40}", source) and matches(r"[0-9a-f]{40}", tree)
                 and source not in seen and isinstance(deployables, list)
+                and all(isinstance(name, str) for name in deployables)
                 and deployables == sorted(set(deployables)) and set(deployables).issubset(DEPLOYABLES.values()),
                 "Release change identity is invalid")
         seen.add(source)
         history.position(source)
+    changes = durable_baselines(sorted(queue["changes"], key=lambda change: history.position(change["source"])),
+                                pending, finals, history)
+    newest = {name: change["source"] for change in changes for name in change["deployables"]}
+    owners, busy = {}, set()
+    group_sources = [newest[DEPLOYABLES[key]] for key in GROUP if DEPLOYABLES[key] in newest]
+    transition = queue.get("contract_transition")
+    group_tip = max(group_sources, key=history.position, default=None) if transition else None
+    inventory = pending + [tag["receipt"]["identity"] for tag in finals]
+    # A successor claims its complete group atomically. Once its newest source
+    # has a reservation or final, replaying the queue cannot take ownership again.
+    new_group_source = group_tip is not None and not any(
+        item["component"] in GROUP and item["source"] == group_tip for item in inventory)
+    for item in pending:
+        if item["component"] not in DEPLOYABLES or DEPLOYABLES[item["component"]] not in newest:
+            continue
+        # Only duplicate work for the very same source needs an owner lookup.
+        # A strictly older owner that has not started building yields to the
+        # successor; one already building finishes unless a higher final lands.
+        if item["source"] != newest[DEPLOYABLES[item["component"]]]:
+            continue
+        if new_group_source and item["component"] in GROUP and item["source"] != group_tip:
+            # A sibling source moves only with an actual group publication.
+            # Defer it to the atomic group plan without waiting for its writer.
+            busy.add(item["component"])
+            continue
+        owner = (item["run_id"], item["run_attempt"])
+        if owner == (run_id, attempt):
+            continue
+        candidates = [value for value in inventory if value["component"] == item["component"]]
+        # Use the same durable fence as publication. Queue intent alone cannot
+        # revoke a writer between its last check and registry copy.
+        if item["source"] not in history.positions or any(
+                (value["source"] in history.positions
+                 and history.position(value["source"]) > history.position(item["source"]))
+                or version_tuple(value["version"]) > version_tuple(item["version"]) for value in candidates):
+            continue
+        owners.setdefault(owner, []).append(item)
+
+    def owner_active(items):
+        item = items[0]
+        mark(item["component"], "owner-read")
+        return run_active(api, item)
+
+    to_reconcile = []
+    final_names = {tag["name"] for tag in finals}
+    for items, active in zip(owners.values(), parallel_read(owner_active, owners.values())):
+        if active:
+            for item in items:
+                busy.add(item["component"])
+        else:
+            for item in items:
+                name = DEPLOYABLES[item["component"]]
+                if name + "/v" + item["version"] not in final_names:
+                    to_reconcile.append(item)
+    if transition and not new_group_source and busy & GROUP:
+        # A partial resume would make group completion replace a live publisher.
+        # Leave every peer to that owner while independent components proceed.
+        busy.update(GROUP)
+    if to_reconcile:
+        settled = parallel_read(reservations.final_after_owner, to_reconcile)
+        finals.extend(tag for tag in settled if tag is not None)
+    latest = {}
+    for tag in sorted(finals, key=lambda tag: history.position(tag["target"])):
+        receipt = tag["receipt"]
+        latest[receipt["identity"]["component"]] = receipt
+    verified = proven_components(proofs or {}, latest, history)
+    current_event = queue.get("event_source") == queue["head"] == history.head
+    actions, needed_prs = [], {}
+    for change in changes:
+        source, tree, deployables = (change[key] for key in ("source", "tree", "deployables"))
         if not deployables:
             continue
-        pr, level = None, None
         published = [tag["receipt"] for tag in finals if tag["target"] == source]
         for component, name in DEPLOYABLES.items():
-            if name not in deployables:
+            if name not in deployables or source != newest[name] or component in busy:
+                continue
+            stored = [item for item in pending if item["component"] == component]
+            stored += [tag["receipt"]["identity"] for tag in finals
+                       if tag["receipt"]["identity"]["component"] == component]
+            # Legacy reservations whose sources left history still burn versions,
+            # but cannot establish a source ordering or authorize publication.
+            if any(item["source"] in history.positions
+                   and history.position(item["source"]) > history.position(source) for item in stored):
                 continue
             existing = [receipt for receipt in published if receipt["identity"]["component"] == component]
             require(len(existing) <= 1, "Source already has conflicting final versions")
             if existing:
-                latest = max((tag["receipt"] for tag in finals if tag["receipt"]["identity"]["component"] == component),
-                             key=lambda receipt: history.position(receipt["source"]))
-                # History reconciliation skips obsolete deployments. A rerun of
-                # the latest publication resumes its exact immutable digest.
-                if existing[0] == latest and source == queue.get("event_source"):
+                # Finalization proves which bytes exist. Only a matching
+                # controller result proves that the latest writer applied them.
+                receipt = existing[0]
+                if (latest[component] == receipt and component not in verified
+                        and (source == queue.get("event_source") or current_event)
+                        and all(version_tuple(row["version"]) <= version_tuple(receipt["identity"]["version"])
+                                for row in stored)):
                     jobs.append({"component": component, "mode": "resume", "receipt": existing[0]})
                 continue
-            owned = [item for item in pending if item["source"] == source and item["component"] == component]
-            if any((item["run_id"], item["run_attempt"]) != (run_id, attempt) and run_active(api, item) for item in owned):
-                continue
-            if pr is None:
-                pr = merged_pr(source, api.request)
-                level = published[0]["identity"]["bump"] if published else label_level(pr)
-            def next_value(current, reserved):
-                return next_reservation(component, source, tree, pr["number"], level, run_id, attempt,
-                                        current, reserved)
-            value = reserve(next_value, reservations.insert, lambda: (api.tags(), reservations.list()))
-            pending.append(value)
-            jobs.append({"component": component, "mode": "publish", "reservation": value})
-    # One component chain runs in source order; independent components remain
-    # parallel. A canceled/failed chain leaves reservations burned for retries.
-    grouped = [{"component": key, "tasks": canonical([job for job in jobs if job["component"] == key])}
+            needed_prs.setdefault(source, (component, published))
+            actions.append((component, source, tree))
+
+    def read_pr(source):
+        component, published = needed_prs[source]
+        mark(component, "merged-pr")
+        pr = merged_pr(source, api.request)
+        return pr["number"], published[0]["identity"]["bump"] if published else label_level(pr)
+
+    provenance = dict(zip(needed_prs, parallel_read(read_pr, needed_prs)))
+    for component, source, tree in actions:
+        pr, level = provenance[source]
+        value = next_reservation(component, source, tree, pr, level, run_id, attempt, finals, pending)
+        mark(component, "reserve")
+        require(reservations.insert(value), "Allocation reservation collision")
+        pending.append(value)
+        jobs.append({"component": component, "mode": "publish", "reservation": value})
+    # Queued sources without reservations are superseded. Existing versions
+    # stay burned, and only the selected source supplies each new bump.
+    complete = complete_group(transition, jobs, changes, api, reservations, finals, pending, run_id, attempt)
+    grouped = [{"component": key, **({"contract_transition": transition} if complete and key in GROUP else {}),
+                "tasks": canonical([job for job in jobs if job["component"] == key])}
                for key in DEPLOYABLES if any(job["component"] == key for job in jobs)]
+    mark("all", "planned")
     return {"include": grouped}
 
 
-def main():
-    env = os.environ
+def main(argv=()):
+    env, argv = os.environ, list(argv)
+    if argv == ["--require-settled"]:
+        return require_settled(env.get("CD_ALLOCATION_REFUSED"), env.get("CD_ALLOCATION_SITE"))
+    if argv:
+        report("step", "refused", subject="allocation")
+        return 1
     def operation(_masker):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Version allocation only accepts develop pushes")
-        api = GitHub(env.get("GH_TOKEN"))
-        reservations = Reservations(api, env.get("GH_TOKEN"), Path.cwd())
-        matrix = allocate_queue(json.loads(env["CD_QUEUE"]), api, reservations,
-                                int(env["GITHUB_RUN_ID"]), int(env["GITHUB_RUN_ATTEMPT"]))
+        queue = json.loads(env["CD_QUEUE"])
+        require(isinstance(queue, dict) and matches(r"[0-9a-f]{40}", queue.get("event_source"))
+                and queue["event_source"] == env["GITHUB_SHA"], "Release queue is invalid")
+        matrix = allocate_attempts(queue, env, mark, mark.retry)
+        mark("all", "complete")
         output(env, "matrix", canonical(matrix))
         output(env, "changed", "true" if matrix["include"] else "false")
         return True
-    return run_private(operation, None)
+    with allocation_progress() as mark:
+        return run_allocation(operation, env)
+
+
+def allocate_attempts(queue, env, mark, retry, *, sleep=time.sleep, rand=random.random):
+    """Allocate, once more after a transient refusal raised before the push started."""
+    for attempt in range(1, ALLOCATION_ATTEMPTS + 1):
+        io = AllocationIO()
+        try:
+            matrix = allocate_current(queue, env, io, mark)
+            io.remaining()
+            return matrix
+        except Refusal as error:
+            code = refusal_code(error)
+            requested = ci_retry.requested_wait(error) or 0
+            # Once the push has started, the remote may hold this attempt's
+            # refs: settlement and the gate decide, as for every other stop.
+            if (attempt == ALLOCATION_ATTEMPTS or io.push_started or code not in RETRIED_CODES
+                    or requested > RETRY_WAIT_SECONDS[1]):
+                raise
+        low, high = RETRY_WAIT_SECONDS
+        wait = max(low + (high - low) * rand(), requested)
+        retry(code, attempt + 1, ALLOCATION_ATTEMPTS, wait)
+        sleep(wait)
+
+
+def allocate_current(queue, env, io, mark):
+    # A lost race proves another atomic allocation completed. Only then may we
+    # plan a distinct transaction, from a fresh history and complete inventory.
+    require(matches(r"[0-9a-f]{40}", queue.get("head")) and isinstance(queue.get("changes"), list),
+            "Release queue is invalid")
+    if queue["event_source"] != queue["head"]:
+        mark("all", "stale-source")
+        return {"include": []}
+    proofs = json.loads(env.get("CD_CONTROLLER_PROOFS") or "{}")
+    api = GitHub(env.get("GH_TOKEN"), io)
+    while True:
+        io.remaining()
+        reservations = Reservations(api, env.get("GH_TOKEN"), Path.cwd(), io, mark=mark)
+        if not reservations.load(event_source=queue["event_source"]):
+            mark("all", "stale-source")
+            return {"include": []}
+        matrix = allocate_queue(queue, SnapshotAPI(api, reservations), reservations,
+                                int(env["GITHUB_RUN_ID"]), int(env["GITHUB_RUN_ATTEMPT"]),
+                                proofs=proofs, mark=mark)
+        try:
+            reservations.commit()
+        except AllocationConflict:
+            mark("all", "replan")
+            continue
+        return matrix
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

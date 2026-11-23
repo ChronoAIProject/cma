@@ -386,6 +386,125 @@ with the error it always received, while a write that repeats an already stored
 shape unchanged, or removes it, is accepted. The extended source lists of §6 and
 the partition `custom_key` of §7 are in the reader phase.
 
+### Graduated rollout gates
+
+Some boolean rollout gates have completed their reader-first rollout in every
+environment. For each of these graduated gates an unset variable means `true`.
+Exact `false` remains the emergency off-switch, and any other value is still
+refused at startup with `<NAME> must be true or false`. Variable names are
+unchanged. Graduation changes only a configuration default, never a `/v1` wire
+shape.
+
+A graduated gate that startup validation ties to another gate defaults on only
+while that prerequisite is effectively on:
+
+- `CMAEG_ROUTED_ADMISSION_ENABLED`, `CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED`,
+  `CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED` and `CMAEG_NATIVE_DISCORD_ENABLED`
+  follow `CMAEG_ROUTED_RECOVERY_ENABLED`.
+- `CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED`,
+  `CMAEG_NATIVE_DISCORD_RICH_CONTENT_ENABLED` and
+  `CMAEG_NATIVE_DISCORD_FORWARDS_ENABLED` follow both
+  `CMAEG_NATIVE_DISCORD_ENABLED` and `CMAEG_ROUTED_RECOVERY_ENABLED`.
+
+Setting a prerequisite to `false` therefore also turns off its unset dependents
+instead of failing startup. An explicit `true` on a dependent is validated as
+before. The graduated gates are:
+
+- `CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED`
+- `CMAEG_DISCORD_CARD_EDITS_ENABLED`
+- `CMAEG_DISCORD_CARD_EFFECTS_ENABLED`
+- `CMAEG_DISCORD_FORMS_ENABLED`
+- `CMAEG_DISCORD_INTERACTIONS_ENABLED`
+- `CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED`
+- `CMAEG_DISCORD_MULTISELECT_ENABLED`
+- `CMAEG_DISCORD_REACTIONS_ENABLED`
+- `CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED`
+- `CMAEG_GITHUB_ENABLED`
+- `CMAEG_LARK_FORMS_ENABLED`
+- `CMAEG_LARK_MESSAGE_EFFECTS_WRITES_ENABLED`
+- `CMAEG_LARK_RESOURCE_WRITES_ENABLED`
+- `CMAEG_MULTI_CONSUMER_WRITES_ENABLED`
+- `CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED`
+- `CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED`
+- `CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED`
+- `CMAEG_NATIVE_DISCORD_EDITS_ENABLED`
+- `CMAEG_NATIVE_DISCORD_ENABLED`
+- `CMAEG_NATIVE_DISCORD_FORWARDS_ENABLED`
+- `CMAEG_NATIVE_DISCORD_MEDIA_CARD_EDITS_ENABLED`
+- `CMAEG_NATIVE_DISCORD_MEDIA_CARD_REPLACEMENTS_ENABLED`
+- `CMAEG_NATIVE_DISCORD_MEDIA_CARD_SETS_ENABLED`
+- `CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED`
+- `CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED`
+- `CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED`
+- `CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED`
+- `CMAEG_NATIVE_DISCORD_RECEIVED_REACTIONS_ENABLED`
+- `CMAEG_NATIVE_DISCORD_RICH_CONTENT_ENABLED`
+- `CMAEG_NATIVE_DISCORD_THREAD_HISTORY_ENABLED`
+- `CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED`
+- `CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED`
+- `CMAEG_NATIVE_DISCORD_WRITES_ENABLED`
+- `CMAEG_NATIVE_LARK_CONTROLS_ENABLED`
+- `CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED`
+- `CMAEG_NATIVE_LARK_FORMS_ENABLED`
+- `CMAEG_NATIVE_LARK_INTAKE_ENABLED`
+- `CMAEG_NATIVE_LARK_MEDIA_CARD_REPLACEMENTS_ENABLED`
+- `CMAEG_NATIVE_LARK_MEDIA_CONTROLS_ENABLED`
+- `CMAEG_NATIVE_LARK_MEDIA_ENABLED`
+- `CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED`
+- `CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED`
+- `CMAEG_NATIVE_LARK_MULTI_IMAGE_CONTROLS_ENABLED`
+- `CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED`
+- `CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED`
+- `CMAEG_NATIVE_LARK_STICKERS_ENABLED`
+- `CMAEG_NATIVE_LARK_STICKER_REPLIES_ENABLED`
+- `CMAEG_NATIVE_LARK_THREAD_START_ENABLED`
+- `CMAEG_NATIVE_LARK_WRITES_ENABLED`
+- `CMAEG_NATIVE_MEDIA_PRESENTATIONS_ENABLED`
+- `CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED`
+- `CMAEG_NATIVE_SPLIT_TEXT_REFS_ENABLED`
+- `CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED`
+- `CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED`
+- `CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED`
+- `CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED`
+- `CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED`
+- `CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED`
+- `CMAEG_NATIVE_TELEGRAM_RECEIVED_REACTIONS_ENABLED`
+- `CMAEG_NATIVE_TELEGRAM_STRUCTURED_REPLIES_ENABLED`
+- `CMAEG_NATIVE_TELEGRAM_TOPIC_CREATION_ENABLED`
+- `CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED`
+- `CMAEG_NATIVE_TYPING_ENABLED`
+- `CMAEG_NATIVE_WHATSAPP_FLOW_WRITES_ENABLED`
+- `CMAEG_NATIVE_WHATSAPP_FORMS_ENABLED`
+- `CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED`
+- `CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED`
+- `CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED`
+- `CMAEG_NATIVE_WHATSAPP_MEDIA_CONTROLS_ENABLED`
+- `CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED`
+- `CMAEG_NATIVE_WHATSAPP_MESSAGE_EVENTS_ENABLED`
+- `CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED`
+- `CMAEG_NATIVE_WHATSAPP_REACTIONS_ENABLED`
+- `CMAEG_NATIVE_WHATSAPP_STRUCTURED_REPLIES_ENABLED`
+- `CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED`
+- `CMAEG_NATIVE_WHATSAPP_WRITES_ENABLED`
+- `CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED`
+- `CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED`
+- `CMAEG_ROUTED_ADMISSION_ENABLED`
+- `CMAEG_ROUTED_RECOVERY_ENABLED`
+- `CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED`
+- `CMAEG_THREAD_CONTRACT_WRITES_ENABLED`
+
+These gates still default to `false`, because each needs a per-environment
+companion setting, an operator-run migration or an explicit operator
+attestation: `CMAEG_BINDING_PREPARATION_ENABLED`, `CMAEG_CONSOLE_ENABLED`,
+`CMAEG_CONSOLE_SHARED_SESSIONS`, `CMAEG_CONSUMER_INTERACTIONS_ENABLED`,
+`CMAEG_LARK_CARDS_ENABLED`, `CMAEG_MEDIA_CONTINUATIONS_ENABLED`,
+`CMAEG_MEDIA_ENABLED`, `CMAEG_NYXID_NATIVE_MEDIA_ENABLED`,
+`CMAEG_OWNER_KEYS_ENABLED`, `CMAEG_RELAY_TEXT_EDITS_ENABLED`,
+`CMAEG_REPLICAS_ENABLED`, `CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED`,
+`CMAEG_WHATSAPP_INTERACTIONS_ENABLED`, `CMAEG_WHATSAPP_TEMPLATES_ENABLED` and
+`CMAEG_WORKER_CREDENTIAL_TRACKING_ENABLED`. A gate not named in this section
+keeps the default its own section states.
+
 ## 3. Conventions, limits and problems
 
 Bodies use UTF-8 JSON and `snake_case` property names. Tagged unions use `type`
@@ -723,12 +842,21 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
 | `GET /v1/channels/{channel_id}/activity` | No body | 200 bounded recent activity snapshot with cursor, retention and truncation | 404 absent or other owner; 503 store unavailable |
 | `GET /v1/channels/{channel_id}/activity/stream` | Optional `Last-Event-ID` or `cursor` | SSE `activity`/`reset` full snapshots; initial snapshot on every connection | 400 invalid cursor; 404 absent or other owner |
+| `GET /v1/channels/{channel_id}/activity/history` | UTC `from`, `until`, optional `limit`, or continuation `cursor` | 200 retained receipts, current summaries, coverage and `next_cursor` | 400 invalid range/cursor; 410 expired export; 501 unsupported backend; 503 disabled/unavailable |
+| `GET /v1/channels/{channel_id}/activity/history/events/{event_id}/details` | Required detail `cursor`; opaque history event ID | 200 sealed-generation detail parts and optional `next_cursor` | 400 invalid cursor; 404 absent or other owner; 410 expired export; 503 unavailable |
 | `GET /v1/channels/{channel_id}/partition` | Required `partition_key`; optional `consumer_id` (default `default`) | 200 retained CMA conversation mapping and current Agent status | 400 unsupported affinity; 404 absent/hidden channel or mapping |
+| `POST /v1/channels/{channel_id}/partition/resets` | Required `Idempotency-Key` and owner reset body below | 200 reserved successor receipt; no-store | 409 disabled, ineligible target, changed mapping or reused key; uncertain failures require exact retry |
 | `PUT /v1/channels/{channel_id}` | Complete create policy plus required `expected_version`; optional credential patch | 200 channel response with incremented version | 409 stale version |
 | `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version |
 | `POST /v1/channels/{channel_id}/test` | No body | 200 `{"accepted_after_ms":42,"first_text":"...","level":"l1"}` | Provider refusal, timeout or no usable result |
 | `POST /v1/channels/{channel_id}/rekey` | CMA service bearer; no body | 200 `{"kid":1}` | 401 service authentication failure |
 | `GET /v1/permissions` | No body; creator bearer | 200 `{"subject":"...","roles":[...]}` for the authenticated creator | 401 unauthenticated |
+
+Activity snapshots may include `produced_by` when `produced_at` is unavailable.
+It is the earliest confirmation time of an Answer receipt whose
+`answer_response_id` matches the consumer's `response_id`. Use `produced_at`
+for exact-time metrics. Buffering, failed and uncorrelated receipts provide no
+production bound.
 
 PUT replaces policy, not a merge patch. Omitted/null `credentials` retains all
 credentials. A supplied patch has optional `agent_key`, `channel_key` and
@@ -741,7 +869,12 @@ a GET alone does not establish the provider's credential state.
 Delete unbinds the provider before removing the record; an unbind failure
 preserves the record and is returned to the caller. Rekey re-encrypts the record under the
 current master key and retains `channel_id`; operators must retain keys needed
-to open existing channel pointers.
+to open existing channel pointers. A channel pointer also seals the record URL
+under the CMA origin its issuing gateway was configured with. When a gateway
+moves to another `CMAEG_CMA_BASE_URL`, operators list each earlier origin in
+`CMAEG_CMA_RECORD_ORIGIN_ALIASES` (comma-separated, at most eight) so existing
+channel IDs keep identifying the same records. A retained origin is only
+matched against sealed pointers; reads always use `CMAEG_CMA_BASE_URL`.
 
 Common management errors: 400 `invalid_request` for invalid IDs, schemas, policy,
 credentials or unknown providers; 401 `not_authenticated`; 404
@@ -750,6 +883,65 @@ credentials or unknown providers; 401 `not_authenticated`; 404
 backend failures; 500 `internal`. Body extraction failures are reported as
 400. Authentication precedes mutation; no operation grants access based on a
 caller-supplied owner alone.
+
+### Retained activity history
+
+History enumerates captured ingress receipts and their current bounded summaries,
+independently of the recent view's 50-event limit. It is not an immutable archive
+of every processing or delivery transition. The reader and capture switches are
+disabled by default; rolling retention is configurable from 1 to 90 days and
+defaults to **7 days**. Export before the oldest receipt expires. Previously
+evicted receipts cannot be recovered, and delayed weekly exports can be incomplete.
+
+Every history and detail request requires the current owner read grant and current
+channel ownership. A cursor grants no authority; revocation and channel deletion
+apply to subsequent pages. Responses use `Cache-Control: no-store`.
+
+The initial history request supplies UTC RFC3339 `from` (inclusive) and `until`
+(exclusive), with millisecond or coarser precision. The range must be positive,
+at most seven days, and end no later than the current time. `limit` is 1–200,
+default 100. Continue with the opaque `next_cursor`; repeated range or limit
+parameters must match the first request. The recent-view/SSE cursor is invalid here.
+
+The response is `{items,next_cursor,has_more,range,coverage}`. Ordering is
+`received_at` descending, then opaque `history_event_id` ascending. The first page
+freezes membership at a committed channel watermark: later inserts, including
+late arrivals with older receive times, are excluded. Summaries may still advance.
+Pages are bounded to 1 MiB as well as the requested count, so follow `next_cursor`
+even when fewer than `limit` items are returned. `has_more` describes remaining
+retained scan results, including unreadable rows; it does not promise recovery of
+deleted history.
+
+Each item contains `history_event_id`, `activity`, `detail_cursor`,
+`detail_incomplete`, `detail_truncated`, and `legacy_partial`. Large summaries
+leave the ingress receipt in `activity` and provide a detail cursor. Use that
+item's `history_event_id` as the detail route's `event_id`. Detail pages contain
+`generation`, `encoding: "base64-json-fragment"`, `parts`, `next_cursor`, and
+the two detail flags. Each part has `index`, `sha256`, and standard-base64 `data`.
+Verify each decoded part's SHA-256, concatenate in index order across pages, then
+parse the UTF-8 JSON as `ChannelActivity`. Cursors pin one immutable generation;
+summary details are bounded to 1 MiB in at most 32 parts.
+
+Coverage reports `complete_event_enumeration`, `retained_from`, the nullable
+`all_writers_capture_from` and `all_writers_capture_until` boundaries,
+`current_summaries: true`, and `gaps`. The possible gaps are `legacy_partial`,
+`retention_expired`, `capture_gap`, and `unreadable_record`. An unreadable row
+advances paging and records a gap. Completeness requires the attested capture
+interval, retained range, and no observed gaps; it does not establish exhaustive
+transition history or successful delivery.
+
+Cursors expire after at most 15 minutes, or earlier at the earliest retained
+member's expiry. A changed capture boundary also invalidates history paging.
+HTTP 410 `activity_history_cursor_expired` requires restarting the range and
+deduplicating event identities. Tampered, cross-channel, wrong-purpose or
+mismatched cursors return 400 `invalid_activity_history_request`. Disabled history
+returns 503 `activity_history_disabled`; an enabled reader on the legacy remote
+backend returns 501 `unsupported_backend`. Storage or detail failures return a
+typed error, never an empty report claiming completeness. See the
+[integration guide](CMAEG_Integration.md#paged-activity-history) for export usage.
+Operators follow private maintainer guidance for activation procedures.
+
+### Partition inspection
 
 Partition inspection is an owner-authorized, `Cache-Control: no-store` GET for
 the `cma_codex` provider. Supply the exact raw partition key: with
@@ -761,13 +953,139 @@ supported by this transport-partition lookup.
 
 The result contains `consumer_id`, `transport_conversation_id`, and `mapping`
 with `binding_id`, `generation`, canonical `conversation_id`, `agent_id`,
-conversation `state`, and nullable `agent_status`. A null Agent status means
+conversation `state`, nullable `agent_status`, and optional `incarnation` (absent or zero means no reset). A null Agent status means
 the retained mapping has no Agent record; `deleted` means a tombstone remains.
 An `existing_agent` target resolves its canonical shared conversation alias.
 Inspection never reserves, recreates, deletes, or rebinds an Agent. A 404 can
 mean no mapping exists in the current binding generation. Provider managers
 can also inspect the canonical mapping directly through
 `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` on CMA.
+
+### Owner repair of a deleted partition Agent
+
+Reset admission is disabled by default. An explicit owner operation can reserve
+one successor for a partition whose mapped Agent is terminally deleted and whose
+cleanup has settled. CMA determines eligibility from its current records. Live
+or stopped Agents, missing mappings or tombstones, unavailable parents, borrowed
+`existing_agent` targets, and unsupported affinity cannot be repaired this way.
+The channel ID, URLs, version, profile, service scope, credentials, and other
+partitions remain unchanged. Reset keeps the pinned configuration; a different
+profile or service scope requires the existing new-binding workflow.
+
+Authenticate with the channel owner's creator bearer. Scoped credentials need
+`cma-eg:channels:update`; read or create permission alone does not authorize a
+reset. Worker credentials are refused. `X-CMAEG-Owner` may select an organization
+through the existing owner authentication path; both its subject and owner kind
+must match the channel.
+
+1. Inspect the partition and retain its exact raw partition key and current
+   mapped Agent ID. Read the channel's current version.
+2. Send `POST /v1/channels/{channel_id}/partition/resets` with exactly one
+   `Idempotency-Key` containing 1–128 visible ASCII bytes (no whitespace), and
+   the request below. Unknown fields, including profile or scope overrides,
+   are refused.
+3. Retain the complete request and key. If the response is lost, times out,
+   is malformed, or reports an uncertain provider failure, retry that exact
+   operation. Such a failure does not prove that CMA failed to commit.
+4. Inspect again, then deliver a **new event** to exercise the successor's
+   normal creation/input path. Confirm readiness and delivery separately.
+
+Default-consumer request (omitted or null `consumer_id` selects the default):
+
+```http
+POST /v1/channels/{channel_id}/partition/resets
+Idempotency-Key: repair-fixture-001
+Content-Type: application/json
+
+{"partition_key":"repair-fixture","expected_version":5,"expected_agent_id":"agt_deleted"}
+```
+
+Named-consumer request:
+
+```json
+{"partition_key":"repair-fixture","consumer_id":"csm_00000000000a","expected_version":5,"expected_agent_id":"agt_deleted"}
+```
+
+`partition_key` must contain 1–8192 UTF-8 bytes, `expected_agent_id` must
+contain 1–128 UTF-8 bytes, and `expected_version` must be positive. These are byte
+limits; JSON Schema character limits alone cannot enforce the UTF-8 bounds.
+Consumer identifiers use the existing `default` or `csm_` plus 12 lowercase hex
+digits grammar. Missing and pending consumers are refused before provider I/O.
+
+Successful first execution and exact replay return `200 application/json` with
+`Cache-Control: no-store`, for example:
+
+```json
+{
+  "consumer_id":"default",
+  "transport_conversation_id":"conversation_fixture",
+  "reset":{
+    "binding_id":"binding_fixture",
+    "generation":1,
+    "conversation_id":"conversation_fixture",
+    "incarnation":1,
+    "previous_agent_id":"agt_deleted",
+    "previous_conversation_id":"conversation_fixture",
+    "successor_agent_id":"agt_successor",
+    "state":"reserved"
+  }
+}
+```
+
+`reserved` means the successor identity is durably reserved. It does not mean an
+Agent is ready or a message has been delivered. Generation and the public
+transport conversation identity remain stable; incarnation is positive and
+advances with repair. After repeated resets, `previous_conversation_id` may be
+an internal predecessor incarnation, different from the transport identity.
+Previously admitted event retries, continuations, replies, and history retain
+their original identity. Retrying an old event does not deliver it to the new
+Agent or repeat its output.
+
+Keys are scoped to owner kind, owner, and channel. Within the retained default
+binding scope, using the same key for a different partition, expected Agent,
+consumer, version, or request conflicts. JSON property order and whitespace do
+not affect replay. Omitted and null `consumer_id` are equivalent; explicitly
+sending `"default"` is a different request representation. Keep that choice
+unchanged on retries.
+
+A concurrent channel edit can occur after the initial version check. A committed
+response describes the authorized snapshot and is returned even if channel
+metadata subsequently changes. A retry after version, owner, consumer, provider,
+or default-binding changes may refuse before CMA can look up its receipt.
+Inspect and reconcile the prior operation; do not silently refresh the version,
+change its scope, or generate another key to work around an uncertain result.
+
+Recognized reset refusals return HTTP 409, `Problem.code=conflict`, and exactly
+one of these fixed values in `Problem.detail`:
+
+| Detail | Meaning |
+| --- | --- |
+| `partition_reset_disabled` | New reset admission is disabled; no new receipt or successor is created. An already committed exact receipt remains replayable. |
+| `partition_reset_key_conflict` | The retained key belongs to a different request or target. |
+| `partition_reset_existing_agent` | The binding borrows an existing Agent rather than owning a profile-created conversation. |
+| `partition_reset_affinity_unsupported` | The binding does not use conversation affinity. |
+| `partition_reset_binding_not_ready` | The binding cannot currently admit a reset. |
+| `partition_reset_mapping_retired` | The predecessor mapping has been retired. |
+| `partition_reset_agent_missing` | No retained Agent tombstone establishes deletion. |
+| `partition_reset_agent_not_deleted` | The mapped Agent is not terminally deleted. |
+| `partition_reset_cleanup_pending` | Deletion cleanup has not settled. |
+| `partition_reset_parents_unavailable` | Required parent resources are unavailable. |
+| `partition_reset_mapping_missing` | The selected conversation has no retained mapping. |
+| `partition_reset_mapping_changed` | The mapping no longer matches the expected Agent. |
+| `partition_reset_capacity` | The binding's permanent reset history has reached its bound. |
+| `partition_reset_unsupported` | The configured CMA storage adapter does not support reset operations. |
+
+Activation requires compatible CMA readers and writers for both the selected
+binding and its shared default receipt-scope binding. The admission flag is not
+a compatibility fence. After the first reset promotes persisted state, closing
+the flag preserves the reader floor, heads, and receipts; recovery requires a
+compatible build. Do not remove that state to restore an older CMA binary.
+
+Other failures use the existing management problem mappings: 400 validation,
+401 authentication, 403 permission, 404 unavailable owner/channel/binding,
+409 version conflict, 502 provider refusal, or 503 unavailable/busy provider.
+Unknown upstream refusal text is sanitized. Use exact retry and inspection for
+uncertain results, even when a generic error hides the transport details.
 
 Native WhatsApp status callbacks annotate existing Channel Activity delivery
 rows without admitting a turn. The additive `platform_status` step reports
@@ -921,7 +1239,7 @@ channel with no sources refuses every ingress with the refusal below for that
 transport, and its management `GET` still answers.
 
 Writes of these shapes are refused while `CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED`
-is false (the default). A write the rules above refuse gets the
+is explicitly false; it is a [graduated gate](#graduated-rollout-gates) and an unset value enables them. A write the rules above refuse gets the
 same 400 `invalid_request` it always has, for example
 `/sources/1: source variant is duplicated` for a second relay. A full `PUT` that
 repeats a stored extended source list, its partition and the source credentials
@@ -1356,7 +1674,8 @@ receiving bot's independently obtained `bot_id` (`ou_` open_id), retain its chan
 key, and use raw-event verification. Never derive both the source bot pin and the
 candidate connection identity from the candidate's own bot-info response.
 
-`CMAEG_LARK_RESOURCE_WRITES_ENABLED=false` is the default. With it off, creating
+`CMAEG_LARK_RESOURCE_WRITES_ENABLED` defaults to `true` as a [graduated gate](#graduated-rollout-gates). With it
+explicitly `false`, creating
 or changing a source containing this binding is refused at
 `/sources/<i>/lark_resources: lark_resource_writes_disabled`; retaining an exact
 existing source or removing the binding is allowed. Authenticated capability
@@ -1725,6 +2044,31 @@ deletions and reaction changes retain their explicit CloudEvent types in this
 projection; deletion actors remain unknown when the platform does not report
 them. These fields are descriptive and do not grant message or routing authority.
 
+The management `GET /v1/channels/{channel_id}/activity` response and every
+`activity` or `reset` snapshot on its `/stream` route project actor identity:
+`actor.id` is always `"redacted"`, `actor.kind` is preserved, and
+`actor.display_name` is a fixed label: `Participant` for `human`, `Bot` for
+`bot`, `System` for `system`, or `Actor not reported` for `unknown`. Upstream
+display names are discarded even when present. The placeholder is neither
+unique nor stable sender identity and must not be used to correlate senders,
+route work, or replay canonical activities. This policy applies to every
+authorized management reader, including owners and read-scoped service keys,
+and to receipts retained before the change. There is no raw-actor query option.
+
+The projection leaves event IDs, cursors, timestamps, consumer state and delivery
+receipts intact. It protects structured actor identity; it does not anonymize
+conversation IDs, delivery recipients, event identifiers or the entire feed.
+Canonical ingress, routing and execution retain the original Actor. Recent
+receipts retain their existing encrypted owner scope and seven-day expiry; reads
+do not rewrite them. Authorized console diagnostics keep their existing masked
+actor/chat identifiers, hashed event keys and routing/consumer timeline.
+
+The web views independently use these fixed labels, including `Actor not
+reported` for missing or unsupported legacy kinds. Updated web assets hide
+upstream names and IDs even with an older gateway, but network responses remain
+exposed until every serving gateway has the projection. Rolling back the gateway
+can restore that exposure; the web change alone does not provide API redaction.
+
 Actor is `{id,kind,display_name?}`, kind `human|bot|system|unknown`. Conversation
 is `{id,kind,thread_id?}`, kind `private|group|channel|thread|custom`. Source is
 `{type:"nyxid_relay",platform,route_id}`, with a §6 platform, `{type:"telegram",platform:"telegram",bot_id}` for a native
@@ -1770,9 +2114,9 @@ It is untrusted reference data in provider input and authenticated event context
 The recent Activity feed exposes only optional `quoted_context` availability,
 truncation and content-kind metadata, without quote text or parent IDs.
 
-The independent `CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED` writer gate defaults to
-false. Compatible Gateway, provider, SDK and rollback readers must precede
-activation. Durable admissions and Discord inboxes pin their original quote
+The independent `CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED` writer gate is a
+[graduated gate](#graduated-rollout-gates) and defaults to `true` while routed recovery is on. Compatible Gateway,
+provider, SDK and rollback readers preceded its graduation. Durable admissions and Discord inboxes pin their original quote
 projection so retries never upgrade legacy events or change accepted context
 when the gate changes. Exact source restrictions, field semantics and reader
 requirements are defined by the native quoted-message contract (maintainer guidance).
@@ -1980,10 +2324,52 @@ returns HTTP **409**, problem code `conflict`, and the stable, byte-for-byte
 `detail: "routed_reply_in_progress"`, with **`Retry-After: 2`**. This means durable
 admission, not rejection. Retry with the **same Idempotency-Key and message body**;
 never generate a new key to resolve that request. Two seconds is retry guidance,
-not a completion deadline. Discovery executes the retained FIFO item independently
-of the waiting HTTP connection. An unresolved predecessor can still hold it until
-an authorized operator disposition; receipt polling alone does not release a head.
-An uncertain external send retains an unknown receipt without another send.
+not a completion deadline. When every live replica supports delayed lanes, new
+occurrences have durable per-target custody independent of the conversation's
+dispatch FIFO. They can reach a receipt while the parent is Starting, Accepted or
+Unknown. If the cohort is incomplete, admission retains the legacy FIFO path;
+already-admitted work never changes custody. Queued legacy effects can still wait
+behind an unresolved dispatch and need its authorized disposition.
+
+Contention or a storage failure before durable custody can be confirmed returns
+503 rather than admitted-pending 409. Retry the same key and body: a lost response
+may still have committed the original occurrence, and readback reconciles it
+without another send.
+
+New replica-mode delayed admissions reserve one of 64 per-target occurrence
+slots before payload storage, including FIFO fallback and eventual no-send
+outcomes. Exhaustion returns 429 `rate_limited`, detail `reply_operation_limit`;
+exact existing keys remain replayable. An interrupted preparation retains its
+slot through plan retention, and the same key/body resumes it without consuming
+another slot. Reminting a reply target does not reset this limit. These slots
+grant no send authority; the shared guard remains the send arbiter.
+
+Before IO, both lane and legacy delayed execution use the same per-target reply
+guard as immediate tools. Pending attempts wait for receipt or expiry, capped at
+30 seconds from lane admission (or the first observed Pending wait for legacy
+FIFO work). A still-Pending peer at the cap produces a no-send unknown receipt
+with reason `delayed_reply_guard_wait_expired`; the peer's live attempt remains
+unchanged and may still publish its own receipt. Unknown
+aggregate receipts (including receipts with parts) produce a retained no-send
+unknown receipt. For a legacy FIFO effect, the no-send guard outcomes
+`delayed_reply_guard_uncertain` and `delayed_reply_guard_wait_expired` complete
+that FIFO item after saving the receipt, because no provider IO occurred; other
+Unknown receipts retain FIFO custody. Confirmed attempts and settled Rejected aggregates, including
+ones with confirmed parts, permit a new intended occurrence. A new key is a new
+message, even after a confirmed automatic answer and ordinary close; this supports
+later operation/OAuth callbacks. Confirmation of a tool/delayed reply still
+suppresses later automatic output. Quarantine, unlike ordinary close, refuses
+all new reply authority.
+
+A lane send whose outcome becomes uncertain retains its unknown receipt and
+retires only its lane item without resending. Later same-target keys respect the
+retained guard uncertainty. This does not advance the parent's dispatch head or
+resolve provider acceptance. Exact same-key/body retries replay the retained
+receipt; expired capability requests remain refused. The provider's own
+fallback-versus-replay arbitration is separate from gateway distinct-key intent.
+The parent's acceptance or delivery checkpoint alone is not an additional guard
+predicate: an Accepted parent with historical Unknown/Partial delivery and an
+empty shared guard still permits the explicit delayed occurrence.
 
 An operator may quarantine an abandoned target under the exact partition/head
 fence. New reply-target capabilities, fresh-key delayed replies and immediate
@@ -2812,6 +3198,15 @@ malformed/truncated bodies and contradictory admission headers remain `Unknown`
 and use existing uncertain-submission recovery; they never authorize a blind
 transport retry. The provider transport itself never retries a POST.
 
+A 400 is a definite pre-admission refusal in two dialects only. One is CMA's
+`invalid_json`, which stays `invalid_json`. The other is NyxID's documented
+validation refusal, which is recorded as `provider_validation_refused`. NyxID
+answers an event it cannot accept with a body of exactly `error:
+"validation_error"`, `error_code: 1008` and a string `message`, as
+`application/json` and with no `x-cma-response-id`. Either refusal settles the
+consumer as refused, so the conversation's next queued event can start. Any
+other 400 remains `Unknown`.
+
 Exact replay of admitted input never contacts the gateway. CMA compares the
 complete request, including its ExternalEvent, to the retained command using
 local deterministic prefix rendering. Only new admissions call attestation;
@@ -2847,6 +3242,13 @@ precise retryable refusal (for example `verified_sender_context_unavailable` or
 and restored to Activity on expiry, including after restart. The Feishu
 user receives **no reply** for these refusals or expiry: no Agent ran, and no
 platform failure message is invented. Channel Activity shows the recorded reason.
+A target whose binding, conversation or media preparation fails stays `queued`
+and retries; Activity names the latest preparation failure in
+`last_non_admission_code`: `preparation_provider_busy`,
+`preparation_provider_unavailable`, `preparation_outcome_uncertain`,
+`preparation_authority_changed`, `preparation_event_expired`,
+`preparation_unsupported` or `preparation_failed`. These are observations, not
+receipts; a later precise refusal replaces them.
 If a temporary outage recovers before expiry, the original turn admits once and
 normal automatic-final reply delivery resumes.
 
@@ -3310,14 +3712,19 @@ capacity right after they are spawned and keep their acceptance semantics: 202
 for an accepted or deferred turn, and the same synchronous refusals with
 `Retry-After` as any other turn.
 
-Replica-mode ordinary dispatch and delayed effects retain their shared durable
-FIFO order. An Accepted target with retained delivery/guard uncertainty stays at
+Replica-mode ordinary dispatch retains durable FIFO order. New delayed replies
+use independent per-target lanes once the complete live cohort supports them;
+legacy delayed effects retain their original FIFO position. Delayed occurrences
+are serialized per target, but there is **no chronological ordering guarantee**
+between a delayed reply and a later turn's automatic reply in the same chat.
+An Accepted target with retained delivery/guard uncertainty stays at
 the head; the gateway stops futile provider snapshot/events GETs when those reads
 cannot resolve chat delivery. It still checks for already-retained receipts. A live Pending tool attempt causes
 the parent to wait under its current renewed ownership and continue after receipt
 publication; it does not impose an additional lease-expiry wait. Concurrent renewals
 of that same generation are retried without treating a version race as lost authority.
-There is no automatic retained-unknown head advancement. An explicit operator
+There is no automatic retained-unknown advancement of an ordinary dispatch head.
+A terminal uncertain delayed lane occurrence retires independently. An explicit operator
 `unknown_abandoned` disposition is the exception: its audit, quarantine, guard
 closure and frontier advance commit under one exact fence. It performs no provider
 call or output replay. Later work may then progress, while replies belonging to
@@ -3366,7 +3773,10 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `GET /v1/channels/{channel_id}/partition` | `inspectChannelPartition` |
+| `POST /v1/channels/{channel_id}/partition/resets` | `resetChannelPartition` |
 | `GET /v1/channels/{channel_id}/activity` | `getChannelActivity` |
+| `GET /v1/channels/{channel_id}/activity/history` | `getChannelActivityHistory` |
+| `GET /v1/channels/{channel_id}/activity/history/events/{event_id}/details` | `getChannelActivityHistoryDetails` |
 | `GET /v1/channels/{channel_id}/activity/stream` | `streamChannelActivity` |
 | `GET /v1/channels/{channel_id}/events/{event_id}/media-responses` | `getEventMediaResponses` |
 | `POST /v1/event-attestations` | `attestRetainedEvent` |
@@ -3427,8 +3837,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/github/tasks/{task_id}` | Read the durable admission task associated with a GitHub delivery. |
 <!-- openapi-operations:end -->
 
-GitHub storage initializes in the background only when `CMAEG_GITHUB_ENABLED=true`.
-The false-default flag is read at startup. Until initialization succeeds,
+GitHub storage initializes in the background only when `CMAEG_GITHUB_ENABLED` is
+true. The flag is a [graduated gate](#graduated-rollout-gates), defaults to true and is read at startup. Until initialization succeeds,
 integration operations return 503 and capabilities report `store_ready: false`;
 ordinary gateway readiness and other channel sources remain independent. Disabled
 support preserves records and performs no GitHub schema writes. New or changed
@@ -3648,6 +4058,11 @@ The provider-facing connection operations are generic:
 | `GET /v1/channel-connections` | Owner-scoped ready connections with bounded cursor pagination. |
 | `DELETE /v1/channel-connections/{connection_ref}` | Cancel an unbound operation. A live matching channel must be deleted through channel management first. |
 
+The default error response for these operations and relay-resource connection
+discovery is an RFC 9457 Problem with `Content-Type: application/problem+json`.
+Successful create/read/list responses use `application/json`; successful
+cancellation returns an empty `204` response.
+
 Organization ownership uses the existing `X-CMAEG-Owner` header and current
 NyxID organization authorization. Cross-owner or cross-owner-kind reads and
 cancellation return 404. A repeated create must use the same record ID, event
@@ -3776,8 +4191,8 @@ Rollout uses reader-before-writer deployment. Ship this reader to every replica
 and retained rollback target first. Upgrade the consuming application
 replicas to enforce automated guest execution and durable loop bounds before
 enabling its opt-in writer. Keep
-`CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED=false` (the manifest default) during that
-phase. Once all readers are ready, enabling the flag advertises
+`CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED=false` explicitly during that phase; the
+flag is now a [graduated gate](#graduated-rollout-gates) and an unset value enables it. Once all readers are ready, enabling the flag advertises
 `source_features:["native_bot_mentions_v1"]` on the authenticated
 `GET /v1/channel-capabilities` endpoint and permits new opt-in writes. Consumers
 must discover that capability before sending the field. An absent capability or
@@ -3797,8 +4212,8 @@ admission does not depend on the separate thread-follow contract.
 
 Channel management responses advertise `thread_contract_versions: [1]` when
 `CMAEG_THREAD_CONTRACT_WRITES_ENABLED=true` and the channel has one verified
-NyxID relay Lark or Feishu source with a pinned `bot_id`. The flag defaults to
-false; the field is omitted while writes are disabled or the source is unsupported. A client must discover support before
+NyxID relay Lark or Feishu source with a pinned `bot_id`. The flag is a
+[graduated gate](#graduated-rollout-gates) and defaults to true; the field is omitted while writes are disabled or the source is unsupported. A client must discover support before
 sending `reply.thread_contract = {"version":1,"follow_chat_ids":["oc_chat"]}`
 and must verify the accepted definition in the update response. This opts in to
 metadata and explicit native targeting; it does not change default reply routing.
@@ -4062,8 +4477,8 @@ This capability does not widen a routed lease or send window. Native media calls
 are not automatically retried: an explicit first-call 429 is typed rate-limited,
 while a lost or malformed response is unknown. Any failure after a confirmed
 part is `unknown`/`partial_delivery`; a batch is not atomic. Confirmed media
-batches return a platform message ID. Behind the separate default-off
-`CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED` gate, exactly one confirmed individual
+batches return a platform message ID. Behind the separate
+`CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED` [graduated gate](#graduated-rollout-gates), exactly one confirmed individual
 upload can also return an effects-only reference; separate text plus media,
 multiple uploads, album receipts and uncertain delivery cannot. Caption/media
 editing remains unsupported. See native Telegram media effects (maintainer guidance).
@@ -4145,8 +4560,8 @@ unavailable.
 for a NyxID WhatsApp relay event when `CMAEG_WHATSAPP_TEMPLATES_ENABLED=true`,
 or for a verified private native WhatsApp event (or an opted-in group under its
 additional groups gate) under the independent
-`CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED=true` gate. Both flags default to false
-in code; the source deployment manifest keeps the native gate false.
+`CMAEG_NATIVE_WHATSAPP_TEMPLATES_ENABLED=true` gate. The relay flag defaults to
+false; the native flag is a [graduated gate](#graduated-rollout-gates) and defaults to true.
 `readEventContext` then includes `capabilities.whatsapp_templates: true`; native
 discovery also requires exact current source custody and a matching sealed
 recipient. The capability is absent for other destinations and while the
@@ -4239,8 +4654,8 @@ admission checks remain authoritative.
 `relay_raw_verification_writes_enabled` is independent of
 `dynamic_sources_writes_enabled`, `multi_consumer_writes_enabled`,
 `native_bot_mentions_writes_enabled`, and `thread_contract_writes_enabled`.
-The dedicated default-off `CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED` flag
-admits raw-event verification after every active reader and rollback target can
+The dedicated `CMAEG_RELAY_RAW_VERIFICATION_WRITES_ENABLED` flag, a [graduated gate](#graduated-rollout-gates)
+that defaults to true, admits raw-event verification after every active reader and rollback target can
 read it, without enabling additional source topology or partition extensions.
 When disabled, existing exact sources, partition and credentials can be retained
 through unrelated writes; new or changed raw sources receive
@@ -4277,8 +4692,8 @@ and its agent authorization through the existing public workflow.
 
 ## WhatsApp native choices
 
-Native `whatsapp` events use the independent default-off
-`CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED` gate and the same public buttons/list
+Native `whatsapp` events use the independent
+`CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED` [graduated gate](#graduated-rollout-gates) and the same public buttons/list
 subset below. They send directly with the sealed native phone/recipient/context
 and preserve authenticated callbacks through durable admission to the original
 default or named consumer, provider conversation and partition. The optional
@@ -4474,8 +4889,8 @@ New confirmed native Telegram bot sends can carry additional authority inside th
 existing opaque `message_ref`; no extra target-mint step is required. The operator
 must complete reader rollout and enable `CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED`.
 Legacy references retain edit behavior and explicitly do not grant new effects.
-Single native uploads additionally require the default-off
-`CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED` gate and carry an additive
+Single native uploads additionally require the
+`CMAEG_TELEGRAM_MEDIA_EFFECTS_ENABLED` [graduated gate](#graduated-rollout-gates) and carry an additive
 `telegram_effect.effects_only=true` marker. They cannot authorize text, caption
 or media edits. Historical text/card authority omits this marker and keeps its
 serialized identity. Media scopes use the existing durable message-fence
@@ -4539,8 +4954,8 @@ requests, retained only in the encrypted channel blob, and omitted from public
 channel responses and diagnostics. An absent token field is omitted from old
 blobs and creation fingerprints. The source requires MESSAGE_CONTENT plus guild
 or direct-message intents; unsupported intent bits and malformed bot IDs or
-credentials are refused. `CMAEG_NATIVE_DISCORD_WRITES_ENABLED`, default `false`,
-is independent of dynamic source writes. It gates introduction and changes to
+credentials are refused. `CMAEG_NATIVE_DISCORD_WRITES_ENABLED`, a [graduated gate](#graduated-rollout-gates)
+with default `true`, is independent of dynamic source writes. It gates introduction and changes to
 native source metadata or its credential; unchanged retained settings and removal
 remain possible while the flag is off. All serving and rollback readers must
 support the shape before enabling new writes.
@@ -4548,7 +4963,8 @@ support the shape before enabling new writes.
 Owners may separately opt in to incoming reaction changes by adding
 `GUILD_MESSAGE_REACTIONS` (`1024`) and/or `DIRECT_MESSAGE_REACTIONS` (`8192`) to
 the corresponding enabled message scope. The default intent mask remains 37377.
-`CMAEG_DISCORD_REACTIONS_ENABLED=false` gates new or changed reaction settings,
+`CMAEG_DISCORD_REACTIONS_ENABLED` (a [graduated gate](#graduated-rollout-gates), default `true`) gates new or
+changed reaction settings,
 confirmed outbound receipts and new reaction intake; authenticated authoring
 discovery exposes optional `native_discord_reactions_enabled` in `/v1`.
 Reaction add/remove/all/emoji-clear notifications use
@@ -4614,8 +5030,8 @@ or credential revocation prevents replay, and consumer credentials must still
 match that snapshot. Application code must durably admit this launch once and
 recover its existing routing plan rather than create a new plan on retry.
 
-`CMAEG_NATIVE_DISCORD_RICH_CONTENT_ENABLED=false` is a separate writer gate for
-descriptive sticker, embed and poll intake. When enabled, newly captured human
+`CMAEG_NATIVE_DISCORD_RICH_CONTENT_ENABLED` is a separate writer gate, a
+[graduated gate](#graduated-rollout-gates) defaulting to true with the native runtime, for descriptive sticker, embed and poll intake. When enabled, newly captured human
 MESSAGE_CREATE bodies can retain a version-1 `content_projection` alongside the
 unchanged dispatch. The reader checks its exact message/channel/author identities
 and canonical bounded facts, then projects those facts into ordinary Message text
@@ -4657,8 +5073,9 @@ reply authority is recorded as expired without renewing it or erasing retained
 intake data. Routed execution recovery continues independently after admission.
 
 Native runtime activation is separate from authoring: `CMAEG_NATIVE_DISCORD_ENABLED`
-and `CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED` default to false, and
-`CMAEG_NATIVE_DISCORD_CHANNEL_RECORDS` defaults to empty. The implemented worker
+and `CMAEG_NATIVE_DISCORD_DISCOVERY_ENABLED` are [graduated gate](#graduated-rollout-gates)s that default to true
+while routed recovery is on, and `CMAEG_NATIVE_DISCORD_CHANNEL_RECORDS` defaults
+to empty. The implemented worker
 supports explicit canaries or bounded automatic discovery of eligible native
 sources, with at most 64 selections per process. Explicit canaries must also be
 selected for routed recovery; discovery requires native runtime and routed
@@ -4724,7 +5141,8 @@ remain compatible.
 
 ### Native Discord thread metadata and replies
 
-`CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED` defaults to `false`. After every
+`CMAEG_NATIVE_DISCORD_THREAD_METADATA_ENABLED` is a [graduated gate](#graduated-rollout-gates) and
+defaults to `true`; explicit `false` stops new metadata writes. Once every
 serving and rollback reader understands the optional `native_channel` evidence
 in native inbox bodies and optional `reply.thread_id` inside sealed event
 references, operators may enable new metadata writes. The existing source and
@@ -4797,8 +5215,8 @@ https://discord.com/developers/docs/resources/channel#get-channel.
 
 ### Native Discord text edits
 
-`CMAEG_NATIVE_DISCORD_EDITS_ENABLED` defaults to false. After every serving and
-rollback reader supports the additive sealed destination, enabling it advertises
+`CMAEG_NATIVE_DISCORD_EDITS_ENABLED` is a [graduated gate](#graduated-rollout-gates) and defaults
+to true. Once every serving and rollback reader supports the additive sealed destination, enabling it advertises
 `capabilities.edit=true` on native Discord event contexts and issues an opaque
 `message_ref` for a confirmed single-part text/link reply. Public REST
 `updateMessage` and its MCP tool retain their existing request and response
@@ -4833,10 +5251,10 @@ The existing message capabilities, delete and reaction REST/MCP operations also
 accept newly issued native Discord message references. The optional sealed
 `discord_message.effects` window binds issuance and expiry for at most 24 hours;
 legacy edit-only references omit it without changing their serialized form.
-`CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED` defaults to false and requires
-`CMAEG_NATIVE_DISCORD_EDITS_ENABLED` for text-reference issuance. Media-reference
-issuance instead requires `CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED`, also
-default-off. All serving and rollback
+`CMAEG_NATIVE_DISCORD_MESSAGE_EFFECTS_ENABLED` is a [graduated gate](#graduated-rollout-gates), defaults to
+true and requires `CMAEG_NATIVE_DISCORD_EDITS_ENABLED` for text-reference
+issuance. Media-reference issuance instead requires
+`CMAEG_NATIVE_DISCORD_MEDIA_EFFECTS_ENABLED`, also graduated and default-on. All serving and rollback
 readers must understand this field before writers are enabled. Disabling either
 issuance switch does not revoke previously authorized effects. Editing a message
 preserves its original effect window and cannot extend it.
@@ -4956,8 +5374,8 @@ native Discord control contract (maintainer guidance).
 
 The existing `updateMessage` request accepts native interaction-card references
 when `CMAEG_DISCORD_CARD_EDITS_ENABLED` is enabled. Historical native card records
-and plain native text-edit references keep their existing shapes. The default is
-off. See native card edits (maintainer guidance) for exact bounds.
+and plain native text-edit references keep their existing shapes. The flag is a
+[graduated gate](#graduated-rollout-gates) and defaults to on. See native card edits (maintainer guidance) for exact bounds.
 
 The reference selects one original bot message. Replacement controls retain the
 actor, source/provider/consumer authority, conversation, partition, verified
@@ -5091,7 +5509,7 @@ remain mandatory. See `CMAEG_Native_Telegram_Message_Events.md`.
 
 ### Separate native Lark message effects
 
-The separately provisioned native Lark/Feishu app can issue exact confirmed-message text-edit, recall and own-reaction authority under `CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED`. `CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED` independently adds reaction-only `received_message` context for the original retained routed human message. Both default false. This authority is distinct from NyxID relay `lark_effect`; its current region, app, tenant, bot, source credentials, channel record, selected consumer/provider and routing must still match. A single native message from a confirmed reply can issue one reference; multipart replies do not issue a reference to only their first part. Single media messages grant recall/reaction authority without text editing. References expire within 24 hours of the original receipt or message; received references also respect the original event expiry.
+The separately provisioned native Lark/Feishu app can issue exact confirmed-message text-edit, recall and own-reaction authority under `CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED`. `CMAEG_NATIVE_LARK_RECEIVED_REACTIONS_ENABLED` independently adds reaction-only `received_message` context for the original retained routed human message. Both are [graduated gate](#graduated-rollout-gates)s that default true. This authority is distinct from NyxID relay `lark_effect`; its current region, app, tenant, bot, source credentials, channel record, selected consumer/provider and routing must still match. A single native message from a confirmed reply can issue one reference; multipart replies do not issue a reference to only their first part. Single media messages grant recall/reaction authority without text editing. References expire within 24 hours of the original receipt or message; received references also respect the original event expiry.
 
 Stable effect claims and an exact-message durable fence span all native mutations. An unknown write, uncertain receipt storage, or partially applied reaction replacement keeps the message fenced across restart and new request keys. `updateMessage` has no idempotency-key argument; an uncertain native update is likewise fenced from further mutation. The client verifies fresh native bot custody and exact message metadata, then current local authority before every write. It removes only a retained reaction ID proven to belong to the same app, repeating the checks between removal and creation. See native Lark message effects (maintainer guidance) for the supported subset and regional API contracts.
 
@@ -5100,14 +5518,14 @@ Stable effect claims and an exact-message durable fence span all native mutation
 The existing updateMessage endpoint/tool additionally accepts the exclusive `native_media_update` patch with optional replacement, caption and text members. Omission preserves and empty text clears; null refuses. A visible-ASCII 1–128-byte idempotency key is required for this patch. Telegram caption is visible media text; Discord caption is attachment description/alt text and text is visible message content. Only new explicit revisioned media authority can use it; historical effects-only references remain edit-ineligible. The contract, fixed expiry, shared mutation fences, provider response checks and pending multipart-reference gap are specified in native media edits (maintainer guidance). Both issuance flags default false.
 ### Separate-app native Lark controls and forms
 
-Native Lark/Feishu interactive replies use distinct encrypted card authority, native receipts and `cnl1`/`cnlf1` locators. `CMAEG_NATIVE_LARK_CONTROLS_ENABLED` and `CMAEG_NATIVE_LARK_FORMS_ENABLED` default false; the latter also requires controls. Verified native event context reports `buttons`/`cards: native_card` and optional `forms` capability. The original human, exact conversation and retained existing group thread, default/named consumer, provider/key/credential/routing custody, schema and original 24-hour lifetime remain immutable. A single confirmed receipt and bound card are required before a usable reference is issued.
+Native Lark/Feishu interactive replies use distinct encrypted card authority, native receipts and `cnl1`/`cnlf1` locators. `CMAEG_NATIVE_LARK_CONTROLS_ENABLED` and `CMAEG_NATIVE_LARK_FORMS_ENABLED` are [graduated gate](#graduated-rollout-gates)s that default true; the latter also requires controls. Verified native event context reports `buttons`/`cards: native_card` and optional `forms` capability. The original human, exact conversation and retained existing group thread, default/named consumer, provider/key/credential/routing custody, schema and original 24-hour lifetime remain immutable. A single confirmed receipt and bound card are required before a usable reference is issued.
 
 Only encrypted signed v2 `card.action.trigger` callbacks can consume these cards. Both `header.token` and `event.token` are redacted. The canonical click and recoverable admission are one durable card CAS, and local recovery runs without platform retries. HTTP `{}` acknowledgement follows durable routed admission. Dispatch reopens stored card custody. Card PATCH, delete, own-reaction changes and initial callback consumption use one exact-message fence. A consumed click blocks mutations until its durable admission marker is saved, and recovery of that exact click does not depend on any later external fence. Uncertain external writes cannot be retried through a new key or restarted process. Replacement keeps the original lifetime and activates only after durable success. See native control contract (maintainer guidance) for limits and callback configuration.
 
 ## Exact native Telegram forum topic lifecycle
 
 Native Telegram sources may independently consent with `topic_lifecycle:true`.
-The separate default-off `CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED` gate,
+The separate `CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED` [graduated gate](#graduated-rollout-gates),
 durable routing admission/recovery and existing optional persistent fence storage
 are required. Eligible contexts advertise `capabilities.topic_lifecycle` with
 `manage_original_topic`, `actions: ["close", "reopen"]` and the original expiry.
@@ -5122,8 +5540,8 @@ changes only the topic name, preserving its icon and open/closed state.
 The gateway restores exact native human-message custody and the original selected
 consumer, verifies forum-supergroup bot permissions, rechecks current custody,
 and dispatches one operation. This original-topic consent accepts only its event
-target. Separate `topic_creation:true` consent and the default-off
-`CMAEG_NATIVE_TELEGRAM_TOPIC_CREATION_ENABLED` gate allow `createEventThread` to
+target. Separate `topic_creation:true` consent and the
+`CMAEG_NATIVE_TELEGRAM_TOPIC_CREATION_ENABLED` [graduated gate](#graduated-rollout-gates) allow `createEventThread` to
 create an empty named topic in the original proven forum supergroup. Telegram
 requests contain `name` and omit `auto_archive_duration`; Discord still requires
 its explicit archive duration. A confirmed creation returns the existing
@@ -5138,7 +5556,7 @@ fence prevent duplicate dispatch after uncertain results; no upstream list or
 lookup is inferred as reconciliation. See topic creation (maintainer guidance).
 Listing, private topics and icon selection remain outside this CMA increment.
 General original-topic management additionally requires the separate
-default-off `CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED` gate and
+`CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED` [graduated gate](#graduated-rollout-gates) and
 positive `chat.is_forum:true` in the original native supergroup message, with
 both topic markers absent. Missing topic fields alone or synthetic topic ID `1`
 never grant General authority. Public Activity and ReplyAddress thread fields
@@ -5284,8 +5702,8 @@ Platform semantics were checked against the official Discord API documentation a
 `GET /v1/events/{event_ref}/history?cursor=...` and MCP `readEventHistory`
 read earlier visible messages from the exact conversation that admitted an original
 native human event. They require independent source `conversation_history: true`
-at admission and at read time, plus the default-off
-`CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED` gate. Existing
+at admission and at read time, plus the
+`CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED` [graduated gate](#graduated-rollout-gates). Existing
 `thread_history` and `thread_lifecycle` consent never implies this access.
 Absent or false consent preserves the historical source serialization.
 
@@ -5336,8 +5754,8 @@ recovery, search, file bytes, arbitrary destinations and other platforms.
 
 The same `readEventHistory(event_ref, cursor?, include_media?)` operation supports original native
 Lark/Feishu human events with independent source `conversation_history: true` at
-admission and read time and the default-off
-`CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` gate. Both exact chats and threads
+admission and read time and the
+`CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED` [graduated gate](#graduated-rollout-gates). Both exact chats and threads
 are supported. Native scans use one descending provider page of at most 25 raw rows;
 only rows strictly earlier than the original millisecond timestamp are returned.
 The platform cannot seek within a thread, so empty pages with scanned/omitted counts
@@ -5349,8 +5767,8 @@ The existing page shape and Discord behavior remain unchanged. A native internal
 v2 legacy cursor and retained admission custody bind the original source, human, selected
 consumer/provider/key, partition and original expiry. Text/supported posts are
 projected; unsupported media/formats are counted omissions without invented
-attachment size or filename. The separate default-off
-`CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` permits explicit REST query/MCP argument
+attachment size or filename. The separate
+`CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED` [graduated gate](#graduated-rollout-gates) permits explicit REST query/MCP argument
 `include_media=true` to preserve supported post text around images/video and emit
 `omitted_content: ["media"]` without attachment facts, resource locators or extra
 requests. Retained posts do not increment whole-row omission counts. Omitted/false
@@ -5368,8 +5786,8 @@ optional additions. Full native contract, setup, tests and platform limits (main
 
 ### Native Telegram media with controls
 
-`CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED` is a separate default-off issuance
-gate. After every live reader understands the media-card marker, a verified
+`CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED` is a separate issuance gate,
+graduated to default-on (see [graduated gate](#graduated-rollout-gates)). Once every live reader understands the media-card marker, a verified
 native Telegram routed human event can advertise `native_media.controls` with
 `max_attachments: 1`, `buttons: true`, `choices: true`, `caption_max_chars: 1024`
 and `update: false`. Named consumers also require the existing consumer
@@ -5399,8 +5817,8 @@ rebinding and expiry refuse old actions. Repeated identical callbacks share one
 durable consumption and retain the same dispatch identity. Unbound cards and
 storage contention return a retryable failure without consuming an action.
 
-With the separate default-off
-`CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED` gate, eligible Telegram
+With the separate
+`CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED` [graduated gate](#graduated-rollout-gates), eligible Telegram
 discovery advertises `native_media.controls.update: true`. Only new media cards
 whose confirmed platform message has a bounded, verified file and presentation
 snapshot gain edit permission. Earlier cards remain uneditable even if the gate
@@ -5431,7 +5849,7 @@ such cards remain live.
 
 ### Native Lark image/control cards
 
-The independent default-off `CMAEG_NATIVE_LARK_MEDIA_CONTROLS_ENABLED` gate
+The independent `CMAEG_NATIVE_LARK_MEDIA_CONTROLS_ENABLED` [graduated gate](#graduated-rollout-gates)
 authorizes one confirmed PNG/JPEG image plus buttons/choices in the existing
 native JSON 2.0 card path. Discovery adds optional
 `native_media.controls.kinds: ["image"]`, `max_attachments: 1`,
@@ -5444,7 +5862,7 @@ the image, original lifetime and callback recovery; image replacement/removal an
 forms remain unsupported. Uncertain operations never issue a usable reference or
 fallback message. See native image controls (maintainer guidance).
 
-The additional default-off `CMAEG_NATIVE_LARK_MULTI_IMAGE_CONTROLS_ENABLED` gate
+The additional `CMAEG_NATIVE_LARK_MULTI_IMAGE_CONTROLS_ENABLED` [graduated gate](#graduated-rollout-gates)
 permits two to four PNG/JPEG images in that same card and advertises
 `controls.max_attachments: 4`. Every image is validated before any upload, and
 only the complete confirmed ordered set enters one durable card. New records
@@ -5468,13 +5886,14 @@ stay with their attachments and top-level text remains separate. Incompatible
 kind combinations retain individual uploads. An uncertain album never falls
 back to individual uploads or automatic retry. Multi-attachment delivery still
 issues no message operation references, while single-upload behavior is unchanged.
-This optional capability is absent when its default-false
-`CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED` gate is disabled or the original native
+This optional capability is absent when its
+`CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED` [graduated gate](#graduated-rollout-gates) is explicitly disabled or the original native
 Telegram destination is not verified. See album delivery (maintainer guidance).
 
 ### Native Discord forwarded snapshots
 
-`CMAEG_NATIVE_DISCORD_FORWARDS_ENABLED=false` independently controls new
+`CMAEG_NATIVE_DISCORD_FORWARDS_ENABLED` (a [graduated gate](#graduated-rollout-gates), default `true` with the
+native runtime) independently controls new
 `forward_projection` v1 issuance. The exact supplied FORWARD reference and one
 snapshot produce bounded descriptive text/media counts. Original authors are not
 provided by Discord; the outer forwarder and current channel/thread remain the
@@ -5491,7 +5910,7 @@ An authenticated native sticker is a descriptive message plus an `other` attachm
 
 ### Native static structured replies
 
-An optional `structured_content` is exclusive contact, static location or venue data. `capabilities.structured_replies` lists the kinds supported for an exact retained native Telegram event. `replyToEvent` requires a stable idempotency key; the existing durable result prevents resends after confirmed or unknown delivery. The independent `CMAEG_NATIVE_TELEGRAM_STRUCTURED_REPLIES_ENABLED` gate defaults to false. No payload chooses a recipient, performs live tracking or fetches a URL. See native Telegram structured replies (maintainer guidance) for fields, bounds and reader-first rollout.
+An optional `structured_content` is exclusive contact, static location or venue data. `capabilities.structured_replies` lists the kinds supported for an exact retained native Telegram event. `replyToEvent` requires a stable idempotency key; the existing durable result prevents resends after confirmed or unknown delivery. The independent `CMAEG_NATIVE_TELEGRAM_STRUCTURED_REPLIES_ENABLED` gate is a [graduated gate](#graduated-rollout-gates) and defaults to true. No payload chooses a recipient, performs live tracking or fetches a URL. See native Telegram structured replies (maintainer guidance) for fields, bounds and reader-first rollout.
 
 ## Native WhatsApp static structured replies
 

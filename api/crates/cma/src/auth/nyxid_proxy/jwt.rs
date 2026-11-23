@@ -2,6 +2,7 @@
 //!
 //! This is identity evidence, never an OAuth token or renewable owner custody.
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use cma_service_auth::signing_keys::{self, Cache, Outcome, TransportFailure};
 use ring::signature::{RsaPublicKeyComponents, RSA_PKCS1_2048_8192_SHA256};
 use serde::Deserialize;
 use std::{
@@ -9,7 +10,6 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::{sync::Mutex, time::Instant};
 
 use crate::auth::profile::Profile;
 
@@ -17,7 +17,6 @@ pub(crate) const HEADER: &str = "x-nyxid-identity-token";
 const MAX_TOKEN_BYTES: usize = 16_384;
 const MAX_JWKS_BYTES: usize = 32_768;
 const CACHE_TTL: Duration = Duration::from_secs(300);
-const REFRESH_COOLDOWN: Duration = Duration::from_secs(5);
 const MAX_CLOCK_SKEW: i64 = 5;
 
 #[derive(Clone, Debug)]
@@ -68,14 +67,21 @@ pub(crate) fn identity_token(headers: &axum::http::HeaderMap) -> Result<Option<&
 
 pub(crate) struct Verifier {
     config: Config,
-    client: reqwest::Client,
-    cache: Mutex<Cached>,
+    cache: Cache<KeySet, VerifyError>,
 }
 
-#[derive(Default)]
-struct Cached {
-    keys: Option<(Arc<KeySet>, Instant)>,
-    next_refresh: Option<Instant>,
+impl signing_keys::KeySet for KeySet {
+    fn contains(&self, kid: &str) -> bool {
+        self.0.contains_key(kid)
+    }
+}
+fn transport_error(failure: TransportFailure) -> VerifyError {
+    VerifyError::Unavailable(match failure {
+        TransportFailure::Request => "jwks_request",
+        TransportFailure::Status => "jwks_status",
+        TransportFailure::Bounds => "jwks_bounds",
+        TransportFailure::Body => "jwks_body",
+    })
 }
 
 impl Verifier {
@@ -93,17 +99,13 @@ impl Verifier {
         {
             return Err(VerifyError::Unavailable("trust_configuration"));
         }
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(1))
-            .timeout(Duration::from_secs(3))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|_| VerifyError::Unavailable("http_client"))?;
-        Ok(Self {
-            config,
-            client,
-            cache: Mutex::new(Cached::default()),
-        })
+        let cache = Cache::new(
+            signing_keys::Config::new(CACHE_TTL, 1),
+            KeySet::parse,
+            transport_error,
+        )
+        .map_err(|_| VerifyError::Unavailable("http_client"))?;
+        Ok(Self { config, cache })
     }
 
     pub async fn verify(&self, raw: &str) -> Result<VerifiedIdentity, VerifyError> {
@@ -120,66 +122,16 @@ impl Verifier {
     }
 
     async fn keys_for(&self, kid: &str) -> Result<Arc<KeySet>, VerifyError> {
-        // One endpoint and one bounded cache per configured verifier. Holding
-        // this lock through refresh coalesces concurrent misses and failures.
-        let mut cache = self.cache.lock().await;
-        let now = Instant::now();
-        let current = cache
-            .keys
-            .as_ref()
-            .filter(|(_, until)| *until > now)
-            .map(|(keys, _)| keys.clone());
-        if let Some(keys) = &current {
-            if keys.0.contains_key(kid) {
-                return Ok(keys.clone());
-            }
-        }
-        if cache.next_refresh.is_some_and(|after| after > now) {
-            return Err(if current.is_some() {
-                VerifyError::Rejected("signing_key_unknown")
-            } else {
-                VerifyError::Unavailable("jwks_refresh_throttled")
-            });
-        }
-        cache.next_refresh = Some(now + REFRESH_COOLDOWN);
-        // A failed unknown-key refresh must not evict still-current keys.
-        // Expired keys, however, are never used after a fetch failure.
-        let keys = Arc::new(self.fetch().await?);
-        cache.keys = Some((keys.clone(), Instant::now() + CACHE_TTL));
-        if !keys.0.contains_key(kid) {
-            return Err(VerifyError::Rejected("signing_key_unknown"));
-        }
-        Ok(keys)
-    }
-
-    async fn fetch(&self) -> Result<KeySet, VerifyError> {
-        let mut response = self
-            .client
-            .get(&self.config.jwks_url)
-            .send()
+        self.cache
+            .keys_for(&self.config.jwks_url, kid)
             .await
-            .map_err(|_| VerifyError::Unavailable("jwks_request"))?;
-        if !response.status().is_success() {
-            return Err(VerifyError::Unavailable("jwks_status"));
-        }
-        if response
-            .content_length()
-            .is_some_and(|size| size > MAX_JWKS_BYTES as u64)
-        {
-            return Err(VerifyError::Unavailable("jwks_bounds"));
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| VerifyError::Unavailable("jwks_body"))?
-        {
-            if bytes.len().saturating_add(chunk.len()) > MAX_JWKS_BYTES {
-                return Err(VerifyError::Unavailable("jwks_bounds"));
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        KeySet::parse(&bytes)
+            .map_err(|outcome| match outcome {
+                Outcome::UnknownKey => VerifyError::Rejected("signing_key_unknown"),
+                Outcome::Throttled => VerifyError::Unavailable("jwks_refresh_throttled"),
+                Outcome::Refresh(error) => error,
+                Outcome::FlightLost => VerifyError::Unavailable("jwks_refresh"),
+                Outcome::Capacity => VerifyError::Unavailable("jwks_capacity"),
+            })
     }
 }
 

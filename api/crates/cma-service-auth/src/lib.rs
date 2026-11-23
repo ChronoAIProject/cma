@@ -5,6 +5,7 @@ pub mod mongodb_authority;
 mod nyx;
 mod service_key;
 pub mod session;
+pub mod signing_keys;
 pub use nyx::{AuthError, NyxIdAuth, Principal};
 pub use service_key::{is_service_key, ServiceKeyAuth, ServiceKeyPrincipal};
 #[derive(Clone, Copy, Debug)]

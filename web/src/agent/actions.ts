@@ -69,7 +69,6 @@ export function useAgentActions({
       mode: 'send' | 'steer' | 'interrupt' = 'send',
       onOrdinaryInput?: () => void,
       answerContext?: AnswerContext,
-      recovering = false,
     ) => {
       if (
         currentContext.current !== context ||
@@ -77,17 +76,22 @@ export function useAgentActions({
         actionAbortRef.current !== undefined ||
         ((commandsBlocked || currentCommandsBlocked.current) && typeof approval !== 'string') ||
         !inputAvailability.allowed
-      )
+      ) {
+        if (typeof approval === 'string' && mode === 'send') onRefused?.();
         return;
+      }
       const current = stateRef.current;
-      if (current.status !== 'ready' || current.detail.id !== agentId) return;
+      if (current.status !== 'ready' || current.detail.id !== agentId) {
+        if (typeof approval === 'string' && mode === 'send') onRefused?.();
+        return;
+      }
       if (
         historyIncomplete &&
         typeof approval !== 'string' &&
         !current.conversation.approvals.some((request) => request.id === approval.id)
       )
         return;
-      if (answerContext && !recovering) {
+      if (answerContext) {
         const answer = current.conversation.messages.at(-1);
         if (
           current.conversation.activeRunId ||
@@ -109,8 +113,10 @@ export function useAgentActions({
       if (
         current.detail.status === 'starting' &&
         (session === undefined || typeof approval !== 'string')
-      )
+      ) {
+        if (typeof approval === 'string' && mode === 'send') onRefused?.();
         return;
+      }
       if (session === undefined) replayAbortRef.current?.abort();
       const controller = new AbortController();
       actionAbortRef.current = controller;
@@ -119,11 +125,13 @@ export function useAgentActions({
       setPending(approving ? 'approval' : 'send');
       setActionError(undefined);
       let accepted = false;
+      let recoveringInput = false;
       let legacyKey: string | undefined;
       try {
         if (session !== undefined) {
-          const sendInput = (text: string) =>
-            session.send(
+          const sendInput = (text: string) => {
+            recoveringInput = session.journal.read()?.state === 'pending';
+            return session.send(
               text,
               (receipt) => {
                 if (controller.signal.aborted || currentContext.current !== context) return;
@@ -137,6 +145,7 @@ export function useAgentActions({
               },
               answerContext,
             );
+          };
           if (approving) {
             const scope = `agent:${agentId}:approval:${approval.id}:${approval.decision}`;
             await submitV2Control(
@@ -194,7 +203,16 @@ export function useAgentActions({
           if (!legacy)
             throw new Error('Suggestion recovery is unavailable. Use the message composer.');
           await legacy.authorize(controller.signal);
-          legacyKey = legacy.journal.legacySuggestion.retain(approval, answerContext).key;
+          const previous = legacy.journal.legacySuggestion.read();
+          const retained = legacy.journal.legacySuggestion.retain(approval, answerContext);
+          if (previous?.state === 'pending') {
+            const runId = await legacy.recoverLegacySuggestion(controller.signal);
+            if (!runId) throw new Error('The original suggestion is still awaiting confirmation.');
+            if (!controller.signal.aborted && currentContext.current === context)
+              onAccepted?.({ runId });
+            return;
+          }
+          legacyKey = retained.key;
         } else if (legacy?.journal.legacySuggestion.read()?.state === 'pending') {
           throw new Error('Recover your pending suggestion before sending another message.');
         }
@@ -240,6 +258,7 @@ export function useAgentActions({
           session !== undefined &&
           answerContext &&
           !accepted &&
+          !recoveringInput &&
           error instanceof ApiError &&
           error.status === 422 &&
           error.code === 'responses_field_unsupported'
@@ -269,6 +288,7 @@ export function useAgentActions({
           session !== undefined &&
           !approving &&
           !accepted &&
+          !recoveringInput &&
           (error instanceof InterruptionNotSubmittedError ||
             (error instanceof ApiError &&
               ((error.status === 422 &&
@@ -411,23 +431,16 @@ export function useAgentActions({
 
   const recoverPending = async () => {
     if (currentContext.current !== context) return;
-    if (v2 === undefined) {
-      const legacy = client.agentTransport?.legacySession(agentId, options.viewerId);
-      const pending = legacy?.journal.legacySuggestion.read();
-      if (pending?.state === 'pending')
-        await run(
-          pending.input,
-          undefined,
-          undefined,
-          undefined,
-          'send',
-          undefined,
-          pending.answerContext,
-          true,
-        );
+    const legacy =
+      v2 === undefined
+        ? client.agentTransport?.legacySession(agentId, options.viewerId)
+        : undefined;
+    if (
+      (v2 === undefined && legacy === undefined) ||
+      actionAbortRef.current !== undefined ||
+      historyIncomplete
+    )
       return;
-    }
-    if (v2 === undefined || actionAbortRef.current !== undefined || historyIncomplete) return;
     const current = stateRef.current;
     if (
       current.status === 'ready' &&
@@ -441,13 +454,29 @@ export function useAgentActions({
     setPending('send');
     setActionError(undefined);
     try {
+      if (v2 === undefined) {
+        if (
+          legacy?.journal.legacySuggestion.read()?.state === 'pending' &&
+          !(await legacy.recoverLegacySuggestion(controller.signal))
+        ) {
+          setActionError('The original suggestion is still awaiting confirmation.');
+        }
+        return;
+      }
       // Empty recovery helpers still authorize. Avoid making a retained Cancel
       // wait for unrelated input/interruption checks that have nothing to send.
-      if (v2.journal.read()?.state === 'pending') await v2.recover(() => {}, controller.signal);
       if (v2.journal.readControl()?.commandId === null)
         await recoverV2Control(v2, controller.signal);
       if (v2.journal.interruption.read()?.receipt === null)
         await recoverV2Interruption(v2, controller.signal);
+      if (
+        v2.journal.read()?.state === 'pending' &&
+        !(await v2.recover(() => {}, controller.signal))
+      ) {
+        setActionError(
+          'The original message is still awaiting confirmation. Check the pending request again.',
+        );
+      }
     } catch (error) {
       if (!controller.signal.aborted && !onIdentityChange(error))
         setActionError(errorMessage(error));

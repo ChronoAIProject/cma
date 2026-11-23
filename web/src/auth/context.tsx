@@ -13,6 +13,8 @@ import { parseRoute, routePath } from '../routing/routes';
 import { retainDocumentShareToken } from '../documents/shareToken';
 import { retainAgentShareForSignIn } from '../resources/agentShareToken';
 import { retainTaskViewer } from '../create/taskIdentity';
+import { retainAgentDraftOwner } from '../agent/draftIdentity';
+import { releaseNavigationGuard } from '../routing/navigationGuard';
 
 /**
  * Wires an AuthProvider into React. Components consume `useAuth()` and never
@@ -64,6 +66,11 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         .current()
         .then((next) => {
           if (live && version === currentRead.current) {
+            if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
+            else if (next.status === 'anonymous') {
+              releaseNavigationGuard();
+              retainAgentDraftOwner();
+            }
             if (next.status !== 'error') last = next;
             let leavingSilently = false;
             if (mayNavigate && next.status === 'anonymous') {
@@ -170,6 +177,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         const next = await provider.current();
         if (version !== currentRead.current) return;
         if (next.status === 'authenticated') retainTaskViewer(next.user.id);
+        if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
+        else if (next.status === 'anonymous') retainAgentDraftOwner();
         setOutage(undefined);
         setState(next);
       } catch (error: unknown) {
@@ -184,9 +193,12 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   );
 
   const signOut = useCallback(async () => {
+    releaseNavigationGuard();
     const version = ++currentRead.current;
     try {
       retainTaskViewer();
+      retainAgentDraftOwner();
+      setState({ status: 'checking' });
       await provider.signOut();
       if (version !== currentRead.current) return;
       setOutage(undefined);
@@ -214,4 +226,15 @@ export function useAuth(): AuthContextValue {
     throw new Error('useAuth must be used within an AuthContextProvider');
   }
   return value;
+}
+
+export function useIdentityUncertain(): boolean {
+  const value = useContext(AuthContext);
+  return value !== null && (value.outage !== undefined || value.state.status !== 'authenticated');
+}
+
+/** Account identity for optional owner controls; absent outside an authenticated shell. */
+export function useAuthenticatedSubject(): string | undefined {
+  const value = useContext(AuthContext);
+  return value?.state.status === 'authenticated' ? value.state.user.id : undefined;
 }

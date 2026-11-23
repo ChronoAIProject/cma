@@ -74,6 +74,7 @@ for (const stalled of ['headers', 'body'])
         return route.continue({ url: `${origin}${url.pathname}${url.search}` });
       });
       await page.goto('/agents/agt_contract');
+      await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
       const message = page.getByRole('textbox', { name: 'Message', exact: true });
       await expect(message).toBeEnabled();
       const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });

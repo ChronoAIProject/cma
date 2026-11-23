@@ -1,4 +1,5 @@
 use super::*;
+use axum::Router;
 use layer2_core::sandbox::binding::{BindingPolicy, BindingResources, BindingService};
 
 pub(crate) struct BindingComposition {
@@ -48,6 +49,10 @@ impl BindingComposition {
             )?,
             None => rest::binding_router(self.service.clone()),
         };
+        let routes = routes.merge(rest::binding_conversation_reset_router(
+            self.service.clone(),
+            gateway.is_some_and(|g| g.conversation_reset_enabled),
+        ));
         Ok(
             routes.merge(rest::worker_credentials::worker_credential_router(
                 self.access.clone(),
@@ -84,6 +89,7 @@ impl BindingComposition {
 pub(super) fn resource_access(
     stores: &MongoStores,
     auth: Arc<AuthState>,
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
 ) -> Arc<layer2_core::resource_access::ResourceAccessService> {
     Arc::new(
         layer2_core::resource_access::ResourceAccessService::new(
@@ -93,7 +99,8 @@ pub(super) fn resource_access(
         .with_bindings(layer2_core::sandbox::binding::BindingAccessService::new(
             stores.sandbox_model.clone(),
         ))
-        .with_directory(layer2_core::UserDirectory::new(stores.users.clone())),
+        .with_directory(layer2_core::UserDirectory::new(stores.users.clone()))
+        .with_account_standing(standing),
     )
 }
 

@@ -4,6 +4,10 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
+use crate::ingress_budget::{
+    AdmissionRefusal, AdmittedError, AdmittedOperation, IngressOwnershipPolicy, OwnedWork,
+};
+
 use super::deployment::{
     provider_metadata_identity, provider_request_identity, ProviderIdentity,
     CONTROL_PLANE_METADATA, SANDBOX_METADATA,
@@ -27,6 +31,17 @@ const DEFAULT_READY_POLL: Duration = Duration::from_millis(500);
 /// Runtime control-link implementation paired with the provider lifecycle.
 #[async_trait::async_trait]
 pub trait HostedControlTransport: Send + Sync {
+    async fn challenge_retirement_receiver(
+        &self,
+        _handle: &RuntimeHandle,
+        _binding: &crate::agent_sandbox::PodBinding,
+        _owner: &crate::owner_protocol::TransportOwner,
+    ) -> crate::Result<bool> {
+        Err(crate::AdapterError::Unsupported(
+            "native retirement challenge is unavailable".into(),
+        ))
+    }
+
     fn desktop_ownership(&self) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
         None
     }
@@ -67,6 +82,19 @@ pub trait HostedControlTransport: Send + Sync {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame>;
+
+    /// Admit transport, decode and result storage before constructing work.
+    /// The default refuses without boxing or invoking the legacy exchange.
+    fn exchange_admitted<'a>(
+        &'a self,
+        _handle: &'a RuntimeHandle,
+        _request: OwnedWork<RequestFrame>,
+        _policy: &IngressOwnershipPolicy,
+    ) -> Result<AdmittedOperation<'a, ResponseFrame>, AdmittedError> {
+        Err(AdmittedError::Unsupported(
+            "control transport has no admitted exchange implementation",
+        ))
+    }
 
     /// Revalidate a published checkpoint's writer hold without requiring export.
     async fn verify_checkpoint_hold(
@@ -372,6 +400,21 @@ impl HostedBackend for ProviderHostedBackend {
         self.transport.exchange(handle, request).await
     }
 
+    fn exchange_admitted<'a>(
+        &'a self,
+        handle: &'a RuntimeHandle,
+        request: OwnedWork<RequestFrame>,
+        policy: &IngressOwnershipPolicy,
+    ) -> Result<AdmittedOperation<'a, ResponseFrame>, AdmittedError> {
+        if !request.belongs_to(policy) {
+            return Err(AdmissionRefusal::InvalidPlan {
+                phase: "provider exchange request ownership",
+            }
+            .into());
+        }
+        self.transport.exchange_admitted(handle, request, policy)
+    }
+
     async fn verify_checkpoint_hold(
         &self,
         handle: &RuntimeHandle,
@@ -437,3 +480,7 @@ use identity::*;
 #[cfg(test)]
 #[path = "provider_backend_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "provider_backend_ingress_tests.rs"]
+pub(super) mod ingress_tests;

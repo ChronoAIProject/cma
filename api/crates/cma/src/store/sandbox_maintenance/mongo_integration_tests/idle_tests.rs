@@ -8,6 +8,7 @@ async fn ordinary_inactivity_fences_workspace_work_after_the_evidence_snapshot()
     for leased in [false, true] {
         let (client, name, store) = database().await;
         let (sandbox, ready) = fixture(&store, "sbx_workspace_race").await;
+        let replica = MongoSandboxStore::open(&client, &name).await.unwrap();
         let idle = workspace(&sandbox, WorkspaceWorkStep::None);
         store.create_workspace(idle.clone()).await.unwrap();
         let mut session = client.start_session().await.unwrap();
@@ -30,7 +31,7 @@ async fn ordinary_inactivity_fences_workspace_work_after_the_evidence_snapshot()
                 .unwrap();
         }
         working.revision += 1;
-        store
+        replica
             .save_workspace(idle.revision, working.clone())
             .await
             .unwrap();
@@ -151,6 +152,7 @@ async fn agentless_pause_conflicts_with_new_workspace_or_owner_session() {
         let (client, name, store) = database().await;
         let sandbox = active_sandbox("sbx_empty_race");
         store.create_sandbox(sandbox.clone()).await.unwrap();
+        let replica = MongoSandboxStore::open(&client, &name).await.unwrap();
         let mut session = client.start_session().await.unwrap();
         start_transaction(&mut session).await.unwrap();
         assert!(evidence::idle_workspaces(&store, &sandbox, &mut session)
@@ -163,7 +165,7 @@ async fn agentless_pause_conflicts_with_new_workspace_or_owner_session() {
             child.status = WorkspaceStatus::Preparing;
             child.ready_at = None;
             child.resolved_commit = None;
-            store
+            replica
                 .admit_workspace(WorkspaceAdmission {
                     binding: None,
                     workspace: child,
@@ -173,7 +175,7 @@ async fn agentless_pause_conflicts_with_new_workspace_or_owner_session() {
                 .await
                 .unwrap();
         } else {
-            store
+            replica
                 .open_sandbox_session(&sandbox.id, "new-desktop", "2026-09-05T01:00:00Z")
                 .await
                 .unwrap();
@@ -202,6 +204,102 @@ async fn agentless_pause_conflicts_with_new_workspace_or_owner_session() {
                 .status,
             SandboxStatus::Active
         );
+        client.database(&name).drop().await.unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn operator_pause_rechecks_input_and_desktop_activity_after_preview_on_another_store() {
+    use layer2_core::sandbox::store::{InactivityPauseCause, SandboxMutationGuard};
+    use layer2_core::sandbox::QueuedAgentMessage;
+    for activity in ["recent_log", "queued_input", "desktop"] {
+        let (client, name, store) = database().await;
+        let other_client = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+        let replica = MongoSandboxStore::open(&other_client, &name).await.unwrap();
+        let (sandbox, ready) = fixture(&store, "sbx_preview_activity").await;
+        let (_, policy) = policy_tests::enable(&client, &name).await;
+        let request = SandboxInactivityPauseRequest {
+            cause: InactivityPauseCause::OperatorInactivity,
+            expected_policy_revision: Some(policy.revision),
+            ..policy_tests::global(&sandbox.id)
+        };
+        assert_eq!(
+            store
+                .preview_inactivity_pause(policy_tests::global(&sandbox.id))
+                .await
+                .unwrap(),
+            SandboxMaintenanceOutcome::Scheduled
+        );
+        let mut session = client.start_session().await.unwrap();
+        start_transaction(&mut session).await.unwrap();
+        evidence::live_activities(&store, std::slice::from_ref(&ready), &mut session, LATER)
+            .await
+            .unwrap();
+        if activity == "desktop" {
+            replica
+                .open_sandbox_session(&sandbox.id, "desktop", "2026-09-05T01:00:00Z")
+                .await
+                .unwrap();
+        } else {
+            let mut next = ready.clone();
+            next.revision += 1;
+            next.conversation.last_seq += 1;
+            let content = "Synthetic activity after preview.".to_owned();
+            let log = if activity == "queued_input" {
+                next.conversation
+                    .queued_messages
+                    .push(QueuedAgentMessage::new(2, content.clone(), LATER.into()).unwrap());
+                AgentLogKind::OwnerMessage { content }
+            } else {
+                AgentLogKind::AgentMessage { content }
+            };
+            replica
+                .commit_agent_conversation(AgentConversationMutation {
+                    settings_fence: None,
+                    command_claim: None,
+                    execution_fence: None,
+                    trigger_execution_fence: None,
+                    admission_guard: (activity == "queued_input")
+                        .then(|| SandboxMutationGuard::capture(&sandbox)),
+                    expected_agent_revision: ready.revision,
+                    expected_last_seq: ready.conversation.last_seq,
+                    runtime_generation: 1,
+                    agent: next,
+                    appended_at: LATER.into(),
+                    agent_logs: vec![log],
+                })
+                .await
+                .unwrap();
+        }
+        let admitted = replica.get_agent(&ready.id).await.unwrap();
+        let logs = replica.agent_log(&ready.id, 0, 100).await.unwrap();
+        let result = transaction::apply(
+            &store,
+            &MaintenanceRequest::Inactivity(request.clone()),
+            &mut session,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(ApplyError::Driver(error)) if is_transient(&error)),
+            "{activity}"
+        );
+        let _ = session.abort_transaction().await;
+        assert_eq!(
+            store.schedule_inactivity_pause(request).await.unwrap(),
+            SandboxMaintenanceOutcome::NotEligible,
+            "{activity}"
+        );
+        assert_eq!(store.get_sandbox(&sandbox.id).await.unwrap(), Some(sandbox));
+        assert_eq!(store.get_agent(&ready.id).await.unwrap(), admitted);
+        assert_eq!(store.agent_log(&ready.id, 0, 100).await.unwrap(), logs);
+        assert!(store
+            .sandbox_events(&ready.sandbox_id, 0, 100)
+            .await
+            .unwrap()
+            .is_empty());
         client.database(&name).drop().await.unwrap();
     }
 }

@@ -1,8 +1,6 @@
+mod creation;
 use super::*;
-use crate::{
-    profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef},
-    Caller, Capability, SubjectId,
-};
+use crate::{Caller, Capability, SubjectId};
 use sha2::{Digest, Sha256};
 use std::{
     sync::Arc,
@@ -14,6 +12,7 @@ pub struct BotService {
     profiles: Arc<dyn BotProfileResolver>,
     inline_profiles: Option<Arc<dyn BotInlineProfileResolver>>,
     provider: String,
+    pub(super) effect_reservations: bool,
 }
 impl BotService {
     pub fn new(
@@ -25,8 +24,17 @@ impl BotService {
             store,
             profiles,
             inline_profiles: None,
+            effect_reservations: false,
             provider,
         })
+    }
+    /// Opt in only after every writer understands the durable effect format.
+    /// Closing admission preserves protected work and its exact settlement.
+    pub fn with_effect_reservations(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("BotService effect policy must be configured before sharing")
+            .effect_reservations = enabled;
+        self
     }
     pub fn with_inline_profiles(
         mut self: Arc<Self>,
@@ -73,95 +81,6 @@ impl BotService {
             request,
         )
         .await
-    }
-    async fn create_owned(
-        &self,
-        owner: &SubjectId,
-        authority: Option<&BotOwnerAuthority>,
-        delegated_credential: Option<&str>,
-        key: &str,
-        mut request: CreateBot,
-    ) -> Result<Bot, BotError> {
-        request.validate()?;
-        if key.is_empty() || key.len() > 256 || key.chars().any(char::is_control) {
-            return Err(BotError::Invalid("an idempotency key is required".into()));
-        }
-        let key_hash = if let Some(authority) = authority {
-            hash(
-                &serde_json::to_vec(&("owned-bot-create-v1", authority.owner(), key))
-                    .map_err(|_| BotError::Unavailable)?,
-            )
-        } else {
-            hash(key.as_bytes())
-        };
-        let fingerprint = crate::profiles::content_digest(&request)
-            .map_err(|_| BotError::Invalid("invalid bot request".into()))?;
-        if let Some(current) = self.store.creation(owner, &key_hash).await? {
-            return replay_owned(current, &fingerprint, authority);
-        }
-        let profiles = if request.inline_agent.is_some() {
-            self.inline_profiles
-                .as_ref()
-                .ok_or(BotError::Unavailable)?
-                .resolve_inline(owner, &request, delegated_credential, key)
-                .await?
-        } else if let Some(authority) = authority {
-            self.profiles
-                .resolve_for_owner(authority.owner(), &request)
-                .await?
-        } else {
-            self.profiles.resolve(owner, &request).await?
-        };
-        if request.inline_agent.is_some() {
-            request.profile = AgentProfileRef {
-                id: profiles.agent.profile_id.clone(),
-                revision: profiles.agent.revision,
-            };
-            request.sandbox_profile = Some(SandboxProfileRef::new(
-                profiles.sandbox.profile_id.clone(),
-                profiles.sandbox.revision,
-            ));
-            request.workspace_profile = Some(WorkspaceProfileRef::new(
-                profiles.workspace.profile_id.clone(),
-                profiles.workspace.revision,
-            ));
-        }
-        if let Some(authority) = authority {
-            authority.require(Capability::ManageOwnBots)?;
-        }
-        let now = crate::now_rfc3339();
-        let bot = Bot {
-            ownership: authority.map(|authority| authority.ownership().clone()),
-            bot_id: format!("bot_{}", uuid::Uuid::new_v4().simple()),
-            owner: owner.clone(),
-            request,
-            profiles,
-            provider: self.provider.clone(),
-            record_id: uuid::Uuid::new_v4().to_string(),
-            resources: BotResources::default(),
-            state: BotState::Creating,
-            work: Some(work(BotOperation::Create, 1)),
-            generation: 1,
-            revision: 1,
-            creation_key_hash: key_hash.clone(),
-            request_fingerprint: fingerprint.clone(),
-            created_at: now.clone(),
-            updated_at: now,
-            last_test: None,
-        };
-        bot.validate()?;
-        match self.store.insert(&bot).await {
-            Ok(()) => Ok(bot),
-            Err(BotError::Conflict) => replay_owned(
-                self.store
-                    .creation(owner, &key_hash)
-                    .await?
-                    .ok_or(BotError::Conflict)?,
-                &fingerprint,
-                authority,
-            ),
-            Err(error) => Err(error),
-        }
     }
     pub async fn get_for_owner(
         &self,
@@ -296,50 +215,12 @@ impl BotService {
             bot.generation = bot.generation.checked_add(1).ok_or(BotError::Conflict)?;
             bot.resources.replacement = Some(BotCredentialSet::default());
         }
-        bot.work = Some(work(operation, bot.generation));
+        bot.work = Some(work(operation, bot.generation, self.effect_reservations));
         if operation == BotOperation::Delete {
             bot.state = BotState::Deleting;
         }
         self.save(&mut bot).await?;
         Ok(bot)
-    }
-    /// Claim one operation. An expired creator cannot recover plaintext and must clean up.
-    pub async fn claim(
-        &self,
-        id: &str,
-        holder: &str,
-        now: SystemTime,
-    ) -> Result<Option<Bot>, BotError> {
-        if holder.is_empty() {
-            return Err(BotError::Invalid("worker identity is required".into()));
-        }
-        let mut bot = self.store.get(id).await?.ok_or(BotError::NotFound)?;
-        let Some(work) = bot.work.as_mut() else {
-            return Ok(None);
-        };
-        let now_seconds = now
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map_err(|_| BotError::Unavailable)?
-            .as_secs();
-        if work
-            .expires_at
-            .as_ref()
-            .and_then(|value| crate::seconds_from_rfc3339(value))
-            .is_some_and(|expires| expires > now_seconds)
-        {
-            return Ok(None);
-        }
-        if work.holder.is_some() && work.operation == BotOperation::Create {
-            work.operation = BotOperation::Cleanup;
-            work.step = "recover_interrupted_creation".into();
-            bot.state = BotState::Failed {
-                reason: "interrupted_creation".into(),
-            };
-        }
-        work.holder = Some(holder.into());
-        work.expires_at = Some(crate::rfc3339_at(now + Duration::from_secs(120)));
-        self.save(&mut bot).await?;
-        Ok(Some(bot))
     }
     /// Save progress only while the exact operation claim still owns the record.
     pub async fn checkpoint(
@@ -349,7 +230,7 @@ impl BotService {
         step: &str,
     ) -> Result<(), BotError> {
         let work = bot.work.as_mut().ok_or(BotError::Conflict)?;
-        if work.holder.as_deref() != Some(holder) || !live(work) {
+        if work.holder.as_deref() != Some(holder) || !live(work) || work.effect.is_some() {
             return Err(BotError::Conflict);
         }
         work.step = step.into();
@@ -365,7 +246,7 @@ impl BotService {
         state: BotState,
     ) -> Result<(), BotError> {
         let work = bot.work.as_ref().ok_or(BotError::Conflict)?;
-        if work.holder.as_deref() != Some(holder) || !live(work) {
+        if work.holder.as_deref() != Some(holder) || !live(work) || work.effect.is_some() {
             return Err(BotError::Conflict);
         }
         let allowed = match (&work.operation, &state) {
@@ -439,7 +320,7 @@ impl BotService {
     pub async fn pending(&self, after: Option<&str>, limit: usize) -> Result<Vec<Bot>, BotError> {
         self.store.pending(after, limit).await
     }
-    async fn save(&self, bot: &mut Bot) -> Result<(), BotError> {
+    pub(super) async fn save(&self, bot: &mut Bot) -> Result<(), BotError> {
         let prior = bot.revision;
         let mut next = bot.clone();
         next.revision = prior.checked_add(1).ok_or(BotError::Conflict)?;
@@ -449,9 +330,11 @@ impl BotService {
         Ok(())
     }
 }
-fn work(operation: BotOperation, generation: u64) -> BotWork {
+fn work(operation: BotOperation, generation: u64, effect_reservations: bool) -> BotWork {
     BotWork {
         id: uuid::Uuid::new_v4().to_string(),
+        effect_protocol: u8::from(effect_reservations),
+        effect: None,
         operation,
         step: "admitted".into(),
         generation,
@@ -474,7 +357,7 @@ fn replay(bot: Bot, fingerprint: &str) -> Result<Bot, BotError> {
         Ok(bot)
     }
 }
-fn live(work: &BotWork) -> bool {
+pub(super) fn live(work: &BotWork) -> bool {
     work.expires_at
         .as_ref()
         .and_then(|value| crate::seconds_from_rfc3339(value))

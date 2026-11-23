@@ -14,6 +14,7 @@ use mongodb::{options::Hint, ClientSession};
 use std::{collections::BTreeMap, time::Duration};
 
 pub(super) const INDEX: &str = "owner_agent_association";
+#[cfg(test)]
 pub(super) fn index_keys() -> Document {
     doc! {"record.owner": 1, "record.agent_id": 1, "_id": 1}
 }

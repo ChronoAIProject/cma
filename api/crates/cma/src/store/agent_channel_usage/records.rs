@@ -1,7 +1,10 @@
 use super::*;
 use crate::store::sandbox_mongo::{read_record, record_bson, DOCUMENT_SCHEMA_VERSION};
 use layer2_core::sandbox::store::{channel_usage_cursor, channel_usage_page};
-use mongodb::{options::IndexOptions, Collection, IndexModel};
+use mongodb::{
+    options::{IndexOptions, ReadConcern},
+    Collection, IndexModel,
+};
 
 fn corrupt() -> SandboxStoreError {
     SandboxStoreError::Corrupt("channel usage document or index is inconsistent".into())
@@ -20,7 +23,9 @@ pub(super) fn event_document(event: &ChannelUsageEvent) -> Result<Document, Sand
     Ok(document)
 }
 
-pub(super) fn read_event(document: &Document) -> Result<ChannelUsageEvent, SandboxStoreError> {
+pub(in crate::store) fn read_event(
+    document: &Document,
+) -> Result<ChannelUsageEvent, SandboxStoreError> {
     let event: ChannelUsageEvent = read_record(document).map_err(|_| corrupt())?;
     let expected = event_document(&event)?;
     if expected
@@ -47,7 +52,9 @@ pub(super) fn state_document(
     })
 }
 
-fn read_state(document: &Document) -> Result<StoredAgentChannelUsage, SandboxStoreError> {
+pub(in crate::store) fn read_state(
+    document: &Document,
+) -> Result<StoredAgentChannelUsage, SandboxStoreError> {
     let stored = read_record(document).map_err(|_| corrupt())?;
     let expected = state_document(&stored)?;
     if expected
@@ -65,7 +72,7 @@ pub(in crate::store) async fn read_snapshot(
     session: &mut ClientSession,
 ) -> Result<AgentChannelUsageSnapshot, UsageError> {
     let provenance = crate::store::agent_provenance::read_snapshot(store, id, session).await?;
-    let state = match read_retained_state(store, id, session).await? {
+    let state = match read_retained_state(store, id, session, false).await? {
         Some(stored) => stored.state,
         None => AgentChannelUsageState::empty(provenance.creation_provenance(id)?),
     };
@@ -84,19 +91,33 @@ pub(super) async fn read_retained_state(
     store: &MongoSandboxStore,
     id: &AgentId,
     session: &mut ClientSession,
+    snapshot: bool,
 ) -> Result<Option<StoredAgentChannelUsage>, UsageError> {
-    let stored = store
-        .agent_channel_usage
-        .find_one(doc! {"_id":id.as_str()})
+    // Snapshot sessions add atClusterTime without overriding an inherited
+    // majority level in the driver. Each read must select snapshot explicitly;
+    // transaction callers leave their concern to start_transaction instead.
+    let query = store.agent_channel_usage.find_one(doc! {"_id":id.as_str()});
+    let query = if snapshot {
+        query.read_concern(ReadConcern::snapshot())
+    } else {
+        query
+    };
+    let stored = query
         .session(&mut *session)
         .await?
         .as_ref()
         .map(read_state)
         .transpose()?;
-    let latest = store
+    let query = store
         .channel_usage_events
         .find_one(doc! {"agent_id":id.as_str()})
-        .sort(doc! {"revision":-1})
+        .sort(doc! {"revision":-1});
+    let query = if snapshot {
+        query.read_concern(ReadConcern::snapshot())
+    } else {
+        query
+    };
+    let latest = query
         .session(session)
         .await?
         .as_ref()

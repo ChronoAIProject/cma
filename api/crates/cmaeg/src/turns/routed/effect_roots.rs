@@ -4,6 +4,34 @@ use crate::replicas::partition::PartitionLease;
 use serde::Serialize;
 
 impl Journal {
+    pub(super) async fn admit_delayed_root(
+        &self,
+        plan: &crate::ingress::routing_store::AdmittedPlan,
+        target: &crate::ingress::routing_store::StoredTarget,
+        work: &str,
+        value: &impl Serialize,
+    ) -> Result<(), ExecutionError> {
+        self.partitions
+            .as_ref()
+            .ok_or(ExecutionError::Unsupported)?
+            .admit_delayed(plan, target, work, value)
+            .await
+            .map_err(Into::into)
+    }
+    pub(super) async fn ensure_delayed_custody(
+        &self,
+        plan: &crate::ingress::routing_store::AdmittedPlan,
+        target: &crate::ingress::routing_store::StoredTarget,
+        work: &str,
+    ) -> Result<(), ExecutionError> {
+        self.partitions
+            .as_ref()
+            .ok_or(ExecutionError::Unsupported)?
+            .ensure_delayed(plan, target, work)
+            .await
+            .map_err(Into::into)
+    }
+
     pub async fn write_effect_root(
         &self,
         id: &str,

@@ -254,6 +254,7 @@ async fn renew(
         tokio::time::sleep(Duration::from_secs(3)).await;
         let current = *validity.borrow();
         let Some(current) = current else { return };
+        let timing = timing::Renewal::start();
         let result = renew_before_expiry(current, async {
             context.authorization.current(&context.caller).await?;
             let (sandbox_id, runtime) = service.authorize(&context.caller, &context.id).await?;
@@ -288,12 +289,14 @@ async fn renew(
                 if validity.send(Some(deadline)).is_err() {
                     return;
                 }
+                timing.finish(timing::RenewalOutcome::Renewed);
             }
             _ => {
                 tracing::warn!(
                     "desktop authority lost; closing stream without early lease release"
                 );
                 validity.send_replace(None);
+                timing.finish(timing::RenewalOutcome::Refused);
                 return;
             }
         }

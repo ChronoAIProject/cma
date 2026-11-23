@@ -1,12 +1,14 @@
 import { nativeWhatsappUnavailable, useRelayCapabilities } from '../RelayCapabilities';
-import { AdmissionFields } from './AdmissionFields';
+import { SourceAdmissionFields } from './SourceAdmissionFields';
 import { Section, StringList, TextField, Toggle } from './Fields';
 import { object, strings, type Fields } from './model';
 
 export function WhatsappSourceFields({
   value,
   onChange,
+  hideAdmission = false,
 }: {
+  hideAdmission?: boolean;
   value: Fields;
   onChange: (value: Fields) => void;
 }) {
@@ -112,14 +114,7 @@ export function WhatsappSourceFields({
           </p>
         ) : null}
       </Section>
-      <AdmissionFields
-        value={value.admission}
-        onChange={(admission) => onChange({ ...value, admission })}
-        allowBotMessages={false}
-        privateChats={groups.length === 0}
-        allowGroupMentions={false}
-        allowReplyToBot={false}
-      />
+      {!hideAdmission ? <SourceAdmissionFields value={value} onChange={onChange} /> : null}
     </>
   );
 }

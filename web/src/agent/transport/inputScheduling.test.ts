@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { harness, json } from './controller.fixture';
+import { harness, json, completedInputReceipt } from './controller.fixture';
 import { isIdentityChanged } from './identity';
 
 beforeEach(() => sessionStorage.clear());
@@ -26,7 +26,7 @@ async function holdBackground(h: Awaited<ReturnType<typeof opened>>) {
   };
 }
 
-it('retries a definitive admission conflict with the same body/key while background authority is held', async () => {
+it('reconciles an admission conflict with the same body and key while background authority is held', async () => {
   const h = await opened();
   const release = await holdBackground(h);
   h.post.mockResolvedValueOnce(
@@ -44,11 +44,15 @@ it('retries a definitive admission conflict with the same body/key while backgro
   );
   const onAccepted = vi.fn();
   try {
-    await h.session.send('original input', onAccepted);
+    await expect(h.session.send('original input', onAccepted)).rejects.toThrow();
+    h.inputReceipt.mockImplementationOnce(async () => completedInputReceipt());
+    await h.session.recover(onAccepted);
     expect(h.currentUser).toHaveBeenCalledTimes(4);
     expect(onAccepted).toHaveBeenCalledOnce();
-    expect(h.post).toHaveBeenCalledTimes(2);
-    const [first, second] = h.post.mock.calls.map(([init]) => init!);
+    expect(h.post).toHaveBeenCalledOnce();
+    expect(h.inputReceipt).toHaveBeenCalledOnce();
+    const first = h.post.mock.lastCall![0]!;
+    const second = h.inputReceipt.mock.lastCall![0]!;
     expect(second!.body).toBe(first!.body);
     expect(new Headers(second!.headers).get('idempotency-key')).toBe(
       new Headers(first!.headers).get('idempotency-key'),
@@ -68,9 +72,11 @@ it('recovers lost admission with exact input, answer context and key on the inpu
   const release = await holdBackground(h);
   const onAccepted = vi.fn();
   try {
+    h.inputReceipt.mockImplementationOnce(async () => completedInputReceipt());
     await h.session.forSnapshotRefresh().recover(onAccepted);
     expect(onAccepted).toHaveBeenCalledOnce();
-    const [first, second] = h.post.mock.calls.map(([init]) => init!);
+    const first = h.post.mock.lastCall![0]!;
+    const second = h.inputReceipt.mock.lastCall![0]!;
     // Journal decoding canonicalizes field order; the complete request values
     // and idempotency key must survive recovery unchanged.
     expect(JSON.parse(String(second!.body))).toStrictEqual(JSON.parse(String(first!.body)));
@@ -79,7 +85,8 @@ it('recovers lost admission with exact input, answer context and key on the inpu
       new Headers(first!.headers).get('idempotency-key'),
     );
     await h.session.recover(onAccepted);
-    expect(h.post).toHaveBeenCalledTimes(2);
+    expect(h.post).toHaveBeenCalledOnce();
+    expect(h.inputReceipt).toHaveBeenCalledOnce();
   } finally {
     await release();
   }
@@ -164,8 +171,10 @@ it('retains uncertain admission when navigation aborts after POST and recovers t
   await rejected;
   expect(onAccepted).not.toHaveBeenCalled();
   expect(h.session.journal.read()?.state).toBe('pending');
+  h.inputReceipt.mockImplementationOnce(async () => completedInputReceipt());
   await h.session.recover(onAccepted);
-  const [first, second] = h.post.mock.calls.map(([init]) => init!);
+  const first = h.post.mock.lastCall![0]!;
+  const second = h.inputReceipt.mock.lastCall![0]!;
   expect(second!.body).toBe(first!.body);
   expect(new Headers(second!.headers).get('idempotency-key')).toBe(
     new Headers(first!.headers).get('idempotency-key'),

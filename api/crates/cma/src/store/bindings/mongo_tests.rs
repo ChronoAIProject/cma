@@ -14,6 +14,7 @@ pub(super) async fn fixture() -> (Client, String, MongoSandboxStore) {
         std::env::var("CHRONO_TEST_MONGODB_URI").expect("local Mongo replica set is required");
     let client = Client::with_uri_str(uri).await.unwrap();
     let database = format!("cma_binding_test_{}", uuid::Uuid::new_v4().simple());
+    crate::store::migrations::prepare_bindings_for_test(&client.database(&database)).await;
     let store = MongoSandboxStore::open(&client, &database).await.unwrap();
     (client, database, store)
 }
@@ -327,3 +328,6 @@ async fn mongo_worker_classification_sees_other_clients_committed_key_history() 
         .unwrap());
     writer.database(&database).drop().await.unwrap();
 }
+
+#[path = "admission_contention_tests.rs"]
+mod admission_contention;

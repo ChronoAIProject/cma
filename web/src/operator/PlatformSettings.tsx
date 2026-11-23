@@ -10,6 +10,7 @@ import { usageSettingsChanged } from '../usage/metrics/useMeasuredUsage';
 import { reviewSettingsDraft } from './settingsDraft';
 import { IdleThresholdFields, NumberField } from './SettingsFields';
 import { SpendControls } from './SpendControls';
+import { SpendStatus } from './SpendStatus';
 import { budgetChanged, spendBudget, spendListConflict } from './spendBudget';
 import { validateSpendBudget, type SpendErrors } from './spendValidation';
 import { SettingsAudit } from './SettingsAudit';
@@ -91,7 +92,7 @@ function SettingsEditor({
   const [spendErrors, setSpendErrors] = useState<SpendErrors>({});
   const submitting = useRef(false);
   const spendChanged = budgetChanged(base.model_budget, draft.model_budget);
-  // PUT restores an omitted policy before the backend evaluates either gate.
+  // PUT restores an omitted policy before the backend evaluates the write gates.
   const effectiveBudget = draft.model_budget === undefined ? base.model_budget : draft.model_budget;
   const { edit: writesAvailable, save: canSave } = spendAvailability(availability, effectiveBudget);
   const spendSaveBlocked = !canSave;
@@ -234,13 +235,17 @@ function SettingsEditor({
         disabled={disabled || !writesAvailable}
         writesAvailable={writesAvailable}
         requestWritesAvailable={availability.model_request_budget_writes_available === true}
+        platformWritesAvailable={availability.platform_spend_writes_available === true}
         errors={spendErrors}
         onChange={(model_budget) => {
           update({ ...draft, model_budget });
           setSpendErrors({});
         }}
       />
-      {!writesAvailable || availability.model_request_budget_writes_available !== true ? (
+      <SpendStatus client={client} disabled={disabled} key={`spend-${revision}`} />
+      {!writesAvailable ||
+      availability.model_request_budget_writes_available !== true ||
+      availability.platform_spend_writes_available !== true ? (
         <div className="operator-actions">
           <Button
             disabled={busy}

@@ -108,7 +108,7 @@ if mode == "release"
     value['staging-cd'].delete('on')
   end
   reject.call("staging package grant invokes an alternate workflow") do |value|
-    value['staging-cd']['jobs']['release']['uses'] = './.github/workflows/unreviewed.yml'
+    value['staging-cd']['jobs']['release_web']['uses'] = './.github/workflows/unreviewed.yml'
   end
   reject.call("staging publisher gains contents write") do |value|
     value['staging-release']['jobs']['publish']['permissions']['contents'] = 'write'

@@ -83,6 +83,28 @@ async fn startup_and_unavailable_checks_fail_closed_and_recover() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn backend_free_readiness_depends_on_the_store_and_has_no_execution_workers() {
+    let probe = Arc::new(Probe::default());
+    probe.mode.store(1, Ordering::SeqCst);
+    let app = backend_free_router(probe.clone());
+    for reason in ["pending", "unavailable"] {
+        let (status, body) = response(&app, "/ready").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["dependency"]["reason"], reason);
+        assert_eq!(body["sandbox"]["available"], false);
+        assert_eq!(body["workers"], serde_json::json!([]));
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(response(&app, "/livez").await.0, StatusCode::OK);
+    probe.mode.store(0, Ordering::SeqCst);
+    tick(CHECK_INTERVAL).await;
+    let (status, body) = response(&app, "/ready").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["sandbox"]["available"], false);
+    assert_eq!(body["workers"], serde_json::json!([]));
+}
+
+#[tokio::test(start_paused = true)]
 async fn unanswered_checks_are_single_flight_bounded_cancelled_and_recover() {
     let probe = Arc::new(Probe::default());
     probe.mode.store(2, Ordering::SeqCst);
@@ -118,14 +140,26 @@ async fn stale_success_fails_closed_even_if_the_monitor_stops() {
         failure: None,
         diagnostic_check: 0,
     }));
-    let app = routes(state, None);
-    assert_eq!(response(&app, "/ready").await.0, StatusCode::OK);
+    let apps = [
+        routes(state.clone(), None),
+        health_routes(HealthState {
+            store: state,
+            workers: None,
+            diagnostics: None,
+            backend_free: true,
+        }),
+    ];
+    for app in &apps {
+        assert_eq!(response(app, "/ready").await.0, StatusCode::OK);
+    }
     tick(MAX_CHECK_AGE).await;
-    let (status, body) = response(&app, "/ready").await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["dependency"]["reason"], "stale");
-    assert_eq!(body["dependency"]["age_ms"], 5000);
-    assert_eq!(response(&app, "/livez").await.0, StatusCode::OK);
+    for app in &apps {
+        let (status, body) = response(app, "/ready").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["dependency"]["reason"], "stale");
+        assert_eq!(body["dependency"]["age_ms"], 5000);
+        assert_eq!(response(app, "/livez").await.0, StatusCode::OK);
+    }
 }
 
 #[tokio::test(start_paused = true)]

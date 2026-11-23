@@ -18,6 +18,7 @@ async fn cached_frontier_after_atomic_completion_is_not_corruption() {
     // Preserve the exact pre-completion snapshot through the next read without
     // relying on host speed to hit the production 100ms cache window.
     *node.partitions.snapshot.lock().await = Snapshot {
+        lanes: Default::default(),
         at: Instant::now(),
         heads,
     };
@@ -59,6 +60,7 @@ async fn cached_frontier_after_atomic_completion_is_not_corruption() {
         .await
         .unwrap();
     *node.partitions.snapshot.lock().await = Snapshot {
+        lanes: Default::default(),
         at: Instant::now(),
         heads: BTreeMap::from([(id, current)]),
     };
@@ -66,6 +68,55 @@ async fn cached_frontier_after_atomic_completion_is_not_corruption() {
     assert!(page.plans.is_empty());
     assert_eq!(page.issues.len(), 1);
     assert_eq!(page.issues[0].error, AdmissionError::Corrupt);
+    drop(node);
+    database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn duplicate_permanent_and_ephemeral_heads_are_never_scheduled() {
+    use crate::replicas::{partition_model::partition_id, store::Write};
+    let database = Fixture::new().await;
+    let node = database.node(1).await;
+    let server = crate::ingress::routing_store::test_server::Server::start().await;
+    let plan = admitted(&server, &node, 0).await;
+    let id = partition_id(
+        &node.partitions.membership.deployment,
+        &plan,
+        &plan.targets[0],
+    );
+    let (head, _) = node
+        .partitions
+        .head(&id, &plan.identity.owner)
+        .await
+        .unwrap();
+    node.partitions
+        .store
+        .write(
+            &id,
+            &plan.identity.owner,
+            &head,
+            Write {
+                retained_until: Some(plan.retained_until),
+                projection: Some(node.partitions.projection(true)),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let (heads, lanes) = node.partitions.active_snapshot().await.unwrap();
+    assert!(
+        heads.is_empty(),
+        "duplicate custody must be removed from the snapshot"
+    );
+    assert!(lanes.is_empty(), "duplicate custody must not remain a lane");
+    let frontier = Frontier {
+        partitions: node.partitions.clone(),
+        plans: server.store(),
+    };
+    let page = frontier.page(None).await.unwrap();
+    assert!(page.plans.is_empty());
+    assert_eq!(page.issues.len(), 0);
     drop(node);
     database.cleanup().await;
 }
@@ -204,15 +255,32 @@ async fn bad_head_does_not_block_healthy_dispatch_hints() {
             node.journal(),
         );
         let view = operator.inspect().await.unwrap();
-        assert_eq!(view.unreadable.len(), 1, "{fault}");
-        assert_eq!(
-            view.unreadable[0].age_seconds.is_some(),
-            stage == Stage::PlanCheck
-        );
-        assert_eq!(
-            (view.unreadable[0].class, view.unreadable[0].stage),
-            (class, stage)
-        );
+        if fault == "missing_item" {
+            // Admission here only enqueues; it never claims or dispatches the
+            // target. Its plan is live, but no TargetState was ever written.
+            // With both item and work record absent, retirement is eligible.
+            assert!(node
+                .partitions
+                .store
+                .raw(&bad.targets[0].id, true)
+                .await
+                .unwrap()
+                .is_none());
+            assert!(view.unreadable.is_empty());
+            assert_eq!(view.candidates.len(), 1);
+            assert_eq!(view.candidates[0].state, "missing_item_expired");
+            assert_eq!(view.candidates[0].binding.head_work, bad.targets[0].id);
+        } else {
+            assert_eq!(view.unreadable.len(), 1, "{fault}");
+            assert_eq!(
+                view.unreadable[0].age_seconds.is_some(),
+                stage == Stage::PlanCheck
+            );
+            assert_eq!(
+                (view.unreadable[0].class, view.unreadable[0].stage),
+                (class, stage)
+            );
+        }
 
         assert_eq!(
             page.issues[0].record_id,
@@ -521,6 +589,30 @@ async fn transient_head_advances_pages_and_retries_without_starving_dispatch() {
     assert_eq!(recovered.plans[0].targets[0].id, bad.targets[0].id);
     assert!(recovered.issues.is_empty());
     drop(frontier);
+    drop(node);
+    database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn assignment_uses_lane_set_from_the_same_head_snapshot() {
+    let database = Fixture::new().await;
+    let node = database.node(1).await;
+    let server = crate::ingress::routing_store::test_server::Server::start().await;
+    admitted(&server, &node, 0).await;
+    let (heads, lanes) = node.partitions.active_snapshot().await.unwrap();
+    assert!(lanes.is_empty());
+    // A concurrent refresh replaces the cache after the caller captured heads.
+    node.partitions.snapshot.lock().await.lanes = heads.keys().cloned().collect();
+    let counter = node.command_counter().unwrap();
+    let before = counter.counts();
+    let assigned = node.partitions.assignments(&heads, &lanes).await.unwrap();
+    assert_eq!(assigned.len(), 1);
+    assert_eq!(
+        counter.counts(),
+        before,
+        "ordinary placement must use the captured lane set without Mongo reads"
+    );
     drop(node);
     database.cleanup().await;
 }

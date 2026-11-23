@@ -18,7 +18,9 @@ import {
   loadCorpus,
   resolveSymbols,
   type ContractCase,
+  type Dispatch,
 } from './public-contract/context.js';
+import { revocationDispatch } from './public-contract/resource-revocations.js';
 import { resourceDispatch } from './public-contract/resources.js';
 import { deliverableDispatch, deliveryExchange } from './public-contract/deliverables.js';
 import { eventWorkerDispatch } from './public-contract/event-workers.js';
@@ -40,7 +42,10 @@ import { browserOperations, verifyNavigation } from './public-contract/navigatio
 import { verifyDesktopUpgrade } from './public-contract/desktop.js';
 
 const corpus = loadCorpus();
-const dispatch = {
+const dispatch: Record<string, Dispatch> = {
+  'GET /api/v1/account/deletion': ({ client, options }) => client.accountDeletion.status(options),
+  'POST /api/v1/account/deletion': ({ client, body, command }) =>
+    client.accountDeletion.request(body, command),
   ...capacityRecoveryDispatch,
   ...deliverableDispatch(corpus),
   ...usageDispatch,
@@ -49,6 +54,7 @@ const dispatch = {
   ...botDispatch,
   ...eventWorkerDispatch,
   ...resourceDispatch,
+  ...revocationDispatch,
   ...operatorDispatch,
   ...triggerDispatch,
   ...experienceDispatch,
@@ -141,7 +147,7 @@ describe('shared public contract', () => {
     const required = Object.entries(inventory.operations).flatMap(([operation, contract]) =>
       (contract.required_protocol_failures ?? []).map((code) => ({ operation, code })),
     );
-    expect(required).toHaveLength(28);
+    expect(required).toHaveLength(24);
     for (const { operation, code } of required) {
       const fixtures = corpus.filter(
         (fixture) =>

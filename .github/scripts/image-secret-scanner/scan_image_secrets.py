@@ -14,13 +14,14 @@ from pathlib import Path
 
 from image_secrets.archive import ImageArchive
 from image_secrets.backend import Gitleaks
+from image_secrets.cache import LayerCache, fingerprint
 from image_secrets.common import Budget, ScanError, digest_file, write_json
 from image_secrets.engine import scan_archive
 from image_secrets.gate import assess
 from image_secrets.policy import Allowlist, Findings
 
 HERE = Path(__file__).resolve().parent
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 
 
 class SafeArgumentParser(argparse.ArgumentParser):
@@ -71,10 +72,14 @@ def arguments(argv):
     parser.add_argument(
         "--classifications", type=Path, help="SA-01 classifications bound to this exact archive"
     )
+    parser.add_argument("--staging-runtime-component", choices=["runtime", "runtime-omarchy"])
     parser.add_argument("--tmpdir", type=Path, help="Private temporary parent with sufficient disk space")
     parser.add_argument("--max-bytes", type=int, default=20 * 1024**3)
     parser.add_argument("--max-entries", type=int, default=1000000)
     parser.add_argument("--timeout", type=int, default=900, help="Per subprocess timeout in seconds")
+    parser.add_argument("--detector-cache-input", type=Path)
+    parser.add_argument("--detector-cache-output", type=Path)
+    parser.add_argument("--detector-cache-context")
     parser.add_argument(
         "--expected-archive-sha256", help="Optional external binding to a previously saved tar"
     )
@@ -134,6 +139,8 @@ def main(argv=None):
         print('{"status":"ERROR","error":"output-must-be-new-directory"}', file=sys.stderr)
         return 2
     try:
+        if args.staging_runtime_component and args.blocking_rules != "credential":
+            raise ScanError("runtime-certificate-scope-requires-credential-mode")
         if args.classifications and args.blocking_rules != "credential":
             raise ScanError("classifications-require-credential-mode")
         if min(args.max_bytes, args.max_entries, args.timeout) <= 0:
@@ -146,6 +153,8 @@ def main(argv=None):
             "gitleaks_rules_sha256": digest_file(HERE / "gitleaks.toml"),
             "allowlist_sha256": digest_file(args.allowlist),
         }
+        if args.staging_runtime_component:
+            result["policy"]["staging_runtime_component"] = args.staging_runtime_component
         result["scanner_files"] = {
             str(p.relative_to(HERE)): digest_file(p)
             for p in [HERE / "scan-image-secrets.sh", HERE / "scan_image_secrets.py"]
@@ -155,6 +164,12 @@ def main(argv=None):
             workspace = Path(temporary)
             backend = Gitleaks("gitleaks", HERE / "gitleaks.toml", workspace, args.timeout)
             result["gitleaks_version"] = backend.version
+            if args.detector_cache_input or args.detector_cache_output or args.detector_cache_context:
+                cache_policy = dict(result["policy"], blocking_rules=args.blocking_rules,
+                                    classifications=digest_file(args.classifications) if args.classifications else None)
+                identity = fingerprint(HERE, backend, VERSION, args.detector_cache_context,
+                                       [args.max_bytes, args.max_entries, args.timeout], cache_policy)
+                backend.cache = LayerCache(identity, args.detector_cache_input)
             candidate = Path(args.input)
             is_archive = args.input_kind == "archive" or (args.input_kind == "auto" and candidate.is_file())
             if is_archive:
@@ -174,12 +189,17 @@ def main(argv=None):
                 raise ScanError("insufficient-scratch-space")
             budget = Budget(args.max_bytes, args.max_entries)
             with ImageArchive(archive_path, workspace, budget, args.timeout) as archive:
-                result["inventory"] = scan_archive(archive, backend, findings, workspace, budget, progress)
+                result["inventory"] = scan_archive(archive, backend, findings, workspace, budget, progress,
+                                                   trust_component=args.staging_runtime_component)
             if digest_file(archive_path) != initial_digest:
                 raise ScanError("archive-changed-during-scan")
             result["scanned_bytes"] = budget.bytes
             result["complete"] = True
             result["status"] = "FINDINGS" if findings.items else "CLEAN"
+            if backend.cache is not None:
+                result["detector_cache"] = {"identity": backend.cache.identity, **backend.cache.stats}
+                if args.detector_cache_output:
+                    backend.cache.save(args.detector_cache_output)
     except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 -- fail closed and suppress unsafe error text
         # Third-party exceptions can contain image contents. Publish only our fixed identifiers.
         result["status"] = "ERROR"

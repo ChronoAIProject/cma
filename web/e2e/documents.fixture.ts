@@ -35,6 +35,12 @@ export class LocalDocuments {
   shares: { subject: string; permission: string }[] = [];
   links: { id: string; permission: string; created_at: string }[] = [];
   exists = true;
+  saveFailures = 0;
+  saveGate?: Promise<void>;
+  registryDocuments?: readonly LocalDocuments['document'][];
+  registryPageSize = 50;
+  registryFailures = 0;
+  registryGate?: { readonly query: string; readonly wait: Promise<void> };
   async route(page: Page, baseURL: string) {
     await this.boundary.route(page, baseURL);
     await page.route('**/api/v1/documents**', async (route) => {
@@ -63,11 +69,30 @@ export class LocalDocuments {
           this.document.title = String(body.title);
           return reply(this.document);
         }
-        return reply({ items: this.exists ? [this.document] : [], next: null });
+        const scope = url.searchParams.get('scope');
+        const query = url.searchParams.get('q') ?? '';
+        if (this.registryGate?.query === query) await this.registryGate.wait;
+        if (this.registryFailures > 0) {
+          this.registryFailures--;
+          return reply({ detail: 'Artifacts are unavailable' }, 503);
+        }
+        const documents = this.registryDocuments ?? (this.exists ? [this.document] : []);
+        const matches = documents.filter(
+          (document) =>
+            (scope !== 'owned' || document.access === 'owner') &&
+            (scope !== 'shared' || document.access !== 'owner') &&
+            document.title.toLowerCase().includes(query.toLowerCase()),
+        );
+        const offset = Number(url.searchParams.get('cursor') ?? 0);
+        const end = offset + this.registryPageSize;
+        return reply({
+          items: matches.slice(offset, end),
+          next: end < matches.length ? String(end) : null,
+        });
       }
       if (url.pathname.endsWith('/source'))
         return reply({
-          id: documentId,
+          id: this.document.id,
           revision: this.document.source_revision,
           markdown: this.markdown,
         });
@@ -85,6 +110,13 @@ export class LocalDocuments {
           return reply({ document: this.document, comment });
         }
         return reply({ items: this.comments, next: null });
+      }
+      if (url.pathname.endsWith('/share-recipients')) {
+        const recipient = { subject: 'Reviewer-A', display_name: 'Local Reviewer' };
+        const search = url.searchParams.get('q')?.trim().toLowerCase();
+        return reply(
+          search && recipient.display_name.toLowerCase().includes(search) ? [recipient] : [],
+        );
       }
       if (url.pathname.endsWith('/shares')) return reply(this.shares);
       if (url.pathname.includes('/shares/')) {
@@ -108,8 +140,13 @@ export class LocalDocuments {
         }
         return reply(this.links);
       }
-      if (url.pathname === `/api/v1/documents/${documentId}`) {
+      if (url.pathname === `/api/v1/documents/${this.document.id}`) {
         if (method === 'PATCH') {
+          await this.saveGate;
+          if (this.saveFailures > 0) {
+            this.saveFailures--;
+            return reply({ detail: 'Save could not be confirmed' }, 503);
+          }
           if (body.expected_revision !== this.document.revision)
             return reply({ detail: 'Revision conflict' }, 409);
           this.document.revision++;

@@ -1,6 +1,8 @@
 //! Coordinator cancellation and late-commit regressions; deterministic store only.
 use super::*;
-use layer3_adapter::owner_protocol::TransportAuthority;
+use layer3_adapter::owner_protocol::{
+    OwnershipFailure, OwnershipFailureReason as Reason, OwnershipPhase as Phase, TransportAuthority,
+};
 use std::sync::{atomic::Ordering, Arc};
 use std::time::Duration;
 
@@ -58,8 +60,21 @@ async fn receiver_check_cancellation_preserves_healthy_owners_and_unacknowledged
         0
     );
     // Containment must not turn real membership/store loss into availability.
+    // A transient partition only skips ticks; it extends nothing, so the
+    // established membership and healthy owner still end on schedule.
     fixture.store.inner.partition(true);
-    assert!(fixture.manager.maintain().await.is_err());
+    let mut ticks = 0;
+    let failure = loop {
+        tokio::time::advance(Duration::from_millis(HEARTBEAT_INTERVAL_MS)).await;
+        ticks += 1;
+        fixture.peer.maintain().await.unwrap();
+        match fixture.manager.maintain().await {
+            Ok(handoffs) => assert!(handoffs.is_empty()),
+            Err(error) => break error,
+        }
+        assert!(ticks <= DEFAULT_LEASE_MS / HEARTBEAT_INTERVAL_MS);
+    };
+    assert_eq!(failure, OwnershipError::Stale);
     assert!(!fixture.manager.is_ready());
     assert!(!fixture.healthy.is_current());
     fixture.peer.maintain().await.unwrap();
@@ -241,3 +256,166 @@ async fn delayed_receiver_cancellation_cannot_relabel_generic_revocation_or_expi
         assert!(!fixture.healthy.is_current());
     }
 }
+
+#[tokio::test]
+async fn http_failure_survives_cancelled_worker_and_failed_cleanup() {
+    use layer3_adapter::hosted::{HostedControlTransport, ProviderHostedControlTransport};
+    use layer3_adapter::{provider::SandboxClient, wire::RequestFrame, RuntimeHandle};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let fixture = Fixture::new(false).await;
+    let original = fixture
+        .store
+        .owner(&fixture.cancelled.token.agent_id)
+        .await
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let transport = ProviderHostedControlTransport::for_retained_opensandbox(SandboxClient::new(
+        format!("http://{address}"),
+        "fixture-key",
+    ))
+    .unwrap();
+    let server = tokio::spawn(async move {
+        for action in [
+            "endpoints/9090",
+            "manager-ownership/challenge",
+            "manager-ownership/revoke",
+        ] {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            loop {
+                let mut byte = [0];
+                assert_eq!(stream.read(&mut byte).await.unwrap(), 1);
+                bytes.push(byte[0]);
+                if bytes.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let headers = String::from_utf8(bytes).unwrap();
+            assert!(headers.lines().next().unwrap().contains(action));
+            let length = headers
+                .lines()
+                .find_map(|line| {
+                    let (key, value) = line.split_once(':')?;
+                    key.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().unwrap())
+                })
+                .unwrap_or(0);
+            let mut body = vec![0; length];
+            stream.read_exact(&mut body).await.unwrap();
+            let (status, body) = if action.starts_with("endpoints") {
+                (
+                    "200 OK",
+                    serde_json::json!({"endpoint":format!("http://{address}")}).to_string(),
+                )
+            } else if action.ends_with("challenge") {
+                ("404 Not Found", "private-response-marker".into())
+            } else {
+                ("403 Forbidden", "private-response-marker".into())
+            };
+            stream.write_all(format!("HTTP/1.1 {status}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), listener.accept())
+                .await
+                .is_err()
+        );
+    });
+    let result = fixture
+        .cancelled
+        .run(async {
+            let _result = transport
+                .exchange(
+                    &RuntimeHandle::new("fixture-runtime"),
+                    RequestFrame::Resources,
+                )
+                .await;
+            // The normal worker-return path can be discarded after receiver cancellation.
+            std::future::pending::<()>().await
+        })
+        .await;
+    assert_eq!(result, Err(OwnershipError::Stale));
+    let expected = OwnershipFailure::http(Phase::Challenge, 404);
+    assert_eq!(fixture.cancelled.receiver_failure(), Some(expected));
+    assert_eq!(
+        fixture
+            .store
+            .inner
+            .recorded_failure(&fixture.cancelled.token.agent_id),
+        Some((fixture.cancelled.token.clone(), expected))
+    );
+    assert!(fixture.cancelled.receiver_cancelled());
+    assert_eq!(
+        fixture
+            .store
+            .owner(&fixture.cancelled.token.agent_id)
+            .await
+            .unwrap(),
+        original
+    );
+    assert!(fixture.cancelled.revoke_transports().await.is_err());
+    server.await.unwrap();
+    assert_eq!(fixture.cancelled.receiver_failure(), Some(expected));
+    assert_eq!(
+        fixture
+            .store
+            .inner
+            .recorded_failure(&fixture.cancelled.token.agent_id),
+        Some((fixture.cancelled.token.clone(), expected))
+    );
+    fixture.healthy_work().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn store_failure_is_recorded_before_cancelled_scope_loses_its_result() {
+    for phase in [Phase::Challenge, Phase::Confirm] {
+        let fixture = Fixture::new(false).await;
+        fixture.store.inner.partition(true);
+        let result = fixture
+            .cancelled
+            .run(async {
+                let _ = fixture.cancelled.check_for_phase(phase).await;
+                std::future::pending::<()>().await
+            })
+            .await;
+        assert_eq!(result, Err(OwnershipError::Stale));
+        assert_eq!(
+            fixture.cancelled.receiver_failure(),
+            Some(OwnershipFailure::new(phase, Reason::TransportUnavailable))
+        );
+        fixture.store.inner.partition(false);
+        fixture.healthy_work().await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn renewal_deadline_is_retained_before_receiver_cancellation() {
+    let fixture = Fixture::new(false).await;
+    fixture.store.pause_next.store(true, Ordering::SeqCst);
+    let pending = tokio::spawn({
+        let authority = fixture.cancelled.clone();
+        async move {
+            authority
+                .run(async {
+                    let _ = authority.renew_for_challenge().await;
+                    std::future::pending::<()>().await
+                })
+                .await
+        }
+    });
+    fixture.store.entered.notified().await;
+    tokio::time::advance(Duration::from_millis(STORE_DEADLINE_MS)).await;
+    assert_eq!(pending.await.unwrap(), Err(OwnershipError::Stale));
+    assert_eq!(
+        fixture.cancelled.receiver_failure(),
+        Some(OwnershipFailure::new(Phase::Renew, Reason::Deadline))
+    );
+    assert!(fixture.cancelled.receiver_cancelled());
+    fixture.healthy_work().await;
+}
+
+#[path = "receiver_failure_tests.rs"]
+mod persistence;
+
+#[path = "receiver_diagnostic_tests.rs"]
+mod diagnostics;

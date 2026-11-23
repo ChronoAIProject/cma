@@ -3,6 +3,21 @@ import { expect, it } from 'vitest';
 import { agent, transport } from './resource-fixtures.js';
 import type { AgentLifecycleCreateRequest } from '../index.js';
 
+it.each(['inferred', true, { mode: 'automatic' }])(
+  'rejects invalid title mode %j before admitting a lifecycle request',
+  async (title_mode) => {
+    const test = transport();
+    test.answer({ id: 'unexpected-operation', status: 'provisioning' }, 202);
+    expect(() =>
+      test.client.agents.createLifecycle(
+        { name: 'New task', title_mode } as AgentLifecycleCreateRequest,
+        { idempotencyKey: 'invalid-title-mode' },
+      ),
+    ).toThrow('title_mode');
+    expect(test.calls).toHaveLength(0);
+  },
+);
+
 it('reads the actual checkout separately from the requested ref and upstream source commit', async () => {
   const test = transport();
   test.answer({
@@ -33,6 +48,8 @@ it.each([
   { desktop: true },
   { machine_included: true },
   { desktop: true, machine_included: true },
+  { title_mode: 'automatic' as const },
+  { title_mode: 'named' as const },
 ])(
   'preserves exact initial task bytes, desktop intent %j and the original key on lifecycle replay',
   async (desktopIntent) => {
@@ -91,4 +108,18 @@ it('retains the selected Workspace and exact inline intent when replaying Agent 
     expect(new Headers(call.init.headers).get('Idempotency-Key')).toBe('exact-context');
     expect(JSON.parse(String(call.init.body))).toEqual(request);
   }
+});
+
+it('preserves typed template fields and compiled text exactly on replay', async () => {
+  const test = transport();
+  test.answer({ id: 'template-operation', status: 'provisioning' }, 202);
+  const body: AgentLifecycleCreateRequest = {
+    name: 'Task',
+    template: { id: 'research', version: 1, fields: { topic: '  Synthetic topic  ' } },
+    initial_message:
+      'Research Synthetic topic and summarize the key findings, with links to sources.',
+  };
+  for (let attempt = 0; attempt < 2; attempt += 1)
+    await test.client.agents.createLifecycle(body, { idempotencyKey: 'template-key' });
+  expect(test.calls.map((call) => JSON.parse(String(call.init.body)))).toEqual([body, body]);
 });

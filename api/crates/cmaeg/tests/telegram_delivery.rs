@@ -34,6 +34,8 @@ mod native_media;
 mod observations;
 #[path = "delivery/platforms.rs"]
 mod platforms;
+#[path = "delivery/produced.rs"]
+mod produced;
 #[path = "delivery/recording.rs"]
 mod recording;
 #[path = "delivery/recording_fixtures.rs"]

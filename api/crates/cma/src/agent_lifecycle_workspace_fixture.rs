@@ -45,12 +45,31 @@ pub(super) fn facade(
     profiles: Arc<crate::store::MongoProfileStore>,
     operations: Arc<MongoAgentLifecycleStore>,
 ) -> Arc<InlineAgentLifecycle> {
+    facade_with_limit(
+        store,
+        profiles,
+        operations,
+        SandboxPolicy::default().max_sandboxes_per_owner,
+        FixedSandboxCredentialPrerequisite::SetupRequired,
+    )
+}
+
+pub(super) fn facade_with_limit(
+    store: Arc<InMemorySandboxStore>,
+    profiles: Arc<crate::store::MongoProfileStore>,
+    operations: Arc<MongoAgentLifecycleStore>,
+    limit: u16,
+    credentials: impl layer2_core::sandbox::SandboxCredentialPrerequisite + 'static,
+) -> Arc<InlineAgentLifecycle> {
     InlineAgentLifecycle::new(
         SandboxService::new(
             store.clone(),
             profiles.clone(),
-            SandboxPolicy::default(),
-            Arc::new(FixedSandboxCredentialPrerequisite::SetupRequired),
+            SandboxPolicy {
+                max_sandboxes_per_owner: limit,
+                ..SandboxPolicy::default()
+            },
+            Arc::new(credentials),
         ),
         WorkspaceService::new(store.clone(), profiles.clone()),
         AgentService::new(
@@ -173,4 +192,13 @@ pub(in crate::agent_lifecycle) async fn seed(store: &InMemorySandboxStore) -> Wo
     };
     store.create_workspace(workspace.clone()).await.unwrap();
     workspace
+}
+
+pub(super) fn task_policy() -> Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy> {
+    Arc::new(
+        serde_json::from_value(json!({
+            "mode":"accounts", "accounts":["owner"], "capabilities":["task_home_admission"]
+        }))
+        .unwrap(),
+    )
 }

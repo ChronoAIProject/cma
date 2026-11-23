@@ -68,13 +68,11 @@ async fn executable_delivers_ack_final_and_tool_reply_and_drains_the_relay_witho
             assert_eq!(relay.texts(), ["Working on it…"]);
         }
         process.terminate().await;
-        assert!(
-            tokio::time::timeout(Duration::from_secs(9), process.child.wait())
-                .await
-                .unwrap()
-                .unwrap()
-                .success()
-        );
+        assert!(tokio::time::timeout(Duration::from_secs(9), process.wait())
+            .await
+            .unwrap()
+            .unwrap()
+            .success());
         if use_tool {
             assert_eq!(relay.texts(), ["tool answer"]);
         } else {
@@ -168,13 +166,11 @@ async fn executable_accepts_signed_custom_events_and_curl_streams_through_comple
         }
     }
     process.terminate().await;
-    assert!(
-        tokio::time::timeout(Duration::from_secs(3), process.child.wait())
-            .await
-            .unwrap()
-            .unwrap()
-            .success()
-    );
+    assert!(tokio::time::timeout(Duration::from_secs(3), process.wait())
+        .await
+        .unwrap()
+        .unwrap()
+        .success());
     process.assert_safe_logs();
     assert!(!process.logs().contains(secret.as_str()));
     provider.close().await;
@@ -216,13 +212,11 @@ async fn real_signed_callback_accepts_at_two_seconds_and_defers_at_twenty() {
         );
         process.assert_safe_logs();
         process.terminate().await;
-        assert!(
-            tokio::time::timeout(Duration::from_secs(2), process.child.wait())
-                .await
-                .unwrap()
-                .unwrap()
-                .success()
-        );
+        assert!(tokio::time::timeout(Duration::from_secs(2), process.wait())
+            .await
+            .unwrap()
+            .unwrap()
+            .success());
         fake.close().await;
     }
 }
@@ -266,7 +260,7 @@ async fn sigterm_keeps_process_alive_until_ten_second_turn_finishes() {
     assert_eq!(refused.json::<Value>().await.unwrap()["code"], "draining");
     assert!(process.child.try_wait().unwrap().is_none());
     assert!(
-        tokio::time::timeout(Duration::from_secs(12), process.child.wait())
+        tokio::time::timeout(Duration::from_secs(12), process.wait())
             .await
             .unwrap()
             .unwrap()
@@ -310,13 +304,11 @@ async fn nyxid_photo_callback_is_refused_not_rejected_by_the_real_binary() {
     }
     process.assert_safe_logs();
     process.terminate().await;
-    assert!(
-        tokio::time::timeout(Duration::from_secs(3), process.child.wait())
-            .await
-            .unwrap()
-            .unwrap()
-            .success()
-    );
+    assert!(tokio::time::timeout(Duration::from_secs(3), process.wait())
+        .await
+        .unwrap()
+        .unwrap()
+        .success());
     provider.close().await;
 }
 
@@ -387,12 +379,10 @@ async fn relay_video_with_sender_facts_reaches_provider_when_media_enabled() {
     }
     process.assert_safe_logs();
     process.terminate().await;
-    assert!(
-        tokio::time::timeout(Duration::from_secs(3), process.child.wait())
-            .await
-            .unwrap()
-            .unwrap()
-            .success()
-    );
+    assert!(tokio::time::timeout(Duration::from_secs(3), process.wait())
+        .await
+        .unwrap()
+        .unwrap()
+        .success());
     provider.close().await;
 }

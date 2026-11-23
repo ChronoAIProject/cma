@@ -19,6 +19,8 @@ pub struct SandboxRuntimeLossRequest {
     pub expected_runtime: Option<RuntimeBinding>,
     /// Preserve a storage-owning provider object while replacing its process.
     pub retain_runtime: bool,
+    /// Set only after proof of exact whole-Sandbox native retirement finality.
+    pub native_retirement_finality: bool,
     pub interruption_cause: super::super::SandboxInterruptionCause,
     pub observed_at: String,
 }
@@ -142,11 +144,21 @@ pub fn apply_sandbox_runtime_loss(
         if let Some(outcome) = precheck_agent_time(agent, request)? {
             return Ok(SandboxRuntimeLossApplication::Complete(outcome));
         }
+        if request.native_retirement_finality && !retirement_debt_is_local(agent) {
+            return Ok(SandboxRuntimeLossApplication::Complete(
+                SandboxRuntimeLossOutcome::NotEligible,
+            ));
+        }
         if !agent.status.is_live() {
             continue;
         }
-        let (next, logs) = recover_agent(current, agent, &request.observed_at)
-            .map_err(|error| corrupt(&error.to_string()))?;
+        let (next, logs) = recover_agent(
+            current,
+            agent,
+            &request.observed_at,
+            request.native_retirement_finality,
+        )
+        .map_err(|error| corrupt(&error.to_string()))?;
         if next.status != agent.status {
             events.push(SandboxEventKind::AgentStatusChanged {
                 agent_id: agent.id.clone(),
@@ -233,6 +245,17 @@ pub fn precheck_sandbox_runtime_loss(
     {
         return Ok(Some(SandboxRuntimeLossOutcome::Superseded));
     }
+    if request.native_retirement_finality
+        && (current.status != SandboxStatus::Retiring
+            || current.work.step != super::super::SandboxWorkStep::StopAgents
+            || request.retain_runtime
+            || current
+                .runtime
+                .as_ref()
+                .is_none_or(|binding| !binding.runtime_id.starts_with("agent-sandbox:")))
+    {
+        return Ok(Some(SandboxRuntimeLossOutcome::NotEligible));
+    }
     if !current.requires_runtime_loss_recovery()
         || seconds_from_rfc3339(&current.updated_at)
             .is_none_or(|at| Some(at) > seconds_from_rfc3339(&request.observed_at))
@@ -290,3 +313,17 @@ fn precheck_agent_time(
 #[cfg(test)]
 #[path = "reconciliation_tests.rs"]
 mod tests;
+
+/// Physical runtime/home deletion cannot settle unknown external obligations.
+/// Keep this check in the aggregate transaction as well as before provider I/O.
+#[doc(hidden)]
+pub fn retirement_debt_is_local(agent: &Agent) -> bool {
+    agent.work.cleanup_debt.iter().all(|debt| {
+        matches!(
+            debt.step,
+            crate::sandbox::AgentWorkStep::AddWorktree
+                | crate::sandbox::AgentWorkStep::MaterializeHome
+                | crate::sandbox::AgentWorkStep::OpenConversation
+        )
+    })
+}

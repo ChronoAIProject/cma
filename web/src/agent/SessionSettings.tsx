@@ -1,12 +1,13 @@
-import { observeRead } from './transport/readObserver';
-import { retrySchedule } from './transport/readRetry';
 import type { AgentUsage } from '../api/types';
 import { usageDescription } from './usageDescription';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useCmaClient } from '../api/context';
 import type { AgentModelOption, AgentSettingsView } from '../api/client';
 import { Button } from '../ui/Button';
-import { AgentSettingsError } from '../api/rest/agentSettings';
+import { useSettingsEditor, type SettingsEditorAdapter } from './useSettingsEditor';
+import { unconfirmedSettingsWarning, useUnconfirmedSettings } from './useUnconfirmedSettings';
+import { parseSettingsIntentBody } from './settingsIntent';
+import { agentTransportJournal } from './transport/journal';
 import { Presence } from '../ui/Presence';
 import { ModelEffortPicker } from './ModelEffortPicker';
 import { PermissionChip } from './PermissionChip';
@@ -14,32 +15,81 @@ import { effortLabel, modelLabel, permissionLabel } from './settingsChoices';
 import { IconChevronDownOutline14 } from '../ui/icons';
 import './ComposerSettings.css';
 
-export function SessionSettings({
+interface SessionSettingsProps {
+  readonly usage?: AgentUsage;
+  readonly agentId: string;
+  readonly viewerId?: string;
+  readonly active: boolean;
+  readonly runtimeReady: boolean;
+  readonly busy: boolean;
+  readonly authorizeUpdate?: (signal: AbortSignal) => Promise<void>;
+}
+
+const settingsProposal = (view: AgentSettingsView): AgentSettingsView => ({
+  model: view.model,
+  reasoning_effort: view.reasoning_effort,
+  permission_mode: view.permission_mode,
+});
+const sameSettings = (left: AgentSettingsView, right: AgentSettingsView) =>
+  left.model === right.model &&
+  left.reasoning_effort === right.reasoning_effort &&
+  left.permission_mode === right.permission_mode;
+
+export function SessionSettings(props: SessionSettingsProps) {
+  return <SessionSettingsForm key={JSON.stringify([props.viewerId, props.agentId])} {...props} />;
+}
+
+function SessionSettingsForm({
   agentId,
+  viewerId,
   active,
   runtimeReady,
   busy,
   authorizeUpdate,
   usage,
-}: {
-  readonly usage?: AgentUsage;
-  readonly agentId: string;
-  readonly active: boolean;
-  readonly runtimeReady: boolean;
-  readonly busy: boolean;
-  readonly authorizeUpdate?: (signal: AbortSignal) => Promise<void>;
-}) {
+}: SessionSettingsProps) {
   const client = useCmaClient();
   const [expanded, setExpanded] = useState(false);
   const settingsId = useId();
   const usageId = useId();
   const usageText = usageDescription(usage);
-  const [value, setValue] = useState<AgentSettingsView>();
-  const [saved, setSaved] = useState<AgentSettingsView>();
-  const [error, setError] = useState<string>();
-  const [pending, setPending] = useState(false);
-  const [confirmed, setConfirmed] = useState(false);
-  const [reload, setReload] = useState(0);
+  const authorize = useRef(authorizeUpdate);
+  useLayoutEffect(() => {
+    authorize.current = authorizeUpdate;
+  }, [authorizeUpdate]);
+  const adapter = useMemo<
+    SettingsEditorAdapter<AgentSettingsView, AgentSettingsView, AgentSettingsView>
+  >(
+    () => ({
+      read: (signal) => client.readAgentSettings!(agentId, { signal }),
+      update: async (body, options) => {
+        await authorize.current?.(options.signal);
+        options.signal.throwIfAborted();
+        return client.updateAgentSettings!(agentId, body, options);
+      },
+      proposal: settingsProposal,
+      body: (_view, proposal) => ({ ...settingsProposal(proposal), model: proposal.model.trim() }),
+      equal: sameSettings,
+      pending: (view) => view.pending === true,
+      retention: viewerId
+        ? {
+            journal: () =>
+              agentTransportJournal(sessionStorage, viewerId, agentId).settingsIntent(
+                'settings',
+                parseSettingsIntentBody,
+              ),
+            proposal: settingsProposal,
+          }
+        : undefined,
+    }),
+    [client, agentId, viewerId],
+  );
+  const editor = useSettingsEditor(adapter, active && !!client.readAgentSettings);
+  const { proposal: value, snapshot: saved, intent } = editor;
+  const error = editor.failure?.message;
+  const pending = editor.saving;
+  const confirmed = editor.confirmed;
+  useUnconfirmedSettings(intent !== undefined && !viewerId);
   const [modelsReload, setModelsReload] = useState(0);
   const [models, setModels] = useState<readonly AgentModelOption[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
@@ -70,10 +120,6 @@ export function SessionSettings({
     })();
     return () => request.abort();
   }, [active, runtimeReady, expanded, agentId, busy, client, modelsReload]);
-  const [intent, setIntent] = useState<{ key: string; body: AgentSettingsView } | undefined>(
-    undefined,
-  );
-  const mutation = useRef<AbortController | undefined>(undefined);
   const unavailableModelChange = Boolean(
     value &&
     saved &&
@@ -82,87 +128,11 @@ export function SessionSettings({
   );
   const draft =
     unavailableModelChange && !intent && value && saved ? { ...value, model: saved.model } : value;
-  const changed = Boolean(draft && JSON.stringify(draft) !== JSON.stringify(saved));
-  useEffect(() => {
-    if (!confirmed) return;
-    const timer = setTimeout(() => setConfirmed(false), 3000);
-    return () => clearTimeout(timer);
-  }, [confirmed]);
-  useEffect(() => () => mutation.current?.abort(), []);
-  useEffect(() => {
-    if (!active || !client.readAgentSettings) return;
-    let failures = 0;
-    const observer = observeRead(async (signal) =>
-      client.readAgentSettings!(agentId, { signal: signal })
-        .then((settings) => {
-          if (signal.aborted) return;
-          setSaved(settings);
-          setValue(settings);
-          setError(undefined);
-          if (settings.pending === false)
-            setIntent((previous) =>
-              previous &&
-              previous.body.model === settings.model &&
-              previous.body.reasoning_effort === settings.reasoning_effort &&
-              previous.body.permission_mode === settings.permission_mode
-                ? undefined
-                : previous,
-            );
-          failures = 0;
-          if (settings.pending) return { next: 2000, cooldown: 2000 };
-        })
-        .catch((cause: unknown) => {
-          if (!signal.aborted)
-            setError(
-              cause instanceof Error ? cause.message : 'Agent settings could not be loaded.',
-            );
-          if (!signal.aborted) return retrySchedule(cause, ++failures);
-        }),
-    );
-    return () => observer.dispose();
-  }, [active, agentId, client, reload]);
+  const changed = Boolean(draft && saved && !sameSettings(draft, saved));
   const update = async () => {
-    if (mutation.current || pending || busy || !draft || !client.updateAgentSettings) return;
-    const request = new AbortController();
-    mutation.current = request;
-    const retained = intent ?? {
-      key: crypto.randomUUID(),
-      body: {
-        model: draft.model.trim(),
-        reasoning_effort: draft.reasoning_effort,
-        permission_mode: draft.permission_mode,
-      },
-    };
-    setIntent(retained);
-    setPending(true);
-    setError(undefined);
-    setConfirmed(false);
-    try {
-      await authorizeUpdate?.(request.signal);
-      request.signal.throwIfAborted();
-      const result = await client.updateAgentSettings(agentId, retained.body, {
-        idempotencyKey: retained.key,
-        signal: request.signal,
-      });
-      if (request.signal.aborted) return;
-      if (!result.pending) setIntent(undefined);
-      setSaved(result);
-      setValue(result);
-      setConfirmed(!result.pending);
-      if (result.pending) setReload((count) => count + 1);
-    } catch (cause) {
-      if (cause instanceof AgentSettingsError && [400, 409, 422].includes(cause.status))
-        setIntent(undefined);
-      if (!request.signal.aborted)
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : 'The settings update could not be confirmed. Retry the same request.',
-        );
-    } finally {
-      if (!request.signal.aborted) setPending(false);
-      mutation.current = undefined;
-    }
+    if (busy || !runtimeReady || !draft || !editor.canApply) return;
+    if (!intent) editor.edit(draft);
+    await editor.apply();
   };
   if (!client.readAgentSettings || !client.updateAgentSettings)
     return (
@@ -185,10 +155,9 @@ export function SessionSettings({
         </div>
       </>
     );
-  const locked = pending || intent !== undefined || draft?.pending === true;
+  const locked = editor.locked;
   const change = (next: AgentSettingsView) => {
-    setValue(next);
-    setConfirmed(false);
+    editor.edit(next);
   };
   const summary = draft
     ? `${modelLabel(models, draft.model)} · ${effortLabel(draft.reasoning_effort)} · ${permissionLabel(draft.permission_mode)}`
@@ -253,13 +222,20 @@ export function SessionSettings({
         </p>
       )}
       <div className="agent-settings__status">
-        {value?.pending ? (
+        {editor.pending ? (
           <p role="status">Waiting for the runtime to confirm these settings.</p>
         ) : null}
         {busy && changed ? (
           <p role="status">Settings can be changed after the current turn finishes.</p>
         ) : null}
+        {intent ? <p role="status">{unconfirmedSettingsWarning(viewerId)}</p> : null}
+        {editor.waiting ? <p role="status">Waiting before another request is allowed.</p> : null}
         {error ? <p role="alert">{error}</p> : null}
+        {error && draft ? (
+          <Button size="sm" disabled={editor.busy || editor.waiting} onClick={editor.refresh}>
+            Refresh current settings
+          </Button>
+        ) : null}
         <Presence>
           {confirmed ? <p role="status">Settings applied to this Agent.</p> : null}
         </Presence>
@@ -267,7 +243,13 @@ export function SessionSettings({
           <Button
             size="sm"
             placement="agent-settings__apply"
-            disabled={pending || busy || !draft.model.trim() || (!intent && !changed)}
+            disabled={
+              !editor.canApply ||
+              busy ||
+              !runtimeReady ||
+              !draft.model.trim() ||
+              (!intent && !changed)
+            }
             onClick={() => void update()}
           >
             {pending ? 'Applying settings…' : intent ? 'Retry settings update' : 'Apply settings'}
@@ -276,7 +258,8 @@ export function SessionSettings({
           <Button
             size="sm"
             placement="agent-settings__apply"
-            onClick={() => setReload((count) => count + 1)}
+            disabled={editor.busy || editor.waiting}
+            onClick={editor.refresh}
           >
             Retry settings
           </Button>

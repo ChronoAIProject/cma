@@ -8,6 +8,17 @@ use futures_util::TryStreamExt;
 use mongodb::options::ReadConcern;
 use std::future::IntoFuture;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::store) enum IntegrityFailurePolicy {
+    Quarantine,
+    ReportOnly,
+}
+
+struct CompleteScanOptions {
+    snapshot: bool,
+    failure_policy: IntegrityFailurePolicy,
+}
+
 pub(in crate::store) async fn scan_complete_log_with_session<F>(
     caller: ScanCaller,
     store: &MongoSandboxStore,
@@ -19,7 +30,43 @@ pub(in crate::store) async fn scan_complete_log_with_session<F>(
 where
     F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
 {
-    scan_complete_log(caller, store, agent_id, last_seq, session, false, visit).await
+    scan_complete_log_with_policy(
+        caller,
+        store,
+        agent_id,
+        last_seq,
+        session,
+        IntegrityFailurePolicy::Quarantine,
+        visit,
+    )
+    .await
+}
+
+pub(in crate::store) async fn scan_complete_log_with_policy<F>(
+    caller: ScanCaller,
+    store: &MongoSandboxStore,
+    agent_id: &AgentId,
+    last_seq: u64,
+    session: &mut mongodb::ClientSession,
+    failure_policy: IntegrityFailurePolicy,
+    visit: F,
+) -> Result<LogSummary, TransactionLogError>
+where
+    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
+{
+    scan_complete_log(
+        caller,
+        store,
+        agent_id,
+        last_seq,
+        session,
+        CompleteScanOptions {
+            snapshot: false,
+            failure_policy,
+        },
+        visit,
+    )
+    .await
 }
 
 pub(in crate::store) async fn scan_complete_log_with_snapshot_session<F>(
@@ -33,21 +80,61 @@ pub(in crate::store) async fn scan_complete_log_with_snapshot_session<F>(
 where
     F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
 {
-    scan_complete_log(caller, store, agent_id, last_seq, session, true, visit).await
+    scan_complete_log_with_snapshot_policy(
+        caller,
+        store,
+        agent_id,
+        last_seq,
+        session,
+        IntegrityFailurePolicy::Quarantine,
+        visit,
+    )
+    .await
 }
 
-pub(in crate::store) async fn scan_complete_log<F>(
+pub(in crate::store) async fn scan_complete_log_with_snapshot_policy<F>(
     caller: ScanCaller,
     store: &MongoSandboxStore,
     agent_id: &AgentId,
     last_seq: u64,
     session: &mut mongodb::ClientSession,
-    snapshot: bool,
+    failure_policy: IntegrityFailurePolicy,
+    visit: F,
+) -> Result<LogSummary, TransactionLogError>
+where
+    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
+{
+    scan_complete_log(
+        caller,
+        store,
+        agent_id,
+        last_seq,
+        session,
+        CompleteScanOptions {
+            snapshot: true,
+            failure_policy,
+        },
+        visit,
+    )
+    .await
+}
+
+async fn scan_complete_log<F>(
+    caller: ScanCaller,
+    store: &MongoSandboxStore,
+    agent_id: &AgentId,
+    last_seq: u64,
+    session: &mut mongodb::ClientSession,
+    options: CompleteScanOptions,
     mut visit: F,
 ) -> Result<LogSummary, TransactionLogError>
 where
     F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
 {
+    let CompleteScanOptions {
+        snapshot,
+        failure_policy,
+    } = options;
     let find = store.agents.find_one(doc! { "_id": agent_id.as_str() });
     let find = if snapshot {
         find.read_concern(ReadConcern::snapshot())
@@ -74,10 +161,12 @@ where
         }
         let proof = proof::validate_summary(store, agent, row, caller, session, snapshot).await;
         if let Err(error) = proof {
-            if matches!(
-                &error,
-                TransactionLogError::Domain(SandboxStoreError::Corrupt(_))
-            ) {
+            if failure_policy == IntegrityFailurePolicy::Quarantine
+                && matches!(
+                    &error,
+                    TransactionLogError::Domain(SandboxStoreError::Corrupt(_))
+                )
+            {
                 let _ = session.abort_transaction().await;
                 proof::quarantine_row(store, row).await?;
             }
@@ -116,7 +205,8 @@ where
         },
     )
     .await;
-    if !visitor_failed
+    if failure_policy == IntegrityFailurePolicy::Quarantine
+        && !visitor_failed
         && matches!(
             &result,
             Err(TransactionLogError::Domain(

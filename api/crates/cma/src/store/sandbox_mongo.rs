@@ -19,7 +19,8 @@ use super::{durability::majority_collection, schema::initialize_collections};
 #[path = "sandbox_mongo_transactions.rs"]
 mod transactions;
 pub(super) use transactions::{
-    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
+    commit_transaction, commit_transaction_with_refusal, is_confirmed_body_retry, is_duplicate_key,
+    is_transient, start_transaction, CommitOutcome, PrecommitRefusal,
 };
 
 pub use super::profile_mongo::MongoProfileStore;
@@ -68,6 +69,11 @@ use collections::SANDBOX_COLLECTIONS;
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) usage_capture: Option<super::sandbox_usage_export::CaptureStore>,
+    pub(super) initial_settings: super::settings_defaults::InitialSettings,
+    pub(super) ownership_retry_hints_enabled: bool,
+    #[cfg(test)]
+    pub(super) ownership_retry_hint_now: Option<mongodb::bson::DateTime>,
     pub(super) empty_discovery: super::empty_discovery::Policy,
     pub(super) agent_connection_observations:
         Option<std::sync::Arc<super::agent_connection_observations::Observations>>,
@@ -92,6 +98,7 @@ pub struct MongoSandboxStore {
     pub(super) bounded_transcript_reads: bool,
     pub(super) bounded_usage_reads: bool,
     pub(super) access_snapshot_session: bool,
+    pub(super) resource_list_batch_reads: bool,
     pub(super) sandbox_agent_projection: bool,
     pub(super) sandbox_snapshot_reads: bool,
     pub(super) sandbox_batched_reads: bool,
@@ -181,10 +188,28 @@ impl MongoSandboxStore {
         Self::open_with_storage(client, name, super::checkpoint_storage::test_storage(name)).await
     }
 
+    #[cfg(test)]
     pub(super) async fn open_with_storage(
         client: &Client,
         name: &str,
         objects: std::sync::Arc<dyn super::CheckpointBlobStore>,
+    ) -> Result<Self, StoreError> {
+        Self::open_with_schema(
+            client,
+            name,
+            objects,
+            &mut super::schema::StartupObserver::new(Default::default()),
+            Default::default(),
+        )
+        .await
+    }
+
+    pub(super) async fn open_with_schema(
+        client: &Client,
+        name: &str,
+        objects: std::sync::Arc<dyn super::CheckpointBlobStore>,
+        observer: &mut super::schema::StartupObserver,
+        initial_settings: super::settings_defaults::InitialSettings,
     ) -> Result<Self, StoreError> {
         let database = client.database(name);
         require_transaction_topology(&database).await?;
@@ -192,6 +217,8 @@ impl MongoSandboxStore {
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
+            usage_capture: None,
+            initial_settings,
             empty_discovery: Default::default(),
             agent_connection_observations: None,
             segment_logs: super::agent_log_segments::SegmentCollections::new(&database),
@@ -214,12 +241,13 @@ impl MongoSandboxStore {
             bounded_transcript_reads: false,
             bounded_usage_reads: false,
             access_snapshot_session: false,
+            resource_list_batch_reads: false,
             sandbox_agent_projection: false,
             sandbox_snapshot_reads: false,
             sandbox_batched_reads: false,
             bounded_response_reads: false,
             writer_policy: Default::default(),
-            bindings: super::bindings::BindingCollections::open(&database).await?,
+            bindings: super::bindings::BindingCollections::open(&database, observer).await?,
             client: client.clone(),
             checkpoint_objects,
             sandboxes: majority_collection(&database, SANDBOXES),
@@ -234,6 +262,9 @@ impl MongoSandboxStore {
             agent_writes: Default::default(),
             agent_control_write_coordination: false,
             agent_ownership: None,
+            ownership_retry_hints_enabled: false,
+            #[cfg(test)]
+            ownership_retry_hint_now: None,
             agent_manager_instance: None,
             platform: Default::default(),
             agent_access_tools: majority_collection(
@@ -290,7 +321,7 @@ impl MongoSandboxStore {
             agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
-        super::budget::initialize_settings(&store).await?;
+        super::budget::initialize_settings(&store, initial_settings).await?;
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
         super::sandbox_sessions::ensure_indexes(&store.sandbox_sessions).await?;
         super::sandbox_usage::ensure_indexes(&store).await?;

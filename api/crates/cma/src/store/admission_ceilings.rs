@@ -3,7 +3,7 @@
 use layer2_core::admission::{
     AdmissionCeilingsRead, AdmissionCeilingsState, AdmissionCeilingsStore,
 };
-use layer2_core::{PlatformSettings, StoreError, SubjectId};
+use layer2_core::{StoreError, SubjectId};
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::{Client, ClientSession, Collection};
 
@@ -22,29 +22,59 @@ mod history;
 mod mongo_tests;
 
 pub struct MongoAdmissionCeilingsStore {
+    initial_settings: super::settings_defaults::InitialSettings,
     client: Client,
     settings: Collection<Document>,
     activity: Collection<ActivityDoc>,
     database: mongodb::Database,
     deployment_limit: u16,
+    pub(crate) pending_homes: super::pending_launch_homes::PendingLaunchHomes,
 }
 
 impl MongoAdmissionCeilingsStore {
+    #[cfg(test)]
     pub(super) async fn open(
         client: &Client,
         database: &str,
         deployment_limit: u16,
     ) -> Result<Self, StoreError> {
+        Self::open_with_defaults(client, database, deployment_limit, Default::default()).await
+    }
+
+    pub(super) async fn open_with_defaults(
+        client: &Client,
+        database: &str,
+        deployment_limit: u16,
+        initial_settings: super::settings_defaults::InitialSettings,
+    ) -> Result<Self, StoreError> {
         let database = client.database(database);
         require_transaction_topology(&database).await?;
         schema::initialize_collections(&database, &[SETTINGS, ACTIVITY]).await?;
         Ok(Self {
+            pending_homes: super::pending_launch_homes::PendingLaunchHomes::new(
+                client,
+                database.name(),
+            ),
+            initial_settings,
             client: client.clone(),
             database: database.clone(),
             deployment_limit,
             settings: majority_collection(&database, SETTINGS),
             activity: majority_collection(&database, ACTIVITY),
         })
+    }
+
+    pub(super) fn with_activation(
+        mut self,
+        activation: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        self.pending_homes = self.pending_homes.with_activation(activation);
+        self
+    }
+
+    pub(crate) fn with_pending_home_reconciliation(mut self, enabled: bool) -> Self {
+        self.pending_homes = self.pending_homes.with_enabled(enabled);
+        self
     }
 
     async fn apply(
@@ -101,8 +131,8 @@ impl MongoAdmissionCeilingsStore {
                 )));
             }
         } else {
-            let settings =
-                mongodb::bson::serialize_to_bson(&PlatformSettings::default()).map_err(|_| {
+            let settings = mongodb::bson::serialize_to_bson(&self.initial_settings.platform())
+                .map_err(|_| {
                     ApplyError::Domain(StoreError::Malformed("serialize default settings".into()))
                 })?;
             self.settings
@@ -158,6 +188,19 @@ enum ApplyError {
 
 #[async_trait::async_trait]
 impl AdmissionCeilingsStore for MongoAdmissionCeilingsStore {
+    async fn reconcile_pending_homes(
+        &self,
+        observed: u64,
+        actor: &SubjectId,
+        reason: &str,
+        dry_run: bool,
+        now: u64,
+    ) -> Result<layer2_core::admission::PendingHomesReconciliation, StoreError> {
+        self.pending_homes
+            .correct(observed, actor, reason, dry_run, now)
+            .await
+    }
+
     async fn read(&self) -> Result<AdmissionCeilingsState, StoreError> {
         self.settings
             .find_one(doc! {"_id": "platform"})

@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::{
     client_types::{
-        ProviderError, ProviderHandle, TurnRequest, TurnStream, MAX_METADATA_KEYS,
+        ProviderError, ProviderHandle, TurnEvents, TurnRequest, TurnStream, MAX_METADATA_KEYS,
         MAX_METADATA_KEY_BYTES, MAX_METADATA_VALUE_BYTES,
     },
     probe::{classify_conformance, AgentCardProbe},
@@ -28,12 +28,14 @@ use super::{
 
 /// One client pool per allowlisted provider.
 pub struct ProviderClient {
+    pub(crate) execution_verifiers: Arc<crate::turns::execution_receipt::ExecutionVerifiers>,
     providers: BTreeMap<ProviderSlug, ProviderHandle>,
     pub(super) request_timeout: Duration,
     pub(super) management_auth: Option<super::management_auth::CmaManagementAuth>,
     worker_credentials: Option<crate::worker_credentials::WorkerCredentials>,
     tracking_required: bool,
     pub(super) turn_trace_enabled: bool,
+    pub(super) context_diagnostics_enabled: bool,
 }
 
 impl ProviderClient {
@@ -83,12 +85,14 @@ impl ProviderClient {
             );
         }
         Ok(Self {
+            execution_verifiers: Arc::default(),
             providers,
             request_timeout,
             management_auth: None,
             worker_credentials: None,
             tracking_required: false,
             turn_trace_enabled: false,
+            context_diagnostics_enabled: false,
         })
     }
 
@@ -99,6 +103,11 @@ impl ProviderClient {
             config.provider_request_timeout,
             config.provider_max_inflight,
         )?;
+        client.context_diagnostics_enabled = super::context_retry::diagnostics::config::enabled()?;
+        client.execution_verifiers =
+            Arc::new(crate::turns::execution_receipt::ExecutionVerifiers::new(
+                config.turns.provider_execution_attribution_enabled,
+            ));
         client.turn_trace_enabled =
             crate::telemetry::turn_trace::config::enabled().map_err(|_| {
                 ProviderError::InvalidRequest("invalid turn trace configuration".into())
@@ -120,6 +129,13 @@ impl ProviderClient {
 
     pub fn provider_count(&self) -> usize {
         self.providers.len()
+    }
+    pub fn with_execution_verifiers(
+        mut self,
+        verifiers: Arc<crate::turns::execution_receipt::ExecutionVerifiers>,
+    ) -> Self {
+        self.execution_verifiers = verifiers;
+        self
     }
     pub(crate) fn with_worker_credentials(
         mut self,
@@ -302,7 +318,7 @@ impl ProviderClient {
         Ok(TurnStream {
             trace: association,
             accepted,
-            events,
+            events: TurnEvents(events),
             request_started,
         })
     }

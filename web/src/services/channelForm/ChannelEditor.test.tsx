@@ -6,6 +6,38 @@ import { channelDraft, channelRequest, defaultProfile, object } from './model';
 import { routingRequest } from './RoutingFields';
 const reply = (v: unknown) => new Response(JSON.stringify(v));
 afterEach(() => vi.unstubAllGlobals());
+it.each([undefined, '', 'Connection_Retained.Exact-123'])(
+  'keeps the saved connection %s read-only and exact in unrelated saves',
+  async (connection) => {
+    const channel = fixture();
+    if (connection !== undefined) channel.definition.connection_ref = connection;
+    const done = vi.fn();
+    const fetcher = vi.fn().mockResolvedValue(reply({ ...channel, version: 8 }));
+    vi.stubGlobal('fetch', fetcher);
+    render(<ChannelEditor channel={channel} onDone={done} denied={vi.fn()} />);
+    const reference = screen.getByRole('textbox', { name: 'Connection reference' });
+    expect(reference).toHaveAttribute('readonly');
+    expect(reference).toHaveValue(connection || 'No shared connection');
+    const user = userEvent.setup();
+    await user.type(reference, 'replacement');
+    await user.keyboard('{Control>}a{/Control}{Backspace}');
+    expect(reference).toHaveValue(connection || 'No shared connection');
+    fireEvent.change(screen.getByLabelText('Channel name'), { target: { value: 'Renamed' } });
+    expect(fetcher).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Save channel' }));
+    await waitFor(() => expect(done).toHaveBeenCalledOnce());
+    expect(fetcher).toHaveBeenCalledOnce();
+    const [path, request] = fetcher.mock.calls[0]!;
+    expect(path).toBe('/api/event-gateway/v1/channels/channel_fixture');
+    expect(request.method).toBe('PUT');
+    const body = JSON.parse(request.body);
+    expect(body).toMatchObject({ name: 'Renamed', expected_version: 7 });
+    if (connection === undefined) expect(body).not.toHaveProperty('connection_ref');
+    else expect(body.connection_ref).toBe(connection);
+    expect(body).not.toHaveProperty('credentials');
+    expect(body.sources).toEqual(channelRequest(channelDraft(channel), {}, channel).sources);
+  },
+);
 function fixture(): Channel {
   return {
     channel_id: 'channel_fixture',
@@ -386,3 +418,70 @@ it('keeps unsaved consumer policy separate from a central routing save and then 
   expect(second.routing.max_targets).toBe(2);
   expect(second.routing.consumers[0].label).toBe('Unsaved reviewer');
 });
+
+it.each([
+  ['retained-private-service', 'personal-custom-service'],
+  ['aa480b39-3ba0-42af-9c21-10d02885337c', '106f2888-6bb9-4ff1-a8d8-249af96c06ac'],
+])(
+  'shows actionable scope refusal for %s with unchanged saves before and after',
+  async (retained, added) => {
+    const source = fixture();
+    source.definition.provider = { slug: 'cma', binding_id: 'binding_original' };
+    source.definition.partition = { version: 1, key: 'per_event' };
+    const scope = ['chrono-llm-public', 'ornn-api', retained];
+    source.definition.profile = {
+      ...object(source.definition.profile),
+      permission: { action_mode: 'autonomous', service_scope: scope },
+    };
+    const saved = { ...source, version: 8 };
+    const detail =
+      "This channel's existing agent configuration is pinned. Changing its service scope, skills, prompt, model, environment, or conversation affinity through a channel update is not supported. To use a different service scope, create a new binding with the required scope. The provider binding, credentials, and retained work have not been changed. Keep the current profile to save other channel settings, and rotate credentials separately using that profile. Retrying with the same key will not apply this change.";
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      return body.profile.permission.service_scope.includes(added)
+        ? new Response(JSON.stringify({ status: 409, code: 'provider_rejected', detail }), {
+            status: 409,
+            headers: { 'Content-Type': 'application/problem+json' },
+          })
+        : reply(saved);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const done = vi.fn();
+    const view = (channel: Channel) => (
+      <ChannelEditor
+        channel={channel}
+        section={{ kind: 'consumer', id: 'default' }}
+        onDone={done}
+        denied={vi.fn()}
+      />
+    );
+    const editor = render(view(source));
+    await userEvent.click(screen.getByRole('button', { name: 'Save agent settings' }));
+    await screen.findByText('Changes saved.');
+    await userEvent.click(screen.getByRole('button', { name: 'Add Service scope' }));
+    fireEvent.change(screen.getByLabelText('Service scope 4'), { target: { value: added } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save agent settings' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(detail);
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body))).toMatchObject({
+      expected_version: 8,
+      profile: { permission: { service_scope: [...scope, added] } },
+    });
+
+    editor.unmount();
+    render(view(saved));
+    await userEvent.click(screen.getByRole('button', { name: 'Save agent settings' }));
+    await screen.findByText('Changes saved.');
+    expect(done).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual(
+      Array(3).fill('/api/event-gateway/v1/channels/channel_fixture'),
+    );
+    for (const index of [0, 2]) {
+      expect(fetcher.mock.calls[index]?.[1]?.method).toBe('PUT');
+      expect(
+        JSON.parse(String(fetcher.mock.calls[index]?.[1]?.body)).profile.permission.service_scope,
+      ).toEqual(scope);
+    }
+  },
+);

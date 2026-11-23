@@ -1,4 +1,5 @@
 import type { CommandOptions, ReadOptions } from './client';
+import type { DocumentShareRecipient } from '@cma/client';
 
 export type DocumentPermission = 'read' | 'comment';
 export interface DocumentView {
@@ -86,6 +87,11 @@ export interface DocumentsClient {
   ): Promise<DocumentView>;
   revisions(id: string, options?: DocumentPageOptions): Promise<DocumentPage<DocumentRevision>>;
   shares(id: string, options?: ReadOptions): Promise<readonly DocumentShare[]>;
+  shareRecipients(
+    id: string,
+    query: string,
+    options?: ReadOptions,
+  ): Promise<readonly DocumentShareRecipient[]>;
   grant(
     id: string,
     subject: string,

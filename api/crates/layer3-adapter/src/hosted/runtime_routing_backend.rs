@@ -1,5 +1,9 @@
 //! Preserve each runtime and home provider through creation and recovery.
 use super::*;
+use crate::ingress_budget::{AdmittedError, AdmittedOperation, IngressOwnershipPolicy, OwnedWork};
+
+#[path = "runtime_routing_backend_ingress.rs"]
+mod ingress;
 
 /// Persistence port for the provider chosen before a runtime creation request.
 #[async_trait::async_trait]
@@ -137,6 +141,16 @@ impl HostedBackend for RuntimeBackends {
             .await
     }
 
+    fn run_recovery_command_admitted<'a>(
+        &'a self,
+        handle: &'a RuntimeHandle,
+        command: OwnedWork<super::super::RuntimeRecoveryCommand>,
+        policy: &IngressOwnershipPolicy,
+    ) -> std::result::Result<AdmittedOperation<'a, Vec<u8>>, AdmittedError> {
+        self.admitted_backend(handle, &command, policy)?
+            .run_recovery_command_admitted(handle, command, policy)
+    }
+
     async fn reserve_home_request(
         &self,
         request: &ProviderSandboxRequest,
@@ -264,6 +278,38 @@ impl HostedBackend for RuntimeBackends {
             .provision_with_home(request, home)
             .await
     }
+    async fn challenge_retirement_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        receiver: &crate::receiver_failure::RetirementReceiver,
+    ) -> Result<bool> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?
+            .challenge_retirement_receiver(handle, request, home, receiver)
+            .await
+    }
+    async fn retire_unreachable(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        receiver: &crate::RetirementPod,
+    ) -> Result<()> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?
+            .retire_unreachable(handle, request, home, receiver)
+            .await
+    }
+    async fn verify_retired(
+        &self,
+        handle: &RuntimeHandle,
+        home: &crate::HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?.verify_retired(handle, home).await
+    }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> Result<()> {
         self.for_handle(handle)?.teardown_retained(handle).await
     }
@@ -359,6 +405,16 @@ impl HostedBackend for RuntimeBackends {
     ) -> Result<Option<RuntimeObservation>> {
         self.for_handle(handle)?.adopt(handle, request).await
     }
+    async fn adopt_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeObservation>> {
+        self.for_handle(handle)?
+            .adopt_with_home(handle, request, home)
+            .await
+    }
     async fn inspect_native_runtime(
         &self,
         handle: &RuntimeHandle,
@@ -392,6 +448,16 @@ impl HostedBackend for RuntimeBackends {
         request: RequestFrame,
     ) -> Result<ResponseFrame> {
         self.for_handle(handle)?.exchange(handle, request).await
+    }
+
+    fn exchange_admitted<'a>(
+        &'a self,
+        handle: &'a RuntimeHandle,
+        request: OwnedWork<RequestFrame>,
+        policy: &IngressOwnershipPolicy,
+    ) -> std::result::Result<AdmittedOperation<'a, ResponseFrame>, AdmittedError> {
+        self.admitted_backend(handle, &request, policy)?
+            .exchange_admitted(handle, request, policy)
     }
     async fn export_agent_history(
         &self,
@@ -427,3 +493,7 @@ impl HostedBackend for RuntimeBackends {
         self.for_handle(handle)?.teardown(handle).await
     }
 }
+
+#[cfg(test)]
+#[path = "runtime_routing_backend_ingress_tests.rs"]
+mod ingress_tests;

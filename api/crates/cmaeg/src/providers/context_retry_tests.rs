@@ -8,7 +8,7 @@ use std::sync::{
 async fn timed_out_read_retries_once_after_backoff_within_total_budget() {
     let attempts = Arc::new(AtomicUsize::new(0));
     let start = Instant::now();
-    let result = retry(|| {
+    let result = retry(false, |_| {
         let attempt = attempts.fetch_add(1, Ordering::SeqCst);
         async move {
             if attempt == 0 {
@@ -28,7 +28,7 @@ async fn timed_out_read_retries_once_after_backoff_within_total_budget() {
 async fn persistent_timeout_is_not_absence_and_never_exceeds_two_attempts() {
     let attempts = AtomicUsize::new(0);
     let start = Instant::now();
-    let result = retry(|| {
+    let result = retry(false, |_| {
         attempts.fetch_add(1, Ordering::SeqCst);
         std::future::pending()
     })
@@ -55,7 +55,7 @@ async fn refusal_and_malformed_results_are_not_retried() {
         ProviderError::InvalidRequest("identity changed".into()),
     ] {
         let attempts = AtomicUsize::new(0);
-        let result = retry(|| {
+        let result = retry(false, |_| {
             attempts.fetch_add(1, Ordering::SeqCst);
             let error = error.clone();
             async move { Err(error.into()) }
@@ -71,7 +71,7 @@ async fn retry_after_is_a_minimum_and_is_never_shortened_to_fit() {
     for seconds in [2_u64, 10] {
         let attempts = AtomicUsize::new(0);
         let start = Instant::now();
-        let result = retry(|| {
+        let result = retry(false, |_| {
             let attempt = attempts.fetch_add(1, Ordering::SeqCst);
             async move {
                 if attempt == 0 {
@@ -123,7 +123,7 @@ async fn cancellation_drops_pending_attempt_and_backoff_without_detached_reads()
         let attempts = Arc::new(AtomicUsize::new(0));
         let observed = attempts.clone();
         let task = tokio::spawn(async move {
-            retry(|| {
+            retry(false, |_| {
                 observed.fetch_add(1, Ordering::SeqCst);
                 async move {
                     if pending {

@@ -2,23 +2,28 @@ import { useId, type ReactNode } from 'react';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
 import { Picker } from '../../ui/Picker';
+import { useValidationPath } from './ValidationPath';
 import { text } from './model';
 import '../NodeInspector.css';
 import { ConfigurationDepth, useConfigurationSection } from '../ConfigurationSections';
 export function Section({
+  path,
   title,
   description,
   children,
   navigation,
 }: {
+  path?: string;
   title: string;
   description?: string;
   children: ReactNode;
   navigation?: boolean;
 }) {
+  const validationPath = useValidationPath(path);
   const { id, ref, navigable, depth } = useConfigurationSection(title, navigation);
   return (
     <fieldset
+      data-validation-path={validationPath}
       className="channel-form-section"
       id={id}
       ref={ref}
@@ -32,32 +37,39 @@ export function Section({
   );
 }
 export function TextField({
+  path,
   label,
   value,
   onChange,
+  readOnly,
   required,
   secret,
   multiline,
   hint,
 }: {
+  path?: string;
   label: string;
   value: unknown;
-  onChange: (value: string) => void;
   required?: boolean;
   secret?: boolean;
   multiline?: boolean;
   hint?: string;
-}) {
+} & (
+  { readOnly: true; onChange?: never } | { readOnly?: false; onChange: (value: string) => void }
+)) {
+  const validationPath = useValidationPath(path);
   const id = useId();
+  const description = [required ? 'Required.' : undefined, hint].filter(Boolean).join(' ');
   return (
-    <div className="channel-value-field">
+    <div className="channel-value-field" data-validation-path={validationPath}>
       <label htmlFor={id}>{label}</label>
       {multiline ? (
         <textarea
           id={id}
-          aria-describedby={hint ? `${id}-hint` : undefined}
+          aria-describedby={description ? `${id}-hint` : undefined}
           value={text(value)}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+          readOnly={readOnly}
           rows={3}
           maxLength={32768}
           required={required}
@@ -65,23 +77,25 @@ export function TextField({
       ) : (
         <Input
           id={id}
-          aria-describedby={hint ? `${id}-hint` : undefined}
+          aria-describedby={description ? `${id}-hint` : undefined}
           value={text(value)}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+          readOnly={readOnly}
           type={secret ? 'password' : 'text'}
           autoComplete={secret ? 'new-password' : 'off'}
           required={required}
         />
       )}
-      {hint ? (
+      {description ? (
         <p id={`${id}-hint`} className="channel-field-hint">
-          {hint}
+          {description}
         </p>
       ) : null}
     </div>
   );
 }
 export function NumberField({
+  path,
   label,
   value,
   onChange,
@@ -89,6 +103,7 @@ export function NumberField({
   max,
   step = 1,
 }: {
+  path?: string;
   label: string;
   value: unknown;
   onChange: (n: number) => void;
@@ -96,9 +111,10 @@ export function NumberField({
   max?: number;
   step?: number | 'any';
 }) {
+  const validationPath = useValidationPath(path);
   const id = useId();
   return (
-    <div className="channel-value-field">
+    <div className="channel-value-field" data-validation-path={validationPath}>
       <label htmlFor={id}>{label}</label>
       <Input
         id={id}
@@ -114,16 +130,19 @@ export function NumberField({
   );
 }
 export function Choice({
+  path,
   label,
   value,
   options,
   onChange,
 }: {
+  path?: string;
   label: string;
   value: unknown;
   options: readonly (string | { value: string; label: string; unavailable?: string })[];
   onChange: (v: string) => void;
 }) {
+  const validationPath = useValidationPath(path);
   const id = useId();
   const entries = options.map((v) =>
     typeof v === 'string' ? { value: v, label: v.replaceAll('_', ' ') } : v,
@@ -132,7 +151,7 @@ export function Choice({
   if (current && !entries.some((v) => v.value === current))
     entries.push({ value: current, label: current });
   return (
-    <div className="channel-value-field">
+    <div className="channel-value-field" data-validation-path={validationPath}>
       <label htmlFor={id}>{label}</label>
       <Picker id={id} label={label} value={current} options={entries} onChange={onChange} />
     </div>
@@ -167,21 +186,27 @@ export function Toggle({
   );
 }
 export function StringList({
+  path,
   label,
   value,
   onChange,
   max = 64,
+  requiredItems = false,
 }: {
+  path?: string;
   label: string;
   value: readonly string[];
   onChange: (v: string[]) => void;
   max?: number;
+  requiredItems?: boolean;
 }) {
   return (
-    <Section title={label}>
+    <Section title={label} path={path}>
       {value.map((item, index) => (
         <div className="channel-form-row" key={index}>
           <TextField
+            path={path ? `${path}/${index}` : undefined}
+            required={requiredItems}
             label={`${label} ${index + 1}`}
             value={item}
             onChange={(next) => onChange(value.map((v, i) => (i === index ? next : v)))}

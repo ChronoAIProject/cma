@@ -1,0 +1,36 @@
+.share-recipient-search,
+.share-recipient-search label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.share-recipient-search__list {
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+}
+.share-recipient-search__list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+}
+.share-recipient-search__list li > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.share-recipient-search__list .share-recipient-search__identity {
+  display: grid;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.share-recipient-search__identity small {
+  color: var(--dsw-alias-label-secondary);
+}

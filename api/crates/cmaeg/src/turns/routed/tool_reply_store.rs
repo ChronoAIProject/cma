@@ -16,6 +16,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+mod delayed;
 mod legacy;
 mod replay;
 mod retained;
@@ -254,6 +255,7 @@ impl ReplyStore {
             operation,
             content_hash,
             self.0.partitions.is_some(),
+            false,
         )
         .await
     }
@@ -264,6 +266,7 @@ impl ReplyStore {
         operation: String,
         content_hash: String,
         preserve_legacy: bool,
+        allow_closed: bool,
     ) -> Result<Admission, ExecutionError> {
         let mut record = self.load(plan, target).await?;
         if record.operation_keys.contains(&operation) {
@@ -297,7 +300,7 @@ impl ReplyStore {
                 Admission::Unknown
             });
         }
-        if record.closed {
+        if record.closed && !allow_closed {
             return Ok(Admission::Closed);
         }
         if preserve_legacy {

@@ -14,7 +14,7 @@ pub(super) struct StoredTrigger {
     pub mutation_version: u64,
 }
 
-pub(super) struct StoredRevision {
+pub(in crate::store) struct StoredRevision {
     pub trigger_id: String,
     pub public_id: PublicTriggerId,
     pub owner: String,
@@ -141,15 +141,29 @@ pub(super) fn revision_document(
     })
 }
 
-pub(super) fn read_revision(document: &Document) -> Result<StoredRevision, TriggerStoreError> {
+pub(in crate::store) fn read_revision(
+    document: &Document,
+) -> Result<StoredRevision, TriggerStoreError> {
     require_version(document).map_err(TriggerStoreError::Corrupt)?;
     let revision: TriggerRevision = read_record(document).map_err(TriggerStoreError::Corrupt)?;
     revision
         .validate()
         .map_err(|error| TriggerStoreError::Corrupt(error.to_string()))?;
+    super::publisher_erasure::revision_fenced(document)?;
     let trigger_id = string_field(document, "trigger_id")?;
     let public_id = PublicTriggerId(string_field(document, "public_id")?);
     let owner = string_field(document, "owner")?;
+    if revision.publisher_deleted
+        && (owner != layer2_core::DELETED_ACCOUNT_SUBJECT
+            || document
+                .get_i64("mutation_version")
+                .ok()
+                .is_none_or(|value| value < 1))
+    {
+        return Err(TriggerStoreError::Corrupt(
+            "invalid publisher tombstone authority".into(),
+        ));
+    }
     if !string_field_matches(
         document,
         "_id",

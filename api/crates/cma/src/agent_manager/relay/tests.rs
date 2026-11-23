@@ -1,5 +1,6 @@
 use super::*;
 mod acceptance;
+mod environment;
 mod transport_auth;
 use axum::{
     http::{HeaderMap, Method, StatusCode, Uri},
@@ -26,6 +27,10 @@ pub(crate) struct Instance {
     address: String,
     server: JoinHandle<()>,
 }
+
+pub(crate) fn public_routes(relay: &Arc<Relay>, router: Router) -> Router {
+    relay.routes(router)
+}
 impl Drop for Instance {
     fn drop(&mut self) {
         self.server.abort();
@@ -38,6 +43,14 @@ pub(crate) async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Ins
 async fn cluster_with_capacity(
     count: usize,
     capacity: crate::config::RelayCapacityConfig,
+) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
+    cluster_with_middleware(count, capacity, |router| router).await
+}
+
+async fn cluster_with_middleware(
+    count: usize,
+    capacity: crate::config::RelayCapacityConfig,
+    wrap: impl Fn(Router) -> Router,
 ) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
     let store = Arc::new(MemoryOwnershipStore::default());
     let mut instances = Vec::new();
@@ -73,6 +86,11 @@ async fn cluster_with_capacity(
         updates.install_live_source(relay.live_source());
         let router = relay.routes(
             Router::new()
+                .route("/api/v1/agents/{agent}", get(environment::ready_fixture_read))
+                .route(
+                    "/api/v1/agents/{agent}/transcript",
+                    get(environment::ready_fixture_read),
+                )
                 .route(
                     "/api/v1/agents/{agent}/{*operation}",
                     axum::routing::any(|headers: HeaderMap, body: axum::body::Bytes| async move {
@@ -83,9 +101,11 @@ async fn cluster_with_capacity(
                         {
                             return StatusCode::UNAUTHORIZED.into_response();
                         }
-                        let owner = layer2_core::agent_ownership::execution_owner().unwrap();
+                        // File requests may run locally without an owner.
+                        let owner = layer2_core::agent_ownership::execution_owner();
                         axum::Json(
-                            serde_json::json!({"instance": owner.instance_id, "epoch": owner.epoch, "bytes": body.len(),
+                            serde_json::json!({"instance": owner.as_ref().map(|owner| owner.instance_id.clone()),
+                "epoch": owner.as_ref().map(|owner| owner.epoch), "bytes": body.len(),
                 "idempotency": headers.get("idempotency-key").and_then(|value| value.to_str().ok()),
                 "request": headers.get("x-request-id").and_then(|value| value.to_str().ok()) }),
                         )
@@ -104,6 +124,7 @@ async fn cluster_with_capacity(
                 )
                 .layer(axum::extract::DefaultBodyLimit::max(MAX_BUFFERED_BODY_BYTES)),
         ).layer(axum::middleware::from_fn(test_auth));
+        let router = wrap(router);
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });
@@ -225,6 +246,74 @@ async fn two_and_three_instances_route_to_exact_owner_and_preserve_authorization
                 .status(),
             StatusCode::SERVICE_UNAVAILABLE
         );
+    }
+}
+
+async fn owner_routed(
+    instance: &Instance,
+    method: Method,
+    id: &AgentId,
+    path: &str,
+) -> (StatusCode, serde_json::Value) {
+    let response = client()
+        .request(
+            method,
+            format!("{}/api/v1/agents/{id}/{path}", instance.address),
+        )
+        .header("authorization", "Bearer synthetic-authorized")
+        .send()
+        .await
+        .unwrap();
+    (response.status(), response.json().await.unwrap())
+}
+
+#[tokio::test]
+async fn file_requests_without_a_live_owner_are_served_locally_and_other_owner_routes_refuse() {
+    let (store, instances) = cluster(2).await;
+    let id = AgentId("agt-without-owner".into());
+    let files = [
+        (Method::GET, "files/content"),
+        (Method::GET, "files/tree"),
+        (Method::POST, "files"),
+        (Method::DELETE, "files"),
+    ];
+    let others = [
+        (Method::GET, "environment"),
+        (Method::GET, "models"),
+        (Method::POST, "attachments"),
+        (Method::POST, "recover-worktree"),
+    ];
+    // A stopped Agent has no live owner at all.
+    for instance in &instances {
+        for (method, path) in files.clone() {
+            let (status, body) = owner_routed(instance, method, &id, path).await;
+            assert_eq!(status, StatusCode::OK, "{path}");
+            assert_eq!(body["instance"], serde_json::Value::Null, "{path}");
+        }
+        for (method, path) in others.clone() {
+            let (status, body) = owner_routed(instance, method, &id, path).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+            assert_eq!(body["code"], "agent_owner_unavailable", "{path}");
+        }
+    }
+    // A live owner still serves its Agent's files.
+    let (owner, authority) = acquire(&store, &instances, &id).await;
+    let peer = &instances[(owner + 1) % instances.len()];
+    let (status, body) = owner_routed(peer, Method::GET, &id, "files/content").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["instance"], instances[owner].coordinator.instance_id);
+    assert_eq!(body["epoch"], authority.token.epoch);
+    // A draining owner cannot accept new work; files fall back to the peer.
+    instances[owner].coordinator.begin_drain().await;
+    for (method, path) in files {
+        let (status, body) = owner_routed(peer, method, &id, path).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(body["instance"], serde_json::Value::Null, "{path}");
+    }
+    for (method, path) in others {
+        let (status, body) = owner_routed(peer, method, &id, path).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+        assert_eq!(body["code"], "agent_owner_unavailable", "{path}");
     }
 }
 

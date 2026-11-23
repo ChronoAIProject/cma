@@ -184,6 +184,37 @@ pub trait HostedBackend: Send + Sync {
             "retained provider deletion is unavailable".into(),
         ))
     }
+    async fn challenge_retirement_receiver(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+        _receiver: &crate::receiver_failure::RetirementReceiver,
+    ) -> Result<bool> {
+        Err(crate::AdapterError::Unsupported(
+            "native retirement challenge is unavailable".into(),
+        ))
+    }
+    async fn retire_unreachable(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+        _receiver: &crate::RetirementPod,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "verified provider retirement is unavailable".into(),
+        ))
+    }
+    async fn verify_retired(
+        &self,
+        _handle: &RuntimeHandle,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "provider retirement finality is unavailable".into(),
+        ))
+    }
     async fn suspend(
         &self,
         _handle: &RuntimeHandle,
@@ -276,6 +307,16 @@ pub trait HostedBackend: Send + Sync {
         ))
     }
 
+    /// A persisted home supplies identity only; adoption still proves live authority.
+    async fn adopt_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeObservation>> {
+        self.adopt(handle, request).await
+    }
+
     /// Optional native optimization. None selects the unchanged full adoption path.
     /// The returned observation must include status; caller rechecks home afterward.
     async fn inspect_native_runtime(
@@ -360,6 +401,23 @@ pub trait HostedBackend: Send + Sync {
         ))
     }
 
+    /// Admit command transport, bounded output and errors before constructing
+    /// the recovery future. Preserve the legacy identity/termination checks;
+    /// allocation custody never authorizes a maintenance command.
+    fn run_recovery_command_admitted<'a>(
+        &'a self,
+        _handle: &'a RuntimeHandle,
+        _command: crate::ingress_budget::OwnedWork<RuntimeRecoveryCommand>,
+        _policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> std::result::Result<
+        crate::ingress_budget::AdmittedOperation<'a, Vec<u8>>,
+        crate::ingress_budget::AdmittedError,
+    > {
+        Err(crate::ingress_budget::AdmittedError::Unsupported(
+            "hosted backend has no admitted recovery implementation",
+        ))
+    }
+
     async fn reclaim(&self, _observation: &RuntimeObservation) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "hosted runtime reclamation is not supported".into(),
@@ -371,6 +429,23 @@ pub trait HostedBackend: Send + Sync {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> Result<ResponseFrame>;
+
+    /// Synchronous admission port: no legacy future construction or transport
+    /// fallback. The producer must validate request ownership against `policy`
+    /// and cover transport/decode/working overlap before returning owned output.
+    fn exchange_admitted<'a>(
+        &'a self,
+        _handle: &'a RuntimeHandle,
+        _request: crate::ingress_budget::OwnedWork<RequestFrame>,
+        _policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> std::result::Result<
+        crate::ingress_budget::AdmittedOperation<'a, ResponseFrame>,
+        crate::ingress_budget::AdmittedError,
+    > {
+        Err(crate::ingress_budget::AdmittedError::Unsupported(
+            "hosted backend has no admitted exchange implementation",
+        ))
+    }
 
     /// Revalidate a published checkpoint's writer hold without requiring export.
     async fn verify_checkpoint_hold(

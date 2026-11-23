@@ -145,3 +145,192 @@ fn confirmed_receipts_and_local_buffering_remain_distinct_and_uncertainty_can_re
     assert!(delivery.confirmed_at.is_some());
     assert_eq!(delivery.recipients[0].id, "https://hook.example");
 }
+
+#[tokio::test]
+async fn only_matching_durable_answer_receipts_bound_production() {
+    use crate::{
+        activity::{facts, public_page},
+        delivery::intents::DeliveryOutcome,
+        turns::observer::{DeliveryStep, Destination},
+    };
+    use cmaeg_core::seal::ReplyAddress;
+
+    let server = Server::start_realtime().await;
+    let keys = Arc::new(fixture::keys());
+    let store = ActivityStore::new(server.records.clone(), keys.clone());
+    let activity = fixture::message("fixture");
+    let event = activity.event_id.as_str();
+    store
+        .received_at(
+            "owner",
+            "record",
+            &activity,
+            time::OffsetDateTime::now_utc(),
+        )
+        .await
+        .unwrap();
+    let apply = |change: Change| {
+        let store = &store;
+        async move { store.change("record", event, &change).await.unwrap() }
+    };
+    let address = ReplyAddress::ResultWebhook {
+        url: "https://hook.example/result".into(),
+        hmac_key_id: "fixture".into(),
+    };
+    let confirmed = DeliveryOutcome::Confirmed {
+        platform_message_id: Some("message".into()),
+    };
+    fn receipt(
+        step: DeliveryStep,
+        outcome: &DeliveryOutcome,
+        reply: &ReplyAddress,
+        response: Option<&str>,
+        at: &str,
+        destination: Destination,
+    ) -> Change {
+        let mut change = facts::delivery("default", step, outcome, destination, reply, None)
+            .with_answer_response(response);
+        let delivery = change.delivery.as_mut().unwrap();
+        delivery.observed_at = at.into();
+        if delivery.confirmed_at.is_some() {
+            delivery.confirmed_at = Some(at.into());
+        }
+        change
+    }
+    let answer = |response, at, destination| {
+        receipt(
+            DeliveryStep::Answer,
+            &confirmed,
+            &address,
+            response,
+            at,
+            destination,
+        )
+    };
+
+    apply(Change::state(
+        "default",
+        ConsumerState::Accepted,
+        Some("first".into()),
+    ))
+    .await;
+    // Even the only visible confirmed legacy delivery lacks a response binding.
+    apply(answer(None, "2026-11-21T08:00:01Z", Destination::Origin)).await;
+    let restored = ActivityStore::new(server.records.clone(), keys);
+    let current = || async {
+        public_page(&restored.latest("owner", "record").await.unwrap()).items[0].consumers[0]
+            .clone()
+    };
+    assert!(current().await.produced_by.is_none());
+    apply(answer(None, "2026-11-21T08:00:02Z", Destination::Default).join_retained_answer("first"))
+        .await;
+    assert!(current().await.produced_by.is_none());
+    apply(answer(None, "2026-11-21T08:00:02Z", Destination::Origin).join_retained_answer("first"))
+        .await;
+    assert_eq!(
+        current().await.produced_by.as_deref(),
+        Some("2026-11-21T08:00:01Z")
+    );
+    apply(Change::state(
+        "default",
+        ConsumerState::Accepted,
+        Some("second".into()),
+    ))
+    .await;
+    apply(answer(None, "2026-11-21T08:00:02Z", Destination::Origin).join_retained_answer("second"))
+        .await;
+    for step in [
+        DeliveryStep::Ack,
+        DeliveryStep::Heartbeat,
+        DeliveryStep::ToolReply,
+        DeliveryStep::Failure,
+    ] {
+        apply(receipt(
+            step,
+            &confirmed,
+            &address,
+            Some("second"),
+            "2026-11-21T08:00:03Z",
+            Destination::Origin,
+        ))
+        .await;
+    }
+    for (outcome, reply) in [
+        (
+            DeliveryOutcome::Unknown {
+                reason: "uncertain".into(),
+            },
+            address.clone(),
+        ),
+        (
+            DeliveryOutcome::Confirmed {
+                platform_message_id: None,
+            },
+            ReplyAddress::Sync {
+                waiter: "fixture".into(),
+            },
+        ),
+    ] {
+        apply(receipt(
+            DeliveryStep::Answer,
+            &outcome,
+            &reply,
+            Some("second"),
+            "2026-11-21T08:00:04Z",
+            Destination::Origin,
+        ))
+        .await;
+    }
+    assert!(current().await.produced_by.is_none());
+
+    let second_confirmation = DeliveryOutcome::Confirmed {
+        platform_message_id: Some("second-message".into()),
+    };
+
+    for (at, destination) in [
+        ("2026-11-21T08:00:07Z", Destination::Origin),
+        ("2026-11-21T08:00:06Z", Destination::Default),
+        ("2026-11-21T08:00:05Z", Destination::Origin),
+        ("2026-11-21T08:00:08Z", Destination::Origin),
+    ] {
+        apply(receipt(
+            DeliveryStep::Answer,
+            &second_confirmation,
+            &address,
+            Some("second"),
+            at,
+            destination,
+        ))
+        .await;
+    }
+    let consumer = current().await;
+    assert_eq!(
+        consumer.produced_by.as_deref(),
+        Some("2026-11-21T08:00:05Z")
+    );
+    assert!(consumer.produced_at.is_none());
+    assert_eq!(
+        consumer
+            .deliveries
+            .iter()
+            .filter(|d| d.answer_response_id.as_deref() == Some("second"))
+            .count(),
+        2
+    );
+    assert!(restored
+        .latest("other", "record")
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+
+    let mut exact = Change::state("default", ConsumerState::Produced, Some("second".into()));
+    exact.at = "2026-11-21T08:00:04Z".into();
+    apply(exact).await;
+    let consumer = current().await;
+    assert_eq!(
+        consumer.produced_at.as_deref(),
+        Some("2026-11-21T08:00:04Z")
+    );
+    assert!(consumer.produced_by.is_none());
+}

@@ -56,6 +56,10 @@ pub(crate) struct EventParams {
 pub(super) fn routes() -> Router<HierarchyState> {
     Router::new()
         .route("/api/v1/sandboxes", post(create).get(list))
+        .route(
+            "/api/v1/sandboxes/capacity",
+            get(super::sandbox_capacity::read),
+        )
         .route("/api/v1/sandboxes/{id}", get(read).delete(remove))
         .route("/api/v1/sandboxes/{id}/pause", post(pause))
         .route("/api/v1/sandboxes/{id}/revive", post(revive))

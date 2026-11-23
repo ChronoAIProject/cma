@@ -1,12 +1,20 @@
-import { ProtocolError } from '@cma/client';
+import { ApiError, ProtocolError, retryAfterMilliseconds } from '@cma/client';
+import {
+  agentUpdateHeaders,
+  agentUpdateProblem,
+  type AgentUpdateReason,
+} from './agentUpdateProblem';
 import type { AgentPreferencesView, CmaWebClient } from '../client';
 
-export class AgentPreferencesError extends Error {
+export class AgentPreferencesError extends ApiError {
   constructor(
     message: string,
-    readonly status: number,
+    status: number,
+    retryAfterMs?: number,
+    code?: string,
+    reason?: AgentUpdateReason,
   ) {
-    super(message);
+    super(status, message, code, undefined, retryAfterMs, { settings_update_reason: reason });
   }
 }
 
@@ -17,14 +25,13 @@ async function request(id: string, init: RequestInit): Promise<AgentPreferencesV
     ...init,
   });
   if (!response.ok) {
-    const problem = (await response.json().catch(() => ({}))) as { detail?: unknown };
+    const problem = await agentUpdateProblem(response);
     throw new AgentPreferencesError(
-      typeof problem.detail === 'string'
-        ? problem.detail
-        : response.status === 409
-          ? 'The Agent changed. Reload its preferences and try again when its turn is finished.'
-          : `Agent preferences are unavailable (${String(response.status)}).`,
+      'Agent preferences could not be loaded or updated.',
       response.status,
+      retryAfterMilliseconds(response),
+      problem.code,
+      problem.reason,
     );
   }
   const value = (await response.json()) as AgentPreferencesView;
@@ -52,7 +59,7 @@ export function agentPreferencesClient(): Pick<
       request(id, {
         method: 'PATCH',
         signal: options.signal,
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': options.idempotencyKey },
+        headers: agentUpdateHeaders(options.idempotencyKey),
         body: JSON.stringify(preferences),
       }),
   };

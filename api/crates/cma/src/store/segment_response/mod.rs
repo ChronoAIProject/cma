@@ -19,6 +19,7 @@ const MAX_BYTES: usize = 4 * 1024 * 1024;
 
 mod boundary;
 mod indexed;
+mod suffix;
 mod telemetry;
 pub(crate) use telemetry::emit;
 use telemetry::{Attempt, Outcome};
@@ -56,6 +57,14 @@ impl AgentResponseLogStore for MongoSandboxStore {
         SandboxStoreError,
     > {
         indexed::open(self, agent, turn).await
+    }
+
+    async fn agent_response_log_suffix(
+        &self,
+        agent: &Agent,
+        previous: &AgentResponseLogWindow,
+    ) -> Result<Option<AgentResponseLogWindow>, SandboxStoreError> {
+        suffix::read(self, agent, previous).await
     }
 
     async fn agent_response_log_window(

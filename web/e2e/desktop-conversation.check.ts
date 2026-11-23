@@ -1,3 +1,7 @@
+import {
+  registerComputerSkillsRedesignCases,
+  registerDesktopMotionCases,
+} from './redesign-agent.cases';
 import { test, expect } from '@playwright/test';
 import { binding, cursor, LocalAgentV2 } from './agent-v2.fixture';
 
@@ -40,6 +44,7 @@ test('LOCAL a starting Machine connects when ready without a page reload', async
       }),
     );
     await page.goto('/agents/agt_contract');
+    await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
     const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
     await expect(desktop.getByRole('status')).toContainText('Waiting for your machine');
     await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).toBeVisible();
@@ -88,6 +93,7 @@ test('LOCAL restores a cleared desktop without losing the conversation or granti
       }),
     );
     await page.goto('/agents/agt_contract');
+    await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
     const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
     const message = page.getByRole('textbox', { name: 'Message', exact: true });
     // Drive the first-frame timer while the browser clock remains paused.
@@ -176,7 +182,7 @@ for (const width of [1600, 1024, 390]) {
         await expect(message).toBeEnabled();
         await message.fill('Open a terminal and run pwd where I can see it.');
         const field = await message.elementHandle();
-        if (width < 1024) await page.getByRole('button', { name: 'Show Agent computer' }).click();
+        await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
         await expect(desktop.getByRole('status')).toContainText('Agent paused · Desktop is idle');
         await expect(
           desktop.getByRole('button', { name: 'Take control', exact: true }),
@@ -251,7 +257,7 @@ for (const width of [1600, 1024, 390]) {
         await expectPaintedDesktop();
         const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
         await expect(computer).toBeVisible();
-        await computer.getByRole('tab', { name: 'Terminal' }).click();
+        await computer.getByRole('tab', { name: 'Operations' }).click();
         await expect(desktop).toHaveCount(0);
         await computer.getByRole('tab', { name: 'Screen', exact: true }).click();
         await expectPaintedDesktop();
@@ -268,97 +274,7 @@ for (const width of [1600, 1024, 390]) {
   }
 }
 
-for (const reducedMotion of ['no-preference', 'reduce'] as const) {
-  test(`LOCAL desktop loading and timed handoffs with motion ${reducedMotion}`, async ({
-    page,
-    baseURL,
-  }, info) => {
-    const fixture = new LocalAgentV2();
-    fixture.boundary.agent = { ...fixture.boundary.agent, desktop: true };
-    try {
-      await page.setViewportSize({ width: 1600, height: 1000 });
-      await page.emulateMedia({ reducedMotion });
-      await fixture.route(page, baseURL!);
-      const desktopStream = await desktopBoundary(page, false);
-      await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
-        route.fulfill({
-          json: {
-            object: 'cma.agent.event_head',
-            schema_version: 1,
-            agent_id: 'agt_contract',
-            incarnation: 'a'.repeat(64),
-            through_cursor: cursor(fixture.items.length),
-            active_turn: null,
-          },
-        }),
-      );
-      await page.goto('/agents/agt_contract');
-      const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
-      const control = desktop.getByRole('button', { name: 'Take control', exact: true });
-      await expect(desktop.getByRole('status')).toContainText('Loading the desktop screen');
-      await expect(control).toBeDisabled();
-      await expect(desktop.locator('.agent-desktop__loading')).toBeVisible();
-      const shimmer = await desktop
-        .locator('.skeleton')
-        .first()
-        .evaluate((e) => getComputedStyle(e, '::after').animationName);
-      expect(shimmer).toBe(reducedMotion === 'reduce' ? 'none' : 'skeleton-shimmer');
-      await page.screenshot({ path: info.outputPath(`loading-${reducedMotion}.png`) });
-      desktopStream.paint();
-      await expect(control).toBeEnabled();
-      await expect(desktop.locator('.agent-desktop__loading')).toHaveCount(0);
-      await page.clock.install();
-      // Leave ample room for real screenshot/protocol work; component tests
-      // cover the exact 4,999/5,000ms boundary with a fully stopped clock.
-      await control.click();
-      await expect(desktop.locator('.agent-desktop__notice')).toContainText('You have control');
-      expect(
-        await desktop
-          .locator('.agent-desktop__notice')
-          .evaluate((e) => getComputedStyle(e).pointerEvents),
-      ).toBe('none');
-      await page.clock.fastForward(3_000);
-      await expect(desktop.locator('.agent-desktop__notice')).toBeVisible();
-      await desktop.locator('canvas').click();
-      await page.keyboard.down('Control');
-      await page.mouse.down();
-      await expect
-        .poll(() =>
-          desktopStream.inputs.some((x) => x.kind === 'key' && x.down && x.keysym === 0xffe3),
-        )
-        .toBe(true);
-      fixture.append({ type: 'turn_started', turn_sequence: 1 }, binding);
-      fixture.live('text_delta', 'Using the shared desktop.');
-      await expect(desktop.getByRole('status')).toContainText(
-        'Agent is in control · Working in Desktop',
-      );
-      await expect(control).toBeEnabled();
-      await expect(desktop.locator('.agent-desktop__notice')).toContainText(
-        'The Agent has control',
-      );
-      await expect
-        .poll(() =>
-          desktopStream.inputs.some((x) => x.kind === 'key' && !x.down && x.keysym === 0xffe3),
-        )
-        .toBe(true);
-      expect(desktopStream.inputs.filter((x) => x.kind === 'pointer').at(-1)?.buttons).toBe(0);
-      await page.mouse.up();
-      await page.keyboard.up('Control');
-      await page.screenshot({ path: info.outputPath(`handoff-${reducedMotion}.png`) });
-      await page.clock.fastForward(3_000);
-      await expect(desktop.locator('.agent-desktop__notice')).toBeVisible();
-      await page.clock.fastForward(2_400);
-      await expect(desktop.locator('.agent-desktop__notice')).toHaveCount(0);
-      await expect(desktop.getByRole('status')).toContainText(
-        'Agent is in control · Working in Desktop',
-      );
-      expect(fixture.writes).toEqual([]);
-      expect(desktopStream.connections).toHaveLength(1);
-    } finally {
-      await fixture.close(page);
-    }
-  });
-}
+registerDesktopMotionCases();
 
 test('LOCAL Workspace tabs and the 1180px sidebar threshold respect keyboard and manual choices', async ({
   page,
@@ -383,6 +299,7 @@ test('LOCAL Workspace tabs and the 1180px sidebar threshold respect keyboard and
       }),
     );
     await page.goto('/agents/agt_contract');
+    await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
     const sidebar = page.getByRole('complementary', {
       name: 'Application navigation',
       exact: true,
@@ -393,7 +310,7 @@ test('LOCAL Workspace tabs and the 1180px sidebar threshold respect keyboard and
     await expect(screen).toHaveAttribute('aria-selected', 'true');
     await expect(screen).toHaveAttribute('tabindex', '0');
     await expect(files).toHaveAttribute('tabindex', '-1');
-    await expect(computer.getByRole('tab', { name: 'Terminal' })).toHaveCount(0);
+    await expect(computer.getByRole('tab', { name: 'Operations' })).toHaveCount(0);
     await screen.focus();
     await page.keyboard.press('End');
     await expect(files).toBeFocused();
@@ -450,6 +367,7 @@ test('LOCAL running desktop takeover confirms and waits for the public cancelled
       }),
     );
     await page.goto('/agents/agt_contract');
+    await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
     const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
     await expect(desktop.getByRole('button', { name: 'Take control' })).toBeEnabled();
     await expect.poll(() => fixture.streams.size).toBeGreaterThan(0);
@@ -485,14 +403,14 @@ test('LOCAL running desktop takeover confirms and waits for the public cancelled
 });
 
 for (const completion of ['before End', 'after End'] as const) {
-  test(`LOCAL late conversation readiness preserves computer keyboard focus ${completion}`, async ({
+  test(`LOCAL late conversation history preserves computer keyboard focus ${completion}`, async ({
     page,
     baseURL,
   }) => {
     const fixture = new LocalAgentV2();
     fixture.boundary.agent = { ...fixture.boundary.agent, desktop: true };
     let resume!: () => void;
-    const hierarchy = new Promise<void>((resolve) => {
+    const history = new Promise<void>((resolve) => {
       resume = resolve;
     });
     let waiting = false;
@@ -528,15 +446,13 @@ for (const completion of ['before End', 'after End'] as const) {
           },
         }),
       );
-      await page.route(
-        `**/api/v1/workspaces/${fixture.boundary.agent.workspace.id}`,
-        async (route) => {
-          waiting = true;
-          await hierarchy;
-          await route.fallback();
-        },
-      );
+      await page.route('**/api/v2/agents/agt_contract/events/snapshot**', async (route) => {
+        waiting = true;
+        await history;
+        await route.fallback();
+      });
       await page.goto('/agents/agt_contract');
+      await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
       const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
       const screen = computer.getByRole('tab', { name: 'Screen', exact: true });
       const files = computer.getByRole('tab', { name: 'Files', exact: true });
@@ -548,7 +464,11 @@ for (const completion of ['before End', 'after End'] as const) {
         await expect(files).toBeFocused();
         await expect(files).toHaveAttribute('aria-selected', 'true');
       }
+      await expect(page.getByText('Loading conversation activity.', { exact: true })).toBeVisible();
       resume();
+      await expect(page.getByText('Loading conversation activity.', { exact: true })).toHaveCount(
+        0,
+      );
       await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
       await expect(completion === 'before End' ? screen : files).toBeFocused();
       if (completion === 'before End') await page.keyboard.press('End');
@@ -574,3 +494,5 @@ for (const completion of ['before End', 'after End'] as const) {
     }
   });
 }
+
+registerComputerSkillsRedesignCases();

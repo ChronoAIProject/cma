@@ -18,6 +18,35 @@ fn reads(app: &App) -> Vec<super::fake_provider::ReceivedRequest> {
 }
 
 #[tokio::test]
+async fn disabled_retry_keeps_three_second_timeout_and_never_submits_after_uncertain_read() {
+    let mut app = App::new(
+        |_| {},
+        FakeProviderConfig {
+            context_delay: Duration::from_millis(3200),
+            ..Default::default()
+        },
+        Default::default(),
+        0,
+    )
+    .await;
+    let started = Instant::now();
+    let response = app
+        .request(&app.url, app.event("slow-default-context").to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 503);
+    assert!(started.elapsed() >= Duration::from_secs(3));
+    assert!(response.headers().get("retry-after").is_none());
+    let problem: Value = response.json().await.unwrap();
+    assert_eq!(problem["detail"], "provider_context_unavailable");
+    app.drain().await;
+    assert_eq!(reads(&app).len(), 1);
+    assert!(app.provider.requests().is_empty());
+    assert!(app.receiver.events().is_empty());
+}
+
+#[tokio::test]
 async fn disabled_flag_preserves_one_read_and_original_refusal() {
     let mut app = App::new(
         |_| {},

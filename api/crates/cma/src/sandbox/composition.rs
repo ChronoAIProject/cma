@@ -30,6 +30,7 @@ use crate::{shutdown::ShutdownCoordinator, store::MongoSandboxStore};
 
 pub(crate) struct SandboxLifecycleDependencies {
     pub store: Arc<MongoSandboxStore>,
+    pub pending_homes: Arc<crate::store::pending_launch_homes::PendingLaunchHomes>,
     pub adapter: Arc<dyn SandboxAdapter>,
     pub credentials: Arc<dyn SandboxCredentialController>,
     pub registry: Arc<LiveAgentRegistry>,
@@ -47,7 +48,9 @@ pub(crate) struct SandboxLifecycleConfig {
     pub renewable_work: bool,
     pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     pub runtime_loss_bounded_proof_enabled: bool,
+    pub native_retirement_finality_enabled: bool,
     pub parent_not_ready_pacing_enabled: bool,
+    pub startup_sibling_hold_enabled: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
@@ -146,6 +149,11 @@ impl SandboxLifecycleComposition {
                 ),
             )),
         ));
+        let reconciliation = if dependencies.pending_homes.enabled() {
+            reconciliation.with_pending_homes(dependencies.pending_homes.clone())
+        } else {
+            reconciliation
+        };
         let updates = DurableAgentUpdateRecorder::with_output_policy(
             dependencies.store.clone(),
             dependencies.store.writer_policy.clone(),
@@ -188,6 +196,23 @@ impl SandboxLifecycleComposition {
             .with_execution(config.execution)
             .with_replicas(config.renewable_work),
         );
+        let mut agent_config = AgentWorkerConfig::new(
+            format!("{}:agent", config.holder),
+            config.deployment_id.clone(),
+        )
+        .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
+        .with_ownership(config.ownership)
+        .with_ownership_retry_hints(dependencies.store.ownership_retry_hints())
+        .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
+        .with_startup_sibling_hold(config.startup_sibling_hold_enabled)
+        .with_cleanup_continuation(config.cleanup_continuation_enabled)
+        .with_retry_single_marker(config.retry_single_marker_enabled)
+        .with_work_retry_policy(config.work_retry_policy_enabled)
+        .with_managed_documents(config.managed_documents_enabled)
+        .with_access_transport_migration(config.access_transport_migration);
+        if config.native_retirement_finality_enabled {
+            agent_config.retirement_reporter = Some(dependencies.store.clone());
+        }
         let agent_worker = AgentWorker::new(
             AgentWorkerDependencies {
                 store: dependencies.store.clone(),
@@ -197,20 +222,30 @@ impl SandboxLifecycleComposition {
                 updates: updates.clone(),
                 operations: Arc::clone(&dependencies.operations),
             },
-            AgentWorkerConfig::new(
-                format!("{}:agent", config.holder),
-                config.deployment_id.clone(),
-            )
-            .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
-            .with_ownership(config.ownership)
-            .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
-            .with_cleanup_continuation(config.cleanup_continuation_enabled)
-            .with_retry_single_marker(config.retry_single_marker_enabled)
-            .with_work_retry_policy(config.work_retry_policy_enabled)
-            .with_managed_documents(config.managed_documents_enabled)
-            .with_access_transport_migration(config.access_transport_migration),
+            agent_config,
         );
         let funding_renewal = FundingRenewalWorker::new(Arc::clone(&dependencies.funding));
+        let retirement_finalizer = Arc::new(
+            super::native_retirement_finalizer::NativeRetirementFinalizer::new(
+                dependencies.store.clone(),
+                dependencies.adapter.clone(),
+                config.deployment_id.clone(),
+                dependencies.store.clone(),
+                config.native_retirement_finality_enabled,
+            ),
+        );
+        let mut sandbox_config = SandboxWorkerConfig::with_policy_source(
+            format!("{}:sandbox", config.holder),
+            config.deployment_id,
+            config.runtime_version,
+            dependencies.policy,
+        )
+        .with_execution(config.execution)
+        .with_replicas(config.renewable_work)
+        .with_work_retry_policy(config.work_retry_policy_enabled)
+        .with_native_create_retry(config.native_create_retry_enabled)
+        .with_home_policy(config.home_policy);
+        sandbox_config.retirement_finalizer = Some(retirement_finalizer);
         let sandbox_worker = SandboxWorker::new_with_funding(
             SandboxWorkerDependencies {
                 store: dependencies.store.clone(),
@@ -228,17 +263,7 @@ impl SandboxLifecycleComposition {
                 updates: updates.clone(),
                 operations: dependencies.operations,
             },
-            SandboxWorkerConfig::with_policy_source(
-                format!("{}:sandbox", config.holder),
-                config.deployment_id,
-                config.runtime_version,
-                dependencies.policy,
-            )
-            .with_execution(config.execution)
-            .with_replicas(config.renewable_work)
-            .with_work_retry_policy(config.work_retry_policy_enabled)
-            .with_native_create_retry(config.native_create_retry_enabled)
-            .with_home_policy(config.home_policy),
+            sandbox_config,
             dependencies.funding,
         );
 

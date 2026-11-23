@@ -186,6 +186,7 @@ async fn composed_with_input_history(
     Arc<Authority>,
     Arc<AtomicUsize>,
 ) {
+    crate::store::migrations::prepare_bindings_for_test(&client.database(name)).await;
     let store = MongoSandboxStore::open(client, name).await.unwrap();
     let mut agent = ready_agent(&parent, "agt_commands");
     if let Some((_, conversation)) = &input {
@@ -438,6 +439,9 @@ async fn replaced_control_turn_has_typed_refusal_before_runtime_or_lifecycle_wor
 mod binding_execution;
 
 mod operation_lookup_tests;
+
+#[path = "runtime_loss_budget_tests.rs"]
+mod runtime_loss_budget;
 
 #[path = "budget_execution_tests.rs"]
 mod budget_execution;

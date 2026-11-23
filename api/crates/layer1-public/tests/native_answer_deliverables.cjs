@@ -8,6 +8,9 @@ const { createInterface } = require("node:readline");
 const {
   stop,
 } = require("../../layer3-adapter/src/codex/native_tools_fixture.cjs");
+const {
+  files, stageFiles, digest, relayTool, requestText, verifyFileRead,
+} = require("./native_answer_delivery_fixture.cjs");
 
 async function prove() {
   const [origin, directory] = process.argv.slice(2);
@@ -25,19 +28,24 @@ async function prove() {
     encoding: "utf8",
   }).trim();
   assert.equal(version, "codex-cli 0.147.0");
+  stageFiles(directory);
   const markers = new Set();
+  const receipts = new Map();
+  const markerPattern = /^<!--cma-deliverable:v1:([A-Za-z0-9_-]+)-->$/;
+  let typedCsvMarker;
+  const typedCsvPath = "output/nested/report.csv";
+  const describe = [...files, files[0]];
   let round = 0;
   let failure;
   const model = createServer(async (request, response) => {
     try {
+      if (request.url === "/native-mcp") {
+        await relayTool(origin, request, response, receipts);
+        return;
+      }
       assert.equal(request.url, "/v1/responses");
       assert.equal(request.method, "POST");
-      let body = "";
-      for await (const chunk of request) {
-        body += chunk;
-        assert(body.length < 2 * 1024 * 1024);
-      }
-      const value = JSON.parse(body);
+      const value = JSON.parse(await requestText(request));
       for (const marker of JSON.stringify(value.input).match(
         /<!--cma-deliverable:v1:[A-Za-z0-9_-]+-->/g,
       ) ?? [])
@@ -81,34 +89,38 @@ async function prove() {
       let item;
       if (round === 0)
         item = call("exec_command", {
-          cmd: "printf 'Native answer file\\n' > report.txt",
+          cmd: "mkdir -p output/nested && cp fixture-source/* output/nested/",
           workdir: directory,
         });
-      else if (round === 1) {
-        assert.equal(
-          readFileSync(join(directory, "report.txt"), "utf8"),
-          "Native answer file\n",
-        );
+      else if (round <= describe.length) {
+        const file = describe[round - 1];
+        await verifyFileRead(origin, directory, file);
         item = call("__describe_deliverable", {
           kind: "live_file",
-          path: "report.txt",
+          path: file.path,
         });
-      } else if (round === 2) {
-        assert.equal(
-          markers.size,
-          1,
-          "native file tool receipt must supply its verified marker",
-        );
+      } else if (round === describe.length + 1) {
+        assert.equal(receipts.size, files.length);
+        for (const file of files) {
+          const { reference, marker } = receipts.get(file.path);
+          assert.deepEqual(reference.resource, { kind: "live_file", path: file.path });
+          assert.equal(reference.size_bytes, file.bytes.length);
+          assert.equal(reference.sha256, digest(file.bytes));
+          assert.equal(reference.media_type, file.mediaType, `MCP media type for ${file.path}`);
+          const stored = JSON.parse(Buffer.from(markerPattern.exec(marker)[1], "base64url"));
+          assert.deepEqual(stored, { ...reference, media_type: "application/octet-stream" });
+          assert(markers.has(marker), `The native tool reply must supply its marker for ${file.path}`);
+        }
         item = call("__publish_document", {
           request_key: "native-delivery-document",
           title: "Native document",
           markdown: "# Native document\n\nKnown persistent content.\n",
         });
       } else {
-        assert.equal(round, 3);
+        assert.equal(round, describe.length + 2);
         assert.equal(
           markers.size,
-          2,
+          files.length + 1,
           "native publication receipt must supply the document marker",
         );
         const kinds = [...markers]
@@ -116,15 +128,15 @@ async function prove() {
             (marker) =>
               JSON.parse(
                 Buffer.from(
-                  /^<!--cma-deliverable:v1:([A-Za-z0-9_-]+)-->$/.exec(
-                    marker,
-                  )[1],
+                  markerPattern.exec(marker)[1],
                   "base64url",
                 ).toString(),
               ).resource.kind,
           )
           .sort();
-        assert.deepEqual(kinds, ["document", "live_file"]);
+        assert.deepEqual(kinds, ["document", ...files.map(() => "live_file")]);
+        const typedCsv = receipts.get(typedCsvPath).reference;
+        typedCsvMarker = `<!--cma-deliverable:v1:${Buffer.from(JSON.stringify(typedCsv)).toString("base64url")}-->`;
         item = {
           id: `msg_${round}`,
           type: "message",
@@ -133,7 +145,7 @@ async function prove() {
           content: [
             {
               type: "output_text",
-              text: `Delivered the file and persistent document.\n${[...markers].join("\n")}`,
+              text: `Delivered the native files and persistent document.\n${[typedCsvMarker, ...markers, receipts.get(files[0].path).marker].join("\n")}`,
               annotations: [],
             },
           ],
@@ -299,7 +311,7 @@ async function prove() {
         {
           type: "http",
           name: "cma_access",
-          url: origin + "/api/v1/agent-tools",
+          url: `http://127.0.0.1:${model.address().port}/native-mcp`,
           headers: [
             {
               name: "Authorization",
@@ -321,14 +333,14 @@ async function prove() {
       prompt: [
         {
           type: "text",
-          text: "Create report.txt containing Native answer file and a persistent document. Use the verified tool receipts as standalone references in the final answer.",
+          text: "Create and verify the six native live files, then publish a separate persistent document. Include their receipts in the final answer.",
         },
       ],
     });
-    assert.equal(markers.size, 2);
+    assert.equal(markers.size, files.length + 1);
     assert(
-      [...markers].every((marker) => answer.includes(marker)),
-      `ACP answer must actually contain both observed receipts: ${JSON.stringify(answer)}`,
+      [typedCsvMarker, ...markers].every((marker) => answer.includes(marker)),
+      `ACP answer must contain every observed receipt: ${JSON.stringify(answer)}`,
     );
     process.stdout.write(
       JSON.stringify({
@@ -336,6 +348,10 @@ async function prove() {
         bridge_sha256: bridgeHash,
         sessionId: created.sessionId,
         stopReason: result.stopReason,
+        files: files.map(({ path, bytes, mediaType }) => ({
+          path, size_bytes: bytes.length, sha256: digest(bytes), media_type: mediaType,
+          stored_media_type: path === typedCsvPath ? mediaType : "application/octet-stream",
+        })),
         answer,
       }),
     );

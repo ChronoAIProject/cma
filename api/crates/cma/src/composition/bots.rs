@@ -1,6 +1,7 @@
 use super::*;
 use crate::agent_lifecycle::ImageResolver;
 use crate::auth::AuthMode;
+use axum::Router;
 use layer1_public::rest::{AgentLifecycleImageReference, AgentLifecycleProvisioningError};
 use layer2_core::bots::BotError;
 use layer2_core::bots::{BotControl, BotService, BotWorker};
@@ -223,6 +224,7 @@ impl BotInlineProfileResolver for InlineBotProfileResolver {
 
 fn image_error(error: AgentLifecycleProvisioningError) -> BotError {
     match error {
+        AgentLifecycleProvisioningError::Template(error) => BotError::Invalid(error.to_string()),
         AgentLifecycleProvisioningError::Forbidden
         | AgentLifecycleProvisioningError::ImageAccessDenied => BotError::Forbidden,
         AgentLifecycleProvisioningError::SignInRequired => {
@@ -231,7 +233,8 @@ fn image_error(error: AgentLifecycleProvisioningError) -> BotError {
         AgentLifecycleProvisioningError::Invalid(error)
         | AgentLifecycleProvisioningError::DesktopUnsupported(error)
         | AgentLifecycleProvisioningError::Conflict(error) => BotError::Invalid(error),
-        AgentLifecycleProvisioningError::AdmissionPaused
+        AgentLifecycleProvisioningError::SandboxLimitReached { .. }
+        | AgentLifecycleProvisioningError::AdmissionPaused
         | AgentLifecycleProvisioningError::ConnectionRequired { .. }
         | AgentLifecycleProvisioningError::Unavailable => BotError::Unavailable,
     }
@@ -329,6 +332,7 @@ impl BotComposition {
             default_model: config.default_profiles.agent_model.clone(),
         });
         let service = BotService::new(stores.bots.clone(), profiles, "cma_codex".into())
+            .with_effect_reservations(config.features.bot_effect_reservations)
             .with_inline_profiles(inline_profiles);
         let router = rest::bot_router(BotControl::new(service.clone(), external.clone()));
         let worker = BotWorker::new(
@@ -397,6 +401,9 @@ impl BotComposition {
 fn due(bot: &layer2_core::bots::Bot) -> bool {
     let now = layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339()).unwrap_or_default();
     if let Some(work) = &bot.work {
+        if work.effect.is_some() {
+            return false;
+        }
         work.expires_at
             .as_deref()
             .and_then(layer2_core::seconds_from_rfc3339)

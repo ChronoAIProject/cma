@@ -66,9 +66,11 @@ async fn selected_material_survives_failure_stop_and_delete_without_resolution()
                 .await
                 .unwrap();
             for _ in 0..3 {
-                harness
-                    .run(&agent.id, harness.now + Duration::from_secs(5))
-                    .await;
+                assert!(harness
+                    .worker
+                    .run_one(&agent.id, harness.now + Duration::from_secs(5))
+                    .await
+                    .unwrap());
             }
             let stopped = harness.stored(&agent.id).await;
             assert_eq!(stopped.status, AgentStatus::Stopped);
@@ -88,9 +90,11 @@ async fn selected_material_survives_failure_stop_and_delete_without_resolution()
             .await
             .unwrap();
         for _ in 0..4 {
-            harness
-                .run(&agent.id, harness.now + Duration::from_secs(10))
-                .await;
+            assert!(harness
+                .worker
+                .run_one(&agent.id, harness.now + Duration::from_secs(10))
+                .await
+                .unwrap());
         }
         let deleted = harness.stored(&agent.id).await;
         assert_eq!(deleted.status, AgentStatus::Deleted);
@@ -456,3 +460,6 @@ async fn live_skill_resolution_failure_does_not_fail_the_agent_or_publish_instal
 
 #[path = "skill_upgrade_tests.rs"]
 mod upgrade_tests;
+
+#[path = "skill_parent_fence_tests/mod.rs"]
+mod parent_fence;

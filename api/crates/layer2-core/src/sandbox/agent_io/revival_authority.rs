@@ -6,7 +6,7 @@ use std::{
 use crate::resource_access::{
     AccessError, AccessPurpose, AuthorizedResource, CallerContext, ResourceAccessError,
     ResourceAccessService, ResourceAccessSnapshot, ResourceAccessStoreError, ResourceCapability,
-    ResourceTarget, MAX_MEMBERSHIP_AGE,
+    ResourceSelector, ResourceTarget, MAX_MEMBERSHIP_AGE,
 };
 use crate::{now_rfc3339, seconds_from_rfc3339, Caller};
 
@@ -45,12 +45,19 @@ impl ResourceAccessService {
         let parent = if let Some(binding) = execution.fence().binding_authority() {
             // Only this admitted Agent command may revive its proved parent.
             // The public binding principal still cannot target a Sandbox.
+            // Agent shares were validated above, but do not cover the parent
+            // once its Agent ancestry is removed.
+            snapshot.shares.retain(|share| {
+                matches!(&share.selector, ResourceSelector::Sandbox { sandbox_id }
+                    if sandbox_id == &snapshot.lineage.sandbox.id)
+            });
             snapshot.lineage.agent = None;
             snapshot.lineage.worktree = None;
             snapshot.lineage.workspace = None;
             AuthorizedResource {
                 snapshot,
                 decision: crate::resource_access::AccessDecision::binding(binding, true),
+                caller: context.caller.clone(),
                 binding: Some(binding.clone()),
             }
         } else {

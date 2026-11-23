@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@cma/client';
 import { AuthContextProvider } from '../auth/context';
 import type { AuthProvider, AuthState } from '../auth/types';
@@ -38,7 +38,9 @@ function setup(provider = auth(signedIn), client = publicClient()) {
   );
   return { ...view, provider, client, navigate, user: userEvent.setup() };
 }
+beforeEach(() => vi.stubEnv('VITE_VISITOR_ALLOWANCE_GUIDANCE_ENABLED', 'true'));
 afterEach(() => {
+  vi.unstubAllEnvs();
   sessionStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -192,6 +194,173 @@ describe('public visitor admission', () => {
       idempotencyKey: intent.key,
     });
   });
+
+  it('clears the saved intent after a settled quota refusal and starts again with a fresh key', async () => {
+    const resetAt = '2026-11-13T00:00:00Z';
+    const intent = createIntent(route);
+    const client = publicClient();
+    vi.mocked(client.requests.createOrResume)
+      .mockRejectedValueOnce(
+        new ApiError(429, 'unsafe Launch resource_quota', 'resource_quota', undefined, undefined, {
+          resource: 'visitor_launches',
+          limit: 5,
+          reset_at: resetAt,
+        }),
+      )
+      .mockResolvedValue(PUBLIC_RECORD);
+    const test = setup(auth(signedIn), client);
+    const formatted = new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(new Date(resetAt));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(formatted);
+    expect(readIntent(path)).toBeUndefined();
+    expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+    expect(test.navigate).not.toHaveBeenCalled();
+
+    await test.user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(test.navigate).toHaveBeenCalled());
+    const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.[2].idempotencyKey).toBe(intent.key);
+    expect(calls[1]?.[2].idempotencyKey).not.toBe(intent.key);
+    expect(calls[1]?.[1]).toEqual(intent.body);
+  });
+
+  it('discards a credential recovery intent after a settled quota refusal without automatically resubmitting', async () => {
+    const client = publicClient();
+    vi.mocked(client.requests.createOrResume)
+      .mockRejectedValueOnce(
+        new ApiError(409, 'Sign in again.', 'sandbox_credential_setup_required'),
+      )
+      .mockRejectedValueOnce(
+        new ApiError(429, 'Daily allowance used.', 'resource_quota', undefined, undefined, {
+          resource: 'visitor_launches',
+          limit: 5,
+          reset_at: '2026-11-14T00:00:00Z',
+        }),
+      )
+      .mockResolvedValue(PUBLIC_RECORD);
+    const popup = { opener: {}, location: { href: '' }, close: vi.fn() };
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              authenticated: true,
+              subject: PUBLIC_USER.id,
+              visitor: true,
+              capabilities: PUBLIC_USER.capabilities,
+            }),
+            { headers: { 'Content-Type': 'application/json' } },
+          ),
+      ),
+    );
+    const test = setup(auth(signedIn), client);
+
+    await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
+    await test.user.click(await screen.findByRole('button', { name: 'Sign in to CMA' }));
+    await test.user.click(screen.getByRole('button', { name: 'Check signed-in account' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open in CMA' })).toBeEnabled());
+    expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+
+    await test.user.click(screen.getByRole('button', { name: 'Open in CMA' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('daily allowance');
+    expect(readIntent(path)).toBeUndefined();
+    await act(async () => undefined);
+    expect(client.requests.createOrResume).toHaveBeenCalledTimes(2);
+    expect(test.navigate).not.toHaveBeenCalled();
+
+    await test.user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(test.navigate).toHaveBeenCalledOnce());
+    const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+    expect(calls).toHaveLength(3);
+    expect(calls[1]?.[2].idempotencyKey).not.toBe(calls[0]?.[2].idempotencyKey);
+    expect(calls[2]?.[2].idempotencyKey).not.toBe(calls[1]?.[2].idempotencyKey);
+    expect(calls[2]?.[1]).toEqual(calls[1]?.[1]);
+  });
+
+  it.each(['saved intent', 'pending entry check'] as const)(
+    'does not reuse entry evidence after a settled refusal with %s',
+    async (source) => {
+      if (source === 'saved intent') createIntent(route);
+      const client = publicClient();
+      vi.mocked(client.requests.preview).mockResolvedValue({
+        ...PUBLIC_PREVIEW,
+        always_review: false,
+      });
+      let settleEntry!: (entry: { accepted: true; placement_id: string }) => void;
+      const entry = new Promise<{ accepted: true; placement_id: string }>((resolve) => {
+        settleEntry = resolve;
+      });
+      vi.mocked(client.requests.entryIntent).mockReturnValue(entry);
+      vi.mocked(client.requests.createOrResume)
+        .mockRejectedValueOnce(
+          new ApiError(429, 'Daily allowance used.', 'resource_quota', undefined, undefined, {
+            resource: 'visitor_launches',
+            reset_at: '2026-11-14T00:00:00Z',
+          }),
+        )
+        .mockResolvedValue(PUBLIC_RECORD);
+      const test = setup(auth(signedIn), client);
+      if (source === 'pending entry check') {
+        await waitFor(() => expect(client.requests.entryIntent).toHaveBeenCalledOnce());
+        await test.user.click(screen.getByRole('button', { name: 'Open in CMA' }));
+      }
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('daily allowance');
+      await act(async () => settleEntry({ accepted: true, placement_id: route.placementId }));
+      expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+      expect(readIntent(path)).toBeUndefined();
+      expect(test.navigate).not.toHaveBeenCalled();
+
+      await test.user.click(screen.getByRole('button', { name: 'Try again' }));
+      await waitFor(() => expect(test.navigate).toHaveBeenCalledOnce());
+      const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[1]?.[2].idempotencyKey).not.toBe(calls[0]?.[2].idempotencyKey);
+    },
+  );
+
+  it.each([
+    [429, 'resource_quota', { resource: 'visitor_launches' }],
+    [429, 'resource_quota', { resource: 'visitor_launches', reset_at: 'unknown' }],
+    [429, 'resource_quota', { resource: 'sandboxes', reset_at: '2026-11-13T00:00:00Z' }],
+    [429, 'rate_limited', { resource: 'visitor_launches', reset_at: '2026-11-13T00:00:00Z' }],
+    [503, 'resource_quota', { resource: 'visitor_launches', reset_at: '2026-11-13T00:00:00Z' }],
+  ])(
+    'preserves the intent and key for an unsettled refusal: %i %s %j',
+    async (status, code, extensions) => {
+      const intent = createIntent(route);
+      const client = publicClient();
+      vi.mocked(client.requests.createOrResume)
+        .mockRejectedValueOnce(
+          new ApiError(status, 'Unknown', code, undefined, undefined, extensions),
+        )
+        .mockResolvedValue(PUBLIC_RECORD);
+      const test = setup(auth(signedIn), client);
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Your previous choices are saved');
+      expect(readIntent(path)).toEqual({
+        ...intent,
+        owner: PUBLIC_USER.id,
+        submitted: true,
+        wireBody: JSON.stringify(intent.body),
+      });
+      expect(test.navigate).not.toHaveBeenCalled();
+
+      await test.user.click(screen.getByRole('button', { name: 'Try again' }));
+      await waitFor(() => expect(test.navigate).toHaveBeenCalled());
+      const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[1]).toEqual(calls[0]);
+    },
+  );
 
   it.each(['resume', 'new'] as const)(
     'submits the explicit repeat %s choice with a fresh key',

@@ -6,6 +6,8 @@ pub mod agent_v2;
 pub mod agui;
 pub mod auth;
 mod conversation;
+#[path = "rest/desktop_telemetry.rs"]
+pub mod desktop_telemetry;
 pub mod mcp;
 pub mod pty;
 mod resource_auth;
@@ -65,3 +67,6 @@ pub trait InterfaceProfile {
     fn interface_id(&self) -> &'static str;
     fn operations(&self) -> &'static [Operation];
 }
+
+#[cfg(test)]
+mod observation_test_support;

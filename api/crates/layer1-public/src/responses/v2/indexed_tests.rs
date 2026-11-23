@@ -27,6 +27,8 @@ mod large_history;
 mod pagination;
 #[path = "indexed_tests/parity.rs"]
 mod parity;
+#[path = "indexed_tests/provider_failure.rs"]
+mod provider_failure;
 
 #[path = "indexed_tests/history.rs"]
 mod history;
@@ -38,3 +40,6 @@ mod http;
 
 #[path = "indexed_tests/legacy_bounds.rs"]
 mod legacy_bounds;
+
+#[path = "indexed_tests/shared.rs"]
+mod shared;

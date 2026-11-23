@@ -110,21 +110,18 @@ pub(super) fn connection_from_lookup(
     Ok(Some(connection))
 }
 
+/// A graduated gate: unset enables it and explicit `false` turns it off.
 fn claim_guard_from_lookup(
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
 ) -> Result<bool, String> {
-    match lookup("CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED")?.as_deref() {
-        None | Some("false") => Ok(false),
-        Some("true") => Ok(true),
-        _ => Err("CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED must be true or false".into()),
-    }
+    super::features::flag(lookup, "CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED")
 }
 
 #[cfg(test)]
 mod claim_guard_tests {
     #[test]
-    fn default_off_and_strict_boolean() {
-        for (input, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+    fn default_on_with_explicit_off_switch_and_strict_boolean() {
+        for (input, expected) in [(None, true), (Some("false"), false), (Some("true"), true)] {
             assert_eq!(
                 super::claim_guard_from_lookup(&mut |_| Ok(input.map(str::to_owned))).unwrap(),
                 expected
@@ -165,5 +162,59 @@ mod startup_breaker_tests {
             assert!(super::startup_breaker_from_lookup(&mut |_| Ok(Some(input.into()))).is_err());
         }
         assert!(super::startup_breaker_from_lookup(&mut |_| Err("lookup failure".into())).is_err());
+    }
+}
+
+pub(super) fn legacy_receiver_image(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+) -> Result<Option<layer3_adapter::hosted::LegacyReceiverImage>, String> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ReviewedImage {
+        manifest: String,
+        config_digest: String,
+        source_revision: String,
+    }
+
+    let Some(raw) = lookup("CHRONO_LEGACY_RECEIVER_IMAGE_PROOF")? else {
+        return Ok(None);
+    };
+    let invalid = || {
+        "CHRONO_LEGACY_RECEIVER_IMAGE_PROOF must contain the reviewed manifest, config_digest and source_revision".to_owned()
+    };
+    if raw.len() > 4096 {
+        return Err(invalid());
+    }
+    let proof: ReviewedImage = serde_json::from_str(&raw).map_err(|_| invalid())?;
+    layer3_adapter::hosted::LegacyReceiverImage::from_reviewed_mapping(
+        proof.manifest,
+        proof.config_digest,
+        &proof.source_revision,
+    )
+    .map(Some)
+    .map_err(|_| invalid())
+}
+
+#[cfg(test)]
+mod legacy_receiver_tests {
+    #[test]
+    fn legacy_receiver_image_is_default_off_and_validates_private_input() {
+        assert!(super::legacy_receiver_image(&mut |key| {
+            assert_eq!(key, "CHRONO_LEGACY_RECEIVER_IMAGE_PROOF");
+            Ok(None)
+        })
+        .unwrap()
+        .is_none());
+        assert!(super::legacy_receiver_image(&mut |_| Ok(Some("{}".into()))).is_err());
+        let proof = serde_json::json!({
+            "manifest": format!("ghcr.io/fixture/runtime@sha256:{}", "1".repeat(64)),
+            "config_digest": format!("sha256:{}", "2".repeat(64)),
+            "source_revision": "bc8cd8bf0f585446a37d3bd50a8e3df2d6d06e6e",
+        });
+        assert!(
+            super::legacy_receiver_image(&mut |_| Ok(Some(proof.to_string())))
+                .unwrap()
+                .is_some()
+        );
     }
 }

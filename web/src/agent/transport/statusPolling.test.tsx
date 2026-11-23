@@ -64,6 +64,39 @@ it.each(['hint', 'focus', 'visibility', 'refresh'])(
   },
 );
 
+it.each(['turn', 'request'])(
+  'retains a compatibility retry when an early %s refresh precedes the only stream hint',
+  async (trigger) => {
+    const h = fixture();
+    h.listQueued.mockImplementationOnce(async () => unavailable(404));
+    const hook = renderHook(
+      ({ revision, active, request }) =>
+        useQueuedInputs(h.session, true, active, revision, unchangedIdentity, request),
+      { initialProps: { revision: '0', active: false, request: 0 } },
+    );
+    await advance(0);
+    expect(h.listQueued).toHaveBeenCalledTimes(1);
+    h.listQueued.mockImplementation(async () => json(queuedPage('Discovered after deployment')));
+    hook.rerender({
+      revision: '0',
+      active: trigger === 'turn',
+      request: trigger === 'request' ? 1 : 0,
+    });
+    await advance(50);
+    hook.rerender({
+      revision: '1',
+      active: trigger === 'turn',
+      request: trigger === 'request' ? 1 : 0,
+    });
+    await advance(4950);
+    expect(h.listQueued.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(h.listQueued.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(hook.result.current.items[0]?.input).toBe('Discovered after deployment');
+    expect(h.post).not.toHaveBeenCalled();
+    hook.unmount();
+  },
+);
+
 it.each(['hint', 'refresh'])(
   'retains a queue and real failure through a compatibility 404, then recovers on %s',
   async (trigger) => {

@@ -1,5 +1,7 @@
 use super::home;
 include!("../config_tests.rs");
+#[path = "erasure_tests.rs"]
+mod erasure;
 #[path = "machine_pool_tests.rs"]
 mod machine_pools;
 #[path = "../config_native_tests.rs"]
@@ -67,6 +69,25 @@ fn skill_upgrades_require_an_explicit_strict_boolean() {
     for value in ["", "1", "TRUE", " true "] {
         assert!(super::FeatureFlags::from_lookup(&mut |key| Ok((key
             == "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")
+            .then(|| value.to_owned())))
+        .is_err());
+    }
+}
+
+#[test]
+fn proxy_replay_principal_writer_requires_explicit_activation() {
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = super::FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == "CHRONO_NYXID_PROXY_REPLAY_PRINCIPAL_ENABLED")
+                .then(|| value.map(str::to_owned))
+                .flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.nyxid_proxy_replay_principal, expected);
+    }
+    for value in ["", "1", "TRUE", " true "] {
+        assert!(super::FeatureFlags::from_lookup(&mut |key| Ok((key
+            == "CHRONO_NYXID_PROXY_REPLAY_PRINCIPAL_ENABLED")
             .then(|| value.to_owned())))
         .is_err());
     }
@@ -213,4 +234,44 @@ fn activity_async_configuration_reaches_composition_and_rejects_invalid_values()
             .activity_async_enabled
     );
     assert!(configured(&[("CHRONO_ACTIVITY_ASYNC_ENABLED", "TRUE")]).is_err());
+}
+
+#[test]
+fn shared_observation_requires_routed_replicas_and_bounded_replay() {
+    let flags = [
+        ("CHRONO_AGENT_SHARED_OBSERVATION_ENABLED", "true"),
+        ("CHRONO_AGUI_BOUNDED_REPLAY_ENABLED", "true"),
+    ];
+    assert!(configured(&flags)
+        .unwrap_err()
+        .contains("CHRONO_AGENT_MANAGER_REPLICAS_ENABLED"));
+    let mut routed = flags.to_vec();
+    routed.extend([
+        ("CHRONO_AGENT_MANAGER_REPLICAS_ENABLED", "true"),
+        (
+            "CHRONO_AGENT_MANAGER_RELAY_ADDRESS",
+            "http://127.0.0.1:3000",
+        ),
+    ]);
+    assert!(
+        configured(&routed)
+            .unwrap()
+            .features
+            .agent_shared_observation
+    );
+}
+
+#[test]
+fn home_backup_expiry_cannot_enable_without_a_qualified_production_provider() {
+    let key = "CHRONO_HOME_BACKUP_EXPIRY_ENABLED";
+    assert!(!configured(&[]).unwrap().features.home_backup_expiry_enabled);
+    assert!(
+        !configured(&[(key, "false")])
+            .unwrap()
+            .features
+            .home_backup_expiry_enabled
+    );
+    let error = configured(&[(key, "true")]).unwrap_err();
+    assert!(error.contains(key));
+    assert!(error.contains("qualified deletion provider"));
 }

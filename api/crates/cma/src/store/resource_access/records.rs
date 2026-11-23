@@ -25,7 +25,7 @@ pub(in crate::store) fn read_policy(
     check_projection(document, &policy_document(&record)?)?;
     Ok(record)
 }
-pub(super) fn share_document(
+pub(in crate::store) fn share_document(
     sandbox_id: &SandboxId,
     record: &ResourceShare,
 ) -> Result<Document, ResourceAccessStoreError> {
@@ -71,7 +71,7 @@ fn check_projection(
     Ok(())
 }
 
-pub(super) fn receipt_document(
+pub(in crate::store) fn receipt_document(
     receipt: &layer2_core::resource_access::ShareMutationReceipt,
 ) -> Result<Document, ResourceAccessStoreError> {
     receipt.validate()?;
@@ -79,7 +79,7 @@ pub(super) fn receipt_document(
         doc! {"_id":&receipt.operation_id,"document_schema_version":DOCUMENT_SCHEMA_VERSION,"share_id":&receipt.share.id,"sandbox_id":receipt.sandbox_id.as_str(),"record":record_bson(receipt).map_err(|_|ResourceAccessStoreError::Corrupt)?},
     )
 }
-pub(super) fn read_receipt(
+pub(in crate::store) fn read_receipt(
     document: &Document,
 ) -> Result<layer2_core::resource_access::ShareMutationReceipt, ResourceAccessStoreError> {
     let record = read_record(document).map_err(|_| ResourceAccessStoreError::Corrupt)?;

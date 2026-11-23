@@ -1,11 +1,64 @@
-import type { AgentResourceState } from './controllerTypes';
-import type { AgentDetail, AgentStatus } from '../api/types';
+import type { AgentCommand, AgentResourceState } from './controllerTypes';
+import { useEffect, useMemo, useState } from 'react';
+import type { AgentDetail, AgentStatus, AgentSummary } from '../api/types';
+import { observedActivity } from './activityStatus';
+import { currentAgentStatus } from './status';
 import { mergeRuntimeMetadata } from './runtimeMetadata';
 import type { AgentV2Session } from './transport/client';
 
-export function presentRetainedInputs(v2?: AgentV2Session, legacy?: AgentV2Session) {
-  const retained = v2?.pending();
+export function usePresentedAgent(state: AgentResourceState, summary?: AgentSummary) {
+  return useMemo(
+    () =>
+      presentAgent(
+        state,
+        state.status === 'ready'
+          ? currentAgentStatus(state.detail, state.conversation, summary)
+          : undefined,
+        summary,
+      ),
+    [state, summary],
+  );
+}
+
+export function usePresentedRetainedInputs(
+  v2: AgentV2Session | undefined,
+  legacy: AgentV2Session | undefined,
+  pending: AgentCommand | undefined,
+  onIdentityChange: (error: unknown) => boolean,
+) {
+  const [checked, setChecked] = useState<{ session: AgentV2Session; key: string }>();
   const legacyInput = legacy?.journal.legacySuggestion.read();
+  const session = v2 ?? legacy;
+  const key =
+    pending !== undefined
+      ? undefined
+      : v2
+        ? pendingInputKey(v2)
+        : legacyInput?.state === 'pending'
+          ? legacyInput.key
+          : undefined;
+  const checkingInputReceipt =
+    session !== undefined &&
+    key !== undefined &&
+    (checked?.session !== session || checked.key !== key);
+  useEffect(() => {
+    if (!session || key === undefined || !checkingInputReceipt) return;
+    const controller = new AbortController();
+    const receipt =
+      v2 === undefined
+        ? session.recoverLegacySuggestion(controller.signal)
+        : session.recover(() => {}, controller.signal);
+    void receipt
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) onIdentityChange(error);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setChecked({ session, key });
+      });
+    return () => controller.abort();
+  }, [checkingInputReceipt, key, onIdentityChange, session, v2]);
+
+  const retained = v2?.pending();
   return {
     readSuggestionRequest: () => v2?.journal.read() ?? legacy?.journal.legacySuggestion.read(),
     pendingMessage:
@@ -15,7 +68,17 @@ export function presentRetainedInputs(v2?: AgentV2Session, legacy?: AgentV2Sessi
     acceptedSteeringMessage: retained?.acceptedSteering,
     acceptedInterruptionMessage: retained?.acceptedInterruption,
     pendingControl: retained?.control,
+    checkingInputReceipt,
   };
+}
+
+function pendingInputKey(session: AgentV2Session | undefined) {
+  try {
+    const input = session?.journal.read();
+    return input?.state === 'pending' ? input.key : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The same label is used by the header, document title and hierarchy. */
@@ -49,13 +112,19 @@ function boundedTitle(value: string | undefined, limit = 64): string | undefined
 }
 
 /** Runtime notifications update visible metadata without a hierarchy refresh. */
-export function presentAgent(state: AgentResourceState, status?: AgentStatus): AgentResourceState {
+export function presentAgent(
+  state: AgentResourceState,
+  status?: AgentStatus,
+  summary?: AgentSummary,
+): AgentResourceState {
   if (state.status !== 'ready') return state;
+  const activityStatus = observedActivity(state, summary);
   const ownerTitle = state.conversation.ownerTitle ?? state.detail.ownerTitle;
   const title = state.conversation.title ?? state.detail.title;
   const saved = state.detail.runtimeMetadata;
   const runtimeMetadata = mergeRuntimeMetadata(saved, state.conversation.runtimeMetadata);
   if (
+    activityStatus === state.activityStatus &&
     (status === undefined || status === state.detail.status) &&
     runtimeMetadata === saved &&
     ownerTitle === state.detail.ownerTitle &&
@@ -64,6 +133,7 @@ export function presentAgent(state: AgentResourceState, status?: AgentStatus): A
     return state;
   return {
     ...state,
+    activityStatus,
     detail: {
       ...state.detail,
       status: status ?? state.detail.status,

@@ -74,7 +74,11 @@
 .context-ring__row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 12px;
+  column-gap: 12px;
+}
+
+.context-ring__definition {
+  grid-column: 1 / -1;
 }
 
 .context-ring__term {

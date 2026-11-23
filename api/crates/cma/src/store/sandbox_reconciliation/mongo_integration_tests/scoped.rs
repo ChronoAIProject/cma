@@ -12,6 +12,7 @@ mod uncertainty;
 async fn adopted(store: &MongoSandboxStore, id: &str) -> (Sandbox, Agent) {
     let db = store.client.database(&store.agents.namespace().db);
     segments::schema::migrate(&db).await.unwrap();
+    crate::store::migrations::agent_log_source_keys::prepare_for_test(&db).await;
     let mut sandbox = active_sandbox(id);
     let mut agent = ready_agent(&sandbox, &format!("agt_{id}"));
     agent.conversation.last_seq = 2;
@@ -54,7 +55,7 @@ async fn adopted(store: &MongoSandboxStore, id: &str) -> (Sandbox, Agent) {
     (sandbox, agent)
 }
 
-async fn admit(store: &MongoSandboxStore, agent: &Agent, revision: i64) -> Agent {
+pub(super) async fn admit(store: &MongoSandboxStore, agent: &Agent, revision: i64) -> Agent {
     let db = store.client.database(&store.agents.namespace().db);
     let mut session = store.client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();

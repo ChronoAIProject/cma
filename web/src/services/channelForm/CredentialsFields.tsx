@@ -38,6 +38,11 @@ export function CredentialsFields({
           onChange={(v) => onChange({ ...value, [key]: v })}
           secret
           required={create && key === 'agent_key'}
+          hint={
+            key === 'agent_key'
+              ? 'Authorizes this channel to send work to the selected provider.'
+              : undefined
+          }
         />
       ))}
       {hmac ? (

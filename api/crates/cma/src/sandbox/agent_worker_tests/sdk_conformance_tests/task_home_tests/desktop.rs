@@ -14,6 +14,8 @@ use std::collections::BTreeMap;
 pub(super) struct CreationSupport {
     pub connections: Arc<dyn layer2_core::sandbox::SandboxCredentialPrerequisite>,
     pub adapter: Option<Arc<dyn SandboxAdapter>>,
+    pub policy: Option<Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>>,
+    pub machine_image: Option<String>,
 }
 
 pub(super) fn image() -> String {
