@@ -28,6 +28,10 @@ pub enum DesktopError {
     Busy,
     #[error("desktop runtime could not be reached")]
     RuntimeUnavailable,
+    #[error(
+        "The desktop could not recover automatically. Contact support if you need desktop access."
+    )]
+    RuntimeFailed,
     #[error("desktop session authority is temporarily unavailable")]
     AuthorityUnavailable,
 }
@@ -264,6 +268,9 @@ mod lease_tests;
 
 impl DesktopError {
     fn adapter(error: layer3_adapter::AdapterError) -> Self {
+        if matches!(error, layer3_adapter::AdapterError::DesktopFailed) {
+            return Self::RuntimeFailed;
+        }
         super::RuntimeCapacityError::from_adapter(&error)
             .map(Self::RuntimeCapacity)
             .unwrap_or(Self::RuntimeUnavailable)
