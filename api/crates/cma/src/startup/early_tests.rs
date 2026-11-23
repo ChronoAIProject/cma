@@ -65,7 +65,10 @@ async fn startup_refusals_bypass_the_application_and_leave_request_bodies_unread
         }
         let bytes = to_bytes(response.into_body(), 128).await.unwrap();
         if body == "startup" {
-            assert_eq!(bytes, r#"{"reason":"startup","status":"not-ready"}"#);
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+                serde_json::json!({"status":"not-ready", "reason":"startup"})
+            );
         } else {
             assert_eq!(bytes, body);
         }
@@ -111,7 +114,7 @@ async fn same_connection_uses_current_phase_and_preserves_peer_on_both_servers()
             (
                 "/ready",
                 StatusCode::SERVICE_UNAVAILABLE,
-                r#"{"reason":"draining","status":"not-ready"}"#.to_owned(),
+                "draining".to_owned(),
             ),
         ] {
             let response = client
@@ -124,10 +127,15 @@ async fn same_connection_uses_current_phase_and_preserves_peer_on_both_servers()
                 .await
                 .unwrap();
             assert_eq!(response.status(), status);
-            assert_eq!(
-                response.into_body().collect().await.unwrap().to_bytes(),
-                body
-            );
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            if body == "draining" {
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+                    serde_json::json!({"status":"not-ready", "reason":"draining"})
+                );
+            } else {
+                assert_eq!(bytes, body);
+            }
             if path == "/livez" {
                 assert!(admission.open());
             } else if body == "workers" {
