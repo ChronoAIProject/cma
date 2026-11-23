@@ -84,6 +84,7 @@ mod durability;
 mod empty_discovery;
 mod encryption;
 mod execution_sections;
+pub(crate) mod legal_consents;
 mod media_uploads;
 pub(crate) mod provenance_progress;
 pub(crate) mod registration_capacity;
