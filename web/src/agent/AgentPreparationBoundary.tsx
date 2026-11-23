@@ -19,13 +19,14 @@ import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
 
 export function AgentPreparationBoundary(props: AgentSurfaceProps) {
-  const { lifecycleClient, viewerId, agentId, accessUncertain } = props;
-  if (!lifecycleClient || !viewerId || accessUncertain) return <ActiveAgentSurface {...props} />;
+  const { lifecycleClient, viewerId, agentId } = props;
+  if (!lifecycleClient || !viewerId) return <ActiveAgentSurface {...props} />;
   return (
     <AgentLifecycleFollowup
       client={lifecycleClient}
       viewerId={viewerId}
       agentId={agentId}
+      enabled={!props.accessUncertain}
       render={(followup) => (
         <PreparationHost
           {...props}
@@ -133,6 +134,7 @@ function PreparationHost(
               />
             ) : null}
             {followup.feedback}
+            {!hasRequest ? followup.details : null}
           </>
         }
       />

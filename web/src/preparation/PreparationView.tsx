@@ -38,7 +38,7 @@ export function PreparationView({
     <section className="preparation" aria-label="Task preparation">
       <header className="preparation__header">
         <h1 id={titleId}>{model.title}</h1>
-        <Badge tone={model.stage === 'failed' ? 'warning' : 'neutral'} wrap>
+        <Badge tone={model.stage === 'failed' ? 'warning' : 'neutral'} wrap live>
           {model.label}
         </Badge>
       </header>

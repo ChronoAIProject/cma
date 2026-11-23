@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { unavailableClient, type CmaWebClient } from '../api/client';
 import { taskExperience } from '../test/taskExperience';
@@ -9,6 +9,7 @@ import {
   taskDraftStorageKey,
   legacyTaskDraftStorageKey,
   discardSubmittedTaskDraft,
+  useTaskDraft,
 } from './taskDraft';
 import { lifecycleStorageKey } from './lifecycleIntent';
 import { compileTaskTemplate, parseTaskTemplate, taskTemplates } from './taskTemplateModel';
@@ -202,7 +203,15 @@ it('replays the original body and key after reload without recompiling or cleari
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await screen.findByRole('button', { name: 'Recover original task' });
   const original = view.create.mock.calls[0]!;
-  fill('Topic', 'A later draft');
+  expect(screen.queryByLabelText('Topic')).not.toBeInTheDocument();
+  const later = renderHook(() => useTaskDraft('owner'));
+  act(() =>
+    later.result.current.changeTemplate({
+      id: 'research',
+      version: 1,
+      fields: { topic: 'A later draft' },
+    }),
+  );
   const saved = JSON.parse(sessionStorage.getItem(lifecycleStorageKey('owner'))!) as {
     intent: { body: { initial_message: string }; draftRevision: string };
   };
@@ -219,7 +228,13 @@ it('replays the original body and key after reload without recompiling or cleari
   });
   expect(restored.create.mock.calls[0]![1].idempotencyKey).toBe(original[1].idempotencyKey);
   discardSubmittedTaskDraft('owner', original[0], saved.intent.draftRevision);
-  expect(screen.getByLabelText('Topic')).toHaveValue('A later draft');
+  expect(later.result.current.template).toMatchObject({ fields: { topic: 'A later draft' } });
+  expect(
+    JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!).template.fields.topic,
+  ).toBe('A later draft');
+  expect(screen.getByRole('region', { name: 'Original request' }).textContent).toBe(
+    saved.intent.body.initial_message,
+  );
 });
 
 it.each([false, true])(
@@ -232,13 +247,24 @@ it.each([false, true])(
     fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
     await screen.findByRole('button', { name: 'Recover original task' });
     const submitted = view.create.mock.calls[0]![0];
-    if (edited) fill('Topic', ' Synthetic topic ');
+    expect(screen.queryByLabelText('Topic')).not.toBeInTheDocument();
+    const retained = renderHook(() => useTaskDraft('owner'));
+    if (edited)
+      act(() =>
+        retained.result.current.changeTemplate({
+          id: 'research',
+          version: 1,
+          fields: { topic: ' Synthetic topic ' },
+        }),
+      );
     const revision = JSON.parse(sessionStorage.getItem(lifecycleStorageKey('owner'))!).intent
       .draftRevision;
     act(() => discardSubmittedTaskDraft('owner', submitted, revision));
     if (edited) {
       expect(sessionStorage.getItem(taskDraftStorageKey('owner'))).not.toBeNull();
-      expect(screen.getByLabelText('Topic')).toHaveValue(' Synthetic topic ');
+      expect(retained.result.current.template).toMatchObject({
+        fields: { topic: ' Synthetic topic ' },
+      });
     } else {
       expect(JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!)).toEqual({
         version: 3,
@@ -249,7 +275,8 @@ it.each([false, true])(
         legacyObserved: null,
         recoverable: [],
       });
-      await waitFor(() => expect(screen.getByLabelText('Your task')).toHaveValue(''));
+      expect(retained.result.current.template).toBeUndefined();
+      expect(retained.result.current.text).toBe('');
     }
   },
 );

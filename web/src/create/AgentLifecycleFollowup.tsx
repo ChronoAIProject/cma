@@ -23,6 +23,7 @@ interface Props {
   readonly client: CmaWebClient;
   readonly viewerId: string;
   readonly agentId: string;
+  readonly enabled?: boolean;
   readonly render?: (view: LifecycleFollowupView) => ReactNode;
 }
 
@@ -34,7 +35,7 @@ export function AgentLifecycleFollowup(props: Props) {
   return <FollowupScope key={scope.generation} {...props} />;
 }
 
-function FollowupScope({ client, viewerId, agentId, render }: Props) {
+function FollowupScope({ client, viewerId, agentId, render, enabled }: Props) {
   const [scope] = useState(() => lifecycleScopeForAgent(viewerId, agentId));
   return scope === undefined ? (
     render?.({ feedback: null })
@@ -44,6 +45,7 @@ function FollowupScope({ client, viewerId, agentId, render }: Props) {
       viewerId={viewerId}
       agentId={agentId}
       render={render}
+      enabled={enabled}
       {...scope}
     />
   );
@@ -57,15 +59,20 @@ function RetainedSetup({
   sandboxId,
   operationId,
   render,
+  enabled = true,
 }: Props & {
   readonly workspaceId?: string;
   readonly sandboxId?: string;
   readonly operationId: string;
 }) {
-  const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId, {
-    agentId,
-    operationId,
-  });
+  const lifecycle = useLifecycleIntent(
+    client,
+    viewerId,
+    workspaceId,
+    sandboxId,
+    { agentId, operationId },
+    enabled,
+  );
   const connections = useConnectionGate();
   const cleared = useRef(false);
   const { operation, intent, clear } = lifecycle;
@@ -74,11 +81,12 @@ function RetainedSetup({
     operation?.id === intent.receipt?.id &&
     operation?.agent_id === agentId;
   useEffect(() => {
-    if (!render && matches && operation?.status === 'succeeded' && !cleared.current) {
+    if (enabled && !render && matches && operation?.status === 'succeeded' && !cleared.current) {
       cleared.current = true;
       clear();
     }
-  }, [clear, matches, operation?.status, render]);
+  }, [clear, enabled, matches, operation?.status, render]);
+  if (!enabled) return render?.({ lifecycle, context: { workspaceId, sandboxId }, feedback: null });
   if (!intent) {
     const feedback = lifecycle.failure ? (
       <Alert tone="error">{lifecycleFailureMessage(lifecycle.failure, retrySetupStatus)}</Alert>

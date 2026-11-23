@@ -22,7 +22,8 @@ export function retainPreparationDraftOwner(owner?: string) {
     const keys = Array.from({ length: sessionStorage.length }, (_, index) =>
       sessionStorage.key(index),
     ).filter((key): key is string => key?.startsWith(preparationDraftPrefix) === true);
-    if (cleanupRequired) sessionStorage.setItem(marker, '');
+    if (cleanupRequired && (previous !== null || keys.length > 0))
+      sessionStorage.setItem(marker, '');
     for (const key of keys) {
       let identity: unknown;
       try {
