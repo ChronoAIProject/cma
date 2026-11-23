@@ -26,6 +26,17 @@ async function fixture(page: Page, baseURL: string) {
   const boundary = new LocalStartup();
   const writes: { body: unknown; key: string | undefined }[] = [];
   await boundary.route(page, baseURL);
+  await page.route(`${baseURL}/api/v1/agents/agt_contract/reply-preview`, (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    return route.fulfill({
+      json: {
+        status: 'none',
+        agent_id: 'agt_contract',
+        source_through_seq: 0,
+        latest_assistant_reply: null,
+      },
+    });
+  });
   await page.route('**/openapi.json', (route) =>
     route.fulfill({
       json: {
