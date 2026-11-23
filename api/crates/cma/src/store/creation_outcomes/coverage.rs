@@ -4,7 +4,7 @@ use mongodb::bson::Bson;
 const DAY_MS: i64 = 86_400_000;
 
 fn current_day() -> Document {
-    doc! {"$floor": {"$divide": [{"$toLong": "$$NOW"}, DAY_MS]}}
+    doc! {"$toLong": {"$floor": {"$divide": [{"$toLong": "$$NOW"}, DAY_MS]}}}
 }
 
 impl CreationOutcomes {

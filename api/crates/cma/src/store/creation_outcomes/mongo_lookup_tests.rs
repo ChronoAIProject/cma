@@ -60,12 +60,17 @@ async fn closed_miss_uses_one_read_only_snapshot_with_point_reads() {
         first_read
             .get_document("readConcern")
             .unwrap()
-            .get_str("level"),
-        Ok("snapshot")
+            .get_str("level")
+            .unwrap(),
+        "snapshot"
     );
     assert_eq!(
-        first_read.get_document("filter").unwrap().get_str("owner"),
-        Ok(owner.as_str())
+        first_read
+            .get_document("filter")
+            .unwrap()
+            .get_str("owner")
+            .unwrap(),
+        owner.as_str()
     );
     assert!(commands[1]
         .1
@@ -151,7 +156,7 @@ async fn opaque_lifecycle_key_requires_original_wire_evidence_and_exact_new_orig
     };
     let admission = SandboxAdmission::new(
         candidate,
-        SandboxAdmissionName::Allocate("wire-fixture".into()),
+        SandboxAdmissionName::Allocate("trigger-research".into()),
         10,
         layer2_core::now_rfc3339(),
     )
