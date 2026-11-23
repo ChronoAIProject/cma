@@ -29,6 +29,10 @@ struct RestoreMarker {
 
 impl Binding {
     pub(crate) fn validate_inventory(bytes: &[u8], config: &RuntimeConfig) -> Result<()> {
+        Self::decode_inventory(bytes, config).map(|_| ())
+    }
+
+    pub(crate) fn decode_inventory(bytes: &[u8], config: &RuntimeConfig) -> Result<Self> {
         let binding: Self =
             serde_json::from_slice(bytes).map_err(|_| invalid("home binding is malformed"))?;
         binding.validate(config)?;
@@ -37,7 +41,7 @@ impl Binding {
                 "home binding generation does not match the inventory",
             ));
         }
-        Ok(())
+        Ok(binding)
     }
 
     fn new(config: &RuntimeConfig) -> Result<Self> {

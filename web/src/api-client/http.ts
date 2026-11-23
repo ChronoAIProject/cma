@@ -364,6 +364,9 @@ export function errorFromBody(
     requestId,
     retryAfterMilliseconds(response),
     extensions,
+    code === 'resource_revocation_pending' && response.status === 409
+      ? response.headers.get('link')?.slice(0, 2048)
+      : undefined,
   );
 }
 
