@@ -18,8 +18,8 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
     const expected = {
       darkAttribute: theme === 'dark',
       colorScheme: theme,
-      pageBackground: theme === 'dark' ? 'rgb(9, 9, 11)' : 'rgb(255, 255, 255)',
-      canvasBackground: theme === 'dark' ? 'rgb(24, 24, 27)' : 'rgb(250, 250, 250)',
+      pageBackground: theme === 'dark' ? 'rgb(11, 11, 12)' : 'rgb(255, 255, 255)',
+      canvasBackground: theme === 'dark' ? 'rgb(24, 24, 27)' : 'rgb(247, 247, 248)',
     };
     const rendered = () =>
       page.evaluate(() => ({
@@ -104,7 +104,9 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
   await expect(page.getByText('prepareFormReply', { exact: true })).not.toBeVisible();
   await capture('channel-toolsets-conditional-light-1600.png', 'light');
   await otherTools.click();
-  await expect(page.getByText('Requires a direct Discord source')).toBeVisible();
+  await expect(
+    page.getByText('Requires a direct Discord or Lark / Feishu source', { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText('Requires a direct WhatsApp source')).toBeVisible();
   await capture('channel-toolsets-other-light-1600.png', 'light');
   await otherTools.click();
@@ -237,10 +239,13 @@ test('LOCAL channel map preserves node drafts and renders every producer and con
       await map.getByRole('button', { name: 'Producer: Telegram (NyxID relay)' }).click();
       const inspector = page.locator('.channel-inspector');
       const bounds = await page.getByRole('dialog').boundingBox();
-      expect(bounds!.width).toBeLessThanOrEqual(width * 0.6 + 1);
-      expect(bounds!.height).toBeLessThanOrEqual(601);
-      expect(bounds!.x).toBeGreaterThanOrEqual(width * 0.2 - 1);
-      expect(bounds!.y).toBeGreaterThanOrEqual(199);
+      const height = page.viewportSize()!.height;
+      const expectedWidth = width <= 720 ? width - 32 : Math.min(960, width * 0.6);
+      const expectedHeight = width <= 720 ? height - 32 : height * 0.6;
+      expect(bounds!.width).toBeCloseTo(expectedWidth, 0);
+      expect(bounds!.height).toBeCloseTo(expectedHeight, 0);
+      expect(bounds!.x).toBeCloseTo((width - expectedWidth) / 2, 0);
+      expect(bounds!.y).toBeCloseTo((height - expectedHeight) / 2, 0);
       await inspector.scrollIntoViewIfNeeded();
       await expect
         .poll(() =>

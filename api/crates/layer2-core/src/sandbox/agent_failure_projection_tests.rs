@@ -12,6 +12,7 @@ const CLASSES: &[&str] = &[
     "platform_budget_exhausted",
     "agent_log_capacity_exceeded",
     "conversation_output_gap",
+    AGENT_TURN_NO_PROGRESS,
     "runtime_lost",
     SOURCE_DEFERRED_FAILURE,
 ];

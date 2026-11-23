@@ -17,6 +17,7 @@ mod browser;
 mod browser_control;
 pub mod file_read_diagnostics;
 pub mod permanent_custody;
+pub mod stale_turn;
 pub use browser::{
     BrowserAdapter, BrowserFrame, BrowserObservation, BrowserOperation, BrowserReceipt,
     BrowserRequest, BrowserState,

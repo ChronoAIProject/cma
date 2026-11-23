@@ -1,7 +1,19 @@
-import { act, renderHook } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
+import {
+  act,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
 import { useResourceActions } from './ResourceActions';
-import { agentClient } from './test/agent';
+import { AGENT_DETAIL, agentClient } from './test/agent';
+import type { CmaWebClient } from './api/client';
+import { useDeletionNoticeReconciliation } from './useDeletionNoticeReconciliation';
+import { persistDeletion, restoreDeletions } from './deletionRecovery';
+import { sandboxFixture } from './test/hierarchy';
 import { downloadAgentHistory } from './agent/historyExport';
 
 vi.mock('./agent/historyExport', () => ({ downloadAgentHistory: vi.fn() }));
@@ -45,3 +57,151 @@ it('delivers a delayed acceptance to the current view callback after navigation'
   expect(previous).not.toHaveBeenCalled();
   expect(current).toHaveBeenCalledExactlyOnceWith({ kind: 'pause_sandbox', sandboxId: 'sbx_1' });
 });
+
+afterEach(() => vi.restoreAllMocks());
+
+function DeletionNotices({
+  source,
+  kind,
+}: {
+  readonly source: CmaWebClient;
+  readonly kind: 'Agent' | 'Sandbox';
+}) {
+  const observed = useDeletionNoticeReconciliation(source, 'owner', 0, true);
+  const actions = useResourceActions(
+    observed.client,
+    () => {},
+    undefined,
+    'owner',
+    undefined,
+    true,
+    observed.settlements,
+  );
+  return (
+    <>
+      <button
+        onClick={() =>
+          actions.select(
+            kind === 'Agent'
+              ? { kind: 'delete_agent', agentId: 'second' }
+              : { kind: 'delete_sandbox', sandboxId: 'second' },
+          )
+        }
+      >
+        Delete second
+      </button>
+      <button
+        onClick={() =>
+          void (kind === 'Agent'
+            ? observed.client.readAgent('first')
+            : observed.client.readSandbox('first'))
+        }
+      >
+        Read first terminal
+      </button>
+      <output aria-label="Settlements">{observed.revision}</output>
+      <output aria-label="Deleting environments">
+        {[...actions.deletingSandboxIds].join(',')}
+      </output>
+      <button onClick={actions.viewDeletionStatus} disabled={!actions.viewDeletionStatus}>
+        Open pending request
+      </button>
+      {actions.notice}
+      {actions.overlay}
+    </>
+  );
+}
+
+for (const kind of ['Agent', 'Sandbox'] as const)
+  it.each(['healthy', 'write-failure', 'unknown', 'remove-failure'] as const)(
+    `retains unrelated ${kind} responsibility when another request settles: %s`,
+    async (failure) => {
+      const storageFails = failure === 'write-failure' || failure === 'unknown';
+      persistDeletion('owner', {
+        key: 'synthetic-first-accepted',
+        action:
+          kind === 'Agent'
+            ? { kind: 'delete_agent', agentId: 'first' }
+            : { kind: 'delete_sandbox', sandboxId: 'first' },
+        accepted: true,
+      });
+      if (storageFails)
+        vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+          throw new DOMException('Synthetic storage full', 'QuotaExceededError');
+        });
+      const command = vi.fn().mockResolvedValue(undefined);
+      if (failure === 'unknown') command.mockRejectedValueOnce(new Error('Response lost'));
+      const source = agentClient({
+        deleteAgent: command,
+        deleteSandbox: command,
+        readAgent: async (id) => ({
+          ...AGENT_DETAIL,
+          id,
+          status: id === 'first' ? 'deleted' : 'stopped',
+          worktree: {
+            ...AGENT_DETAIL.worktree,
+            agentId: id,
+            status: id === 'first' ? 'removed' : 'ready',
+          },
+        }),
+        readSandbox: async (id) => ({
+          ...sandboxFixture(id === 'first' ? 'retired' : 'active'),
+          id,
+          workspaces: [],
+        }),
+      });
+      render(<DeletionNotices source={source} kind={kind} />);
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Delete second' })));
+      fireEvent.click(screen.getByRole('checkbox'));
+      await act(async () =>
+        fireEvent.click(
+          screen.getByRole('button', {
+            name: kind === 'Agent' ? 'Delete Agent' : 'Request deletion',
+          }),
+        ),
+      );
+      expect(command).toHaveBeenCalledExactlyOnceWith('second', {
+        idempotencyKey: expect.any(String),
+      });
+      const original = command.mock.calls[0]![1].idempotencyKey;
+      if (failure === 'unknown') {
+        expect(await screen.findByText('Response lost')).toBeVisible();
+        await act(async () => fireEvent.click(screen.getByText('Close', { selector: 'button' })));
+      }
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.getAllByRole('region', { name: 'Deletion request' })).toHaveLength(2);
+      expect(restoreDeletions('owner')).toHaveLength(storageFails ? 1 : 2);
+      if (failure === 'remove-failure')
+        vi.spyOn(localStorage, 'removeItem').mockImplementation(() => {
+          throw new DOMException('Synthetic removal blocked', 'SecurityError');
+        });
+      await act(async () =>
+        fireEvent.click(screen.getByRole('button', { name: 'Read first terminal' })),
+      );
+      await waitFor(() => expect(screen.getByLabelText('Settlements')).toHaveTextContent('1'));
+      expect(screen.queryAllByRole('region', { name: 'Deletion request' })).toHaveLength(1);
+      if (kind === 'Sandbox')
+        expect(screen.getByLabelText('Deleting environments').textContent).toBe(
+          failure === 'unknown' ? '' : 'second',
+        );
+      await act(async () =>
+        fireEvent.click(screen.getByRole('button', { name: 'Open pending request' })),
+      );
+      const status = await screen.findByRole('dialog', { name: `Deleting ${kind}` });
+      expect(within(status).getByText(original)).toBeVisible();
+      expect(command).toHaveBeenCalledTimes(1);
+      if (failure === 'unknown') {
+        expect(within(status).getByText('Request unconfirmed')).toBeVisible();
+        await act(async () =>
+          fireEvent.click(within(status).getByRole('button', { name: 'Check request' })),
+        );
+        expect(command.mock.calls[1]).toEqual(command.mock.calls[0]);
+      } else {
+        await act(async () =>
+          fireEvent.click(within(status).getByText('Close', { selector: 'button' })),
+        );
+      }
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.queryAllByRole('region', { name: 'Deletion request' })).toHaveLength(1);
+    },
+  );
