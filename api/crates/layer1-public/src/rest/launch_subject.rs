@@ -3,7 +3,7 @@
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, HeaderValue, StatusCode},
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use layer2_core::Caller;
@@ -23,43 +23,49 @@ const MAX_ENCODED_BYTES: usize = 4096;
 
 struct VerifiedSubject(HeaderValue);
 
-impl VerifiedSubject {
-    fn check(headers: &HeaderMap, caller: &Caller) -> Result<Self, Response> {
-        let invalid = || {
-            problem_response(
-                StatusCode::BAD_REQUEST,
-                problem_document(
-                    StatusCode::BAD_REQUEST,
-                    "command-subject-condition-invalid",
-                    "A single canonical expected command account is required.",
-                    "command_subject_condition_invalid",
-                ),
-            )
+enum SubjectConditionError {
+    Invalid,
+    Mismatch,
+}
+
+impl IntoResponse for SubjectConditionError {
+    fn into_response(self) -> Response {
+        let (status, slug, detail, code) = match self {
+            Self::Invalid => (StatusCode::BAD_REQUEST, "command-subject-condition-invalid",
+                "A single canonical expected command account is required.", "command_subject_condition_invalid"),
+            Self::Mismatch => (StatusCode::CONFLICT, "command-subject-mismatch",
+                "Sign in with the same CMA account that made this request. The original request remains unresolved.", "command_subject_mismatch"),
         };
+        problem_response(status, problem_document(status, slug, detail, code))
+    }
+}
+
+impl VerifiedSubject {
+    fn check(headers: &HeaderMap, caller: &Caller) -> Result<Self, SubjectConditionError> {
         let mut values = headers.get_all(EXPECTED).iter();
-        let value = values.next().ok_or_else(invalid)?;
+        let value = values.next().ok_or(SubjectConditionError::Invalid)?;
         if values.next().is_some() || value.as_bytes().len() > MAX_ENCODED_BYTES {
-            return Err(invalid());
+            return Err(SubjectConditionError::Invalid);
         }
         let encoded = value
             .to_str()
-            .map_err(|_| invalid())?
+            .map_err(|_| SubjectConditionError::Invalid)?
             .strip_prefix("v1.")
-            .ok_or_else(invalid)?;
-        let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| invalid())?;
-        let subject = std::str::from_utf8(&bytes).map_err(|_| invalid())?;
+            .ok_or(SubjectConditionError::Invalid)?;
+        let bytes = URL_SAFE_NO_PAD
+            .decode(encoded)
+            .map_err(|_| SubjectConditionError::Invalid)?;
+        let subject = std::str::from_utf8(&bytes).map_err(|_| SubjectConditionError::Invalid)?;
         if subject.is_empty() || URL_SAFE_NO_PAD.encode(&bytes) != encoded {
-            return Err(invalid());
+            return Err(SubjectConditionError::Invalid);
         }
         if subject != caller.subject.as_str() {
-            return Err(problem_response(StatusCode::CONFLICT, problem_document(
-                StatusCode::CONFLICT, "command-subject-mismatch",
-                "Sign in with the same CMA account that made this request. The original request remains unresolved.",
-                "command_subject_mismatch",
-            )));
+            return Err(SubjectConditionError::Mismatch);
         }
         let proof = format!("v1.{}", URL_SAFE_NO_PAD.encode(caller.subject.as_str()));
-        Ok(Self(HeaderValue::from_str(&proof).map_err(|_| invalid())?))
+        Ok(Self(
+            HeaderValue::from_str(&proof).map_err(|_| SubjectConditionError::Invalid)?,
+        ))
     }
 
     fn stamp(self, mut response: Response) -> Response {
@@ -102,7 +108,7 @@ pub(super) async fn create_bound(
 ) -> Response {
     let verified = match VerifiedSubject::check(&headers, &caller.0) {
         Ok(verified) => verified,
-        Err(response) => return response,
+        Err(problem) => return problem.into_response(),
     };
     verified.stamp(super::launches::create(state, caller, resource, path, key, body).await)
 }
