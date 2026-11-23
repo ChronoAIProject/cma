@@ -30,6 +30,7 @@ pub(super) struct NativeBackend {
     pub lose_resume: Arc<AtomicBool>,
     pub lose_delete: Arc<AtomicBool>,
     pub reject_reopen: Arc<AtomicBool>,
+    pub adoption_pause: Arc<Mutex<Option<Arc<RetirementProbePause>>>>,
     pub hold_reopen: Arc<AtomicBool>,
     pub reopen_entered: Arc<Notify>,
     pub reopen_release: Arc<Notify>,
@@ -266,6 +267,11 @@ impl HostedBackend for NativeBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> layer3_adapter::Result<Option<RuntimeObservation>> {
+        let pause = self.adoption_pause.lock().unwrap().take();
+        if let Some(pause) = pause {
+            pause.entered.notify_one();
+            pause.release.notified().await;
+        }
         let rows = self.row.lock().await;
         let Some(row) = rows.as_ref() else {
             return Ok(None);
