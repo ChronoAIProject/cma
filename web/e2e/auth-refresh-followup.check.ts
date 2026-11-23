@@ -101,6 +101,7 @@ for (const order of ['queued refresh', 'preflight before global A', 'local A bef
       await expect(page.getByRole('button', { name: 'Try again', exact: true })).toBeEnabled();
       expect(starts).toHaveLength(1);
       await page.reload();
+      await expect(page.getByRole('region', { name: 'CMA sign-in required' })).toBeVisible();
       if (order !== 'local A before global B') await checkAccount();
       const retained = await stored();
       expect(JSON.parse(retained!)).toMatchObject({
