@@ -112,15 +112,19 @@ fn pipeline(store: &MongoSandboxStore, agents: &[layer2_core::sandbox::Agent]) -
     }
     // The state record alone is never sufficient: choose the actual latest
     // event by the existing (Agent, revision) index, including orphan events.
+    // Capture decoded these IDs on the same snapshot used for this lookup.
+    let selected = ids
+        .into_iter()
+        .map(|id| doc! {"_id":id})
+        .collect::<Vec<_>>();
     let mut latest = vec![
-        doc! {"$match":{"_id":{"$in":ids}}},
-        doc! {"$project":{"_id":1}},
+        doc! {"$documents":{"$literal":selected}},
         doc! {"$lookup":{"from":store.channel_usage_events.name(),"localField":"_id","foreignField":"agent_id","as":"event","pipeline":[{"$sort":{"revision":-1}},{"$limit":1}]}},
         doc! {"$unwind":"$event"},
         doc! {"$replaceWith":"$event"},
     ];
     latest.extend(personal_inventory::query::frame("usage_event"));
-    result.push(doc! {"$unionWith":{"coll":store.agents.name(),"pipeline":latest}});
+    result.push(doc! {"$unionWith":{"pipeline":latest}});
     task_plan::append(store, agents, &mut result);
     result
 }
