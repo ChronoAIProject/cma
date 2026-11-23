@@ -10,7 +10,7 @@ import { RelaySetupGuidance } from './RelaySetupGuidance';
 import { SourceAdmissionFields } from './SourceAdmissionFields';
 import { Choice, Section, StringList, TextField, Toggle } from './Fields';
 import { object, optional, strings, without, type Fields } from './model';
-import { ValueBuilder } from './ValueBuilder';
+import { useValidationPath } from './ValidationPath';
 const platforms = ['telegram', 'lark', 'feishu', 'discord', 'whatsapp', 'slack'];
 export function SourceFields({
   value,
@@ -331,6 +331,7 @@ function CustomSource({
   const auth = object(value.auth),
     attachments = object(value.attachments);
   const set = (key: string, next: unknown) => onChange(optional(value, key, next));
+  const schemaPath = useValidationPath('schema');
   return (
     <>
       <Section
@@ -401,25 +402,17 @@ function CustomSource({
           </>
         ) : null}
       </Section>
-      <Section
-        title="Event data validation"
-        description="Optionally require incoming event data to match a schema before it reaches the agent."
-      >
-        {value.schema != null ? (
-          <>
-            <ValueBuilder
-              label="Event schema"
-              value={value.schema}
-              onChange={(v) => set('schema', v)}
-            />
+      {value.schema != null ? (
+        // The v1 gateway contract refuses every Custom event schema, so none is offered.
+        <Section
+          title="Event data validation"
+          description="Event schema validation is not supported by this gateway. Remove it before saving."
+        >
+          <div data-validation-path={schemaPath}>
             <Button onClick={() => set('schema', undefined)}>Remove schema validation</Button>
-          </>
-        ) : (
-          <Button onClick={() => set('schema', { type: 'object', properties: {} })}>
-            Add schema validation
-          </Button>
-        )}
-      </Section>
+          </div>
+        </Section>
+      ) : null}
     </>
   );
 }
