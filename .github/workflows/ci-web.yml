@@ -79,6 +79,8 @@ jobs:
         run: |
           node --test ../.github/scripts/install-contract-browser.test.mjs
           node ../.github/scripts/install-contract-browser.mjs
+          node --test ../.github/scripts/install-contract-video.test.mjs
+          node ../.github/scripts/install-contract-video.mjs
       -
         name: "Local browser guard mechanics"
         working-directory: "web"
