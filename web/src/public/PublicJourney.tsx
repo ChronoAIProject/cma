@@ -16,7 +16,7 @@ import {
 import { SandboxCredentialSetup } from '../auth/SandboxCredentialSetup';
 import type { SignInOptions } from '../auth/types';
 import lockup from '../assets/brand/cma-lockup-horizontal.svg';
-import { routePath, type AppRoute, type AppRouter } from '../routing/routes';
+import { parseRoute, routePath, type AppRoute, type AppRouter } from '../routing/routes';
 import { Button } from '../ui/Button';
 import { publicCopy } from '../vocabulary/needs';
 import { refusalSentence } from '../vocabulary/errors';
@@ -27,7 +27,14 @@ import {
   isSettledQuotaRefusal,
   isUnsettledCommand,
 } from './admission';
-import { createIntent, forgetIntent, readIntent, writeIntent, type BrowserIntent } from './intent';
+import {
+  createIntent,
+  forgetIntent,
+  IntentConflictError,
+  readIntent,
+  writeIntent,
+  type BrowserIntent,
+} from './intent';
 import { Landing } from './Landing';
 import { Progress } from './Progress';
 import { RepeatChoice } from './RepeatChoice';
@@ -95,6 +102,13 @@ function Entry({
   );
   const [signingInBusy, setSigningInBusy] = useState(false);
   const [blockedOwner, setBlockedOwner] = useState<string>();
+  const [conflict, setConflict] = useState<IntentConflictError>();
+  const storageFailure = useCallback((cause: unknown) => {
+    if (cause instanceof IntentConflictError) {
+      setConflict(cause);
+      setError(cause.message);
+    } else setError(publicCopy.storageUnavailable);
+  }, []);
   const [pending, setPending] = useState<{
     owner: string;
     client: PublicClient;
@@ -110,7 +124,7 @@ function Entry({
   const [existing, setExisting] = useState<ExistingLaunchAgent>();
   const [revision, setRevision] = useState(0);
   const owner = state.status === 'authenticated' ? state.user.id : undefined;
-  const recoveryBlocked = owner !== undefined && blockedOwner === owner;
+  const recoveryBlocked = conflict !== undefined || (owner !== undefined && blockedOwner === owner);
   const credentialReturnTo = routePath({ kind: 'public_trigger', publicId: route.publicId });
   const allowed =
     state.status === 'authenticated' && state.user.capabilities.includes('launch_triggers');
@@ -148,6 +162,10 @@ function Entry({
         onNavigate({ kind: 'launch', launchId: result.id }, { replace: true });
       } catch (cause) {
         if (controller.signal.aborted) return;
+        if (cause instanceof IntentConflictError) {
+          storageFailure(cause);
+          return;
+        }
         if (cause instanceof AdmissionRecoveryError) {
           setBlockedOwner(owner);
           setError(cause.message);
@@ -191,7 +209,7 @@ function Entry({
         if (!controller.signal.aborted) setPending(undefined);
       }
     },
-    [allowed, client, onNavigate, owner],
+    [allowed, client, onNavigate, owner, storageFailure],
   );
   useEffect(() => {
     const controller = new AbortController();
@@ -228,8 +246,8 @@ function Entry({
           const selected = createIntent(route);
           setAutomatic(true);
           setIntent(selected);
-        } catch {
-          setError(publicCopy.storageUnavailable);
+        } catch (cause) {
+          storageFailure(cause);
         }
       },
       () => undefined,
@@ -237,7 +255,7 @@ function Entry({
     return () => {
       live = false;
     };
-  }, [client, intent, preview?.always_review, preview?.availability, route]);
+  }, [client, intent, preview?.always_review, preview?.availability, route, storageFailure]);
   useEffect(() => {
     if (!automatic || intent === undefined || state.status !== 'anonymous' || signingIn.current)
       return;
@@ -293,8 +311,8 @@ function Entry({
               createIntent(route))
             : createIntent(route, choice);
       writeIntent(selected);
-    } catch {
-      setError(publicCopy.storageUnavailable);
+    } catch (cause) {
+      storageFailure(cause);
       return;
     }
     setIntent(selected);
@@ -342,7 +360,29 @@ function Entry({
             <p className="public-error" role="alert">
               {error}
             </p>
-            {needsSignIn ? (
+            {conflict !== undefined ? (
+              conflict.path === undefined ? null : (
+                <a
+                  href={conflict.path}
+                  onClick={(event) => {
+                    if (
+                      event.button !== 0 ||
+                      event.metaKey ||
+                      event.ctrlKey ||
+                      event.shiftKey ||
+                      event.altKey ||
+                      conflict.path === undefined ||
+                      conflict.path === routePath(route)
+                    )
+                      return;
+                    event.preventDefault();
+                    onNavigate(parseRoute(conflict.path));
+                  }}
+                >
+                  Return to saved request
+                </a>
+              )
+            ) : needsSignIn ? (
               <SandboxCredentialSetup
                 returnTo={credentialReturnTo}
                 expectedSubject={intent?.owner}

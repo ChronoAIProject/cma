@@ -15,8 +15,47 @@ export interface BrowserIntent {
   readonly credentialRecovery?: 'refused' | 'retry';
 }
 
+export class IntentConflictError extends Error {
+  readonly path?: string;
+
+  constructor(saved?: BrowserIntent) {
+    super(
+      saved === undefined
+        ? 'This tab has a saved request that could not be read safely. No new request has been sent. Contact your CMA administrator.'
+        : 'An earlier request is still unresolved in this tab. Return to it with the same CMA account before starting another request.',
+    );
+    this.path = saved?.path;
+  }
+}
+
 export function writeIntent(intent: BrowserIntent): void {
-  sessionStorage.setItem(KEY, JSON.stringify(intent));
+  const stored = sessionStorage.getItem(KEY);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(stored ?? 'null');
+  } catch {
+    throw new IntentConflictError();
+  }
+  const saved = parseIntent(raw);
+  if (raw !== null && saved === undefined) throw new IntentConflictError();
+  if (
+    saved?.submitted &&
+    (saved.id !== intent.id ||
+      saved.owner !== intent.owner ||
+      saved.path !== intent.path ||
+      saved.publicId !== intent.publicId ||
+      saved.expiresAt !== intent.expiresAt ||
+      saved.body.start_if_ready !== intent.body.start_if_ready ||
+      saved.body.placement_id !== intent.body.placement_id ||
+      saved.body.referrer_origin !== intent.body.referrer_origin ||
+      saved.body.choice !== intent.body.choice ||
+      (saved.key !== intent.key &&
+        !(saved.credentialRecovery === 'refused' && intent.credentialRecovery === 'retry')))
+  )
+    throw new IntentConflictError(saved);
+  const submitted =
+    intent.submitted || (saved?.submitted === true && intent.credentialRecovery !== 'refused');
+  sessionStorage.setItem(KEY, JSON.stringify({ ...intent, submitted }));
 }
 
 export function hasCurrentConsent(intent: BrowserIntent): boolean {
@@ -55,11 +94,21 @@ export function createIntent(
 
 export function readIntent(path: string): BrowserIntent | undefined {
   try {
-    const raw: unknown = JSON.parse(sessionStorage.getItem(KEY) ?? 'null');
+    const intent = parseIntent(JSON.parse(sessionStorage.getItem(KEY) ?? 'null'));
+    return intent?.path === path && (intent.submitted || hasCurrentConsent(intent))
+      ? intent
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseIntent(raw: unknown): BrowserIntent | undefined {
+  try {
     if (typeof raw !== 'object' || raw === null) return undefined;
     const intent = raw as Partial<BrowserIntent>;
     if (
-      intent.path !== path ||
+      typeof intent.path !== 'string' ||
       typeof intent.id !== 'string' ||
       typeof intent.key !== 'string' ||
       typeof intent.publicId !== 'string' ||
@@ -72,7 +121,6 @@ export function readIntent(path: string): BrowserIntent | undefined {
     if (
       (intent.owner !== undefined && typeof intent.owner !== 'string') ||
       (intent.submitted && typeof intent.owner !== 'string') ||
-      (!intent.submitted && !hasCurrentConsent(intent as BrowserIntent)) ||
       (intent.credentialRecovery !== undefined &&
         (typeof intent.owner !== 'string' ||
           (intent.credentialRecovery !== 'refused' && intent.credentialRecovery !== 'retry'))) ||
@@ -96,11 +144,11 @@ export function readIntent(path: string): BrowserIntent | undefined {
       publicId: intent.publicId,
       placementId: intent.body.placement_id,
     });
-    if (canonical !== path) return undefined;
+    if (canonical !== intent.path) return undefined;
     return {
       id: intent.id,
       key: intent.key,
-      path,
+      path: intent.path,
       publicId: intent.publicId,
       expiresAt: intent.expiresAt,
       submitted: intent.submitted,

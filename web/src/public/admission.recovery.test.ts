@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { Launch } from '@cma/client';
 import { PUBLIC_RECORD, publicClient } from '../test/public';
 import { admit } from './admission';
-import { createIntent, readIntent, writeIntent, type BrowserIntent } from './intent';
+import { createIntent, forgetIntent, readIntent, writeIntent, type BrowserIntent } from './intent';
 
 const route = { kind: 'public_trigger', publicId: 'recovery-example' } as const;
 const path = '/t/recovery-example';
@@ -24,8 +24,8 @@ it.each([0, 1, -30 * 60 * 1000])(
     expect(readIntent(path)).toEqual(submitted);
     await expect(admit(client, submitted, owner)).resolves.toEqual(PUBLIC_RECORD);
     expect(client.requests.createOrResume).toHaveBeenCalledOnce();
-    writeIntent(original);
-    expect(readIntent(path)).toBeUndefined();
+    expect(() => writeIntent(original)).toThrow('earlier request');
+    expect(readIntent(path)).toEqual(submitted);
   },
 );
 
@@ -67,7 +67,13 @@ it('keeps an expired packet when capacity eviction removes its unresolved result
   const original = createIntent(route);
   void admit(client, original, owner);
   const submitted = readIntent(path)!;
-  for (let index = 0; index < 50; index += 1) await admit(client, createIntent(route), owner);
+  // Isolate result-cache eviction from the independently tested storage barrier.
+  forgetIntent(original.id);
+  for (let index = 0; index < 50; index += 1) {
+    const next = createIntent(route);
+    await admit(client, next, owner);
+    forgetIntent(next.id);
+  }
   writeIntent(submitted);
   vi.spyOn(Date, 'now').mockReturnValue(original.expiresAt + 1);
   await expect(admit(client, submitted, owner)).rejects.toThrow('Your original request is saved');

@@ -77,7 +77,7 @@ for (const exit of ['route', 'owner'] as const) {
 }
 
 for (const outcome of ['accepted', 'credential-refusal', 'forbidden'] as const) {
-  test(`LOCAL Entry ignores A's old ${outcome} while B recovers its own command`, async ({
+  test(`LOCAL Entry blocks B and ignores A's retired ${outcome} observer`, async ({
     page,
     baseURL,
   }, info) => {
@@ -92,23 +92,30 @@ for (const outcome of ['accepted', 'credential-refusal', 'forbidden'] as const) 
       await expect.poll(() => flow.sessions.includes('different-owner')).toBe(true);
       await expect(page.getByRole('button', { name: 'Try it', exact: true })).toBeEnabled();
       await page.getByRole('button', { name: 'Try it', exact: true }).click();
-      await expect(page.getByRole('button', { name: 'Try again', exact: true })).toBeEnabled();
+      await expect(page.getByRole('link', { name: 'Return to saved request' })).toHaveAttribute(
+        'href',
+        '/t/public_contract',
+      );
+      await expect(page.getByRole('button', { name: 'Try it', exact: true })).toBeDisabled();
       const retained = await flow.stored();
       const newer = await flow.packet();
-      expect(newer?.id).not.toBe(original?.id);
-      expect(newer?.key).not.toBe(original?.key);
-      expect(newer?.owner).toBe('different-owner');
-      expect(flow.posts).toHaveLength(2);
+      expect(newer).toEqual(original);
+      expect(flow.posts).toHaveLength(1);
       await flow.release();
       expect(await flow.stored()).toBe(retained);
       expect(await flow.documentId()).toBe(documentId);
       await expect(page).toHaveURL(`${baseURL}/t/public_contract`);
-      expect(flow.posts).toHaveLength(2);
+      expect(flow.posts).toHaveLength(1);
       await page.screenshot({ path: info.outputPath(`entry-old-${outcome}.png`) });
-      await page.getByRole('button', { name: 'Try again', exact: true }).click();
+      flow.setSubject('local-owner');
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      if (outcome !== 'accepted') {
+        await expect(page.getByRole('button', { name: 'Try again', exact: true })).toBeEnabled();
+        await page.getByRole('button', { name: 'Try again', exact: true }).click();
+      }
       await expect(page).toHaveURL(`${baseURL}/launches/${flow.accepted.id}`);
-      expect(flow.posts).toHaveLength(3);
-      expect(flow.posts[2]).toEqual(flow.posts[1]);
+      expect(flow.posts).toHaveLength(outcome === 'accepted' ? 1 : 3);
+      for (const post of flow.posts) expect(post).toEqual(flow.posts[0]);
       flow.finish();
     } finally {
       flow.releaseGate();

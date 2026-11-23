@@ -198,7 +198,7 @@ it('aborts the account check and leaves recovery intact across A to B to A', asy
 });
 
 it.each(['accepted', 'credential refusal', 'settled refusal', 'unknown'] as const)(
-  'keeps B packet and route when A returns a late %s',
+  'blocks B without consuming A when its retired observer returns a late %s',
   async (outcome) => {
     const response = deferred<Launch>();
     const client = publicClient();
@@ -214,8 +214,12 @@ it.each(['accepted', 'credential refusal', 'settled refusal', 'unknown'] as cons
     await screen.findByRole('alert');
     const retained = sessionStorage.getItem(key);
     const current = readIntent(path)!;
-    expect(current.owner).toBe('another-owner');
-    expect(current.id).not.toBe(original.id);
+    expect(current).toEqual(original);
+    expect(screen.getByRole('link', { name: 'Return to saved request' })).toHaveAttribute(
+      'href',
+      path,
+    );
+    expect(screen.getByRole('button', { name: 'Open in CMA' })).toBeDisabled();
     await act(async () => {
       if (outcome === 'accepted') response.resolve(PUBLIC_RECORD);
       else
@@ -229,11 +233,16 @@ it.each(['accepted', 'credential refusal', 'settled refusal', 'unknown'] as cons
     });
     expect(sessionStorage.getItem(key)).toBe(retained);
     expect(test.navigate).not.toHaveBeenCalled();
-    expect(client.requests.createOrResume).toHaveBeenCalledTimes(2);
-    await test.user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+    await test.changeOwner(PUBLIC_USER.id);
+    if (outcome !== 'accepted') {
+      await waitFor(() => expect(client.requests.createOrResume).toHaveBeenCalledTimes(2));
+      await test.user.click(await screen.findByRole('button', { name: 'Try again' }));
+    }
     await waitFor(() => expect(test.navigate).toHaveBeenCalledOnce());
     const calls = vi.mocked(client.requests.createOrResume).mock.calls;
-    expect(calls[2]).toEqual(calls[1]);
+    expect(calls).toHaveLength(outcome === 'accepted' ? 1 : 3);
+    for (const call of calls) expect(call).toEqual(calls[0]);
   },
 );
 

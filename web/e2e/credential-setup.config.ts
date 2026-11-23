@@ -13,6 +13,7 @@ export default defineConfig({
     'credential-setup.check.ts',
     'public-entry-lifecycle.check.ts',
     'public-entry-reload.check.ts',
+    'public-entry-multiroute.check.ts',
   ],
   workers: 1,
   retries: 0,
