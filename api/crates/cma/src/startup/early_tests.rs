@@ -2,7 +2,7 @@ use super::*;
 use axum::{
     body::{to_bytes, Body, Bytes},
     extract::ConnectInfo,
-    http::{header, Request, StatusCode},
+    http::{header, Method, Request, StatusCode},
     routing::any,
 };
 use http_body_util::{BodyExt as _, Empty};
@@ -20,8 +20,6 @@ async fn startup_refusals_bypass_the_application_and_leave_request_bodies_unread
     let app = admission.wrap(Router::new().fallback(application), false);
     for (method, path, status, body) in [
         ("GET", "/livez", StatusCode::OK, "ok"),
-        ("HEAD", "/livez", StatusCode::OK, ""),
-        ("HEAD", "/ready", StatusCode::SERVICE_UNAVAILABLE, ""),
         ("POST", "/livez", StatusCode::SERVICE_UNAVAILABLE, "startup"),
         ("GET", "/ready", StatusCode::SERVICE_UNAVAILABLE, "startup"),
         ("GET", "/livez/", StatusCode::SERVICE_UNAVAILABLE, "startup"),
@@ -59,9 +57,6 @@ async fn startup_refusals_bypass_the_application_and_leave_request_bodies_unread
         assert_eq!(response.status(), status, "{method} {path}");
         if status == StatusCode::SERVICE_UNAVAILABLE {
             assert_eq!(response.headers()[header::RETRY_AFTER], "1");
-        }
-        if path == "/livez" && method == "HEAD" {
-            assert_eq!(response.headers()[header::CONTENT_LENGTH], "2");
         }
         let bytes = to_bytes(response.into_body(), 128).await.unwrap();
         if body == "startup" {
@@ -103,6 +98,33 @@ async fn same_connection_uses_current_phase_and_preserves_peer_on_both_servers()
             .await
             .unwrap();
         let connection = tokio::spawn(connection);
+        for (path, status) in [
+            ("/livez", StatusCode::OK),
+            ("/ready", StatusCode::SERVICE_UNAVAILABLE),
+        ] {
+            let response = client
+                .send_request(
+                    Request::builder()
+                        .method(Method::HEAD)
+                        .uri(path)
+                        .header(header::HOST, "localhost")
+                        .body(Empty::<Bytes>::new())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status);
+            if path == "/livez" {
+                assert_eq!(response.headers()[header::CONTENT_LENGTH], "2");
+            }
+            assert!(response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .is_empty());
+        }
         for (path, status, body) in [
             ("/livez", StatusCode::OK, "ok".to_owned()),
             ("/agents", StatusCode::OK, peer.to_string()),
