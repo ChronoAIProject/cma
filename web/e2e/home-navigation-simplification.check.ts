@@ -123,7 +123,7 @@ for (const width of [1440, 390, 320]) {
       await expect(
         sidebar
           .getByRole('tree', { name: 'Needs attention sandboxes' })
-          .locator('[role=treeitem][aria-level=1]'),
+          .locator('[role="treeitem"][aria-level="1"]'),
       ).toHaveCount(2);
       await sidebar.getByRole('button', { name: 'Tasks', exact: true }).click();
       await disclosure

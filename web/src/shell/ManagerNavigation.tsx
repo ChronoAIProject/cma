@@ -387,7 +387,11 @@ function ViewerNavigation({
           ) : null}
         </TreeCreationScope>
       </div>
-      <DeletionProgressList sandboxes={[...deletions.values()]} onViewStatus={onViewDeletion} />
+      <DeletionProgressList
+        footer
+        sandboxes={[...deletions.values()]}
+        onViewStatus={onViewDeletion}
+      />
     </div>
   );
 }

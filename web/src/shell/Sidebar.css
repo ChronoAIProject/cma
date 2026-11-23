@@ -186,12 +186,6 @@
   min-height: 0;
   overflow: auto;
 }
-.manager-navigation > .deletion-progress {
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: 60%;
-  overflow: auto;
-}
 .sidebar__account {
   min-width: 0;
   flex: none;

@@ -74,15 +74,17 @@ function DeletionProgressRow({
 }
 
 export function DeletionProgressList({
+  footer = false,
   sandboxes,
   onViewStatus,
 }: {
+  readonly footer?: boolean;
   readonly sandboxes: readonly DeletingSandbox[];
   readonly onViewStatus: (id: string) => void;
 }) {
   if (sandboxes.length === 0) return null;
   return (
-    <details className="deletion-progress">
+    <details className="deletion-progress" data-navigation-footer={footer || undefined}>
       <summary>
         {sandboxes.some((sandbox) => sandbox.unknown)
           ? `${sandboxes.length} deletions need checking`
