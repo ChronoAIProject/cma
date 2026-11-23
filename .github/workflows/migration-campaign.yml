@@ -17,6 +17,7 @@ on:
       - '.github/scripts/migration_kind_runner.py'
       - '.github/scripts/migration_image_preflight.py'
       - '.github/scripts/migration_campaign_summary.py'
+      - '.github/scripts/migration_campaign_cells.py'
 
 permissions:
   contents: read
@@ -168,6 +169,14 @@ jobs:
             --timeout 900 > "$RUNNER_TEMP/runner-result.json"
           status=$?
           set -e
+          if [ -s "$output/kind-evidence.private.json" ]; then
+            # Public-safe stage, collection and check names for the coverage job.
+            mkdir -p "$RUNNER_TEMP/cells"
+            python3 -B .github/scripts/migration_campaign_cells.py derive \
+              --evidence "$output/kind-evidence.private.json" --fixture "${{ matrix.fixture.name }}" \
+              --output "$RUNNER_TEMP/cells/${{ matrix.fixture.name }}.json"
+            cp "$inputs/plan.json" "$RUNNER_TEMP/cells/plan-${{ matrix.fixture.name }}.json"
+          fi
           if [ ! -s "$output/kind-evidence.private.json" ]; then
             reason=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("reason", "unknown"))' "$RUNNER_TEMP/runner-result.json" 2>/dev/null || echo unknown)
             echo "::error title=Migration campaign runner::${{ matrix.fixture.name }} stopped before recording evidence: ${reason}."
@@ -180,3 +189,63 @@ jobs:
             echo "::error title=Migration campaign ${{ matrix.fixture.name }}::The campaign did not complete cleanly: ${reason}. The job summary names the stage; raw evidence stays on the runner."
             exit 1
           fi
+      - name: Retain public-safe cell records
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-campaign-cells-${{ matrix.fixture.name }}
+          path: ${{ runner.temp }}/cells/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  coverage:
+    name: Migration matrix coverage
+    needs: campaign
+    if: always() && github.repository == 'ChronoAIProject/cma'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - id: cells-download
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/download-artifact@v4
+        with:
+          pattern: migration-campaign-cells-*
+          path: ${{ runner.temp }}/cells
+          merge-multiple: true
+      - id: cells-download-retry
+        if: steps.cells-download.outcome == 'failure'
+        timeout-minutes: 3
+        uses: actions/download-artifact@v4
+        with:
+          pattern: migration-campaign-cells-*
+          path: ${{ runner.temp }}/cells
+          merge-multiple: true
+      - name: Explain the unavailable cell records
+        if: failure() && steps.cells-download-retry.outcome == 'failure'
+        run: |
+          echo "::error title=Migration cell records unavailable::The campaign cell records were not downloaded: both attempts failed. Each attempt is limited to 3 minutes; an attempt that hit the limit shows 'has timed out' in its log. Coverage is unmeasured for this run. Next step: re-run the coverage job."
+          exit 1
+      - name: Report executed and unrun matrix cells
+        timeout-minutes: 3
+        run: |
+          cells="$RUNNER_TEMP/cells"
+          mapfile -t plans < <(find "$cells" -maxdepth 1 -name 'plan-*.json' | sort)
+          mapfile -t records < <(find "$cells" -maxdepth 1 -name '*.json' ! -name 'plan-*.json' | sort)
+          if [ "${#plans[@]}" -eq 0 ] || [ "${#records[@]}" -eq 0 ]; then
+            echo "::error title=Migration matrix coverage::No campaign produced a cell record, so coverage is unmeasured. Check the campaign jobs."
+            exit 1
+          fi
+          if [ "$(sha256sum "${plans[@]}" | awk '{print $1}' | sort -u | wc -l)" -ne 1 ]; then
+            echo "::error title=Migration matrix coverage::Campaigns ran different plans; their cells cannot be combined."
+            exit 1
+          fi
+          python3 -B .github/scripts/migration_campaign_cells.py aggregate --plan "${plans[0]}" \
+            --output "$RUNNER_TEMP/coverage.json" "${records[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
