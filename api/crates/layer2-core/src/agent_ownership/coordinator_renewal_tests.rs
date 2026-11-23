@@ -4,6 +4,8 @@ use super::*;
 #[path = "coordinator_renewal_test_support.rs"]
 mod support;
 use support::{Fixture, Reply};
+#[path = "coordinator_batch_renewal_tests.rs"]
+mod batch;
 #[path = "coordinator_renewal_diagnostic_tests.rs"]
 mod diagnostics;
 #[path = "coordinator_heartbeat_tests.rs"]

@@ -10,11 +10,13 @@ use tokio::sync::{watch, Mutex};
 use tokio::time::Instant;
 
 use super::{
-    candidates, Authority, Member, OwnershipError, OwnershipLease, OwnershipStore, OwnershipToken,
-    STORE_DEADLINE_MS,
+    candidates, Authority, Member, Membership, OwnershipError, OwnershipLease, OwnershipStore,
+    OwnershipToken, STORE_DEADLINE_MS,
 };
 use crate::AgentId;
 
+#[path = "coordinator_batch_renewal.rs"]
+mod batch;
 #[path = "coordinator_heartbeat.rs"]
 mod heartbeat;
 #[path = "coordinator_renewal.rs"]
@@ -36,7 +38,14 @@ pub struct OwnershipCoordinator {
     skipped_heartbeats: AtomicU32,
     draining: AtomicBool,
     failed: watch::Sender<bool>,
+    batch_maintenance: Option<Mutex<()>>,
     pub(super) cleanup_pacing: super::cleanup_pacing::CleanupPacing,
+}
+
+struct RenewalHeartbeat {
+    started: Instant,
+    member_deadline: Instant,
+    membership: Membership,
 }
 
 impl OwnershipCoordinator {
@@ -52,6 +61,15 @@ impl OwnershipCoordinator {
         member: Member,
         enabled: bool,
     ) -> Result<Arc<Self>, OwnershipError> {
+        Self::register_with_options(store, member, enabled, false).await
+    }
+
+    pub async fn register_with_options(
+        store: Arc<dyn OwnershipStore>,
+        member: Member,
+        cleanup_pacing: bool,
+        batch_renewal: bool,
+    ) -> Result<Arc<Self>, OwnershipError> {
         let capacity = member.max_owned_agents as usize;
         let started = Instant::now();
         let instance_id = member.instance_id.clone();
@@ -64,6 +82,8 @@ impl OwnershipCoordinator {
         let deadline = deadline(started, membership.now_ms, member.expires_at_ms)?;
         Ok(Arc::new(Self {
             instance_id,
+            batch_maintenance: (batch_renewal && store.supports_batch_renewal())
+                .then(Mutex::default),
             store,
             owned: Mutex::new(BTreeMap::new()),
             acquisition: Mutex::new(()),
@@ -72,7 +92,7 @@ impl OwnershipCoordinator {
             skipped_heartbeats: AtomicU32::new(0),
             draining: AtomicBool::new(false),
             failed: watch::channel(false).0,
-            cleanup_pacing: super::cleanup_pacing::CleanupPacing::new(enabled, capacity),
+            cleanup_pacing: super::cleanup_pacing::CleanupPacing::new(cleanup_pacing, capacity),
         }))
     }
 
@@ -166,6 +186,10 @@ impl OwnershipCoordinator {
     /// Returns cooperative handoff candidates; callers may defer busy Agents.
     /// A skipped heartbeat tick renews nothing and returns no candidates.
     pub async fn maintain(&self) -> Result<Vec<Arc<Authority>>, OwnershipError> {
+        let _batch_guard = match &self.batch_maintenance {
+            Some(lock) => Some(lock.lock().await),
+            None => None,
+        };
         let result = self.maintain_inner().await;
         if result.is_err() {
             self.fail().await;
@@ -174,6 +198,35 @@ impl OwnershipCoordinator {
     }
 
     async fn maintain_inner(&self) -> Result<Vec<Arc<Authority>>, OwnershipError> {
+        let Some(mut heartbeat) = self.refresh_membership().await? else {
+            return Ok(Vec::new());
+        };
+        let owned: Vec<_> = self.owned.lock().await.values().cloned().collect();
+        if self.batch_maintenance.is_some() {
+            if !self.renew_in_batches(&owned, &mut heartbeat).await? {
+                return Ok(Vec::new());
+            }
+        } else {
+            let renewals = stream::iter(owned.clone())
+                .map(|authority| {
+                    let started = heartbeat.started;
+                    let now_ms = heartbeat.membership.now_ms;
+                    async move { self.renew_owned(&authority, started, now_ms).await }
+                })
+                .buffer_unordered(4)
+                .try_collect::<Vec<_>>();
+            tokio::select! {
+                biased;
+                _ = tokio::time::sleep_until(heartbeat.member_deadline) => {
+                    return Err(self.maintenance_error("member_batch_deadline", None, OwnershipError::Stale));
+                }
+                result = renewals => { result?; }
+            }
+        }
+        self.handoff_candidates(owned, &heartbeat.membership)
+    }
+
+    async fn refresh_membership(&self) -> Result<Option<RenewalHeartbeat>, OwnershipError> {
         if !self.is_ready() {
             return Err(self.maintenance_error("member_readiness", None, OwnershipError::Stale));
         }
@@ -190,7 +243,7 @@ impl OwnershipCoordinator {
             })?;
         // Neither membership nor any authority is extended by a skipped tick.
         let Some(membership) = self.heartbeat_membership(heartbeat)? else {
-            return Ok(Vec::new());
+            return Ok(None);
         };
         membership
             .require_compatible()
@@ -216,21 +269,18 @@ impl OwnershipCoordinator {
             }
             *current = member_deadline;
         }
-        let owned: Vec<_> = self.owned.lock().await.values().cloned().collect();
-        let renewals = stream::iter(owned.clone())
-            .map(|authority| async move {
-                self.renew_owned(&authority, started, membership.now_ms)
-                    .await
-            })
-            .buffer_unordered(4)
-            .try_collect::<Vec<_>>();
-        tokio::select! {
-            biased;
-            _ = tokio::time::sleep_until(member_deadline) => {
-                return Err(self.maintenance_error("member_batch_deadline", None, OwnershipError::Stale));
-            }
-            result = renewals => { result?; }
-        }
+        Ok(Some(RenewalHeartbeat {
+            started,
+            member_deadline,
+            membership,
+        }))
+    }
+
+    fn handoff_candidates(
+        &self,
+        owned: Vec<Arc<Authority>>,
+        membership: &Membership,
+    ) -> Result<Vec<Arc<Authority>>, OwnershipError> {
         if !self.is_ready() {
             return Err(self.maintenance_error("member_completion", None, OwnershipError::Stale));
         }
@@ -247,7 +297,7 @@ impl OwnershipCoordinator {
             }
             if candidates(
                 &authority.token.agent_id,
-                &membership,
+                membership,
                 Some(&self.instance_id),
             )?
             .first()

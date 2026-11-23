@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn batch_ownership_renewal_is_strict_and_default_off() {
+    const KEY: &str = "CHRONO_AM_BATCH_OWNERSHIP_RENEWAL";
+    for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok(if key == KEY {
+                value.map(str::to_owned)
+            } else {
+                None
+            })
+        })
+        .unwrap();
+        assert_eq!(flags.batch_ownership_renewal, enabled);
+        assert!(flags.ownership_cleanup_pacing);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "1".into()))).is_err());
+}
+
+#[test]
 fn ownership_cleanup_pacing_is_independent_strict_and_default_on() {
     const KEY: &str = "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED";
     for (value, expected) in [(None, true), (Some("false"), false), (Some("true"), true)] {

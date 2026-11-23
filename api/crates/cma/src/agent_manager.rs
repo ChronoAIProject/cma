@@ -39,8 +39,9 @@ impl AgentManager {
         address: String,
         capacity: u32,
         cleanup_pacing: bool,
+        batch_renewal: bool,
     ) -> Result<Arc<Self>, String> {
-        let coordinator = OwnershipCoordinator::register_with_cleanup_pacing(
+        let coordinator = OwnershipCoordinator::register_with_options(
             store
                 .agent_ownership
                 .clone()
@@ -58,6 +59,7 @@ impl AgentManager {
                 max_owned_agents: capacity,
             },
             cleanup_pacing,
+            batch_renewal,
         )
         .await
         .map_err(|_| "Agent Manager membership registration failed")?;
