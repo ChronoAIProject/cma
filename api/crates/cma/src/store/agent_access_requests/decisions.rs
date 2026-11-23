@@ -43,7 +43,8 @@ impl MongoSandboxStore {
             }) {
                 return Err(AgentAccessError::Conflict.into());
             }
-            let snapshot = validate_lineage(self, &record.requester, session, false).await?;
+            let snapshot =
+                validate_lineage_transaction(self, &record.requester, session, false).await?;
             let required = snapshot
                 .resource
                 .lineage
@@ -110,7 +111,8 @@ impl MongoSandboxStore {
             ) {
                 return Err(AgentAccessError::Conflict.into());
             }
-            let snapshot = validate_lineage(self, &record.requester, session, false).await?;
+            let snapshot =
+                validate_lineage_transaction(self, &record.requester, session, false).await?;
             fence(self, &snapshot, session).await?;
             let revision = record.revision;
             record.revision += 1;
@@ -142,7 +144,8 @@ impl MongoSandboxStore {
             if record.phase != AgentAccessPhase::Connecting && !record.phase.applying() {
                 return Err(AgentAccessError::Conflict.into());
             }
-            let snapshot = validate_lineage(self, &record.requester, session, false).await?;
+            let snapshot =
+                validate_lineage_transaction(self, &record.requester, session, false).await?;
             fence(self, &snapshot, session).await?;
             Ok(record.approved_services()?.to_vec())
         })
