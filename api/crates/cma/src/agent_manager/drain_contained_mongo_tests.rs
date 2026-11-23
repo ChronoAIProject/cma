@@ -34,6 +34,7 @@ impl Drop for Exited {
 
 async fn fixture(
     pacing: bool,
+    receiver_only: bool,
 ) -> (
     mongodb::Client,
     String,
@@ -59,6 +60,9 @@ async fn fixture(
     )
     .await
     .unwrap();
+    if receiver_only {
+        manager.enable_receiver_containment();
+    }
     let lifecycle = crate::agent_lifecycle::LifecycleDrain::fixture(1);
     let exited = Arc::new(AtomicBool::new(false));
     let guard = Exited(exited.clone());
@@ -108,8 +112,11 @@ async fn fixture(
 #[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
 async fn cancelled_prestop_and_process_shutdown_share_actual_manager_episode_and_complete_custody()
 {
-    for pacing in [false, true] {
-        let (client, name, manager, authority, receiver) = fixture(pacing).await;
+    for (pacing, receiver_only) in [false, true]
+        .into_iter()
+        .flat_map(|pacing| [false, true].map(|receiver_only| (pacing, receiver_only)))
+    {
+        let (client, name, manager, authority, receiver) = fixture(pacing, receiver_only).await;
         let first = tokio::spawn({
             let manager = manager.clone();
             async move { manager.drain().await }
@@ -156,7 +163,7 @@ async fn cancelled_prestop_and_process_shutdown_share_actual_manager_episode_and
 #[tokio::test]
 #[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
 async fn supervisor_fatal_result_is_retained_after_successful_cleanup() {
-    let (client, name, manager, authority, receiver) = fixture(false).await;
+    let (client, name, manager, authority, receiver) = fixture(false, true).await;
     // The actual supervisor's result is observed independently of the failure
     // watch. Simulate a fatal return racing the start of shutdown.
     let supervisor = manager.supervisor.lock().await.take().unwrap();

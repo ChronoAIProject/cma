@@ -1,4 +1,5 @@
 //! One participating process: renew, rebalance, revoke receivers, then release.
+mod configuration;
 mod containment;
 mod drain;
 mod drain_contained;

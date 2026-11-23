@@ -9,6 +9,7 @@ use std::sync::{
 pub(super) struct Store {
     pub inner: test_support::MemoryOwnershipStore,
     pub release_calls: AtomicUsize,
+    pub owner_calls: AtomicUsize,
     pub release_mode: AtomicUsize,
     pub observation: Mutex<Option<Option<OwnershipLease>>>,
 }
@@ -25,6 +26,7 @@ impl OwnershipStore for Store {
         self.inner.membership().await
     }
     async fn owner(&self, id: &AgentId) -> Result<Option<OwnershipLease>, OwnershipError> {
+        self.owner_calls.fetch_add(1, Ordering::SeqCst);
         if let Some(observation) = self.observation.lock().unwrap().clone() {
             return Ok(observation);
         }

@@ -240,7 +240,9 @@ async fn absence_keeps_the_old_floor_and_generic_revocation_is_not_retirement() 
     assert_eq!(manager.retirement_background(&old).await.unwrap(), None);
     *store.observation.lock().unwrap() = Some(None);
     assert_eq!(manager.retirement_background(&old).await.unwrap(), None);
+    let reads = store.owner_calls.load(Ordering::SeqCst);
     assert!(!manager.forget_unconfirmed_retirement(&old).await.unwrap());
+    assert_eq!(store.owner_calls.load(Ordering::SeqCst), reads);
     assert!(old.cleanup.lock().await.settlement.is_none());
     assert!(!old.cleanup.lock().await.legacy_forgotten);
     assert_eq!(manager.owned().await.len(), 2);

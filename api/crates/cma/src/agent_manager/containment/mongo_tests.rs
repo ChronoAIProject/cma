@@ -1,3 +1,6 @@
+#[path = "composition_tests.rs"]
+mod composition;
+
 use super::*;
 use crate::store::sandbox_maintenance::mongo_integration_tests::{database, fixture};
 use layer3_adapter::owner_protocol::{
