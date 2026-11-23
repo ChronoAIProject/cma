@@ -51,7 +51,7 @@ export function templateDefinition(id: TaskTemplateId) {
 export function emptyTemplate(id: TaskTemplateId): TaskTemplate {
   return taskTemplate({
     id,
-    version: 1,
+    version: 2,
     fields: Object.fromEntries(templateDefinition(id).fields.map(({ key }) => [key, ''])),
   });
 }
@@ -64,7 +64,7 @@ export function changeTemplateField(
   field: string,
   value: string,
 ): TaskTemplate {
-  return taskTemplate({ ...template, fields: { ...template.fields, [field]: value } });
+  return taskTemplate({ ...template, version: 2, fields: { ...template.fields, [field]: value } });
 }
 const trim = (value: string) => value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
 export function compileTaskTemplate(template: TaskTemplate): {
@@ -89,6 +89,8 @@ export function compileTaskTemplate(template: TaskTemplate): {
   const text = (() => {
     switch (template.id) {
       case 'research':
+        if (template.version === 2)
+          return `Research the following topic:\n\n${value('topic')}\n\nSummarize the key findings, with links to sources.`;
         return `Research ${value('topic')} and summarize the key findings, with links to sources.`;
       case 'spreadsheet':
         return `Analyze the spreadsheet at ${value('link')} and point out trends, outliers and what to do next.`;
@@ -97,6 +99,10 @@ export function compileTaskTemplate(template: TaskTemplate): {
       case 'website':
         return `Build a one-page website for ${value('project')} and share a preview link.`;
       case 'code':
+        if (template.version === 2) {
+          const behavior = value('behavior');
+          return `Write a ${value('language')} script for the following task:\n\n${behavior}${/[.!?。！？]$/u.test(behavior) ? '' : '.'}`;
+        }
         return `Write a ${value('language')} script that ${value('behavior')}.`;
     }
   })();

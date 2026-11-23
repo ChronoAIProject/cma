@@ -55,7 +55,8 @@ export async function redesignHomeFixture(
         openapi: '3.1.0',
         info: { title: 'Synthetic', version: '1' },
         paths: {},
-        'x-cma-task-templates-v1': templateSupport,
+        'x-cma-task-templates-v1': true,
+        'x-cma-task-templates-v2': templateSupport,
         'x-cma-agent-title-mode': true,
         'x-cma-task-repository': true,
         components: {

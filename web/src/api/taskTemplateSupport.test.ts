@@ -11,7 +11,8 @@ it.each([true, false, undefined, 'true'])(
           openapi: '3.1.0',
           info: { title: 'Synthetic', version: '1' },
           paths: {},
-          'x-cma-task-templates-v1': supported,
+          'x-cma-task-templates-v1': true,
+          'x-cma-task-templates-v2': supported,
         }),
     });
     expect(await createRestWebClient(sdk).readTaskTemplateSupport!()).toBe(supported === true);

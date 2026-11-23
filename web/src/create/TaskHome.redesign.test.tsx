@@ -168,7 +168,7 @@ it('preserves template fields on a capability read failure without enabling subm
   await screen.findByText('Template availability could not be checked.');
   expect(screen.getByLabelText('Topic')).toHaveValue('研究 сохраняется');
   expect(screen.getByRole('region', { name: 'Task preview · read-only' })).toHaveTextContent(
-    'Research 研究 сохраняется',
+    'Research the following topic: 研究 сохраняется',
   );
   expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
   expect(create).not.toHaveBeenCalled();

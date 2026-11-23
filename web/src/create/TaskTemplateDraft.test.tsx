@@ -109,7 +109,7 @@ it('requires explicit confirmation before replacing an existing free-text draft'
   click('Write a task without a template');
   click('Replace free-text draft');
   expect(screen.getByLabelText('Your task')).toHaveValue(
-    'Research A complete template and summarize the key findings, with links to sources.',
+    'Research the following topic:\n\nA complete template\n\nSummarize the key findings, with links to sources.',
   );
   click('Resume research template');
   expect(screen.getByLabelText('Topic')).toHaveValue('A complete template');
@@ -312,8 +312,8 @@ it('cleans only the confirmed submitted mode and retains other drafts for the ta
       {
         name: 'New task',
         initial_message:
-          'Research Submitted topic and summarize the key findings, with links to sources.',
-        template: { id: 'research', version: 1, fields: { topic: 'Submitted topic' } },
+          'Research the following topic:\n\nSubmitted topic\n\nSummarize the key findings, with links to sources.',
+        template: { id: 'research', version: 2, fields: { topic: 'Submitted topic' } },
       },
       draftRevision(),
     ),
@@ -376,12 +376,12 @@ it.each(['text', 'template'] as const)(
           initial_message:
             mode === 'text'
               ? 'Same text'
-              : 'Research Same topic and summarize the key findings, with links to sources.',
+              : 'Research the following topic:\n\nSame topic\n\nSummarize the key findings, with links to sources.',
           ...(mode === 'template'
             ? {
                 template: {
                   id: 'research' as const,
-                  version: 1 as const,
+                  version: 2 as const,
                   fields: { topic: 'Same topic' },
                 },
               }

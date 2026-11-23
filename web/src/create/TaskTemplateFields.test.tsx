@@ -71,7 +71,7 @@ it.each(taskTemplates)(
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
     const template = parseTaskTemplate({
       id: definition.id,
-      version: 1,
+      version: 2,
       fields: Object.fromEntries(definition.fields.map(({ key }) => [key, `Synthetic ${key}`])),
     });
     expect(create.mock.calls[0]![0]).toMatchObject({
@@ -102,7 +102,7 @@ it.each([false, undefined, 'failure'] as const)(
     expect(screen.getByLabelText('Topic')).toHaveValue('Synthetic topic');
     fireEvent.click(screen.getByRole('button', { name: 'Write a task without a template' }));
     expect(screen.getByLabelText('Your task')).toHaveValue(
-      'Research Synthetic topic and summarize the key findings, with links to sources.',
+      'Research the following topic:\n\nSynthetic topic\n\nSummarize the key findings, with links to sources.',
     );
     expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
   },
@@ -242,5 +242,45 @@ it.each([false, true])(
       });
       await waitFor(() => expect(screen.getByLabelText('Your task')).toHaveValue(''));
     }
+  },
+);
+
+it.each([
+  {
+    name: 'Research a topic',
+    fields: [
+      [
+        'Topic',
+        'Compare three established methods. Cite public sources and provide a concise table.',
+      ],
+    ],
+    expected:
+      'Research the following topic:\n\nCompare three established methods. Cite public sources and provide a concise table.\n\nSummarize the key findings, with links to sources.',
+  },
+  {
+    name: 'Write code',
+    fields: [
+      ['Language', 'JavaScript'],
+      ['What should the code do?', 'Create a small accessible form on a new branch.'],
+    ],
+    expected:
+      'Write a JavaScript script for the following task:\n\nCreate a small accessible form on a new branch.',
+  },
+])(
+  'previews and submits grammatical $name instructions without rewriting user sentences',
+  async ({ name, fields, expected }) => {
+    const { create } = setup();
+    await ready();
+    fireEvent.click(screen.getByRole('button', { name }));
+    for (const [label, value] of fields) fill(label!, value!);
+    expect(screen.getByRole('region', { name: 'Task preview · read-only' })).toHaveTextContent(
+      expected.replace(/\s+/g, ' '),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(create.mock.calls[0]![0]).toMatchObject({
+      initial_message: expected,
+      template: { version: 2 },
+    });
   },
 );

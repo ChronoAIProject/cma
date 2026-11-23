@@ -245,9 +245,9 @@ it.each(['ctrlKey', 'metaKey', 'submit'])(
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         title_mode: 'automatic',
-        template: { id: 'research', version: 1, fields: { topic: 'Retained research topic' } },
+        template: { id: 'research', version: 2, fields: { topic: 'Retained research topic' } },
         initial_message:
-          'Research Retained research topic and summarize the key findings, with links to sources.',
+          'Research the following topic:\n\nRetained research topic\n\nSummarize the key findings, with links to sources.',
       }),
       expect.anything(),
     );
