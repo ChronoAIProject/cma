@@ -2,6 +2,7 @@
 use super::*;
 
 use crate::store::agent_capacity_recovery::observations::{cohort, Outcome, Stage};
+use crate::store::agent_write_coordination::CLEANUP_RETRY_DEADLINE;
 use layer2_core::sandbox::store::{AgentWorkPublication, AgentWorkPublicationParents};
 
 enum Completion {
@@ -98,7 +99,18 @@ async fn run(
     };
     ensure_append_batch_size(mutation.agent_logs.len())?;
     let mut timing = contention::PublicationTiming::new(&mutation);
-    let mut writer = store.agent_writes.lock(&mutation.agent.id).await;
+    let deadline = CLEANUP_RETRY_DEADLINE.try_with(|deadline| *deadline).ok();
+    let lock_writer = || async {
+        match deadline {
+            Some(deadline) => store
+                .agent_writes
+                .lock_until(&mutation.agent.id, deadline)
+                .await
+                .ok_or(SandboxStoreError::Conflict),
+            None => Ok(store.agent_writes.lock(&mutation.agent.id).await),
+        }
+    };
+    let mut writer = lock_writer().await?;
     timing.acquired();
     let mut history_cache = publication_history::AttemptHistory::default();
     let mut last_transient = None;
@@ -110,6 +122,9 @@ async fn run(
         timing.attempt();
         contention::backoff(attempt, jitter).await;
         attempt += 1;
+        if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+            return Err(SandboxStoreError::Conflict);
+        }
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
             Err(error) if positively_aborted(&error) => {
@@ -153,7 +168,7 @@ async fn run(
                     .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
                 drop(writer);
                 staged = pending_adoption::prepare(store, *source).await?;
-                writer = store.agent_writes.lock(&mutation.agent.id).await;
+                writer = lock_writer().await?;
                 adoption_not_selected = staged.is_none();
                 attempt -= 1;
                 continue;
@@ -205,6 +220,12 @@ async fn run(
             }
             cohort(Stage::Blocked, Outcome::KnownAbort);
             return Err(pending_adoption::witness::unavailable());
+        }
+        // Once commit is sent, the original transaction must settle or
+        // reconcile even if the work lease expires while waiting for Mongo.
+        if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+            let _ = session.abort_transaction().await;
+            return Err(SandboxStoreError::Conflict);
         }
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
