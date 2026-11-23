@@ -34,6 +34,7 @@ impl SandboxWorker {
         if sandbox.runtime.is_some() && sandbox.lifecycle.home.is_none() {
             return Ok(None);
         }
+        let mut release_retries = 0;
         loop {
             let mut timing = super::provision_timing::ProvisionTiming::new();
             let phase = home_phase(sandbox.lifecycle.home.as_deref());
@@ -98,8 +99,20 @@ impl SandboxWorker {
                 Err(error) => return Ok(Some(adapter_failure(error))),
             };
             timing.completed(phase);
-            self.save_home(sandbox, next, now, release_fence.as_ref())
-                .await?;
+            if !self
+                .save_home(sandbox, next, now, release_fence.as_ref())
+                .await?
+            {
+                release_retries += 1;
+                if release_retries == 4 {
+                    return Ok(Some(adapter_failure(
+                        layer3_adapter::AdapterError::Unavailable(
+                            layer3_adapter::StaleReleasedRuntime.to_string(),
+                        ),
+                    )));
+                }
+                continue;
+            }
             timing.completed("home_persist");
         }
     }
@@ -136,7 +149,7 @@ impl SandboxWorker {
         home: layer2_core::sandbox::SandboxHome,
         now: SystemTime,
         release: Option<&layer3_adapter::ReleasedRuntime>,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Result<bool, SandboxStoreError> {
         for _ in 0..4 {
             let expected = sandbox.revision;
             let mut updated = sandbox.clone();
@@ -165,7 +178,7 @@ impl SandboxWorker {
             match saved {
                 Ok(()) => {
                     *sandbox = updated;
-                    return Ok(());
+                    return Ok(true);
                 }
                 Err(SandboxStoreError::Conflict) => {
                     let current = self
@@ -189,6 +202,24 @@ impl SandboxWorker {
                         return Err(SandboxStoreError::Conflict);
                     }
                     *sandbox = current;
+                    if let (Some(source), Some(release)) = (&self.config.released, release) {
+                        // The transaction can see a promotion before this replica's
+                        // cache. Replan the uncommitted home before creating a Claim.
+                        source.refresh_after_stale().await;
+                        let refreshed = source.snapshot();
+                        if refreshed.agent != release.agent
+                            || refreshed.lane_revisions.map(|value| value.agent)
+                                != release.lane_revisions.map(|value| value.agent)
+                        {
+                            tracing::info!(
+                                sandbox_id = %sandbox.id,
+                                captured_revision = release.revision,
+                                current_revision = refreshed.revision,
+                                "retrying home reservation after durable release changed"
+                            );
+                            return Ok(false);
+                        }
+                    }
                 }
                 Err(error) => return Err(error),
             }
