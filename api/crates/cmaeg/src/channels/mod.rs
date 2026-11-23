@@ -37,6 +37,8 @@ mod native_discord;
 mod native_telegram;
 
 #[cfg(test)]
+mod create_cleanup_tests;
+#[cfg(test)]
 mod lark_effect_gate_tests;
 
 #[cfg(test)]

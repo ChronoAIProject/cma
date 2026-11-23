@@ -16,6 +16,27 @@ const user = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('account menu', () => {
+  it('opens the export inventory only when the owner session advertises export', async () => {
+    const fetch = vi.fn(async () =>
+      Response.json({
+        owner_subject: user.id,
+        data_class: 'retained_conversation',
+        agents: [],
+        next: null,
+      }),
+    );
+    vi.stubGlobal('fetch', fetch);
+    const actor = userEvent.setup();
+    const { rerender } = render(<ProfileMenu user={user} onSignOut={vi.fn()} />);
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.queryByRole('menuitem', { name: 'Export account data' })).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+    rerender(<ProfileMenu user={{ ...user, privacyExport: true }} onSignOut={vi.fn()} />);
+    await actor.click(screen.getByRole('menuitem', { name: 'Export account data' }));
+    expect(await screen.findByText('No Agents to export.')).toBeVisible();
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it('opens the published terms and privacy notice in a new tab', async () => {
     const open = vi.fn();
     vi.stubGlobal('open', open);

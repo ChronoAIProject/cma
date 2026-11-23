@@ -57,7 +57,7 @@ impl AgentReopenGuard {
             .as_ref()
             .and_then(|lease| seconds_from_rfc3339(&lease.expires_at));
         let now = seconds_from_rfc3339(at);
-        if SandboxMutationGuard::capture(parent) != self.sandbox
+        if !self.sandbox.matches(parent)
             || parent.work.step != SandboxWorkStep::RunLifecycleOperation
             || !matches!((now, expires), (Some(now), Some(expires)) if now < expires)
             || parent

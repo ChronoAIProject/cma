@@ -1,6 +1,7 @@
 import type { AgentStatus, SandboxSummary, WorkspaceDetail } from '../api/types';
 import { sandboxChildrenAvailable, sandboxLifecycleAction } from '../sandbox/lifecycle';
 import { sandboxDeletionReason } from '../sandbox/deletionEligibility';
+import { sandboxHasParkedRuntimeUpdate } from '../sandbox/parkedRuntimeUpdate';
 import {
   IconPauseOutline16,
   IconPlayOutline16,
@@ -109,6 +110,7 @@ export interface AgentActionContext {
 }
 
 export const OPEN_SANDBOX_TO_RESUME = 'open_sandbox_to_resume';
+export const OPEN_RUNTIME_UPDATE = 'open_runtime_update';
 const ACTION_BUSY = 'Another action is still being confirmed.';
 const REQUIRES_ACTIVE_SANDBOX = 'Available when the Sandbox is active.';
 
@@ -121,6 +123,39 @@ export function agentActions(
   const runtimeAvailable =
     !busy && !stale && sandbox !== undefined && sandboxChildrenAvailable(sandbox);
   const actions: TreeRowAction[] = [];
+  const canReviewUpdate =
+    sandbox !== undefined &&
+    viewerId !== undefined &&
+    sandbox.owner === viewerId &&
+    !stale &&
+    (sandboxHasParkedRuntimeUpdate(sandbox) ||
+      (sandbox.status === 'failed' &&
+        sandbox.runtimeUpdate?.state === 'failed' &&
+        sandbox.runtimeUpdate.completedAt === undefined));
+  const canOfferEnvironmentDeletion =
+    sandbox !== undefined &&
+    viewerId !== undefined &&
+    sandbox.owner === viewerId &&
+    permissions.deleteSandbox &&
+    sandboxHasParkedRuntimeUpdate(sandbox);
+  const environmentDeletionReason = canOfferEnvironmentDeletion
+    ? sandboxDeletionReason(sandbox, { busy, stale })
+    : undefined;
+  const recoveryReason =
+    canReviewUpdate && !busy
+      ? canOfferEnvironmentDeletion && environmentDeletionReason === undefined
+        ? 'Use Retry runtime update to review this environment, or Delete environment… to delete it and all its tasks.'
+        : 'Use Retry runtime update to review this environment.'
+      : undefined;
+  if (canReviewUpdate)
+    actions.push({
+      id: OPEN_RUNTIME_UPDATE,
+      label: 'Retry runtime update',
+      icon: <IconDataOutline16 />,
+      route: { kind: 'sandbox', sandboxId: sandbox.id },
+      disabled: busy,
+      reason: busy ? ACTION_BUSY : 'Open the environment to review and retry this update.',
+    });
   if (permissions.stopAgent)
     actions.push({
       id: 'stop_agent',
@@ -129,13 +164,18 @@ export function agentActions(
       disabled:
         !runtimeAvailable ||
         !['starting', 'ready', 'working', 'waiting_approval', 'paused'].includes(status),
-      reason: busy ? ACTION_BUSY : !runtimeAvailable ? REQUIRES_ACTIVE_SANDBOX : undefined,
+      reason: busy
+        ? ACTION_BUSY
+        : !runtimeAvailable
+          ? (agentDeletionBlock(context) ?? recoveryReason ?? REQUIRES_ACTIVE_SANDBOX)
+          : undefined,
     });
   if (permissions.deleteAgent) {
     const terminal = status === 'stopped' || status === 'failed';
     const paused = terminal && sandbox?.status === 'paused' && !sandbox.lifecycle?.operation;
     const reason =
       agentDeletionBlock(context) ??
+      recoveryReason ??
       (paused
         ? 'Resume the Sandbox before deleting this Agent and its Worktree.'
         : !runtimeAvailable
@@ -166,6 +206,15 @@ export function agentActions(
       reason,
     });
   }
+  if (canOfferEnvironmentDeletion)
+    actions.push({
+      id: 'delete_sandbox',
+      label: 'Delete environment…',
+      icon: <IconTrashOutline16 />,
+      danger: true,
+      disabled: environmentDeletionReason !== undefined,
+      reason: environmentDeletionReason,
+    });
   if (permissions.exportHistory) {
     actions.push({
       id: 'export_retained_conversation',
@@ -190,7 +239,10 @@ function agentDeletionBlock({ sandbox, stale, busy }: AgentActionContext): strin
     return 'Sandbox status is unavailable. Refresh and try again.';
   if (sandbox.status === 'retiring') return 'The Sandbox is being deleted.';
   if (sandbox.status === 'retired') return 'The Sandbox has been deleted.';
-  if (sandbox.status === 'reviving' || sandbox.lifecycle?.operation?.purpose === 'revive')
-    return 'Wait for the Sandbox to finish resuming.';
   if (busy) return ACTION_BUSY;
+  if (
+    (sandbox.status === 'reviving' || sandbox.lifecycle?.operation?.purpose === 'revive') &&
+    !sandboxHasParkedRuntimeUpdate(sandbox)
+  )
+    return 'Wait for the Sandbox to finish resuming.';
 }

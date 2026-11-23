@@ -106,8 +106,8 @@ impl SandboxStore for MongoSandboxStore {
         super::super::sandbox_unpublished_recovery::retained_snapshot(self, id).await
     }
 
-    fn managed_runtime_version(&self) -> Option<&str> {
-        self.managed_runtime_version.as_deref()
+    fn managed_runtime_version(&self) -> Option<String> {
+        self.managed_agent_release()
     }
 
     async fn unpublished_runtime_recovery_snapshot(
