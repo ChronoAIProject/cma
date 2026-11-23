@@ -8,7 +8,7 @@ import {
 } from '../RelayCapabilities';
 import { credentialsPatch, object, records, strings, text, without, type Fields } from './model';
 
-function canonical(value: unknown): string {
+export function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) =>
     item !== null && typeof item === 'object' && !Array.isArray(item)
       ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)))

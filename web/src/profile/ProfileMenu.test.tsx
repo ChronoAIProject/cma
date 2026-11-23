@@ -16,6 +16,40 @@ const user = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('account menu', () => {
+  it('opens the published terms and privacy notice in a new tab', async () => {
+    const open = vi.fn();
+    vi.stubGlobal('open', open);
+    const actor = userEvent.setup();
+    const { rerender } = render(<ProfileMenu user={user} onSignOut={vi.fn()} />);
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.queryByRole('menuitem', { name: 'Terms of Service' })).toBeNull();
+    rerender(
+      <ProfileMenu
+        user={{
+          ...user,
+          legalTerms: {
+            version: '2026-11-30',
+            termsUrl: 'https://legal.example.test/terms',
+            privacyUrl: 'https://legal.example.test/privacy',
+          },
+        }}
+        onSignOut={vi.fn()}
+      />,
+    );
+    await actor.click(screen.getByRole('menuitem', { name: 'Privacy Notice' }));
+    expect(open).toHaveBeenCalledWith(
+      'https://legal.example.test/privacy',
+      '_blank',
+      'noopener,noreferrer',
+    );
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    await actor.click(screen.getByRole('menuitem', { name: 'Terms of Service' }));
+    expect(open).toHaveBeenLastCalledWith(
+      'https://legal.example.test/terms',
+      '_blank',
+      'noopener,noreferrer',
+    );
+  });
   it('keeps a management credential refusal separate from the grant and does not loop sign-in', async () => {
     vi.stubGlobal(
       'fetch',

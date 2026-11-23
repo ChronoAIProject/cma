@@ -5,6 +5,7 @@ import { Button } from '../ui/Button';
 import { segment, ServiceError, serviceRequest, type Denied } from './client';
 import { useRelayCapabilities } from './RelayCapabilities';
 import { validateRelayAuthoring } from './channelForm/relayAuthoring';
+import { validateAuthoringRules } from './channelForm/authoringRules';
 import { NodeFields, nodeCredentials } from './channelForm/NodeFields';
 import {
   ConsumerPolicyFields,
@@ -178,13 +179,15 @@ export function ChannelEditor({
       const selectedCredentials = baseline
         ? nodeCredentials(credentials, section, projected)
         : channelCredentials(credentials, projected, true);
-      if (kind === 'channel')
+      if (kind === 'channel') {
         validateRelayAuthoring(
           discovery,
           projected,
           baseline ? channelDraft(baseline) : undefined,
           selectedCredentials,
         );
+        validateAuthoringRules(discovery, projected, baseline ? channelDraft(baseline) : undefined);
+      }
       const body: Fields =
         kind === 'routing'
           ? {

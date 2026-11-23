@@ -1,0 +1,501 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "legal-consent-status-before-accept",
+      "operation": "GET /api/v1/account/legal-consent",
+      "scenario": "legal_consent_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": "2026-11-30",
+          "terms_url": "https://legal.example.test/terms",
+          "privacy_url": "https://legal.example.test/privacy",
+          "accepted_at": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "legal-consent-version-mismatch",
+      "operation": "PUT /api/v1/account/legal-consent",
+      "scenario": "legal_consent_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": "2026-01-01"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/legal-terms-version-mismatch",
+          "title": "legal terms version mismatch",
+          "status": 409,
+          "detail": "Review the current terms version before accepting it.",
+          "code": "legal_terms_version_mismatch"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "legal-consent-accepted",
+      "operation": "PUT /api/v1/account/legal-consent",
+      "scenario": "legal_consent_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": "2026-11-30"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": "2026-11-30",
+          "terms_url": "https://legal.example.test/terms",
+          "privacy_url": "https://legal.example.test/privacy",
+          "accepted_at": "2026-11-30T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "accepted_at": "/accepted_at"
+      }
+    },
+    {
+      "id": "legal-consent-replay",
+      "operation": "PUT /api/v1/account/legal-consent",
+      "scenario": "legal_consent_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": "2026-11-30"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": "2026-11-30",
+          "terms_url": "https://legal.example.test/terms",
+          "privacy_url": "https://legal.example.test/privacy",
+          "accepted_at": "2026-11-30T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "accepted_at": "/accepted_at"
+      }
+    },
+    {
+      "id": "legal-consent-status-accepted",
+      "operation": "GET /api/v1/account/legal-consent",
+      "scenario": "legal_consent_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": "2026-11-30",
+          "terms_url": "https://legal.example.test/terms",
+          "privacy_url": "https://legal.example.test/privacy",
+          "accepted_at": "2026-11-30T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "accepted_at": "/accepted_at"
+      }
+    },
+    {
+      "id": "legal-consent-invalid-json",
+      "operation": "PUT /api/v1/account/legal-consent",
+      "scenario": "legal_consent_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "legal-consent-unknown-field",
+      "operation": "PUT /api/v1/account/legal-consent",
+      "scenario": "legal_consent_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": "2026-11-30",
+          "unexpected": true
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: unexpected: unknown field `unexpected`, expected `version` at line 1 column 36",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "legal-consent-missing-media-type",
+      "operation": "PUT /api/v1/account/legal-consent",
+      "scenario": "legal_consent_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {},
+        "body": {
+          "version": "2026-11-30"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "legal-consent-get-anonymous",
+      "operation": "GET /api/v1/account/legal-consent",
+      "scenario": "legal_consent_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "legal-consent-put-anonymous",
+      "operation": "PUT /api/v1/account/legal-consent",
+      "scenario": "legal_consent_anonymous",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": "2026-11-30"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "legal-consent-get-nonhuman",
+      "operation": "GET /api/v1/account/legal-consent",
+      "scenario": "legal_consent_nonhuman",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/legal-consent-requires-owner-session",
+          "title": "legal consent requires owner session",
+          "status": 403,
+          "detail": "Legal consent requires a verified human owner session.",
+          "code": "legal_consent_requires_owner_session"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "legal-consent-put-nonhuman",
+      "operation": "PUT /api/v1/account/legal-consent",
+      "scenario": "legal_consent_nonhuman",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": "2026-11-30"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/legal-consent-requires-owner-session",
+          "title": "legal consent requires owner session",
+          "status": 403,
+          "detail": "Legal consent requires a verified human owner session.",
+          "code": "legal_consent_requires_owner_session"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "legal-consent-get-store-failed",
+      "operation": "GET /api/v1/account/legal-consent",
+      "scenario": "legal_consent_store_error",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "Legal consent is temporarily unavailable.",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "legal-consent-put-store-failed",
+      "operation": "PUT /api/v1/account/legal-consent",
+      "scenario": "legal_consent_store_error",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": "2026-11-30"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "Legal consent is temporarily unavailable.",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "legal-consent-get-unconfigured",
+      "operation": "GET /api/v1/account/legal-consent",
+      "scenario": "legal_consent_unconfigured",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/legal-terms-not-configured",
+          "title": "legal terms not configured",
+          "status": 404,
+          "detail": "This deployment publishes no terms that require acceptance.",
+          "code": "legal_terms_not_configured"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "legal-consent-put-unconfigured",
+      "operation": "PUT /api/v1/account/legal-consent",
+      "scenario": "legal_consent_unconfigured",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": "2026-11-30"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/legal-terms-not-configured",
+          "title": "legal terms not configured",
+          "status": 404,
+          "detail": "This deployment publishes no terms that require acceptance.",
+          "code": "legal_terms_not_configured"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "legal-consent-sign-in-required",
+      "operation": "PUT /api/v1/account/legal-consent",
+      "scenario": "legal_consent_unrecorded",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": "2026-11-30"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/legal-consent-sign-in-required",
+          "title": "legal consent sign in required",
+          "status": 409,
+          "detail": "Sign out and sign in again before accepting the terms.",
+          "code": "legal_consent_sign_in_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
