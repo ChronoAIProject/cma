@@ -26,10 +26,6 @@ pub(super) struct CacheRead {
     policy: IngressOwnershipPolicy,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "native worker qualification pending")
-)]
 impl CacheRead {
     pub(super) fn admit(
         input: &SharedOwned<SecretValue>,
