@@ -46,6 +46,9 @@ const dispatch: Record<string, Dispatch> = {
   'GET /api/v1/account/deletion': ({ client, options }) => client.accountDeletion.status(options),
   'POST /api/v1/account/deletion': ({ client, body, command }) =>
     client.accountDeletion.request(body, command),
+  'GET /api/v1/account/legal-consent': ({ client, options }) => client.legalConsent.status(options),
+  'PUT /api/v1/account/legal-consent': ({ client, body, options }) =>
+    client.legalConsent.accept(body, options),
   ...capacityRecoveryDispatch,
   ...deliverableDispatch(corpus),
   ...usageDispatch,
