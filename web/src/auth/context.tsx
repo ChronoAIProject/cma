@@ -232,3 +232,9 @@ export function useIdentityUncertain(): boolean {
   const value = useContext(AuthContext);
   return value !== null && (value.outage !== undefined || value.state.status !== 'authenticated');
 }
+
+/** Account identity for optional owner controls; absent outside an authenticated shell. */
+export function useAuthenticatedSubject(): string | undefined {
+  const value = useContext(AuthContext);
+  return value?.state.status === 'authenticated' ? value.state.user.id : undefined;
+}
