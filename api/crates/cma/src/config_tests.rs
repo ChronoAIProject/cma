@@ -190,46 +190,47 @@ fn account_deletion_config_rejects_non_boolean_values() {
     }
 }
 
-const LEGAL: [(&str, &str); 3] = [
-    ("CHRONO_LEGAL_TERMS_VERSION", "2026-11-30"),
-    ("CHRONO_LEGAL_TERMS_URL", "https://legal.example.test/terms"),
-    ("CHRONO_LEGAL_PRIVACY_URL", "https://legal.example.test/privacy"),
-];
+const LEGAL: &str =
+    "2026-11-30 https://legal.example.test/terms https://legal.example.test/privacy";
 
 #[test]
-fn legal_terms_default_off_and_load_as_a_complete_set() {
+fn legal_terms_default_off_and_load_from_one_setting() {
     assert!(configured(&[]).unwrap().legal_terms.is_none());
-    let blank: Vec<_> = LEGAL.iter().map(|(key, _)| (*key, "")).collect();
-    assert!(configured(&blank).unwrap().legal_terms.is_none());
-    let terms = configured(&LEGAL).unwrap().legal_terms.unwrap();
+    assert!(configured(&[("CHRONO_LEGAL_TERMS", "")])
+        .unwrap()
+        .legal_terms
+        .is_none());
+    let terms = configured(&[("CHRONO_LEGAL_TERMS", LEGAL)])
+        .unwrap()
+        .legal_terms
+        .unwrap();
     assert_eq!(terms.version(), "2026-11-30");
     assert_eq!(terms.terms_url(), "https://legal.example.test/terms");
     assert_eq!(terms.privacy_url(), "https://legal.example.test/privacy");
 }
 
 #[test]
-fn legal_terms_refuse_partial_or_invalid_settings() {
-    for omitted in 0..LEGAL.len() {
-        let partial: Vec<_> = LEGAL
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| *index != omitted)
-            .map(|(_, entry)| *entry)
-            .collect();
-        assert!(configured(&partial)
-            .unwrap_err()
-            .contains("must be configured together"));
-    }
-    for (key, value) in [
-        ("CHRONO_LEGAL_TERMS_VERSION", "two words"),
-        ("CHRONO_LEGAL_TERMS_URL", "http://legal.example.test/terms"),
-        ("CHRONO_LEGAL_PRIVACY_URL", "/privacy"),
+fn legal_terms_refuse_malformed_or_invalid_settings() {
+    for value in [
+        "2026-11-30 https://legal.example.test/terms",
+        "2026-11-30  https://legal.example.test/terms https://legal.example.test/privacy",
+        " 2026-11-30 https://legal.example.test/terms https://legal.example.test/privacy",
+        "2026-11-30 https://legal.example.test/terms https://legal.example.test/privacy extra",
     ] {
-        let mut entries = LEGAL.to_vec();
-        entries.retain(|(name, _)| *name != key);
-        entries.push((key, value));
-        let error = configured(&entries).unwrap_err();
-        assert!(error.starts_with("CHRONO_LEGAL_TERMS_VERSION, CHRONO_LEGAL_TERMS_URL and CHRONO_LEGAL_PRIVACY_URL: "), "{error}");
+        assert!(
+            configured(&[("CHRONO_LEGAL_TERMS", value)])
+                .unwrap_err()
+                .contains("separated by single spaces"),
+            "{value}"
+        );
+    }
+    for value in [
+        "v/1 https://legal.example.test/terms https://legal.example.test/privacy",
+        "1 http://legal.example.test/terms https://legal.example.test/privacy",
+        "1 https://legal.example.test/terms /privacy",
+    ] {
+        let error = configured(&[("CHRONO_LEGAL_TERMS", value)]).unwrap_err();
+        assert!(error.starts_with("CHRONO_LEGAL_TERMS: "), "{error}");
     }
 }
 
