@@ -266,16 +266,24 @@ export function registerTopographicFlowCases() {
     baseURL,
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
+    const anchor = Date.now();
+    await page.clock.install({ time: anchor - 60_000 });
+    await page.clock.pauseAt(anchor);
     await installFlowProbe(page);
     await flowFixture(page, baseURL!, 'landing');
     await page.goto('/');
-    await expect.poll(async () => (await flowProbe(page)).draws.length).toBeGreaterThan(1);
+    await expect
+      .poll(async () => {
+        await page.clock.runFor(50);
+        return (await flowProbe(page)).draws.length;
+      })
+      .toBeGreaterThan(1);
     await page.evaluate(() => {
       Object.defineProperty(document, 'hidden', { configurable: true, value: true });
       document.dispatchEvent(new Event('visibilitychange'));
     });
     const background = await flowProbe(page);
-    await page.waitForTimeout(200);
+    await page.clock.runFor(200);
     expect((await flowProbe(page)).draws).toEqual(background.draws);
     expect(background.pendingFrames).toEqual([]);
     await page.evaluate(() => {
@@ -288,25 +296,28 @@ export function registerTopographicFlowCases() {
     });
     await expect.poll(async () => (await flowProbe(page)).pendingFrames.length).toBe(0);
     const hidden = await flowProbe(page);
-    await page.waitForTimeout(300);
+    await page.clock.runFor(300);
     expect((await flowProbe(page)).draws).toEqual(hidden.draws);
     await host.evaluate((node: HTMLElement) => {
       node.hidden = false;
     });
     await expect
-      .poll(async () => (await flowProbe(page)).draws.length)
+      .poll(async () => {
+        await page.clock.runFor(50);
+        return (await flowProbe(page)).draws.length;
+      })
       .toBeGreaterThan(hidden.draws.length);
     await host.evaluate((node: HTMLElement) => {
       node.style.transform = 'translateY(10000px)';
     });
     await expect.poll(async () => (await flowProbe(page)).pendingFrames.length).toBe(0);
     const offscreen = await flowProbe(page);
-    await page.waitForTimeout(4300);
+    await page.clock.runFor(4300);
     expect((await flowProbe(page)).draws).toEqual(offscreen.draws);
     await host.evaluate((node: HTMLElement) => {
       node.style.transform = '';
     });
-    await page.waitForTimeout(300);
+    await page.clock.runFor(300);
     expect((await flowProbe(page)).draws).toEqual(offscreen.draws);
     expect((await flowProbe(page)).contextReleases).toBe(1);
   });
