@@ -5,6 +5,15 @@ export class DeletionBlocked extends Error {}
 export const stoppedProofMissing =
   'Stopping has not been confirmed. This request is blocked. Review the parent environment before continuing.';
 
+export function deleteMayHaveBeenSent(request: DeletionRequest): boolean {
+  // Older combined receipts cannot prove that Delete was never sent.
+  return request.stop !== undefined && request.deleteSent !== false;
+}
+
+export function blockedBeforeDelete(request: DeletionRequest): boolean {
+  return request.stop?.phase === 'blocked' && !deleteMayHaveBeenSent(request);
+}
+
 export function stopDeletionBlock(
   request: DeletionRequest,
   observation: DeletionObservation,
@@ -18,8 +27,10 @@ export function stopDeletionBlock(
   )
     return 'The Agent deletion target changed. Review the parent environment.';
   if (request.accepted || observation.complete) return undefined;
-  if (stop.phase === 'blocked') return stoppedProofMissing;
+  if (blockedBeforeDelete(request)) return stoppedProofMissing;
   if (observation.blocked) return observation.blocked;
   if (observation.agent?.status === 'failed' || observation.agent?.status === 'deleted')
-    return stoppedProofMissing;
+    return deleteMayHaveBeenSent(request)
+      ? 'The delete result is unconfirmed. Review the parent environment before retrying the original request.'
+      : stoppedProofMissing;
 }

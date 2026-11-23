@@ -22,7 +22,8 @@ function decode(raw: string | null, combined = false): DeletionRequest | undefin
       typeof value.key !== 'string' ||
       value.key.length === 0 ||
       value.key.length > 128 ||
-      typeof value.accepted !== 'boolean'
+      typeof value.accepted !== 'boolean' ||
+      (value.deleteSent !== undefined && typeof value.deleteSent !== 'boolean')
     )
       return undefined;
     const action = value.action;
@@ -118,4 +119,19 @@ export function forgetDeletion(viewerId: string, key: string): void {
   } catch {
     // An accepted request can be observed again safely if storage is unavailable.
   }
+}
+
+export function acknowledgeRetainedDeletion(viewerId: string, sent: DeletionRequest): void {
+  const retained = restoreDeletions(viewerId).find((request) => request.key === sent.key);
+  if (
+    !retained?.stop ||
+    !sent.stop ||
+    retained.deleteSent === false ||
+    JSON.stringify(retained.action) !== JSON.stringify(sent.action) ||
+    !(['key', 'sandboxId', 'workspaceId', 'worktreeId'] as const).every(
+      (field) => retained.stop![field] === sent.stop![field],
+    )
+  )
+    return;
+  persistDeletion(viewerId, { ...retained, accepted: true });
 }

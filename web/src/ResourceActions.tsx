@@ -53,6 +53,11 @@ export function useResourceActions(
   const refreshDeletions = () => {
     setDeletionRequests(restoreDeletions(viewerId));
   };
+  const reopenDeletion = (request: DeletionRequest) =>
+    setDeletion({
+      request: restoreDeletions(viewerId).find((item) => item.key === request.key) ?? request,
+      restored: true,
+    });
   const [stopping, setStopping] = useState<{ agentId: string; key: string }>();
   const [sandboxRequests, setSandboxRequests] = useState<readonly SandboxActionRequest[]>([]);
   const setSandboxRequest = (request: SandboxActionRequest) =>
@@ -169,7 +174,7 @@ export function useResourceActions(
         (request) => JSON.stringify(request.action) === JSON.stringify(action),
       );
       if (same) {
-        setDeletion({ request: same, restored: true });
+        reopenDeletion(same);
         return;
       }
       setDeletion(
@@ -221,8 +226,7 @@ export function useResourceActions(
       stopping !== undefined ||
       connections.pending,
     error: history.error ?? error ?? connections.error,
-    viewDeletionStatus:
-      retained === undefined ? undefined : () => setDeletion({ request: retained, restored: true }),
+    viewDeletionStatus: retained === undefined ? undefined : () => reopenDeletion(retained),
     notice: (
       <>
         {history.notice ? (
@@ -245,7 +249,7 @@ export function useResourceActions(
             <Button
               size="sm"
               disabled={pending || deletion !== undefined || stopping !== undefined}
-              onClick={() => setDeletion({ request, restored: true })}
+              onClick={() => reopenDeletion(request)}
             >
               View {deletionTarget(request.action)} deletion status ({index + 1})
             </Button>

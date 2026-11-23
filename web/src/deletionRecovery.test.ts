@@ -76,6 +76,7 @@ it('restores distinct Stop and Delete keys but rejects a malformed combined inte
   expect(restoreDeletion('owner')).toEqual(combined);
   for (const invalid of [
     { ...combined, stop: null },
+    { ...combined, deleteSent: 'no' },
     { ...combined, stop: { ...combined.stop, key: second.key } },
     { ...combined, stop: { ...combined.stop, phase: 'done' } },
     { ...combined, stop: { ...combined.stop, sandboxId: '../other' } },
@@ -127,3 +128,13 @@ it('never reads combined fields from the legacy namespace', () => {
   localStorage.setItem(deletionStorageKey('owner'), JSON.stringify(combined));
   expect(restoreDeletions('owner')).toEqual([]);
 });
+
+it.each([false, true])(
+  'retains the combined Delete dispatch marker %s without exposing it to the predecessor',
+  (deleteSent) => {
+    const recorded = { ...combined, deleteSent };
+    persistDeletion('owner', recorded);
+    expect(restoreDeletion('owner')).toEqual(recorded);
+    expect(predecessorRestore('owner')).toEqual([]);
+  },
+);

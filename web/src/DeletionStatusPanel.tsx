@@ -7,7 +7,7 @@ import { activityEntries } from './sandbox/activity';
 import { Button } from './ui/Button';
 import { IconCheckOutline16, IconCopyOutline16, IconWarningOutline16 } from './ui/icons';
 import './DeletionPresentation.css';
-import { stoppedProofMissing } from './agent/stopDeletion';
+import { stoppedProofMissing, deleteMayHaveBeenSent } from './agent/stopDeletion';
 
 export function DeletionReference({ request }: { readonly request: DeletionRequest }) {
   const [copy, setCopy] = useState<'copied' | 'failed'>();
@@ -55,9 +55,13 @@ export function DeletionStatusPanel({
 }) {
   const target = deletionTarget(request.action);
   const complete = observation?.complete === true;
+  const unknownDelete = !request.accepted && deleteMayHaveBeenSent(request);
   const blocked = request.stop?.phase === 'blocked' && !request.accepted;
   const stopping =
-    request.stop !== undefined && !request.accepted && observation?.agent?.status !== 'stopped';
+    request.stop !== undefined &&
+    !request.accepted &&
+    !unknownDelete &&
+    observation?.agent?.status !== 'stopped';
   const state = complete
     ? 'Deleted'
     : blocked
@@ -72,7 +76,7 @@ export function DeletionStatusPanel({
               ? 'Deleting'
               : request.accepted
                 ? 'Deletion requested'
-                : request.stop?.phase === 'accepted'
+                : !unknownDelete && request.stop?.phase === 'accepted'
                   ? 'Stopping'
                   : 'Request unconfirmed';
   return (
@@ -84,23 +88,27 @@ export function DeletionStatusPanel({
       <p role="status">
         {complete
           ? `${target} deletion is confirmed.`
-          : blocked
-            ? stoppedProofMissing
-            : stopping
-              ? 'Waiting for the Agent to stop. Deletion will follow only after stopping is confirmed.'
-              : sending
-                ? 'Submitting delete request.'
-                : request.accepted
-                  ? 'Delete request accepted. Cleanup continues even if you close this page.'
-                  : 'The delete request has not been confirmed. Check the same request before trying another action.'}
+          : unknownDelete
+            ? 'Delete may already have started. Its result is unconfirmed; keep checking the original request.'
+            : blocked
+              ? stoppedProofMissing
+              : stopping
+                ? 'Waiting for the Agent to stop. Deletion will follow only after stopping is confirmed.'
+                : sending
+                  ? 'Submitting delete request.'
+                  : request.accepted
+                    ? 'Delete request accepted. Cleanup continues even if you close this page.'
+                    : 'The delete request has not been confirmed. Check the same request before trying another action.'}
       </p>
       {!complete && !request.accepted ? (
         <p>
-          {blocked
-            ? 'End this request to stop further steps. Commands already sent may still finish. Deleting later requires a new confirmation.'
-            : stopping
-              ? 'Stop and delete keeps the original requests. Close preserves them; reopen to check or continue.'
-              : 'Check request retries the original delete request with the same reference.'}
+          {blocked && unknownDelete
+            ? 'End this request stops automatic steps and keeps this deletion available for status checks and allowed retries.'
+            : blocked
+              ? 'End this request to stop further steps. Commands already sent may still finish. Deleting later requires a new confirmation.'
+              : stopping
+                ? 'Stop and delete keeps the original requests. Close preserves them; reopen to check or continue.'
+                : 'Check request retries the original delete request with the same reference.'}
         </p>
       ) : null}
       {target === 'Agent' ? (

@@ -19,6 +19,7 @@ export interface DeletionRequest {
   readonly action: DeleteAction;
   readonly key: string;
   readonly accepted: boolean;
+  readonly deleteSent?: boolean;
   readonly stop?: {
     readonly key: string;
     readonly phase: 'requested' | 'accepted' | 'blocked';

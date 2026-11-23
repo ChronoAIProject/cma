@@ -3,7 +3,12 @@ import { usePresenceExiting } from './ui/Presence';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CmaWebClient } from './api/client';
 import { detailReadSource } from './api/detailReads';
-import { DeletionBlocked, stopDeletionBlock } from './agent/stopDeletion';
+import {
+  DeletionBlocked,
+  stopDeletionBlock,
+  blockedBeforeDelete,
+  deleteMayHaveBeenSent,
+} from './agent/stopDeletion';
 import { ApiError } from '@cma/client';
 import {
   deletionTarget,
@@ -13,7 +18,7 @@ import {
   type DeletionRequest,
   type AgentDeletionPermissions,
 } from './deletion';
-import { forgetDeletion, persistDeletion } from './deletionRecovery';
+import { forgetDeletion, persistDeletion, acknowledgeRetainedDeletion } from './deletionRecovery';
 import { RiskConfirmation } from './ui/RiskConfirmation';
 import { Modal } from './ui/Modal';
 import { Button } from './ui/Button';
@@ -62,6 +67,7 @@ export function DeletionDialog({
   const changed = useRef(onChanged);
   const completed = useRef(false);
   const autoDelete = useRef(false);
+  const blockedRevision = useRef(0);
   const stopAllowed = agentPermissions?.stopAgent;
   const deleteAllowed = agentPermissions?.deleteAgent;
   const authority = useMemo(
@@ -110,6 +116,7 @@ export function DeletionDialog({
     (message: string) => {
       const value = latestRequest.current;
       if (!value.stop) return;
+      blockedRevision.current += 1;
       autoDelete.current = false;
       if (value.stop && value.stop.phase !== 'blocked' && !value.accepted)
         persist({ ...value, stop: { ...value.stop, phase: 'blocked' } });
@@ -223,7 +230,9 @@ export function DeletionDialog({
   const submit = useCallback(
     async (source: 'user' | 'observation' = 'user') => {
       const lifetime = activeScope.current;
-      const blocked = () => latestRequest.current.stop?.phase === 'blocked';
+      const beforeRead = blockedRevision.current;
+      const blocked = () =>
+        blockedBeforeDelete(latestRequest.current) || blockedRevision.current !== beforeRead;
       const current = () =>
         lifetime !== undefined &&
         activeScope.current === lifetime &&
@@ -231,7 +240,7 @@ export function DeletionDialog({
         !lifetime.controller.signal.aborted &&
         enabled &&
         !exiting;
-      if (!current() || inFlight.current || request.accepted || request.stop?.phase === 'blocked')
+      if (!current() || inFlight.current || request.accepted || blockedBeforeDelete(request))
         return;
       if (
         !started &&
@@ -253,11 +262,12 @@ export function DeletionDialog({
       setStarted(true);
       setSendingScope(scope);
       if (source === 'user') setCommandError(undefined);
-      const submitted: DeletionRequest =
+      let submitted: DeletionRequest =
         request.stop || !observation?.stopsAgent
           ? request
           : {
               ...request,
+              deleteSent: false,
               stop: {
                 key: crypto.randomUUID(),
                 phase: 'requested',
@@ -289,6 +299,10 @@ export function DeletionDialog({
               'The Agent is running again. Close this request and review Stop and delete.',
             );
           if (submitted.stop && fresh.agent?.status !== 'stopped') {
+            if (deleteMayHaveBeenSent(submitted))
+              throw new DeletionBlocked(
+                'The delete result is unconfirmed. Check the original request after stopping is confirmed.',
+              );
             autoDelete.current = true;
             if (source === 'user' && submitted.stop.phase === 'requested') {
               await client.stopAgent(submitted.action.agentId, {
@@ -307,8 +321,15 @@ export function DeletionDialog({
         }
         if (!current() || blocked()) return;
         autoDelete.current = false;
+        if (submitted.stop) {
+          submitted = { ...submitted, deleteSent: true };
+          persist(submitted);
+        }
         await requestDeletion(client, submitted);
-        if (!current()) return;
+        if (!current()) {
+          acknowledgeRetainedDeletion(identity.viewerId, submitted);
+          return;
+        }
         const accepted = { ...submitted, accepted: true };
         persist(accepted);
         backgrounded.current = backgroundOnAcceptance;
@@ -388,8 +409,10 @@ export function DeletionDialog({
     const value = latestRequest.current;
     if (value.stop?.phase !== 'blocked' || value.accepted) return;
     invalidate();
-    persist(undefined);
-    onAbandoned?.(value);
+    if (!deleteMayHaveBeenSent(value)) {
+      persist(undefined);
+      onAbandoned?.(value);
+    }
     onClose();
   };
   const name = observation?.name ?? target;
@@ -439,12 +462,14 @@ export function DeletionDialog({
           {!request.accepted && !observation?.complete ? (
             <Button
               variant="primary"
-              disabled={sending || request.stop?.phase === 'blocked' || !enabled}
+              disabled={sending || blockedBeforeDelete(request) || !enabled}
               onClick={() => {
                 void submit();
               }}
             >
-              {request.stop?.phase === 'requested' ? 'Retry stop request' : 'Check request'}
+              {request.stop?.phase === 'requested' && !deleteMayHaveBeenSent(request)
+                ? 'Retry stop request'
+                : 'Check request'}
             </Button>
           ) : null}
           {request.stop?.phase === 'blocked' && !request.accepted && !observation?.complete ? (

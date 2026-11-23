@@ -22,6 +22,7 @@ const blocked: DeletionRequest = {
   action: { kind: 'delete_agent', agentId: AGENT_DETAIL.id },
   key: 'delete-original',
   accepted: false,
+  deleteSent: false,
   stop: {
     key: 'stop-original',
     phase: 'blocked',
