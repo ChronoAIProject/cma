@@ -306,7 +306,8 @@ export class Harness {
       .toBe(true);
     const launch = await this.readLaunch(page, id);
     expect(launch.resolution.agent.id).toBeTruthy();
-    await page.goto(`${this.config.baseURL}/agents/${launch.resolution.agent.id}`);
+    const destination = `${this.config.baseURL}/agents/${launch.resolution.agent.id}`;
+    if (page.url() !== destination) await page.goto(destination);
     await expect(page.locator('#agent-message')).toBeVisible();
     return launch;
   }
