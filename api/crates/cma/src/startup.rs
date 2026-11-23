@@ -79,11 +79,16 @@ pub(crate) async fn serve() -> Result<(), String> {
     observe(
         "default_warm_pool_readiness",
         async {
-            composition
-                .native_warm_pools
-                .await_default_ready()
-                .await
-                .map_err(|error| format!("native warm pool startup readiness failed: {error:?}"))
+            match &composition.runtime_pointer {
+                Some(controller) => controller.await_active_ready().await,
+                None => composition
+                    .native_warm_pools
+                    .await_default_ready()
+                    .await
+                    .map_err(|error| {
+                        format!("native warm pool startup readiness failed: {error:?}")
+                    }),
+            }
         },
         |_| None,
     )
