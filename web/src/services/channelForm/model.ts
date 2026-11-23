@@ -1,4 +1,5 @@
 import type { Channel } from '../ChannelEditor';
+import { validateHmacCredentials } from './hmacCredentials';
 
 export type Fields = Record<string, unknown>;
 export type EditorSection =
@@ -171,7 +172,7 @@ export function credentialsPatch(values: Fields, create: boolean): Fields | unde
     const value = text(values[key]);
     if (value !== '') patch[key] = value;
   }
-  if (values.replace_hmac === true)
+  if (values.replace_hmac === true || (create && values.hmac_secrets !== undefined))
     patch.hmac_secrets = records(values.hmac_secrets).map((row) => ({
       key_id: text(row.key_id),
       secret: text(row.secret),
@@ -187,7 +188,9 @@ export function channelRequest(
 ): Fields {
   if (!channel && draft.connection_ref !== undefined && !text(draft.connection_ref))
     throw new Error('Choose a ready CMA-managed Telegram connection.');
-  const patch = credentialsPatch(channelCredentials(credentials, draft, !channel), !channel);
+  const selected = channelCredentials(credentials, draft, !channel);
+  validateHmacCredentials(draft, selected, !channel);
+  const patch = credentialsPatch(selected, !channel);
   return {
     ...without(draft, ['durable_custom_execution']),
     ...(patch ? { credentials: patch } : {}),
