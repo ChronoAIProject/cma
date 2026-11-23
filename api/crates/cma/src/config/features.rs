@@ -13,6 +13,8 @@ mod ingress_coordinator_tests;
 mod resource_list_tests;
 #[cfg(test)]
 mod segmentation_tests;
+#[cfg(test)]
+mod stale_turn_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
     pub visitor_launch_admission: bool,
@@ -100,6 +102,7 @@ pub(crate) struct FeatureFlags {
     pub retained_context_lookup: bool,
     pub context_diagnostics: bool,
     pub event_driven_reconciliation: bool,
+    pub stale_turn_reconciliation: bool,
     pub agent_connection_observations: bool,
     pub empty_discovery: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
@@ -251,6 +254,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED",
             )?,
+            stale_turn_reconciliation: flag(lookup, "CHRONO_STALE_TURN_RECONCILIATION_ENABLED")?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
             model_credit_required: flag(lookup, "CHRONO_AGENT_MODEL_CREDIT_REQUIRED")?,
