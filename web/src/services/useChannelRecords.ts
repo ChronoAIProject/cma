@@ -62,10 +62,16 @@ export function useChannelRecords(
     });
   }, []);
   const beginRefresh = useCallback(() => {
-    setState((previous) => ({
-      ...previous,
-      refreshEvidence: new Map([...previous.records].filter(([, value]) => value.unconfirmed)),
-    }));
+    setState((previous) => {
+      const records = new Map(
+        [...previous.records].map(([id, value]) => [id, { ...value, stale: true }]),
+      );
+      return {
+        ...previous,
+        records,
+        refreshEvidence: new Map([...records].filter(([, value]) => value.unconfirmed)),
+      };
+    });
   }, []);
   return { records, observe, unavailable, beginRefresh };
 }

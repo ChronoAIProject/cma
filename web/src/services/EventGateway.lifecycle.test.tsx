@@ -352,3 +352,36 @@ it('does not use a list read begun before a contradiction to clear that contradi
   expect(screen.getAllByText(/Creation status unconfirmed/).length).toBeGreaterThan(0);
   expect(writes()).toHaveLength(0);
 });
+
+it.each([
+  ['human', 'owner', true],
+  ['organization', 'owner', false],
+  ['human', 'other', false],
+] as const)(
+  'checks the public owner kind and subject during original-address recovery: %s/%s',
+  async (kind, subject, accepted) => {
+    const initial = {
+      ...channel(),
+      channel_id: undefined,
+      endpoints: undefined,
+      definition: { ...channel().definition, owner: { kind: 'human', subject: 'owner' } },
+    };
+    const { current, writes } = fixture(initial);
+    current.recovered = {
+      ...channel(),
+      definition: { ...channel().definition, owner: { kind, subject } },
+    };
+    fireEvent.click(
+      await within(screen.getByRole('tree')).findByRole('button', { name: /^Original/ }),
+    );
+    if (accepted) {
+      fireEvent.click(await screen.findByRole('button', { name: /^Channel: Original/ }));
+      expect(screen.getByRole('button', { name: 'Save channel' })).toBeEnabled();
+    } else {
+      await screen.findByLabelText('Original channel ID');
+      expect(screen.queryByRole('button', { name: 'Save channel' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Delete channel' })).not.toBeInTheDocument();
+    }
+    expect(writes()).toHaveLength(0);
+  },
+);

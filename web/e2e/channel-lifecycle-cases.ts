@@ -8,7 +8,12 @@ const record = (ready: boolean, version = 3): ChannelListItem => ({
   version,
   definition: { ...teamChannel.definition, creation: { ready } },
 });
-async function setup(page: Page, baseURL: string, initial = record(false)) {
+async function setup(
+  page: Page,
+  baseURL: string,
+  initial = record(false),
+  second?: ChannelListItem,
+) {
   const boundary = new LocalStartup();
   await boundary.route(page, baseURL);
   const state = { row: initial, recovered: record(false), readStatus: 200, deleteStatus: 409 };
@@ -35,7 +40,9 @@ async function setup(page: Page, baseURL: string, initial = record(false)) {
     if (path.endsWith('/v1/channels'))
       return route.fulfill({
         status: state.readStatus,
-        json: { items: [state.row], next_cursor: null },
+        json: url.searchParams.has('after')
+          ? { items: second ? [second] : [], next_cursor: null }
+          : { items: [state.row], next_cursor: second ? 'next-page' : null },
       });
     if (path.includes('/activity/stream'))
       return route.fulfill({
@@ -68,6 +75,72 @@ async function setup(page: Page, baseURL: string, initial = record(false)) {
 }
 
 export function channelLifecycleCases() {
+  test('LOCAL paginated channel refresh retains the exact uncertain request and requires fresh record evidence', async ({
+    page,
+    baseURL,
+  }) => {
+    const second = {
+      ...record(true),
+      record_id: 'second-record',
+      channel_id: 'second-channel',
+      definition: {
+        ...record(true).definition,
+        name: 'Second page',
+        owner: { kind: 'human', subject: 'local-owner' },
+      },
+    };
+    const { writes, boundary } = await setup(page, baseURL!, record(true), second);
+    await page.getByRole('button', { name: 'Load more channels', exact: true }).click();
+    await page.getByRole('treeitem').filter({ hasText: 'Second page' }).click();
+    await page.getByRole('button', { name: /^Channel: Second page/ }).click();
+    const dialog = page.getByRole('dialog', { name: 'Channel settings' });
+    const input = dialog.getByLabel('Channel name', { exact: true });
+    const originalInput = await input.elementHandle();
+    await input.fill('Retained second-page draft');
+    await dialog.getByRole('button', { name: 'Save channel', exact: true }).click();
+    await expect(
+      dialog.getByRole('button', { name: 'Retry same request', exact: true }),
+    ).toBeEnabled();
+    expect(writes).toHaveLength(1);
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await page.getByRole('button', { name: 'Refresh channel status', exact: true }).click();
+    await expect(
+      page.getByRole('button', { name: 'Load more channels', exact: true }),
+    ).toBeEnabled();
+    await expect(page.getByRole('status').filter({ hasText: 'status stale' })).toBeVisible();
+    expect(await originalInput!.evaluate((element) => element.isConnected)).toBe(true);
+    await page.getByRole('button', { name: /^Channel: Second page/ }).click();
+    await expect(input).toHaveValue('Retained second-page draft');
+    await expect(
+      dialog.getByRole('button', { name: 'Retry same request', exact: true }),
+    ).toBeDisabled();
+    await expect(
+      dialog.getByRole('button', { name: 'Delete channel', exact: true }),
+    ).toBeDisabled();
+    await dialog
+      .locator('form')
+      .first()
+      .evaluate((form) =>
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+      );
+    expect(writes).toHaveLength(1);
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await page.getByRole('button', { name: 'Load more channels', exact: true }).click();
+    await expect(page.getByRole('treeitem').filter({ hasText: 'Second page' })).toBeVisible();
+    await page.getByRole('button', { name: /^Channel: Second page/ }).click();
+    await expect(
+      dialog.getByRole('button', { name: 'Retry same request', exact: true }),
+    ).toBeEnabled();
+    expect(await originalInput!.evaluate((element) => element.isConnected)).toBe(true);
+    await expect(input).toHaveValue('Retained second-page draft');
+    expect(writes).toHaveLength(1);
+    await dialog.getByRole('button', { name: 'Retry same request', exact: true }).click();
+    await expect.poll(() => writes.length).toBe(2);
+    expect(writes[1]).toEqual(writes[0]);
+    expect(boundary.errors).toEqual([]);
+    expect(boundary.unexpected).toEqual([]);
+  });
+
   for (const theme of ['light', 'dark'] as const) {
     test(`LOCAL lifecycle readiness preserves drafts and rejects writes in ${theme}`, async ({
       page,

@@ -71,7 +71,13 @@ function EventGatewayBody({
     .map((row) => evidence.records.get(row.record_id)!.channel);
   // Nothing is open until somebody chooses a channel: the page opens on the
   // welcome surface until a channel is selected.
-  const current = items.find((row) => row.record_id === selected);
+  const workspaces = [...new Set([...visited, ...(selected ? [selected] : [])])]
+    .filter((id) => !deleted.includes(id))
+    .flatMap((id) => {
+      const record = evidence.records.get(id);
+      return record ? [record.channel] : [];
+    });
+  const current = workspaces.find((row) => row.record_id === selected);
   const canCreate = can(session, 'event-gateway', 'channels:create');
   useDocumentTitle(creating ? 'New channel' : (current?.definition.name ?? 'Event Gateway'));
   const retain = () => {
@@ -193,38 +199,36 @@ function EventGatewayBody({
           <Button onClick={() => setCreating(false)}>Cancel</Button>
         </section>
       ) : null}
-      {items
-        .filter((row) => row.record_id === current?.record_id || visited.includes(row.record_id))
-        .map((channel) => (
-          <section
-            key={channel.record_id}
-            hidden={creating || channel.record_id !== current?.record_id}
-            className="gateway-detail"
-            aria-label={`${channel.definition.name} details`}
-          >
-            <ChannelDetail
-              evidence={evidence.records.get(channel.record_id)!}
-              stale={stale}
-              onRead={evidence.observe}
-              onUnavailable={evidence.unavailable}
-              refresh={refresh}
-              active={active && !creating && channel.record_id === current?.record_id}
-              channelsCrumb={channelsCrumb}
-              session={session}
-              denied={denied}
-              onChanged={(updated) => {
-                if (updated) evidence.observe(updated);
-                if (updated && updated.record_id === created?.record_id) setCreated(updated);
-                refresh();
-              }}
-              onDeleted={() => {
-                setDeleted((previous) => [...previous, channel.record_id]);
-                if (created?.record_id === channel.record_id) setCreated(undefined);
-                refresh();
-              }}
-            />
-          </section>
-        ))}
+      {workspaces.map((channel) => (
+        <section
+          key={channel.record_id}
+          hidden={creating || channel.record_id !== current?.record_id}
+          className="gateway-detail"
+          aria-label={`${channel.definition.name} details`}
+        >
+          <ChannelDetail
+            evidence={evidence.records.get(channel.record_id)!}
+            stale={stale}
+            onRead={evidence.observe}
+            onUnavailable={evidence.unavailable}
+            refresh={refresh}
+            active={active && !creating && channel.record_id === current?.record_id}
+            channelsCrumb={channelsCrumb}
+            session={session}
+            denied={denied}
+            onChanged={(updated) => {
+              if (updated) evidence.observe(updated);
+              if (updated && updated.record_id === created?.record_id) setCreated(updated);
+              refresh();
+            }}
+            onDeleted={() => {
+              setDeleted((previous) => [...previous, channel.record_id]);
+              if (created?.record_id === channel.record_id) setCreated(undefined);
+              refresh();
+            }}
+          />
+        </section>
+      ))}
       {!creating && !current ? (
         <GatewayWelcome
           kind="channel"
