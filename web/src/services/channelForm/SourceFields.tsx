@@ -1,3 +1,4 @@
+import { botIdMessage, telegramUsernameMessage } from './connectorValidation';
 import { AdvancedFields } from './AdvancedFields';
 import { LarkMessageEffectsFields } from './LarkMessageEffectsFields';
 import { LarkResourceFields } from './LarkResourceFields';
@@ -295,6 +296,10 @@ export function SourceFields({
         ) : (
           <>
             <TextField
+              path="bot_id"
+              validationMessage={
+                value.type === 'telegram' ? botIdMessage(value.bot_id, 'telegram') : undefined
+              }
               label="Bot ID"
               value={value.bot_id}
               onChange={(v) => onChange(optional(value, 'bot_id', v || undefined))}
@@ -302,6 +307,15 @@ export function SourceFields({
               hint="Use the platform's bot user ID for exact mention and reply matching."
             />
             <TextField
+              path="bot_username"
+              validationMessage={
+                value.type === 'telegram' ? telegramUsernameMessage(value.bot_username) : undefined
+              }
+              hint={
+                value.type === 'telegram'
+                  ? 'Optional: 5–32 letters, numbers or underscores, without @.'
+                  : undefined
+              }
               label="Bot username"
               value={value.bot_username}
               onChange={(v) => onChange(optional(value, 'bot_username', v || undefined))}
