@@ -1,6 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 
+const discoveryLinks =
+  '<https://fixture.invalid/profile>; rel="profile", </openapi.json>; rel="service-desc"; title="API, schema"';
+
 test('LOCAL Sandbox revision refusal allows an explicit fresh revoke after reload', async ({
   page,
   baseURL,
@@ -105,7 +108,7 @@ test('LOCAL Sandbox revision refusal allows an explicit fresh revoke after reloa
 });
 
 // Synthetic HTTP boundaries exercise the real browser; they do not qualify a runtime.
-for (const entry of ['details', 'header', 'success'] as const) {
+for (const entry of ['details', 'header', 'success', 'conflicting'] as const) {
   test(`LOCAL ${entry} revocation preserves the original request through lost reply and reload`, async ({
     page,
     baseURL,
@@ -117,7 +120,7 @@ for (const entry of ['details', 'header', 'success'] as const) {
 async function agentRevocationRecovery(
   page: Page,
   baseURL: string,
-  entry: 'details' | 'header' | 'success',
+  entry: 'details' | 'header' | 'success' | 'conflicting',
 ) {
   const boundary = new LocalStartup();
   await boundary.route(page, baseURL!);
@@ -135,6 +138,8 @@ async function agentRevocationRecovery(
   };
   const commands: { key?: string; revision: string | null }[] = [];
   let lost = true;
+  let conflicting = entry === 'conflicting';
+  const expectedWrites = conflicting ? 3 : 2;
   let effective = false;
   let statusUnavailable = false;
   let unresolved = 1;
@@ -166,10 +171,11 @@ async function agentRevocationRecovery(
         },
       });
     }
+    const statusLink = `</api/v1/resource-revocations/${operation}?kind=agent&id=agt_contract>; rel="status"`;
     return route.fulfill({
       status: 409,
       headers: {
-        Link: `</api/v1/resource-revocations/${operation}?kind=agent&id=agt_contract>; rel="status"`,
+        Link: `${discoveryLinks}, ${statusLink}${conflicting ? `, ${statusLink.replace(operation, 'b'.repeat(64))}` : ''}`,
       },
       json: { code: 'resource_revocation_pending', detail: 'Pending' },
     });
@@ -177,6 +183,10 @@ async function agentRevocationRecovery(
   await page.route('**/api/v1/resource-revocations/**', async (route) => {
     statusReads++;
     expect(route.request().method()).toBe('GET');
+    const target = new URL(route.request().url());
+    expect(target.pathname).toBe(`/api/v1/resource-revocations/${operation}`);
+    expect(target.searchParams.get('kind')).toBe('agent');
+    expect(target.searchParams.get('id')).toBe('agt_contract');
     if (statusUnavailable)
       return route.fulfill({ status: 503, json: { code: 'resource_revocation_unavailable' } });
     const actor = { kind: 'human', subject: 'local-owner' };
@@ -233,6 +243,21 @@ async function agentRevocationRecovery(
   lost = false;
   await page.getByRole('button', { name: 'Revoke link', exact: true }).click();
   await page.getByRole('button', { name: 'Revoke access', exact: true }).click();
+  if (conflicting) {
+    await expect(page.getByRole('alert')).toContainText('Pending');
+    expect(statusReads).toBe(0);
+    expect(commands).toHaveLength(2);
+    expect(commands[1]).toEqual(commands[0]);
+    await page.reload();
+    await open();
+    await expect(page.getByRole('button', { name: 'Revoke link', exact: true })).toBeEnabled();
+    expect(statusReads).toBe(0);
+    expect(commands).toHaveLength(2);
+    conflicting = false;
+    await page.getByRole('button', { name: 'Revoke link', exact: true }).click();
+    await page.getByRole('button', { name: 'Revoke access', exact: true }).click();
+    expect(commands[2]).toEqual(commands[0]);
+  }
   if (entry !== 'success')
     await expect(
       page.getByText(
@@ -243,14 +268,14 @@ async function agentRevocationRecovery(
     await expect(
       page.getByText('Access revoked. Previously submitted external requests may still complete.'),
     ).toBeVisible();
-  expect(commands).toHaveLength(2);
+  expect(commands).toHaveLength(expectedWrites);
   expect(commands[1]).toEqual(commands[0]);
   expect(commands[0]!.key).toBeTruthy();
   await page.reload();
   await open();
   if (entry !== 'success')
     await expect(page.getByRole('button', { name: 'Revoke link', exact: true })).toBeDisabled();
-  expect(commands).toHaveLength(2);
+  expect(commands).toHaveLength(expectedWrites);
   effective = true;
   await expect(
     page.getByText('Access revoked. Previously submitted external requests may still complete.'),
@@ -274,7 +299,7 @@ async function agentRevocationRecovery(
   await page.reload();
   await open();
   await expect(page.getByRole('region', { name: 'Unresolved external requests' })).toHaveCount(0);
-  expect(commands).toHaveLength(2);
+  expect(commands).toHaveLength(expectedWrites);
   expect(boundary.errors).toEqual([]);
   expect(boundary.unexpected).toEqual([]);
 }
@@ -367,7 +392,7 @@ for (const success of [false, true]) {
         return route.fulfill({
           status: 409,
           headers: {
-            Link: `</api/v1/resource-revocations/${operation}?kind=sandbox&id=${sandboxId}>; rel="status"`,
+            Link: `</api/v1/resource-revocations/${operation}?kind=sandbox&id=${sandboxId}>; rel="status", ${discoveryLinks}`,
           },
           json: { code: 'resource_revocation_pending', detail: 'Pending' },
         });
