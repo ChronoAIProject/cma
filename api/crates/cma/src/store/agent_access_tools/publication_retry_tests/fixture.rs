@@ -1,5 +1,7 @@
 use super::*;
-use layer2_core::sandbox::store::{AgentProvenanceStore, AgentStore};
+use layer2_core::sandbox::store::{
+    AgentProvenanceStore, AgentStore, ClaimedWork, SandboxWorkerStore, WorkAuthority,
+};
 use mongodb::event::{command::CommandEvent, EventHandler};
 use mongodb::options::ClientOptions;
 use std::sync::{
@@ -34,6 +36,8 @@ pub(super) struct Fixture {
     fired: Arc<AtomicBool>,
     commands: Arc<Mutex<Vec<Document>>>,
     commit_replies: Arc<Mutex<Vec<Document>>>,
+    after_abort: Arc<Mutex<Option<AfterAbort>>>,
+    changed_after_abort: Arc<AtomicBool>,
 }
 
 impl Fixture {
@@ -195,7 +199,22 @@ impl Fixture {
             fired,
             commands,
             commit_replies,
+            after_abort,
+            changed_after_abort,
         }
+    }
+
+    pub fn change_after_abort(&self, collection: &str, filter: Document, update: Document) {
+        self.changed_after_abort.store(false, Ordering::SeqCst);
+        *self.after_abort.lock().unwrap() = Some(AfterAbort {
+            collection: collection.into(),
+            filter,
+            update,
+        });
+    }
+
+    pub fn changed_after_abort(&self) -> bool {
+        self.changed_after_abort.load(Ordering::SeqCst)
     }
 
     pub fn arm(&self, command: &str, collection: Option<&str>, times: i32, data: Document) {
@@ -313,6 +332,34 @@ impl Fixture {
         }
     }
 
+    pub async fn with_work<T>(&self, work: impl std::future::Future<Output = T>) -> T {
+        let claimed = self
+            .independent
+            .claim_sandbox_work(
+                &self.state.resource.lineage.sandbox.id,
+                "access-parent-worker",
+                layer2_core::now_rfc3339(),
+                deadline(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        WorkAuthority::new(
+            ClaimedWork::Sandbox(Box::new(claimed.clone())),
+            tokio::time::Instant::now(),
+        )
+        .run(
+            async { Ok(crate::store::work_publication::scope(&self.store, work).await) },
+            || async {
+                self.independent
+                    .renew_sandbox_authority(&claimed, &layer2_core::now_rfc3339(), &deadline())
+                    .await
+            },
+        )
+        .await
+        .expect("fixture retains live original parent work authority")
+    }
+
     pub async fn owner_save(
         &self,
         expected: Vec<ServiceId>,
@@ -336,6 +383,10 @@ impl Fixture {
             )
             .await
     }
+}
+
+fn deadline() -> String {
+    layer2_core::rfc3339_at(std::time::SystemTime::now() + std::time::Duration::from_secs(15))
 }
 
 pub(super) fn assert_starts(commands: &[Document], count: usize) {
