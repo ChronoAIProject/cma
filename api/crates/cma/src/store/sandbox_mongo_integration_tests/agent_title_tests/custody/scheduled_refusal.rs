@@ -49,10 +49,7 @@ async fn scheduled_permanent_404_persists_prompt_fallback_without_redispatch() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let router = Router::new()
-        .route(
-            "/api/v1/proxy/s/chrono-llm/v1/responses",
-            post(refuse_title),
-        )
+        .route("/api/v1/proxy/s/chrono-llm/responses", post(refuse_title))
         .with_state(refusal.clone());
     let provider = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let (stop, shutdown) = watch::channel(false);
