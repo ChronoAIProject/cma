@@ -19,6 +19,7 @@ mod account_deletion_tests;
 mod bot_setups;
 mod bots;
 pub mod legal_consent;
+pub mod privacy_export;
 pub use bot_setups::bot_setup_router;
 pub use bots::bot_router;
 mod agent_access_requests;

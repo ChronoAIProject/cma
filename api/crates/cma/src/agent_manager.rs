@@ -1,4 +1,5 @@
 //! One participating process: renew, rebalance, revoke receivers, then release.
+mod containment;
 mod drain;
 mod maintenance;
 pub(crate) mod relay;
@@ -29,6 +30,7 @@ pub(crate) struct AgentManager {
     retired_since: Mutex<BTreeMap<AgentId, Instant>>,
     drain: tokio::sync::Mutex<bool>,
     handoffs: Mutex<BTreeMap<AgentId, Instant>>,
+    contained: containment::ContainedHandoffs,
     lifecycle: OnceLock<crate::agent_lifecycle::LifecycleDrain>,
 }
 
@@ -71,9 +73,16 @@ impl AgentManager {
             retired_since: Mutex::default(),
             drain: tokio::sync::Mutex::new(false),
             handoffs: Mutex::new(BTreeMap::new()),
+            contained: Default::default(),
             lifecycle: OnceLock::new(),
         });
         Ok(manager)
+    }
+
+    /// Contain a transient receiver housekeeping failure to that receiver
+    /// instead of stopping the process (#3069). Off unless configured.
+    pub fn enable_receiver_containment(&self) {
+        self.contained.enable();
     }
 
     pub fn register_lifecycle(

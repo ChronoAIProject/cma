@@ -136,6 +136,7 @@ pub struct AuthState {
     pub(crate) creation_outcomes_enabled: bool,
     standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
     account_deletion_enabled: bool,
+    privacy_export_enabled: bool,
     platform_settings: Option<Arc<layer2_core::PlatformSettingsService>>,
     bot_father_username: Option<String>,
     agent_key_service_id: Option<String>,
@@ -219,6 +220,7 @@ impl AuthState {
         Arc::new(Self {
             standing: Arc::new(layer2_core::account_deletion::AvailableAccounts),
             account_deletion_enabled: false,
+            privacy_export_enabled: false,
             platform_settings: None,
             bot_father_username: None,
             bindings: None,

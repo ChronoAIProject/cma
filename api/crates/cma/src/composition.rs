@@ -83,7 +83,8 @@ impl ControlPlaneComposition {
             credentials::authentication(config, &stores, &users, &activity, settings.clone())?
                 .with_account_standing(standing.clone())
                 .with_account_deletion_enabled(config.account_deletion_enabled)
-                .with_creation_outcomes_enabled(creation_outcomes.is_some());
+                .with_creation_outcomes_enabled(creation_outcomes.is_some())
+                .with_privacy_export_enabled(config.features.privacy_export_enabled);
         let broker = credentials::connection_broker(config, auth.clone(), subscriptions.clone())?;
         let connection_prerequisite = crate::connections::ConnectionPrerequisite::new(
             auth.clone(),
@@ -259,7 +260,7 @@ impl ControlPlaneComposition {
         )?;
         sandbox_lifecycle.register_inline_lifecycle(lifecycle_drain);
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
-            standing,
+            standing: standing.clone(),
             common_first_messages: config.features.trigger_command_admission,
             agent_reads: projections.reads(),
             credentials: connection_prerequisite.clone(),
@@ -370,11 +371,9 @@ impl ControlPlaneComposition {
             "cma_codex".into(),
         );
         let metadata = routes::agent_metadata(&stores, resource_access.clone(), config);
+        let accounts = routes::accounts(config, &stores, deletions, standing, projections.reads());
         let resource_routes = rest::profiles_router(profiles)
-            .merge(rest::account_deletion_router(deletions))
-            .merge(rest::legal_consent::legal_consent_router(
-                legal_consent::service(config, &stores),
-            ))
+            .merge(accounts)
             .merge(rest::answer_deliverables_router(deliverables))
             .merge(media::router(media))
             .merge(rest::documents_router(documents.clone()))

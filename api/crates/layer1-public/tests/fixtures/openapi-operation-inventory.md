@@ -16,6 +16,8 @@ privacy notice. Without one, both operations answer 404 `legal_terms_not_configu
 |---|---|
 | `GET /api/v1/account/legal-consent` | Read the current terms version, its document URLs and when the verified human owner accepted that version (`null` until accepted). |
 | `PUT /api/v1/account/legal-consent` | Accept the exact current `version`; a repeat keeps the original acceptance time, and any other version is refused with 409 `legal_terms_version_mismatch`. An owner without a recorded browser sign-in gets 409 `legal_consent_sign_in_required` and must sign in again. |
+| `GET /api/v1/account/privacy-export` | Page through the verified personal owner's Agent export inventory when account export is enabled. |
+| `GET /api/v1/account/privacy-export/agents/{id}/transcript` | Deliver a bounded, verified retained-conversation page with a SHA-256 manifest and source-bound continuation. |
 
 ### Event Worker Profiles
 

@@ -278,6 +278,16 @@ pub trait AgentLogStore: Send + Sync {
         Ok(None)
     }
 
+    /// A transcript page with an explicit source-work bound for export.
+    /// Absence must never trigger the compatibility reader.
+    async fn agent_log_export_page(
+        &self,
+        _agent: &Agent,
+        _request: &crate::sandbox::AgentTranscriptPageRequest,
+    ) -> Result<Option<crate::sandbox::AgentTranscriptPage>, SandboxStoreError> {
+        Ok(None)
+    }
+
     /// Resolve one final answer from certified message/turn evidence. `None`
     /// selects legacy compatibility; a certified non-answer returns NotFound.
     /// A missing or stale proof must fail, never select a lifetime fallback.
