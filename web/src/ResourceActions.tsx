@@ -12,6 +12,7 @@ import {
   deletionTarget,
   type DeleteAction,
   type DeletionRequest,
+  type AgentDeletionPermissions,
 } from './deletion';
 import { restoreDeletions } from './deletionRecovery';
 import { Button } from './ui/Button';
@@ -35,6 +36,7 @@ export function useResourceActions(
   viewerId = 'current',
   onNavigate?: (route: AppRoute) => void,
   enabled = true,
+  agentPermissions?: AgentDeletionPermissions,
 ) {
   // Commands may settle after navigation; target matching belongs to the current view.
   const changed = useRef(onChanged);
@@ -301,6 +303,8 @@ export function useResourceActions(
               key={deletion.request.key}
               client={client}
               viewerId={viewerId}
+              agentPermissions={agentPermissions}
+              enabled={enabled}
               initial={deletion.request}
               restored={deletion.restored}
               backgroundOnAcceptance

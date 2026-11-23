@@ -80,9 +80,8 @@ function ConsoleContent({
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
   const [revision, setRevision] = useState(0);
   const sourceClient = useCmaClient();
-  const reads = useMemo(() => coalesceDetailReads(sourceClient), [sourceClient]);
-  useEffect(() => () => reads.dispose(), [reads]);
-  const client = reads.client;
+  const { client, dispose } = useMemo(() => coalesceDetailReads(sourceClient), [sourceClient]);
+  useEffect(() => dispose, [dispose]);
   const computerObservation = useMemo(
     () =>
       new AgentComputerObservation(
@@ -148,6 +147,14 @@ function ConsoleContent({
     if (!accessUncertain && agent.state.status === 'ready')
       agent.state.v2?.journal.reconcileDraft();
   }, [accessUncertain, agent.state, draft.recoveryBlocked]);
+  const { canStartNewAgent, canCreateInScope, newAgentUnavailable, permissions } =
+    consoleCreationAccess(
+      user,
+      navigationScope,
+      scopeReady,
+      accessUncertain,
+      onCreate !== undefined,
+    );
   const actions = useResourceActions(
     client,
     (target) => {
@@ -158,15 +165,8 @@ function ConsoleContent({
     user.id,
     onNavigate,
     !accessUncertain,
+    permissions,
   );
-  const { canStartNewAgent, canCreateInScope, newAgentUnavailable, permissions } =
-    consoleCreationAccess(
-      user,
-      navigationScope,
-      scopeReady,
-      accessUncertain,
-      onCreate !== undefined,
-    );
   const canOpenTriggers = !user.visitor && user.capabilities.includes('publish_triggers');
   const [commandsOpen, setCommandsOpen] = useState(false);
   const newAgent = useCallback(() => onCreate?.({ kind: 'new_agent' }), [onCreate]);

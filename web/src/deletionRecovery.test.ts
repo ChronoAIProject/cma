@@ -1,3 +1,4 @@
+import { restoreDeletions as predecessorRestore } from './test/deletionRecoveryPredecessor';
 import { afterEach, expect, it } from 'vitest';
 import {
   deletionStorageKey,
@@ -58,4 +59,71 @@ it('rejects malformed data and isolates viewer names that contain separators', (
   persistDeletion('owner', second);
   expect(restoreDeletions('owner')).toEqual([second]);
   expect(restoreDeletions('owner:request')).toEqual([first]);
+});
+
+it('restores distinct Stop and Delete keys but rejects a malformed combined intent', () => {
+  const combined: DeletionRequest = {
+    ...second,
+    stop: {
+      key: 'original-stop',
+      phase: 'accepted',
+      sandboxId: 'sbx_1',
+      workspaceId: 'ws_1',
+      worktreeId: 'wkt_1',
+    },
+  };
+  persistDeletion('owner', combined);
+  expect(restoreDeletion('owner')).toEqual(combined);
+  for (const invalid of [
+    { ...combined, stop: null },
+    { ...combined, stop: { ...combined.stop, key: second.key } },
+    { ...combined, stop: { ...combined.stop, phase: 'done' } },
+    { ...combined, stop: { ...combined.stop, sandboxId: '../other' } },
+    { ...combined, stop: { ...combined.stop, worktreeId: undefined } },
+    { ...combined, action: { kind: 'delete_sandbox', sandboxId: 'sbx_1' } },
+  ]) {
+    localStorage.clear();
+    localStorage.setItem(
+      `cma:stop-delete:v1:owner:${second.key}`,
+      JSON.stringify({ version: 1, request: invalid }),
+    );
+    expect(restoreDeletion('owner')).toBeUndefined();
+  }
+});
+
+const combined: DeletionRequest = {
+  ...second,
+  stop: {
+    key: 'stop-key',
+    phase: 'blocked',
+    sandboxId: 'sbx_1',
+    workspaceId: 'ws_1',
+    worktreeId: 'wkt_1',
+  },
+};
+it('keeps combined intent invisible to the actual predecessor reader while both restore legacy Delete', () => {
+  persistDeletion('owner', combined);
+  expect(predecessorRestore('owner')).toEqual([]);
+  expect(localStorage.getItem(deletionStorageKey('owner'))).toBeNull();
+  persistDeletion('owner', first);
+  expect(predecessorRestore('owner')).toEqual([first]);
+  expect(restoreDeletions('owner')).toEqual(expect.arrayContaining([first, combined]));
+  forgetDeletion('owner', combined.key);
+  expect(restoreDeletions('owner')).toEqual([first]);
+});
+it.each([
+  { version: 2, request: combined },
+  { request: combined },
+  { version: 1, request: second },
+  { version: 1, request: { ...combined, key: 'mismatched-key' } },
+  { version: 1, request: { ...combined, stop: { ...combined.stop, workspaceId: undefined } } },
+  { version: 1, request: { ...combined, stop: { ...combined.stop, key: 'k'.repeat(129) } } },
+])('refuses invalid combined envelope without falling back to direct Delete: %j', (value) => {
+  localStorage.setItem(`cma:stop-delete:v1:owner:${second.key}`, JSON.stringify(value));
+  expect(restoreDeletions('owner')).toEqual([]);
+  expect(predecessorRestore('owner')).toEqual([]);
+});
+it('never reads combined fields from the legacy namespace', () => {
+  localStorage.setItem(deletionStorageKey('owner'), JSON.stringify(combined));
+  expect(restoreDeletions('owner')).toEqual([]);
 });
