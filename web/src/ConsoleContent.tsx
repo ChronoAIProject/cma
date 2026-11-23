@@ -24,7 +24,7 @@ import { routePath } from './routing/routes';
 import { useViewArrival } from './ui/arrivalMotion';
 import { DeliverablePreviewFrame as AppFrame } from './agent/DeliverablePreviewFrame';
 import { Sidebar } from './shell/Sidebar';
-import { ManagerNavigation } from './shell/ManagerNavigation';
+import { ManagerNavigation, useEnvironmentNavigation } from './shell/ManagerNavigation';
 import { navigationAgent, useNavigation } from './shell/navigation';
 import { CharacterColorContext } from './character/characterColor';
 import { SandboxPage } from './sandbox/SandboxPage';
@@ -54,6 +54,7 @@ import { useReportOwner } from './usage/metrics/reportOwner';
 import { OperationsRoute } from './operator/OperationsRoute';
 export function ConsoleContent({
   settlements,
+  selectedRetired,
   user,
   authEpoch = 0,
   visible = true,
@@ -65,7 +66,8 @@ export function ConsoleContent({
   sidebarCollapsed: sharedCollapsed,
   onSidebarCollapsedChange,
   onServiceNavigate,
-}: ConsoleProps & Pick<ReturnType<typeof useDeletionNoticeReconciliation>, 'settlements'>) {
+}: ConsoleProps &
+  Pick<ReturnType<typeof useDeletionNoticeReconciliation>, 'settlements' | 'selectedRetired'>) {
   const surfaceRef = useViewArrival(routePath(route), true, false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const selectedAgent = route.kind === 'agent' ? route.agentId : undefined;
@@ -106,9 +108,7 @@ export function ConsoleContent({
   const usagePrincipal = useReportOwner(user.id, user.capabilities, authEpoch);
   const navigation = useNavigation(client);
   const refreshNavigation = navigation.refresh;
-  useEffect(() => {
-    refreshNavigation();
-  }, [hierarchyRevision, refreshNavigation]);
+  useEffect(refreshNavigation, [hierarchyRevision, refreshNavigation]);
   const refresh = useCallback(() => {
     refreshNavigation();
     setRevision((value) => value + 1);
@@ -151,6 +151,11 @@ export function ConsoleContent({
     onNavigate,
     !accessUncertain,
     settlements,
+  );
+  const environments = useEnvironmentNavigation(
+    navigation,
+    actions.deletingSandboxIds,
+    actions.unknownDeletingSandboxIds,
   );
   const { canStartNewAgent, canCreateInScope, newAgentUnavailable, permissions } =
     consoleCreationAccess(
@@ -329,6 +334,8 @@ export function ConsoleContent({
         route={route}
         canCreate={canCreateInScope}
         home={{
+          ...environments.home,
+          authEpoch,
           navigation: scopeReady && navigationScope === '' ? navigation : undefined,
           scope: navigationScope,
           onRetry: refreshNavigation,
@@ -415,6 +422,15 @@ export function ConsoleContent({
             }}
             navigation={
               <ManagerNavigation
+                ref={environments.ref}
+                authEpoch={authEpoch}
+                selectedRetired={
+                  personalAgentId === selectedAgent && !accessUncertain
+                    ? selectedRetired
+                    : undefined
+                }
+                attention={environments.attention}
+                unknownDeletingSandboxIds={actions.unknownDeletingSandboxIds}
                 client={scopeClient}
                 scope={navigationScope}
                 choices={scopeChoices}

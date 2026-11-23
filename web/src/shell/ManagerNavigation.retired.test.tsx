@@ -153,3 +153,16 @@ it('repeated personal Environment entry preserves the original Tasks route, scop
   expect(observedRoute).toEqual(props.route);
   expect(scroll.scrollTop).toBe(120);
 });
+
+it('keeps the authorized retired row when navigation fails without inventing an empty inventory', () => {
+  render(
+    <ManagerNavigation
+      {...props}
+      selectedRetired={witness}
+      navigation={{ status: 'error', message: 'Navigation read unavailable', refresh: vi.fn() }}
+    />,
+  );
+  expect(screen.getByRole('group', { name: 'Retired' })).toBeVisible();
+  expect(screen.getByRole('alert')).toHaveTextContent('Navigation read unavailable');
+  expect(screen.queryByText('No other agents to show.')).not.toBeInTheDocument();
+});
