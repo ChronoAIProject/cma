@@ -13,7 +13,14 @@ export function fixture(mode = 'Suspended') {
     pvcs: [{name: 'home', uid: 'home-uid', volume: 'volume'}],
   };
   const metadata = (name, uid) => ({name, uid, namespace: 'fixture', resourceVersion: '10'});
-  const containers = [{name: 'runtime', image: binding.image, env: [{name: 'PRIVATE_TEST_VALUE', value: 'omit-this-field'}]}];
+  // Match pool/model.rs: the retained home holds the runtime's three subtrees.
+  const volumeMounts = [
+    {name: 'home', mountPath: '/home/cma', subPath: 'home', readOnly: false},
+    {name: 'home', mountPath: '/var/lib/cma-runtime', subPath: 'state', readOnly: false},
+    {name: 'home', mountPath: '/var/lib/cma-transfer', subPath: 'transfer', readOnly: false},
+  ];
+  const containers = [{name: 'runtime', image: binding.image, volumeMounts,
+    env: [{name: 'PRIVATE_TEST_VALUE', value: 'omit-this-field'}]}];
   const namespace = {apiVersion: 'v1', kind: 'Namespace',
     metadata: {name: 'fixture', uid: 'namespace-uid', resourceVersion: '1'}};
   const sandbox = {apiVersion: 'agents.x-k8s.io/v1beta1', kind: 'Sandbox',
@@ -34,7 +41,7 @@ export function fixture(mode = 'Suspended') {
   const pod = {apiVersion: 'v1', kind: 'Pod', metadata: {...metadata('worker', 'pod-uid'),
     labels: {'cma/runtime-name': 'member'}, ownerReferences: [{apiVersion: sandbox.apiVersion,
       kind: 'Sandbox', name: 'member', uid: 'member-uid', controller: true}]},
-  spec: {containers}, status: {phase: 'Running'}};
+  spec: structuredClone(sandbox.spec.podTemplate.spec), status: {phase: 'Running'}};
   const pods = {apiVersion: 'v1', kind: 'PodList', metadata: {resourceVersion: '20'},
     items: mode === 'Running' ? [pod] : []};
   const routes = {
