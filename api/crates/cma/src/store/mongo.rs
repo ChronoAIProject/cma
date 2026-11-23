@@ -432,7 +432,16 @@ async fn connection_options(uri: &str) -> Result<ClientOptions, StoreError> {
     // Replica ownership changes authority, not the deployment's connection
     // budget. Preserve explicit URI options and driver defaults in both modes.
     super::mongo_latency::observe(&mut options);
+    #[cfg(test)]
+    if let Ok(handler) = STARTUP_COMMANDS.try_with(Clone::clone) {
+        options.command_event_handler = Some(handler);
+    }
     Ok(options)
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    pub(super) static STARTUP_COMMANDS: mongodb::event::EventHandler<mongodb::event::command::CommandEvent>;
 }
 
 #[cfg(test)]
