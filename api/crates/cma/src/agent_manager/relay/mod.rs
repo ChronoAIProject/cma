@@ -1,7 +1,7 @@
 //! Authenticated peer relay. Public credentials and durable command IDs survive a hop.
 mod authentication;
 mod control;
-pub(crate) use control::prestop;
+pub(crate) use control::{prestop, DRAIN};
 mod environment_diagnostics;
 mod http;
 mod ingress;
@@ -52,6 +52,7 @@ pub(crate) struct Relay {
     public_access: std::sync::OnceLock<Arc<dyn public_access::PublicAuthorization>>,
     settings_owner_routing: std::sync::OnceLock<()>,
     client: reqwest::Client,
+    reopen_client: reqwest::Client,
     slots: Arc<Semaphore>,
     capacity: crate::config::RelayCapacityConfig,
     capacity_gate: std::sync::Mutex<()>,
@@ -88,13 +89,15 @@ impl Relay {
             authentication: authentication::Authentication::new(key),
             public_access: std::sync::OnceLock::new(),
             settings_owner_routing: std::sync::OnceLock::new(),
-            client: reqwest::Client::builder()
-                .connect_timeout(Duration::from_secs(2))
+            client: peer_client()
                 .read_timeout(Duration::from_secs(10))
-                .redirect(reqwest::redirect::Policy::none())
-                .no_proxy()
                 .build()
                 .map_err(|_| "peer relay client is unavailable")?,
+            // The owner sends its reply only after the retained conversation
+            // opens. The reopen call supplies the absolute response deadline.
+            reopen_client: peer_client()
+                .build()
+                .map_err(|_| "peer reopen client is unavailable")?,
             slots: Arc::new(Semaphore::new(capacity.limit)),
             capacity,
             capacity_gate: std::sync::Mutex::new(()),
@@ -162,16 +165,33 @@ impl Relay {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn authenticated_routes(
         self: &Arc<Self>,
         router: axum::Router,
         auth: Arc<crate::auth::AuthState>,
     ) -> axum::Router {
+        self.authenticated_control_routes(router, auth, None)
+    }
+
+    pub(crate) fn authenticated_control_routes(
+        self: &Arc<Self>,
+        router: axum::Router,
+        auth: Arc<crate::auth::AuthState>,
+        admission: Option<Arc<dyn crate::control_admission::LifecycleAdmissionPolicy>>,
+    ) -> axum::Router {
+        let router = router.layer(axum::middleware::from_fn_with_state(
+            self.clone(),
+            http::route,
+        ));
+        let router = match admission {
+            Some(policy) => router.layer(axum::middleware::from_fn_with_state(
+                policy,
+                crate::control_admission::enforce,
+            )),
+            None => router,
+        };
         router
-            .layer(axum::middleware::from_fn_with_state(
-                self.clone(),
-                http::route,
-            ))
             .layer(axum::middleware::from_fn_with_state(
                 auth,
                 crate::auth::attach_subject,
@@ -220,6 +240,13 @@ impl Relay {
                 http::route,
             ))
     }
+}
+
+fn peer_client() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(2))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
 }
 
 #[cfg(test)]

@@ -387,6 +387,7 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
             WorkerFailure::resource_quota("requested sandbox capacity is unavailable")
         }
         AdapterError::Rejected(_)
+        | AdapterError::DesktopFailed
         | AdapterError::SkillUpgradeRefused(_)
         | AdapterError::OperationIdentityConflict(_)
         | AdapterError::Unsupported(_) => {
@@ -420,6 +421,10 @@ pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
 
 pub(super) fn dependency_failure(error: SandboxDependencyError) -> WorkerFailure {
     match error {
+        SandboxDependencyError::AgentsStopping => {
+            WorkerFailure::retryable("lifecycle dependency unavailable")
+                .with_retry_kind(WorkRetryFailure::Waiting)
+        }
         SandboxDependencyError::Transient(detail) => WorkerFailure::retryable(
             "lifecycle dependency unavailable",
         )

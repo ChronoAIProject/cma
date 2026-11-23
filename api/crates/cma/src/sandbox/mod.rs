@@ -24,11 +24,13 @@ mod policy;
 mod provenance_backfill;
 pub(crate) use provenance_backfill::AgentProvenanceBackfill;
 mod model_request_budget;
+mod native_retirement_finalizer;
 mod reconciliation;
 pub(crate) mod retained_recovery;
 pub(crate) mod runtime_attachment;
 mod runtime_mapping;
 mod scheduler;
+mod stale_turn_reconciliation;
 mod suggestion_worker;
 pub(crate) mod suggestions;
 mod title_budget;
@@ -54,7 +56,7 @@ pub(crate) use credential::{
 };
 #[cfg(test)]
 pub(crate) use live_agents::record_update_for_test;
-pub(crate) use live_agents::LiveAgentRegistry;
+pub(crate) use live_agents::{LiveAgentRegistry, LiveAgentTarget};
 #[cfg(test)]
 pub(crate) use model_request_budget::tests::assert_metered_title_refusal;
 pub(crate) use policy::LiveSandboxPolicy;
@@ -69,6 +71,8 @@ pub(crate) use reconciliation::SandboxReconciler;
 mod agent_worker_tests;
 #[cfg(test)]
 mod worker_tests;
+#[cfg(test)]
+pub(crate) use worker_tests::exercise_native_retirement_finality;
 
 pub(crate) mod legacy_credentials;
 

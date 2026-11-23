@@ -17,6 +17,7 @@ pub(crate) async fn compose(
     Error,
 > {
     let custody = crate::channels::mutation::enabled_from_env()?;
+    let retained_origins = crate::config::cma_record_origin_aliases()?;
     let owner_key_settings = crate::worker_credentials::config::Settings::from_env()?;
     let independent_store_enabled = [
         CMAEG_MONGODB_URI,
@@ -66,6 +67,7 @@ pub(crate) async fn compose(
                 &config.management.cma_base_url,
                 config.management.cma_service_token.as_str(),
             )?
+            .with_retained_origins(&retained_origins)?
             .with_database(database)
             .with_channel_mutation_custody(custody),
         );
@@ -111,6 +113,7 @@ pub(crate) async fn compose(
                 &config.management.cma_base_url,
                 config.management.cma_service_token.as_str(),
             )?
+            .with_retained_origins(&retained_origins)?
             .with_service_auth(service_auth)
             .with_channel_mutation_custody(custody),
         );
@@ -126,11 +129,13 @@ pub(crate) async fn compose(
 pub(crate) async fn record_client(
     client: records::RecordClient,
 ) -> Result<records::RecordClient, records::RecordError> {
-    let client = client.with_channel_mutation_custody(
-        crate::channels::mutation::enabled_from_env().map_err(|_| {
-            records::RecordError::Rejected("channel custody flag is invalid".into())
-        })?,
-    );
+    let client = client
+        .with_channel_mutation_custody(crate::channels::mutation::enabled_from_env().map_err(
+            |_| records::RecordError::Rejected("channel custody flag is invalid".into()),
+        )?)
+        .with_retained_origins(&crate::config::cma_record_origin_aliases().map_err(|_| {
+            records::RecordError::Rejected("retained CMA record origins are invalid".into())
+        })?)?;
     if ![
         CMAEG_MONGODB_URI,
         CMAEG_MONGODB_DATABASE,

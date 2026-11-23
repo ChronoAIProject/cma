@@ -97,7 +97,10 @@ pub(super) use proof::trusted_summary;
 pub(super) use scan::{
     scan_collection, scan_complete_log_with_policy, IntegrityFailurePolicy, ScanOptions,
 };
-pub(super) use scan::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
+pub(super) use scan::{
+    scan_complete_log_with_session, scan_complete_log_with_snapshot_policy,
+    scan_complete_log_with_snapshot_session,
+};
 pub(super) use semantic::audit_checkpoint;
 
 pub(super) fn empty_summary() -> LogSummary {

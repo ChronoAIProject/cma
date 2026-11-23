@@ -1,6 +1,7 @@
 import type { AgentStatus } from '../api/types';
 import { Button } from '../ui/Button';
 import type { SandboxInputAvailability } from './sandboxInput';
+import { STOPPED_AGENT_MESSAGE } from './stopAgentCopy';
 
 export function composerInputAvailability(
   availability: SandboxInputAvailability,
@@ -26,7 +27,7 @@ export function canMessage(status: AgentStatus): boolean {
 export function placeholder(status: AgentStatus): string {
   if (status === 'starting') return 'Message Agent';
   if (status === 'waiting_approval') return 'Resolve the approval to continue.';
-  if (status === 'stopped') return 'This Agent has stopped.';
+  if (status === 'stopped') return STOPPED_AGENT_MESSAGE;
   if (status === 'deleted') return 'This Agent was deleted.';
   if (status === 'failed') return 'This Agent is unavailable.';
   return 'Reply to Chrono Agent…';

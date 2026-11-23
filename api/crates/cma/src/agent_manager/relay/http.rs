@@ -49,13 +49,13 @@ async fn route_request(
             next.run(request).await
         };
     };
-    if settings && relay.settings_owner_routing.get().is_none() {
+    // With owner routing disabled, a Settings write still needs the owner's
+    // authority: without it the ownership fence refuses every commit. Serve it
+    // under a local owner and never forward it to a peer (#2267).
+    let local_settings = settings && relay.settings_owner_routing.get().is_none();
+    if local_settings && proof.is_some() {
         // An enabled ingress can reach a replica with this rollout still disabled.
-        return if proof.is_some() {
-            StatusCode::FORBIDDEN.into_response()
-        } else {
-            next.run(request).await
-        };
+        return StatusCode::FORBIDDEN.into_response();
     }
     // Route operations whose publication or runtime effects require execution-owner authority.
     if !private
@@ -215,6 +215,12 @@ async fn route_request(
         }
         match relay.destination(&id).await {
             Ok(value) => value,
+            Err(reason) if serves_without_owner(request.uri().path(), reason) => {
+                // A stopped Agent holds no owner, and a draining owner cannot
+                // accept new work. Runtime file operations do not depend on
+                // owner authority, so serve the authorized request here.
+                return retain(next.run(request).await, slot);
+            }
             Err(reason) => return unavailable_with(environment.as_ref(), reason),
         }
     };
@@ -227,7 +233,8 @@ async fn route_request(
         // One admission covers the owner response body, including live streams.
         return retain(response, slot);
     }
-    if private {
+    if private || local_settings {
+        // A retryable typed refusal: the caller may land on the owner next.
         return unavailable();
     }
     forward(
@@ -290,6 +297,18 @@ fn needs_owner(path: &str, method: &axum::http::Method) -> bool {
         || suffix == "browser/control"
 }
 
+/// File requests need no execution owner. Only an absent or no longer live
+/// owner falls back locally; store and authority failures still refuse.
+fn serves_without_owner(path: &str, reason: Refusal) -> bool {
+    matches!(
+        reason,
+        Refusal::OwnerMissing | Refusal::OwnerMemberUnavailable
+    ) && path
+        .strip_prefix("/api/v1/agents/")
+        .and_then(|path| path.split_once('/'))
+        .is_some_and(|(_, suffix)| suffix == "files" || suffix.starts_with("files/"))
+}
+
 fn settings_patch(path: &str, method: &axum::http::Method) -> bool {
     method == axum::http::Method::PATCH
         && path
@@ -323,19 +342,19 @@ pub(super) async fn forward(
             headers.append(name, value.clone());
         }
     }
-    let proof = match relay.authentication.sign(
+    let headers = match relay.authentication.signed_headers(
         &relay.coordinator.instance_id,
         &destination.token,
         request.method(),
         request.uri(),
-        &headers,
+        headers,
         body,
     ) {
-        Ok(proof) => proof,
+        Ok(headers) => headers,
         Err(_) => return unavailable_with(environment.as_ref(), Refusal::PeerSignature),
     };
     if let Some(environment) = environment.as_mut() {
-        environment.correlate_hop(proof.as_bytes());
+        environment.correlate_hop(headers[PROOF].as_bytes());
     }
     let url = format!(
         "{}{}",
@@ -351,7 +370,6 @@ pub(super) async fn forward(
             .client
             .request(request.method().clone(), url)
             .headers(headers)
-            .header(PROOF, proof)
             .body(body.to_vec())
             .send(),
     )

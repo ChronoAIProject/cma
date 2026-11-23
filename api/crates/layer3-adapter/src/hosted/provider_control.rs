@@ -7,68 +7,105 @@ impl ProviderHostedControlTransport {
         request: &RequestFrame,
     ) -> crate::Result<ResponseFrame> {
         let _ownership = self.receiver_lease(endpoint).await?;
-        let url = endpoint.control()?;
-        let auth = self.auth_header(endpoint);
-        let exchange = async {
-            if endpoint.native_binding().is_some() {
-                let body = serde_json::to_vec(request).map_err(|_| {
-                    AdapterError::Rejected("runtime request could not be encoded".into())
-                })?;
-                let reply = self
-                    .native_http_for(
-                        endpoint,
-                        http::Method::POST,
-                        url,
-                        body,
-                        super::super::provider_http::CONTROL_RESPONSE_BYTES,
-                        (
-                            native_pool::NativeHttpLane::Control,
-                            request_capacity_class(request),
+        self.control_exchange(endpoint, request).await
+    }
+
+    pub(super) async fn open_on_receiver_lease(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        launch: &FencedRequest<AgentLaunch>,
+        ownership: &ownership::ReceiverLease,
+    ) -> crate::Result<ResponseFrame> {
+        let request = RequestFrame::OpenAgent(launch.clone());
+        self.require_supported_operation(&request)?;
+        ownership
+            .check_open(self, endpoint, &launch.request.agent_id)
+            .await?;
+        tracing::debug!(
+            stage = "open_receiver_lease_reuse",
+            "Open reuses its live receiver lease"
+        );
+        self.control_exchange(endpoint, &request).await
+    }
+
+    fn control_exchange<'a>(
+        &'a self,
+        endpoint: &'a RuntimeEndpoint,
+        request: &'a RequestFrame,
+    ) -> futures_util::future::BoxFuture<'a, crate::Result<ResponseFrame>> {
+        // The native HTTP future is large. Sharing the exchange must not inline
+        // another copy of its state into each caller's ownership/capacity scope.
+        Box::pin(async move {
+            let url = endpoint.control()?;
+            let auth = self.auth_header(endpoint);
+            let reads_status = matches!(request, RequestFrame::RuntimeStatus(_));
+            let exchange = async {
+                if endpoint.native_binding().is_some() {
+                    let body = serde_json::to_vec(request).map_err(|_| {
+                        AdapterError::Rejected("runtime request could not be encoded".into())
+                    })?;
+                    let reply = self
+                        .native_http_for(
+                            endpoint,
+                            http::Method::POST,
+                            url,
+                            body,
+                            super::super::provider_http::CONTROL_RESPONSE_BYTES,
+                            (
+                                native_pool::NativeHttpLane::Control,
+                                request_capacity_class(request),
+                            ),
+                        )
+                        .await?;
+                    if reads_status {
+                        crate::receiver_failure::record_status(reply.status);
+                    }
+                    return self.complete_native_control(endpoint, request, reply).await;
+                }
+                let mut request_builder = self
+                    .http
+                    .post(url)
+                    .header(auth.0, auth.1)
+                    .header(
+                        reqwest::header::ACCEPT,
+                        format!(
+                            "{}, {}, {}",
+                            crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
+                            crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
+                            crate::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
                         ),
                     )
-                    .await?;
-                return self.complete_native_control(endpoint, request, reply).await;
+                    .json(request);
+                if let Some(owner) = crate::owner_protocol::current_header()? {
+                    request_builder =
+                        request_builder.header(crate::owner_protocol::OWNER_HEADER, owner);
+                }
+                let response = request_builder.send().await.map_err(|error| {
+                    AdapterError::Unavailable(format!("runtime control request failed: {error}"))
+                })?;
+                if reads_status {
+                    crate::receiver_failure::record_status(response.status());
+                }
+                super::super::provider_http::decode_control(response).await
+            };
+            let response = crate::file_read_diagnostics::transport(
+                request.operation(),
+                crate::file_read_diagnostics::TransportPhase::Control,
+                async {
+                    tokio::time::timeout(CONTROL_DEADLINE, exchange)
+                        .await
+                        .map_err(|_| {
+                            AdapterError::Unavailable("runtime control request timed out".into())
+                        })?
+                },
+            )
+            .await?;
+            control_correlation::validate(request, &response)?;
+            if let Some(authority) = crate::owner_protocol::current_authority() {
+                authority.check().await?;
             }
-            let mut request_builder = self
-                .http
-                .post(url)
-                .header(auth.0, auth.1)
-                .header(
-                    reqwest::header::ACCEPT,
-                    format!(
-                        "{}, {}, {}",
-                        crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
-                        crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
-                        crate::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
-                    ),
-                )
-                .json(request);
-            if let Some(owner) = crate::owner_protocol::current_header()? {
-                request_builder =
-                    request_builder.header(crate::owner_protocol::OWNER_HEADER, owner);
-            }
-            let response = request_builder.send().await.map_err(|error| {
-                AdapterError::Unavailable(format!("runtime control request failed: {error}"))
-            })?;
-            super::super::provider_http::decode_control(response).await
-        };
-        let response = crate::file_read_diagnostics::transport(
-            request.operation(),
-            crate::file_read_diagnostics::TransportPhase::Control,
-            async {
-                tokio::time::timeout(CONTROL_DEADLINE, exchange)
-                    .await
-                    .map_err(|_| {
-                        AdapterError::Unavailable("runtime control request timed out".into())
-                    })?
-            },
-        )
-        .await?;
-        control_correlation::validate(request, &response)?;
-        if let Some(authority) = crate::owner_protocol::current_authority() {
-            authority.check().await?;
-        }
-        Ok(response)
+            Ok(response)
+        })
     }
 
     pub(super) async fn status_on_native_lease(
@@ -90,6 +127,7 @@ impl ProviderHostedControlTransport {
                 lease,
             )
             .await?;
+        crate::receiver_failure::record_status(reply.status);
         self.complete_native_control(endpoint, &request, reply)
             .await
     }

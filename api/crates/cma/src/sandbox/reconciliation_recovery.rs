@@ -64,8 +64,9 @@ impl Schedule {
                 }
             };
             let last = page_authority.items.last_key_value().map(|(id, _)| id);
+            let latest = service.latest_version();
             for (id, sandbox) in &page_authority.items {
-                if !eligible(sandbox, service.latest_version()) {
+                if !eligible(sandbox, &latest) {
                     continue;
                 }
                 if reconciler.binding_holds.contains(id.as_str()) {

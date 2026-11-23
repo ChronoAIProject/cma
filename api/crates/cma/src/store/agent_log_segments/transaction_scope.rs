@@ -40,8 +40,8 @@ impl<'session> TransactionScope<'session> {
     pub(in crate::store) async fn fence_ordinary_work(
         &mut self,
         store: &crate::store::MongoSandboxStore,
-    ) -> Result<(), SandboxStoreError> {
-        crate::store::work_publication::fence(store, self.session).await
+    ) -> Result<(), crate::store::work_publication::FenceError> {
+        crate::store::work_publication::fence_transaction(store, self.session).await
     }
 
     pub(in crate::store) async fn live_agents(
@@ -80,6 +80,16 @@ impl<'session> TransactionScope<'session> {
             policy,
         )
         .await
+    }
+
+    pub(in crate::store) async fn settle_runtime_loss_budget(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        current: &layer2_core::sandbox::Agent,
+        change: &layer2_core::sandbox::store::SandboxRuntimeLossAgentMutation,
+        at: &str,
+    ) -> Result<(), TransactionLogError> {
+        crate::store::budget::settle_runtime_loss(store, current, change, at, self.session).await
     }
 
     /// Release consumes the scope. The caller may commit/abort and do normal

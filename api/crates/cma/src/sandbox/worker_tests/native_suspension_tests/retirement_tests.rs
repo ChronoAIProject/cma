@@ -95,9 +95,21 @@ pub(super) async fn failed_revive() -> (Fixture, Sandbox, layer2_core::sandbox::
     (fixture, failed, agent, now)
 }
 
-#[tokio::test]
-async fn failed_native_credential_delivery_retires_without_recredentialing_or_closing_old_agents() {
+/// Retire a Sandbox whose native credential delivery failed, losing the first
+/// deletion reply, and return the original and final Agent.
+async fn retire_failed_credential_delivery(
+    admission: bool,
+) -> (
+    Fixture,
+    layer2_core::sandbox::Agent,
+    layer2_core::sandbox::Agent,
+) {
     let (fixture, failed, agent, mut now) = failed_revive().await;
+    let fixture = if admission {
+        fixture
+    } else {
+        fixture.without_retirement_admission()
+    };
     let requests_before = fixture.harness.backend.requests().await.len();
     fixture.backend.lose_delete.store(true, Ordering::SeqCst);
     let mut retiring = failed.clone();
@@ -132,7 +144,6 @@ async fn failed_native_credential_delivery_retires_without_recredentialing_or_cl
         .unwrap()
         .unwrap();
     assert_eq!(stopped.status, AgentStatus::Stopped);
-    assert_eq!(stopped.work.receipts, agent.work.receipts);
     assert_eq!(
         stopped.conversation.conversation_id,
         agent.conversation.conversation_id
@@ -144,26 +155,43 @@ async fn failed_native_credential_delivery_retires_without_recredentialing_or_cl
             request,
             RequestFrame::Credential(_) | RequestFrame::CloseAgent(_) | RequestFrame::OpenAgent(_)
         )));
+    assert_eq!(calls(&fixture, "create"), 1);
+    (fixture, agent, stopped)
+}
+
+fn calls(fixture: &Fixture, name: &str) -> usize {
+    fixture
+        .backend
+        .calls
+        .snapshot()
+        .iter()
+        .filter(|call| *call == name)
+        .count()
+}
+
+#[tokio::test]
+async fn failed_native_credential_delivery_retires_without_recredentialing_or_closing_old_agents() {
+    // The production default: finality admission off keeps the earlier path.
+    let (fixture, agent, stopped) = retire_failed_credential_delivery(false).await;
+    assert_eq!(stopped.work.receipts, agent.work.receipts);
+    assert_eq!(calls(&fixture, "delete-retained"), 2);
+}
+
+#[tokio::test]
+async fn admitted_finality_settles_a_lost_deletion_reply_without_deleting_again() {
+    let (fixture, agent, stopped) = retire_failed_credential_delivery(true).await;
+    // The lost deletion reply is settled through verified runtime loss. Obsolete
+    // process receipts are retired, without inventing a successful close receipt.
+    assert!(stopped.work.receipts.is_empty());
     assert_eq!(
-        fixture
-            .backend
-            .calls
-            .snapshot()
-            .iter()
-            .filter(|call| *call == "create")
-            .count(),
-        1
+        stopped.conversation.runtime_generation,
+        agent
+            .conversation
+            .runtime_generation
+            .map(|generation| generation + 1)
     );
-    assert_eq!(
-        fixture
-            .backend
-            .calls
-            .snapshot()
-            .iter()
-            .filter(|call| *call == "delete-retained")
-            .count(),
-        2
-    );
+    // Absence is reconciled by identity before any retry, so one deletion.
+    assert_eq!(calls(&fixture, "delete-retained"), 1);
 }
 
 #[tokio::test]

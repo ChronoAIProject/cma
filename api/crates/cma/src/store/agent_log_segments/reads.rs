@@ -34,7 +34,24 @@ pub(in crate::store) async fn read_head(
     session: &mut ClientSession,
     snapshot: bool,
 ) -> Result<Head> {
-    read_head_from(&database(store), aggregate, session, snapshot).await
+    read_head_from(&database(store), aggregate, session, snapshot, None).await
+}
+
+pub(super) async fn read_export_head(
+    store: &MongoSandboxStore,
+    aggregate: &Document,
+    session: &mut ClientSession,
+    max_entries: i64,
+    max_bytes: i64,
+) -> Result<Head> {
+    read_head_from(
+        &database(store),
+        aggregate,
+        session,
+        true,
+        Some((max_entries, max_bytes)),
+    )
+    .await
 }
 
 async fn read_head_from(
@@ -42,6 +59,7 @@ async fn read_head_from(
     aggregate: &Document,
     session: &mut ClientSession,
     snapshot: bool,
+    tail_budget: Option<(i64, i64)>,
 ) -> Result<Head> {
     let agent = crate::store::agents::read_agent(aggregate)?;
     if aggregate.contains_key(QUARANTINE_FIELD) {
@@ -88,6 +106,11 @@ async fn read_head_from(
         || u64::try_from(head.last_seq).ok() != Some(agent.conversation.last_seq)
     {
         return Err(corrupt().into());
+    }
+    if tail_budget
+        .is_some_and(|(entries, bytes)| head.active_count > entries || head.active_bytes > bytes)
+    {
+        return Err(SandboxStoreError::AgentLogCapacityExceeded.into());
     }
     let seals = majority_collection::<Document>(db, SEGMENTS);
     let find = seals.find_one(doc! {
@@ -430,7 +453,7 @@ pub(in crate::store) async fn retained_turn(
         return Ok(false);
     }
     let entry = if read_format(aggregate)?.is_some() {
-        let head = read_head_from(db, aggregate, session, true).await?;
+        let head = read_head_from(db, aggregate, session, true, None).await?;
         let mut entry = None;
         visit_range_from(
             db,

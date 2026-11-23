@@ -1,7 +1,10 @@
+import { TopographicBackdrop } from '../decoration/TopographicBackdrop';
 import { Presence } from '../ui/Presence';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { LandingCharacter } from './LandingCharacter';
 import { Button } from '../ui/Button';
+import { LegalNotice } from '../auth/LegalNotice';
+import type { LegalTerms } from '../auth/types';
 import './SignInLanding.css';
 
 /** Where each service card returns after sign-in; every path is a canonical CMA route. */
@@ -35,8 +38,11 @@ const STEPS = [
 
 export function SignInLanding({
   onSignIn,
+  legalTerms,
 }: {
   readonly onSignIn: (returnTo?: string) => Promise<void>;
+  /** Published terms the person accepts by continuing. */
+  readonly legalTerms?: LegalTerms;
 }) {
   const [entering, setEntering] = useState<{ readonly returnTo?: string }>();
   const [failed, setFailed] = useState(false);
@@ -96,6 +102,9 @@ export function SignInLanding({
             <p className="sign-in-landing__note" role="status">
               {busy ? 'Opening NyxID sign-in…' : 'Sign in with NyxID. You’ll come straight back.'}
             </p>
+            {legalTerms === undefined ? null : (
+              <LegalNotice terms={legalTerms} className="sign-in-landing__note" />
+            )}
             <Presence>
               {failed ? (
                 <div className="sign-in-landing__alert" role="alert">
@@ -108,6 +117,7 @@ export function SignInLanding({
             </Presence>
           </div>
           <div className="brand-home sign-in-landing__brand">
+            <TopographicBackdrop placement="landing" />
             <LandingCharacter key={String(failed)} />
           </div>
         </section>

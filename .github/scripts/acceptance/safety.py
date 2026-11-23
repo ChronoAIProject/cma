@@ -17,7 +17,7 @@ NYX_ORIGIN = "https://nyx-api.chrono-ai.fun"
 CMA_ORIGIN = "https://cma.nyxid.ai"
 ALLOWED_ORIGINS = {
     NYX_ORIGIN, CMA_ORIGIN, "https://bot.chrono-ai.fun",
-    "https://bot-api.chrono-ai.fun", "https://bot-gateway.chrono-ai.fun",
+    "https://bot-gateway.chrono-ai.fun",
     "https://api.nyxid.ai",
     "https://nyxid.ai",
 }

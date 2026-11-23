@@ -21,6 +21,12 @@ import {
 import { Journal } from './journal';
 import { publicApiPath } from './public-api-path';
 import {
+  assertConnectionProof,
+  connectionCaseTitles,
+  identityDigest,
+  type ConnectionProof,
+} from '../../.github/scripts/connection-journey-evidence.mjs';
+import {
   assertCredentialFree,
   assertPageSafe,
   credentialValues,
@@ -58,6 +64,7 @@ export class Harness {
   private readonly observations = new Set<Promise<void>>();
   private identityFlow = false;
   private journeyProof?: Record<string, unknown>;
+  private connectionProof?: ConnectionProof;
   constructor(
     readonly browser: Browser,
     readonly operators: Hooks,
@@ -124,7 +131,17 @@ export class Harness {
       if (url.origin !== this.config.baseURL || !url.pathname.startsWith('/api/')) return;
       const task = (async () => {
         if (!isJsonMediaType(response.headers()['content-type'] ?? '')) return;
-        const text = await response.text();
+        let text: string;
+        try {
+          text = await response.text();
+        } catch (error) {
+          if (
+            response.request().method() === 'GET' &&
+            response.request().failure()?.errorText === 'net::ERR_ABORTED'
+          )
+            return;
+          throw error;
+        }
         assertCredentialFree(text, this.forbidden);
         if (role === 'signup' && account.subject === '' && response.request().method() === 'POST') {
           const current = await context.request.get(`${this.config.baseURL}/auth/session`);
@@ -188,6 +205,43 @@ export class Harness {
         body: JSON.stringify(this.journeyProof),
         contentType: 'application/json',
       });
+    if (this.connectionProof)
+      await info.attach('connection-journey-proof', {
+        body: JSON.stringify(this.connectionProof),
+        contentType: 'application/json',
+      });
+  }
+  proveConnection(proof: unknown) {
+    if (!Object.hasOwn(connectionCaseTitles, this.caseId) || this.connectionProof)
+      throw new Error('Only one connection journey proof is permitted per connection case');
+    const evidence = {
+      ...object(proof),
+      schema: 'cma-connection-journey-v1',
+      execution: 'configured_remote_origin',
+      scope: 'ordinary_service_connection',
+      run: this.journal.run,
+      caseId: this.caseId,
+    };
+    assertCredentialFree(JSON.stringify(evidence), this.forbidden);
+    const verified = assertConnectionProof(evidence, {
+      run: this.journal.run,
+      caseId: this.caseId,
+      providerRevision: this.fixture.provenance.nyxidCommit,
+    });
+    const service = this.fixture.connectionJourneys.services[verified.mode];
+    if (
+      verified.serviceDigest !== identityDigest(service.serviceId) ||
+      verified.fixtureDigest !== service.fixtureDigest ||
+      !this.journal.resources.some(
+        (row) =>
+          row.kind === 'launches' &&
+          row.subject === this.fixture.accounts.visitor.subject &&
+          identityDigest(row.subject) === verified.ownerDigest &&
+          identityDigest({ type: 'launch', id: row.id }) === verified.targetDigest,
+      )
+    )
+      throw new Error('Connection proof does not match the owned Launch and reviewed fixture');
+    this.connectionProof = structuredClone(verified);
   }
   async get<T>(page: Page, path: string): Promise<T> {
     if (
@@ -252,7 +306,8 @@ export class Harness {
       .toBe(true);
     const launch = await this.readLaunch(page, id);
     expect(launch.resolution.agent.id).toBeTruthy();
-    await page.goto(`${this.config.baseURL}/agents/${launch.resolution.agent.id}`);
+    const destination = `${this.config.baseURL}/agents/${launch.resolution.agent.id}`;
+    if (page.url() !== destination) await page.goto(destination);
     await expect(page.locator('#agent-message')).toBeVisible();
     return launch;
   }

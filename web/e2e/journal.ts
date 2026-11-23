@@ -57,6 +57,7 @@ export class Journal {
   observe(path: string, method: string, status: number, body: unknown, subject: string) {
     if (status < 200 || status >= 300 || body === null || typeof body !== 'object') return;
     path = publicApiPath(path);
+    if (method === 'GET' && Array.isArray(body)) return;
     const row = object(body);
     if (path === '/api/v1/agents' && method === 'POST' && status === 202)
       this.own('agent-lifecycle', row.id, subject);

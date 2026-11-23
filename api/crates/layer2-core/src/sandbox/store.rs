@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
+mod sandbox_events;
+pub use sandbox_events::SandboxEventStore;
+
 use async_trait::async_trait;
 
 use super::{
@@ -52,7 +55,7 @@ pub use agent_reads::AgentReadQueryStore;
 mod reconciliation;
 pub use reconciliation::{
     apply_sandbox_runtime_loss, precheck_runtime_loss_agents, precheck_sandbox_runtime_loss,
-    validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
+    retirement_debt_is_local, validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
     SandboxRuntimeLossAgentMutation, SandboxRuntimeLossApplication, SandboxRuntimeLossMutation,
     SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
 };
@@ -336,22 +339,6 @@ pub trait WorktreeStore: Send + Sync {
         workspace_id: &WorkspaceId,
         page: &PageRequest,
     ) -> Result<Page<Worktree>, SandboxStoreError>;
-}
-
-#[async_trait]
-pub trait SandboxEventStore: Send + Sync {
-    async fn append_sandbox_event(
-        &self,
-        sandbox_id: &SandboxId,
-        appended_at: String,
-        kind: SandboxEventKind,
-    ) -> Result<SandboxEvent, SandboxStoreError>;
-    async fn sandbox_events(
-        &self,
-        sandbox_id: &SandboxId,
-        after: u64,
-        limit: u16,
-    ) -> Result<Vec<SandboxEvent>, SandboxStoreError>;
 }
 
 #[derive(Debug, Clone)]

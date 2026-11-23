@@ -27,6 +27,8 @@ export interface OperatorClient {
     | 'retireProfile'
     | 'readSettings'
     | 'replaceSettings'
+    | 'readSpend'
+    | 'recordSpendObservation'
     | 'previewAutoPause'
     | 'pauseIdleNow'
     | 'setSandboxAlwaysOn'

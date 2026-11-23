@@ -53,15 +53,11 @@ import { coalesceDetailReads } from './api/detailReads';
 import { DocsPage } from './services/DocsPage';
 import { useReportOwner } from './usage/metrics/reportOwner';
 import { OperationsRoute } from './operator/OperationsRoute';
-
-export function Console(props: ConsoleProps) {
-  return (
-    <OwnerViewsProvider key={props.user.id} viewerId={props.user.id}>
-      <ConsoleContent {...props} />
-    </OwnerViewsProvider>
-  );
-}
-
+export const Console = (props: ConsoleProps) => (
+  <OwnerViewsProvider key={props.user.id} viewerId={props.user.id}>
+    <ConsoleContent {...props} />
+  </OwnerViewsProvider>
+);
 function ConsoleContent({
   user,
   authEpoch = 0,
@@ -151,7 +147,7 @@ function ConsoleContent({
   useEffect(() => {
     if (!accessUncertain && agent.state.status === 'ready')
       agent.state.v2?.journal.reconcileDraft();
-  }, [accessUncertain, agent.state]);
+  }, [accessUncertain, agent.state, draft.recoveryBlocked]);
   const actions = useResourceActions(
     client,
     (target) => {
@@ -343,6 +339,12 @@ function ConsoleContent({
         user={user}
         route={route}
         canCreate={canCreateInScope}
+        home={{
+          navigation: scopeReady && navigationScope === '' ? navigation : undefined,
+          scope: navigationScope,
+          onRetry: refreshNavigation,
+          onNavigate,
+        }}
         onCreated={(target) => {
           setRevision((value) => value + 1);
           onNavigate(target);

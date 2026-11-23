@@ -1,5 +1,6 @@
 import type { AgentStatus, SandboxSummary, WorkspaceStatus } from '../api/types';
 import { sandboxStatusPresentation, type SandboxStatusObservation } from './presentation';
+import { sandboxHasParkedRuntimeUpdate } from './parkedRuntimeUpdate';
 
 export function transitionRefreshDelay(startedAt: number): number {
   return Date.now() - startedAt < 10_000 ? 250 : 1500;
@@ -97,8 +98,10 @@ export function sandboxTone(sandbox: SandboxSummary) {
   return sandboxStatusPresentation(sandbox).tone;
 }
 
-export function sandboxRefreshDelay(sandbox: SandboxSummary): number {
-  return sandbox.lifecycle?.checkpoint !== undefined ||
+export function sandboxRefreshDelay(sandbox: SandboxSummary, childrenChanging = false): number {
+  if (sandboxHasParkedRuntimeUpdate(sandbox)) return 5000;
+  return childrenChanging ||
+    sandbox.lifecycle?.checkpoint !== undefined ||
     ['queued', 'updating'].includes(sandbox.runtimeUpdate?.state ?? '') ||
     sandbox.lifecycle?.backgroundSave !== undefined ||
     sandbox.lifecycle?.operation !== undefined ||

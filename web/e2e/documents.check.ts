@@ -269,7 +269,7 @@ test('LOCAL Preview refuses an uncertain save retry and Edit retains its exact b
   await expect(content).toBeVisible();
   await title.fill('Unconfirmed title');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
-  const retry = page.getByRole('button', { name: 'Retry save', exact: true });
+  const retry = page.getByRole('button', { name: 'Retry same save', exact: true });
   await expect(retry).toBeEnabled();
   expect(fixture.writes).toHaveLength(1);
   const original = fixture.writes[0];
@@ -282,11 +282,11 @@ test('LOCAL Preview refuses an uncertain save retry and Edit retains its exact b
   await content.dispatchEvent('keydown', { key: 's', ctrlKey: true });
   await content.dispatchEvent('keydown', { key: 's', metaKey: true });
   await expect(page.locator('.document-workspace__save-status')).toHaveText(
-    'Unsaved changes · Switch to Edit to save',
+    'Save not confirmed · Switch to Edit to save',
   );
   expect(fixture.writes).toHaveLength(1);
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await expect(title).toBeDisabled();
+  await expect(title).toBeEnabled();
   await expect(retry).toBeEnabled();
   await retry.click();
   await expect(page.locator('.document-workspace__save-status')).toHaveText('Saved');

@@ -17,7 +17,16 @@ pub(in crate::store) fn is_duplicate_key(error: &Error) -> bool {
 }
 
 pub(in crate::store) fn is_transient(error: &Error) -> bool {
-    error.contains_label(TRANSIENT_TRANSACTION_ERROR)
+    // Only a known abort permits a fresh mutation. Multiple labels do not
+    // erase uncertainty about an earlier transaction result.
+    !error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT)
+        && error.contains_label(TRANSIENT_TRANSACTION_ERROR)
+}
+
+/// A body error with uncertain outcome never permits a new transaction.
+pub(in crate::store) fn is_confirmed_body_retry(error: &Error) -> bool {
+    !error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT)
+        && (is_transient(error) || is_duplicate_key(error))
 }
 
 pub(in crate::store) enum CommitResolution<E> {
@@ -81,6 +90,52 @@ pub(in crate::store) async fn commit_transaction(session: &mut ClientSession) ->
         return CommitOutcome::Failed(Error::custom(error));
     }
     commit_with(session).await
+}
+
+/// Only an acknowledged abort before any commit send releases durable custody.
+pub(in crate::store) enum PrecommitRefusal {
+    Aborted(layer2_core::sandbox::store::SandboxStoreError),
+    AbortUnacknowledged(Error),
+}
+
+pub(in crate::store) async fn commit_transaction_with_refusal(
+    session: &mut ClientSession,
+) -> Result<CommitOutcome, PrecommitRefusal> {
+    if let Err(refusal) = layer2_core::sandbox::store::WorkAuthority::current() {
+        // The driver's convenience abort suppresses command failures. Observe
+        // the reply on this same session/transaction and pinned route first.
+        let reply = session
+            .client()
+            .database("admin")
+            .run_command(mongodb::bson::doc! {"abortTransaction":1_i32})
+            .session(&mut *session)
+            .await;
+        // Close local driver state; this second best-effort abort proves nothing
+        // about an uncertain first reply and cannot release the durable marker.
+        if session.abort_transaction().await.is_err() {
+            tracing::warn!(
+                stage = "precommit_refusal",
+                outcome = "local_abort_failed",
+                "publication custody remains governed by the original abort reply"
+            );
+        }
+        return Err(match reply {
+            Ok(reply) if acknowledged_abort_reply(&reply) => PrecommitRefusal::Aborted(refusal),
+            Ok(_) => PrecommitRefusal::AbortUnacknowledged(Error::custom(
+                "precommit abort acknowledgment is uncertain",
+            )),
+            Err(error) => PrecommitRefusal::AbortUnacknowledged(error),
+        });
+    }
+    Ok(commit_with(session).await)
+}
+
+fn acknowledged_abort_reply(reply: &mongodb::bson::Document) -> bool {
+    use mongodb::bson::Bson;
+    !reply.contains_key("writeConcernError")
+        && !reply.contains_key("errorLabels")
+        && (matches!(reply.get("ok"), Some(Bson::Int32(1) | Bson::Int64(1)))
+            || matches!(reply.get("ok"), Some(Bson::Double(value)) if *value == 1.0))
 }
 
 async fn commit_with<C: CommitOperation>(commit: &mut C) -> CommitResolution<C::Error> {

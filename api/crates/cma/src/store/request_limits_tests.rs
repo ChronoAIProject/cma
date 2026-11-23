@@ -6,6 +6,8 @@ mod contracts;
 mod fixture;
 #[path = "request_limits_tests/legacy.rs"]
 mod legacy;
+#[path = "request_limits_tests/lifecycle.rs"]
+mod lifecycle;
 #[path = "request_limits_tests/ttl.rs"]
 mod ttl;
 
