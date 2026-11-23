@@ -8,7 +8,7 @@ pub(super) async fn apply_mutation(
     mutation: &AgentConversationMutation,
     session: &mut mongodb::ClientSession,
 ) -> Result<ConversationReceipt, ApplyError> {
-    apply_mutation_with_capacity(caller, store, mutation, session, None).await
+    apply_mutation_with_capacity(caller, store, mutation, session, None, None).await
 }
 
 pub(in crate::store) async fn apply_mutation_with_capacity(
@@ -17,14 +17,17 @@ pub(in crate::store) async fn apply_mutation_with_capacity(
     mutation: &AgentConversationMutation,
     session: &mut mongodb::ClientSession,
     capacity: Option<&layer2_core::sandbox::store::AgentConversationCapacitySettlement>,
+    exact_checkpoint: Option<&layer2_core::sandbox::store::AgentMessageCheckpoint>,
 ) -> Result<ConversationReceipt, ApplyError> {
-    let current_row = store
-        .agents
-        .find_one(doc! { "_id": mutation.agent.id.as_str() })
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?
-        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    let current_row = crate::store::stale_turns::find_with_proof_budget(
+        &store.agents,
+        doc! { "_id": mutation.agent.id.as_str() },
+        session,
+        false,
+    )
+    .await
+    .map_err(ApplyError::Driver)?
+    .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
     before(store, &current, mutation, session).await?;
     // These alternative proof futures are large in debug builds. Keep their
@@ -143,8 +146,18 @@ pub(in crate::store) async fn apply_mutation_with_capacity(
         session,
     ))
     .await?;
-    replace_agent(store, &current, mutation, integrity.integrity, session).await?;
-    checkpoint::carry(store, &current_row, &current, &mutation.agent, session).await?;
+    replace_agent(
+        store,
+        &current,
+        mutation,
+        integrity.integrity,
+        exact_checkpoint,
+        session,
+    )
+    .await?;
+    if exact_checkpoint.is_none() {
+        checkpoint::carry(store, &current_row, &current, &mutation.agent, session).await?;
+    }
     insert_logs(store, &integrity.documents, session).await?;
     crate::store::suggestions::enqueue(store, &mutation.agent, &logs, session).await?;
     Ok(ConversationReceipt {

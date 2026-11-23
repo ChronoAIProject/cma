@@ -48,10 +48,8 @@ pub(in crate::store) async fn apply(
         Authority::Capacity(proof) => Some(proof.as_ref()),
         _ => None,
     };
-    let row = store
-        .agents
-        .find_one(doc! { "_id": current.id.as_str() })
-        .session(scope.session())
+    let row = scope
+        .find_one(&store.agents, doc! { "_id": current.id.as_str() })
         .await
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
@@ -154,7 +152,9 @@ pub(in crate::store) async fn apply(
         }
         current
     };
-    if mutation.is_some() {
+    if matches!(authority, Authority::StaleTurn) {
+        // Both writers set the exact checkpoint in the publication CAS.
+    } else if mutation.is_some() {
         // Publication can adopt or advance the log envelope. Its original row
         // cannot certify the new format/head; retain the post-publication read.
         write(store, updated, Some(next), scope.session()).await?;

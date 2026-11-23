@@ -8,6 +8,71 @@ pub(super) enum Race {
     Interrupt,
     Successor,
     Oversize,
+    Predecessor,
+}
+
+pub(super) fn history_rows(race: Option<Race>) -> u64 {
+    if race == Some(Race::Predecessor) {
+        10_000
+    } else {
+        6
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn stale_turn_seal_refuses_predecessor_before_fetching_its_payload() {
+    Box::pin(exercise_settlement(true, None, Some(Race::Predecessor))).await;
+}
+
+#[derive(Clone, Default)]
+pub(super) struct SealProbe(Arc<Mutex<SealRead>>);
+
+#[derive(Default)]
+struct SealRead {
+    enabled: bool,
+    request: Option<i32>,
+    charged_bytes: Option<i32>,
+    payload_present: bool,
+}
+
+impl SealProbe {
+    pub(super) async fn client(&self) -> Client {
+        let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+        let capture = self.0.clone();
+        options.command_event_handler = Some(EventHandler::callback(move |event| {
+            let mut trace = capture.lock().unwrap();
+            if !trace.enabled {
+                return;
+            }
+            match event {
+                CommandEvent::Started(event)
+                    if event.command.get_str("find").ok() == Some(segments::SEGMENTS)
+                        && event.command.get_document("filter").is_ok_and(|filter| {
+                            filter.get_i32("ordinal").is_ok() || filter.get_i64("ordinal").is_ok()
+                        }) =>
+                {
+                    assert!(trace.request.replace(event.request_id).is_none());
+                }
+                CommandEvent::Succeeded(event) if trace.request == Some(event.request_id) => {
+                    let batch = event
+                        .reply
+                        .get_document("cursor")
+                        .unwrap()
+                        .get_array("firstBatch")
+                        .unwrap();
+                    let row = batch[0].as_document().unwrap();
+                    trace.charged_bytes = row.get_i32("proof_bytes").ok();
+                    trace.payload_present =
+                        row.contains_key("evidence") || row.contains_key("leaf_digests");
+                }
+                _ => {}
+            }
+        }));
+        Client::with_options(options).unwrap()
+    }
 }
 
 pub(super) struct Competition<'a> {
@@ -19,6 +84,7 @@ pub(super) struct Competition<'a> {
     pub proof: &'a StaleTurnSettlement,
     pub source: RuntimeOutputSource,
     pub budget_before: &'a mongodb::bson::Document,
+    pub seal_probe: Option<SealProbe>,
 }
 
 impl Competition<'_> {
@@ -94,12 +160,40 @@ impl Competition<'_> {
                 .unwrap();
             assert_eq!(admitted.record.status, AgentResponseStatus::Queued);
         }
+        const PREDECESSOR_ALLOWANCE: i64 = 96 * 1024;
+        if let Some(probe) = &self.seal_probe {
+            let head = self
+                .client
+                .database(self.name)
+                .collection::<Document>(segments::HEADS)
+                .find_one(doc! {"_id": agent.id.as_str()})
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(head.get_i64("active_ordinal").unwrap(), 1);
+            assert!(head.get_i64("active_bytes").unwrap() < 16 * 1024);
+            budget
+                .charge(budget.remaining() - PREDECESSOR_ALLOWANCE)
+                .unwrap();
+            probe.0.lock().unwrap().enabled = true;
+        }
         let result = self
             .owner
             .run(self.scan.settle(self.proof, budget))
             .await
             .unwrap();
-        if race == Race::Oversize {
+        if let Some(probe) = &self.seal_probe {
+            let trace = probe.0.lock().unwrap();
+            assert!(
+                trace
+                    .charged_bytes
+                    .is_some_and(|bytes| i64::from(bytes) > PREDECESSOR_ALLOWANCE),
+                "{result:?}"
+            );
+            assert!(!trace.payload_present);
+        }
+        let over_budget = matches!(race, Race::Oversize | Race::Predecessor);
+        if over_budget {
             assert!(
                 matches!(result, Err(SandboxStoreError::Unavailable(detail)) if detail.contains("proof byte budget"))
             );
@@ -120,7 +214,7 @@ impl Competition<'_> {
             .agent_log(&agent.id, agent.conversation.last_seq, 100)
             .await
             .unwrap();
-        if race == Race::Oversize {
+        if over_budget {
             assert!(after_refusal.is_empty());
             assert_eq!(
                 self.peer.get_command(id).await.unwrap().unwrap().status,
@@ -139,7 +233,7 @@ impl Competition<'_> {
                 AgentResponseStatus::Completed,
                 Some(TurnStopReason::EndTurn),
             ),
-            Race::Oversize => unreachable!(),
+            Race::Oversize | Race::Predecessor => unreachable!(),
         };
         if let Some(stop_reason) = stop_reason {
             assert!(after_refusal.is_empty());

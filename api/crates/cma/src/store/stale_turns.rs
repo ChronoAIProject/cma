@@ -13,6 +13,7 @@ mod scan;
 mod settlement;
 
 pub(crate) use evidence::{Candidate, Observation, QuietTurn};
+pub(in crate::store) use proof_budget::find_with_proof_budget;
 pub(crate) use proof_budget::ProofBudget;
 
 pub(crate) struct StaleTurnStore {

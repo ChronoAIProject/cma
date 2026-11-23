@@ -9,6 +9,16 @@ use crate::store::sandbox_mongo::record_bson;
 
 pub(in crate::store) const FIELD: &str = "agent_message_checkpoint";
 
+pub(in crate::store) fn set_field(
+    fields: &mut Document,
+    value: &AgentMessageCheckpoint,
+) -> Result<(), SandboxStoreError> {
+    value.validate()?;
+    let encoded = record_bson(value).map_err(SandboxStoreError::Corrupt)?;
+    fields.insert(FIELD, encoded);
+    Ok(())
+}
+
 pub(in super::super) fn carry_fields(
     row: &Document,
     current: &Agent,

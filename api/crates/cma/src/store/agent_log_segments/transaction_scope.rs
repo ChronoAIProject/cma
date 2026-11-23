@@ -104,12 +104,13 @@ impl<'session> TransactionScope<'session> {
         collection: &Collection<Document>,
         filter: Document,
     ) -> Result<Option<Document>, mongodb::error::Error> {
-        collection
-            .find_one(crate::store::work_schema::for_collection(
-                collection, filter,
-            ))
-            .session(&mut *self.session)
-            .await
+        crate::store::stale_turns::find_with_proof_budget(
+            collection,
+            crate::store::work_schema::for_collection(collection, filter),
+            &mut *self.session,
+            false,
+        )
+        .await
     }
 
     pub(in crate::store) async fn find_projected(

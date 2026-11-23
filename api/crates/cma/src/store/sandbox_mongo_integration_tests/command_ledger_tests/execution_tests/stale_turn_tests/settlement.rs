@@ -15,7 +15,7 @@ use layer3_adapter::{
 };
 
 mod competing;
-use competing::{Competition, Race};
+use competing::{Competition, Race, SealProbe};
 
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
@@ -60,7 +60,7 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>, race: Opt
         &name,
         Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         parent,
-        Some((6, false)),
+        Some((competing::history_rows(race), false)),
     )
     .await;
     if segmented {
@@ -87,7 +87,10 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>, race: Opt
     };
     assert_eq!(sends.load(Ordering::SeqCst), 1);
 
-    let writer = if let Some(application) = ambiguous {
+    let seal_probe = (race == Some(Race::Predecessor)).then(SealProbe::default);
+    let writer = if let Some(probe) = &seal_probe {
+        probe.client().await
+    } else if let Some(application) = ambiguous {
         let mut options =
             ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap())
                 .await
@@ -272,6 +275,7 @@ async fn exercise_settlement(segmented: bool, ambiguous: Option<&str>, race: Opt
             proof: &proof,
             source: source(final_cursor + 1),
             budget_before: budget_before.as_ref().unwrap(),
+            seal_probe,
         };
         if race == Race::Oversize {
             assert!(matches!(

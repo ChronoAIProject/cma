@@ -228,7 +228,11 @@ pub(in crate::store) async fn stale_turn_segment_bytes(
     scope: &mut TransactionScope<'_>,
 ) -> Result<i64, TransactionLogError> {
     let head = super::read_head(store, row, scope.session(), false).await?;
-    if head.active_bytes > remaining || head.active_count == 0 {
+    if head.active_count == 0 {
+        // The writer would reopen a sealed tail to locate its latest entry.
+        return Err(SandboxStoreError::Conflict.into());
+    }
+    if head.active_bytes > remaining {
         return Ok(head.active_bytes);
     }
     let session = scope.session();

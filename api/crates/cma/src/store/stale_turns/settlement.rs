@@ -83,7 +83,11 @@ impl StaleTurnStore {
             if let Err(error) = session.abort_transaction().await {
                 tracing::warn!(%error, "stale-turn transaction abort unconfirmed");
             }
-            return Err(store_error(error));
+            return Err(if budget.remaining() == 0 {
+                unavailable(ScanError::ProofBudget)
+            } else {
+                store_error(error)
+            });
         }
         match commit_transaction(session).await {
             CommitOutcome::Committed => {
@@ -188,14 +192,34 @@ impl StaleTurnStore {
         let segment_bytes = if ordinary {
             0
         } else {
-            stale_turn_segment_bytes(&self.store, &agent.id, &row, budget.remaining(), scope)
+            budget
+                .with_writer(stale_turn_segment_bytes(
+                    &self.store,
+                    &agent.id,
+                    &row,
+                    budget.remaining(),
+                    scope,
+                ))
                 .await?
         };
         if segment_bytes > 0 {
             budget.charge(segment_bytes).map_err(proof_read_error)?;
         }
+        if ordinary {
+            // Charge the exact key used by the ordinary integrity reader.
+            let tail = scope
+                .find_projected(
+                    &self.store.agent_log,
+                    doc! {"_id": log_id(&agent.id, agent.conversation.last_seq)},
+                    doc! {"_id": 0, "proof_bytes": {"$bsonSize": "$$ROOT"}},
+                )
+                .await
+                .map_err(ApplyError::Driver)?
+                .ok_or(CONFLICT)?;
+            budget.charge_row(&tail).map_err(proof_read_error)?;
+        }
         let (turn, event) = terminal_event(proof)?;
-        self.require_no_approvals(proof, turn, scope, budget, segment_bytes == 0)
+        self.require_no_approvals(proof, turn, scope, budget)
             .await?;
         let key = budget::turn_key(agent, turn);
         let reservation = read_scoped(scope, &self.store.model_budget, &key, budget).await?;
@@ -203,7 +227,7 @@ impl StaleTurnStore {
             // A pending budget stop already has its own failure disposition.
             budget::validate_stale_turn_reservation(row, agent, turn, false)?;
         }
-        Box::pin(apply_stale_turn(&self.store, proof, scope)).await?;
+        Box::pin(budget.with_writer(apply_stale_turn(&self.store, proof, scope))).await?;
         let budget_key = if reservation.is_some() {
             let row = read_scoped(scope, &self.store.model_budget, &key, budget)
                 .await?
@@ -241,7 +265,6 @@ impl StaleTurnStore {
         turn: u64,
         scope: &mut TransactionScope<'_>,
         budget: &mut ProofBudget,
-        reads_tail: bool,
     ) -> Result<(), ApplyError> {
         let agent = &proof.snapshot().agent;
         let head = agent.conversation.last_seq;
@@ -293,12 +316,6 @@ impl StaleTurnStore {
         }
         if !approvals.is_empty() {
             return Err(CONFLICT);
-        }
-        if reads_tail {
-            // The writer validates the tail for an ordinary log or an empty segment.
-            budget
-                .charge_row(history.last().ok_or(CONFLICT)?)
-                .map_err(proof_read_error)?;
         }
         Ok(())
     }
