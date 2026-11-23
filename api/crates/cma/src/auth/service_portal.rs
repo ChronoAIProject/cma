@@ -30,6 +30,8 @@ struct Portal {
 enum PortalError {
     #[error("activity stream authorization changed: {0}")]
     Status(StatusCode),
+    #[error("activity stream authorization changed: {0}")]
+    Unauthorized(credentials::Refusal),
     #[error("account_deletion_in_progress")]
     AccountDeletionInProgress,
 }
@@ -40,10 +42,23 @@ impl From<StatusCode> for PortalError {
     }
 }
 
+impl From<credentials::Refusal> for PortalError {
+    fn from(refusal: credentials::Refusal) -> Self {
+        Self::Unauthorized(refusal)
+    }
+}
+
 impl PortalError {
     fn response(self) -> Response {
         match self {
-            Self::Status(status) => problem(status),
+            Self::Status(status) => problem(status, None),
+            Self::Unauthorized(refusal) => {
+                tracing::info!(
+                    reason = refusal.code(),
+                    "Event Gateway portal refused the browser credential"
+                );
+                problem(StatusCode::UNAUTHORIZED, Some(refusal.code()))
+            }
             Self::AccountDeletionInProgress => super::account_standing::deletion_problem(),
         }
     }
@@ -209,6 +224,14 @@ async fn forward_checked(portal: &Portal, request: Request) -> Result<Response, 
         return Err(StatusCode::BAD_GATEWAY.into());
     }
     let status = upstream.status();
+    if status == StatusCode::UNAUTHORIZED {
+        // The Gateway checks its own audience and permissions; its answer
+        // passes through unchanged. Distinguish it from portal refusals.
+        tracing::info!(
+            reason = "gateway_refused_credential",
+            "Event Gateway refused the forwarded browser credential"
+        );
+    }
     let mut headers = HeaderMap::new();
     for name in [
         header::CONTENT_TYPE,
@@ -246,13 +269,17 @@ async fn forward_checked(portal: &Portal, request: Request) -> Result<Response, 
     Ok((status, headers, Body::from(bytes)).into_response())
 }
 
-fn problem(status: StatusCode) -> Response {
-    (status, [(header::CACHE_CONTROL, "no-store")], Json(serde_json::json!({
+fn problem(status: StatusCode, code: Option<&'static str>) -> Response {
+    let mut body = serde_json::json!({
         "status": status.as_u16(), "detail": match status {
             StatusCode::UNAUTHORIZED => "Sign in to CMA to open Event Gateway.",
             StatusCode::FORBIDDEN => "This request is not allowed from this origin.",
             StatusCode::NOT_FOUND => "This Event Gateway route is unavailable through the portal.",
             _ => "Event Gateway authorization or transport is temporarily unavailable."
         }
-    }))).into_response()
+    });
+    if let Some(code) = code {
+        body["code"] = code.into();
+    }
+    (status, [(header::CACHE_CONTROL, "no-store")], Json(body)).into_response()
 }
