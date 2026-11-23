@@ -25,6 +25,31 @@ def require_runtime_inventory(documents)
   end
 end
 
+IMAGE_SCAN_IF = "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
+
+# Staging CD refuses an image whose secret scan leaves a blocking finding. CI
+# runs the same gate on its exported image before retaining it, so a PR or
+# merge group fails first instead of the release after the merge.
+def require_image_secret_scan(documents)
+  [['ci-images', 'images', '"$IMAGE_COMPONENT"', 'Scan tested image as staging publication does', 'Retain tested native image'],
+   ['ci-omarchy', 'omarchy', 'runtime-omarchy', 'Scan tested Omarchy image as staging publication does', 'Retain tested Omarchy image']].each do |file, job, component, name, retain|
+    steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
+    install = steps.index { |step| step['name'] == 'Install pinned image secret scanner' }
+    scan = steps.index { |step| step['name'] == name }
+    export = steps.index { |step| step.fetch('run', '').include?('export-ci-native-image.py') }
+    keep = steps.index { |step| step['name'] == retain }
+    require_check(install && scan && export && keep && export < install && install < scan && scan < keep,
+                  "#{file} must scan the exported image before retaining it")
+    [steps[install], steps[scan]].each do |step|
+      require_check(step['if'] == IMAGE_SCAN_IF && !step.key?('continue-on-error'), "#{file} image secret scan is optional")
+    end
+    require_check(steps[install]['run'] == "bash .github/scripts/staging_cd_transport.sh\nbash .github/scripts/install-image-gitleaks.sh\n" &&
+                  steps[install]['timeout-minutes'] == 5, "#{file} image scanner install differs")
+    command = "python3 -B .github/scripts/ci_image_secret_scan.py #{component} \"$RUNNER_TEMP/ci-native-image\" \"$GITHUB_SHA\""
+    require_check(steps[scan]['run'] == command && steps[scan]['timeout-minutes'] == 30, "#{file} image secret scan command differs")
+  end
+end
+
 def require_pinned_actions(steps, actions, parents = [])
   steps.each do |step|
     reference = step['uses']
@@ -149,6 +174,7 @@ end
 
 def validate(documents, actions)
   require_runtime_inventory(documents)
+  require_image_secret_scan(documents)
   check_component_cache_writers(documents)
   check_merge_group_artifacts(documents)
   ci = documents.fetch('ci')
@@ -519,6 +545,13 @@ report_steps.call(copy) << {'run' => 'gh run download "$GITHUB_RUN_ID" -n eviden
 check_artifact_downloads(copy, actions)
 before_queue = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
 mutations = [
+  ->(d) { d['ci-images']['jobs']['images']['steps'].reject! { |s| s['name'] == 'Scan tested image as staging publication does' } },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Scan tested image as staging publication does' }['continue-on-error'] = true },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Scan tested image as staging publication does' }['if'] = "github.event_name == 'merge_group'" },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Scan tested image as staging publication does' }['run'] += ' || true' },
+  ->(d) { steps = d['ci-images']['jobs']['images']['steps']; scan = steps.index { |s| s['name'] == 'Scan tested image as staging publication does' }; steps.insert(steps.index { |s| s['name'] == 'Retain tested native image' } + 1, steps.delete_at(scan)) },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].reject! { |s| s['name'] == 'Install pinned image secret scanner' } },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Scan tested Omarchy image as staging publication does' }['timeout-minutes'] = 120 },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].reject! { |s| s['name'] == 'API allocator qualification' } },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'] << d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }.dup },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['continue-on-error'] = true },
