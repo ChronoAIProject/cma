@@ -1,6 +1,7 @@
 import type { AgentStatus, SandboxSummary, WorkspaceDetail } from '../api/types';
 import { sandboxChildrenAvailable, sandboxLifecycleAction } from '../sandbox/lifecycle';
 import { sandboxDeletionReason } from '../sandbox/deletionEligibility';
+import { sandboxHasParkedRuntimeUpdate } from '../sandbox/parkedRuntimeUpdate';
 import {
   IconPauseOutline16,
   IconPlayOutline16,
@@ -109,6 +110,7 @@ export interface AgentActionContext {
 }
 
 export const OPEN_SANDBOX_TO_RESUME = 'open_sandbox_to_resume';
+export const OPEN_RUNTIME_UPDATE = 'open_runtime_update';
 const ACTION_BUSY = 'Another action is still being confirmed.';
 const REQUIRES_ACTIVE_SANDBOX = 'Available when the Sandbox is active.';
 
@@ -121,6 +123,26 @@ export function agentActions(
   const runtimeAvailable =
     !busy && !stale && sandbox !== undefined && sandboxChildrenAvailable(sandbox);
   const actions: TreeRowAction[] = [];
+  const canReviewUpdate =
+    sandbox !== undefined &&
+    viewerId !== undefined &&
+    sandbox.owner === viewerId &&
+    !stale &&
+    (sandboxHasParkedRuntimeUpdate(sandbox) ||
+      (sandbox.status === 'failed' &&
+        sandbox.runtimeUpdate?.state === 'failed' &&
+        sandbox.runtimeUpdate.completedAt === undefined));
+  const recoveryReason =
+    canReviewUpdate && !busy ? 'Use Retry runtime update to review this environment.' : undefined;
+  if (canReviewUpdate)
+    actions.push({
+      id: OPEN_RUNTIME_UPDATE,
+      label: 'Retry runtime update',
+      icon: <IconDataOutline16 />,
+      route: { kind: 'sandbox', sandboxId: sandbox.id },
+      disabled: busy,
+      reason: busy ? ACTION_BUSY : 'Open the environment to review and retry this update.',
+    });
   if (permissions.stopAgent)
     actions.push({
       id: 'stop_agent',
@@ -129,12 +151,17 @@ export function agentActions(
       disabled:
         !runtimeAvailable ||
         !['starting', 'ready', 'working', 'waiting_approval', 'paused'].includes(status),
-      reason: busy ? ACTION_BUSY : !runtimeAvailable ? REQUIRES_ACTIVE_SANDBOX : undefined,
+      reason: busy
+        ? ACTION_BUSY
+        : !runtimeAvailable
+          ? (recoveryReason ?? REQUIRES_ACTIVE_SANDBOX)
+          : undefined,
     });
   if (permissions.deleteAgent) {
     const terminal = status === 'stopped' || status === 'failed';
     const paused = terminal && sandbox?.status === 'paused' && !sandbox.lifecycle?.operation;
     const reason =
+      recoveryReason ??
       agentDeletionBlock(context) ??
       (paused
         ? 'Resume the Sandbox before deleting this Agent and its Worktree.'

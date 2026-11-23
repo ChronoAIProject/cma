@@ -2,6 +2,7 @@ import type { AgentDetail, AgentStatus } from '../api/types';
 import { routePath, type AppRoute } from '../routing/routes';
 import {
   agentActions,
+  OPEN_RUNTIME_UPDATE,
   OPEN_SANDBOX_TO_RESUME,
   type AgentActionContext,
 } from '../shell/treeActions';
@@ -73,7 +74,7 @@ export function agentHeaderActionHandler(
   return readOnly
     ? undefined
     : (id: string) => {
-        if (id === OPEN_SANDBOX_TO_RESUME) onOpenSandbox();
+        if (id === OPEN_SANDBOX_TO_RESUME || id === OPEN_RUNTIME_UPDATE) onOpenSandbox();
         else selectAgentAction(id, agentId, onAction);
       };
 }

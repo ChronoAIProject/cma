@@ -103,7 +103,16 @@ for (const purpose of ['image_rotation', 'revive'] as const) {
       'Runtime update needs attention',
     );
     allowDetails = true;
-    await page.goto(`/sandboxes/${boundary.sandbox.id}`);
+    await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+    await resourceRow(page, 'agent', boundary.agent.id)
+      .getByRole('button', { name: /^Options for/ })
+      .click();
+    await expect(page.getByRole('menuitem', { name: /^Stop\b/ })).toContainText(
+      'Retry runtime update',
+    );
+    await page.getByRole('menuitem', { name: /^Retry runtime update/ }).click();
+    await expect(page).toHaveURL(`${baseURL}/sandboxes/${boundary.sandbox.id}`);
+    expect(writes).toEqual([]);
     await page.getByRole('tab', { name: 'Activity', exact: true }).click();
     await expect(page.getByRole('region', { name: 'Sandbox progress' })).toContainText(
       'Last confirmed stage',
