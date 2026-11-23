@@ -99,12 +99,26 @@ async fn retained(
         .unwrap()
 }
 
-async fn receipt(request: reqwest::RequestBuilder) -> Value {
+async fn receipt(request: reqwest::RequestBuilder, observes: bool) -> Value {
     let reply = request.send().await.unwrap();
     assert_eq!(reply.status(), StatusCode::OK);
     assert_eq!(reply.headers()["content-type"], "application/json");
     assert!(reply.headers().get("link").is_none());
-    let body: Value = reply.json().await.unwrap();
+    let mut body: Value = reply.json().await.unwrap();
+    let reference = body.as_object_mut().unwrap().remove("revocation");
+    if observes {
+        assert_eq!(
+            reference.unwrap(),
+            json!({
+                "operation_id": body["operation_id"], "kind":"sandbox",
+                "id": body["share"]["selector"]["sandbox_id"],
+                "share_id": body["share"]["id"],
+                "expected_revision": body["share"]["revision"].as_u64().unwrap() - 1,
+            })
+        );
+    } else {
+        assert!(reference.is_none());
+    }
     let mut fields: Vec<_> = body
         .as_object()
         .unwrap()
@@ -221,12 +235,20 @@ async fn legacy_share_changes_preserve_pending_identity_until_effective_receipt(
         )
         .await;
         assert_eq!(status["state"], "effective");
-        let result = receipt(request(&replacement, &fixture.owner, "legacy-original")).await;
+        let result = receipt(
+            request(&replacement, &fixture.owner, "legacy-original"),
+            true,
+        )
+        .await;
         assert_eq!(result, status["receipt"]);
         assert_eq!(result["operation_id"], original.key.operation_id.as_str());
         assert_eq!(
             result,
-            receipt(request(&replacement, &fixture.owner, "legacy-original")).await
+            receipt(
+                request(&replacement, &fixture.owner, "legacy-original"),
+                true
+            )
+            .await
         );
         problem(
             request(&replacement, &fixture.other, "legacy-original"),
@@ -337,7 +359,7 @@ async fn omitted_revocation_service_cannot_bypass_activation_but_replays_final_r
         assert_eq!(status["state"], "effective");
         for _ in 0..2 {
             assert_eq!(
-                receipt(request(&omitted, "omitted-original", 1)).await,
+                receipt(request(&omitted, "omitted-original", 1), false).await,
                 status["receipt"]
             );
         }

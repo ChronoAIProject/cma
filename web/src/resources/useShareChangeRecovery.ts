@@ -3,6 +3,7 @@ import { ApiError, pendingRevocation } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import type { ShareTarget } from './sharing';
 import { sharingDeadline } from './sharing';
+import { retainPendingOperation } from './revocationObservation';
 import {
   forgetShareChange,
   matchesShareChange,
@@ -62,6 +63,17 @@ export function useShareChangeRecovery(
     setNotice(undefined);
     let retained: RetainedShareChange | undefined;
     let sending = false;
+    const adoptOperation = (original: RetainedShareChange, operation: string) => {
+      const pending = { ...original, operation };
+      setChanges((rows) => [...rows.filter((row) => row.shareId !== pending.shareId), pending]);
+      try {
+        retainPendingOperation({ owner, kind: target.kind, id: target.id }, pending, original);
+      } catch {
+        setError(
+          'The original request is saved, but status recovery could not be saved. Keep this tab open and restore session storage.',
+        );
+      }
+    };
     const timer = setTimeout(() => {
       request.abort();
       if (active.current === request) {
@@ -89,6 +101,10 @@ export function useShareChangeRecovery(
       if (active.current !== request) return;
       if (!matchesShareChange(receipt, target, retained))
         throw new Error('The result did not confirm the saved share change.');
+      if (receipt.revocation) {
+        adoptOperation(retained, receipt.revocation.operation);
+        return;
+      }
       forgetShareChange(owner, target, retained);
       setChanges((rows) => rows.filter((row) => row.shareId !== retained!.shareId));
       setNotice(retained.revoked ? 'Access revoked.' : 'Access change confirmed.');
@@ -98,15 +114,7 @@ export function useShareChangeRecovery(
       // Abort and unknown replies leave the original request available for explicit retry.
       const operation = pendingRevocation(cause, target.kind, target.id);
       if (operation && retained) {
-        const pending = { ...retained, operation };
-        setChanges((rows) => [...rows.filter((row) => row.shareId !== pending.shareId), pending]);
-        try {
-          saveShareChange(owner, target, pending);
-        } catch {
-          setError(
-            'The share change is pending. Its original request is saved; status recovery could not be saved. Keep this tab open.',
-          );
-        }
+        adoptOperation(retained, operation);
       } else if (
         sending &&
         !request.signal.aborted &&

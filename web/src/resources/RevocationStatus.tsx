@@ -78,7 +78,7 @@ export function RevocationStatus({
                 ? 'Access change pending. Waiting for in-flight work to stop.'
                 : 'Revocation pending. Waiting for in-flight work to stop.'}
       </p>
-      {status && status.unresolved_effects > 0 ? (
+      {status === undefined || status.unresolved_effects > 0 ? (
         <p>Previously submitted external requests may still complete.</p>
       ) : null}
       {error ? (

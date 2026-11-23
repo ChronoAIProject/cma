@@ -15,11 +15,21 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         "owner-a"
     };
     let context = super::super::resource_access_tests::context(subject);
-    let mut service = if name == "revocation_effective" {
+    let mut service = if name.starts_with("revocation_effective") {
         Service::completed()
     } else {
         Service::new()
     };
+    if name.starts_with("revocation_effective_sandbox") {
+        service.value.selector = layer2_core::resource_access::ResourceSelector::Sandbox {
+            sandbox_id: layer2_core::SandboxId("sandbox".into()),
+        };
+        let receipt = service.value.receipt.as_mut().unwrap();
+        receipt.share.selector = service.value.selector.clone();
+        if name.ends_with("set_mode") {
+            receipt.share.revoked_at = None;
+        }
+    }
     if name == "revocation_evidence" {
         service.value.stage =
             layer2_core::resource_access::revocations::RevocationStage::EvidenceReceived;

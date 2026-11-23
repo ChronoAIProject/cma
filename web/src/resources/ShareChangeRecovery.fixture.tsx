@@ -23,6 +23,8 @@ export function fixture() {
   const state = {
     allowed: true,
     unknown: false,
+    success: false,
+    unresolved: 1,
     statusUnavailable: true,
     effective: false,
     operation,
@@ -57,7 +59,7 @@ export function fixture() {
         state: state.effective ? 'effective' : 'evidence_received',
         participants: 1,
         stopped: 1,
-        unresolved_effects: 1,
+        unresolved_effects: state.unresolved,
         deadline_unix_ms: 11000,
         deadline_exceeded: !state.effective,
         receipt: state.effective
@@ -87,6 +89,26 @@ export function fixture() {
         ...(body ? { mode: body.mode } : {}),
       });
       if (state.unknown) throw new TypeError('Lost reply');
+      if (state.success)
+        return Response.json({
+          operation_id: operation,
+          actor,
+          at,
+          policy_revision: 2,
+          share: {
+            ...original,
+            revision: 2,
+            mode: state.mode,
+            revoked_at: state.revoked ? at : null,
+          },
+          revocation: {
+            operation_id: operation,
+            kind: 'sandbox',
+            id: target.id,
+            share_id: original.id,
+            expected_revision: 1,
+          },
+        });
       return Response.json(
         { code: 'resource_revocation_pending', detail: 'Pending' },
         {

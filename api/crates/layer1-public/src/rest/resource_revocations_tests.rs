@@ -315,6 +315,149 @@ async fn only_effective_receipt_uses_the_predecessor_success_shape() {
     assert_eq!(status, StatusCode::OK);
     assert!(receipt["share"]["revoked_at"].is_string());
     assert_eq!(receipt["operation_id"], "a".repeat(64));
+    assert_eq!(
+        receipt["revocation"],
+        json!({
+            "operation_id": "a".repeat(64), "kind": "agent", "id": "agt_share",
+            "share_id": "share", "expected_revision": 1,
+        })
+    );
     assert!(receipt.get("state").is_none());
     assert!(receipt.get("sandbox_id").is_none());
+}
+
+#[tokio::test]
+async fn sandbox_success_and_replay_keep_original_status_identity_with_unresolved_effects() {
+    for method in ["DELETE", "PATCH"] {
+        let (router, _, _) = app().await;
+        let mut service = Service::completed();
+        service.value.selector = ResourceSelector::Sandbox {
+            sandbox_id: layer2_core::SandboxId("sandbox".into()),
+        };
+        let receipt = service.value.receipt.as_mut().unwrap();
+        receipt.share.selector = service.value.selector.clone();
+        if method == "PATCH" {
+            receipt.share.revoked_at = None;
+        }
+        let service = Arc::new(service);
+        let router = installed(router, service.clone());
+        for _ in 0..2 {
+            let body = (method == "PATCH").then(|| json!({"mode":"view", "expected_revision":1}));
+            let response = router
+                .clone()
+                .oneshot(request(
+                    method,
+                    "/api/v1/resource-shares/sandbox/sandbox/share?expected_revision=1",
+                    "owner-a",
+                    Some("original"),
+                    body,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            let body: serde_json::Value = serde_json::from_slice(
+                &axum::body::to_bytes(response.into_body(), 16 * 1024)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                body["revocation"],
+                json!({
+                    "operation_id":"a".repeat(64), "kind":"sandbox", "id":"sandbox",
+                    "share_id":"share", "expected_revision":1,
+                })
+            );
+            let (_, status) = json_response(
+                &router,
+                request(
+                    "GET",
+                    &format!(
+                        "/api/v1/resource-revocations/{}?kind=sandbox&id=sandbox",
+                        "a".repeat(64)
+                    ),
+                    "owner-a",
+                    None,
+                    None,
+                ),
+            )
+            .await;
+            assert_eq!(status["unresolved_effects"], 1);
+            let mut legacy = body;
+            legacy.as_object_mut().unwrap().remove("revocation");
+            assert_eq!(legacy, status["receipt"]);
+        }
+        assert_eq!(
+            *service.commands.lock().unwrap(),
+            [("original".into(), Some(1)), ("original".into(), Some(1))]
+        );
+    }
+}
+
+#[tokio::test]
+async fn agent_link_success_and_replay_preserve_original_operation_without_changing_legacy_fields()
+{
+    let (router, store, _) = app().await;
+    let (code, created) = json_response(
+        &router,
+        request(
+            "POST",
+            "/api/v1/agents/agt_share/share-links",
+            "owner-a",
+            Some("create-link"),
+            Some(json!({"audience":{"kind":"public"}, "mode":"view", "token":"c".repeat(64)})),
+        ),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert!(created.get("revocation").is_none());
+    let id = created["id"].as_str().unwrap();
+    let mut service = Service::completed();
+    let mut share = store.resource_share(id).await.unwrap().unwrap();
+    share.revoked_at = Some("2026-01-01T00:00:01Z".into());
+    share.revision += 1;
+    service.value.share_id = id.into();
+    service.value.receipt.as_mut().unwrap().share = share;
+    let service = Arc::new(service);
+    let router = installed(router, service.clone());
+    for _ in 0..2 {
+        let response = router
+            .clone()
+            .oneshot(request(
+                "DELETE",
+                &format!("/api/v1/agents/agt_share/share-links/{id}?expected_revision=1"),
+                "owner-a",
+                Some("original"),
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            body["revocation"],
+            json!({
+                "operation_id":"a".repeat(64), "kind":"agent", "id":"agt_share",
+                "share_id":id, "expected_revision":1,
+            })
+        );
+        let mut legacy = body;
+        legacy.as_object_mut().unwrap().remove("revocation");
+        let mut expected = created.clone();
+        expected["revoked_at"] = json!("2026-01-01T00:00:01Z");
+        expected["revision"] = json!(2);
+        assert_eq!(legacy, expected);
+    }
+    assert_eq!(service.value.unresolved_effects, 1);
+    assert_eq!(
+        *service.commands.lock().unwrap(),
+        [("original".into(), Some(1)), ("original".into(), Some(1))]
+    );
 }

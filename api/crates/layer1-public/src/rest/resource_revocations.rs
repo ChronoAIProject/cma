@@ -23,6 +23,45 @@ use crate::AuthenticatedResourceCaller;
 
 pub(super) type Revocations = Extension<Arc<dyn ResourceRevocations>>;
 
+#[derive(Serialize, ToSchema)]
+pub(crate) struct RevocationReferenceView {
+    operation_id: String,
+    kind: String,
+    id: String,
+    share_id: String,
+    expected_revision: u64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct RevocationAwareSuccess<T> {
+    #[serde(flatten)]
+    value: T,
+    /// Original status identity. A successful access change does not prove external effects ended.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revocation: Option<RevocationReferenceView>,
+}
+
+pub(super) fn completed<T: Serialize>(status: &RevocationStatus, value: T) -> Response {
+    let (kind, id) = match &status.selector {
+        ResourceSelector::Agent { agent_id } => ("agent", agent_id.as_str()),
+        ResourceSelector::Sandbox { sandbox_id } => ("sandbox", sandbox_id.as_str()),
+    };
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(RevocationAwareSuccess {
+            value,
+            revocation: Some(RevocationReferenceView {
+                operation_id: status.operation_id.clone(),
+                kind: kind.into(),
+                id: id.into(),
+                share_id: status.share_id.clone(),
+                expected_revision: status.expected_revision,
+            }),
+        }),
+    )
+        .into_response()
+}
+
 pub(super) fn routes() -> Router<Arc<ResourceAccessService>> {
     Router::new()
         .route("/api/v1/resource-revocations", post(create))

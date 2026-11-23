@@ -233,7 +233,7 @@ pub(crate) async fn create(
 
 #[utoipa::path(patch, path = "/api/v1/resource-shares/{kind}/{id}/{share_id}", tag = "resource-access",
     params(("kind" = String, Path), ("id" = String, Path), ("share_id" = String, Path), ("Idempotency-Key" = String, Header)), request_body = UpdateShareBody,
-    responses((status = 200, body = ShareReceiptView), (status = 409, body = super::ProblemDocument)))]
+    responses((status = 200, body = super::resource_revocations::RevocationAwareSuccess<ShareReceiptView>), (status = 409, body = super::ProblemDocument)))]
 pub(crate) async fn update(
     revocations: Option<super::resource_revocations::Revocations>,
     State(service): State<Arc<ResourceAccessService>>,
@@ -263,7 +263,7 @@ pub(crate) async fn update(
 
 #[utoipa::path(delete, path = "/api/v1/resource-shares/{kind}/{id}/{share_id}", tag = "resource-access",
     params(("kind" = String, Path), ("id" = String, Path), ("share_id" = String, Path), ("Idempotency-Key" = String, Header), ("expected_revision" = u64, Query)),
-    responses((status = 200, body = ShareReceiptView), (status = 409, body = super::ProblemDocument)))]
+    responses((status = 200, body = super::resource_revocations::RevocationAwareSuccess<ShareReceiptView>), (status = 409, body = super::ProblemDocument)))]
 pub(crate) async fn revoke(
     revocations: Option<super::resource_revocations::Revocations>,
     State(service): State<Arc<ResourceAccessService>>,
@@ -328,7 +328,10 @@ async fn change(
                 .await
             {
                 Ok(value) => match value.receipt.clone() {
-                    Some(receipt) => Json(ShareReceiptView::from(receipt)).into_response(),
+                    Some(receipt) => super::resource_revocations::completed(
+                        &value,
+                        ShareReceiptView::from(receipt),
+                    ),
                     None => super::resource_revocations::pending(&value),
                 },
                 Err(error) => super::resource_revocations::problem(error),

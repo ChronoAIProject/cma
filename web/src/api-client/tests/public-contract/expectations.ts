@@ -355,6 +355,12 @@ export function expectedRequestUrl(fixture: ContractCase): URL {
 }
 
 export function expectedProjection(fixture: ContractCase): unknown {
+  if (fixture.id.startsWith('revocation-success-')) {
+    const body = fixture.response.body as Record<string, unknown> & {
+      revocation: { operation_id: string };
+    };
+    return { ...body, revocation: { operation: body.revocation.operation_id } };
+  }
   if (fixture.operation === 'GET /api/v1/triggers/public/{public_id}/badge.svg') {
     return {
       status: fixture.response.status,

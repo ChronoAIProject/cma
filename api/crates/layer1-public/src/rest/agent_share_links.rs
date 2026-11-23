@@ -184,7 +184,7 @@ pub(super) async fn create(
         .await?;
     Ok(Json(view(&service, receipt.share).await?))
 }
-#[utoipa::path(delete, path="/api/v1/agents/{id}/share-links/{share_id}", tag="agents", params(("id"=String,Path),("share_id"=String,Path),("expected_revision"=u64,Query),("Idempotency-Key"=String,Header)),responses((status=200,body=ShareLinkView),(status=409,body=super::ProblemDocument,content_type="application/problem+json")))]
+#[utoipa::path(delete, path="/api/v1/agents/{id}/share-links/{share_id}", tag="agents", params(("id"=String,Path),("share_id"=String,Path),("expected_revision"=u64,Query),("Idempotency-Key"=String,Header)),responses((status=200,body=super::resource_revocations::RevocationAwareSuccess<ShareLinkView>),(status=409,body=super::ProblemDocument,content_type="application/problem+json")))]
 pub(super) async fn revoke(
     revocations: Option<super::resource_revocations::Revocations>,
     State(service): State<Arc<ResourceAccessService>>,
@@ -216,7 +216,10 @@ pub(super) async fn revoke(
                 .await
             {
                 Ok(value) => match value.receipt.clone() {
-                    Some(receipt) => Json(view(&service, receipt.share).await?).into_response(),
+                    Some(receipt) => super::resource_revocations::completed(
+                        &value,
+                        view(&service, receipt.share).await?,
+                    ),
                     None => super::resource_revocations::pending(&value),
                 },
                 Err(error) => super::resource_revocations::problem(error),

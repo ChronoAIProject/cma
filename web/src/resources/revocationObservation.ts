@@ -67,12 +67,14 @@ async function observe<T>(
   }
 }
 
-function completePending(
+export function retainPendingOperation(
   scope: RevocationScope,
   intent: RevocationIntent,
   expected: RetainedShareChange | undefined,
-  status: ResourceRevocationStatus,
 ) {
+  assertRevocationScope(scope);
+  if (!intent.operation || !/^[a-f0-9]{64}$/.test(intent.operation))
+    throw new Error('The original operation is unavailable.');
   if (expected && scope.kind !== 'sandbox') throw new Error('The share scope changed.');
   const target = { kind: 'sandbox' as const, id: scope.id, name: '' };
   const priorShare = expected
@@ -81,7 +83,7 @@ function completePending(
   const prior = expected
     ? priorShare
     : readRevocations(scope.owner, scope.id).find((row) => row.shareId === intent.shareId);
-  if (!prior) return;
+  if (!prior) throw new Error('The original saved share change is unavailable.');
   if (
     prior.key !== intent.key ||
     prior.revision !== intent.revision ||
@@ -98,8 +100,18 @@ function completePending(
       saveShareChange(scope.owner, target, { ...expected, operation: intent.operation });
     else saveRevocation(scope.owner, scope.id, intent);
   }
+}
+
+function completePending(
+  scope: RevocationScope,
+  intent: RevocationIntent,
+  expected: RetainedShareChange | undefined,
+  status: ResourceRevocationStatus,
+) {
+  retainPendingOperation(scope, intent, expected);
   retainRevocationEvidence(scope, status);
-  if (expected) forgetShareChange(scope.owner, target, expected);
+  if (expected)
+    forgetShareChange(scope.owner, { kind: 'sandbox', id: scope.id, name: '' }, expected);
   else forgetRevocation(scope.owner, scope.id, intent.shareId);
 }
 

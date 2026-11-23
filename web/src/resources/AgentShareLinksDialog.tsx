@@ -17,6 +17,7 @@ import { agentShareUrl, newAgentShareToken } from './agentShareToken';
 import './AgentShareLinks.css';
 import { RevocationStatus } from './RevocationStatus';
 import { UnresolvedRevocations } from './UnresolvedRevocations';
+import { retainPendingOperation } from './revocationObservation';
 import {
   readRevocations,
   saveRevocation,
@@ -208,6 +209,19 @@ function AgentShareLinksContent({ client, ownerId, agentId, open, onClose }: Pro
       return;
     }
     const key = retained.key;
+    const adoptOperation = (operation: string) => {
+      const pending = { ...retained, operation };
+      setRevocations((rows) => [...rows.filter((row) => row.shareId !== link.id), pending]);
+      setConfirm(undefined);
+      try {
+        if (!ownerId) throw new Error('Owner identity is unavailable.');
+        retainPendingOperation({ owner: ownerId, kind: 'agent', id: agentId }, pending, undefined);
+      } catch {
+        setError(
+          'The original request is saved, but status recovery could not be saved. Keep this tab open and restore session storage.',
+        );
+      }
+    };
     setBusy(link.id);
     setError(undefined);
     try {
@@ -220,6 +234,10 @@ function AgentShareLinksContent({ client, ownerId, agentId, open, onClose }: Pro
       if (request.signal.aborted) return;
       if (result.id !== link.id || result.agent_id !== agentId || result.revoked_at === null)
         throw new Error('Revocation could not be confirmed. Try again.');
+      if (result.revocation) {
+        adoptOperation(result.revocation.operation);
+        return;
+      }
       try {
         if (ownerId) forgetRevocation(ownerId, agentId, link.id);
       } catch {
@@ -231,17 +249,8 @@ function AgentShareLinksContent({ client, ownerId, agentId, open, onClose }: Pro
     } catch (cause) {
       if (!request.signal.aborted) {
         const operation = pendingRevocation(cause, 'agent', agentId);
-        if (operation && client.resourceRevocations && ownerId) {
-          const pending = { ...retained, operation };
-          try {
-            saveRevocation(ownerId, agentId, pending);
-            setRevocations((rows) => [...rows.filter((row) => row.shareId !== link.id), pending]);
-            setConfirm(undefined);
-          } catch {
-            setError(
-              'Revocation is pending. Keep this tab open and retry the original request when session storage is available.',
-            );
-          }
+        if (operation) {
+          adoptOperation(operation);
         } else {
           if (cause instanceof ApiError && cause.code === 'resource_access_changed') {
             try {
