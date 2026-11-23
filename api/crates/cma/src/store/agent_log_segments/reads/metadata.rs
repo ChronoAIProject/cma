@@ -230,15 +230,7 @@ pub(super) async fn containing_from(
     if seal.ordinal + 1 == head.active_ordinal {
         seal.precedes(head)?;
     } else {
-        let next = seal_at_from(
-            db,
-            head,
-            seal.ordinal + 1,
-            session,
-            snapshot,
-            budget,
-        )
-        .await?;
+        let next = seal_at_from(db, head, seal.ordinal + 1, session, snapshot, budget).await?;
         next.follows(&seal)?;
     }
     Ok(seal)
