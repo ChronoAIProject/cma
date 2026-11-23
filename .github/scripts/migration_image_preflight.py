@@ -1,4 +1,5 @@
 """Retain only the image fields used by compatibility checks, before kind starts."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -24,10 +25,23 @@ def identity_metadata(text):
             raise ValueError('image metadata objects are malformed')
         retained['Config'] = {'Labels': {key: labels[key] for key in (
             'org.opencontainers.image.revision', 'org.opencontainers.image.source') if key in labels}}
-        retained['Descriptor'] = {'annotations': {
-            key: annotations[key] for key in ('config.digest',) if key in annotations}}
+        # The classic store has no descriptor; its absence selects how the
+        # config digest is bound, so it must not be replaced by an empty one.
+        if 'Descriptor' in row:
+            kept = {key: descriptor[key] for key in ('mediaType', 'digest') if key in descriptor}
+            kept['annotations'] = {key: annotations[key] for key in ('config.digest',) if key in annotations}
+            retained['Descriptor'] = kept
         result.append(retained)
     return result
+
+
+def manifest_metadata(text):
+    document = json.loads(text)
+    if not isinstance(document, dict) or not isinstance(document.get('config') or {}, dict):
+        raise ValueError('image manifest must be an object')
+    return {'manifest_sha256': hashlib.sha256(text.encode()).hexdigest(),
+            'mediaType': document.get('mediaType'),
+            'config': (document.get('config') or {}).get('digest')}
 
 
 class ImagePreflight:
@@ -37,12 +51,19 @@ class ImagePreflight:
         self.observations = []
 
     def __call__(self, argv):
-        if len(argv) != 4 or argv[:3] != ['docker', 'image', 'inspect']:
+        inspection = len(argv) == 4 and argv[:3] == ['docker', 'image', 'inspect']
+        manifest = len(argv) == 6 and argv[:5] == ['docker', 'buildx', 'imagetools', 'inspect', '--raw']
+        if not (inspection or manifest):
             raise ValueError('image preflight only permits Docker image inspection')
         row = {'argv': argv, 'started_at': time.time()}
         try:
             value = self.command(argv)
             row['exit'] = 0
+            if manifest:
+                # The raw manifest is returned unchanged for its digest check;
+                # only its identity, never its layer list, is retained.
+                row['metadata'] = manifest_metadata(value)
+                return value
             row['metadata'] = identity_metadata(value)
             return json.dumps(row['metadata'])
         except (ValueError, AttributeError, TypeError) as error:
