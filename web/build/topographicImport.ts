@@ -30,7 +30,7 @@ export function optionalTopographicImport(): Plugin {
       return {
         code: code.replace(
           source,
-          `import(/* @vite-ignore */ import.meta.ROLLUP_FILE_URL_${reference})`,
+          () => `import(/* @vite-ignore */ import.meta.ROLLUP_FILE_URL_${reference})`,
         ),
         map: null,
       };
