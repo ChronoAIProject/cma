@@ -96,6 +96,7 @@ async fn same_manager_resumes_retained_durable_work_under_a_strictly_newer_epoch
             .advance("recovered-worker", fence, AgentWorkStep::None, NOW.into())
             .unwrap();
         completed.revision += 1;
+        completed.updated_at = NOW.into();
         completed.conversation.last_seq += 1;
         next.run(store.commit_agent_work(AgentWorkMutation {
             expected_agent_revision: claimed.revision,

@@ -54,41 +54,56 @@ fn raw_body(body: &str) -> Vec<u8> {
 }
 
 #[tokio::test]
-async fn actual_transport_loss_and_deadline_recover_on_the_same_receiver() {
+async fn connection_refusal_and_deadline_recover_on_the_same_receiver() {
     for deadline in [false, true] {
         let authority = TestAuthority::new(3);
         let listener = listener().await;
-        let receiver = fence(listener.local_addr().unwrap(), &authority);
+        let address = listener.local_addr().unwrap();
+        let receiver = fence(address, &authority);
+        let outcome = ReceiverSettlementWatch::default();
+        let listener = if deadline {
+            listener
+        } else {
+            drop(listener);
+            assert_eq!(
+                receiver
+                    .settle_typed(ReceiverConfirmationCustody::PossiblyDelivered, &outcome)
+                    .await,
+                Err(Failure::Unavailable)
+            );
+            assert!(outcome.terminal().is_none());
+            tokio::net::TcpListener::bind(address).await.unwrap()
+        };
         let reply = json_response(&OwnerAcknowledgement {
             owner: authority.owner(),
             protocol: 1,
         });
         let (release, wait) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(async move {
-            let (mut first, _) = listener.accept().await.unwrap();
-            let first_request = read_request(&mut first).await;
-            if deadline {
+            let first_request = if deadline {
+                let (mut first, _) = listener.accept().await.unwrap();
+                let request = read_request(&mut first).await;
                 wait.await.unwrap();
-            }
-            drop(first);
+                drop(first);
+                Some(request)
+            } else {
+                None
+            };
             let (mut second, _) = listener.accept().await.unwrap();
             let second_request = read_request(&mut second).await;
-            assert_eq!(first_request, second_request);
+            if let Some(first_request) = first_request {
+                assert_eq!(first_request, second_request);
+            }
             second.write_all(&reply).await.unwrap();
         });
-        let outcome = ReceiverSettlementWatch::default();
-        assert_eq!(
-            receiver
-                .settle_typed(ReceiverConfirmationCustody::PossiblyDelivered, &outcome)
-                .await,
-            Err(if deadline {
-                Failure::Deadline
-            } else {
-                Failure::Unavailable
-            })
-        );
-        assert!(outcome.terminal().is_none());
         if deadline {
+            assert_eq!(
+                receiver
+                    .settle_typed(ReceiverConfirmationCustody::PossiblyDelivered, &outcome)
+                    .await,
+                Err(Failure::Deadline)
+            );
+            assert!(outcome.terminal().is_none());
             release.send(()).unwrap();
         }
         assert_eq!(
@@ -100,6 +115,22 @@ async fn actual_transport_loss_and_deadline_recover_on_the_same_receiver() {
         assert!(outcome.terminal().is_none());
         server.await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn unclassified_reply_loss_remains_fatal() {
+    let authority = TestAuthority::new(3);
+    let (receiver, calls, server) = response(vec![], &authority).await;
+    let outcome = ReceiverSettlementWatch::default();
+    assert_eq!(
+        receiver
+            .settle_typed(ReceiverConfirmationCustody::PossiblyDelivered, &outcome)
+            .await,
+        Err(Failure::Unclassified)
+    );
+    assert_eq!(outcome.terminal(), Some(Failure::Unclassified));
+    server.await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
