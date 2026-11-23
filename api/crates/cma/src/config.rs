@@ -30,6 +30,7 @@ mod debug;
 mod global_admission;
 mod http_connections;
 mod provider_tool_relay;
+mod public_owner_sandbox_limit;
 pub(crate) use access_migration::AgentAccessMigration;
 #[cfg(test)]
 pub(crate) use anonymous_public::AnonymousPublicConfig;
@@ -158,6 +159,7 @@ pub struct Config {
     pub(crate) legal_terms: Option<layer2_core::legal_consent::LegalTerms>,
     pub(crate) account_erasure_transaction_drain_seconds: u64,
     pub(crate) global_sandbox_limit: u16,
+    pub(crate) public_owner_sandbox_limit: Option<std::num::NonZeroU16>,
     pub(crate) agent_log_fleet_percent: u8,
     pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
     pub bind: SocketAddr,
@@ -301,6 +303,7 @@ impl Config {
         let account_erasure_transaction_drain_seconds =
             account_deletion::transaction_drain(&mut lookup)?;
         let global_sandbox_limit = global_admission::from_lookup(&mut lookup)?;
+        let public_owner_sandbox_limit = public_owner_sandbox_limit::from_lookup(&mut lookup)?;
         let bounded_admission_agents = admission_log::from_lookup(&mut lookup)?;
         let agent_log_fleet_percent =
             admission_log::fleet_percent(&mut lookup, &bounded_admission_agents)?;
@@ -351,6 +354,7 @@ impl Config {
         }
         Ok(Self {
             global_sandbox_limit,
+            public_owner_sandbox_limit,
             account_deletion_enabled,
             legal_terms,
             creation_outcomes,

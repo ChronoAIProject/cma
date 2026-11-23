@@ -80,6 +80,7 @@ pub struct MongoSandboxStore {
         Option<std::sync::Arc<super::agent_connection_observations::Observations>>,
     pub(super) segment_logs: super::agent_log_segments::SegmentCollections,
     pub(super) global_sandbox_limit: u16,
+    pub(super) public_owner_sandbox_limit: Option<std::num::NonZeroU16>,
     #[cfg(test)]
     pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
     pub(super) renewable_work: bool,
@@ -225,6 +226,7 @@ impl MongoSandboxStore {
             agent_connection_observations: None,
             segment_logs: super::agent_log_segments::SegmentCollections::new(&database),
             global_sandbox_limit: 0,
+            public_owner_sandbox_limit: None,
             #[cfg(test)]
             request_budget_clock: None,
             bounded_admission_agents: Default::default(),

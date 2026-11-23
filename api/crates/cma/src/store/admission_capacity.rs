@@ -44,7 +44,7 @@ pub(super) async fn require_sessions(
             && super::registration_capacity::is_public(
                 &store.sandbox_admissions,
                 &agent.owner,
-                session,
+                Some(session),
             )
             .await
             .map_err(ApplyError::Driver)?
