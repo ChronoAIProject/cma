@@ -14,6 +14,7 @@ const suites = [
   "connection-popup-blocked.check.ts",
   "connection-cancel-reentry.check.ts",
   "connection-terminal-reentry.check.ts",
+  "connection-pending-reentry.check.ts",
 ];
 
 function verify(job, suite, inherited) {
