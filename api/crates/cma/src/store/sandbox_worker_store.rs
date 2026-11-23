@@ -36,8 +36,12 @@ impl SandboxWorkerStore for MongoSandboxStore {
         &self,
         sandbox: &layer2_core::sandbox::Sandbox,
     ) -> Result<Option<layer3_adapter::ReleasedRuntime>, SandboxStoreError> {
+        let Some(lanes) = &self.released_lanes else {
+            return Ok(None);
+        };
         let database = self.client.database(&self.sandboxes.namespace().db);
-        super::agent_lifecycle_operations::released::admitted_release(&database, sandbox).await
+        super::agent_lifecycle_operations::released::admitted_release(&database, lanes, sandbox)
+            .await
     }
 
     async fn due_sandbox_work(

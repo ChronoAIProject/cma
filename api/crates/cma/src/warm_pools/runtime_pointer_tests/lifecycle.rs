@@ -22,7 +22,7 @@ use layer3_adapter::{
 };
 use std::time::SystemTime;
 
-use crate::warm_pools::tests::runtime_pointer::lifecycle_backend::Backend;
+use crate::warm_pools::tests::runtime_pointer::lifecycle_backend::{Backend, SnapshotFixture};
 
 pub(super) struct Lifecycle {
     store: Arc<MongoSandboxStore>,
@@ -37,14 +37,25 @@ pub(super) struct Lifecycle {
 impl ControllerReplica<'_> {
     pub(super) async fn lifecycle(&self) -> TestResult<&Lifecycle> {
         self.lifecycle
-            .get_or_try_init(|| Lifecycle::new(self.replica, self.controller.release.clone()))
+            .get_or_try_init(|| {
+                Lifecycle::new(
+                    self.replica,
+                    self.controller.release.clone(),
+                    image(Lane::Agent, 'a'),
+                    image(Lane::Machine, '1'),
+                )
+            })
             .await
     }
 }
 
 impl Lifecycle {
-    async fn new(replica: &Replica, released: Arc<StoreReleasedRuntime>) -> TestResult<Self> {
-        let pin = image(Lane::Agent, 'a');
+    pub(super) async fn new(
+        replica: &Replica,
+        released: Arc<StoreReleasedRuntime>,
+        pin: String,
+        machine_pin: String,
+    ) -> TestResult<Self> {
         let store = Arc::new(
             open_pointer_fixture_sandbox_store(&replica.database, pin.clone(), released.clone())
                 .await?,
@@ -75,11 +86,22 @@ impl Lifecycle {
             policy.clone(),
             Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         );
+        let local_home = layer3_adapter::HomeVolumePolicy {
+            mode: layer3_adapter::HomeVolumeMode::LegacySnapshot,
+            template_name: "fixture-snapshot".into(),
+            template_generation: "initial".into(),
+            ..home_policy()
+        };
+        let homes = Arc::new(layer3_adapter::RoutedHomeVolumes::new(
+            Some((Arc::new(SnapshotFixture), local_home.clone())),
+            Some((Arc::new(replica.provider.clone()), home_policy())),
+        )?);
         let adapter = Arc::new(
             CodexAdapter::with_backend(
                 Backend {
                     provider: replica.provider.clone(),
                     hosted: replica.hosted.clone(),
+                    homes: homes.clone(),
                 },
                 CodexSandboxSpec {
                     deployment: HostedDeployment {
@@ -89,12 +111,13 @@ impl Lifecycle {
                     ..CodexSandboxSpec::default()
                 },
             )
-            .with_home_volumes(Arc::new(replica.provider.clone())),
+            .with_native_runtime_image(deployment_image(machine_pin))?
+            .with_home_volumes(homes),
         );
         let actions = ActionLog::default();
         let registry = Arc::new(LiveAgentRegistry::default());
         let mut config = SandboxWorkerConfig::new(&replica.mongo_app_name, DEPLOYMENT, pin, policy)
-            .with_home_policy(Some(home_policy()))
+            .with_home_policy(Some(local_home))
             .with_released_runtime(released.clone());
         config.retry_delay = Duration::ZERO;
         let worker = SandboxWorker::new(

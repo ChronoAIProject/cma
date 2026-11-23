@@ -136,6 +136,36 @@ impl MongoReleasedRuntimes {
         Ok(Some(document.record))
     }
 
+    pub(super) async fn has_served_image(
+        &self,
+        lane: ReleasedLane,
+        image: &str,
+    ) -> Result<bool, SandboxStoreError> {
+        let Some(record) = self.load(lane).await? else {
+            return Ok(false);
+        };
+        if record.active.image == image {
+            return Ok(true);
+        }
+        // Every superseded image, including the bootstrap, appears as
+        // from_image in the immutable receipt that advanced the lane.
+        let found = self
+            .transitions
+            .find_one(doc! {
+                "deployment": &self.deployment,
+                "document_schema_version": SCHEMA_VERSION,
+                "transition.lane": lane_key(lane),
+                "transition.from_image": image,
+                "transition.to_revision": { "$lte": revision(record.active.revision)? },
+            })
+            .await
+            .map_err(unavailable)?;
+        Ok(found.is_some_and(|row| {
+            row.id == self.transition_id(lane, row.transition.from_revision)
+                && row.transition.from_revision.checked_add(1) == Some(row.transition.to_revision)
+        }))
+    }
+
     /// Create the lane from its verified first record once. A concurrent or
     /// earlier bootstrap wins, and its record is returned instead.
     pub(crate) async fn bootstrap(

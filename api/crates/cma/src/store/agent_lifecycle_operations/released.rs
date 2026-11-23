@@ -5,6 +5,7 @@ use layer3_adapter::ReleasedRuntime;
 use mongodb::{bson::Document, Database};
 
 use super::{doc, majority_collection, schema, LifecycleRecord, COLLECTION};
+use crate::store::released_runtimes::MongoReleasedRuntimes;
 
 pub(crate) fn managed_lifecycle_release_lane(
     request: &AgentLifecycleCreateRequest,
@@ -21,6 +22,7 @@ pub(crate) fn managed_lifecycle_release_lane(
 
 pub(in crate::store) async fn admitted_release(
     database: &Database,
+    lanes: &MongoReleasedRuntimes,
     sandbox: &Sandbox,
 ) -> Result<Option<ReleasedRuntime>, SandboxStoreError> {
     let SandboxOrigin::Lifecycle { operation_id } = &sandbox.origin else {
@@ -31,27 +33,41 @@ pub(in crate::store) async fn admitted_release(
     };
     let operations = majority_collection::<LifecycleRecord>(database, COLLECTION);
     let Some(operation) = operations
-        .find_one(doc! { "_id": operation_id, "owner": sandbox.owner.as_str(), "released_lane": { "$exists": true } })
+        .find_one(doc! { "_id": operation_id, "owner": sandbox.owner.as_str() })
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
     else {
         return Ok(None);
     };
-    let lane = managed_lifecycle_release_lane(&operation.input.request);
-    if operation.document_schema_version != schema::DOCUMENT_SCHEMA_VERSION
-        || lane.is_none()
-        || operation.released_lane != lane
-        || operation.input.resolved_image.as_ref() != Some(image)
-    {
-        return Err(SandboxStoreError::Corrupt(
-            "lifecycle release admission differs from its Sandbox".into(),
-        ));
-    }
+    let lane = managed_lifecycle_release_lane(&operation.input.request)
+        .filter(|_| operation.input.resolved_image.as_ref() == Some(image));
+    let lane = match (operation.released_lane, lane) {
+        (Some(recorded), Some(lane))
+            if recorded == lane
+                && operation.document_schema_version == schema::DOCUMENT_SCHEMA_VERSION =>
+        {
+            lane
+        }
+        (Some(_), _) => {
+            return Err(SandboxStoreError::Corrupt(
+                "lifecycle release admission differs from its Sandbox".into(),
+            ));
+        }
+        // A pre-marker desktop receipt needs proof that its exact image
+        // was released in this deployment and lane.
+        (None, Some(lane))
+            if operation.document_schema_version == schema::DOCUMENT_SCHEMA_VERSION
+                && lanes.has_served_image(lane, image).await? =>
+        {
+            lane
+        }
+        (None, _) => return Ok(None),
+    };
     // The lane fence admitted this exact image. The Sandbox profile still
     // renders the request, and this snapshot supplies its verified metadata.
     let (agent, machine) = match lane {
-        Some(ReleasedLane::Machine) => (String::new(), Some(image.clone())),
-        _ => (image.clone(), None),
+        ReleasedLane::Machine => (String::new(), Some(image.clone())),
+        ReleasedLane::Agent => (image.clone(), None),
     };
     Ok(Some(ReleasedRuntime {
         revision: 0,

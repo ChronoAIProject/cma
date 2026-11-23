@@ -50,14 +50,11 @@ impl SandboxWorker {
                 Ok(Some(home)) if sandbox.lifecycle.home.is_none() => {
                     // A fenced lifecycle receipt owns its pin across promotion.
                     // Other new homes fence the current release when reserved.
-                    let admitted = if home.request.policy.is_native_vct() {
-                        self.dependencies
-                            .store
-                            .admitted_runtime_release(sandbox)
-                            .await?
-                    } else {
-                        None
-                    };
+                    let admitted = self
+                        .dependencies
+                        .store
+                        .admitted_runtime_release(sandbox)
+                        .await?;
                     let released = admitted.is_none().then(|| self.config.release()).flatten();
                     let mut request = RuntimeProvisionRequest::new(
                         sandbox.lifecycle.runtime_generation_high_water.max(1),

@@ -6,8 +6,8 @@ use layer3_adapter::wire::{
 };
 use layer3_adapter::{
     AgentLaunch, ConversationChannel, ConversationUpdate, HomeVolumeAttachment, HomeVolumeReceipt,
-    HomeVolumeRequest, HomeVolumeScope, HomeVolumeStore, RuntimeHandle, RuntimeImage,
-    RuntimeObservation,
+    HomeVolumeRequest, HomeVolumeScope, HomeVolumeStore, RoutedHomeVolumes, RuntimeHandle,
+    RuntimeImage, RuntimeObservation,
 };
 
 #[derive(Clone, Default)]
@@ -59,6 +59,7 @@ impl HostedFixture {
 pub(super) struct Backend {
     pub(super) provider: Provider,
     pub(super) hosted: HostedFixture,
+    pub(super) homes: Arc<RoutedHomeVolumes>,
 }
 
 #[async_trait]
@@ -72,9 +73,7 @@ impl HostedBackend for Backend {
         _: &ProviderSandboxRequest,
         home: &HomeVolumeRequest,
     ) -> layer3_adapter::Result<HomeVolumeRequest> {
-        let mut home = home.clone();
-        home.scope = self.provider.allocation_scope();
-        Ok(home)
+        self.homes.reserve_for(true, home)
     }
 
     async fn select_native_pool(
@@ -245,6 +244,35 @@ impl HostedBackend for Backend {
                 assert_eq!(&runtime.request, request);
                 runtime.observation.clone()
             }))
+    }
+}
+
+pub(super) struct SnapshotFixture;
+
+#[async_trait]
+impl HomeVolumeStore for SnapshotFixture {
+    fn allocation_scope(&self) -> Option<HomeVolumeScope> {
+        Some(HomeVolumeScope::from_authority("snapshot", &["fixture", "local"]).unwrap())
+    }
+
+    async fn inventory(&self) -> layer3_adapter::Result<Vec<HomeVolumeAttachment>> {
+        Ok(Vec::new())
+    }
+
+    async fn prepare(&self, _: &HomeVolumeRequest) -> layer3_adapter::Result<HomeVolumeReceipt> {
+        unreachable!("this fixture routes new homes to the native provider")
+    }
+
+    async fn verify(&self, _: &HomeVolumeAttachment) -> layer3_adapter::Result<()> {
+        unreachable!("this fixture only retains native homes")
+    }
+
+    async fn remove(
+        &self,
+        _: &HomeVolumeRequest,
+        _: Option<&HomeVolumeReceipt>,
+    ) -> layer3_adapter::Result<()> {
+        unreachable!("the fixture retains its original home")
     }
 }
 
