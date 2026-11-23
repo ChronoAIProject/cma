@@ -16,8 +16,11 @@ use layer2_core::{
 };
 
 use super::{
-    admission::AdmissionRequest, discovery, preparation, settlement, status, transactions,
-    RecoveryCursor, RecoveryPage, RecoveryStatus, RecoveryStream,
+    admission::AdmissionRequest,
+    discovery,
+    observations::{cohort, Outcome, Stage},
+    preparation, settlement, status, transactions, RecoveryCursor, RecoveryPage, RecoveryStatus,
+    RecoveryStream,
 };
 use crate::store::{
     agent_log_segments::transaction_scope::TransactionScope, sandbox_mongo::MongoSandboxStore,
@@ -176,6 +179,9 @@ impl RecoveryService {
                 eprintln!("capacity recovery original lookup refused: {_error:?}");
             })?
         {
+            if self.store.segment_adoption_enabled {
+                cohort(Stage::Admitted, Outcome::Replay);
+            }
             return Ok(CommitOutcome::Recorded(*work));
         }
         if !self.features.enabled {
