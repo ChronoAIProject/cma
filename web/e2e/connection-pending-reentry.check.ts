@@ -78,7 +78,9 @@ test('LOCAL compiled pending intent survives ready services, reload and re-entry
         active_state: 'pending',
         services: [{ service: original.service_id, state: 'satisfied' }],
       });
-      await expect(wizard.getByRole('status')).toHaveText('1 of 1 connections verified');
+      await expect(
+        wizard.getByRole('status').filter({ hasText: /connections verified$/ }),
+      ).toHaveText('1 of 1 connections verified');
       await expect(fallback).toHaveAttribute('href', hostedUrl!);
       await expect(fallback).toBeVisible();
       await expect(wizard.getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
