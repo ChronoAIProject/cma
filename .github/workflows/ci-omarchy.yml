@@ -26,6 +26,7 @@ on:
       - api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch
 permissions:
   contents: "read"
+  issues: "read"
 jobs:
   omarchy:
     concurrency:
@@ -190,8 +191,15 @@ jobs:
           format: "json"
           output: "${{ runner.temp }}/omarchy-evidence/vulnerabilities.json"
           severity: "HIGH,CRITICAL"
-          exit-code: "1"
+          exit-code: "0"
           ignore-unfixed: true
+      -
+        name: "Omarchy vulnerability gate"
+        timeout-minutes: 5
+        env:
+          BASE_SHA: "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}"
+          GH_TOKEN: "${{ github.token }}"
+        run: "python3 -B .github/scripts/image_vulnerability_gate.py --component runtime-omarchy --report \"$RUNNER_TEMP/omarchy-evidence/vulnerabilities.json\" --base \"$BASE_SHA\""
       -
         name: "Retain Omarchy image evidence"
         if: "always() && steps.build.outcome == 'success'"
