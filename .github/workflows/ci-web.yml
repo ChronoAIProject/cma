@@ -314,4 +314,5 @@ jobs:
           python3 .github/scripts/web-image-evidence-tests.py
           ruby .github/scripts/web-build-contract.rb
         working-directory: "."
-    timeout-minutes: 45
+    # Budget for the complete design, shell, auth and default-off lanes as well.
+    timeout-minutes: 60
