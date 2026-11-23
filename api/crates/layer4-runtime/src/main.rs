@@ -23,6 +23,7 @@ mod git;
 mod github_proxy;
 mod history;
 mod home_initializer;
+mod home_restore_inspection;
 mod install;
 mod install_state;
 mod install_state_validation;
@@ -93,7 +94,19 @@ async fn main() {
 }
 
 async fn run() -> Result<(), String> {
-    let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    run_arguments(std::env::args_os().skip(1).collect()).await
+}
+
+#[cfg(test)]
+thread_local! { static TRAP_SERVING_STARTUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+async fn run_arguments(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
+    if arguments
+        .first()
+        .is_some_and(|arg| arg == "--inspect-restored-home")
+    {
+        return home_restore_inspection::run(&arguments[1..]);
+    }
     #[cfg(target_os = "linux")]
     if arguments.len() == 1 && arguments[0] == desktop_process::guardian::COMMAND {
         return desktop_process::guardian::run().await;
@@ -196,6 +209,10 @@ async fn run() -> Result<(), String> {
         if !waiting {
             return Err("unknown runtime command".into());
         }
+    }
+    #[cfg(test)]
+    if TRAP_SERVING_STARTUP.get() {
+        return Err("serving_startup_trapped".into());
     }
     // Native pools invoke this binary directly. Initialize image-specific
     // identity or trust before advertising readiness, never while seeding a reusable home.
