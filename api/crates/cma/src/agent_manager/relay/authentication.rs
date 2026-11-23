@@ -1,5 +1,5 @@
 use super::*;
-use axum::http::{HeaderMap, Method, Uri};
+use axum::http::{HeaderMap, HeaderValue, Method, Uri};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ring::hmac;
 use std::{
@@ -17,6 +17,8 @@ pub(super) struct Proof {
     until: u64,
 }
 
+const REQUEST_ID: &str = "x-request-id";
+
 pub(super) struct Authentication {
     key: hmac::Key,
     nonces: Mutex<BTreeMap<String, u64>>,
@@ -30,7 +32,48 @@ impl Authentication {
         }
     }
 
+    /// The exact headers an internal request sends: `headers`, the request ID
+    /// the receiver will see, and a proof over both.
+    ///
+    /// `x-request-id` is signed, and the receiving replica's request context
+    /// normalizes it or assigns a fresh one before the relay verifies the
+    /// proof. A sender that signed without it was refused as forged, so every
+    /// sender fixes the receiver's view of it here, signs exactly that map and
+    /// must send exactly the returned map.
+    pub fn signed_headers(
+        &self,
+        sender: &str,
+        owner: &OwnershipToken,
+        method: &Method,
+        uri: &Uri,
+        mut headers: HeaderMap,
+        body: &[u8],
+    ) -> Result<HeaderMap, ()> {
+        let id = layer1_public::rest::request_id_from_headers(&headers)
+            .map_or_else(|| uuid::Uuid::new_v4().to_string(), str::to_owned);
+        headers.remove(REQUEST_ID);
+        headers.insert(REQUEST_ID, HeaderValue::from_str(&id).map_err(|_| ())?);
+        headers.remove(PROOF);
+        let proof = self.proof(sender, owner, method, uri, &headers, body)?;
+        headers.insert(PROOF, HeaderValue::from_str(&proof).map_err(|_| ())?);
+        Ok(headers)
+    }
+
+    /// Sign arbitrary headers; tests use it to construct exact or forged proofs.
+    #[cfg(test)]
     pub fn sign(
+        &self,
+        sender: &str,
+        owner: &OwnershipToken,
+        method: &Method,
+        uri: &Uri,
+        headers: &HeaderMap,
+        body: &[u8],
+    ) -> Result<String, ()> {
+        self.proof(sender, owner, method, uri, headers, body)
+    }
+
+    fn proof(
         &self,
         sender: &str,
         owner: &OwnershipToken,

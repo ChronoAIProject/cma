@@ -33,6 +33,7 @@ impl Workers {
                 ("workspaces", true),
                 ("sandbox_reconciliation", true),
                 ("agent_capacity_recovery", true),
+                ("agent_stale_turn_reconciliation", false),
                 ("native_warm_pools", false),
                 #[cfg(test)]
                 ("home_backup_expiry", false),

@@ -49,13 +49,13 @@ async fn route_request(
             next.run(request).await
         };
     };
-    if settings && relay.settings_owner_routing.get().is_none() {
+    // With owner routing disabled, a Settings write still needs the owner's
+    // authority: without it the ownership fence refuses every commit. Serve it
+    // under a local owner and never forward it to a peer (#2267).
+    let local_settings = settings && relay.settings_owner_routing.get().is_none();
+    if local_settings && proof.is_some() {
         // An enabled ingress can reach a replica with this rollout still disabled.
-        return if proof.is_some() {
-            StatusCode::FORBIDDEN.into_response()
-        } else {
-            next.run(request).await
-        };
+        return StatusCode::FORBIDDEN.into_response();
     }
     // Route operations whose publication or runtime effects require execution-owner authority.
     if !private
@@ -233,7 +233,8 @@ async fn route_request(
         // One admission covers the owner response body, including live streams.
         return retain(response, slot);
     }
-    if private {
+    if private || local_settings {
+        // A retryable typed refusal: the caller may land on the owner next.
         return unavailable();
     }
     forward(
@@ -341,19 +342,19 @@ pub(super) async fn forward(
             headers.append(name, value.clone());
         }
     }
-    let proof = match relay.authentication.sign(
+    let headers = match relay.authentication.signed_headers(
         &relay.coordinator.instance_id,
         &destination.token,
         request.method(),
         request.uri(),
-        &headers,
+        headers,
         body,
     ) {
-        Ok(proof) => proof,
+        Ok(headers) => headers,
         Err(_) => return unavailable_with(environment.as_ref(), Refusal::PeerSignature),
     };
     if let Some(environment) = environment.as_mut() {
-        environment.correlate_hop(proof.as_bytes());
+        environment.correlate_hop(headers[PROOF].as_bytes());
     }
     let url = format!(
         "{}{}",
@@ -369,7 +370,6 @@ pub(super) async fn forward(
             .client
             .request(request.method().clone(), url)
             .headers(headers)
-            .header(PROOF, proof)
             .body(body.to_vec())
             .send(),
     )

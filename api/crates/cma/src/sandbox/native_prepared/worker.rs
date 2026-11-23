@@ -32,6 +32,9 @@ impl NativePreparedWorker {
         adapter: Arc<dyn SandboxAdapter>,
         config: &Config,
     ) -> Result<Self, String> {
+        // Prepared plans name one release for both lanes. A changed release
+        // must replace these plans; the planner retires records that differ.
+        let released = store.released_runtime();
         let target = config.runtime.native_prepared_target;
         let machine_target = config.runtime.native_machine_prepared_target;
         let mut desired = if target == 0 && machine_target == 0 {
@@ -68,7 +71,7 @@ impl NativePreparedWorker {
                     },
                     crate::agent_lifecycle::prepared_default_agent_profile()?,
                     reaches,
-                    config.runtime.sandbox_image.clone(),
+                    released.agent.clone(),
                     config.execution,
                     config
                         .runtime
@@ -81,9 +84,8 @@ impl NativePreparedWorker {
         };
         let machine_desired = if machine_target > 0 {
             let prototype = desired.as_ref().ok_or("prepared prototype missing")?;
-            let image = config
-                .runtime
-                .machine_sandbox_image
+            let image = released
+                .machine
                 .clone()
                 .ok_or("prepared machine image missing")?;
             let mut sandbox = prototype.warm.profile.content.clone();

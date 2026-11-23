@@ -53,6 +53,7 @@ export interface User {
   readonly capabilities: readonly Capability[];
   readonly visitor: boolean;
   readonly serviceAuthorization?: boolean;
+  readonly privacyExport?: boolean;
   readonly legalTerms?: LegalTerms;
 }
 

@@ -30,6 +30,7 @@ pub(crate) mod retained_recovery;
 pub(crate) mod runtime_attachment;
 mod runtime_mapping;
 mod scheduler;
+mod stale_turn_reconciliation;
 mod suggestion_worker;
 pub(crate) mod suggestions;
 mod title_budget;
@@ -55,7 +56,7 @@ pub(crate) use credential::{
 };
 #[cfg(test)]
 pub(crate) use live_agents::record_update_for_test;
-pub(crate) use live_agents::LiveAgentRegistry;
+pub(crate) use live_agents::{LiveAgentRegistry, LiveAgentTarget};
 #[cfg(test)]
 pub(crate) use model_request_budget::tests::assert_metered_title_refusal;
 pub(crate) use policy::LiveSandboxPolicy;

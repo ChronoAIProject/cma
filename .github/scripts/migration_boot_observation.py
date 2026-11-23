@@ -95,7 +95,15 @@ def evaluate(raw, existing, selected, image, config, version):
                     and any(c.get('type') == 'Ready' and c.get('status') == 'True'
                             for c in status.get('conditions', [])))
         if is_ready:
-            if config not in container.get('imageID', ''):
+            identity = container.get('imageID', '')
+            for prefix in ('containerd://', 'docker-pullable://'):
+                if identity.startswith(prefix):
+                    identity = identity[len(prefix):]
+                    break
+            accepted = {config}
+            if '@sha256:' in image:
+                accepted.update((image, image.split('@')[1]))
+            if identity not in accepted:
                 raise BootObservationError('startup watch image config differs from selected reader')
             ready.add(uid)
         if kind == 'DELETED' and uid not in ready:

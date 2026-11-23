@@ -69,12 +69,18 @@ async fn fixture_collections(database: &mongodb::Database) {
 
 pub(in crate::store) async fn prepare_bindings_for_test(database: &mongodb::Database) {
     fixture_collections(database).await;
+    apply_binding_indexes_for_test(database).await.unwrap();
+}
+
+pub(in crate::store) async fn apply_binding_indexes_for_test(
+    database: &mongodb::Database,
+) -> Result<serde_json::Value> {
     let ledger = ledger::Ledger::for_step(
         database.client().clone(),
         database.clone(),
         Step::BindingIndexes,
     );
-    apply_indexes(&ledger, database, &identity()).await.unwrap();
+    apply_indexes(&ledger, database, &identity()).await
 }
 
 #[test]

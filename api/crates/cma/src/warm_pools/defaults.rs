@@ -7,9 +7,10 @@ impl NativeWarmPools {
     /// Pod-policy change creates a new pool identity and never mutates a claimed
     /// pool. Provider resources are still created only by the normal reconciler.
     pub async fn ensure_default(&self) -> Result<(), WarmPoolError> {
-        self.ensure_image(&self.image, self.default_target, false)
+        let released = self.released_images();
+        self.ensure_image(&released.agent, self.default_target, false)
             .await?;
-        if let Some((image, target)) = &self.machine {
+        if let Some((image, target)) = &released.machine {
             self.ensure_image(image, *target, true).await?;
         }
         Ok(())

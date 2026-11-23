@@ -2,6 +2,10 @@
 
 from safety import CMA_ORIGIN, decode
 
+# The former web origin permanently redirects to the same path on the
+# canonical origin. The harness never follows a redirect, so no bearer leaves.
+REDIRECTING_ORIGIN = "https://bot.chrono-ai.fun"
+
 
 def check(p, case, good, response):
     p.record(case, "PASS" if good else "FAIL", [1291, 1597], response)
@@ -10,8 +14,8 @@ def check(p, case, good, response):
 
 
 def run(p):
-    origins = (CMA_ORIGIN, "https://bot.chrono-ai.fun", "https://bot-api.chrono-ai.fun")
-    for number, origin in enumerate(origins):
+    # bot-api.chrono-ai.fun is retired (#1343); only the canonical origin serves the API.
+    for number, origin in enumerate((CMA_ORIGIN,)):
         response = p.http.request(origin, "/openapi.json", limit=1024 * 1024)
         fields = {k.lower(): v for k, v in response[1].items()}
         valid = response[0] == 200 and "json" in fields.get("content-type", "").lower()
@@ -37,7 +41,7 @@ def run(p):
         response = p.http.request(origin, "/api/v1/sandboxes?limit=1",
                                   token=p.accounts["a"]["access_token"])
         check(p, "domain_owned_rest_" + str(number), response[0] == 200, response)
-    for number, origin in enumerate((CMA_ORIGIN, "https://bot.chrono-ai.fun")):
+    for number, origin in enumerate((CMA_ORIGIN,)):
         for service, route in (("agent", "/agent-manager/openapi.json"),
                                ("image", "/image-manager/openapi.json"),
                                ("gateway", "/event-gateway/openapi.json")):
@@ -47,6 +51,13 @@ def run(p):
             if valid:
                 valid = isinstance(decode(response[2]).get("paths"), dict)
             check(p, "domain_service_" + str(number) + "_" + service, valid, response)
+    for name, path in (("discovery", "/openapi.json"), ("agent", "/agent-manager/openapi.json"),
+                       ("gateway", "/event-gateway/openapi.json"),
+                       ("rest", "/api/v1/sandboxes?limit=1")):
+        response = p.http.request(REDIRECTING_ORIGIN, path)
+        headers = {k.lower(): v for k, v in response[1].items()}
+        check(p, "domain_redirect_" + name,
+              response[0] == 301 and headers.get("location") == CMA_ORIGIN + path, response)
     response = p.http.request("https://bot-gateway.chrono-ai.fun", "/openapi.json")
     valid = response[0] == 200 and isinstance(decode(response[2]).get("paths"), dict)
     check(p, "retained_gateway_discovery", valid, response)

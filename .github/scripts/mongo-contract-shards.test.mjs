@@ -49,8 +49,8 @@ export function registerShardTests({fixture, ...isolated}) {
       } finally { f.close(); }
     }
     assert.deepEqual(partitions.sort(), Array.from({length: 9}, (_, i) => `count:${i + 1}/9`).sort());
-    assert.equal(selected.length, 328);
-    assert.equal(new Set(selected).size, 328);
+    assert.equal(selected.length, 329);
+    assert.equal(new Set(selected).size, 329);
     for (const name of Object.values(isolated)) assert.ok(selected.includes(name));
   });
 

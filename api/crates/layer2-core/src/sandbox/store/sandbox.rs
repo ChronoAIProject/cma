@@ -106,7 +106,8 @@ pub trait SandboxStore: Send + Sync {
     }
 
     /// Current server-managed runtime; custom images and lost-runtime recovery stay pinned.
-    fn managed_runtime_version(&self) -> Option<&str> {
+    /// Read once per admission: each call may observe a newer release.
+    fn managed_runtime_version(&self) -> Option<String> {
         None
     }
 

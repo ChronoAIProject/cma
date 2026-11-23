@@ -267,7 +267,16 @@ pub enum ManagementError {
     Provider(ProviderError),
     Record(RecordError),
     NotFound,
-    Conflict { expected: u64, actual: Option<u64> },
+    Conflict {
+        expected: u64,
+        actual: Option<u64>,
+    },
+    /// The provider answered a binding release with a definite refusal. The
+    /// channel record is retained; nothing proves the binding is absent.
+    ReleaseRefused {
+        status: u16,
+        code: String,
+    },
     Unauthorized,
     Internal(String),
 }
@@ -283,6 +292,12 @@ impl fmt::Display for ManagementError {
                 write!(
                     formatter,
                     "channel version conflict: expected {expected}, actual {actual:?}"
+                )
+            }
+            Self::ReleaseRefused { status, .. } => {
+                write!(
+                    formatter,
+                    "provider refused to release the binding (HTTP {status})"
                 )
             }
             Self::Unauthorized => formatter.write_str("management service authentication failed"),
