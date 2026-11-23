@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import { useAgentAccess } from './agentAccess';
 import { useOwnerViews } from './retainedOwnerViews';
@@ -9,9 +9,11 @@ export function useConsoleAgentAccess(
   client: CmaWebClient,
   agentId: string | undefined,
   viewerId: string,
+  authEpoch = 0,
 ) {
   const ownerViews = useOwnerViews();
-  const agentAccess = useAgentAccess(client.resourceViews, agentId, viewerId, client);
+  const authority = useMemo(() => ({ client, authEpoch }), [client, authEpoch]);
+  const agentAccess = useAgentAccess(client.resourceViews, agentId, viewerId, authority);
   // A returning personal view already owns a transport. Its reopen path checks
   // identity itself; preparing another selection would add competing reads.
   const [opening, setOpening] = useState({
