@@ -216,9 +216,6 @@ fn unavailable() -> SandboxStoreError {
     SandboxStoreError::Unavailable("original runtime quiescence is incomplete".into())
 }
 
-// Keep uncertain transport failures retryable; a refused original-history or
-// identity proof requires outside recovery and uses the smaller retry budget.
-// This internal classification never changes the persisted failure diagnostic.
 /// The mapped store error is deliberately coarse, so a stalled recovery would
 /// otherwise retry with no visible cause. Keep the provider's reason observable.
 fn observed_recovery_failure(sandbox: &Sandbox, error: AdapterError) -> SandboxStoreError {
@@ -236,6 +233,9 @@ fn observed_recovery_failure(sandbox: &Sandbox, error: AdapterError) -> SandboxS
     recovery_failure(error)
 }
 
+// Keep uncertain transport failures retryable; a refused original-history or
+// identity proof requires outside recovery and uses the smaller retry budget.
+// This internal classification never changes the persisted failure diagnostic.
 fn recovery_failure(error: AdapterError) -> SandboxStoreError {
     match error {
         AdapterError::NativeClaimNotReady(_)

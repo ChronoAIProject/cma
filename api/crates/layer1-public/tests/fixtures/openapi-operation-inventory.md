@@ -739,7 +739,9 @@ states, refusal categories, atomic admission and rollback qualification.
 `runtime-update` accepts `{ "target_version": "<exact image reference>" }`
 with `Idempotency-Key` from the Sandbox owner. Use the owner detail's
 `runtime_update.latest_version`, or its retained `target_version` when retrying a
-failed update. HTTP 202 records the request; follow `runtime_update.state` on
+failed update. A failed update stalled at reopening conversations whose retained
+target is no longer the latest is recovered onto the latest runtime instead.
+HTTP 202 records the request; follow `runtime_update.state` on
 Sandbox reads until completion. Busy Agents defer the update until idle, and
 eligible managed Sandboxes retain their original home and conversations. Stale
 or conflicting targets return 409; replay an uncertain request with its original
@@ -750,7 +752,8 @@ Operators with `ControlAnySandbox` can queue the same update across owners using
 operator endpoint does not require an idempotency key: retrying the same pending
 target leaves the request unchanged. It validates the configured latest target
 or an already pinned retry target and audits the actual operator, Sandbox owner,
-and target. Queueing does not interrupt current work; the existing idle checks
+and admitted target. After a stalled reopen is recovered onto the latest runtime,
+its former target returns 409. Queueing does not interrupt current work; the existing idle checks
 and transaction fencing retain the original PVC and conversation identities.
 Operator Sandbox detail exposes `runtime_update` with the pinned target, current
 state, and completion or failure metadata. The owner endpoint still hides
