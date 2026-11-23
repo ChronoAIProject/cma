@@ -37,39 +37,22 @@ export function argumentsFor(args, env) {
 }
 
 export function configure(original, options) {
-  const { suite, web, origin, output, setup, p7 } = options;
+  const { suite, web, origin, output, setup, server, p7 } = options;
   assert.equal(original.workers, 1, "Browser suites must use one worker");
   assert.equal(original.retries, 0, "Browser suites cannot retry");
   assert.equal(original.forbidOnly, true, "Browser suites must forbid only");
   for (const config of [original, ...(original.projects ?? [])]) {
-    for (const key of [
-      "grep",
-      "grepInvert",
-      "shard",
-      "testIgnore",
-      "globalSetup",
-      "globalTeardown",
-    ])
+    for (const key of ["grep", "grepInvert", "shard", "testIgnore", "globalSetup", "globalTeardown"])
       assert.equal(config[key], undefined, `Browser configuration cannot narrow execution: ${key}`);
-    assert.ok(
-      config.repeatEach === undefined || config.repeatEach === 1,
-      "Browser suites cannot repeat",
-    );
-    assert.ok(
-      config.retries === undefined || config.retries === 0,
-      "Project retries are forbidden",
-    );
+    assert.ok(config.repeatEach === undefined || config.repeatEach === 1, "Browser suites cannot repeat");
+    assert.ok(config.retries === undefined || config.retries === 0, "Project retries are forbidden");
   }
   for (const project of original.projects ?? []) {
     assert.equal(project.testMatch, undefined, "Projects cannot replace the suite selection");
     assert.equal(project.testDir, undefined, "Projects cannot replace the suite directory");
     assert.ok(!project.dependencies?.length, "Unlisted project dependencies are forbidden");
     for (const key of ["baseURL", "trace", "screenshot"])
-      assert.equal(
-        project.use?.[key],
-        undefined,
-        `Projects cannot override owned evidence: ${key}`,
-      );
+      assert.equal(project.use?.[key], undefined, `Projects cannot override owned evidence: ${key}`);
   }
   const matches = [original.testMatch].flat();
   for (const file of suites[suite].files)
@@ -89,7 +72,7 @@ export function configure(original, options) {
   if (suite === "shell") result.testMatch = "shell-layout.check.ts";
   if (suite === "design") {
     assert.equal(original.webServer?.reuseExistingServer, false, "Design must own its server");
-    assert.match(original.webServer.command, /^npm run dev -- .*--port \d+.*--strictPort$/);
+    assert.match(original.webServer.command, /^npm run dev -- --host 127\.0\.0\.1 --port \d+ --strictPort$/);
     if (p7)
       assert.equal(
         original.webServer.env?.VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED,
@@ -98,7 +81,17 @@ export function configure(original, options) {
       );
     result.webServer = {
       ...original.webServer,
-      command: original.webServer.command.replace(/--port \d+/, `--port ${new URL(origin).port}`),
+      command: [process.execPath, server].map((arg) => "'" + arg.replaceAll("'", "'\\''") + "'").join(" "),
+      env: {
+        ...original.webServer.env,
+        CMA_P1_DEV_ARGS: JSON.stringify(
+          original.webServer.command
+            .replace(/--port \d+/, `--port ${new URL(origin).port}`)
+            .split(" ")
+            .slice(1),
+        ),
+      },
+      gracefulShutdown: { signal: "SIGTERM", timeout: 4000 },
       cwd: web,
       url: origin,
       reuseExistingServer: false,
@@ -119,11 +112,7 @@ function cases(report, executed) {
   function visit(suite) {
     for (const spec of suite.specs ?? [])
       for (const test of spec.tests) {
-        assert.equal(
-          test.expectedStatus,
-          "passed",
-          "Skipped or expected-failure cases cannot qualify",
-        );
+        assert.equal(test.expectedStatus, "passed", "Skipped or expected-failure cases cannot qualify");
         assert.ok(!test.annotations.some(({ type }) => ["skip", "fixme", "fail"].includes(type)));
         if (executed) {
           assert.equal(test.status, "expected", "Every discovered case must pass");
@@ -131,9 +120,7 @@ function cases(report, executed) {
           assert.equal(test.results[0].status, "passed");
           assert.equal(test.results[0].retry, 0);
         } else assert.deepEqual(test.results, [], "Discovery must not execute cases");
-        entries.push(
-          JSON.stringify([spec.id, spec.file, spec.title, test.projectId, test.timeout]),
-        );
+        entries.push(JSON.stringify([spec.id, spec.file, spec.title, test.projectId, test.timeout]));
       }
     for (const child of suite.suites ?? []) visit(child);
   }
@@ -152,13 +139,8 @@ export function verifyResults(discovery, execution) {
   const expected = cases(discovery, false);
   assert.deepEqual(cases(execution, true), expected, "Discovered and executed cases differ");
   for (const field of ["configFile", "rootDir", "grep", "grepInvert", "shard"])
-    assert.deepEqual(
-      execution.config[field],
-      discovery.config[field],
-      `Browser configuration changed: ${field}`,
-    );
-  const projects = (report) =>
-    report.config.projects.map(({ metadata, ...selection }) => selection);
+    assert.deepEqual(execution.config[field], discovery.config[field], `Browser configuration changed: ${field}`);
+  const projects = (report) => report.config.projects.map(({ metadata, ...selection }) => selection);
   assert.deepEqual(projects(execution), projects(discovery), "Project selection changed");
   assert.equal(execution.stats.expected, expected.length);
   for (const field of ["skipped", "unexpected", "flaky"]) assert.equal(execution.stats[field], 0);
@@ -176,17 +158,10 @@ export async function verifyDevIdentity(origin, revision, p7) {
       signal: AbortSignal.timeout(4000),
     });
     const text = await response.text();
-    assert.ok(
-      response.ok && !text.trimStart().startsWith("<"),
-      `Invalid development module: ${path}`,
-    );
+    assert.ok(response.ok && !text.trimStart().startsWith("<"), `Invalid development module: ${path}`);
     modules.push({ path, text, sha256: hash(text) });
   }
-  assert.match(
-    modules[0].text,
-    /__CHRONO_BUILD_SHA__/,
-    "Build module must consume the checked definition",
-  );
+  assert.match(modules[0].text, /__CHRONO_BUILD_SHA__/, "Build module must consume the checked definition");
   assert.ok(
     modules[1].text.match(/"__CHRONO_BUILD_SHA__"\s*:\s*"([^"]+)"/)?.[1] === revision,
     "Development server revision does not match checkout",
@@ -256,17 +231,35 @@ export async function command(file, args, { cwd, env, signal, log, timeout = 480
     });
     signal?.throwIfAborted();
     assert.ok(!timedOut, "Browser command exceeded its bound");
-    assert.equal(
-      result.code,
-      0,
-      `Browser command failed (${result.signal ?? result.code}); see ${log}`,
-    );
+    assert.equal(result.code, 0, `Browser command failed (${result.signal ?? result.code}); see ${log}`);
   } finally {
     clearTimeout(timer);
     clearTimeout(force);
     signal?.removeEventListener("abort", stop);
     kill("SIGKILL");
     await new Promise((done) => output.end(done));
+  }
+}
+
+export async function serveDesign() {
+  const controller = new AbortController();
+  const stop = () => controller.abort(new Error("Owned development server stopped"));
+  process.stdin.on("end", stop);
+  process.stdin.resume();
+  process.once("SIGTERM", stop);
+  process.once("SIGINT", stop);
+  try {
+    await command("npm", JSON.parse(process.env.CMA_P1_DEV_ARGS), {
+      cwd: process.cwd(),
+      env: process.env,
+      signal: controller.signal,
+      log: process.argv[2],
+      timeout: 540_000,
+    });
+  } finally {
+    process.stdin.destroy();
+    process.removeListener("SIGTERM", stop);
+    process.removeListener("SIGINT", stop);
   }
 }
 
@@ -295,10 +288,7 @@ export async function runSuite(suite, { repository = root, env = process.env, si
   argumentsFor([suite], env);
   const temporary = env.RUNNER_TEMP || (await mkdtemp(join(tmpdir(), "cma-browser-gate-")));
   const output = resolve(temporary, "cma-p1-browser", suite);
-  assert.ok(
-    !output.startsWith(resolve(repository) + "/"),
-    "Browser evidence must stay outside the source tree",
-  );
+  assert.ok(!output.startsWith(resolve(repository) + "/"), "Browser evidence must stay outside the source tree");
   await mkdir(dirname(output), { recursive: true });
   await mkdir(output);
   const receipt = { suite, status: "failed", output, commands: [] };
@@ -330,6 +320,11 @@ export async function runSuite(suite, { repository = root, env = process.env, si
         throw error;
       },
     );
+    const server = join(output, "server.mjs");
+    await writeFile(
+      server,
+      `import {serveDesign} from ${JSON.stringify(helper)};\nprocess.argv[2]=${JSON.stringify(join(output, "server.log"))};\nawait serveDesign();\n`,
+    );
     const setup = join(output, "identity.mjs");
     await writeFile(
       setup,
@@ -338,7 +333,7 @@ export async function runSuite(suite, { repository = root, env = process.env, si
     const config = join(output, "config.mts");
     await writeFile(
       config,
-      `import original from ${JSON.stringify(original)};\nimport {configure} from ${JSON.stringify(helper)};\nexport default configure(original,${JSON.stringify({ suite, web, origin, output, setup, p7 })});\n`,
+      `import original from ${JSON.stringify(original)};\nimport {configure} from ${JSON.stringify(helper)};\nexport default configure(original,${JSON.stringify({ suite, web, origin, output, setup, server, p7 })});\n`,
     );
     receipt.configSha256 = hash(await readFile(config));
     if (suite !== "design") preview = await startProductionPreview(web, port, source.revision);

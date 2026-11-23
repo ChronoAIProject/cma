@@ -21,13 +21,9 @@ import {
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const require = createRequire(new URL("../../web/package.json", import.meta.url));
 const yaml = require("js-yaml");
-const workflow = yaml.load(
-  await readFile(new URL("../workflows/ci-web.yml", import.meta.url), "utf8"),
-);
+const workflow = yaml.load(await readFile(new URL("../workflows/ci-web.yml", import.meta.url), "utf8"));
 const env = Object.fromEntries(
-  Object.entries(process.env).filter(
-    ([key]) => !/^(CMA_|PW_|PLAYWRIGHT_|NODE_OPTIONS|RUNNER_TEMP)/.test(key),
-  ),
+  Object.entries(process.env).filter(([key]) => !/^(CMA_|PW_|PLAYWRIGHT_|NODE_OPTIONS|RUNNER_TEMP)/.test(key)),
 );
 for (const key of ["CMA_E2E_BROWSER_PATH", "PLAYWRIGHT_BROWSERS_PATH"])
   if (process.env[key]) env[key] = process.env[key];
@@ -38,6 +34,7 @@ const options = {
   output: "/synthetic/output",
   setup: "/synthetic/setup.mjs",
   p7: true,
+  server: "/synthetic/server.mjs",
 };
 const original = () => ({
   workers: 1,
@@ -62,10 +59,7 @@ test("fixed CLI rejects execution bypasses, including inherited selectors", () =
   for (const args of [
     [],
     ["unknown"],
-    ...["--list", "--grep=x", "--project=x", "--shard=1/2", "--retries=1"].map((arg) => [
-      "design",
-      arg,
-    ]),
+    ...["--list", "--grep=x", "--project=x", "--shard=1/2", "--retries=1"].map((arg) => ["design", arg]),
   ])
     assert.throws(() => argumentsFor(args, {}));
   for (const key of [
@@ -85,9 +79,19 @@ test("wrapper preserves full design, future registrations, projects, timeouts an
   assert.deepEqual(config.testMatch, input.testMatch);
   assert.deepEqual(config.projects, input.projects);
   assert.equal(config.timeout, input.timeout);
-  assert.deepEqual(config.webServer.env, input.webServer.env);
+  assert.equal(config.webServer.env.VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED, "true");
   assert.equal(config.webServer.cwd, options.web);
-  assert.match(config.webServer.command, /--port 4311 --strictPort$/);
+  assert.match(config.webServer.command, /server.mjs/);
+  assert.deepEqual(JSON.parse(config.webServer.env.CMA_P1_DEV_ARGS), [
+    "run",
+    "dev",
+    "--",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "4311",
+    "--strictPort",
+  ]);
   assert.equal(config.use.trace, "retain-on-failure");
   assert.equal(config.use.screenshot, "only-on-failure");
   assert.equal(config.outputDir, "/synthetic/output/results");
@@ -116,9 +120,7 @@ test("configuration mutations cannot remove coverage or reuse a server", () => {
     ...["testMatch", "testDir", "retries", "dependencies"].map(
       (key) => (c) => (c.projects = [{ [key]: ["override"] }]),
     ),
-    ...["trace", "screenshot", "baseURL"].map(
-      (key) => (c) => (c.projects = [{ use: { [key]: "off" } }]),
-    ),
+    ...["trace", "screenshot", "baseURL"].map((key) => (c) => (c.projects = [{ use: { [key]: "off" } }])),
   ];
   for (const mutate of mutations) {
     const input = original();
@@ -207,9 +209,7 @@ function verifyWorkflow(job) {
     assert.equal(step.run, `node ../.github/scripts/p1-browser-ci.mjs ${suite}`);
     assert.ok(steps.indexOf(mechanics[0]) < steps.indexOf(step));
     assert.ok(steps.indexOf(step) < steps.findIndex((s) => s.id === "agent_v2"));
-    assert.ok(
-      steps.indexOf(step) > steps.findIndex((s) => s.name === "New agent request failure evidence"),
-    );
+    assert.ok(steps.indexOf(step) > steps.findIndex((s) => s.name === "New agent request failure evidence"));
     for (const checked of [step, mechanics[0]]) {
       for (const key of ["if", "continue-on-error", "env", "working-directory"])
         assert.equal(checked[key], undefined);
@@ -232,10 +232,7 @@ test("workflow executes the guard and all suites, fails closed and uploads match
     (j) => (j.steps.find((s) => s.id === "p1_design")["continue-on-error"] = true),
     (j) => (j.steps.find((s) => s.id === "p1_design").if = "false"),
     (j) => (j.steps.find((s) => s.name === "Design browser failure evidence").with.path = "wrong"),
-    (j) =>
-      delete j.steps.find((s) => s.name === "Design browser failure evidence").with[
-        "if-no-files-found"
-      ],
+    (j) => delete j.steps.find((s) => s.name === "Design browser failure evidence").with["if-no-files-found"],
   ]) {
     const job = structuredClone(workflow.jobs.web);
     mutate(job);
@@ -276,11 +273,7 @@ test("dev identity rejects a wrong checkout, HTML fallback and missing enabled f
         : req.url === "/src/shell/build.ts"
           ? "__CHRONO_BUILD_SHA__"
           : req.url === "/@vite/env"
-            ? JSON.stringify(
-                { __CHRONO_BUILD_SHA__: mode === "stale" ? "old" : "checkout" },
-                null,
-                2,
-              )
+            ? JSON.stringify({ __CHRONO_BUILD_SHA__: mode === "stale" ? "old" : "checkout" }, null, 2)
             : JSON.stringify({
                 VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED: mode === "off" ? "false" : "true",
               }),
@@ -297,16 +290,13 @@ async function fixture(t, body) {
   const directory = await temporary(t);
   const repository = join(directory, "repository");
   const web = join(repository, "web");
-  for (const path of ["web/e2e", "web/scripts", "web/dist", ".github/scripts"])
+  for (const path of ["web/e2e", "web/scripts", "web/dist", "web/src/shell", ".github/scripts"])
     await mkdir(join(repository, path), { recursive: true });
   await symlink(join(root, "web/node_modules"), join(web, "node_modules"), "dir");
   await cp(join(root, "web/scripts/preview.mjs"), join(web, "scripts/preview.mjs"));
-  await cp(
-    new URL("./p1-browser-ci.mjs", import.meta.url),
-    join(repository, ".github/scripts/p1-browser-ci.mjs"),
-  );
+  await cp(new URL("./p1-browser-ci.mjs", import.meta.url), join(repository, ".github/scripts/p1-browser-ci.mjs"));
   await writeFile(join(repository, ".gitignore"), "web/dist/\nweb/node_modules/\n");
-  await writeFile(join(web, "package.json"), '{"type":"module"}');
+  await writeFile(join(web, "package.json"), '{"type":"module","scripts":{"dev":"vite"}}');
   await writeFile(join(web, "dist/index.html"), "<html><body>synthetic preview</body></html>");
   await writeFile(
     join(web, "e2e/agent-settings.config.ts"),
@@ -315,6 +305,18 @@ async function fixture(t, body) {
   await writeFile(
     join(web, "e2e/shell-layout.check.ts"),
     `import {test,expect} from '@playwright/test';\nimport {writeFile} from 'node:fs/promises';\ntest('synthetic contract',async({page})=>{await page.goto('/');${body}});`,
+  );
+  await cp(join(web, "dist/index.html"), join(web, "index.html"));
+  await cp(join(root, "web/src/shell/build.ts"), join(web, "src/shell/build.ts"));
+  await writeFile(
+    join(web, "vite.config.mjs"),
+    "export default {define:{__CHRONO_BUILD_SHA__:JSON.stringify(process.env.CHRONO_BUILD_SHA)}};",
+  );
+  const design = ["design-correction", "task-home-states", "theme-palette"];
+  for (const name of design) await cp(join(web, "e2e/shell-layout.check.ts"), join(web, `e2e/${name}.check.ts`));
+  await writeFile(
+    join(web, "e2e/design-correction.config.ts"),
+    `export default {workers:1,retries:0,forbidOnly:true,testMatch:${JSON.stringify(design.map((n) => n + ".check.ts"))},webServer:{command:'npm run dev -- --host 127.0.0.1 --port 4644 --strictPort',reuseExistingServer:false},use:{launchOptions:{executablePath:process.env.CMA_E2E_BROWSER_PATH}}};`,
   );
   const git = (...args) =>
     execFileSync("git", args, {
@@ -391,81 +393,92 @@ test("command cleans descendant listeners on success, failure, timeout and cance
   );
 });
 
-test("real failed browser case returns failure with trace and screenshot in the upload directory", async (t) => {
-  const f = await fixture(
-    t,
-    "await expect(page.locator('body')).toHaveText('deliberate mismatch',{timeout:100});",
-  );
-  await assert.rejects(runSuite("shell", f), /Browser command failed/);
-  const output = join(f.env.RUNNER_TEMP, "cma-p1-browser/shell");
-  const files = await readdir(join(output, "results"), { recursive: true });
-  assert.ok(files.some((file) => file.endsWith("trace.zip")));
-  assert.ok(files.some((file) => file.endsWith(".png")));
-  const receipt = JSON.parse(await readFile(join(output, "receipt.json")));
-  assert.equal(receipt.status, "failed");
-  assert.equal(receipt.productionPreviewClosed, true);
-  await closed(receipt.port);
-});
-
-test("real successful browser case binds discovery, execution, checkout and preview cleanup", async (t) => {
-  const f = await fixture(t, "await expect(page.locator('body')).toHaveText('synthetic preview');");
-  const receipt = await runSuite("shell", f);
-  assert.equal(receipt.status, "passed");
-  assert.equal(receipt.revision, f.revision);
-  assert.equal(receipt.cases.length, 1);
-  await closed(receipt.port);
-  await assert.rejects(runSuite("shell", f), /EEXIST/);
-});
-
-for (const signal of ["SIGINT", "SIGTERM"])
-  test(`real CLI ${signal} closes its preview and browser and remains nonzero`, async (t) => {
+for (const suite of ["shell", "design"])
+  test(`real failed ${suite} case returns failure with trace and screenshot in the upload directory`, async (t) => {
     const f = await fixture(
       t,
-      "const cdp=await page.context().browser().newBrowserCDPSession();const info=await cdp.send('SystemInfo.getProcessInfo');await writeFile('dist/started',String(info.processInfo.find(p=>p.type==='browser').id));await new Promise(()=>{});",
+      "await expect(page.locator('body')).toHaveText('deliberate mismatch',{timeout:100});",
     );
-    const child = spawn(
-      process.execPath,
-      [join(f.repository, ".github/scripts/p1-browser-ci.mjs"), "shell"],
-      { cwd: f.repository, env: f.env, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    t.after(() => {
-      if (child.exitCode === null) child.kill("SIGKILL");
-    });
-    let diagnostics = "";
-    child.stdout.on("data", (chunk) => {
-      diagnostics += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      diagnostics += chunk;
-    });
-    const ended = new Promise((done) =>
-      child.once("exit", (code, signal) => done({ code, signal })),
-    );
-    await eventually(async () => {
-      assert.equal(child.exitCode, null, diagnostics);
-      return exists(join(f.web, "dist/started"));
-    });
-    const browserPid = Number(await readFile(join(f.web, "dist/started"), "utf8"));
-    child.kill(signal);
-    const outcome = await Promise.race([
-      ended,
-      delay(10_000, undefined, { ref: false }).then(() => {
-        throw new Error("Cancellation did not finish");
-      }),
-    ]);
-    assert.equal(outcome.code, signal === "SIGINT" ? 130 : 143);
-    const receipt = JSON.parse(
-      await readFile(join(f.env.RUNNER_TEMP, "cma-p1-browser/shell/receipt.json")),
-    );
-    assert.ok(receipt.error.includes(`Cancelled by ${signal}`));
-    await eventually(() => {
-      try {
-        process.kill(browserPid, 0);
-        return false;
-      } catch (error) {
-        return error.code === "ESRCH";
-      }
-    });
-    assert.equal(receipt.productionPreviewClosed, true);
+    await assert.rejects(runSuite(suite, f), /Browser command failed/);
+    const output = join(f.env.RUNNER_TEMP, `cma-p1-browser/${suite}`);
+    const files = await readdir(join(output, "results"), { recursive: true });
+    assert.ok(files.some((file) => file.endsWith("trace.zip")));
+    assert.ok(files.some((file) => file.endsWith(".png")));
+    const receipt = JSON.parse(await readFile(join(output, "receipt.json")));
+    assert.equal(receipt.status, "failed");
+    assert.equal(receipt.productionPreviewClosed, suite === "shell");
     await closed(receipt.port);
   });
+
+for (const suite of ["shell", "design"])
+  test(`real successful ${suite} case binds discovery, execution, checkout and preview cleanup`, async (t) => {
+    const f = await fixture(t, "await expect(page.locator('body')).toHaveText('synthetic preview');");
+    const receipt = await runSuite(suite, f);
+    assert.equal(receipt.status, "passed");
+    assert.equal(receipt.revision, f.revision);
+    assert.equal(receipt.cases.length, suite === "shell" ? 1 : 3);
+    await closed(receipt.port);
+    await assert.rejects(runSuite(suite, f), /EEXIST/);
+  });
+
+for (const stage of ["startup", "browser"])
+  for (const suite of ["shell", "design"])
+    for (const signal of ["SIGINT", "SIGTERM"])
+      test(`real CLI ${stage} ${suite} ${signal} closes its preview and browser and remains nonzero`, async (t) => {
+        const f = await fixture(
+          t,
+          "const cdp=await page.context().browser().newBrowserCDPSession();const info=await cdp.send('SystemInfo.getProcessInfo');await writeFile('dist/started',String(info.processInfo.find(p=>p.type==='browser').id));await new Promise(()=>{});",
+        );
+        const child = spawn(process.execPath, [join(f.repository, ".github/scripts/p1-browser-ci.mjs"), suite], {
+          cwd: f.repository,
+          env: f.env,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        t.after(() => {
+          if (child.exitCode === null) child.kill("SIGKILL");
+        });
+        let diagnostics = "";
+        child.stdout.on("data", (chunk) => {
+          diagnostics += chunk;
+        });
+        child.stderr.on("data", (chunk) => {
+          diagnostics += chunk;
+        });
+        const ended = new Promise((done) => child.once("exit", (code, signal) => done({ code, signal })));
+        await eventually(async () => {
+          assert.equal(child.exitCode, null, diagnostics);
+          return exists(
+            stage === "browser"
+              ? join(f.web, "dist/started")
+              : join(
+                  f.env.RUNNER_TEMP,
+                  `cma-p1-browser/${suite}/${suite === "design" ? "server.log" : "discovery.json"}`,
+                ),
+          );
+        });
+        const browserPid =
+          stage === "browser" ? Number(await readFile(join(f.web, "dist/started"), "utf8")) : null;
+        child.kill(signal);
+        const outcome = await Promise.race([
+          ended,
+          delay(10_000, undefined, { ref: false }).then(() => {
+            throw new Error("Cancellation did not finish");
+          }),
+        ]);
+        assert.equal(outcome.code, signal === "SIGINT" ? 130 : 143);
+        const receipt = JSON.parse(
+          await readFile(join(f.env.RUNNER_TEMP, `cma-p1-browser/${suite}/receipt.json`)),
+        );
+        assert.ok(receipt.error.includes(`Cancelled by ${signal}`));
+        if (browserPid)
+          await eventually(() => {
+            try {
+              process.kill(browserPid, 0);
+              return false;
+            } catch (error) {
+              return error.code === "ESRCH";
+            }
+          });
+        assert.equal(receipt.productionPreviewClosed, suite === "shell");
+        await closed(receipt.port);
+      });
