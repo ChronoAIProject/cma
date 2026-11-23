@@ -1,9 +1,10 @@
-# Auto-pause campaign core
+# Auto-pause campaign core and native observer
 
-This directory contains reusable campaign and lifecycle logic, with offline
-contract tests. It supplies no HTTP adapter, launcher, fixture provisioner or
-runtime execution authorization. A current adapter and an approved disposable
-execution lane are prerequisites for native qualification. Refs #1547.
+This directory contains reusable campaign and lifecycle logic, an injectable
+read-only native HTTP observer, and offline contract tests. Fixture custody,
+a mutating execution adapter, launcher and cleanup remain the caller's
+responsibility. Native qualification requires those components and an approved
+disposable execution lane. Refs #1330 and #1547.
 
 Run the offline tests from the repository root:
 
@@ -45,7 +46,45 @@ substitutes for independently measured suspension, activity or retention proof.
 The surrounding runner must use `try/finally` to clean up only owned synthetic
 resources and restore policy, including uncertain setup attempts. Cleanup
 failure prevents acceptance even if the core's cycle sample passed. Cleanup and
-native adapters are deliberately outside this extraction.
+the mutating execution adapter remain outside this directory's implementation.
+
+## Injected read-only native observer
+
+`createNativeReader({origin, binding, timeoutMs, bearer, fetchImpl})` from
+`native-reader.mjs` returns `readNativeSnapshot({signal})`. Supply an independently
+verified original fixture binding; labels or newly discovered resources cannot
+establish that authority. The reader pins Namespace, Sandbox and PVC identities,
+the original PV, home and image digest. It supports one retained `home` PVC and
+the runtime's home/state/transfer mounts, with an explicit `home_contract.kind`:
+
+| Contract | Required storage and ownership |
+| --- | --- |
+| `legacy-detached-v1` | Detached PVC with original adoption metadata; explicit template volume; runtime home mounted at `/home/cma`. |
+| `native-vct-empty-v1` | Original Claim assignment and Sandbox/PVC controller chain; retained VCT and initializer; runtime home mounted at `/home/cma`. |
+| `native-vct-full-home-v2` | The same native authority checks with the full-home VCT layout and initializer; runtime home mounted at `/home`. |
+
+Native bindings additionally pin the Claim's name, UID and request hashes, pool
+configuration hash, storage class and capacity. Unknown or mixed contracts,
+additional volumes, sidecars and incompatible mounts are refused. Synthetic
+examples are in `fixtures/native.mjs` and `fixtures/native-vct.mjs`; they demonstrate
+the input shape and tests, not fixture custody or deployed compatibility.
+
+The reader issues only fixed resource GETs to a loopback HTTP(S) origin. All
+reads share one timeout, defaulting to 10 seconds and bounded to 30 seconds;
+redirects and response bodies over 4 MiB are refused. A complete namespace Pod
+page is required, with at most 128 entries and no pagination. A Pod using the
+original PVC is relevant even without tracking labels; ambiguous ownership
+blocks observation. Related Pods, including terminating and completed Pods,
+must disappear before suspension can be reported. Both the template and actual
+runtime mounts must reference the original home.
+
+The reader rechecks the Namespace, Sandbox, PVC and, for native VCT, Claim for
+drift. These sequential reads are not an atomic distributed snapshot or a promise
+about future resource state. Results retain sanitized identity/status evidence
+and hashes with `scope: READ_ONLY_OBSERVATION` and `qualification: NOT_ASSESSED`.
+Callers must propagate refusals instead of converting missing evidence to an
+empty Pod list. The helper provides no resource mutation, command launcher,
+cleanup authority or permission to execute a campaign.
 
 ## Injected lifecycle waits
 
