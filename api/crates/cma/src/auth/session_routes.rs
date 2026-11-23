@@ -45,19 +45,23 @@ pub(super) async fn read(
                         .into_response()
                 }
             };
-            let api_commands = !erasing && resource.as_ref().is_some_and(|r| {
-                r.credential.as_ref().is_some_and(|credential| {
-                    use layer2_core::resource_access::CredentialSource;
-                    // 中间件已核验这个凭据；只有普通 Key 可以没有过期时间。
-                    let lifetime = match r.context.credential_source {
-                        CredentialSource::Independent { expires_at: Some(expiry) } => expiry > std::time::SystemTime::now(),
-                        CredentialSource::Independent { expires_at: None } => super::agent_keys::is_agent_key(credential.value()),
-                        _ => false,
-                    };
-                    lifetime && auth.permits_oauth_or_key_commands(credential.value())
-                })
-                    && caller.authorization.allows(Capability::UseOwnSandboxes)
-            });
+            let api_commands = !erasing
+                && resource.as_ref().is_some_and(|r| {
+                    r.credential.as_ref().is_some_and(|credential| {
+                        use layer2_core::resource_access::CredentialSource;
+                        // 中间件已核验这个凭据；只有普通 Key 可以没有过期时间。
+                        let lifetime = match r.context.credential_source {
+                            CredentialSource::Independent {
+                                expires_at: Some(expiry),
+                            } => expiry > std::time::SystemTime::now(),
+                            CredentialSource::Independent { expires_at: None } => {
+                                super::agent_keys::is_agent_key(credential.value())
+                            }
+                            _ => false,
+                        };
+                        lifetime && auth.permits_oauth_or_key_commands(credential.value())
+                    }) && caller.authorization.allows(Capability::UseOwnSandboxes)
+                });
             let mut body = serde_json::json!({
                 "authenticated": true,
                 "api_commands": api_commands,
@@ -68,6 +72,9 @@ pub(super) async fn read(
             });
             if !erasing && authority.is_some() && auth.service_authorization_enabled() {
                 body["service_authorization"] = true.into();
+            }
+            if let Some(terms) = auth.legal_terms_body() {
+                body["legal_terms"] = terms;
             }
             if !erasing {
                 let profile = profile
@@ -81,13 +88,38 @@ pub(super) async fn read(
             }
             Json(body).into_response()
         }
-        None => (
-            StatusCode::UNAUTHORIZED,
+        None => {
             // Advertised so a client only attempts `/auth/login?prompt=none`
             // against a control plane that implements it.
-            Json(serde_json::json!({ "authenticated": false, "silent_sign_in": auth.silent_sign_in_enabled && !super::silent_preference::suppressed(&auth,&headers).await })),
-        )
-            .into_response(),
+            let mut body = serde_json::json!({ "authenticated": false, "silent_sign_in": auth.silent_sign_in_enabled && !super::silent_preference::suppressed(&auth,&headers).await });
+            if let Some(terms) = auth.legal_terms_body() {
+                body["legal_terms"] = terms;
+            }
+            (StatusCode::UNAUTHORIZED, Json(body)).into_response()
+        }
+    }
+}
+
+impl AuthState {
+    /// Publish the terms an owner must accept, readable before sign-in.
+    pub(crate) fn with_legal_terms(
+        mut self: Arc<Self>,
+        terms: Option<layer2_core::legal_consent::LegalTerms>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("auth configured before sharing")
+            .legal_terms = terms;
+        self
+    }
+
+    fn legal_terms_body(&self) -> Option<serde_json::Value> {
+        self.legal_terms.as_ref().map(|terms| {
+            serde_json::json!({
+                "version": terms.version(),
+                "terms_url": terms.terms_url(),
+                "privacy_url": terms.privacy_url(),
+            })
+        })
     }
 }
 
