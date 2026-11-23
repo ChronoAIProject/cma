@@ -70,6 +70,8 @@ notice paths and unpinned origins stay visible. Additional license/notice
 filenames are listed for review, but filename discovery cannot find all embedded
 third-party code, native bundled libraries, media or generated derivatives.
 Review those separately and extend the catalog with public provenance only.
+The [ReactDrops inventory](REACTDROPS.md) records the exact derived files and
+their integration boundaries pending an owner decision.
 
 ## Release boundary
 

@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "status": "DRAFT: owner disposition pending; no removal or replacement performed",
+  "upstream": "https://github.com/crisjavr/reactdrops",
+  "revision": "aed0014649a2f0964041ac33c5f02dc3a40c5e13",
+  "license": "ReactDrops Component License 1.0",
+  "derivedFiles": [
+    {
+      "path": "web/src/decoration/vendor/reactdrops-topographic/topographic-field.ts",
+      "sha256": "ed6ca3c739425399fec56d07db095ffce9d981abe31bdea4176b2108164c4f88",
+      "upstreamSource": "packages/components/src/topographic-flow/topographic-field.ts:294-405",
+      "role": "Seeded elevation field; adapted array assertions",
+      "replacementBoundary": "Independent field implementation or remove the renderer"
+    },
+    {
+      "path": "web/src/decoration/vendor/reactdrops-topographic/topographic-surface-shaders.ts",
+      "sha256": "37e5c5261aefa3c90e3e1aa3d6aace05461b14d6ad6bd8e2b22230606ff02236",
+      "upstreamSource": "packages/components/src/topographic-flow/topographic-surface.ts:66-235",
+      "role": "Adapted Flow vertex/fragment shaders and contour sampling",
+      "replacementBoundary": "Independent shaders or remove the WebGL effect"
+    },
+    {
+      "path": "web/src/decoration/vendor/reactdrops-topographic/topographic-surface-resources.ts",
+      "sha256": "2328f69593a043bb1ac876d6dcc27844f2473dcf47ae2ef00019191a93445099",
+      "upstreamSource": "packages/components/src/topographic-flow/topographic-surface.ts:555-634",
+      "role": "Adapted WebGL program, buffer and texture allocation/disposal",
+      "replacementBoundary": "Independent resource lifecycle or remove the renderer"
+    },
+    {
+      "path": "web/src/decoration/vendor/reactdrops-topographic/topographic-surface.ts",
+      "sha256": "b7f5c11b28fe1dd1cd7cc3584764d320511e48e26407a7b218919326543808e3",
+      "upstreamSource": "packages/components/src/topographic-flow/topographic-surface.ts:672-758,760-871",
+      "role": "Adapted height texture preparation and synchronous draw/dispose",
+      "replacementBoundary": "Independent renderer factory or remove the animated surface"
+    },
+    {
+      "path": "web/src/decoration/assets/topographic-dark.svg",
+      "sha256": "c3888b5cf02812b90a5df6c0eb322843b1fa8ebfcf7e8f0f90b4a2102dc3ae74",
+      "upstreamSource": "packages/components/src/topographic-flow/topographic-field.ts:1-36,251-405,407-525",
+      "role": "Derived static contour alpha mask",
+      "replacementBoundary": "Independent artwork; regeneration from the same algorithm remains derived"
+    },
+    {
+      "path": "web/src/decoration/assets/topographic-light.svg",
+      "sha256": "c3888b5cf02812b90a5df6c0eb322843b1fa8ebfcf7e8f0f90b4a2102dc3ae74",
+      "upstreamSource": "packages/components/src/topographic-flow/topographic-field.ts:1-36,251-405,407-525",
+      "role": "Derived static contour alpha mask; bytes equal the dark asset",
+      "replacementBoundary": "Independent artwork; regeneration from the same algorithm remains derived"
+    }
+  ],
+  "licenseAndProvenanceFiles": [
+    {
+      "path": "web/src/decoration/vendor/reactdrops-topographic/LICENSE",
+      "sha256": "c899796a18b9d85487fe8df8d7c69c66812e37bb439789b6bcac5a78dbbfd592",
+      "role": "Exact RCL text, also emitted as a browser asset"
+    },
+    {
+      "path": "web/src/decoration/vendor/reactdrops-topographic/NOTICE",
+      "sha256": "3cfb025704c105ccc18c2c8f81831eb027da937086eb9326d0d070ab091702e0",
+      "role": "Attribution, pinned source and SVG derivation statement"
+    },
+    {
+      "path": "web/src/decoration/vendor/reactdrops-topographic/source-map.json",
+      "sha256": "50ebd4c244db79c4a58490576b56416101fd75c389700d947173b95bfde4eb62",
+      "role": "Upstream hashes, source spans and adaptation history"
+    }
+  ],
+  "directIntegrationFiles": [
+    { "path": "web/src/decoration/TopographicBackdrop.tsx", "action": "Replace or remove LICENSE asset import and rel=license link only with approved disposition; preserve attribution while any derivative remains" },
+    { "path": "web/src/decoration/TopographicBackdrop.css", "action": "Replace or remove both SVG mask references and check theme appearance" },
+    { "path": "web/src/decoration/topographicLoader.ts", "action": "Replace vendor type and dynamic import; preserve the optional failure boundary if a replacement uses it" },
+    { "path": "web/build/topographicImport.ts", "action": "Replace or retire the exact vendor import rewrite and emitted chunk entry" },
+    { "path": "web/vite.config.ts", "action": "Review optionalTopographicImport plugin registration when its implementation changes" },
+    { "path": "web/src/decoration/topographicSurface.test.ts", "action": "Replace tests importing the old renderer and elevation field with replacement behavior coverage" },
+    { "path": "web/src/decoration/topographicLoader.test.ts", "action": "Update vendor module mocks and failure cases" },
+    { "path": "web/build/topographicImport.test.ts", "action": "Update synthetic vendor paths and import-rewrite expectations" }
+  ],
+  "applicationAndVerificationFiles": [
+    "web/src/decoration/TopographicCanvas.tsx",
+    "web/src/decoration/TopographicBackdrop.test.tsx",
+    "web/src/decoration/HomeDecorationProvider.tsx",
+    "web/src/decoration/HomeDecorationProvider.test.tsx",
+    "web/src/decoration/topographicFeature.ts",
+    "web/src/decoration/topographicPolicy.ts",
+    "web/src/decoration/topographicPolicy.test.ts",
+    "web/src/decoration/topographicPalette.ts",
+    "web/src/decoration/topographicPalette.test.ts",
+    "web/src/create/TaskHomeDecoration.tsx",
+    "web/src/create/TaskHomeDecoration.test.tsx",
+    "web/src/create/TaskHomeLayout.tsx",
+    "web/src/landing/SignInLanding.tsx",
+    "web/src/main.tsx",
+    "web/e2e/topographic-flow.cases.ts",
+    "web/e2e/topographic-flow.fixture.ts",
+    "web/e2e/topographic-flow.probes.ts",
+    "web/e2e/topographic-off.check.ts",
+    "web/e2e/topographic-off.config.ts",
+    "web/e2e/theme-palette.check.ts",
+    ".github/scripts/p1-browser-ci.mjs",
+    ".github/scripts/p7-default-off-ci.mjs",
+    ".github/scripts/p7-default-off-ci.test.mjs"
+  ]
+}
