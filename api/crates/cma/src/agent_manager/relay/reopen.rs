@@ -10,6 +10,9 @@ use layer2_core::{
     sandbox::{AgentWorkReceipt, Sandbox, SandboxWorkLease},
     SandboxId,
 };
+use tokio::time::Instant;
+
+const REOPEN_LIMIT: Duration = Duration::from_secs(layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS);
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,6 +54,7 @@ impl Relay {
         sandbox: &Sandbox,
         id: &AgentId,
     ) -> Result<AgentWorkReceipt, CallFailure> {
+        let deadline = Instant::now() + REOPEN_LIMIT;
         let _permit = self
             .acquire(capacity::Class::Control)
             .map_err(|_| CallFailure::RelayCapacity)?;
@@ -62,8 +66,8 @@ impl Relay {
         };
         let reply = if destination.member.instance_id == self.coordinator.instance_id {
             let worker = self.reopen.get().ok_or(())?;
-            let receipt = tokio::time::timeout(
-                Duration::from_secs(60),
+            let receipt = tokio::time::timeout_at(
+                deadline,
                 destination.authority.run(worker.reopen_at_owner(id, &call)),
             )
             .await
@@ -96,9 +100,9 @@ impl Relay {
                 destination.member.relay_address.trim_end_matches('/'),
                 uri
             );
-            tokio::time::timeout(Duration::from_secs(60), async {
+            tokio::time::timeout_at(deadline, async {
                 let mut response = self
-                    .client
+                    .reopen_client
                     .post(url)
                     .headers(headers)
                     .body(body)
@@ -153,7 +157,7 @@ pub(super) async fn serve(
         return http::unavailable();
     };
     match tokio::time::timeout(
-        Duration::from_secs(60),
+        REOPEN_LIMIT,
         worker.reopen_at_owner(&authority.token.agent_id, &call),
     )
     .await

@@ -1,6 +1,8 @@
 use super::*;
 use layer2_core::agent_ownership::{candidates, DEFAULT_MAX_OWNED_AGENTS};
 
+#[path = "mongo_batch_renewal_tests.rs"]
+mod batch_renewal;
 #[path = "mongo_containment_tests.rs"]
 mod containment;
 #[path = "mongo_effect_tests.rs"]

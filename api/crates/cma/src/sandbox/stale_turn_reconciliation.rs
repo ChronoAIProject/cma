@@ -1,0 +1,197 @@
+//! Observe admitted turns without competing with their existing output recorder.
+
+use std::{collections::HashMap, sync::Arc, time::Duration};
+
+use layer2_core::{agent_ownership::OwnershipCoordinator, sandbox::store::SandboxStoreError};
+use tokio::{
+    sync::watch,
+    task::JoinHandle,
+    time::{Instant, MissedTickBehavior},
+};
+
+use super::LiveAgentRegistry;
+use crate::{
+    background::{self, BackgroundWork},
+    store::{
+        stale_turns::{Candidate, Observation, StaleTurnStore},
+        MongoSandboxStore,
+    },
+    worker_supervision::{self, Activity},
+};
+
+const NAME: &str = "agent_stale_turn_reconciliation";
+const INTERVAL: Duration = Duration::from_secs(30);
+const SWEEP_DEADLINE: Duration = Duration::from_secs(10);
+const INVESTIGATION_DEADLINE: Duration = Duration::from_secs(5);
+const MAX_INVESTIGATIONS: usize = 4;
+const HOLD_CAPACITY: usize = 512;
+const HOLD_INTERVAL: Duration = Duration::from_secs(60);
+
+pub(super) struct Worker {
+    store: StaleTurnStore,
+    ownership: Arc<OwnershipCoordinator>,
+    registry: Arc<LiveAgentRegistry>,
+    work: BackgroundWork,
+    reported: HashMap<Candidate, (&'static str, Instant)>,
+}
+
+impl Worker {
+    pub(super) fn new(
+        store: Arc<MongoSandboxStore>,
+        ownership: Arc<OwnershipCoordinator>,
+        registry: Arc<LiveAgentRegistry>,
+    ) -> Self {
+        Self {
+            store: StaleTurnStore::new(store),
+            ownership,
+            registry,
+            work: BackgroundWork::new(background::shared(), NAME, SWEEP_DEADLINE, INTERVAL),
+            reported: HashMap::new(),
+        }
+    }
+
+    pub(super) fn spawn(
+        self,
+        shutdown: watch::Receiver<bool>,
+        activity: Activity,
+    ) -> JoinHandle<()> {
+        worker_supervision::spawn(
+            self,
+            activity,
+            shutdown,
+            |worker, activity, mut shutdown| {
+                Box::pin(async move {
+                    let mut ticker = tokio::time::interval(INTERVAL);
+                    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                    loop {
+                        activity.waiting(INTERVAL + SWEEP_DEADLINE, "stale_turn_scan");
+                        tokio::select! {
+                            _ = shutdown.changed() => break,
+                            _ = ticker.tick() => {
+                                activity.scheduled();
+                                let _scan = activity.reconciliation();
+                                let work = worker.work.clone();
+                                if work.run(|| worker.sweep()).await.is_err() {
+                                    outcome("sweep_unavailable");
+                                }
+                            }
+                        }
+                    }
+                })
+            },
+            |_| Box::pin(async {}),
+        )
+    }
+
+    async fn sweep(&mut self) -> Result<(), SandboxStoreError> {
+        if !self.ownership.is_ready() {
+            outcome("ownership_unavailable");
+            return Ok(());
+        }
+        let Some(lease) = self.store.claim().await.map_err(store_error)? else {
+            outcome("scan_busy");
+            return Ok(());
+        };
+        let page = self.store.page(&lease).await.map_err(store_error)?;
+        let stop_investigating = Instant::now() + INVESTIGATION_DEADLINE;
+        self.reported
+            .retain(|_, (_, until)| *until > Instant::now());
+        let mut last_examined = None;
+        let mut examined = 0;
+        let mut investigations = 0;
+        let mut oldest = None;
+        for row in &page.rows {
+            if !self.ownership.is_ready()
+                || investigations == MAX_INVESTIGATIONS
+                || Instant::now() >= stop_investigating
+            {
+                break;
+            }
+            let key = row.get_str("_id").map_err(|_| {
+                SandboxStoreError::Corrupt("stale-turn scan cursor is invalid".into())
+            })?;
+            last_examined = Some(key);
+            examined += 1;
+            let Some(candidate) = Candidate::from_row(row, lease.now) else {
+                continue;
+            };
+            if let Some(reason) = Candidate::early_hold(row) {
+                self.report_hold(candidate, reason);
+                continue;
+            }
+            investigations += 1;
+            let observation = tokio::time::timeout_at(
+                stop_investigating,
+                self.store.observe(&candidate, lease.now),
+            )
+            .await;
+            let reason = match observation {
+                Ok(Ok(Observation::Progressing)) => {
+                    self.reported.remove(&candidate);
+                    outcome("progressing");
+                    continue;
+                }
+                Ok(Ok(Observation::Hold(reason))) => reason,
+                Ok(Ok(Observation::Quiet { target, age })) => {
+                    oldest = Some(oldest.map_or(age, |previous: u64| previous.max(age)));
+                    match self.ownership.local(&target.agent_id).await {
+                        None => "owner_elsewhere",
+                        Some(authority)
+                            if self
+                                .registry
+                                .owned_target_is_recording(&target, &authority.token) =>
+                        {
+                            // The existing owner recorder already consumes all retained
+                            // frames in order. A second consumer could skip a receipt.
+                            "producer_seal_unavailable"
+                        }
+                        Some(_) => "recorder_unavailable",
+                    }
+                }
+                Ok(Err(error)) => error.outcome(),
+                Err(_) => "observation_timeout",
+            };
+            self.report_hold(candidate, reason);
+        }
+        metrics::histogram!("cma_stale_turn_scan_rows").record(examined as f64);
+        if let Some(age) = oldest {
+            metrics::histogram!("cma_stale_turn_oldest_eligible_age_seconds").record(age as f64);
+        }
+        let eof = page.eof && examined == page.rows.len();
+        if self
+            .store
+            .advance(&lease, last_examined, eof)
+            .await
+            .map_err(store_error)?
+        {
+            outcome("complete");
+        } else {
+            outcome("scan_lease_lost");
+        }
+        Ok(())
+    }
+
+    fn report_hold(&mut self, candidate: Candidate, reason: &'static str) {
+        if self
+            .reported
+            .get(&candidate)
+            .is_some_and(|(previous, _)| *previous == reason)
+        {
+            return;
+        }
+        if self.reported.len() < HOLD_CAPACITY || self.reported.contains_key(&candidate) {
+            self.reported
+                .insert(candidate, (reason, Instant::now() + HOLD_INTERVAL));
+        }
+        metrics::counter!("cma_stale_turn_hold_total", "reason" => reason).increment(1);
+    }
+}
+
+fn outcome(outcome: &'static str) {
+    metrics::counter!("cma_stale_turn_reconciliation_total", "outcome" => outcome).increment(1);
+}
+
+fn store_error(error: crate::store::stale_turns::ScanError) -> SandboxStoreError {
+    outcome(error.outcome());
+    SandboxStoreError::Unavailable(error.to_string())
+}

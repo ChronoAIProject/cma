@@ -20,7 +20,6 @@ export function TaskTemplatePanel({
   if (!template) return children;
   return (
     <div className="task-template-panel">
-      <TaskTemplateFields template={template} issue={issue} errorId={errorId} onChange={onChange} />
       {availability !== 'supported' ? (
         <div className="task-template-panel__notice" role="status">
           <strong>
@@ -33,6 +32,7 @@ export function TaskTemplatePanel({
           <p>Your fields are kept. You can keep editing or write a task without a template.</p>
         </div>
       ) : null}
+      <TaskTemplateFields template={template} issue={issue} errorId={errorId} onChange={onChange} />
       {children}
     </div>
   );

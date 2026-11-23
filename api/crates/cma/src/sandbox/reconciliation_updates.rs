@@ -11,9 +11,14 @@ impl SandboxReconciler {
         now: SystemTime,
         automatic_updates: bool,
     ) -> Result<bool, SandboxStoreError> {
-        let Some(target) = &self.runtime_version else {
+        let Some(target) = self
+            .released
+            .as_ref()
+            .map(|released| released.snapshot().agent)
+        else {
             return Ok(false);
         };
+        let target = &target;
         let stamp = rfc3339_at(now);
         for _ in 0..4 {
             let Some(mut sandbox) = self.store.get_sandbox(id).await? else {

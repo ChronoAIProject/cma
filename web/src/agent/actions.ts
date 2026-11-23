@@ -3,6 +3,7 @@ import type { AgentActionOptions } from './actionOptions';
 import type { AgentCommand, ApprovalDecision } from './controller';
 import type { MessageAcceptance } from './controllerTypes';
 import { ApiError, type AnswerContext } from '@cma/client';
+import { stoppedInputMessage } from './controllerError';
 import { submitV2Control, recoverV2Control } from './transport/controls';
 import {
   submitV2Interruption,
@@ -314,7 +315,10 @@ export function useAgentActions({
               : undefined,
           );
         if (!controller.signal.aborted && !onIdentityChange(error))
-          setActionError(errorMessage(error));
+          setActionError(
+            (!approving && !accepted && stoppedInputMessage(error, stateRef.current, agentId)) ||
+              errorMessage(error),
+          );
       } finally {
         if (actionAbortRef.current === controller) {
           actionAbortRef.current = undefined;
