@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use super::store::{SandboxStore, SandboxStoreError};
 use super::{
-    Sandbox, SandboxStatus, SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoveryVerifier,
+    Sandbox, SandboxImageRotationPhase, SandboxLifecycleOperation, SandboxRevivePhase,
+    SandboxStatus, SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoveryVerifier,
 };
 use crate::{Caller, Capability, SandboxId, SubjectId};
 
@@ -186,10 +187,16 @@ impl SandboxRuntimeUpdateService {
                 return Err(SandboxRuntimeUpdateError::TargetChanged);
             }
             if sandbox.unpublished_recovery_candidate() {
-                match self
-                    .recover_unpublished(&sandbox, target_version, false)
-                    .await
-                {
+                // A reopen stalled on a superseded pinned runtime cannot succeed there:
+                // the current manager refuses that runtime. Retrying it would park the
+                // Sandbox in the same place again, so recover onto the latest (#2257).
+                let target =
+                    if target_version != self.latest_version && reopens_conversations(&sandbox) {
+                        self.latest_version.as_str()
+                    } else {
+                        target_version
+                    };
+                match self.recover_unpublished(&sandbox, target, false).await {
                     Ok(recovered) => return Ok(recovered),
                     Err(SandboxStoreError::Conflict) => {
                         tokio::task::yield_now().await;
@@ -213,6 +220,20 @@ impl SandboxRuntimeUpdateService {
         }
         Err(SandboxRuntimeUpdateError::Unavailable)
     }
+}
+
+/// Stalled at reopening conversations on an unpublished runtime, which recovery rebuilds.
+fn reopens_conversations(sandbox: &Sandbox) -> bool {
+    matches!(
+        sandbox.lifecycle.operation,
+        Some(SandboxLifecycleOperation::ImageRotation {
+            phase: SandboxImageRotationPhase::ConversationReopen,
+            ..
+        }) | Some(SandboxLifecycleOperation::Revive {
+            phase: SandboxRevivePhase::ConversationReopen,
+            ..
+        })
+    )
 }
 
 fn store_error(error: SandboxStoreError) -> SandboxRuntimeUpdateError {
