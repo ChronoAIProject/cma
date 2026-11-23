@@ -4,6 +4,7 @@ import { useAuth } from './auth/context';
 import { BrandLoading } from './landing/LandingCharacter';
 import { ShellLoading } from './ui/Skeleton';
 import { SignInLanding } from './landing/SignInLanding';
+import { legalTermsOf } from './auth/types';
 import { parseRoute, useAppRouter } from './routing/routes';
 import './styles/tokens.css';
 import './styles/design-platform.css';
@@ -192,6 +193,7 @@ function HomeLanding({ router }: { readonly router: AppRouter }) {
   if (state.status === 'checking') return <BrandLoading />;
   return (
     <SignInLanding
+      legalTerms={legalTermsOf(state)}
       onSignIn={async (returnTo = '/agent-manager') => {
         if (state.status === 'authenticated') router.navigate(parseRoute(returnTo));
         else {
@@ -264,6 +266,7 @@ function AgentApp({
         landing
       >
         <SignInLanding
+          legalTerms={state.legalTerms}
           onSignIn={async (returnTo) => {
             retainFatherDraftForSignIn();
             await signIn(
