@@ -33,6 +33,10 @@ pub(super) struct Context {
     /// persisted. Resource-execution evidence names shares only by ID (#3296).
     #[serde(skip)]
     pub shares: BTreeSet<String>,
+    /// Deterministic execution digests naming the subject, recomputed with the
+    /// shares on every refresh and never persisted (#3296).
+    #[serde(skip)]
+    pub execution_digests: BTreeSet<String>,
 }
 impl Context {
     pub fn ids(&self, set: Set) -> Vec<String> {
@@ -283,6 +287,17 @@ impl Context {
             self.sandboxes.clear();
         }
         self.exclude_protected();
+        let launches: Vec<_> = self
+            .ids(Set::Launches)
+            .into_iter()
+            .map(layer2_core::LaunchId)
+            .collect();
+        let subject = layer2_core::SubjectId::new(self.subject.clone());
+        self.execution_digests =
+            layer2_core::resource_access::execution::subject_execution_digests(&subject, &launches)
+                .map_err(|_| Error::InvalidRecord("resource execution identity digest"))?
+                .into_iter()
+                .collect();
         self.shares.clear();
         let personal = self.ids(Set::Sandboxes);
         if !personal.is_empty() {

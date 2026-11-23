@@ -91,6 +91,7 @@ pub(super) fn matches(rule: Erasure, row: &Document, context: &Context) -> bool 
             let mut values = vec![context.subject.clone()];
             values.extend(context.sets.values().flatten().cloned());
             values.extend(context.shares.iter().cloned());
+            values.extend(context.execution_digests.iter().cloned());
             fields.iter().any(|field| match row.get(*field) {
                 None => false,
                 Some(Bson::String(text)) => serde_json::from_str::<serde_json::Value>(text)
@@ -232,6 +233,7 @@ mod json_residue_tests {
             .sets
             .insert(Set::Sandboxes, ["sbx_erased".to_owned()].into());
         context.shares.insert("shr_erased".into());
+        context.execution_digests.insert("d1gest".into());
         context
     }
 
@@ -247,6 +249,8 @@ mod json_residue_tests {
         let wrong_type = doc! {"_id": "e", "record": 7_i32};
         let absent = doc! {"_id": "activation", "share_id": "shr_x"};
         let share = doc! {"_id": "h", "record": r#"{"key":{"share_id":"shr_erased"}}"#};
+        let digest = doc! {"_id": "i", "record": r#"{"basis":{"actor":"d1gest"}}"#};
+        assert!(matches(rule, &digest, &context));
         let receipt = doc! {"_id": "grant_receipt:o", "share_id": "shr_erased"};
         assert!(matches(rule, &share, &context));
         assert!(matches(

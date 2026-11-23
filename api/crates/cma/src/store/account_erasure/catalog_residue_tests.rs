@@ -94,6 +94,14 @@ async fn proven_absent_known_lineage_blocks_without_subject_projection() {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn serialized_resource_execution_residue_blocks_erasure() {
     let record = |value: &str| doc! {"_id": "execution", "protocol": 1_i32, "record": value};
+    // Another owner's evidence where the erased user acted names them only by digest.
+    let actor = layer2_core::resource_access::execution::subject_execution_digests(
+        &SubjectId::new("acct:a"),
+        &[],
+    )
+    .unwrap()
+    .remove(0);
+    let foreign_basis = format!(r#"{{"basis":{{"owner":"other","actor":"{actor}"}}}}"#);
     for (collection, row) in [
         (
             "resource_revocation_operations_v1",
@@ -108,6 +116,7 @@ async fn serialized_resource_execution_residue_blocks_erasure() {
             "resource_execution_effects_v1",
             record(r#"{"effect":["sbx_a"]}"#),
         ),
+        ("resource_execution_records_v1", record(&foreign_basis)),
         // Grants name the erased Sandbox's share only by its ID.
         (
             "resource_execution_grants_v1",
