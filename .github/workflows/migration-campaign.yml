@@ -22,6 +22,12 @@ on:
 permissions:
   contents: read
 
+# An explicit bash shell runs with -eo pipefail, so a failing summary or
+# coverage command cannot hide behind the tee that copies it into the log.
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: migration-campaign-${{ github.ref }}
   cancel-in-progress: true
@@ -51,7 +57,8 @@ jobs:
       - name: Pull pinned images
         timeout-minutes: 25
         run: |
-          mapfile -t images < <(python3 -B .github/scripts/migration_campaign_pins.py images)
+          python3 -B .github/scripts/migration_campaign_pins.py images > "$RUNNER_TEMP/images.txt"
+          mapfile -t images < "$RUNNER_TEMP/images.txt"
           for image in "${images[@]}"; do
             bash .github/scripts/pull-pinned-image.sh "$image"
           done
@@ -127,7 +134,8 @@ jobs:
       - name: Pull pinned images
         timeout-minutes: 25
         run: |
-          mapfile -t images < <(python3 -B .github/scripts/migration_campaign_pins.py images)
+          python3 -B .github/scripts/migration_campaign_pins.py images > "$RUNNER_TEMP/images.txt"
+          mapfile -t images < "$RUNNER_TEMP/images.txt"
           for image in "${images[@]}"; do
             bash .github/scripts/pull-pinned-image.sh "$image"
           done
