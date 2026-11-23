@@ -37,10 +37,36 @@ async fn leaf_unknown_and_both_labels_never_replay_or_publish() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires disposable failpoint Mongo"]
+async fn leaf_unknown_and_both_labels_never_replay_or_publish_variant_2() {
+    leaf_unknown_and_both_labels_never_replay_or_publish_case(
+        Kind::Ordinary,
+        vec![
+            "TransientTransactionError",
+            "UnknownTransactionCommitResult",
+        ],
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires disposable failpoint Mongo"]
 async fn leaf_unknown_and_both_labels_never_replay_or_publish_variant_3() {
     leaf_unknown_and_both_labels_never_replay_or_publish_case(
         Kind::Pair,
         vec!["UnknownTransactionCommitResult"],
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires disposable failpoint Mongo"]
+async fn leaf_unknown_and_both_labels_never_replay_or_publish_variant_4() {
+    leaf_unknown_and_both_labels_never_replay_or_publish_case(
+        Kind::Pair,
+        vec![
+            "TransientTransactionError",
+            "UnknownTransactionCommitResult",
+        ],
     )
     .await;
 }
@@ -57,6 +83,19 @@ async fn leaf_unknown_and_both_labels_never_replay_or_publish_variant_5() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires disposable failpoint Mongo"]
+async fn leaf_unknown_and_both_labels_never_replay_or_publish_variant_6() {
+    leaf_unknown_and_both_labels_never_replay_or_publish_case(
+        Kind::Targeted,
+        vec![
+            "TransientTransactionError",
+            "UnknownTransactionCommitResult",
+        ],
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires disposable failpoint Mongo"]
 async fn leaf_unknown_and_both_labels_never_replay_or_publish_variant_7() {
     leaf_unknown_and_both_labels_never_replay_or_publish_case(
         Kind::Edit,
@@ -67,10 +106,36 @@ async fn leaf_unknown_and_both_labels_never_replay_or_publish_variant_7() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires disposable failpoint Mongo"]
+async fn leaf_unknown_and_both_labels_never_replay_or_publish_variant_8() {
+    leaf_unknown_and_both_labels_never_replay_or_publish_case(
+        Kind::Edit,
+        vec![
+            "TransientTransactionError",
+            "UnknownTransactionCommitResult",
+        ],
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires disposable failpoint Mongo"]
 async fn leaf_unknown_and_both_labels_never_replay_or_publish_variant_9() {
     leaf_unknown_and_both_labels_never_replay_or_publish_case(
         Kind::Cancel,
         vec!["UnknownTransactionCommitResult"],
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires disposable failpoint Mongo"]
+async fn leaf_unknown_and_both_labels_never_replay_or_publish_variant_10() {
+    leaf_unknown_and_both_labels_never_replay_or_publish_case(
+        Kind::Cancel,
+        vec![
+            "TransientTransactionError",
+            "UnknownTransactionCommitResult",
+        ],
     )
     .await;
 }

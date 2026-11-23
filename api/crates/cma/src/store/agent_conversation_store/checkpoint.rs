@@ -179,7 +179,26 @@ async fn commit_inner(
         if let Some(mutation) = &mutation {
             admission::require_current(mutation, &mut session).await?;
         }
-        store.fence_agent_effect(&current.id, &mut session).await?;
+        if let Err(error) = store
+            .fence_agent_effect_transaction(&current.id, &mut session)
+            .await
+        {
+            let _ = session.abort_transaction().await;
+            match error {
+                crate::store::agent_ownership::FenceError::Domain(error) => return Err(error),
+                crate::store::agent_ownership::FenceError::Driver(error)
+                    if is_transient(&error) =>
+                {
+                    last_transient = Some("checkpoint ownership fence aborted".into());
+                    continue;
+                }
+                crate::store::agent_ownership::FenceError::Driver(_) => {
+                    return Err(SandboxStoreError::Unavailable(
+                        "checkpoint ownership fence unavailable".into(),
+                    ));
+                }
+            }
+        }
         let published = publication.is_some();
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
