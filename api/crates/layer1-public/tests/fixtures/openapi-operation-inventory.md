@@ -63,6 +63,8 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/resource-shares/{kind}/{id}/{share_id}` | - | - | 200 ResourceShareView |
 | `PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}` | UpdateShareBody; key | - | 200 ShareReceiptView |
 | `DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}` | -; key | expected_revision* | 200 ShareReceiptView |
+| `POST /api/v1/resource-revocations` | RevocationBody; key | - | 202 RevocationStatusView |
+| `GET /api/v1/resource-revocations/{operation_id}` | - | kind*, id* | 200 RevocationStatusView |
 | `POST /api/v1/cmaeg/worker-credentials/classify` | WorkerCredentialDigest | Gateway service bearer only | 200 WorkerCredentialClassificationView; 400/401/403/503 ProblemDocument |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}` | PutBindingRequest | - | 200 BindingView; 400/401/403/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}` | - | - | 200 BindingView; 401/403/404/409/503 ProblemDocument |

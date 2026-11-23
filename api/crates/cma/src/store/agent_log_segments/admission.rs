@@ -50,7 +50,7 @@ pub(in crate::store) async fn apply_catalogue(
         .bindings
         .admit_agent(admission, scope.session())
         .await
-        .map_err(ApplyError::Domain)?;
+        .map_err(ApplyError::from)?;
     let persisted_launch = trigger_protocol::selected(store, admission, scope.session()).await?;
     let common_launch = persisted_launch
         .as_ref()

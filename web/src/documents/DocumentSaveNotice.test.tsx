@@ -133,7 +133,9 @@ it.each([false, true])(
       expected_revision: 4,
     });
     expect(update.mock.calls[2]?.[2].idempotencyKey).not.toBe(original.key);
-    expect(documentDraft('owner', id)).toBeUndefined();
+    // The retained draft is cleared by a passive effect after the commit that
+    // shows "Saved", so wait for the draft store itself rather than the status.
+    await waitFor(() => expect(documentDraft('owner', id)).toBeUndefined());
     mounted.unmount();
   },
 );

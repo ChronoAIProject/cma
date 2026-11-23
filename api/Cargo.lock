@@ -2199,6 +2199,7 @@ dependencies = [
  "base64 0.22.1",
  "flate2",
  "futures-util",
+ "h2",
  "layer3-adapter",
  "libc",
  "reqwest",

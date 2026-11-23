@@ -114,6 +114,16 @@ async fn unknown_transient_refuses_without_replay() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn unknown_duplicate_refuses_without_sequence_conflict() {
+    exercise(Fault::Unknown {
+        duplicate: true,
+        transient: false,
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
 async fn duplicate_only_retains_sequence_conflict() {
     exercise(Fault::Duplicate).await;
 }

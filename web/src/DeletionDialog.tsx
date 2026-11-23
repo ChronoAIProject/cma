@@ -1,6 +1,5 @@
-import { routePath } from './routing/routes';
 import { refreshSandboxCapacity } from './sandbox/useSandboxCapacity';
-import { Presence, usePresenceExiting } from './ui/Presence';
+import { usePresenceExiting } from './ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { CmaWebClient } from './api/client';
 import { ApiError } from '@cma/client';
@@ -15,9 +14,8 @@ import { forgetDeletion, persistDeletion } from './deletionRecovery';
 import { RiskConfirmation } from './ui/RiskConfirmation';
 import { Modal } from './ui/Modal';
 import { Button } from './ui/Button';
-import { ProvisioningProgress } from './sandbox/ProvisioningProgress';
-import { LiveActivity } from './sandbox/LiveActivity';
-import { activityEntries } from './sandbox/activity';
+import { DeletionImpactSummary } from './DeletionImpactSummary';
+import { DeletionStatusPanel } from './DeletionStatusPanel';
 import { transitionRefreshDelay } from './sandbox/lifecycle';
 
 export function DeletionDialog({
@@ -182,29 +180,18 @@ export function DeletionDialog({
         open
         title={`Delete ${target}`}
         description={
-          <>
-            {observation?.stopsRuntimeUpdate
-              ? `Delete "${name}" and stop the paused runtime update. This cannot be undone. Cleanup continues in the background; retained history follows the retention policy.`
-              : `Delete "${name}"${target === 'Agent' ? ' and its Worktree' : ' and its contained runtime resources'}. This cannot be undone. Retained history follows the retention policy.`}
-            {target === 'Sandbox'
-              ? ' This deletes the whole Sandbox environment, including all Agents, Workspaces, and files inside it.'
-              : null}
-            {target === 'Agent' ? (
-              <>
-                {' '}
-                Its Sandbox environment remains and still counts toward your environment limit.{' '}
-                {observation?.sandboxId ? (
-                  <a href={routePath({ kind: 'sandbox', sandboxId: observation.sandboxId })}>
-                    Review parent environment
-                  </a>
-                ) : null}
-              </>
-            ) : null}
-          </>
+          <DeletionImpactSummary
+            key={JSON.stringify([viewerId, request.action])}
+            client={client}
+            viewerId={viewerId}
+            action={request.action}
+            observation={observation}
+            available={observation !== undefined && readError === undefined}
+          />
         }
         acknowledgeLabel={`I understand this ${target} will be deleted.`}
         confirmLabel={`Delete ${target}`}
-        busy={
+        confirmDisabled={
           observation === undefined || readError !== undefined || observation.blocked !== undefined
         }
         status={observation === undefined ? 'Checking deletion availability.' : observation.blocked}
@@ -244,56 +231,13 @@ export function DeletionDialog({
         </>
       }
     >
-      <p role="status">
-        {observation?.complete
-          ? `${target} deletion is confirmed.`
-          : sending
-            ? 'Submitting delete request.'
-            : request.accepted
-              ? 'Delete request accepted. Cleanup continues even if you close this page.'
-              : 'The delete request has not been confirmed. Check the same request before trying another action.'}
-      </p>
-      {target === 'Agent' ? (
-        <p>
-          {observation?.complete
-            ? 'Agent deleted. Its Sandbox environment is retained and still counts toward your environment limit.'
-            : 'Only this Agent and its Worktree are being removed. Its Sandbox environment remains.'}{' '}
-          {observation?.sandboxId ? (
-            <a href={routePath({ kind: 'sandbox', sandboxId: observation.sandboxId })}>
-              Review parent environment
-            </a>
-          ) : null}
-        </p>
-      ) : target === 'Sandbox' && request.accepted && !observation?.complete ? (
-        <p>
-          Deleting — still uses one Sandbox slot. The slot becomes available when deletion is
-          confirmed.
-        </p>
-      ) : null}
-      <details>
-        <summary>Cleanup progress</summary>
-        {observation === undefined ? null : (
-          <ProvisioningProgress title="Deletion progress" steps={observation.steps} />
-        )}
-        <LiveActivity
-          entries={activityEntries(
-            observation?.agentEvents ?? observation?.events ?? [],
-            request.action.kind === 'delete_agent' ? 'agent' : 'sandbox',
-          )}
-          syncedAt={observation?.observedAt}
-          stale={readError !== undefined}
-          loading={observation === undefined && readError === undefined}
-        />
-      </details>
-      <Presence>
-        {observation?.failure === undefined ? null : (
-          <p role="alert">
-            Cleanup reported: {observation.failure.detail}. Deletion is not complete.
-          </p>
-        )}
-      </Presence>
-      <Presence>{commandError === undefined ? null : <p role="alert">{commandError}</p>}</Presence>
-      <Presence>{readError === undefined ? null : <p role="alert">{readError}</p>}</Presence>
+      <DeletionStatusPanel
+        request={request}
+        observation={observation}
+        sending={sending}
+        commandError={commandError}
+        readError={readError}
+      />
     </Modal>
   );
 }
