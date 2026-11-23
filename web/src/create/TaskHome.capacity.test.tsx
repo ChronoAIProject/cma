@@ -214,6 +214,7 @@ it.each(['ctrlKey', 'metaKey', 'submit'])(
         client={client({
           readSandboxCapacity: async () => snapshot,
           readTaskTemplateSupport: async () => true,
+          readTaskTemplateV2Support: async () => true,
           readTaskTitleModeSupport: async () => true,
           createAgentLifecycle: create,
         })}

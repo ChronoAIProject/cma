@@ -48,7 +48,7 @@ async function fixture(page: Page, baseURL: string, supported = true) {
         openapi: '3.1.0',
         info: { title: 'Synthetic', version: '1' },
         paths: {},
-        'x-cma-task-templates-v1': true,
+        'x-cma-task-templates-v1': supported,
         'x-cma-task-templates-v2': supported,
         components: {
           schemas: {
@@ -210,7 +210,7 @@ test('LOCAL unsupported template support preserves input and ordinary bracket te
   await page.getByLabel('Topic', { exact: true }).fill('Synthetic');
   await expect(page.getByRole('heading', { name: 'Task preview · read-only' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Task preview · read-only' })).toHaveText(
-    'Research the following topic:\n\nSynthetic\n\nSummarize the key findings, with links to sources.',
+    'Research Synthetic and summarize the key findings, with links to sources.',
   );
   await expect(page.getByText(/Template tasks are not available on this service/)).toBeVisible();
   await expect(page.getByText(/↵ to run/)).toHaveCount(0);

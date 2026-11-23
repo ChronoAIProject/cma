@@ -48,10 +48,10 @@ export const taskTemplates = [
 export function templateDefinition(id: TaskTemplateId) {
   return taskTemplates.find((template) => template.id === id)!;
 }
-export function emptyTemplate(id: TaskTemplateId): TaskTemplate {
+export function emptyTemplate(id: TaskTemplateId, version: 1 | 2 = 1): TaskTemplate {
   return taskTemplate({
     id,
-    version: 2,
+    version,
     fields: Object.fromEntries(templateDefinition(id).fields.map(({ key }) => [key, ''])),
   });
 }
@@ -63,8 +63,14 @@ export function changeTemplateField(
   template: TaskTemplate,
   field: string,
   value: string,
+  allowV2 = false,
 ): TaskTemplate {
-  return taskTemplate({ ...template, version: 2, fields: { ...template.fields, [field]: value } });
+  if ((template.fields as Readonly<Record<string, string>>)[field] === value) return template;
+  return taskTemplate({
+    ...template,
+    version: allowV2 ? 2 : template.version,
+    fields: { ...template.fields, [field]: value },
+  });
 }
 const trim = (value: string) => value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
 export function compileTaskTemplate(template: TaskTemplate): {

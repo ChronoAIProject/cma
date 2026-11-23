@@ -7,6 +7,7 @@ export function TaskTemplatePanel({
   issue,
   errorId,
   availability,
+  allowV2 = false,
   onChange,
   children,
 }: {
@@ -14,13 +15,20 @@ export function TaskTemplatePanel({
   readonly issue?: TemplateIssue;
   readonly errorId: string;
   readonly availability: TaskTemplateAvailability;
+  readonly allowV2?: boolean;
   readonly onChange: (template: TaskTemplate) => void;
   readonly children: ReactNode;
 }) {
   if (!template) return children;
   return (
     <div className="task-template-panel">
-      <TaskTemplateFields template={template} issue={issue} errorId={errorId} onChange={onChange} />
+      <TaskTemplateFields
+        template={template}
+        issue={issue}
+        errorId={errorId}
+        onChange={onChange}
+        allowV2={allowV2}
+      />
       {availability !== 'supported' ? (
         <div className="task-template-panel__notice" role="status">
           <strong>

@@ -15,6 +15,7 @@ it('preserves compiled template input alongside supported automatic title intent
     taskExperience: taskExperience('owner'),
     readTaskCreationSupport: async () => true,
     readTaskTemplateSupport: async () => true,
+    readTaskTemplateV2Support: async () => true,
     readTaskTitleModeSupport: async () => true,
     createAgentLifecycle: create,
   });
@@ -29,8 +30,8 @@ it('preserves compiled template input alongside supported automatic title intent
     name: 'New task',
     title_mode: 'automatic',
     initial_message:
-      'Research the following topic:\n\nSynthetic topic\n\nSummarize the key findings, with links to sources.',
-    template: { id: 'research', version: 2, fields: { topic: 'Synthetic topic' } },
+      'Research Synthetic topic and summarize the key findings, with links to sources.',
+    template: { id: 'research', version: 1, fields: { topic: 'Synthetic topic' } },
   });
   const saved = JSON.parse(sessionStorage.getItem(lifecycleStorageKey('owner'))!);
   const draft = JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!);

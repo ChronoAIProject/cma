@@ -63,7 +63,7 @@ it('preserves legacy compilation until the owner edits a draft', () => {
   expect(compileTaskTemplate(retained).text).toBe(
     'Research Saved topic. and summarize the key findings, with links to sources.',
   );
-  const edited = changeTemplateField(retained, 'topic', 'Updated topic.');
+  const edited = changeTemplateField(retained, 'topic', 'Updated topic.', true);
   expect(edited.version).toBe(2);
   expect(compileTaskTemplate(edited).text).toBe(
     'Research the following topic:\n\nUpdated topic.\n\nSummarize the key findings, with links to sources.',

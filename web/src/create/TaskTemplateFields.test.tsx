@@ -23,6 +23,7 @@ function setup(overrides: Partial<CmaWebClient> = {}, viewerId = 'owner', worksp
     taskExperience: taskExperience(viewerId),
     readTaskCreationSupport: async () => true,
     readTaskTemplateSupport: async () => true,
+    readTaskTemplateV2Support: async () => true,
     readSandboxCapacity: async () => AVAILABLE_CAPACITY,
     createAgentLifecycle: create,
     ...overrides,
@@ -85,6 +86,7 @@ it.each([false, undefined, 'failure'] as const)(
   'preserves fields when template support is %s',
   async (support) => {
     const { create } = setup({
+      readTaskTemplateV2Support: async () => false,
       readTaskTemplateSupport:
         support === undefined
           ? undefined
@@ -102,7 +104,7 @@ it.each([false, undefined, 'failure'] as const)(
     expect(screen.getByLabelText('Topic')).toHaveValue('Synthetic topic');
     fireEvent.click(screen.getByRole('button', { name: 'Write a task without a template' }));
     expect(screen.getByLabelText('Your task')).toHaveValue(
-      'Research the following topic:\n\nSynthetic topic\n\nSummarize the key findings, with links to sources.',
+      'Research Synthetic topic and summarize the key findings, with links to sources.',
     );
     expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
   },
@@ -140,6 +142,7 @@ it('requires fresh template support when the client changes', async () => {
   const client = {
     ...view.props.client,
     readTaskTemplateSupport: () => new Promise<boolean>(() => {}),
+    readTaskTemplateV2Support: () => new Promise<boolean>(() => {}),
   };
   view.rerender(<TaskHome {...view.props} client={client} />);
   expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();

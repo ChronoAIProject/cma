@@ -25,6 +25,7 @@ function setup(overrides: Partial<CmaWebClient> = {}) {
       taskExperience: taskExperience('owner'),
       readTaskCreationSupport: async () => true,
       readTaskTemplateSupport: async () => true,
+      readTaskTemplateV2Support: async () => true,
       readSandboxCapacity: async () => AVAILABLE_CAPACITY,
       createAgentLifecycle: create,
       ...overrides,
@@ -109,7 +110,7 @@ it('requires explicit confirmation before replacing an existing free-text draft'
   click('Write a task without a template');
   click('Replace free-text draft');
   expect(screen.getByLabelText('Your task')).toHaveValue(
-    'Research the following topic:\n\nA complete template\n\nSummarize the key findings, with links to sources.',
+    'Research A complete template and summarize the key findings, with links to sources.',
   );
   click('Resume research template');
   expect(screen.getByLabelText('Topic')).toHaveValue('A complete template');
@@ -281,7 +282,10 @@ it('keeps drafts isolated by owner and task scope and clears them on account cha
 it.each([false, true])(
   'retains partial fields when template support is %s without bypassing submit validation',
   async (support) => {
-    const { create } = setup({ readTaskTemplateSupport: async () => support });
+    const { create } = setup({
+      readTaskTemplateSupport: async () => support,
+      readTaskTemplateV2Support: async () => support,
+    });
     await waitFor(() => expect(screen.queryByText('Checking task creation…')).toBeNull());
     click('Write a document');
     fill('Subject', 'Incomplete task');
@@ -312,8 +316,8 @@ it('cleans only the confirmed submitted mode and retains other drafts for the ta
       {
         name: 'New task',
         initial_message:
-          'Research the following topic:\n\nSubmitted topic\n\nSummarize the key findings, with links to sources.',
-        template: { id: 'research', version: 2, fields: { topic: 'Submitted topic' } },
+          'Research Submitted topic and summarize the key findings, with links to sources.',
+        template: { id: 'research', version: 1, fields: { topic: 'Submitted topic' } },
       },
       draftRevision(),
     ),

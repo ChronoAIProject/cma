@@ -28,7 +28,6 @@ it.each([
     fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'Edited topic' } });
     expect(onChange).toHaveBeenCalledExactlyOnceWith({
       ...template,
-      version: 2,
       fields: { topic: 'Edited topic' },
     });
   },
