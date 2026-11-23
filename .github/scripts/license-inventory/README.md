@@ -72,6 +72,8 @@ third-party code, native bundled libraries, media or generated derivatives.
 Review those separately and extend the catalog with public provenance only.
 The [ReactDrops inventory](REACTDROPS.md) records the exact derived files and
 their integration boundaries pending an owner decision.
+The [replacement behavior specification](REACTDROPS-REPLACEMENT.md) describes
+an independent candidate without implementing or removing any effect.
 
 ## Release boundary
 

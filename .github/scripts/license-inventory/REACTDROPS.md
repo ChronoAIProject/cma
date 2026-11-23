@@ -6,6 +6,9 @@ direct integration/test files and 23 application/verification files. The latter
 two groups are review surfaces, not assertions that their code is derived.
 No listed file is deleted or replaced by this groundwork.
 
+The [replacement behavior specification](REACTDROPS-REPLACEMENT.md) proposes
+independent geometry and acceptance criteria, pending owner approval.
+
 The provenance authority is the existing
 [`source-map.json`](../../../web/src/decoration/vendor/reactdrops-topographic/source-map.json)
 and [`NOTICE`](../../../web/src/decoration/vendor/reactdrops-topographic/NOTICE).
