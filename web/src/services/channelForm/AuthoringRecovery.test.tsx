@@ -95,13 +95,11 @@ it('keeps unknown-write errors and the original request through edits and retry,
 });
 
 it('clears the rejected field validity and description after correction', async () => {
-  const fetcher = vi
-    .fn()
-    .mockResolvedValue(
-      new Response(JSON.stringify({ detail: '/sources/0/bot_id: Check bot identity.' }), {
-        status: 400,
-      }),
-    );
+  const fetcher = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ detail: '/sources/0/bot_id: Check bot identity.' }), {
+      status: 400,
+    }),
+  );
   vi.stubGlobal('fetch', fetcher);
   render(<ChannelEditor onDone={vi.fn()} denied={vi.fn()} />);
   choose('Producer 1 connection type', 'Direct Telegram bot');
