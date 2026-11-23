@@ -1,6 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
-import { activityPage, receipt, responseConsumer, setupActivity } from './redesign-channel.fixture';
+import {
+  activityPage,
+  receipt,
+  responseConsumer,
+  setupActivity,
+  setupActivityDiagnosticPage,
+} from './redesign-channel.fixture';
 
 function nativeLayoutDiagnostic(page: Page) {
   return page.evaluate(() => {
@@ -182,16 +188,70 @@ export function registerRedesignChannelCases() {
 
   test.describe('narrow error boundary', () => {
     test.use({ viewport: { width: 390, height: 844 } });
+    for (const guard of ['trust', 'phase'] as const) {
+      test(`LOCAL Activity fixture isolates ${guard} rejection at eligible width`, async ({
+        page,
+        baseURL,
+      }) => {
+        const { browserErrors, boundary, layoutDiagnostics, layoutTelemetry, setPhase } =
+          await setupActivityDiagnosticPage(page, baseURL!);
+        if (guard === 'trust') {
+          await setPhase('selecting channel');
+          await page.evaluate(() => {
+            window.dispatchEvent(
+              new ErrorEvent('error', {
+                message: 'ResizeObserver loop completed with undelivered notifications.',
+                filename: location.href,
+                lineno: 0,
+                colno: 0,
+              }),
+            );
+          });
+        } else await nativeLayoutDiagnostic(page);
+        await expect.poll(() => layoutDiagnostics.length + browserErrors.length).toBe(1);
+        expect(layoutDiagnostics).toEqual([]);
+        expect(browserErrors).toEqual([
+          expect.objectContaining({
+            message: 'ResizeObserver loop completed with undelivered notifications.',
+            filename: new URL('/event-gateway', baseURL!).href,
+            lineno: 0,
+            colno: 0,
+            trusted: guard === 'phase',
+            hasError: false,
+            stack: undefined,
+            phase: guard === 'trust' ? 'selecting channel' : 'reading Activity',
+          }),
+        ]);
+        await expect.poll(() => boundary.unexpected).toEqual(['POST /api/v1/telemetry/browser']);
+        await page.evaluate(() =>
+          fetch('/api/v1/telemetry/browser', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kind: 'uncaught_error' }),
+          }),
+        );
+        await expect
+          .poll(() => boundary.unexpected)
+          .toEqual(Array.from({ length: 2 }, () => 'POST /api/v1/telemetry/browser'));
+        expect(boundary.writes).toEqual(
+          Array.from({ length: 2 }, () => ({
+            path: '/api/v1/telemetry/browser',
+            body: { kind: 'uncaught_error' },
+            key: undefined,
+          })),
+        );
+        expect(layoutTelemetry).toEqual([]);
+        expect(boundary.errors).toEqual([]);
+      });
+    }
     test('LOCAL Activity fixture rejects later errors and unsolicited telemetry after layout qualification', async ({
       page,
       baseURL,
     }) => {
-      const { browserErrors, boundary, state, layoutDiagnostics, layoutTelemetry, setPhase } =
-        await setupActivity(page, baseURL!);
-      if (layoutDiagnostics.length === 0) {
-        await setPhase('selecting channel');
-        await nativeLayoutDiagnostic(page);
-      }
+      const { browserErrors, boundary, layoutDiagnostics, layoutTelemetry, setPhase } =
+        await setupActivityDiagnosticPage(page, baseURL!);
+      await setPhase('selecting channel');
+      await nativeLayoutDiagnostic(page);
       await expect.poll(() => layoutDiagnostics).toHaveLength(1);
       await expect.poll(() => layoutTelemetry).toHaveLength(1);
       expect(layoutDiagnostics[0]).toMatchObject({
@@ -244,7 +304,6 @@ export function registerRedesignChannelCases() {
       expect(boundary.unexpected).toEqual(['POST /api/v1/telemetry/browser']);
       expect(layoutDiagnostics).toHaveLength(1);
       expect(layoutTelemetry).toHaveLength(1);
-      expect(state.writes).toEqual([]);
       expect(boundary.writes).toEqual([
         { path: '/api/v1/telemetry/browser', body: { kind: 'uncaught_error' }, key: undefined },
       ]);

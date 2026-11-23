@@ -20,6 +20,12 @@ impl SandboxReconciler {
         self.initialize_with_exclusion(now, false, &|| false).await
     }
 
+    /// Whether a binding hold currently protects this Sandbox.
+    #[cfg(test)]
+    pub(crate) fn binding_held(&self, id: &str) -> bool {
+        self.binding_holds.contains(id)
+    }
+
     #[cfg(test)]
     pub(crate) async fn initialize_before_workers(
         &self,
