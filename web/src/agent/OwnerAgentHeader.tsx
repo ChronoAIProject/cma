@@ -7,6 +7,7 @@ import { SkillsSettings } from './SkillsSettings';
 import { AgentHeader } from './AgentHeader';
 import { AgentPreferencesDialog } from './AgentPreferencesDialog';
 import { usePromptAvailability } from './usePromptAvailability';
+import { readRetainedPromptIntent } from './transport/journal';
 
 /** Owner-only tools reuse the same public authorization as their Details controls. */
 export function OwnerAgentHeader({
@@ -26,6 +27,15 @@ export function OwnerAgentHeader({
   const client = useCmaClient();
   const configBusy = busy || actionsBusy;
   const [menuOpen, setMenuOpen] = useState(false);
+  const canInspectPrompt = () => {
+    if (readOnly || !header.viewerId || !client.readAgentPreferences) return false;
+    try {
+      return !!readRetainedPromptIntent(sessionStorage, header.viewerId, detail.id);
+    } catch {
+      return false;
+    }
+  };
+  const canReviewPrompt = menuOpen && canInspectPrompt();
   const promptReason = usePromptAvailability(
     client,
     detail.id,
@@ -66,16 +76,17 @@ export function OwnerAgentHeader({
             disabled:
               readOnly ||
               !client.readAgentPreferences ||
-              !client.updateAgentPreferences ||
-              configBusy ||
-              promptReason !== undefined,
+              (!canReviewPrompt &&
+                (!client.updateAgentPreferences || configBusy || promptReason !== undefined)),
             reason: readOnly
               ? 'Only the task owner can update its system prompt.'
-              : !client.readAgentPreferences || !client.updateAgentPreferences
-                ? 'Task preferences are unsupported by this client.'
-                : configBusy
-                  ? 'Wait until the Agent and its pending actions are idle.'
-                  : promptReason,
+              : canReviewPrompt
+                ? 'Review the pending system prompt change. New changes remain blocked until it is resolved.'
+                : !client.readAgentPreferences || !client.updateAgentPreferences
+                  ? 'Task preferences are unsupported by this client.'
+                  : configBusy
+                    ? 'Wait until the Agent and its pending actions are idle.'
+                    : promptReason,
           },
           {
             id: 'update-skills',
@@ -94,9 +105,10 @@ export function OwnerAgentHeader({
         ]}
         onMenuSelect={(id) => {
           if (id === 'rename-agent') setDialog('rename');
-          else if (id === 'update-prompt' && !readOnly && !configBusy && promptReason === undefined)
-            setDialog('prompt');
-          else if (id === 'update-skills') setDialog('skills');
+          else if (id === 'update-prompt') {
+            if (!readOnly && (canInspectPrompt() || (!configBusy && promptReason === undefined)))
+              setDialog('prompt');
+          } else if (id === 'update-skills') setDialog('skills');
           else header.onMenuSelect?.(id);
         }}
       />
