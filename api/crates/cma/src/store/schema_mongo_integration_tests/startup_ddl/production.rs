@@ -34,6 +34,7 @@ async fn production_connection_enforces_both_converted_contracts_before_returnin
                     agent_manager_replicas: false,
                     startup_schema: mode,
                     initial_settings: Default::default(),
+                    released: None,
                 },
             )
             .await
