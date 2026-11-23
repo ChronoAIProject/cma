@@ -10,6 +10,18 @@ const body = (link: string) => ({
   initial_message: `Analyze the spreadsheet at ${link.trim()} and point out trends, outliers and what to do next.`,
 });
 
+async function chooseTemplate(page: Page, name: string) {
+  const button = page.getByRole('button', { name, exact: true });
+  const menu = page.getByRole('button', { name: 'Templates', exact: true });
+  await expect(button.or(menu).first()).toBeVisible();
+  if (await button.isVisible()) {
+    await button.click();
+    return;
+  }
+  await menu.click();
+  await page.getByRole('menuitem', { name, exact: true }).click();
+}
+
 async function fixture(page: Page, baseURL: string) {
   const boundary = new LocalStartup();
   const writes: { body: unknown; key: string | undefined }[] = [];
@@ -80,7 +92,7 @@ for (const theme of ['light', 'dark']) {
       await page.addInitScript((value) => localStorage.setItem('cma:appearance', value), theme);
       await page.goto('/');
       await settle(page);
-      await page.getByRole('button', { name: 'Analyze a spreadsheet', exact: true }).click();
+      await chooseTemplate(page, 'Analyze a spreadsheet');
       const input = page.getByLabel('Spreadsheet link', { exact: true });
       const start = page.getByRole('button', { name: 'Start task', exact: true });
       await input.fill('not-a-url');
@@ -149,16 +161,16 @@ test('LOCAL invalid spreadsheet drafts survive switching and reload without a re
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   await settle(page);
-  await page.getByRole('button', { name: 'Analyze a spreadsheet', exact: true }).click();
+  await chooseTemplate(page, 'Analyze a spreadsheet');
   await page.getByLabel('Spreadsheet link', { exact: true }).fill('not-a-url');
-  await page.getByRole('button', { name: 'Write a document', exact: true }).click();
+  await chooseTemplate(page, 'Write a document');
   await page.getByLabel('Subject', { exact: true }).fill('Separate synthetic draft');
-  await page.getByRole('button', { name: 'Analyze a spreadsheet', exact: true }).click();
+  await chooseTemplate(page, 'Analyze a spreadsheet');
   await page.reload();
   await settle(page);
   await expect(page.getByLabel('Spreadsheet link', { exact: true })).toHaveValue('not-a-url');
   await expect(page.getByRole('button', { name: 'Start task', exact: true })).toBeDisabled();
-  await page.getByRole('button', { name: 'Write a document', exact: true }).click();
+  await chooseTemplate(page, 'Write a document');
   await expect(page.getByLabel('Subject', { exact: true })).toHaveValue('Separate synthetic draft');
   expect(writes).toEqual([]);
   expect(boundary.writes).toEqual([]);
