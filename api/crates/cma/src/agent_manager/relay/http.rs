@@ -341,19 +341,19 @@ pub(super) async fn forward(
             headers.append(name, value.clone());
         }
     }
-    let proof = match relay.authentication.sign(
+    let headers = match relay.authentication.signed_headers(
         &relay.coordinator.instance_id,
         &destination.token,
         request.method(),
         request.uri(),
-        &headers,
+        headers,
         body,
     ) {
-        Ok(proof) => proof,
+        Ok(headers) => headers,
         Err(_) => return unavailable_with(environment.as_ref(), Refusal::PeerSignature),
     };
     if let Some(environment) = environment.as_mut() {
-        environment.correlate_hop(proof.as_bytes());
+        environment.correlate_hop(headers[PROOF].as_bytes());
     }
     let url = format!(
         "{}{}",
@@ -369,7 +369,6 @@ pub(super) async fn forward(
             .client
             .request(request.method().clone(), url)
             .headers(headers)
-            .header(PROOF, proof)
             .body(body.to_vec())
             .send(),
     )
