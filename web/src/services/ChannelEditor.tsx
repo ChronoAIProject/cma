@@ -1,3 +1,8 @@
+import { HmacCredentialsScope } from './channelForm/HmacCredentialsScope';
+import { ValidationMessageScope } from './channelForm/ValidationPath';
+import { useDraftReloadWarning } from './channelForm/useDraftReloadWarning';
+import { validateConnectorFields } from './channelForm/connectorValidation';
+import { validateReplyFields } from './channelForm/replyValidation';
 import { revealInvalidField } from './channelForm/AdvancedFields';
 import { ValidationError } from './channelForm/ValidationError';
 import { useRef, useState } from 'react';
@@ -115,7 +120,21 @@ export function ChannelEditor({
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [edited, setEdited] = useState(false);
   const create = !baseline;
+  useDraftReloadWarning((create && edited) || pending !== undefined);
+  function editDraft(next: Fields) {
+    if (pending || busy) return;
+    setEdited(true);
+    setError(undefined);
+    setDraft(next);
+  }
+  function editCredentials(next: Fields) {
+    if (pending || busy) return;
+    setEdited(true);
+    setError(undefined);
+    setCredentials(next);
+  }
   const checkingCustomSupport = create && customExecutionWaiting(discovery, draft);
   const additional = section.kind === 'consumer' && section.id !== 'default';
   async function send(request: Pending) {
@@ -129,6 +148,7 @@ export function ChannelEditor({
         headers: { 'Idempotency-Key': request.key },
       });
       setPending(undefined);
+      setEdited(false);
       if (hasChannelAddress(value)) {
         setBaseline(value);
         if (request.kind === 'channel') {
@@ -180,6 +200,8 @@ export function ChannelEditor({
         ? nodeCredentials(credentials, section, projected)
         : channelCredentials(credentials, projected, true);
       if (kind === 'channel') {
+        validateConnectorFields(projected);
+        validateReplyFields(projected, baseline ? channelDraft(baseline) : undefined);
         validateRelayAuthoring(
           discovery,
           projected,
@@ -259,25 +281,36 @@ export function ChannelEditor({
       {!additional ? (
         <form
           className="service-form"
-          onInvalidCapture={(event) => revealInvalidField(event.target as HTMLElement)}
+          onInvalidCapture={(event) => {
+            const first = event.currentTarget.querySelector<HTMLElement>(
+              'input:invalid, textarea:invalid',
+            );
+            revealInvalidField(first ?? (event.target as HTMLElement));
+            first?.focus();
+          }}
           onSubmit={(e) => {
             e.preventDefault();
             submit('channel');
           }}
         >
           <fieldset className="channel-form-section" disabled={pending !== undefined || busy}>
-            <NodeFields
-              active={active}
-              draft={draft}
-              onChange={setDraft}
-              credentials={credentials}
-              onCredentials={setCredentials}
-              section={section}
-              create={create}
-              sourceCount={baseline?.definition.sources.length ?? 0}
-              savedCustomExecution={baseline?.definition.durable_custom_execution}
-              denied={denied}
-            />
+            <ValidationMessageScope value={!pending && !busy ? error : undefined}>
+              <HmacCredentialsScope value={credentials} create={create}>
+                <NodeFields
+                  active={active}
+                  draft={draft}
+                  onChange={editDraft}
+                  credentials={credentials}
+                  onCredentials={editCredentials}
+                  section={section}
+                  create={create}
+                  sourceCount={baseline?.definition.sources.length ?? 0}
+                  retainedAckDelay={object(baseline?.definition.reply).ack_after_ms}
+                  savedCustomExecution={baseline?.definition.durable_custom_execution}
+                  denied={denied}
+                />
+              </HmacCredentialsScope>
+            </ValidationMessageScope>
           </fieldset>
           {!pending ? (
             <Button type="submit" variant="primary" disabled={busy || checkingCustomSupport}>
