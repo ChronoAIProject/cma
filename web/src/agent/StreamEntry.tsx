@@ -20,6 +20,7 @@ import type { TaskAcceptance } from '@cma/client';
 import { taskAcceptanceLabel, taskAcceptanceReason } from './taskAcceptance';
 
 function StreamEntryView({
+  retained = false,
   entry,
   approvalBusy,
   approvalReadOnly = false,
@@ -34,6 +35,7 @@ function StreamEntryView({
   feedback,
   continued = false,
 }: {
+  readonly retained?: boolean;
   readonly entry: Entry;
   readonly approvalBusy: boolean;
   readonly approvalReadOnly?: boolean;
@@ -73,7 +75,7 @@ function StreamEntryView({
       <article
         className={`message message--${message.role}`}
         aria-label={identity.name}
-        data-streaming={message.status === 'streaming' ? '' : undefined}
+        data-streaming={!retained && message.status === 'streaming' ? '' : undefined}
         data-message-key={`message:${message.id}`}
       >
         <MessageAvatar identity={identity} continued={continued} />
@@ -85,7 +87,10 @@ function StreamEntryView({
           {message.role === 'user' ? (
             <UserMessage content={delivery.content} />
           ) : (
-            <MessageContent content={delivery.content} streaming={message.status === 'streaming'} />
+            <MessageContent
+              content={delivery.content}
+              streaming={!retained && message.status === 'streaming'}
+            />
           )}
           {canDeliver && delivery.references ? (
             <AnswerDeliverables
@@ -115,7 +120,7 @@ function StreamEntryView({
           ) : null}
           <MessageFooter
             id={message.id}
-            showVotes={message.role === 'assistant' && !message.retainedPartial}
+            showVotes={!retained && message.role === 'assistant' && !message.retainedPartial}
             canVote={message.role === 'assistant' && message.finalAnswer === true}
             at={message.at}
             content={delivery.content}
@@ -201,6 +206,7 @@ function StreamEntryView({
 }
 
 export const StreamEntry = memo(StreamEntryView, (previous, next) => {
+  if (previous.retained !== next.retained) return false;
   if (previous.entry.kind !== next.entry.kind || previous.entry.item !== next.entry.item)
     return false;
   if (next.entry.kind === 'message')
