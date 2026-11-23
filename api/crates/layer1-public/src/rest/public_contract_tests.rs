@@ -49,6 +49,7 @@ mod provider_association_cases;
 mod queued_cancellation_cases;
 mod queued_input_cases;
 mod replay;
+mod resource_revocation_cases;
 mod response_control_cases;
 mod response_headers;
 mod responses_v2_cases;
@@ -175,6 +176,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = resource_revocation_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = platform_spend_cases::scenario(name) {
         return scenario;
     }

@@ -20,6 +20,7 @@ import {
   type ContractCase,
   type Dispatch,
 } from './public-contract/context.js';
+import { revocationDispatch } from './public-contract/resource-revocations.js';
 import { resourceDispatch } from './public-contract/resources.js';
 import { deliverableDispatch, deliveryExchange } from './public-contract/deliverables.js';
 import { eventWorkerDispatch } from './public-contract/event-workers.js';
@@ -53,6 +54,7 @@ const dispatch: Record<string, Dispatch> = {
   ...botDispatch,
   ...eventWorkerDispatch,
   ...resourceDispatch,
+  ...revocationDispatch,
   ...operatorDispatch,
   ...triggerDispatch,
   ...experienceDispatch,
