@@ -190,9 +190,11 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("provider_tool_relays", Linked(Agents, &["agent_id"]) => false),
     // Opt-in execution evidence keeps identities in its serialized `record`;
     // erasure fails closed if any row still names the subject, one of its
-    // resources or one of their shares (#3296). Digest-only identities such as
-    // actor, origin and registration cannot be matched; whether they may be
-    // retained as pseudonymous evidence is the owner's decision on #3296.
+    // resources, one of their shares, or one of the subject's recomputed actor
+    // and owner digests (#3296). Still unmatched: delegated Api actor digests
+    // and the resource-derived `origin`, `target_ancestry` and `registration`
+    // digests; whether those may be retained as pseudonymous evidence is the
+    // owner's decision on #3296.
     entry!("resource_execution_effects_v1", ProvenAbsentJson(&["record"]) => false),
     entry!("resource_execution_grants_v1", ProvenAbsentJson(&["record"]) => false, ProvenAbsent(&["share_id"]) => false),
     entry!("resource_execution_records_v1", ProvenAbsentJson(&["record"]) => false),
