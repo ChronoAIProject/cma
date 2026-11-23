@@ -39,6 +39,7 @@ mod gateway_cases;
 mod gateway_interaction_cases;
 mod inventory;
 mod inventory_cases;
+mod legal_consent_cases;
 mod lifecycle_cases;
 mod lifecycle_result_contract;
 mod message_feedback_cases;
@@ -186,6 +187,9 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = account_deletion_cases::scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = legal_consent_cases::scenario(name) {
         return scenario;
     }
     if let Some(scenario) = capacity_recovery_cases::scenario(name).await {

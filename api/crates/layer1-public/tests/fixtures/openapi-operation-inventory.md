@@ -7,6 +7,16 @@
 | `GET /api/v1/account/deletion` | Read the authenticated owner's deletion status, including when new requests are disabled. |
 | `POST /api/v1/account/deletion` | Request deletion with explicit confirmation and `Idempotency-Key`; return 202 with a durable receipt. Replays remain available when new requests are disabled. |
 
+### Legal consent
+
+The deployment operator publishes at most one current version of its terms and
+privacy notice. Without one, both operations answer 404 `legal_terms_not_configured`.
+
+| Operation | Behavior |
+|---|---|
+| `GET /api/v1/account/legal-consent` | Read the current terms version, its document URLs and when the verified human owner accepted that version (`null` until accepted). |
+| `PUT /api/v1/account/legal-consent` | Accept the exact current `version`; a repeat keeps the original acceptance time, and any other version is refused with 409 `legal_terms_version_mismatch`. |
+
 ### Event Worker Profiles
 
 These owner-scoped resources compose three published CMA profile revisions into

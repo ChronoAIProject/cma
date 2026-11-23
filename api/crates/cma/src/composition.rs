@@ -12,6 +12,7 @@ mod credentials;
 mod desktop;
 mod documents;
 pub(crate) mod event_routing;
+mod legal_consent;
 mod media;
 mod observation;
 mod profiles;
@@ -368,6 +369,9 @@ impl ControlPlaneComposition {
         let metadata = routes::agent_metadata(&stores, resource_access.clone(), config);
         let resource_routes = rest::profiles_router(profiles)
             .merge(rest::account_deletion_router(deletions))
+            .merge(rest::legal_consent::legal_consent_router(
+                legal_consent::service(config, &stores),
+            ))
             .merge(rest::answer_deliverables_router(deliverables))
             .merge(media::router(media))
             .merge(rest::documents_router(documents.clone()))
