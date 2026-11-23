@@ -164,6 +164,6 @@
 .agent-toolbar__actions button[aria-controls='agent-files-panel'][aria-expanded='false'] {
   background: transparent;
 }
-.agent-toolbar__menu {
+.menu.agent-toolbar__menu {
   max-width: min(360px, calc(100vw - 24px));
 }
