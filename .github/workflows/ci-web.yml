@@ -83,8 +83,12 @@ jobs:
         name: "Local browser guard mechanics"
         working-directory: "web"
         run: |
-          node --test ../.github/scripts/agent-v2-ci.test.mjs ../.github/scripts/tree-row-menu-ci.test.mjs ../.github/scripts/new-agent-request-ci.test.mjs ../.github/scripts/lifecycle-browser-ci.test.mjs ../.github/scripts/channel-setup-ci.test.mjs
+          node --test ../.github/scripts/agent-v2-ci.test.mjs ../.github/scripts/tree-row-menu-ci.test.mjs ../.github/scripts/new-agent-request-ci.test.mjs ../.github/scripts/lifecycle-browser-ci.test.mjs ../.github/scripts/channel-setup-ci.test.mjs ../.github/scripts/connection-journey-ui-ci.test.mjs
           npm run e2e:mechanics
+      -
+        name: "Local compiled connection journeys"
+        timeout-minutes: 5
+        run: "node node_modules/playwright/cli.js test --config e2e/connection-journey-ui.config.ts"
       -
         name: "CSS collisions"
         run: "npm run check:css"

@@ -91,6 +91,24 @@ export class ConnectionJourney {
       return true;
     });
   }
+  async returnFromSameTab(page: Page): Promise<void> {
+    assert.ok(this.launch && this.intent, 'Same-tab return requires an acknowledged Launch intent');
+    await expect(page).toHaveURL(
+      (url) => url.origin === this.h.config.baseURL && url.pathname === '/connection-return',
+    );
+    const link = page.getByRole('link', { name: 'Return to CMA', exact: true });
+    await expect(link).toBeVisible();
+    assert.equal(
+      await link.getAttribute('href'),
+      `/launches/${encodeURIComponent(this.launch.id)}`,
+      'Callback must return to the original Launch',
+    );
+    assert.ok(
+      [null, '_self'].includes(await link.getAttribute('target')),
+      'Callback must stay in the original tab',
+    );
+    await Promise.all([this.verification(page), link.click()]);
+  }
   private async observe(phase: 'before' | 'after') {
     assert.ok(this.launch);
     if (phase === 'after') assert.ok(this.intent);
