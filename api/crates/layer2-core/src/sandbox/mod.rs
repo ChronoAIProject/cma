@@ -289,9 +289,9 @@ pub use agent_reads::{
     AgentEventStreamAuthorization, AgentEventStreamHeader, AgentEventStreamSnapshot,
     AgentHistoryCursor, AgentHistoryReading, AgentOriginalRequest, AgentOutputObservation,
     AgentReadService, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
-    AgentRetainedOutput, AgentRetainedOutputAvailability, AgentRetainedOutputPage,
-    AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail,
-    SharedAgentOrigin, RETAINED_OUTPUT_CHUNK_BYTES,
+    AgentResponseObservation, AgentRetainedOutput, AgentRetainedOutputAvailability,
+    AgentRetainedOutputPage, AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry,
+    SharedAgentDetail, SharedAgentOrigin, RETAINED_OUTPUT_CHUNK_BYTES,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,
