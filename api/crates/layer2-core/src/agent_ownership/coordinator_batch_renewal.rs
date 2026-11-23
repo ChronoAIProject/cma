@@ -1,4 +1,5 @@
 use super::super::{RenewalBatch, HEARTBEAT_INTERVAL_MS, MAX_RENEWAL_BATCH};
+use super::heartbeat::RenewalHeartbeat;
 use super::renewal::renewal_obsolete;
 use super::*;
 use futures_util::stream::FuturesUnordered;
