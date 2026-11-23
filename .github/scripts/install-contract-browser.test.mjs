@@ -38,6 +38,17 @@ function gone(pid) {
   }
 }
 
+async function waitForStopped(
+  isStopped,
+  pause = (ms) => new Promise((done) => setTimeout(done, ms)),
+) {
+  for (let wait = 0; wait < 50; wait += 1) {
+    if (isStopped()) return true;
+    await pause(100);
+  }
+  return isStopped();
+}
+
 function fixture(overrides = {}) {
   const calls = [],
     logs = [];
@@ -331,6 +342,46 @@ test('bounded downloader returns combined output and reports a failing exit', as
   assert.match(failure.output, /stderr row/);
 });
 
+test('a stopped worker observation survives a later reaping race', async () => {
+  const observations = [true, false];
+  let checks = 0;
+  const stopped = await waitForStopped(
+    () => observations[checks++],
+    () => assert.fail('a stopped worker needs no further wait'),
+  );
+  assert.equal(stopped, true);
+  assert.equal(checks, 1);
+});
+
+test('worker cleanup waits for a stopped observation', async () => {
+  let checks = 0;
+  const waits = [];
+  assert.equal(
+    await waitForStopped(
+      () => ++checks === 3,
+      async (ms) => waits.push(ms),
+    ),
+    true,
+  );
+  assert.equal(checks, 3);
+  assert.deepEqual(waits, [100, 100]);
+});
+
+test('a running worker exhausts the bounded cleanup wait without passing', async () => {
+  let checks = 0;
+  const waits = [];
+  const stopped = await waitForStopped(
+    () => {
+      checks += 1;
+      return false;
+    },
+    async (ms) => waits.push(ms),
+  );
+  assert.equal(stopped, false);
+  assert.equal(checks, 51);
+  assert.deepEqual(waits, Array(50).fill(100));
+});
+
 test(
   'a timed-out downloader is stopped together with the worker it forked',
   { timeout: 20_000 },
@@ -347,9 +398,7 @@ test(
     assert.ok(Date.now() - started < 10_000);
     const pid = Number(/worker (\d+)/.exec(failure.output)?.[1]);
     assert.ok(pid > 0, failure.output);
-    for (let wait = 0; wait < 50 && !gone(pid); wait += 1)
-      await new Promise((done) => setTimeout(done, 100));
-    assert.ok(gone(pid), `forked worker ${pid} survived the timeout`);
+    assert.ok(await waitForStopped(() => gone(pid)), `forked worker ${pid} survived the timeout`);
   },
 );
 
