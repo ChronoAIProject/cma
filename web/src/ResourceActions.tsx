@@ -14,6 +14,11 @@ import {
   type DeletionRequest,
 } from './deletion';
 import { restoreDeletions } from './deletionRecovery';
+import {
+  reconcileDeletionRequests,
+  sameDeletionRequest,
+  type DeletionSettlements,
+} from './useDeletionNoticeReconciliation';
 import { Button } from './ui/Button';
 import { useHistoryExport } from './agent/useHistoryExport';
 import type { AppRoute } from './routing/routes';
@@ -35,7 +40,7 @@ export function useResourceActions(
   viewerId = 'current',
   onNavigate?: (route: AppRoute) => void,
   enabled = true,
-  deletionRevision = 0,
+  settlements?: DeletionSettlements,
 ) {
   // Commands may settle after navigation; target matching belongs to the current view.
   const changed = useRef(onChanged);
@@ -49,13 +54,23 @@ export function useResourceActions(
     return request === undefined || request.accepted ? undefined : { request, restored: true };
   });
   const [deletionRequests, setDeletionRequests] = useState(() => restoreDeletions(viewerId));
-  const [deletionScope, setDeletionScope] = useState({ viewerId, revision: deletionRevision });
-  if (deletionScope.viewerId !== viewerId || deletionScope.revision !== deletionRevision) {
-    setDeletionScope({ viewerId, revision: deletionRevision });
-    setDeletionRequests(restoreDeletions(viewerId));
+  const settled =
+    settlements?.client === client && settlements.viewerId === viewerId ? settlements.requests : [];
+  const [deletionScope, setDeletionScope] = useState({ viewerId, settlements });
+  if (deletionScope.viewerId !== viewerId || deletionScope.settlements !== settlements) {
+    setDeletionScope({ viewerId, settlements });
+    setDeletionRequests((current) =>
+      reconcileDeletionRequests(
+        deletionScope.viewerId === viewerId ? current : [],
+        restoreDeletions(viewerId),
+        settled,
+      ),
+    );
   }
   const refreshDeletions = () => {
-    setDeletionRequests(restoreDeletions(viewerId));
+    setDeletionRequests((current) =>
+      reconcileDeletionRequests(current, restoreDeletions(viewerId), settled),
+    );
   };
   const [stopping, setStopping] = useState<{ agentId: string; key: string }>();
   const [sandboxRequests, setSandboxRequests] = useState<readonly SandboxActionRequest[]>([]);
@@ -166,7 +181,6 @@ export function useResourceActions(
     } else if (['delete_sandbox', 'remove_workspace', 'delete_agent'].includes(action.kind)) {
       if (pending || deletion !== undefined) return;
       setError(undefined);
-      const retained = restoreDeletion(viewerId);
       const same = deletionRequests.find(
         (request) => JSON.stringify(request.action) === JSON.stringify(action),
       );
@@ -206,7 +220,7 @@ export function useResourceActions(
       void execute(action);
     }
   };
-  const retained = restoreDeletion(viewerId);
+  const retained = deletionRequests.find((request) => !request.accepted) ?? deletionRequests.at(-1);
   return {
     select,
     viewDeletion,
@@ -312,13 +326,13 @@ export function useResourceActions(
                 refreshDeletions();
                 changed.current(deletion.request.action);
               }}
-              onAccepted={(request) => {
+              onRequestChanged={(request) =>
                 setDeletionRequests((current) => [
-                  ...current.filter((item) => item.key !== request.key),
-                  request,
-                ]);
-                setDeletion(undefined);
-              }}
+                  ...current.filter((item) => !sameDeletionRequest(item, deletion.request)),
+                  ...(request ? [request] : []),
+                ])
+              }
+              onAccepted={() => setDeletion(undefined)}
               onClose={() => {
                 setDeletion(undefined);
                 refreshDeletions();

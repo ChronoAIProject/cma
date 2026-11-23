@@ -1,26 +1,57 @@
 import { useLayoutEffect, useMemo, useState } from 'react';
 import type { CmaWebClient, ReadOptions } from './api/client';
 import { coalesceDetailReads } from './api/detailReads';
-import type { DeleteAction } from './deletion';
+import type { DeleteAction, DeletionRequest } from './deletion';
 import { forgetDeletion, restoreDeletions } from './deletionRecovery';
 
-function sameTarget(action: DeleteAction, kind: DeleteAction['kind'], id: string) {
+function targetId(action: DeleteAction) {
+  return action.kind === 'delete_sandbox'
+    ? action.sandboxId
+    : action.kind === 'remove_workspace'
+      ? action.workspaceId
+      : action.agentId;
+}
+
+export function sameDeletionRequest(left: DeletionRequest, right: DeletionRequest) {
   return (
-    action.kind === kind &&
-    (action.kind === 'delete_sandbox'
-      ? action.sandboxId === id
-      : action.kind === 'remove_workspace'
-        ? action.workspaceId === id
-        : action.agentId === id)
+    left.key === right.key &&
+    left.action.kind === right.action.kind &&
+    targetId(left.action) === targetId(right.action)
+  );
+}
+
+export interface DeletionSettlements {
+  readonly client: CmaWebClient;
+  readonly viewerId: string;
+  readonly requests: readonly DeletionRequest[];
+}
+
+export function reconcileDeletionRequests(
+  memory: readonly DeletionRequest[],
+  persisted: readonly DeletionRequest[],
+  settled: readonly DeletionRequest[] = [],
+): readonly DeletionRequest[] {
+  const requests = [
+    ...memory,
+    ...persisted.filter((request) => !memory.some((item) => sameDeletionRequest(item, request))),
+  ];
+  return requests.filter(
+    (request) => !request.accepted || !settled.some((item) => sameDeletionRequest(item, request)),
   );
 }
 
 /** Observe existing reads only; a missing resource is never proof of completed cleanup. */
-function observeAcceptedDeletions(source: CmaWebClient, viewerId: string, onSettled: () => void) {
+function observeAcceptedDeletions(
+  source: CmaWebClient,
+  viewerId: string,
+  onSettled: (request: DeletionRequest) => void,
+) {
   let active = false;
   let authority: { authEpoch: number; authorized: boolean } | undefined;
   const matching = (kind: DeleteAction['kind'], id: string) =>
-    restoreDeletions(viewerId).filter((request) => sameTarget(request.action, kind, id));
+    restoreDeletions(viewerId).filter(
+      (request) => request.action.kind === kind && targetId(request.action) === id,
+    );
   const observe =
     <T>(
       kind: DeleteAction['kind'],
@@ -45,7 +76,7 @@ function observeAcceptedDeletions(source: CmaWebClient, viewerId: string, onSett
         const current = matching(kind, id);
         if (current.length === 1 && current[0]?.key === request.key && current[0].accepted) {
           forgetDeletion(viewerId, request.key);
-          onSettled();
+          onSettled(request);
         }
       }
       return value;
@@ -95,14 +126,21 @@ export function useDeletionNoticeReconciliation(
   authEpoch: number,
   authorized: boolean,
 ) {
-  const [revision, setRevision] = useState(0);
-  const scope = useMemo(
-    () => observeAcceptedDeletions(source, viewerId, () => setRevision((value) => value + 1)),
-    [source, viewerId],
-  );
+  const [settled, setSettled] = useState<DeletionSettlements>();
+  const scope = useMemo(() => {
+    const observed = observeAcceptedDeletions(source, viewerId, (request) =>
+      setSettled((current) => ({
+        client: observed.client,
+        viewerId,
+        requests: [...(current?.client === observed.client ? current.requests : []), request],
+      })),
+    );
+    return observed;
+  }, [source, viewerId]);
   useLayoutEffect(() => {
     scope.authorize(authEpoch, authorized);
   }, [scope, authEpoch, authorized]);
   useLayoutEffect(() => scope.activate(), [scope]);
-  return { client: scope.client, revision };
+  const settlements = settled?.client === scope.client ? settled : undefined;
+  return { client: scope.client, revision: settlements?.requests.length ?? 0, settlements };
 }
