@@ -1,7 +1,14 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import type { Launch, TriggerPreview } from '@cma/client';
 import { LocalStartup, recorded } from './agent-startup-fixtures';
 import { buildSandboxHarness, sandboxHarnessPath } from './credential-sandbox.fixture';
+
+// The refusal is announced by a live alert. A replaced alert can still be
+// leaving the page, hidden and inert, with the same text; role queries skip it.
+const accountMismatch = (page: Page) =>
+  page
+    .getByRole('alert')
+    .filter({ hasText: 'Sign in with the same CMA account that made this request.' });
 
 let sandboxHarness: Awaited<ReturnType<typeof buildSandboxHarness>>;
 test.beforeAll(async () => {
@@ -192,9 +199,7 @@ for (const surface of ['sandbox', 'landing', 'review'] as const) {
     expect(loginReturns).toEqual([surface === 'sandbox' ? '/' : '/t/pub_credential']);
     sessionSubject = 'different-owner';
     await page.getByRole('button', { name: 'Check signed-in account', exact: true }).click();
-    await expect(
-      page.getByText('Sign in with the same CMA account that made this request.'),
-    ).toBeVisible();
+    await expect(accountMismatch(page)).toBeVisible();
     await expect(command).toBeDisabled();
     expect(commands).toHaveLength(1);
     sessionSubject = 'local-owner';
@@ -207,9 +212,7 @@ for (const surface of ['sandbox', 'landing', 'review'] as const) {
       );
     sessionSubject = 'different-owner';
     await command.click();
-    await expect(
-      page.getByText('Sign in with the same CMA account that made this request.'),
-    ).toBeVisible();
+    await expect(accountMismatch(page)).toBeVisible();
     expect(commands).toHaveLength(1);
     const checkedRetry = page.getByRole('button', {
       name:
@@ -235,9 +238,7 @@ for (const surface of ['sandbox', 'landing', 'review'] as const) {
     expect(commands).toHaveLength(2);
     sessionSubject = 'different-owner';
     await ambiguousRetry.click();
-    await expect(
-      page.getByText('Sign in with the same CMA account that made this request.'),
-    ).toBeVisible();
+    await expect(accountMismatch(page)).toBeVisible();
     expect(commands).toHaveLength(2);
     if (surface !== 'sandbox') {
       await page.reload();
@@ -246,9 +247,7 @@ for (const surface of ['sandbox', 'landing', 'review'] as const) {
       if (surface === 'review')
         await page.getByRole('link', { name: 'Open CMA sign-in', exact: true }).click();
       await page.getByRole('button', { name: 'Check signed-in account', exact: true }).click();
-      await expect(
-        page.getByText('Sign in with the same CMA account that made this request.'),
-      ).toBeVisible();
+      await expect(accountMismatch(page)).toBeVisible();
       expect(commands).toHaveLength(2);
     }
     await recover();

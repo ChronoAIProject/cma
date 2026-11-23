@@ -8,7 +8,10 @@ use super::*;
 const HOLDER: &str = "runtime-update-test";
 const END: &str = "2026-09-05T01:00:00Z";
 
-fn step(value: &mut Sandbox, f: impl FnOnce(&mut Sandbox, u64) -> Result<(), SandboxModelError>) {
+pub(super) fn step(
+    value: &mut Sandbox,
+    f: impl FnOnce(&mut Sandbox, u64) -> Result<(), SandboxModelError>,
+) {
     let fence = value.work.claim(HOLDER.into(), NOW, END.into()).unwrap();
     let previous = value.clone();
     f(value, fence).unwrap();
@@ -64,7 +67,7 @@ fn step(value: &mut Sandbox, f: impl FnOnce(&mut Sandbox, u64) -> Result<(), San
     let bytes = serde_json::to_vec(value).unwrap();
     *value = serde_json::from_slice(&bytes).unwrap();
 }
-fn pause(value: &mut Sandbox) {
+pub(super) fn pause(value: &mut Sandbox) {
     value
         .begin_pause(NOW.into(), Some("Paused by you.".into()))
         .unwrap();
@@ -84,7 +87,7 @@ fn pause_to_completion(value: &mut Sandbox) {
         v.publish_lifecycle_paused(HOLDER, f, NOW.into())
     });
 }
-fn admit(value: &mut Sandbox) {
+pub(super) fn admit(value: &mut Sandbox) {
     value
         .request_runtime_update("image-v2".into(), false, NOW.into())
         .unwrap();
@@ -93,7 +96,7 @@ fn admit(value: &mut Sandbox) {
         .begin_image_rotation("image-v2".into(), identity, NOW.into())
         .unwrap();
 }
-fn provision(value: &mut Sandbox) {
+pub(super) fn provision(value: &mut Sandbox) {
     let old = value.lifecycle.suspended_runtime.clone().unwrap();
     let home = value.lifecycle.home.clone();
     let source = value.retained_home_recovery().unwrap().clone();

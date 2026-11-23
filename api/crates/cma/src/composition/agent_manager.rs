@@ -14,6 +14,7 @@ pub(super) async fn register(
                 settings.relay_address.clone(),
                 settings.max_owned_agents,
                 config.features.ownership_cleanup_pacing,
+                config.features.batch_ownership_renewal,
             )
             .await?;
             if config.features.receiver_housekeeping_containment {

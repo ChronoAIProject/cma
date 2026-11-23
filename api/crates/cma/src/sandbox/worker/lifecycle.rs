@@ -16,7 +16,7 @@ mod pause;
 mod queue;
 mod reopen_output;
 mod reopen_owned;
-pub(super) use reopen_owned::PendingReopen;
+pub(super) use reopen_owned::{PendingReopen, ReopenGates};
 mod restore;
 mod service_access;
 mod support;

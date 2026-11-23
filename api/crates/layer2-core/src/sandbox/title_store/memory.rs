@@ -177,7 +177,7 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
                     .title
                     .as_ref()
                     .is_none_or(|title| title.source == AgentTitleSource::Fallback)
-                    && !agent.effect.unknown()
+                    && (!agent.effect.unknown() || agent.title.is_none())
                     && !agent.work.settled
                     && agent
                         .work
@@ -229,7 +229,10 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
             }
         }
 
-        if agent.effect.unknown() {
+        // An unresolved provider effect is never redispatched. Until its
+        // prompt-derived fallback is stored, it may take a fallback-only claim.
+        let unknown = agent.effect.unknown();
+        if unknown && agent.title.is_some() {
             return Ok(None);
         }
         let accepted = agent.effect.accepted().is_some();
@@ -238,7 +241,9 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
         {
             return Ok(None);
         }
-        let mode = if !accepted && agent.work.attempts >= super::super::AGENT_TITLE_MAX_ATTEMPTS {
+        let mode = if !accepted
+            && (unknown || agent.work.attempts >= super::super::AGENT_TITLE_MAX_ATTEMPTS)
+        {
             AgentTitleClaimMode::FallbackOnly
         } else {
             agent.work.attempts += u32::from(!accepted);
@@ -297,6 +302,7 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
         });
         if !exact_lease
             || !agent.effect.permits_title(title, source)
+            || agent.effect.unknown() && claim.mode() != AgentTitleClaimMode::FallbackOnly
             || (agent.effect != AgentTitleEffectState::Legacy
                 && claim.expires_at() <= SystemTime::now())
         {
