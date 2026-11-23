@@ -18,9 +18,20 @@ impl OwnershipCoordinator {
         member: Member,
         enabled: bool,
     ) -> Arc<Self> {
+        Self::prepare_with_options(store, member, enabled, false)
+    }
+
+    pub fn prepare_with_options(
+        store: Arc<dyn OwnershipStore>,
+        member: Member,
+        cleanup_pacing: bool,
+        batch_renewal: bool,
+    ) -> Arc<Self> {
         let capacity = member.max_owned_agents as usize;
         Arc::new(Self {
             instance_id: member.instance_id.clone(),
+            batch_maintenance: (batch_renewal && store.supports_batch_renewal())
+                .then(Mutex::default),
             store,
             owned: Mutex::new(BTreeMap::new()),
             acquisition: Mutex::new(()),
@@ -30,7 +41,10 @@ impl OwnershipCoordinator {
             skipped_heartbeats: AtomicU32::new(0),
             draining: AtomicBool::new(false),
             failed: watch::channel(false).0,
-            cleanup_pacing: super::super::cleanup_pacing::CleanupPacing::new(enabled, capacity),
+            cleanup_pacing: super::super::cleanup_pacing::CleanupPacing::new(
+                cleanup_pacing,
+                capacity,
+            ),
             registration: std::sync::Mutex::new(Some(member)),
             registered: AtomicBool::new(false),
         })

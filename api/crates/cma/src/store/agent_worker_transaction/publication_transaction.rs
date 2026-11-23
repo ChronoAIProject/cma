@@ -1,6 +1,7 @@
 //! Commit or abort one publication snapshot, including prepared eligibility.
 use super::*;
 
+use crate::store::agent_capacity_recovery::observations::{cohort, Outcome, Stage};
 use layer2_core::sandbox::store::{AgentWorkPublication, AgentWorkPublicationParents};
 
 enum Completion {
@@ -12,7 +13,28 @@ enum Completion {
 #[derive(Clone, Copy)]
 enum Attempts {
     KeepProposal,
+    Connection(AgentWorkPublicationParents),
     Rebuild(AgentWorkPublicationParents),
+}
+
+pub(in crate::store) async fn commit_connection(
+    store: &MongoSandboxStore,
+    mutation: AgentWorkMutation,
+    parents: AgentWorkPublicationParents,
+) -> Result<(), SandboxStoreError> {
+    match run(
+        store,
+        mutation,
+        None,
+        None,
+        Attempts::Connection(parents),
+        None,
+    )
+    .await?
+    {
+        Completion::Published => Ok(()),
+        _ => Err(SandboxStoreError::Conflict),
+    }
 }
 
 pub(super) async fn commit(
@@ -69,28 +91,36 @@ async fn run(
     attempts: Attempts,
     skill_guard: Option<&layer2_core::sandbox::store::AgentSkillResultGuard>,
 ) -> Result<Completion, SandboxStoreError> {
-    let (limit, parents) = match attempts {
-        Attempts::KeepProposal => (TRANSACTION_ATTEMPTS, None),
-        Attempts::Rebuild(parents) => (1, Some(parents)),
+    let (limit, parents, observed_connection) = match attempts {
+        Attempts::KeepProposal => (TRANSACTION_ATTEMPTS, None, None),
+        Attempts::Connection(parents) => (TRANSACTION_ATTEMPTS, None, Some(parents)),
+        Attempts::Rebuild(parents) => (1, Some(parents), None),
     };
     ensure_append_batch_size(mutation.agent_logs.len())?;
     let mut timing = contention::PublicationTiming::new(&mutation);
     let deadline = CLEANUP_RETRY_DEADLINE.try_with(|deadline| *deadline).ok();
-    let _writer = match deadline {
-        Some(deadline) => store
-            .agent_writes
-            .lock_until(&mutation.agent.id, deadline)
-            .await
-            .ok_or(SandboxStoreError::Conflict)?,
-        None => store.agent_writes.lock(&mutation.agent.id).await,
+    let lock_writer = || async {
+        match deadline {
+            Some(deadline) => store
+                .agent_writes
+                .lock_until(&mutation.agent.id, deadline)
+                .await
+                .ok_or(SandboxStoreError::Conflict),
+            None => Ok(store.agent_writes.lock(&mutation.agent.id).await),
+        }
     };
+    let mut writer = lock_writer().await?;
     timing.acquired();
     let mut history_cache = publication_history::AttemptHistory::default();
     let mut last_transient = None;
     let jitter = uuid::Uuid::new_v4().as_u128() as u64;
-    for attempt in 0..limit {
+    let mut staged = None;
+    let mut adoption_not_selected = false;
+    let mut attempt = 0;
+    while attempt < limit {
         timing.attempt();
         contention::backoff(attempt, jitter).await;
+        attempt += 1;
         if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
             return Err(SandboxStoreError::Conflict);
         }
@@ -121,12 +151,35 @@ async fn run(
             PublicationGuards {
                 rebuild_parents: parents.as_ref(),
                 skill_result: skill_guard,
+                adoption: staged.as_ref(),
+                adoption_not_selected,
+                observed_connection,
             },
             scope,
         ))
         .await;
         let receipt = match publication {
             Ok(receipt) => receipt,
+            Err(ApplyError::StagePending(source)) => {
+                session
+                    .abort_transaction()
+                    .await
+                    .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+                drop(writer);
+                staged = pending_adoption::prepare(store, *source).await?;
+                writer = lock_writer().await?;
+                adoption_not_selected = staged.is_none();
+                attempt -= 1;
+                continue;
+            }
+            Err(ApplyError::PendingReplayed) => {
+                session
+                    .abort_transaction()
+                    .await
+                    .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+                cohort(Stage::Completed, Outcome::Replay);
+                return Ok(Completion::Published);
+            }
             Err(ApplyError::PreparedIneligible) => {
                 let _ = session.abort_transaction().await;
                 return Ok(Completion::PreparedIneligible);
@@ -137,6 +190,9 @@ async fn run(
             }
             Err(ApplyError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
+                if staged.is_some() {
+                    cohort(Stage::Blocked, Outcome::Refused);
+                }
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if positively_aborted(&error) => {
@@ -149,6 +205,21 @@ async fn run(
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
+        #[cfg(test)]
+        if receipt.pending_adoption() {
+            use pending_adoption::test_hooks::{self, Boundary};
+            test_hooks::stop(&store.agents.namespace().db, Boundary::BeforeCommit).await;
+        }
+        if staged
+            .as_ref()
+            .is_some_and(|prepared| !prepared.lease_live())
+        {
+            if let Err(error) = session.abort_transaction().await {
+                tracing::warn!(error_kind = ?error.kind, "Expired pending publication abort was not acknowledged");
+            }
+            cohort(Stage::Blocked, Outcome::KnownAbort);
+            return Err(pending_adoption::witness::unavailable());
+        }
         // Once commit is sent, the original transaction must settle or
         // reconcile even if the work lease expires while waiting for Mongo.
         if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
@@ -157,6 +228,9 @@ async fn run(
         }
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
+                if receipt.pending_adoption() {
+                    cohort(Stage::Completed, Outcome::Committed);
+                }
                 history_cache.committed(store);
                 timing.committed();
                 crate::telemetry::work::published(&receipt.logs, "committed");
@@ -164,6 +238,9 @@ async fn run(
             }
             CommitOutcome::Retry(error) => last_transient = Some(error),
             CommitOutcome::Unknown(error) => {
+                if receipt.pending_adoption() {
+                    cohort(Stage::Blocked, Outcome::Unknown);
+                }
                 let snapshot_time = session.operation_time().ok_or_else(|| {
                     SandboxStoreError::Unavailable(format!(
                         "agent work publication commit remained unknown without an operation time: {error}"
@@ -182,6 +259,9 @@ async fn run(
                     )
                     .await?
                     {
+                        if receipt.pending_adoption() {
+                            cohort(Stage::Completed, Outcome::Replay);
+                        }
                         crate::telemetry::work::published(&receipt.logs, "reconciled");
                         Ok(Completion::Published)
                     } else {
@@ -203,7 +283,9 @@ async fn run(
         }
     }
     match attempts {
-        Attempts::KeepProposal => Err(contention::exhausted(&mutation, last_transient.as_ref())),
+        Attempts::KeepProposal | Attempts::Connection(_) => {
+            Err(contention::exhausted(&mutation, last_transient.as_ref()))
+        }
         Attempts::Rebuild(_) => Ok(Completion::KnownAborted),
     }
 }
