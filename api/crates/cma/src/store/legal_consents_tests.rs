@@ -23,7 +23,7 @@ fn identity(subject: &str, name: &str) -> PublicIdentity {
 }
 
 #[test]
-fn consent_rows_decode_only_their_own_field() {
+fn consent_rows_tolerate_fields_added_later() {
     let row: ConsentRow = mongodb::bson::deserialize_from_document(doc! {
         "_id": "owner",
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
@@ -32,13 +32,12 @@ fn consent_rows_decode_only_their_own_field() {
     })
     .unwrap();
     assert!(row.legal_consents.is_empty());
-    assert!(
-        mongodb::bson::deserialize_from_document::<ConsentRow>(doc! {
-            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-            FIELD: [{ "version": "1", "accepted_at": FIRST, "extra": true }],
-        })
-        .is_err()
-    );
+    let later: ConsentRow = mongodb::bson::deserialize_from_document(doc! {
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        FIELD: [{ "version": "1", "accepted_at": FIRST, "added_later": true }],
+    })
+    .unwrap();
+    assert_eq!(later.legal_consents[0].version, "1");
 }
 
 #[tokio::test]

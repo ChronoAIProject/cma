@@ -73,7 +73,7 @@ pub(super) async fn read(
             if !erasing && authority.is_some() && auth.service_authorization_enabled() {
                 body["service_authorization"] = true.into();
             }
-            if let Some(terms) = auth.legal_terms_body() {
+            if let Some(terms) = auth.legal_terms_body().filter(|_| !erasing) {
                 body["legal_terms"] = terms;
             }
             if !erasing {

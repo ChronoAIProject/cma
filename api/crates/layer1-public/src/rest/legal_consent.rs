@@ -132,6 +132,12 @@ fn legal_consent_problem(error: LegalConsentError) -> Response {
             "legal_terms_version_mismatch",
             "Review the current terms version before accepting it.",
         ),
+        SignInRequired => (
+            StatusCode::CONFLICT,
+            "legal-consent-sign-in-required",
+            "legal_consent_sign_in_required",
+            "Sign out and sign in again before accepting the terms.",
+        ),
         Store(_) => (
             StatusCode::SERVICE_UNAVAILABLE,
             "store-failed",

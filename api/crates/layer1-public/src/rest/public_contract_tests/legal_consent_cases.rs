@@ -38,10 +38,36 @@ impl LegalConsentStore for UnavailableStore {
     }
 }
 
+/// An owner whose browser sign-in left no directory record.
+struct UnrecordedOwner;
+
+#[async_trait]
+impl LegalConsentStore for UnrecordedOwner {
+    async fn acceptance(
+        &self,
+        _: &SubjectId,
+        _: &str,
+    ) -> Result<Option<ConsentAcceptance>, StoreError> {
+        Ok(None)
+    }
+
+    async fn accept(
+        &self,
+        _: &SubjectId,
+        _: &str,
+        _: &str,
+    ) -> Result<ConsentAcceptance, StoreError> {
+        Err(StoreError::ReferenceUnavailable(
+            "contract owner has no sign-in record".into(),
+        ))
+    }
+}
+
 pub(super) fn scenario(name: &str) -> Option<Scenario> {
     let mode = name.strip_prefix("legal_consent_")?;
     let store: Arc<dyn LegalConsentStore> = match mode {
         "store_error" => Arc::new(UnavailableStore),
+        "unrecorded" => Arc::new(UnrecordedOwner),
         "owner" | "unconfigured" | "anonymous" | "nonhuman" => {
             Arc::new(MemoryLegalConsentStore::default())
         }

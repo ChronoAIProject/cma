@@ -86,6 +86,7 @@ describe('legal consent after sign-in', () => {
       refusal(404, 'legal_terms_not_configured'),
       refusal(403, 'legal_consent_requires_owner_session'),
       refusal(401, 'not_authenticated'),
+      refusal(403, 'account_deletion_in_progress'),
     ]) {
       const api = client(async () => Promise.reject(error));
       const { unmount } = render(
@@ -120,6 +121,7 @@ describe('legal consent after sign-in', () => {
       vi
         .fn<() => Promise<LegalConsent>>()
         .mockRejectedValueOnce(refusal(503, 'store_failed'))
+        .mockRejectedValueOnce(refusal(409, 'legal_consent_sign_in_required'))
         .mockRejectedValueOnce(refusal(409, 'legal_terms_version_mismatch')),
     );
     const actor = userEvent.setup();
@@ -127,6 +129,10 @@ describe('legal consent after sign-in', () => {
     await actor.click(await screen.findByRole('button', { name: 'Accept and continue' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Your acceptance could not be recorded. Try again.',
+    );
+    await actor.click(screen.getByRole('button', { name: 'Accept and continue' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Your sign-in could not be confirmed. Sign out and sign in again to accept the terms.',
     );
     await actor.click(screen.getByRole('button', { name: 'Accept and continue' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(

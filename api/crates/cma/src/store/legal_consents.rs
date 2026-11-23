@@ -34,7 +34,15 @@ pub(super) const FIELD: &str = "legal_consents";
 struct ConsentRow {
     document_schema_version: i64,
     #[serde(default)]
-    legal_consents: Vec<ConsentAcceptance>,
+    legal_consents: Vec<StoredAcceptance>,
+}
+
+/// One stored entry. Fields a later release adds are ignored, so an older
+/// reader keeps reading rows written after an upgrade.
+#[derive(Deserialize)]
+struct StoredAcceptance {
+    version: String,
+    accepted_at: String,
 }
 
 pub struct MongoLegalConsentStore {
@@ -72,7 +80,14 @@ impl MongoLegalConsentStore {
                 "legal consent record is not readable".into(),
             ));
         }
-        Ok(row.legal_consents)
+        Ok(row
+            .legal_consents
+            .into_iter()
+            .map(|record| ConsentAcceptance {
+                version: record.version,
+                accepted_at: record.accepted_at,
+            })
+            .collect())
     }
 }
 

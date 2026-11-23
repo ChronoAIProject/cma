@@ -11,7 +11,15 @@ type LegalConsentClient = NonNullable<CmaWebClient['legalConsent']>;
 const NOT_REQUIRED = new Set([
   'legal_terms_not_configured',
   'legal_consent_requires_owner_session',
+  'account_deletion_in_progress',
 ]);
+
+const ACCEPT_REFUSALS: Readonly<Record<string, string>> = {
+  legal_terms_version_mismatch:
+    'These terms have been updated. Reload the page to review the current version.',
+  legal_consent_sign_in_required:
+    'Your sign-in could not be confirmed. Sign out and sign in again to accept the terms.',
+};
 
 type Phase =
   | { readonly kind: 'checking' }
@@ -75,9 +83,9 @@ export function LegalConsentDialog({
           kind: 'required',
           accepting: false,
           error:
-            error instanceof ApiError && error.code === 'legal_terms_version_mismatch'
-              ? 'These terms have been updated. Reload the page to review the current version.'
-              : 'Your acceptance could not be recorded. Try again.',
+            (error instanceof ApiError && error.code !== undefined
+              ? ACCEPT_REFUSALS[error.code]
+              : undefined) ?? 'Your acceptance could not be recorded. Try again.',
         });
       },
     );

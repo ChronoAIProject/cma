@@ -4197,6 +4197,7 @@
         "legal_consent_requires_owner_session",
         "legal_terms_not_configured",
         "legal_terms_version_mismatch",
+        "legal_consent_sign_in_required",
         "invalid_json",
         "json_content_type_required",
         "store_failed"

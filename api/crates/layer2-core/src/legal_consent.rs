@@ -21,8 +21,9 @@ use crate::{account_deletion::OwnerSessionAuthority, Caller, StoreError, Subject
 pub const MAX_VERSION_LENGTH: usize = 64;
 /// Longest accepted document URL.
 pub const MAX_URL_LENGTH: usize = 2048;
-/// Acceptances retained per owner; older ones are dropped first.
-pub const MAX_RETAINED_ACCEPTANCES: usize = 64;
+/// Acceptances retained per owner; older ones are dropped first. Readers
+/// refuse longer histories, so this bound may grow but must never shrink.
+pub const MAX_RETAINED_ACCEPTANCES: usize = 16;
 
 /// The legal documents a deployment currently asks owners to accept.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +114,9 @@ pub enum LegalConsentError {
     /// The caller accepted a version other than the current one.
     #[error("legal terms version is not current")]
     VersionMismatch,
+    /// The owner's sign-in record is missing; a new browser sign-in records it.
+    #[error("legal consent requires a recorded sign-in")]
+    SignInRequired,
     /// The consent record could not be read or written.
     #[error("legal consent store failed: {0}")]
     Store(String),
@@ -135,7 +139,8 @@ pub trait LegalConsentStore: Send + Sync {
     ) -> Result<Option<ConsentAcceptance>, StoreError>;
 
     /// Record acceptance once. Accepting a recorded version again returns the
-    /// original acceptance unchanged.
+    /// original acceptance unchanged. `ReferenceUnavailable` means the owner
+    /// has no sign-in record to attach the acceptance to.
     async fn accept(
         &self,
         subject: &SubjectId,
@@ -189,7 +194,11 @@ impl LegalConsentService {
         let record = self
             .store
             .accept(&caller.subject, terms.version(), &crate::now_rfc3339())
-            .await?;
+            .await
+            .map_err(|error| match error {
+                StoreError::ReferenceUnavailable(_) => LegalConsentError::SignInRequired,
+                error => error.into(),
+            })?;
         if record.version != terms.version() {
             return Err(LegalConsentError::Store(
                 "stored acceptance names another version".into(),

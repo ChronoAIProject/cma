@@ -215,6 +215,38 @@ async fn memory_store_retains_a_bounded_history() {
         .is_some());
 }
 
+struct UnrecordedOwner;
+
+#[async_trait]
+impl LegalConsentStore for UnrecordedOwner {
+    async fn acceptance(
+        &self,
+        _: &SubjectId,
+        _: &str,
+    ) -> Result<Option<ConsentAcceptance>, StoreError> {
+        Ok(None)
+    }
+
+    async fn accept(
+        &self,
+        _: &SubjectId,
+        _: &str,
+        _: &str,
+    ) -> Result<ConsentAcceptance, StoreError> {
+        Err(StoreError::ReferenceUnavailable("no sign-in record".into()))
+    }
+}
+
+#[tokio::test]
+async fn an_owner_without_a_sign_in_record_is_asked_to_sign_in_again() {
+    let service = LegalConsentService::new(Some(terms("1")), Arc::new(UnrecordedOwner));
+    let (caller, authority) = owner("owner");
+    assert_eq!(
+        service.accept(&caller, Some(&authority), "1").await,
+        Err(LegalConsentError::SignInRequired)
+    );
+}
+
 struct FailingStore;
 
 #[async_trait]

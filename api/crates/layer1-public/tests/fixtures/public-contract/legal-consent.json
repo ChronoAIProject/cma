@@ -465,6 +465,37 @@
         "bodyKind": "json"
       },
       "captures": {}
+    },
+    {
+      "id": "legal-consent-sign-in-required",
+      "operation": "PUT /api/v1/account/legal-consent",
+      "scenario": "legal_consent_unrecorded",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/account/legal-consent",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "version": "2026-11-30"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/legal-consent-sign-in-required",
+          "title": "legal consent sign in required",
+          "status": 409,
+          "detail": "Sign out and sign in again before accepting the terms.",
+          "code": "legal_consent_sign_in_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
     }
   ]
 }
