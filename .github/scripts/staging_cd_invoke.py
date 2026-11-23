@@ -357,6 +357,12 @@ def explain(outcome, reason, private, verification, recovery, release, site, rai
     return None
 
 
+# Transient, yet an immediate retry is wrong: interrupted is an operator's
+# cancel or stop, which a retry would undo, and fence is another project's
+# rollout in the shared namespace, which an immediate re-admission meets again.
+NEVER_RETRY = frozenset({("deploy-private", "interrupted"), ("deploy-private", "fence")})
+
+
 def automatic_retry(outcome, private, reason, env):
     """Return the transient (family, code) of a refusal one automatic retry may follow, else None.
 
@@ -375,6 +381,8 @@ def automatic_retry(outcome, private, reason, env):
     elif reason is not None:
         family, code = "deploy-precondition", reason
     else:
+        return None
+    if (family, code) in NEVER_RETRY:
         return None
     return (family, code) if entry(family, code).get("cause") == "transient" else None
 

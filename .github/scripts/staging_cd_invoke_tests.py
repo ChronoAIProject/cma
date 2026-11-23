@@ -268,6 +268,12 @@ class InvokeTests(unittest.TestCase):
         self.assertIsNone(invoke.automatic_retry(30, None, "checkout", env))
         self.assertIsNone(invoke.automatic_retry(30, "clock", None, dict(env, CD_TARGET="production")))
         self.assertIsNone(invoke.automatic_retry(30, invoke.UNRECOGNIZED, None, env))
+        # An operator's cancel or a foreign rollout is never retried at once.
+        for token in ("interrupted", "fence"):
+            self.assertEqual(invoke.entry("deploy-private", token)["cause"], "transient")
+            self.assertIsNone(invoke.automatic_retry(30, token, None, env))
+        for token in ("transport", "inventory", "image-version", "readiness"):
+            self.assertEqual(invoke.automatic_retry(30, token, None, env), ("deploy-private", token))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env = self.environment(root)
