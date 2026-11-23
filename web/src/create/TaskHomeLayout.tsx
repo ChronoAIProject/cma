@@ -19,6 +19,7 @@ export interface TaskHomeOverview {
   readonly onReviewRuntime?: () => void;
   readonly attention?: RuntimeAttention;
   readonly authEpoch?: number;
+  readonly visible?: boolean;
 }
 
 export function TaskHomeLayout({
