@@ -29,12 +29,14 @@ it.each([
     );
     const wireBody = JSON.stringify(original.body);
     const client = publicClient();
-    vi.mocked(client.requests.createOrResume).mockRejectedValueOnce(new Error('Unknown result'));
+    vi.mocked(client.requests.createOrResumeBound).mockRejectedValueOnce(
+      new Error('Unknown result'),
+    );
     await expect(admit(client, original, 'owner-a')).rejects.toThrow('Unknown result');
     const restored = readIntent(original.path)!;
     expect(JSON.stringify(restored.body)).toBe(wireBody);
     await admit(client, restored, 'owner-a');
-    const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+    const calls = vi.mocked(client.requests.createOrResumeBound).mock.calls;
     expect(calls).toHaveLength(2);
     expect(calls[1]?.[2].idempotencyKey).toBe(calls[0]?.[2].idempotencyKey);
     expect(JSON.stringify(calls[1]?.[1])).toBe(JSON.stringify(calls[0]?.[1]));
@@ -57,7 +59,7 @@ it('stops an unexpired legacy submitted packet instead of guessing its dispatche
   await expect(admit(client, readIntent(legacy.path)!, 'owner-a')).rejects.toThrow(
     'original request is saved',
   );
-  expect(client.requests.createOrResume).not.toHaveBeenCalled();
+  expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
   expect(sessionStorage.getItem(key)).toBe(bytes);
 });
 
@@ -77,7 +79,7 @@ it('does not attach a reordered body to an in-memory result or overwrite the ori
   };
   expect(() => writeIntent(reordered)).toThrow();
   await expect(admit(client, reordered, 'owner-a')).rejects.toThrow();
-  expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
   expect(sessionStorage.getItem(key)).toBe(bytes);
 });
 
@@ -140,8 +142,9 @@ it('permits a fresh explicit command after a known legacy credential refusal', a
   writeIntent(retry);
   const client = publicClient();
   await admit(client, retry, 'owner-a');
-  expect(client.requests.createOrResume).toHaveBeenCalledWith(legacy.publicId, legacy.body, {
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledWith(legacy.publicId, legacy.body, {
     idempotencyKey: retry.key,
+    expectedSubject: 'owner-a',
   });
   expect(readIntent(legacy.path)).toMatchObject({
     key: retry.key,
@@ -160,5 +163,5 @@ it('keeps the review fence when an older copy of the same command is saved', asy
   const fenced = readIntent(original.path)!;
   expect(fenced.recoveryRequired).toBe(true);
   await expect(admit(client, fenced, 'owner-a')).rejects.toThrow('original request is saved');
-  expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
 });

@@ -53,10 +53,10 @@ it('keeps the public landing outside the auth gate and admits only the explicit 
   );
   await screen.findByRole('heading', { name: PUBLIC_PREVIEW.title });
   expect(screen.queryByRole('button', { name: 'Sign in' })).not.toBeInTheDocument();
-  expect(visitor.requests.createOrResume).not.toHaveBeenCalled();
+  expect(visitor.requests.createOrResumeBound).not.toHaveBeenCalled();
   await userEvent.setup().click(await screen.findByRole('button', { name: 'Open in CMA' }));
   await waitFor(() => expect(window.location.pathname).toBe(`/launches/${PUBLIC_RECORD.id}`));
-  expect(visitor.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(visitor.requests.createOrResumeBound).toHaveBeenCalledOnce();
   expect(await screen.findByText('Preparing software')).toBeInTheDocument();
   view.unmount();
 });

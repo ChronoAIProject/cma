@@ -67,7 +67,7 @@ async function setup(
           />
         ) : surface === 'landing' ? (
           <PublicJourney
-            client={{ requests: { ...client.requests, createOrResume: command } }}
+            client={{ requests: { ...client.requests, createOrResumeBound: command } }}
             route={{
               kind: 'public_trigger',
               publicId: 'public-example',

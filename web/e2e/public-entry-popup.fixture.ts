@@ -1,3 +1,4 @@
+import { verifiedEntryHeaders } from './public-entry-binding.fixture';
 import { expect, type Page, type Request, type TestInfo } from '@playwright/test';
 import type { Launch, TriggerPreview } from '@cma/client';
 import { recorded } from './agent-startup-fixtures';
@@ -36,8 +37,14 @@ export async function popupFixture(page: Page, baseURL: string) {
   await context.route('**/*', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    const proof = verifiedEntryHeaders(request, subject);
     const reply = (body: unknown, status = 200) =>
-      route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+      route.fulfill({
+        status,
+        headers: proof,
+        contentType: 'application/json',
+        body: JSON.stringify(body),
+      });
     if (url.origin !== baseURL) {
       unexpected.push('external_request');
       return route.abort();
@@ -61,7 +68,7 @@ export async function popupFixture(page: Page, baseURL: string) {
       loginReturns.push(target);
       return route.fulfill({ status: 302, headers: { location: target }, body: '' });
     }
-    if (url.pathname === '/api/v1/triggers/public/pub_placement/launches') {
+    if (url.pathname === '/api/v2/triggers/public/pub_placement/launches') {
       expect(request.method()).toBe('POST');
       const body = request.postData();
       const key = request.headers()['idempotency-key'];

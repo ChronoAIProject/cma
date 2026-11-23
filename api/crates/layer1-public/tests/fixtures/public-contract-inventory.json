@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 307,
+  "openapi_operations": 308,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -4177,6 +4177,14 @@
         "not_authenticated",
         "resource_not_found",
         "resource_revocation_unavailable"
+      ]
+    },
+    "POST /api/v2/triggers/public/{public_id}/launches": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launch_subject.rs# Bound admission adds a mandatory subject condition before the existing engine.",
+      "required_problems": [
+        "command_subject_condition_invalid",
+        "command_subject_mismatch"
       ]
     }
   },

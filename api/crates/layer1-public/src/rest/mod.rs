@@ -174,6 +174,7 @@ pub(crate) mod instances_problem;
 mod instances_tests;
 mod launch_events;
 mod launch_quota;
+mod launch_subject;
 mod launches;
 mod public_names;
 mod sandbox_always_on;
