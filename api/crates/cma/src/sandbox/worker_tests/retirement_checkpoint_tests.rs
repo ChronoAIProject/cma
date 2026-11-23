@@ -80,6 +80,28 @@ async fn missing_retiring_runtime_settles_real_agents_without_archive_cleanup() 
 
     let runtime = RuntimeHandle(retiring.runtime.as_ref().unwrap().runtime_id.clone());
     harness.adapter.teardown(&runtime).await.unwrap();
+    // The startup inventory itself is global evidence: its failure still stops startup.
+    let global = Arc::new(CodexAdapter::with_backend(
+        super::reconciliation_tests::InventoryProbe::new(
+            harness.backend.clone(),
+            vec![Err(layer3_adapter::AdapterError::Unavailable(
+                "inventory unavailable".into(),
+            ))],
+        ),
+        CodexSandboxSpec::default(),
+    ));
+    assert!(SandboxReconciler::new(
+        harness.store.clone(),
+        global,
+        Arc::new(harness.policy.clone()),
+        "test".into()
+    )
+    .initialize(retirement_at)
+    .await
+    .is_err());
+    assert_eq!(harness.stored(&active.id).await, retiring);
+    // A per-Sandbox final loss observation that is unavailable defers only this
+    // binding (#3187). Without fresh absence evidence nothing is settled.
     let unavailable = Arc::new(CodexAdapter::with_backend(
         super::reconciliation_tests::InventoryProbe::new(
             harness.backend.clone(),
@@ -92,15 +114,15 @@ async fn missing_retiring_runtime_settles_real_agents_without_archive_cleanup() 
         ),
         CodexSandboxSpec::default(),
     ));
-    assert!(SandboxReconciler::new(
+    SandboxReconciler::new(
         harness.store.clone(),
         unavailable,
         Arc::new(harness.policy.clone()),
-        "test".into()
+        "test".into(),
     )
     .initialize(retirement_at)
     .await
-    .is_err());
+    .unwrap();
     assert_eq!(harness.stored(&active.id).await, retiring);
     assert_eq!(
         harness.store.get_agent(&agent.id).await.unwrap(),

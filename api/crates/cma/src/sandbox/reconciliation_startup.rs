@@ -20,6 +20,12 @@ impl SandboxReconciler {
         self.initialize_with_exclusion(now, false).await
     }
 
+    /// Whether a binding hold currently protects this Sandbox.
+    #[cfg(test)]
+    pub(crate) fn binding_held(&self, id: &str) -> bool {
+        self.binding_holds.contains(id)
+    }
+
     /// Composition excludes other assignment-cache writers until this returns:
     /// runtime/preparation workers and HTTP serving start after this barrier.
     /// Inline lifecycle admission and manager renewal already run, but do not

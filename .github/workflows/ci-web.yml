@@ -79,6 +79,8 @@ jobs:
         run: |
           node --test ../.github/scripts/install-contract-browser.test.mjs
           node ../.github/scripts/install-contract-browser.mjs
+          node --test ../.github/scripts/install-contract-video.test.mjs
+          node ../.github/scripts/install-contract-video.mjs
       -
         name: "Local browser guard mechanics"
         working-directory: "web"
@@ -221,6 +223,70 @@ jobs:
           path: "${{ runner.temp }}/cma-new-agent-request"
           retention-days: 1
       -
+        name: "Design, shell and auth gate mechanics"
+        timeout-minutes: 5
+        run: "node --test ../.github/scripts/p1-browser-ci.test.mjs"
+      -
+        name: "Complete design browser contracts"
+        id: p1_design
+        timeout-minutes: 10
+        run: "node ../.github/scripts/p1-browser-ci.mjs design"
+      -
+        name: "Design browser failure evidence"
+        if: "failure() && steps.p1_design.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "p1-design-failure"
+          path: "${{ runner.temp }}/cma-p1-browser/design"
+          retention-days: 1
+          if-no-files-found: "error"
+      -
+        name: "Complete shell browser contracts"
+        id: p1_shell
+        timeout-minutes: 10
+        run: "node ../.github/scripts/p1-browser-ci.mjs shell"
+      -
+        name: "Shell browser failure evidence"
+        if: "failure() && steps.p1_shell.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "p1-shell-failure"
+          path: "${{ runner.temp }}/cma-p1-browser/shell"
+          retention-days: 1
+          if-no-files-found: "error"
+      -
+        name: "Complete auth browser contracts"
+        id: p1_auth
+        timeout-minutes: 10
+        run: "node ../.github/scripts/p1-browser-ci.mjs auth"
+      -
+        name: "Auth browser failure evidence"
+        if: "failure() && steps.p1_auth.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "p1-auth-failure"
+          path: "${{ runner.temp }}/cma-p1-browser/auth"
+          retention-days: 1
+          if-no-files-found: "error"
+      -
+        name: "Default-off production gate mechanics"
+        timeout-minutes: 5
+        run: "node --test ../.github/scripts/p7-default-off-ci.test.mjs"
+      -
+        name: "Default-off Home and landing production contracts"
+        id: p7_default_off
+        timeout-minutes: 10
+        run: "node ../.github/scripts/p7-default-off-ci.mjs"
+      -
+        name: "Default-off production failure evidence"
+        if: "failure() && steps.p7_default_off.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "p7-default-off-failure"
+          path: "${{ runner.temp }}/cma-p7-default-off"
+          retention-days: 1
+          if-no-files-found: "error"
+      -
         name: "Local Agent v2 contracts"
         id: agent_v2
         timeout-minutes: 5
@@ -266,4 +332,5 @@ jobs:
           python3 .github/scripts/web-image-evidence-tests.py
           ruby .github/scripts/web-build-contract.rb
         working-directory: "."
-    timeout-minutes: 45
+    # Budget for the complete design, shell, auth and default-off lanes as well.
+    timeout-minutes: 60

@@ -351,10 +351,8 @@ def run(args):
     campaign.mongo_password = runtime_password
     campaign.mongo_image = args.mongo_image
     key = base64.b64encode(secrets.token_bytes(32)).decode()
-    role_output = subprocess.check_output(["docker", "run", "--rm", "--network", "none",
-                                           "-e", "CHRONO_MONGODB_DATABASE=matrix",
-                                           args.old_image, "--print-runtime-role"], text=True)
-    role = json.loads(role_output)
+    from migration_fixture_dependencies import runtime_role
+    role = runtime_role(subprocess.check_output, args)
     identity_credentials = {
         "client_id": "migration-local-client-" + uuid.uuid4().hex,
         "client_secret": secrets.token_urlsafe(32),

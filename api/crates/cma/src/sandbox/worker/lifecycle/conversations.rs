@@ -84,9 +84,14 @@ impl SandboxWorker {
                         receipts.insert(agent.id.clone(), receipt);
                     }
                     Err(error) => {
+                        // The retryable failure is recorded only as an event;
+                        // name the relayed cause so a stuck reopen is visible.
+                        tracing::warn!(sandbox_id = %sandbox.id, agent_id = %agent.id,
+                            stage = "relayed_reopen", error = %error,
+                            "Lifecycle conversation reopen failed");
                         return self
                             .rollback_reopen(sandbox, attachments, adapter_failure(error), now)
-                            .await
+                            .await;
                     }
                 }
                 continue;
@@ -144,9 +149,12 @@ impl SandboxWorker {
                         .await
                 }
                 Err(error) => {
+                    tracing::warn!(sandbox_id = %sandbox.id, agent_id = %agent.id,
+                        stage = "reconnect", error = %error,
+                        "Lifecycle conversation reopen failed");
                     return self
                         .rollback_reopen(sandbox, attachments, adapter_failure(error), now)
-                        .await
+                        .await;
                 }
             };
             if let Some(settings) = &agent.conversation.settings {

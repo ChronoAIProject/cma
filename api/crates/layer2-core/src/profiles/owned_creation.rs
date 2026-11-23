@@ -130,16 +130,10 @@ impl PrivateProfileCreationService {
         {
             return Err(ProfileCreationError::Conflict);
         }
-        if self.store.agent_profile_revision(&id, 1).await?.is_none() {
-            self.store
-                .publish_agent_profile(&id, 1, crate::now_rfc3339())
-                .await?;
-        }
         let revision = self
             .store
-            .agent_profile_revision(&id, 1)
-            .await?
-            .ok_or(ProfileStoreError::NotFound)?;
+            .ensure_initial_agent_profile(&stored, crate::now_rfc3339())
+            .await?;
         if revision.profile_id != id
             || revision.revision != 1
             || revision.content != profile.draft
@@ -240,21 +234,10 @@ impl PrivateProfileCreationService {
         {
             return Err(ProfileCreationError::Conflict);
         }
-        if self
-            .store
-            .workspace_profile_revision(&id, 1)
-            .await?
-            .is_none()
-        {
-            self.store
-                .publish_workspace_profile(&id, 1, crate::now_rfc3339())
-                .await?;
-        }
         let revision = self
             .store
-            .workspace_profile_revision(&id, 1)
-            .await?
-            .ok_or(ProfileStoreError::NotFound)?;
+            .ensure_initial_workspace_profile(&stored, crate::now_rfc3339())
+            .await?;
         if revision.profile_id != id
             || revision.revision != 1
             || revision.content != profile.draft
@@ -392,22 +375,15 @@ impl PrivateProfileCreationService {
         {
             return Err(ProfileCreationError::Conflict);
         }
-        if self.store.sandbox_profile_revision(&id, 1).await?.is_none() {
-            self.store
-                .publish_sandbox_profile(
-                    &id,
-                    1,
-                    crate::now_rfc3339(),
-                    self.bounds,
-                    self.scanner.as_ref(),
-                )
-                .await?;
-        }
         let revision = self
             .store
-            .sandbox_profile_revision(&id, 1)
-            .await?
-            .ok_or(ProfileStoreError::NotFound)?;
+            .ensure_initial_sandbox_profile(
+                &stored,
+                crate::now_rfc3339(),
+                self.bounds,
+                self.scanner.as_ref(),
+            )
+            .await?;
         if revision.profile_id != id
             || revision.revision != 1
             || revision.content != profile.draft
