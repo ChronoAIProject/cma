@@ -1,3 +1,4 @@
+import { registerDeletionStatusCases } from './redesign-deletion.cases';
 import { expect, test, type Page } from '@playwright/test';
 import { LocalAgentV2 } from './agent-v2.fixture';
 import { LocalStartup } from './agent-startup-fixtures';
@@ -279,3 +280,5 @@ for (const theme of ['light', 'dark']) {
     });
   }
 }
+
+registerDeletionStatusCases();

@@ -57,11 +57,18 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 type OperationKey = (String, String, String);
 type OperationRecord = ([u8; 32], Option<Vec<u8>>);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CompletionFault {
+    BeforeWrite,
+    AfterWrite,
+}
+
 #[derive(Default)]
 struct MemoryOperationStore {
     records: Mutex<HashMap<OperationKey, OperationRecord>>,
     reservations: AtomicUsize,
     failure: Mutex<Option<Result<OperationReservation, StoreError>>>,
+    completion_fault: Mutex<Option<CompletionFault>>,
 }
 
 #[async_trait]
@@ -91,6 +98,12 @@ impl OperationStore for MemoryOperationStore {
     }
 
     async fn complete(&self, claim: &OperationClaim, outcome: Vec<u8>) -> Result<(), StoreError> {
+        let fault = *self.completion_fault.lock().unwrap();
+        if fault == Some(CompletionFault::BeforeWrite) {
+            return Err(StoreError::Unavailable(
+                "synthetic receipt write failure".into(),
+            ));
+        }
         let key = (
             claim.subject().to_string(),
             claim.operation().to_owned(),
@@ -101,6 +114,11 @@ impl OperationStore for MemoryOperationStore {
             .get_mut(&key)
             .ok_or_else(|| StoreError::Malformed("operation claim disappeared".into()))?;
         record.1 = Some(outcome);
+        if fault == Some(CompletionFault::AfterWrite) {
+            return Err(StoreError::Unavailable(
+                "synthetic receipt acknowledgement loss".into(),
+            ));
+        }
         Ok(())
     }
 }
@@ -524,6 +542,10 @@ impl TestApp {
 
     pub fn operation_reservations(&self) -> usize {
         self.operations.reservations.load(Ordering::SeqCst)
+    }
+
+    pub fn fail_completion(&self, fault: Option<CompletionFault>) {
+        *self.operations.completion_fault.lock().unwrap() = fault;
     }
 
     pub fn fail_operations(&self, failure: Result<OperationReservation, StoreError>) {
