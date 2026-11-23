@@ -86,21 +86,6 @@ jobs:
           node --test ../.github/scripts/agent-v2-ci.test.mjs ../.github/scripts/tree-row-menu-ci.test.mjs ../.github/scripts/new-agent-request-ci.test.mjs ../.github/scripts/lifecycle-browser-ci.test.mjs ../.github/scripts/channel-setup-ci.test.mjs
           npm run e2e:mechanics
       -
-        name: "Local credential and Public Entry lifecycle contracts"
-        id: credential_entry
-        timeout-minutes: 5
-        env:
-          CMA_CREDENTIAL_EVIDENCE_DIR: "${{ runner.temp }}/cma-credential-entry"
-        run: "node node_modules/playwright/cli.js test --config e2e/credential-setup-ci.config.ts"
-      -
-        name: "Credential and Public Entry failure evidence"
-        if: "failure() && steps.credential_entry.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-        with:
-          name: "credential-entry-failure"
-          path: "${{ runner.temp }}/cma-credential-entry"
-          retention-days: 1
-      -
         name: "CSS collisions"
         run: "npm run check:css"
       -
@@ -148,6 +133,21 @@ jobs:
         with:
           name: "channel-setup-failure"
           path: "${{ runner.temp }}/cma-channel-setup"
+          retention-days: 1
+      -
+        name: "Local credential recovery contracts"
+        id: credential_setup
+        timeout-minutes: 5
+        env:
+          CMA_CREDENTIAL_EVIDENCE_DIR: "${{ runner.temp }}/cma-credential-setup"
+        run: "node node_modules/playwright/cli.js test --config e2e/credential-setup-ci.config.ts"
+      -
+        name: "Credential recovery failure evidence"
+        if: "failure() && steps.credential_setup.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "credential-recovery-failure"
+          path: "${{ runner.temp }}/cma-credential-setup"
           retention-days: 1
       -
         name: "Local resource lifecycle contracts"
