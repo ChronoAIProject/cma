@@ -40,6 +40,21 @@ impl Change {
     }
 }
 
+fn links(reply: &reqwest::Response, status: Option<&str>) {
+    let actual: Vec<_> = reply
+        .headers()
+        .get_all("link")
+        .iter()
+        .map(|value| value.to_str().unwrap())
+        .collect();
+    let discovery = crate::REST_LINKS;
+    let expected: Vec<_> = status
+        .into_iter()
+        .chain(std::iter::once(discovery.to_str().unwrap()))
+        .collect();
+    assert_eq!(actual, expected);
+}
+
 async fn problem(
     request: reqwest::RequestBuilder,
     expected: StatusCode,
@@ -49,10 +64,7 @@ async fn problem(
     let reply = request.send().await.unwrap();
     assert_eq!(reply.status(), expected);
     assert_eq!(reply.headers()["content-type"], "application/problem+json");
-    assert_eq!(
-        reply.headers().get("link").map(|h| h.to_str().unwrap()),
-        link
-    );
+    links(&reply, link);
     if link.is_some() {
         assert_eq!(reply.headers()["cache-control"], "no-store");
     }
@@ -103,7 +115,7 @@ async fn receipt(request: reqwest::RequestBuilder, observes: bool) -> Value {
     let reply = request.send().await.unwrap();
     assert_eq!(reply.status(), StatusCode::OK);
     assert_eq!(reply.headers()["content-type"], "application/json");
-    assert!(reply.headers().get("link").is_none());
+    links(&reply, None);
     let mut body: Value = reply.json().await.unwrap();
     let reference = body.as_object_mut().unwrap().remove("revocation");
     if observes {
@@ -189,7 +201,7 @@ async fn legacy_share_changes_preserve_pending_identity_until_effective_receipt(
         assert_eq!(original.frozen_members, 1);
         let path = fixture.status_path(original.key.operation_id.as_str());
         let link = format!("<{path}>; rel=\"status\"");
-        assert_eq!(reply.headers()["link"], link);
+        links(&reply, Some(&link));
         assert_eq!(reply.headers()["cache-control"], "no-store");
         assert_eq!(reply.headers()["content-type"], "application/problem+json");
         let pending: Value = reply.json().await.unwrap();
@@ -199,6 +211,21 @@ async fn legacy_share_changes_preserve_pending_identity_until_effective_receipt(
         assert_eq!(share(&fixture).await, fixture.data.share);
         first.stop().await;
         let mut replacement = fixture.server(false, true).await;
+        let pending_status = response(
+            fixture.request(&replacement, Method::GET, &path, Some(&fixture.owner)),
+            StatusCode::OK,
+        )
+        .await;
+        assert_eq!(pending_status["state"], "pending");
+        assert_eq!(
+            pending_status["operation_id"],
+            original.key.operation_id.as_str()
+        );
+        assert_eq!(
+            pending_status["deadline_unix_ms"],
+            original.deadline_unix_ms
+        );
+        assert!(retained(&fixture, &original).await == original);
         problem(
             request(&replacement, &fixture.owner, "legacy-original"),
             StatusCode::CONFLICT,
@@ -313,7 +340,7 @@ async fn omitted_revocation_service_cannot_bypass_activation_but_replays_final_r
         let original = operation(&fixture).await;
         let path = fixture.status_path(original.key.operation_id.as_str());
         let link = format!("<{path}>; rel=\"status\"");
-        assert_eq!(reply.headers()["link"], link);
+        links(&reply, Some(&link));
         let pending: Value = reply.json().await.unwrap();
         assert_eq!(pending["code"], "resource_revocation_pending");
         coordinated.stop().await;

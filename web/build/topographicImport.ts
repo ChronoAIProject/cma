@@ -26,11 +26,12 @@ export function optionalTopographicImport(): Plugin {
         id: resolve(root, 'src/decoration/vendor/reactdrops-topographic/topographic-surface.ts'),
         name: 'topographic-surface',
       });
-      // Rollup resolves this native import after Vite's preload-error wrapper pass.
+      // Rollup resolves this native import after Vite's preload-error wrapper pass. A replacer
+      // function keeps reference IDs such as `ab$$cd` from being read as replacement patterns.
       return {
         code: code.replace(
           source,
-          `import(/* @vite-ignore */ import.meta.ROLLUP_FILE_URL_${reference})`,
+          () => `import(/* @vite-ignore */ import.meta.ROLLUP_FILE_URL_${reference})`,
         ),
         map: null,
       };
