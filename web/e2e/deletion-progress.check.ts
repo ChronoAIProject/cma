@@ -192,10 +192,10 @@ for (const theme of ['light', 'dark']) {
         });
         if (await sidebar.evaluate((element) => element.classList.contains('sidebar--collapsed')))
           await page.getByRole('button', { name: 'Show sidebar', exact: true }).click();
-        const summary = sidebar.getByText('Deletion progress (3)', { exact: true });
+        const summary = sidebar.getByText('Cleaning up 3 sandboxes', { exact: true });
         await summary.focus();
         await page.keyboard.press('Enter');
-        const progress = sidebar.locator('details').filter({ hasText: 'Deletion progress (3)' });
+        const progress = sidebar.locator('details').filter({ hasText: 'Cleaning up 3 sandboxes' });
         for (const name of names) {
           const label = progress.getByText(name, { exact: true });
           await expect(label).toBeVisible();
