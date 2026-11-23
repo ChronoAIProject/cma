@@ -7,17 +7,9 @@ fn image(digit: char) -> String {
     )
 }
 
-fn attestation() -> FleetAttestation {
-    FleetAttestation {
-        generation: 7,
-        template_hash: "hash-7".into(),
-        attested_at: "2026-11-24T00:00:00Z".into(),
-    }
-}
-
 fn ready_b() -> ReleasedLaneRecord {
     let lane = ReleasedLaneRecord::bootstrap(ReleasedLane::Agent, image('a'), "t0").unwrap();
-    let lane = lane.attest(attestation()).unwrap();
+    let lane = lane.enable_following().unwrap();
     let lane = lane.observe(image('b'), "obs-b".into(), "t1").unwrap();
     lane.settle("obs-b", CandidateState::Ready).unwrap()
 }
@@ -27,7 +19,6 @@ fn evidence(lane: &ReleasedLaneRecord) -> PromotionEvidence {
         image: image('b'),
         observation_id: "obs-b".into(),
         lane_revision: lane.revision,
-        template_hash: "hash-7".into(),
     }
 }
 
@@ -38,11 +29,15 @@ fn bootstrap_requires_a_pinned_image() {
     );
     let lane = ReleasedLaneRecord::bootstrap(ReleasedLane::Machine, image('a'), "t").unwrap();
     assert_eq!((lane.revision, lane.active.revision), (1, 1));
+    assert!(lane.frozen);
+    assert!(lane.observe(image('b'), "obs-b".into(), "t").is_err());
+    assert!(ReleasedLaneRecord::bootstrap(ReleasedLane::Agent, image('x'), "t").is_err());
 }
 
 #[test]
 fn admissions_fence_on_the_active_release_not_on_candidate_churn() {
     let lane = ReleasedLaneRecord::bootstrap(ReleasedLane::Agent, image('a'), "t0").unwrap();
+    let lane = lane.enable_following().unwrap();
     let observed = lane.observe(image('b'), "obs-b".into(), "t1").unwrap();
     assert!(observed.revision > lane.revision);
     // A candidate observation does not invalidate an admission captured on A.
@@ -84,12 +79,6 @@ fn promotion_rechecks_every_fence_at_commit() {
         lane.promote(&other, "t").unwrap_err(),
         ReleasedRuntimeRefusal::Stale
     );
-    let mut foreign = evidence(&lane);
-    foreign.template_hash = "hash-legacy".into();
-    assert_eq!(
-        lane.promote(&foreign, "t").unwrap_err(),
-        ReleasedRuntimeRefusal::Unattested
-    );
     // A newer observation supersedes the ready candidate before commit.
     let superseded = lane.observe(image('c'), "obs-c".into(), "t").unwrap();
     assert_eq!(
@@ -98,7 +87,7 @@ fn promotion_rechecks_every_fence_at_commit() {
     );
     let preparing = ReleasedLaneRecord::bootstrap(ReleasedLane::Agent, image('a'), "t0")
         .unwrap()
-        .attest(attestation())
+        .enable_following()
         .unwrap()
         .observe(image('b'), "obs-b".into(), "t1")
         .unwrap();
@@ -109,10 +98,15 @@ fn promotion_rechecks_every_fence_at_commit() {
 }
 
 #[test]
-fn freeze_fences_promotion_and_drops_the_fleet_attestation() {
+fn freeze_fences_promotion_across_an_explicit_reenable() {
     let lane = ready_b();
     let frozen = lane.freeze().unwrap();
-    assert!(frozen.attestation.is_none());
+    assert!(frozen.frozen);
+    let enabled = frozen.enable_following().unwrap();
+    assert_eq!(
+        enabled.promote(&evidence(&lane), "t").unwrap_err(),
+        ReleasedRuntimeRefusal::Stale
+    );
     assert_eq!(
         frozen.promote(&evidence(&frozen), "t").unwrap_err(),
         ReleasedRuntimeRefusal::Frozen

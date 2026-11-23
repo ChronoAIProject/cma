@@ -10,10 +10,16 @@ use serde::{Deserialize, Serialize};
 
 use super::durability::majority_collection;
 
+mod legacy_dispatch;
+mod source;
+mod writers;
+pub(super) use legacy_dispatch::reserve_initial_runtime_image;
+pub(crate) use source::StoreReleasedRuntime;
+pub(crate) use writers::{BootWriter, ResolverLease};
+
 pub(crate) const COLLECTION: &str = "released_runtimes";
+pub(crate) const TRANSITIONS_COLLECTION: &str = "released_runtime_transitions";
 const SCHEMA_VERSION: i64 = 1;
-/// Enough committed transitions to resolve any unknown acknowledgement.
-const TRANSITION_HISTORY: usize = 16;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,13 +30,25 @@ struct LaneDocument {
     document_schema_version: i64,
     revision: i64,
     record: ReleasedLaneRecord,
-    #[serde(default)]
-    transitions: Vec<ReleasedTransition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    decision_fence: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TransitionDocument {
+    #[serde(rename = "_id")]
+    id: String,
+    deployment: String,
+    document_schema_version: i64,
+    transition: ReleasedTransition,
 }
 
 #[derive(Clone)]
 pub(crate) struct MongoReleasedRuntimes {
+    database: Database,
     lanes: Collection<LaneDocument>,
+    transitions: Collection<TransitionDocument>,
     deployment: String,
 }
 
@@ -53,9 +71,29 @@ fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
 impl MongoReleasedRuntimes {
     pub(crate) fn open(database: &Database, deployment: &str) -> Self {
         Self {
+            database: database.clone(),
             lanes: majority_collection(database, COLLECTION),
+            transitions: majority_collection(database, TRANSITIONS_COLLECTION),
             deployment: deployment.into(),
         }
+    }
+
+    pub(crate) async fn initialize(&self) -> Result<(), layer2_core::StoreError> {
+        super::schema::initialize_collections(&self.database, &[COLLECTION, TRANSITIONS_COLLECTION])
+            .await
+    }
+
+    pub(crate) async fn session(&self) -> Result<ClientSession, SandboxStoreError> {
+        let mut session = self
+            .database
+            .client()
+            .start_session()
+            .await
+            .map_err(unavailable)?;
+        super::sandbox_mongo::start_transaction(&mut session)
+            .await
+            .map_err(unavailable)?;
+        Ok(session)
     }
 
     fn id(&self, lane: ReleasedLane) -> String {
@@ -73,18 +111,17 @@ impl MongoReleasedRuntimes {
             || document.record.lane != lane
             || revision(document.record.revision)? != document.revision
             || document.record.validate().is_err()
-            || document.transitions.len() > TRANSITION_HISTORY
         {
             return Err(SandboxStoreError::Corrupt("released runtime record".into()));
         }
         Ok(document)
     }
 
-    /// The lane's record and its retained committed transitions.
+    /// Majority-visible, validated release authority.
     pub(crate) async fn load(
         &self,
         lane: ReleasedLane,
-    ) -> Result<Option<(ReleasedLaneRecord, Vec<ReleasedTransition>)>, SandboxStoreError> {
+    ) -> Result<Option<ReleasedLaneRecord>, SandboxStoreError> {
         let Some(document) = self
             .lanes
             .find_one(doc! {"_id": self.id(lane)})
@@ -94,7 +131,7 @@ impl MongoReleasedRuntimes {
             return Ok(None);
         };
         let document = self.verify(lane, document)?;
-        Ok(Some((document.record, document.transitions)))
+        Ok(Some(document.record))
     }
 
     /// Create the lane from its verified first record once. A concurrent or
@@ -113,26 +150,22 @@ impl MongoReleasedRuntimes {
             document_schema_version: SCHEMA_VERSION,
             revision: revision(record.revision)?,
             record,
-            transitions: Vec::new(),
+            decision_fence: None,
         };
         match self.lanes.insert_one(&document).await {
             Ok(_) => Ok(document.record),
-            Err(error) if super::sandbox_mongo::is_duplicate_key(&error) => self
-                .load(lane)
-                .await?
-                .map(|(record, _)| record)
-                .ok_or(SandboxStoreError::Conflict),
+            Err(error) if super::sandbox_mongo::is_duplicate_key(&error) => {
+                self.load(lane).await?.ok_or(SandboxStoreError::Conflict)
+            }
             Err(error) => Err(unavailable(error)),
         }
     }
 
-    /// Replace `current` with `next` only if nothing changed in between. A
-    /// promotion appends its transition in the same write.
+    /// Replace `current` with `next` only if its lane revision still matches.
     pub(crate) async fn replace(
         &self,
         current: &ReleasedLaneRecord,
         next: ReleasedLaneRecord,
-        transition: Option<ReleasedTransition>,
         session: Option<&mut ClientSession>,
     ) -> Result<(), SandboxStoreError> {
         if next.lane != current.lane
@@ -143,16 +176,18 @@ impl MongoReleasedRuntimes {
                 "released runtime transition".into(),
             ));
         }
-        let record = mongodb::bson::serialize_to_bson(&next)
+        let mut record = mongodb::bson::serialize_to_document(&next)
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-        let mut update = doc! {"$set": {"record": record, "revision": revision(next.revision)?}};
-        if let Some(transition) = transition {
-            let transition = mongodb::bson::serialize_to_bson(&transition)
-                .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-            update.insert(
-                "$push",
-                doc! {"transitions": {"$each": [transition], "$slice": -(TRANSITION_HISTORY as i64)}},
-            );
+        // Admissions deliberately do not advance the lane revision. Updating
+        // individual fields preserves an increment that committed since load.
+        record.remove("admissions");
+        let mut fields = doc! {"revision": revision(next.revision)?};
+        for (key, value) in record {
+            fields.insert(format!("record.{key}"), value);
+        }
+        let mut update = doc! {"$set": fields};
+        if next.candidate.is_none() {
+            update.insert("$unset", doc! {"record.candidate": ""});
         }
         let filter = doc! {
             "_id": self.id(current.lane),
@@ -170,6 +205,66 @@ impl MongoReleasedRuntimes {
         } else {
             Err(SandboxStoreError::Conflict)
         }
+    }
+
+    fn transition_id(&self, lane: ReleasedLane, from_revision: u64) -> String {
+        format!("{}:{from_revision}", self.id(lane))
+    }
+
+    /// A promotion must commit its evidence alongside the lane and target
+    /// updates. It remains readable after any number of later promotions.
+    pub(crate) async fn record_promotion(
+        &self,
+        current: &ReleasedLaneRecord,
+        next: ReleasedLaneRecord,
+        transition: ReleasedTransition,
+        session: &mut ClientSession,
+    ) -> Result<(), SandboxStoreError> {
+        if transition.lane != current.lane
+            || transition.from_revision != current.active.revision
+            || transition.from_image != current.active.image
+            || transition.to_revision != next.active.revision
+            || transition.to_image != next.active.image
+            || transition.at != next.active.promoted_at
+            || current
+                .candidate
+                .as_ref()
+                .is_none_or(|candidate| candidate.observation_id != transition.observation_id)
+        {
+            return Err(SandboxStoreError::Corrupt(
+                "released runtime promotion".into(),
+            ));
+        }
+        self.replace(current, next, Some(&mut *session)).await?;
+        self.transitions
+            .insert_one(TransitionDocument {
+                id: self.transition_id(transition.lane, transition.from_revision),
+                deployment: self.deployment.clone(),
+                document_schema_version: SCHEMA_VERSION,
+                transition,
+            })
+            .session(session)
+            .await
+            .map_err(unavailable)?;
+        Ok(())
+    }
+
+    pub(crate) async fn committed(
+        &self,
+        expected: &ReleasedTransition,
+    ) -> Result<bool, SandboxStoreError> {
+        let found = self
+            .transitions
+            .find_one(doc! {
+                "_id": self.transition_id(expected.lane, expected.from_revision),
+            })
+            .await
+            .map_err(unavailable)?;
+        Ok(found.is_some_and(|row| {
+            row.deployment == self.deployment
+                && row.document_schema_version == SCHEMA_VERSION
+                && row.transition == *expected
+        }))
     }
 
     /// Fence the first durable admission of new work in the caller's
@@ -200,6 +295,69 @@ impl MongoReleasedRuntimes {
             Ok(())
         } else {
             Err(SandboxStoreError::Conflict)
+        }
+    }
+
+    pub(crate) async fn fence_current(
+        &self,
+        record: &ReleasedLaneRecord,
+        session: &mut ClientSession,
+    ) -> Result<(), SandboxStoreError> {
+        let result = self
+            .lanes
+            .update_one(
+                doc! {
+                    "_id": self.id(record.lane), "revision": revision(record.revision)?,
+                    "document_schema_version": SCHEMA_VERSION, "record.frozen": false,
+                },
+                doc! {"$inc": {"decision_fence": 1_i64}},
+            )
+            .session(session)
+            .await
+            .map_err(unavailable)?;
+        if result.matched_count == 1 {
+            Ok(())
+        } else {
+            Err(SandboxStoreError::Conflict)
+        }
+    }
+}
+
+impl super::sandbox_mongo::MongoSandboxStore {
+    pub(super) async fn fence_released_admission(
+        &self,
+        captured: &layer3_adapter::ReleasedRuntime,
+        lane: ReleasedLane,
+        session: &mut ClientSession,
+    ) -> Result<(), SandboxStoreError> {
+        let Some(lanes) = &self.released_lanes else {
+            return Ok(());
+        };
+        lanes.fence_snapshot(captured, lane, session).await
+    }
+}
+
+impl MongoReleasedRuntimes {
+    pub(super) async fn fence_snapshot(
+        &self,
+        captured: &layer3_adapter::ReleasedRuntime,
+        lane: ReleasedLane,
+        session: &mut ClientSession,
+    ) -> Result<(), SandboxStoreError> {
+        let Some(revisions) = captured.lane_revisions else {
+            // Startup must verify and bootstrap the lane before a store-backed
+            // replica admits work. The unverified pin cannot race bootstrap.
+            return Err(SandboxStoreError::Conflict);
+        };
+        let (image, revision) = match lane {
+            ReleasedLane::Agent => (Some(captured.agent.as_str()), Some(revisions.agent)),
+            ReleasedLane::Machine => (captured.machine.as_deref(), revisions.machine),
+        };
+        match (image, revision) {
+            (Some(image), Some(revision)) => {
+                self.fence_admission(lane, image, revision, session).await
+            }
+            _ => Err(SandboxStoreError::Conflict),
         }
     }
 }

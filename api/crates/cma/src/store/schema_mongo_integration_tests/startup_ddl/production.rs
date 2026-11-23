@@ -35,6 +35,7 @@ async fn production_connection_enforces_both_converted_contracts_before_returnin
                     startup_schema: mode,
                     initial_settings: Default::default(),
                     released: None,
+                    runtime_pointer_required: false,
                 },
             )
             .await

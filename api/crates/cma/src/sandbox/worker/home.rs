@@ -37,6 +37,7 @@ impl SandboxWorker {
         loop {
             let mut timing = super::provision_timing::ProvisionTiming::new();
             let phase = home_phase(sandbox.lifecycle.home.as_deref());
+            let mut release_fence = None;
             let next = match crate::sandbox::home::next_home(
                 self.dependencies.adapter.as_ref(),
                 &sandbox.id,
@@ -80,7 +81,12 @@ impl SandboxWorker {
                         }
                     });
                     match reserved {
-                        Ok(home) => home,
+                        Ok(home) => {
+                            if request.spec.runtime_image.is_none() {
+                                release_fence = released;
+                            }
+                            home
+                        }
                         Err(error) => return Ok(Some(adapter_failure(error))),
                     }
                 }
@@ -92,7 +98,8 @@ impl SandboxWorker {
                 Err(error) => return Ok(Some(adapter_failure(error))),
             };
             timing.completed(phase);
-            self.save_home(sandbox, next, now).await?;
+            self.save_home(sandbox, next, now, release_fence.as_ref())
+                .await?;
             timing.completed("home_persist");
         }
     }
@@ -119,7 +126,7 @@ impl SandboxWorker {
                 Ok(None) => return Ok(None),
                 Err(error) => return Ok(Some(adapter_failure(error))),
             };
-            self.save_home(sandbox, next, now).await?;
+            self.save_home(sandbox, next, now, None).await?;
         }
     }
 
@@ -128,6 +135,7 @@ impl SandboxWorker {
         sandbox: &mut Sandbox,
         home: layer2_core::sandbox::SandboxHome,
         now: SystemTime,
+        release: Option<&layer3_adapter::ReleasedRuntime>,
     ) -> Result<(), SandboxStoreError> {
         for _ in 0..4 {
             let expected = sandbox.revision;
@@ -135,12 +143,26 @@ impl SandboxWorker {
             updated.lifecycle.home = Some(Box::new(home.clone()));
             updated.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
             updated.updated_at = updated.updated_at.max(rfc3339_at(now));
-            match self
-                .dependencies
-                .store
-                .save_sandbox(expected, updated.clone())
-                .await
-            {
+            let saved = match release {
+                Some(release) => {
+                    self.dependencies
+                        .store
+                        .save_sandbox_against_release(
+                            expected,
+                            updated.clone(),
+                            release,
+                            layer2_core::released_runtime::ReleasedLane::Agent,
+                        )
+                        .await
+                }
+                None => {
+                    self.dependencies
+                        .store
+                        .save_sandbox(expected, updated.clone())
+                        .await
+                }
+            };
+            match saved {
                 Ok(()) => {
                     *sandbox = updated;
                     return Ok(());

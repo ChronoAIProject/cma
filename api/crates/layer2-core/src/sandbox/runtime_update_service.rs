@@ -135,13 +135,14 @@ impl SandboxRuntimeUpdateService {
         let target = sandbox
             .automatic_unpublished_recovery_target()
             .ok_or(SandboxRuntimeUpdateError::NotAvailable)?;
-        if target != self.latest_version()
+        let release = self.released.snapshot();
+        if target != release.agent
             || sandbox.lifecycle.unpublished_recovery_attempted
             || sandbox.lifecycle.unpublished_recovery.is_some()
         {
             return Err(SandboxRuntimeUpdateError::NotAvailable);
         }
-        self.recover_unpublished(&sandbox, target, true)
+        self.recover_unpublished(&sandbox, target, true, Some(release))
             .await
             .map_err(store_error)
     }
@@ -151,6 +152,7 @@ impl SandboxRuntimeUpdateService {
         sandbox: &Sandbox,
         target: &str,
         automatic: bool,
+        released_runtime: Option<layer3_adapter::ReleasedRuntime>,
     ) -> Result<Sandbox, SandboxStoreError> {
         let verifier = self
             .recovery
@@ -180,6 +182,7 @@ impl SandboxRuntimeUpdateService {
                     snapshot,
                     proof,
                     target_runtime_version: target.into(),
+                    released_runtime,
                     automatic,
                     requested_at: crate::now_rfc3339(),
                 })
@@ -224,9 +227,14 @@ impl SandboxRuntimeUpdateService {
                     superseded_release(&released).await;
                     continue;
                 }
-                match self.recover_unpublished(&sandbox, target, false).await {
+                let authoritative = (target == latest).then_some(released);
+                match self
+                    .recover_unpublished(&sandbox, target, false, authoritative)
+                    .await
+                {
                     Ok(recovered) => return Ok(recovered),
                     Err(SandboxStoreError::Conflict) => {
+                        self.released.refresh_after_stale().await;
                         tokio::task::yield_now().await;
                         continue;
                     }
@@ -244,9 +252,24 @@ impl SandboxRuntimeUpdateService {
                 superseded_release(&released).await;
                 continue;
             }
-            match self.store.save_sandbox(revision, sandbox.clone()).await {
+            let saved = if pinned {
+                self.store.save_sandbox(revision, sandbox.clone()).await
+            } else {
+                self.store
+                    .save_sandbox_against_release(
+                        revision,
+                        sandbox.clone(),
+                        &released,
+                        crate::released_runtime::ReleasedLane::Agent,
+                    )
+                    .await
+            };
+            match saved {
                 Ok(()) => return Ok(sandbox),
-                Err(SandboxStoreError::Conflict) => tokio::task::yield_now().await,
+                Err(SandboxStoreError::Conflict) => {
+                    self.released.refresh_after_stale().await;
+                    tokio::task::yield_now().await;
+                }
                 Err(error) => return Err(store_error(error)),
             }
         }

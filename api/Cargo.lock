@@ -451,6 +451,7 @@ dependencies = [
  "opentelemetry",
  "reqwest",
  "ring",
+ "semver",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",

@@ -21,6 +21,35 @@ pub(super) fn installation_request(sandbox: &Sandbox) -> Option<InstallRequest> 
 }
 
 impl SandboxWorker {
+    pub(super) async fn initial_runtime_release(
+        &self,
+        sandbox: &Sandbox,
+        spec: &layer3_adapter::SandboxSpec,
+        generation: u64,
+    ) -> Result<(Option<layer3_adapter::ReleasedRuntime>, String), SandboxStoreError> {
+        let (mut released, mut runtime_version) = self.config.release_for(spec);
+        if spec.runtime_image.is_none()
+            && released
+                .as_ref()
+                .is_some_and(|release| release.lane_revisions.is_some())
+        {
+            // Native pooled homes and explicit images already have a durable
+            // pin. A legacy dispatch keeps the bootstrap image across restarts.
+            runtime_version = self
+                .dependencies
+                .store
+                .reserve_initial_runtime_image(sandbox, generation, &self.config.runtime_version)
+                .await?;
+            released = Some(layer3_adapter::ReleasedRuntime {
+                revision: 0,
+                agent: runtime_version.clone(),
+                machine: None,
+                lane_revisions: None,
+            });
+        }
+        Ok((released, runtime_version))
+    }
+
     /// None means publication/failure was handled. Some reserves a replacement
     /// generation durably, preserving the ordinary lost-warm-runtime path.
     pub(in crate::sandbox) async fn adopt_initial_runtime(

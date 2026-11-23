@@ -170,6 +170,7 @@ pub(super) async fn admitted_generation(
             snapshot,
             proof,
             target_runtime_version: TARGET.into(),
+            released_runtime: None,
             automatic: false,
             requested_at: rfc3339_at(now),
         })

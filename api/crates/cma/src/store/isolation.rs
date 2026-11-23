@@ -171,6 +171,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "workspaces",
     "worktrees",
     super::released_runtimes::COLLECTION,
+    super::released_runtimes::TRANSITIONS_COLLECTION,
 ];
 // These derived stores are activated separately. Existing credentials must
 // still start while the feature is disabled; partial grants remain invalid.
@@ -185,6 +186,7 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     super::allocation_buckets::COLLECTION,
     super::agent_observation::COLLECTION,
     super::released_runtimes::COLLECTION,
+    super::released_runtimes::TRANSITIONS_COLLECTION,
 ];
 const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
 const MIGRATION_ACTIONS: &[&str] = &["find", "insert", "update", "createCollection"];

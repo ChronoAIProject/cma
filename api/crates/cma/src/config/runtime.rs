@@ -59,6 +59,7 @@ pub(crate) struct RuntimeConfig {
     /// desktop machine. Keeping this separate from the default image prevents
     /// ordinary Agent creation from silently changing its runtime.
     pub machine_sandbox_image: Option<String>,
+    pub runtime_pointer: Option<crate::runtime_pointer::RuntimePointerConfig>,
     pub sandbox_namespace: String,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub agent_sandbox_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
@@ -259,6 +260,13 @@ impl RuntimeConfig {
         }
 
         let legacy_receiver_image = super::agent_sandbox::legacy_receiver_image(lookup)?;
+        let runtime_pointer = crate::runtime_pointer::RuntimePointerConfig::from_lookup(
+            lookup,
+            machine_sandbox_image.is_some(),
+        )?;
+        if runtime_pointer.is_some() && (!allocate_agent_sandbox || agent_sandbox.is_none()) {
+            return Err("runtime pointer following requires native allocation".into());
+        }
         if legacy_receiver_image.is_some()
             && (agent_sandbox.is_none()
                 || agent_sandbox_runtime_transport
@@ -285,6 +293,7 @@ impl RuntimeConfig {
             sandbox_api_key,
             sandbox_image,
             machine_sandbox_image,
+            runtime_pointer,
             sandbox_namespace,
             home_policy,
             agent_sandbox_home_policy,

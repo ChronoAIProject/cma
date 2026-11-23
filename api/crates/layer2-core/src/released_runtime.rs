@@ -44,15 +44,6 @@ pub struct CandidateRelease {
     pub since: String,
 }
 
-/// CD's evidence that one exact rollout replaced every Agent Manager pod.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FleetAttestation {
-    pub generation: u64,
-    pub template_hash: String,
-    pub attested_at: String,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleasedLaneRecord {
@@ -62,10 +53,7 @@ pub struct ReleasedLaneRecord {
     pub active: ActiveRelease,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub candidate: Option<CandidateRelease>,
-    #[serde(default)]
     pub frozen: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub attestation: Option<FleetAttestation>,
     /// Bumped by every fenced admission so it conflicts with a promotion.
     #[serde(default)]
     pub admissions: u64,
@@ -91,7 +79,6 @@ pub struct PromotionEvidence {
     pub image: String,
     pub observation_id: String,
     pub lane_revision: u64,
-    pub template_hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -100,8 +87,6 @@ pub enum ReleasedRuntimeRefusal {
     Stale,
     #[error("the lane is frozen")]
     Frozen,
-    #[error("no verified fleet attestation covers this writer")]
-    Unattested,
     #[error("the candidate is not ready for promotion")]
     NotReady,
     #[error("the released runtime record is invalid")]
@@ -122,8 +107,7 @@ impl ReleasedLaneRecord {
                 promoted_at: at.into(),
             },
             candidate: None,
-            frozen: false,
-            attestation: None,
+            frozen: true,
             admissions: 0,
         };
         record.validate()?;
@@ -132,9 +116,13 @@ impl ReleasedLaneRecord {
 
     pub fn validate(&self) -> Result<(), Refusal> {
         let pinned = |image: &str| {
-            image
-                .rsplit_once("@sha256:")
-                .is_some_and(|(name, digest)| !name.is_empty() && digest.len() == 64)
+            image.rsplit_once("@sha256:").is_some_and(|(name, digest)| {
+                !name.is_empty()
+                    && digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
         };
         let candidate_ok = self.candidate.as_ref().is_none_or(|candidate| {
             pinned(&candidate.image)
@@ -199,6 +187,9 @@ impl ReleasedLaneRecord {
 
     /// Move the exact observed candidate to `state`; anything else is stale.
     pub fn settle(&self, observation_id: &str, state: CandidateState) -> Result<Self, Refusal> {
+        if self.frozen {
+            return Err(Refusal::Frozen);
+        }
         let Some(candidate) = &self.candidate else {
             return Err(Refusal::Stale);
         };
@@ -214,22 +205,26 @@ impl ReleasedLaneRecord {
         Ok(next)
     }
 
-    pub fn attest(&self, attestation: FleetAttestation) -> Result<Self, Refusal> {
-        if self.frozen {
-            return Err(Refusal::Frozen);
+    /// Explicit operator enable after cutover to compatible writers. The
+    /// persistence layer still checks the ready writer cohort for each decision.
+    pub fn enable_following(&self) -> Result<Self, Refusal> {
+        if !self.frozen {
+            return Ok(self.clone());
         }
         let mut next = self.clone();
-        next.attestation = Some(attestation);
+        next.frozen = false;
         next.revision = next.revision.checked_add(1).ok_or(Refusal::Invalid)?;
         Ok(next)
     }
 
-    /// Stop following: fences any in-flight promotion and drops the fleet
-    /// attestation, so only a fresh rollout can resume following.
+    /// Keep the active release serving while invalidating any decision made by
+    /// a resolver before this operator action.
     pub fn freeze(&self) -> Result<Self, Refusal> {
+        if self.frozen {
+            return Ok(self.clone());
+        }
         let mut next = self.clone();
         next.frozen = true;
-        next.attestation = None;
         next.revision = next.revision.checked_add(1).ok_or(Refusal::Invalid)?;
         Ok(next)
     }
@@ -245,13 +240,6 @@ impl ReleasedLaneRecord {
         }
         if self.revision != evidence.lane_revision {
             return Err(Refusal::Stale);
-        }
-        if self
-            .attestation
-            .as_ref()
-            .is_none_or(|attestation| attestation.template_hash != evidence.template_hash)
-        {
-            return Err(Refusal::Unattested);
         }
         let candidate = self.candidate.as_ref().ok_or(Refusal::NotReady)?;
         if candidate.image != evidence.image || candidate.observation_id != evidence.observation_id

@@ -165,8 +165,8 @@ pub use provider_finality::{
     RuntimeProvisionReceipt,
 };
 pub use released_runtime::{
-    released_image, PinnedReleasedRuntime, ReleasedRuntime, ReleasedRuntimeSource,
-    StaleReleasedRuntime,
+    released_image, PinnedReleasedRuntime, ReleasedLaneRevisions, ReleasedRuntime,
+    ReleasedRuntimeSource, StaleReleasedRuntime,
 };
 pub use runtime::{
     CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,

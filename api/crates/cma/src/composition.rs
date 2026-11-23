@@ -179,7 +179,7 @@ impl ControlPlaneComposition {
         let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone())
             .with_detail_timings(config.features.sandbox_detail_timings)
             .with_resource_access(resource_access.clone());
-        let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
+        let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone())?;
         let native_warm_pools = runtime.warm_pools;
         let admin = runtime_inventory::admin_state(
             config.features,
@@ -493,6 +493,7 @@ impl ControlPlaneComposition {
             sandbox_control_scheduler,
             sandbox_lifecycle,
             native_warm_pools,
+            runtime_pointer: runtime.pointer,
             native_prepared: adapters.preparation,
             agent_access_worker: agent_access.worker,
         })

@@ -192,6 +192,24 @@ impl HostedAdapter {
             .await
     }
 
+    pub(super) async fn provision_runtime_request(
+        &self,
+        request: &crate::RuntimeProvisionRequest,
+    ) -> crate::Result<RuntimeHandle> {
+        match (&request.spec.runtime_image, &request.released) {
+            (None, Some(released)) => {
+                let mut spec = request.spec.clone();
+                spec.runtime_image = Some(released.agent.clone());
+                self.provision_exact(&spec, request.generation, request.funded_until)
+                    .await
+            }
+            _ => {
+                self.provision_exact(&request.spec, request.generation, request.funded_until)
+                    .await
+            }
+        }
+    }
+
     pub(super) async fn provision_exact(
         &self,
         spec: &SandboxSpec,

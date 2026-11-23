@@ -14,6 +14,7 @@ use super::durability::majority_collection;
 use crate::warm_pools::{OperatorReplicas, PoolTarget, PoolTargetStore};
 
 pub(super) const COLLECTION: &str = "native_warm_pool_targets";
+mod released;
 mod retirement;
 mod schema;
 
@@ -23,6 +24,7 @@ pub(crate) struct MongoNativeWarmPools {
     targets: Collection<PoolTarget>,
     deployment: String,
     database: Database,
+    pub(super) released_lanes: Option<super::released_runtimes::MongoReleasedRuntimes>,
 }
 
 impl MongoNativeWarmPools {
@@ -41,6 +43,7 @@ impl MongoNativeWarmPools {
             targets,
             deployment: deployment.into(),
             database: database.clone(),
+            released_lanes: None,
         })
     }
 
@@ -92,6 +95,16 @@ fn validate(target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
 
 #[async_trait]
 impl PoolTargetStore for MongoNativeWarmPools {
+    async fn candidate_protected(&self, target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        let mut filter = self.scope();
+        filter.extend(doc! {"_id": &target.id, "preparation": {"$exists": true}});
+        Ok(self
+            .targets
+            .find_one(filter)
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?
+            .is_some())
+    }
     async fn activate(&self, id: &str) -> Result<(), WarmPoolError> {
         retirement::activate(self, id).await
     }
@@ -100,14 +113,16 @@ impl PoolTargetStore for MongoNativeWarmPools {
         target: &PoolTarget,
         image: &str,
     ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
-        retirement::homes(self, target, image).await
+        let durable = self.current_retirement_image(target, image).await?;
+        retirement::homes(self, target, &durable).await
     }
     async fn retirement_drain_homes(
         &self,
         target: &PoolTarget,
         image: &str,
     ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
-        retirement::drain_homes(self, target, image).await
+        let durable = self.current_retirement_image(target, image).await?;
+        retirement::drain_homes(self, target, &durable).await
     }
     async fn begin_retirement(&self, target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         retirement::begin(self, target).await

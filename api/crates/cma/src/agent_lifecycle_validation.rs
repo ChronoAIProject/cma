@@ -404,6 +404,7 @@ pub(super) fn creation_error(
     use crate::store::LifecycleCreateError;
     match error {
         LifecycleCreateError::AdmissionPaused => AgentLifecycleProvisioningError::AdmissionPaused,
+        LifecycleCreateError::StaleReleasedRuntime => AgentLifecycleProvisioningError::Unavailable,
         LifecycleCreateError::Store(error) => operation_error(error),
     }
 }

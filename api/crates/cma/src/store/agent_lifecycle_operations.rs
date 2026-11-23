@@ -153,6 +153,7 @@ pub(crate) struct LifecycleLease {
 pub(crate) struct MongoAgentLifecycleStore {
     operations: Collection<LifecycleRecord>,
     admission_settings: Collection<mongodb::bson::Document>,
+    pub(super) released_lanes: Option<super::released_runtimes::MongoReleasedRuntimes>,
 }
 
 impl MongoAgentLifecycleStore {
@@ -194,14 +195,29 @@ impl MongoAgentLifecycleStore {
         Ok(Self {
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
+            released_lanes: None,
         })
     }
 
+    #[cfg(test)]
     pub(crate) async fn create(
         &self,
         owner: &SubjectId,
         key: &str,
         input: LifecycleInput,
+    ) -> Result<CreateResult, LifecycleCreateError> {
+        self.create_against_release(owner, key, input, None).await
+    }
+
+    pub(crate) async fn create_against_release(
+        &self,
+        owner: &SubjectId,
+        key: &str,
+        input: LifecycleInput,
+        release: Option<(
+            &layer3_adapter::ReleasedRuntime,
+            layer2_core::released_runtime::ReleasedLane,
+        )>,
     ) -> Result<CreateResult, LifecycleCreateError> {
         let bytes = serde_json::to_vec(&input.request)
             .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
@@ -249,7 +265,7 @@ impl MongoAgentLifecycleStore {
             updated_at: now,
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
         };
-        self.finish_create(record).await
+        self.finish_create(record, release).await
     }
 
     /// Claim queued work or an expired worker, including legacy records whose

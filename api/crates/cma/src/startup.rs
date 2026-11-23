@@ -49,20 +49,45 @@ pub(crate) async fn serve() -> Result<(), String> {
     // Do not admit allocations against a newly promoted runtime until its
     // exact default pool has ready capacity (unless an operator disabled it).
     // The shared desktop pool is seeded here but fills in the background.
+    let mut shutdown = ShutdownCoordinator::new();
+    let (runtime_writer_ready, booting) = tokio::sync::watch::channel(false);
+    if let Some(controller) = &composition.runtime_pointer {
+        controller.register_boot().await?;
+        shutdown.push(controller.spawn_heartbeat(booting, shutdown.subscribe()));
+        if !controller.following_configured() {
+            controller
+                .set_following(false)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+    }
     observe(
         "default_warm_pool_configuration",
-        composition.native_warm_pools.ensure_default(),
+        async {
+            match &composition.runtime_pointer {
+                Some(controller) => controller.bootstrap().await,
+                None => composition
+                    .native_warm_pools
+                    .ensure_default()
+                    .await
+                    .map_err(|error| format!("native warm pool default is not usable: {error:?}")),
+            }
+        },
         |_| None,
     )
-    .await
-    .map_err(|error| format!("native warm pool default is not usable: {error:?}"))?;
+    .await?;
     observe(
         "default_warm_pool_readiness",
-        composition.native_warm_pools.await_default_ready(),
+        async {
+            composition
+                .native_warm_pools
+                .await_default_ready()
+                .await
+                .map_err(|error| format!("native warm pool startup readiness failed: {error:?}"))
+        },
         |_| None,
     )
-    .await
-    .map_err(|error| format!("native warm pool startup readiness failed: {error:?}"))?;
+    .await?;
 
     let listener = observe(
         "socket_bind",
@@ -91,7 +116,10 @@ pub(crate) async fn serve() -> Result<(), String> {
             return Err(error);
         }
     }
-    let mut shutdown = ShutdownCoordinator::new();
+    runtime_writer_ready.send_replace(true);
+    if let Some(controller) = composition.runtime_pointer {
+        shutdown.push(controller.spawn(shutdown.subscribe()));
+    }
     composition::activity::spawn(composition.activity_worker, &mut shutdown);
     shutdown.push(read_telemetry::spawn(shutdown.subscribe()));
     shutdown.push(

@@ -50,7 +50,11 @@ impl NativeWarmPools {
             return Ok(());
         };
         for target in self.store.list().await? {
-            if target.retired || (!target.retiring && self.current_plan(&target)?) {
+            if target.retired
+                || (!target.retiring
+                    && (self.current_plan(&target)?
+                        || self.store.candidate_protected(&target).await?))
+            {
                 continue;
             }
             // Plans are immutable and retirement only advances, so a claimed

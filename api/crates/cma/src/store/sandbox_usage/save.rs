@@ -5,12 +5,15 @@ use crate::store::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, unsigned, CommitOutcome,
     TRANSACTION_ATTEMPTS,
 };
+use layer2_core::released_runtime::ReleasedLane;
+use layer3_adapter::ReleasedRuntime;
 
 pub(in crate::store) async fn save(
     store: &MongoSandboxStore,
     expected: u64,
     sandbox: &Sandbox,
     acquisition: Option<&Document>,
+    release: Option<(&ReleasedRuntime, ReleasedLane)>,
 ) -> Result<(), SandboxStoreError> {
     let at = sandbox.updated_at.clone();
     for _ in 0..TRANSACTION_ATTEMPTS {
@@ -25,7 +28,17 @@ pub(in crate::store) async fn save(
             }
             return Err(unavailable(error));
         }
-        match apply(store, &mut session, expected, sandbox, &at, acquisition).await {
+        match apply(
+            store,
+            &mut session,
+            expected,
+            sandbox,
+            &at,
+            acquisition,
+            release,
+        )
+        .await
+        {
             Ok(()) => {}
             Err(TransactionEventError::Driver(error)) if is_transient(&error) => {
                 let _ = session.abort_transaction().await;
@@ -60,6 +73,7 @@ async fn apply(
     sandbox: &Sandbox,
     at: &str,
     acquisition: Option<&Document>,
+    release: Option<(&ReleasedRuntime, ReleasedLane)>,
 ) -> Result<(), TransactionEventError> {
     use TransactionEventError::{Domain, Driver};
     crate::store::work_publication::fence_transaction(store, session)
@@ -92,6 +106,12 @@ async fn apply(
         )
         .await
         .map_err(Driver)?;
+    }
+    if let Some((release, lane)) = release {
+        store
+            .fence_released_admission(release, lane, session)
+            .await
+            .map_err(Domain)?;
     }
     let previous_revision = expected;
     let expected = signed(expected, "sandbox revision")

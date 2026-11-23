@@ -8,7 +8,7 @@ use eligibility::{owned_home, warm_blocks};
 
 const MAX_RECORDS: i64 = 10_000;
 
-fn release_scope(store: &MongoNativeWarmPools, machine: bool) -> Document {
+pub(super) fn release_scope(store: &MongoNativeWarmPools, machine: bool) -> Document {
     let mut scope = store.scope();
     scope.insert(
         "machine",
@@ -248,10 +248,17 @@ pub(super) async fn begin(
     if target.retiring {
         return Ok(target.clone());
     }
+    let mut filter = fence(target);
+    filter.insert("preparation", doc! {"$exists": false});
+    filter.insert(
+        "activated_at",
+        mongodb::bson::serialize_to_bson(&target.activated_at)
+            .map_err(|_| WarmPoolError::Unavailable)?,
+    );
     let updated = store
         .targets
         .find_one_and_update(
-            fence(target),
+            filter,
             doc! {
                 "$set":{"retiring":true,"target_replicas":0_i64},"$inc":{"revision":1_i64}
             },

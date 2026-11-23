@@ -24,12 +24,14 @@ pub(crate) struct MongoConnectionPolicy {
     pub initial_settings: super::settings_defaults::InitialSettings,
     /// The process's single released-default authority; fixtures may omit it.
     pub released: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
+    pub runtime_pointer_required: bool,
 }
 
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
     /// The one released-default authority for new work in this process.
     pub(crate) released_runtime: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
+    pub(crate) runtime_pointer: Option<Arc<super::released_runtimes::StoreReleasedRuntime>>,
     pub(crate) account_deletions: Arc<super::account_deletions::MongoAccountDeletionStore>,
     pub(crate) request_limits: Arc<super::request_limits::MongoRequestLimits>,
     pub(crate) document_artifacts: Arc<crate::document_artifacts::MongoDocumentStore>,
@@ -164,6 +166,7 @@ impl MongoStores {
                 shared_observation: false,
                 initial_settings: Default::default(),
                 released: None,
+                runtime_pointer_required: false,
             },
         )
         .await
@@ -202,6 +205,7 @@ impl MongoStores {
                 schema: super::schema::StartupObserver::new(policy.startup_schema),
                 initial_settings: policy.initial_settings,
                 released: policy.released,
+                runtime_pointer_required: policy.runtime_pointer_required,
             },
         )
         .await
@@ -229,6 +233,7 @@ impl MongoStores {
                 schema: super::schema::StartupObserver::new(Default::default()),
                 initial_settings: Default::default(),
                 released: None,
+                runtime_pointer_required: false,
             },
         )
         .await
@@ -259,7 +264,30 @@ impl MongoStores {
                 None,
             ))
         });
-        let sandbox_model = Arc::new(sandbox_model.with_released_runtime(released_runtime.clone()));
+        let runtime_pointer = match &startup.released {
+            Some(_) => super::released_runtimes::StoreReleasedRuntime::open(
+                &client.database(database),
+                deployment,
+                released_runtime.snapshot(),
+                startup.runtime_pointer_required,
+            )
+            .await?
+            .map(Arc::new),
+            None => None,
+        };
+        let (released_runtime, mut sandbox_model) = match &runtime_pointer {
+            Some(source) => {
+                let mut sandbox_model = sandbox_model;
+                sandbox_model.released_lanes = Some(source.lanes.clone());
+                (
+                    source.clone() as Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
+                    sandbox_model,
+                )
+            }
+            None => (released_runtime, sandbox_model),
+        };
+        sandbox_model = sandbox_model.with_released_runtime(released_runtime.clone());
+        let sandbox_model = Arc::new(sandbox_model);
         let sandbox_profiles = Arc::new(MongoProfileStore::open(&client, database).await?);
         let sandbox_credentials = Arc::new(
             MongoSandboxCredentialStore::open(&client, database, deployment, auth_encryption_key)
@@ -326,8 +354,11 @@ impl MongoStores {
             .with_activation(registration_capacity.activation_observation()),
         );
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
-        let agent_lifecycle =
-            Arc::new(super::MongoAgentLifecycleStore::open(&client.database(database)).await?);
+        let mut agent_lifecycle =
+            super::MongoAgentLifecycleStore::open(&client.database(database)).await?;
+        agent_lifecycle.released_lanes =
+            runtime_pointer.as_ref().map(|source| source.lanes.clone());
+        let agent_lifecycle = Arc::new(agent_lifecycle);
         let bot_setups = Arc::new(
             super::bot_setups::MongoBotSetupStore::open(
                 &client,
@@ -356,13 +387,14 @@ impl MongoStores {
                 .await
                 .map_err(|_| StoreError::Unavailable("open event worker profiles".into()))?,
         );
-        let native_warm_pools = Arc::new(
-            super::native_warm_pools::MongoNativeWarmPools::open(
-                &client.database(database),
-                deployment,
-            )
-            .await?,
-        );
+        let mut native_warm_pools = super::native_warm_pools::MongoNativeWarmPools::open(
+            &client.database(database),
+            deployment,
+        )
+        .await?;
+        native_warm_pools.released_lanes =
+            runtime_pointer.as_ref().map(|source| source.lanes.clone());
+        let native_warm_pools = Arc::new(native_warm_pools);
         let message_feedback = Arc::new(
             super::message_feedback::MongoMessageFeedbackStore::open(&client.database(database))
                 .await?,
@@ -395,6 +427,7 @@ impl MongoStores {
         );
         let stores = Self {
             released_runtime,
+            runtime_pointer,
             account_deletions,
             request_limits,
             document_artifacts,
@@ -459,4 +492,5 @@ struct StoreStartup<'a> {
     schema: super::schema::StartupObserver,
     initial_settings: super::settings_defaults::InitialSettings,
     released: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
+    runtime_pointer_required: bool,
 }

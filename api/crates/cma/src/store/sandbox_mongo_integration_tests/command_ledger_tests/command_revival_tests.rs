@@ -75,6 +75,7 @@ impl Fixture {
             .unwrap();
         SandboxTransaction::SaveSandboxAndAppend {
             command_revival: Some(proof),
+            released_runtime: None,
             expected_revision: self.parent.revision,
             sandbox: Box::new(next),
             event_at,

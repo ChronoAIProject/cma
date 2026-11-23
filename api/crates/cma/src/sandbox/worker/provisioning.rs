@@ -64,7 +64,9 @@ impl SandboxWorker {
             sandbox = next;
         }
         let generation = sandbox.lifecycle.runtime_generation_high_water.max(1);
-        let (released, runtime_version) = self.config.release_for(&spec);
+        let (released, runtime_version) = self
+            .initial_runtime_release(&sandbox, &spec, generation)
+            .await?;
         let funded_until = match self
             .funding
             .ensure_coverage(&sandbox, SystemTime::now())

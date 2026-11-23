@@ -410,46 +410,15 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
         {
             return Ok(receipt);
         }
-        // Resolve the delegated Image Manager reference before persisting the
-        // operation. The durable worker then needs no secret after admission.
-        let resolved_image = match &request.image {
-            Some(image) => Some(
-                self.image_resolver
-                    .resolve(delegated_credential, image)
-                    .await?,
-            ),
-            None if request.machine_included => self
-                .released_machine_image()
-                .ok_or_else(|| {
-                    AgentLifecycleProvisioningError::Invalid(
-                        "Machine Included is not available in this deployment".into(),
-                    )
-                })
-                .map(Some)?,
-            None => None,
-        };
-        let resolved_image = self
-            .resolve_desktop_image(caller, context, &request, resolved_image)
-            .await?;
-        let input = LifecycleInput {
-            behavior: LifecycleBehavior::PromptRepository,
-            managed_agent_instructions: Some(guidance::managed_v3().into()),
-            setup_message: Some(validation::setup_message(&request)),
-            request,
-            resolved_image,
-            capacity: Some(self.capacity),
-            sandbox_availability: layer2_core::profiles::SandboxProfileAvailability {
-                always_keep_alive: true,
-                ..Default::default()
-            },
-            capabilities: caller.authorization.iter().collect(),
-            actor: context.map(|context| context.actor.clone()),
-        };
         let operation = self
-            .operations
-            .create(&caller.subject, idempotency_key, input)
-            .await
-            .map_err(validation::creation_error)?;
+            .admit_operation(
+                caller,
+                context,
+                delegated_credential,
+                request,
+                idempotency_key,
+            )
+            .await?;
         let operation_id = match operation {
             CreateResult::Created(id) => id,
             CreateResult::Existing(record) => record.id.clone(),

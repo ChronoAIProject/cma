@@ -30,6 +30,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
                 config.features.visitor_two_sandbox_defaults,
             ),
             released: Some(released.clone()),
+            runtime_pointer_required: config.runtime.runtime_pointer.is_some(),
         },
     )
     .await
