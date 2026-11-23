@@ -7,7 +7,10 @@ use layer2_core::{
         AgentLogEntry, AgentLogKind, PendingAgentApprovals,
     },
 };
-use mongodb::{bson::doc, options::ReadConcern};
+use mongodb::{
+    bson::{doc, Timestamp},
+    options::ReadConcern,
+};
 
 use super::{evidence::MAX_TURN_ROWS, StaleTurnStore};
 use crate::store::{
@@ -51,7 +54,7 @@ impl StaleTurnStore {
         {
             return Err(SandboxStoreError::Conflict);
         }
-        if self.confirm(proof).await? {
+        if self.confirm(proof, None).await? {
             return Ok(());
         }
         let _writer = self.store.agent_writes.lock(&token.agent_id).await;
@@ -85,9 +88,16 @@ impl StaleTurnStore {
                 Ok(())
             }
             CommitOutcome::Unknown(_) => {
-                // An operation time from the failed commit may still refer
-                // to the precommit state. Only positive evidence confirms it.
-                if self.confirm(proof).await? {
+                // A default snapshot can select a point before the commit.
+                // Use its operation time when available, then allow later
+                // progress to confirm a receipt absent from that snapshot.
+                let operation_time = session.operation_time();
+                let confirmed = if let Some(time) = operation_time {
+                    self.confirm(proof, Some(time)).await?
+                } else {
+                    false
+                };
+                if confirmed || self.confirm(proof, None).await? {
                     crate::telemetry::work::published(
                         &proof.checkpoint().outcome.appended,
                         "reconciled",
@@ -251,17 +261,21 @@ impl StaleTurnStore {
 
     // Both log formats retain the exact event row. The receipt and the budget
     // identity survive an ordinary command projection or later checkpoint.
-    async fn confirm(&self, proof: &StaleTurnSettlement) -> Result<bool, SandboxStoreError> {
+    async fn confirm(
+        &self,
+        proof: &StaleTurnSettlement,
+        at: Option<Timestamp>,
+    ) -> Result<bool, SandboxStoreError> {
         let (turn, event) = terminal_event(proof).map_err(store_error)?;
         let agent = &proof.snapshot().agent;
         let id = &proof.command().receipt.envelope.command_id;
-        let mut session = self
-            .store
-            .client
-            .start_session()
-            .snapshot(true)
-            .await
-            .map_err(unavailable)?;
+        let snapshot = self.store.client.start_session().snapshot(true);
+        let mut session = match at {
+            Some(at) => snapshot.snapshot_time(at),
+            None => snapshot,
+        }
+        .await
+        .map_err(unavailable)?;
         let row = self
             .store
             .agent_commands
