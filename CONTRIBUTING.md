@@ -14,6 +14,9 @@
 | Release and support scope | **[PENDING: source-only or named binaries/images; supported versions and environments]** |
 | Review responsibility | **[PENDING: public maintainer roles for ordinary, CI and security-sensitive changes]** |
 
+Use the [pending-decision checklist](.github/COMMUNITY_DECISIONS.md) to reconcile
+these placeholders with the security, conduct and intake drafts before adoption.
+
 Do not infer reuse or redistribution permission from the repository being public.
 Do not add sign-off requirements or claim a CLA is accepted until the contribution
 agreement is approved. Preserve third-party copyright and license notices; a
