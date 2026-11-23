@@ -205,6 +205,30 @@ pub(in crate::store) fn scan_complete_log_with_session_admitted<'a>(
     policy: &'a IngressOwnershipPolicy,
     read_plan: AllocationPlan,
 ) -> Result<CompleteRead<'a>, AdmittedError> {
+    scan_complete_log_with_session_prepared_admitted(
+        caller,
+        store,
+        agent,
+        session,
+        policy,
+        read_plan,
+        || Ok(|_| Ok(())),
+    )
+}
+
+pub(in crate::store::agent_log_integrity) fn scan_complete_log_with_session_prepared_admitted<
+    'a,
+    F: FnMut(SharedOwned<AgentLogEntry>) -> Result<(), OwnedWork<SandboxStoreError>> + Send + 'a,
+    P: FnOnce() -> Result<F, AdmittedError> + Send + 'a,
+>(
+    caller: ScanCaller,
+    store: &'a MongoSandboxStore,
+    agent: &'a Agent,
+    session: &'a mut mongodb::ClientSession,
+    policy: &'a IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
+    prepare: P,
+) -> Result<CompleteRead<'a>, AdmittedError> {
     AdmittedOperation::from_owned(
         policy,
         IngressClass::Transformation,
@@ -237,7 +261,8 @@ pub(in crate::store) fn scan_complete_log_with_session_admitted<'a>(
             {
                 return Ok(error.map(Err));
             }
-            scan::cursor::scan_collection_admitted(
+            let mut visit = prepare()?;
+            let result = scan::cursor::scan_collection_admitted(
                 caller,
                 scan::cursor::ScanInput {
                     collection: &store.agent_log,
@@ -251,11 +276,12 @@ pub(in crate::store) fn scan_complete_log_with_session_admitted<'a>(
                 |entry| {
                     scope
                         .initialize_owned(|| validate_creation_lineage(agent, &entry))
-                        .transpose()
-                        .map(|_| ())
+                        .transpose()?;
+                    visit(entry)
                 },
             )?
-            .await
+            .await;
+            result
         },
     )
 }

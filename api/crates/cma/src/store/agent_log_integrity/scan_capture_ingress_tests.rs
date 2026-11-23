@@ -490,3 +490,6 @@ async fn capture_preserves_original_driver_errors_after_partial_delivery() {
 
 #[path = "scan_capture_assessment_ingress_tests.rs"]
 mod assessment;
+
+#[path = "scan_capture_transaction_ingress_tests.rs"]
+mod transaction;
