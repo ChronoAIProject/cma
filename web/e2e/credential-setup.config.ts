@@ -14,6 +14,7 @@ export default defineConfig({
     'public-entry-lifecycle.check.ts',
     'public-entry-reload.check.ts',
     'public-entry-multiroute.check.ts',
+    'public-entry-wire.check.ts',
   ],
   workers: 1,
   retries: 0,

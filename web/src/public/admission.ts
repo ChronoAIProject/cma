@@ -10,21 +10,13 @@ const pending = new Map<string, { identity: string; result: Promise<Launch> }>()
 export class AdmissionRecoveryError extends Error {
   constructor() {
     super(
-      'The result of your earlier request is unavailable in this tab. Your original request is saved. No new request has been sent.',
+      'The result of your earlier request is unavailable in this tab. Your original request is saved. No new request has been sent. Contact your CMA administrator to check its result.',
     );
   }
 }
 
 function commandIdentity(intent: BrowserIntent): string {
-  return JSON.stringify([
-    intent.id,
-    intent.path,
-    intent.publicId,
-    intent.body.start_if_ready,
-    intent.body.placement_id,
-    intent.body.referrer_origin,
-    intent.body.choice,
-  ]);
+  return JSON.stringify([intent.id, intent.path, intent.publicId, JSON.stringify(intent.body)]);
 }
 
 export function isSettledQuotaRefusal(error: unknown): boolean {
@@ -45,6 +37,7 @@ export function isUnsettledCommand(error: unknown): boolean {
 export function admit(client: PublicClient, intent: BrowserIntent, owner: string): Promise<Launch> {
   if ((intent.owner !== undefined && intent.owner !== owner) || (intent.submitted && !intent.owner))
     return Promise.reject(new Error(publicCopy.expired));
+  if (intent.recoveryRequired) return Promise.reject(new AdmissionRecoveryError());
   const slot = `${owner}:${intent.key}`;
   const current = pending.get(slot);
   const identity = commandIdentity(intent);
@@ -52,11 +45,13 @@ export function admit(client: PublicClient, intent: BrowserIntent, owner: string
     return current.identity === identity
       ? current.result
       : Promise.reject(new AdmissionRecoveryError());
+  if (intent.submitted && intent.wireBody !== JSON.stringify(intent.body))
+    return Promise.reject(new AdmissionRecoveryError());
   if (!hasCurrentConsent(intent))
     return Promise.reject(
       intent.submitted ? new AdmissionRecoveryError() : new Error(publicCopy.expired),
     );
-  writeIntent({ ...intent, owner, submitted: true });
+  writeIntent({ ...intent, owner, submitted: true, wireBody: JSON.stringify(intent.body) });
   const result = client.requests.createOrResume(intent.publicId, intent.body, {
     idempotencyKey: intent.key,
   });

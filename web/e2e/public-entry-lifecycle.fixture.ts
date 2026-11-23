@@ -9,6 +9,8 @@ export interface EntryPacket {
   owner?: string;
   body: unknown;
   submitted: boolean;
+  wireBody?: string;
+  recoveryRequired?: true;
   expiresAt: number;
   credentialRecovery?: string;
 }

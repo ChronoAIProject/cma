@@ -1,6 +1,7 @@
 import { Presence } from '../ui/Presence';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
+  ApiError,
   repeatChoiceFrom,
   type ExistingLaunchAgent,
   type LaunchRepeatChoice,
@@ -171,6 +172,23 @@ function Entry({
           setError(cause.message);
           return;
         }
+        if (cause instanceof ApiError && cause.code === 'idempotency_key_reused') {
+          setBlockedOwner(owner);
+          setError(
+            'The saved request does not match the recorded request. Your choices are saved. Contact your CMA administrator to check the original result.',
+          );
+          try {
+            writeIntent({
+              ...selected,
+              owner: selected.owner ?? owner,
+              submitted: true,
+              recoveryRequired: true,
+            });
+          } catch {
+            setError(publicCopy.storageUnavailable);
+          }
+          return;
+        }
         let repeat: ExistingLaunchAgent | undefined;
         try {
           repeat = repeatChoiceFrom(cause);
@@ -304,7 +322,13 @@ function Entry({
       selected =
         saved?.credentialRecovery !== undefined
           ? saved.credentialRecovery === 'refused'
-            ? { ...saved, key: crypto.randomUUID(), credentialRecovery: 'retry' }
+            ? {
+                ...saved,
+                key: crypto.randomUUID(),
+                submitted: false,
+                wireBody: undefined,
+                credentialRecovery: 'retry',
+              }
             : saved
           : choice === undefined
             ? ((saved?.owner === undefined || saved.owner === owner ? saved : undefined) ??

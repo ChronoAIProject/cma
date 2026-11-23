@@ -3,7 +3,8 @@ import type { Launch, TriggerPreview } from '@cma/client';
 import { LocalStartup, recorded } from './agent-startup-fixtures';
 import type { EntryPacket } from './public-entry-lifecycle.fixture';
 
-export type ReloadScenario = 'receipt' | 'pending' | 'recovery-required' | 'expired-fence';
+export type ReloadScenario =
+  'receipt' | 'pending' | 'recovery-required' | 'expired-fence' | 'mismatch';
 
 export async function entryReloadFixture(page: Page, baseURL: string, scenario: ReloadScenario) {
   const boundary = new LocalStartup();
@@ -67,8 +68,16 @@ export async function entryReloadFixture(page: Page, baseURL: string, scenario: 
       requests.set(request, post);
       if (posts.length === 1)
         return reply({ code: 'store_failed', title: 'Synthetic unknown result' }, 503);
-      expect(post.key).toBe(posts[0]?.key);
-      expect(post.body).toBe(posts[0]?.body);
+      if (post.key !== posts[0]?.key || post.body !== posts[0]?.body)
+        return reply(
+          { code: 'idempotency_key_reused', title: 'Synthetic retained fingerprint mismatch' },
+          422,
+        );
+      if (scenario === 'mismatch')
+        return reply(
+          { code: 'idempotency_key_reused', title: 'Synthetic retained fingerprint mismatch' },
+          422,
+        );
       if (scenario === 'receipt' || (scenario === 'pending' && posts.length >= 3))
         return reply(accepted, 201);
       return reply(

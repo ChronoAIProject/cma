@@ -155,3 +155,25 @@ it('returns through the router so an accepted in-memory result survives expiry',
   expect(test.client.requests.createOrResume).toHaveBeenCalledOnce();
   expect(sessionStorage.getItem(key)).toBeNull();
 });
+
+it('retains and fences the original command after a fingerprint mismatch, including re-entry', async () => {
+  const test = setup();
+  vi.mocked(test.client.requests.createOrResume).mockRejectedValueOnce(
+    new ApiError(422, 'Mismatch', 'idempotency_key_reused'),
+  );
+  await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('check the original result');
+  expect(screen.getByRole('button', { name: 'Open in CMA' })).toBeDisabled();
+  const original = readIntent('/t/entry-a')!;
+  expect(original.recoveryRequired).toBe(true);
+  expect(original.wireBody).toBe(JSON.stringify(original.body));
+  expect(original.key).toBe(
+    vi.mocked(test.client.requests.createOrResume).mock.calls[0]?.[2].idempotencyKey,
+  );
+  test.show(b);
+  test.show(a);
+  expect(await screen.findByRole('alert')).toHaveTextContent('original request is saved');
+  expect(test.client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(readIntent('/t/entry-a')).toEqual(original);
+  expect(test.navigate).not.toHaveBeenCalled();
+});
