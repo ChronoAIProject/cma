@@ -32,6 +32,7 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("cma_document_artifacts", Documents),
     ("cma_document_quotas", Independent),
     ("native_warm_pool_targets", Independent),
+    ("released_runtimes", Independent),
     ("native_prepared_sandboxes", Empty),
     ("runtime_backend_routes", Sandbox(&["sandbox_id"])),
     ("activity", Activity),
