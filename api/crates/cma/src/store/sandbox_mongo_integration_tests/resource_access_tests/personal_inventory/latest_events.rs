@@ -133,8 +133,7 @@ async fn personal_provenance_selected_agents_and_latest_event_share_one_snapshot
             if matches!(
                 event.command.get_str("comment"),
                 Ok("cma.personal_agent_evidence")
-            )
-                && observed.armed.swap(false, Ordering::SeqCst)
+            ) && observed.armed.swap(false, Ordering::SeqCst)
             {
                 observed.entered.notify_one();
                 let (lock, wake) = &observed.resume;
