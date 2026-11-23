@@ -26,6 +26,9 @@ impl AgentManager {
         &self,
         candidates: Vec<Arc<Authority>>,
     ) -> Result<(), OwnershipError> {
+        if self.coordinator.contains_failures() {
+            return self.service_retirements(candidates).await;
+        }
         self.retire_inactive().await?;
         let cancelled = self.coordinator.cancelled_receivers().await;
         for authority in cancelled.into_iter().chain(candidates) {

@@ -1,4 +1,5 @@
 //! One participating process: renew, rebalance, revoke receivers, then release.
+mod containment;
 mod drain;
 mod maintenance;
 pub(crate) mod relay;
@@ -6,7 +7,7 @@ mod renewal;
 mod retirement;
 use crate::{sandbox::LiveAgentRegistry, store::MongoSandboxStore};
 use layer2_core::{
-    agent_ownership::{Member, OwnershipCoordinator, PROTOCOL_VERSION},
+    agent_ownership::{MaintenancePolicy, Member, OwnershipCoordinator, PROTOCOL_VERSION},
     sandbox::store::AgentStore,
     AgentId,
 };
@@ -30,6 +31,8 @@ pub(crate) struct AgentManager {
     drain: tokio::sync::Mutex<bool>,
     handoffs: Mutex<BTreeMap<AgentId, Instant>>,
     lifecycle: OnceLock<crate::agent_lifecycle::LifecycleDrain>,
+    containment_times: Mutex<containment::IntentTimes>,
+    supervisor: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl AgentManager {
@@ -40,7 +43,26 @@ impl AgentManager {
         capacity: u32,
         cleanup_pacing: bool,
     ) -> Result<Arc<Self>, String> {
-        let coordinator = OwnershipCoordinator::register_with_cleanup_pacing(
+        Self::register_with_policy(
+            store,
+            registry,
+            address,
+            capacity,
+            cleanup_pacing,
+            MaintenancePolicy::Legacy,
+        )
+        .await
+    }
+
+    pub async fn register_with_policy(
+        store: Arc<MongoSandboxStore>,
+        registry: Arc<LiveAgentRegistry>,
+        address: String,
+        capacity: u32,
+        cleanup_pacing: bool,
+        policy: MaintenancePolicy,
+    ) -> Result<Arc<Self>, String> {
+        let coordinator = OwnershipCoordinator::register_with_policy(
             store
                 .agent_ownership
                 .clone()
@@ -58,6 +80,7 @@ impl AgentManager {
                 max_owned_agents: capacity,
             },
             cleanup_pacing,
+            policy,
         )
         .await
         .map_err(|_| "Agent Manager membership registration failed")?;
@@ -72,8 +95,10 @@ impl AgentManager {
             drain: tokio::sync::Mutex::new(false),
             handoffs: Mutex::new(BTreeMap::new()),
             lifecycle: OnceLock::new(),
+            containment_times: Mutex::default(),
+            supervisor: tokio::sync::Mutex::new(None),
         });
-        renewal::spawn(&manager);
+        *manager.supervisor.try_lock().unwrap() = Some(renewal::spawn(&manager));
         Ok(manager)
     }
 
