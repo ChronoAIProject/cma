@@ -8,6 +8,15 @@ use mongodb::options::ReadConcern;
 
 #[path = "scan_assessment_ingress.rs"]
 pub(super) mod assessment;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "enabled recording awaits complete ingress composition"
+    )
+)]
+#[path = "scan_capture_ingress.rs"]
+pub(super) mod capture;
 #[path = "scan_cursor_ingress.rs"]
 pub(super) mod cursor;
 #[path = "scan_ingress.rs"]
