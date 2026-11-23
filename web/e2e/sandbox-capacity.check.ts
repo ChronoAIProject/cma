@@ -238,7 +238,7 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
   await page.getByRole('menuitem', { name: 'Delete Sandbox', exact: true }).click();
   const confirmation = page.getByRole('dialog', { name: 'Delete Sandbox', exact: true });
   await confirmation.getByLabel('I understand this Sandbox will be deleted.').check();
-  await confirmation.getByRole('button', { name: 'Delete Sandbox', exact: true }).click();
+  await confirmation.getByRole('button', { name: 'Request deletion', exact: true }).click();
   await expect.poll(() => writes.includes('DELETE sbx_quota_00')).toBe(true);
   expect(sandboxDeletionKey).toBeTruthy();
   const retainedDeletion = () =>
