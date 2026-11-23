@@ -59,10 +59,10 @@ pub(crate) mod stale_turns;
 pub(crate) use agent_worker_transaction::adoption_probe;
 #[cfg(test)]
 pub(crate) use agent_worker_transaction::skill_result_test_support;
-pub(crate) use agent_worker_transaction::CLEANUP_RETRY_DEADLINE;
 mod agent_worktree_recovery;
 mod agent_worktree_recovery_records;
 mod agent_write_coordination;
+pub(crate) use agent_write_coordination::CLEANUP_RETRY_DEADLINE;
 mod agents;
 pub mod auth;
 mod billing_authority;

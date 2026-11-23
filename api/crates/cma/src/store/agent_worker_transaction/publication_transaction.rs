@@ -2,6 +2,7 @@
 use super::*;
 
 use crate::store::agent_capacity_recovery::observations::{cohort, Outcome, Stage};
+use crate::store::agent_write_coordination::CLEANUP_RETRY_DEADLINE;
 use layer2_core::sandbox::store::{AgentWorkPublication, AgentWorkPublicationParents};
 
 enum Completion {
