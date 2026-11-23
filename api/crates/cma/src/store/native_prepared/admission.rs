@@ -51,13 +51,13 @@ pub(in crate::store) async fn claim_ready(
     // startup. Never let that prior target override this process's released
     // runtime while new owned admissions are already being accepted.
     let released = if machine {
-        store.managed_machine_runtime_version.as_ref()
+        store.managed_machine_release()
     } else {
-        store.managed_runtime_version.as_ref()
+        store.managed_agent_release()
     };
     if desired.machine() != machine
         || (machine && released.is_none())
-        || released.is_some_and(|version| version != &desired.warm.runtime_version)
+        || released.is_some_and(|version| version != desired.warm.runtime_version)
     {
         return Ok(ClaimOutcome::Miss("miss_released_runtime_mismatch"));
     }
