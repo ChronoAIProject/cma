@@ -251,6 +251,14 @@ async fn apply(
         (claim, current_agent_row.as_ref())
     {
         let current = read_agent(current_row).map_err(ClaimError::Domain)?;
+        if super::agent_worker_transaction::pending_adoption::witness::blocks_claim(
+            current_row,
+            &current,
+        )
+        .map_err(ClaimError::Domain)?
+        {
+            return Ok(false);
+        }
         if store.ownership_retry_hints_active() {
             use super::agent_failure_pacing::ownership;
             if let Some((row, now)) = ownership::server_row(store, &current.id, session)
@@ -294,6 +302,14 @@ async fn apply(
         doc! { "$exists": false },
     );
     if let ChildWriterClaim::Agent(agent) = claim {
+        let pending = &super::agent_worker_transaction::pending_adoption::witness::FIELD;
+        if super::agent_worker_transaction::pending_adoption::witness::pending_step(agent) {
+            if let Some(marker) = current_agent_row.as_ref().and_then(|row| row.get(*pending)) {
+                filter.insert(*pending, marker.clone());
+            } else {
+                filter.insert(*pending, doc! {"$exists": false});
+            }
+        }
         filter.insert(
             "last_seq",
             signed(agent.conversation.last_seq, "writer claim Agent log head")
