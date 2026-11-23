@@ -2,15 +2,17 @@ import { useRelayCapabilities } from '../RelayCapabilities';
 import { Button } from '../../ui/Button';
 import { AdmissionFields } from './AdmissionFields';
 import { Choice, NumberField, Section, StringList, TextField, Toggle } from './Fields';
+import {
+  customGroupingApplies,
+  nextSink,
+  partitionKeys,
+  partitionKeyUnavailable,
+  sinkTypeUsedBy,
+} from './authoringRules';
 import { object, optional, records, strings, text, type Fields } from './model';
-const partitionKeys = [
-  { value: 'conversation_and_sender', label: 'Each sender in each conversation' },
-  { value: 'conversation', label: 'Each conversation' },
-  { value: 'thread', label: 'Each thread' },
-  { value: 'fixed', label: 'One shared conversation' },
-  { value: 'event_subject', label: 'Each event subject' },
-  { value: 'per_event', label: 'A new conversation for every event' },
-];
+const customPartitionKeys = partitionKeys.filter((option) =>
+  ['fixed', 'event_subject', 'per_event'].includes(option.value),
+);
 export function ChannelPolicyFields({
   value,
   onChange,
@@ -78,19 +80,39 @@ export function ChannelPolicyFields({
             description="Messages with the same grouping share an agent conversation and its history. Choose separate conversations when senders should not share context."
           >
             <Choice
+              path="/partition/key"
               label="Group incoming messages by"
               value={partition.key}
-              options={partitionKeys}
+              options={partitionKeys.map((option) => ({
+                ...option,
+                unavailable: partitionKeyUnavailable(discovery, option.value, value.sources),
+              }))}
               onChange={(key) =>
                 set('partition', { ...partition, version: partition.version ?? 1, key })
               }
             />
-            <Choice
-              label="Group custom events by"
-              value={partition.custom_key ?? ''}
-              options={[{ value: '', label: 'Use the same grouping' }, ...partitionKeys]}
-              onChange={(v) => set('partition', optional(partition, 'custom_key', v || undefined))}
-            />
+            {customGroupingApplies(discovery, value.sources) || partition.custom_key != null ? (
+              <Choice
+                path="/partition/custom_key"
+                label="Group custom events by"
+                value={partition.custom_key ?? ''}
+                options={[
+                  {
+                    value: '',
+                    label: 'Use the same grouping',
+                    unavailable: partitionKeyUnavailable(
+                      discovery,
+                      text(partition.key),
+                      records(value.sources).filter((source) => source.type === 'custom'),
+                    ),
+                  },
+                  ...customPartitionKeys,
+                ]}
+                onChange={(v) =>
+                  set('partition', optional(partition, 'custom_key', v || undefined))
+                }
+              />
+            ) : null}
           </Section>
           <Section
             title="Replies"
@@ -110,13 +132,19 @@ export function ChannelPolicyFields({
             {sinks.map((sink, index) => (
               <Section key={index} title={`Reply destination ${index + 1}`}>
                 <Choice
+                  path={`/reply/sinks/${index}`}
                   label={`Destination ${index + 1} type`}
                   value={sink.type}
                   options={[
                     { value: 'source', label: 'Original conversation' },
                     { value: 'result_webhook', label: 'Result webhook' },
                     { value: 'sync', label: 'Synchronous response' },
-                  ]}
+                  ].map((option) => {
+                    const used = sinkTypeUsedBy(sinks, index, option.value);
+                    return used
+                      ? { ...option, unavailable: `Already used by destination ${used}.` }
+                      : option;
+                  })}
                   onChange={(type) =>
                     setReply(
                       'sinks',
@@ -170,7 +198,7 @@ export function ChannelPolicyFields({
             ))}
             <Button
               disabled={sinks.length >= 3}
-              onClick={() => setReply('sinks', [...sinks, { type: 'source' }])}
+              onClick={() => setReply('sinks', [...sinks, nextSink(sinks)])}
             >
               Add reply destination
             </Button>

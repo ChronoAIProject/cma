@@ -116,9 +116,11 @@ export function SetupReview({ value }: { value: Fields }) {
         <div>
           <dt>Replies</dt>
           <dd>
-            {reply.auto_final === true
-              ? 'Final answers sent automatically'
-              : 'Explicit reply tool calls only'}
+            {reply.auto_final !== true
+              ? 'Explicit reply tool calls only'
+              : records(reply.sinks).length === 0
+                ? 'Final answers have no reply destination. Add one or turn off automatic answers.'
+                : 'Final answers sent automatically'}
           </dd>
         </div>
       </dl>
