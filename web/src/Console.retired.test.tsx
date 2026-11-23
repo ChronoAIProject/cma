@@ -118,12 +118,14 @@ it.each(['ready', 'error'] as const)(
   'unmounts runtime panels throughout retained loading/%s/unconfirmed and restores the active selection',
   async (outcome) => {
     const witness: SelectedRetiredAgent = { detail: retired, viewerId: 'owner', authEpoch: 7 };
+    let accessGate = Promise.resolve();
     const resourceViews = createClient({
       baseUrl: 'https://cma.test',
       fetch: async (input) => {
         const path = new URL(String(input)).pathname;
         if (path === '/api/v1/organizations') return Response.json({ items: [] });
-        if (path === '/api/v1/agents/agt_1')
+        if (path === '/api/v1/agents/agt_1') {
+          await accessGate;
           return Response.json({
             ...WIRE_AGENT,
             id: 'agt_1',
@@ -131,6 +133,7 @@ it.each(['ready', 'error'] as const)(
             workspace: { ...WIRE_AGENT.workspace, id: AGENT_DETAIL.workspace.id },
             sandbox: { ...WIRE_AGENT.sandbox, id: AGENT_DETAIL.sandbox.id },
           });
+        }
         if (path.includes('/resource-access/'))
           return Response.json({
             owner: { kind: 'person', is_current_person: true },
@@ -228,9 +231,17 @@ it.each(['ready', 'error'] as const)(
     expect(screen.getByText('Checking access to the retained conversation.')).toBeVisible();
     expect(replay).toHaveBeenCalledTimes(replays);
     const accessReads = readAccessible.mock.calls.length;
+    let releaseAccess!: () => void;
+    accessGate = new Promise((resolve) => {
+      releaseAccess = resolve;
+    });
     view.rerender(draw(undefined, 8));
-    fireEvent(window, new Event('focus'));
-    await waitFor(() => expect(readAccessible.mock.calls.length).toBeGreaterThan(accessReads));
+    await waitFor(() => expect(readAccessible).toHaveBeenCalledTimes(accessReads + 1));
+    expectRetained();
+    expect(replay).toHaveBeenCalledTimes(replays);
+    await act(async () => {
+      releaseAccess();
+    });
     await waitFor(() => expect(replay.mock.calls.length).toBeGreaterThan(replays));
     expect(screen.getByRole('complementary', { name: selection })).toBeVisible();
     if (outcome === 'ready')

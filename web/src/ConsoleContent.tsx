@@ -100,7 +100,7 @@ export function ConsoleContent({
     accessUncertain: agentAccessUncertain,
     shared,
     personalAgentId,
-  } = useConsoleAgentAccess(client, selectedAgent, user.id);
+  } = useConsoleAgentAccess(client, selectedAgent, user.id, authEpoch);
   const accessUncertain = useIdentityUncertain() || agentAccessUncertain;
   const selectedRetired =
     personalAgentId === selectedAgent && !accessUncertain ? observedRetired : undefined;
