@@ -59,7 +59,8 @@ it('retains HMAC credential editing for managed connections with webhook replies
   await screen.findByText(/No saved CMA connections/);
   fireEvent.click(screen.getByRole('button', { name: 'Destination 1 type' }));
   fireEvent.click(screen.getByRole('menuitemradio', { name: 'Result webhook' }));
-  expect(screen.getByLabelText('Replace HMAC credentials')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Add HMAC credential' })).toBeVisible();
+  expect(screen.queryByLabelText('Replace HMAC credentials')).not.toBeInTheDocument();
   expect(screen.getByLabelText('Provider agent key')).toBeRequired();
   expect(screen.queryByLabelText('Telegram bot token')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('NyxID channel key')).not.toBeInTheDocument();

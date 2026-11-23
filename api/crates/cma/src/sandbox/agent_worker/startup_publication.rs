@@ -197,23 +197,26 @@ impl AgentWorker {
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
         self.dependencies
             .store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: expected,
-                holder: self.config.holder.clone(),
-                fence,
-                agent: agent.clone(),
-                worktree: Some(VersionedWorktree {
-                    expected_revision: expected_worktree_revision,
-                    worktree,
-                }),
-                appended_at: stamp,
-                sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
-                    agent_id: agent.id.clone(),
-                    from: AgentStatus::Starting,
-                    to: AgentStatus::Ready,
-                }),
-                agent_logs: logs,
-            })
+            .commit_agent_connection_work(
+                AgentWorkMutation {
+                    expected_agent_revision: expected,
+                    holder: self.config.holder.clone(),
+                    fence,
+                    agent: agent.clone(),
+                    worktree: Some(VersionedWorktree {
+                        expected_revision: expected_worktree_revision,
+                        worktree,
+                    }),
+                    appended_at: stamp,
+                    sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+                        agent_id: agent.id.clone(),
+                        from: AgentStatus::Starting,
+                        to: AgentStatus::Ready,
+                    }),
+                    agent_logs: logs,
+                },
+                context.publication_parents(),
+            )
             .await?;
         if first_ready {
             let ready_at = SystemTime::now();

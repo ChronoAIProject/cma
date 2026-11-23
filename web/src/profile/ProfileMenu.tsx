@@ -17,6 +17,7 @@ import {
 } from '../theme/appearance';
 import { BUILD_INFO } from '../shell/build';
 import { ServiceAuthorizationDialog } from './ServiceAuthorizationDialog';
+import { PrivacyExportDialog } from './PrivacyExportDialog';
 import './ProfileMenu.css';
 import {
   SYSTEM_TEXT_SIZES,
@@ -51,6 +52,7 @@ export function initialsFor(user: Pick<User, 'displayName' | 'email' | 'handle'>
 export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
   const [authorizationOwner, setAuthorizationOwner] = useState<string>();
+  const [exportOwner, setExportOwner] = useState<string>();
   const appearance = useAppearance();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [avatarBroken, setAvatarBroken] = useState(false);
@@ -74,6 +76,22 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
   const items: MenuEntry[] = [
     { id: 'docs', icon: <IconBrowseOutline16 />, label: 'Docs' },
     { id: 'usage', icon: <IconSettingsOutline16 />, label: 'Usage' },
+    ...(user.legalTerms === undefined
+      ? []
+      : [
+          {
+            id: 'legal-terms',
+            icon: <IconBrowseOutline16 />,
+            label: 'Terms of Service',
+            href: user.legalTerms.termsUrl,
+          },
+          {
+            id: 'legal-privacy',
+            icon: <IconBrowseOutline16 />,
+            label: 'Privacy Notice',
+            href: user.legalTerms.privacyUrl,
+          },
+        ]),
     ...(user.serviceAuthorization === true
       ? [
           {
@@ -82,6 +100,9 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
             label: 'Service authorization',
           },
         ]
+      : []),
+    ...(user.privacyExport === true
+      ? [{ id: 'privacy-export', icon: <IconBrowseOutline16 />, label: 'Export account data' }]
       : []),
     ...(canOperate
       ? [{ id: 'operations', icon: <IconSettingsOutline16 />, label: 'Operations' }]
@@ -129,9 +150,25 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
   ];
 
   const choose = (id: string) => {
+    const document =
+      id === 'legal-terms'
+        ? user.legalTerms?.termsUrl
+        : id === 'legal-privacy'
+          ? user.legalTerms?.privacyUrl
+          : undefined;
+    if (document !== undefined) {
+      setOpen(false);
+      window.open(document, '_blank', 'noopener,noreferrer');
+      return;
+    }
     if (id === 'service-authorization') {
       setOpen(false);
       setAuthorizationOwner(user.id);
+      return;
+    }
+    if (id === 'privacy-export') {
+      setOpen(false);
+      setExportOwner(user.id);
       return;
     }
     const size = SYSTEM_TEXT_SIZES.find((value) => id === `text-${value}`);
@@ -235,6 +272,16 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
           owner={user.id}
           onClose={() => {
             setAuthorizationOwner(undefined);
+            triggerRef.current?.focus();
+          }}
+        />
+      )}
+      {user.privacyExport === true && exportOwner === user.id && (
+        <PrivacyExportDialog
+          key={user.id}
+          owner={user.id}
+          onClose={() => {
+            setExportOwner(undefined);
             triggerRef.current?.focus();
           }}
         />

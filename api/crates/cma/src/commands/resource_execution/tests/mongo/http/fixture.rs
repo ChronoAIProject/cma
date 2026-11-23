@@ -127,7 +127,7 @@ impl HttpFixture {
         } else {
             layer1_public::rest::resource_access_router(Arc::new(access))
         };
-        let app = app
+        let app = crate::rest_router(app)
             .merge(crate::auth::router(auth.clone()))
             .layer(axum::middleware::from_fn_with_state(
                 auth,

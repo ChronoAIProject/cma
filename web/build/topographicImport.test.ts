@@ -1,10 +1,11 @@
 // @vitest-environment node
+import { realpathSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
-import { build } from 'vite';
+import { build, normalizePath, type ResolvedConfig } from 'vite';
 import { optionalTopographicImport } from './topographicImport';
 
 const roots: string[] = [];
@@ -93,6 +94,36 @@ it('contains a real emitted module failure without dispatching an application pr
   await expect(module.loadOrdinary()).rejects.toThrow('synthetic ordinary failure');
   expect(dispatchEvent).toHaveBeenCalledTimes(1);
   expect(dispatchEvent.mock.calls[0]![0].type).toBe('vite:preloadError');
+});
+
+it('keeps an emitted reference that contains dollar pairs verbatim', async () => {
+  // Rollup reference IDs hash the emitted path and spell '-' as '$', so a build root can yield
+  // '$$'. A string replacement would collapse it and fail the build with an unknown file.
+  const root = await mkdtemp(join(tmpdir(), 'cma-flow-reference-'));
+  roots.push(root);
+  const plugin = optionalTopographicImport();
+  const configResolved = plugin.configResolved as (config: ResolvedConfig) => void;
+  configResolved({
+    root,
+    env: { VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED: 'true' },
+  } as unknown as ResolvedConfig);
+  const transform = plugin.transform as unknown as (
+    this: { emitFile: () => string; error: (message: string) => never },
+    code: string,
+    id: string,
+  ) => { code: string };
+  const reference = 'DR$$Gkk6';
+  const result = transform.call(
+    {
+      emitFile: () => reference,
+      error: (message) => {
+        throw new Error(message);
+      },
+    },
+    await readFile(new URL('../src/decoration/topographicLoader.ts', import.meta.url), 'utf8'),
+    normalizePath(resolve(realpathSync(root), 'src/decoration/topographicLoader.ts')),
+  );
+  expect(result.code).toContain(`import.meta.ROLLUP_FILE_URL_${reference})`);
 });
 
 it.each([undefined, 'false', 'TRUE'])('emits no Flow chunk when the flag is %s', async (flag) => {

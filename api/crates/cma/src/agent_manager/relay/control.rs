@@ -8,7 +8,7 @@ use axum::{
 };
 use std::net::SocketAddr;
 
-pub(super) const DRAIN: &str = "/internal/agent-manager/v1/drain";
+pub(crate) const DRAIN: &str = "/internal/agent-manager/v1/drain";
 
 #[derive(Clone)]
 struct Control {
@@ -71,7 +71,15 @@ async fn admission(State(state): State<Control>, request: Request, next: Next) -
         );
         return StatusCode::FORBIDDEN.into_response();
     }
-    match state.manager.drain().await {
+    let admission = request
+        .extensions()
+        .get::<crate::startup::Admission>()
+        .cloned();
+    let result = match admission {
+        Some(admission) => admission.drain().await,
+        None => state.manager.drain().await,
+    };
+    match result {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => {
             tracing::warn!(
@@ -107,32 +115,17 @@ pub(crate) async fn prestop(config: &crate::config::Config) -> Result<(), String
 }
 
 pub(super) fn signed_drain_headers(key: ring::hmac::Key) -> Result<HeaderMap, String> {
-    let authentication = authentication::Authentication::new(key);
     let uri: Uri = DRAIN.parse().unwrap();
-    let mut headers = HeaderMap::new();
-    // Request context normalizes this signed header before verification.
-    headers.insert(
-        "x-request-id",
-        uuid::Uuid::new_v4()
-            .to_string()
-            .parse()
-            .map_err(|_| "cannot construct drain request ID")?,
-    );
-    let proof = authentication
-        .sign(
+    authentication::Authentication::new(key)
+        .signed_headers(
             "prestop",
             &drain_token(),
             &Method::POST,
             &uri,
-            &headers,
+            HeaderMap::new(),
             &[],
         )
-        .map_err(|_| "cannot sign drain request")?;
-    headers.insert(
-        PROOF,
-        proof.parse().map_err(|_| "cannot encode drain proof")?,
-    );
-    Ok(headers)
+        .map_err(|_| "cannot sign drain request".into())
 }
 
 pub(super) async fn drain_local(port: u16, key: ring::hmac::Key) -> Result<(), String> {

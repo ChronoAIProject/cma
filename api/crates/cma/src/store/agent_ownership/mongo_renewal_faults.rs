@@ -1,5 +1,6 @@
 //! Targeted real-Mongo faults shared by custody and public-route regressions.
 use super::*;
+use layer2_core::agent_ownership::RenewalBatch;
 use mongodb::options::ClientOptions;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -65,6 +66,21 @@ impl OwnershipStore for RoutedStore {
             std::future::pending::<()>().await;
         }
         *self.returned.lock().unwrap() = result.as_ref().err().cloned();
+        result
+    }
+    fn supports_batch_renewal(&self) -> bool {
+        true
+    }
+    async fn renew_batch(&self, tokens: &[OwnershipToken]) -> Result<RenewalBatch, OwnershipError> {
+        if !tokens.iter().any(|token| token.agent_id == self.target) {
+            return self.inner.renew_batch(tokens).await;
+        }
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let result = self.fault_client.renew_batch(tokens).await;
+        if self.withhold_reply.load(Ordering::SeqCst) {
+            assert!(matches!(result, Ok(RenewalBatch::Committed(_))));
+            std::future::pending::<()>().await;
+        }
         result
     }
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {

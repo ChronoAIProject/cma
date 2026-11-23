@@ -159,7 +159,7 @@ it.each([undefined, 'named', 'automatic'] as const)(
         onCreated={vi.fn()}
       />,
     );
-    await screen.findByText('10/10 Sandbox environments used');
+    await screen.findByText('All 10 Sandbox environment slots are in use');
     fireEvent.click(await screen.findByRole('button', { name: 'Recover original task' }));
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
     expect(create.mock.calls[0]?.[0]).toEqual(body);

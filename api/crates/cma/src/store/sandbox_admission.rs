@@ -6,7 +6,7 @@ use futures_util::TryStreamExt;
 use layer2_core::ids::SubjectId;
 use layer2_core::sandbox::store::{
     SandboxAdmission, SandboxAdmissionReplay, SandboxAdmissionResult, SandboxAdmissionStore,
-    SandboxStoreError,
+    SandboxLimitClass, SandboxStoreError,
 };
 use layer2_core::sandbox::{Sandbox, SandboxEvent, SandboxEventKind, SandboxOrigin};
 use mongodb::bson::{doc, Bson};
@@ -18,6 +18,7 @@ use super::sandboxes::{admitted_sandbox_document, read_sandbox, read_sandbox_adm
 mod catalogue;
 mod global;
 mod names;
+mod public_owner;
 mod retry;
 
 const REPLAY_CANDIDATE_LIMIT: i64 = 2;
@@ -175,12 +176,21 @@ where
                     SandboxStoreError::Budget(layer2_core::budget::BudgetError::Unavailable),
                 ),
             })?;
-    let live_limit = admission.live_limit.min(
+    let mut live_limit = admission.live_limit.min(
         admission
             .limit_class
             .current_limit(protected.settings())
             .map_err(AdmissionError::Domain)?,
     );
+    if admission.limit_class == SandboxLimitClass::Owner {
+        live_limit = live_limit.min(
+            store
+                .public_owner_sandbox_limit(&admission.sandbox.owner, Some(&mut *session))
+                .await
+                .map_err(AdmissionError::Driver)?
+                .unwrap_or(live_limit),
+        );
+    }
     let live = store
         .sandboxes
         .count_documents(doc! { "owner": owner, "retired_at": Bson::Null })

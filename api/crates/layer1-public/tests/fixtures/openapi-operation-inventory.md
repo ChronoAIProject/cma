@@ -7,6 +7,18 @@
 | `GET /api/v1/account/deletion` | Read the authenticated owner's deletion status, including when new requests are disabled. |
 | `POST /api/v1/account/deletion` | Request deletion with explicit confirmation and `Idempotency-Key`; return 202 with a durable receipt. Replays remain available when new requests are disabled. |
 
+### Legal consent
+
+The deployment operator publishes at most one current version of its terms and
+privacy notice. Without one, both operations answer 404 `legal_terms_not_configured`.
+
+| Operation | Behavior |
+|---|---|
+| `GET /api/v1/account/legal-consent` | Read the current terms version, its document URLs and when the verified human owner accepted that version (`null` until accepted). |
+| `PUT /api/v1/account/legal-consent` | Accept the exact current `version`; a repeat keeps the original acceptance time, and any other version is refused with 409 `legal_terms_version_mismatch`. An owner without a recorded browser sign-in gets 409 `legal_consent_sign_in_required` and must sign in again. |
+| `GET /api/v1/account/privacy-export` | Page through the verified personal owner's Agent export inventory when account export is enabled. |
+| `GET /api/v1/account/privacy-export/agents/{id}/transcript` | Deliver a bounded, verified retained-conversation page with a SHA-256 manifest and source-bound continuation. |
+
 ### Event Worker Profiles
 
 These owner-scoped resources compose three published CMA profile revisions into
@@ -729,7 +741,9 @@ states, refusal categories, atomic admission and rollback qualification.
 `runtime-update` accepts `{ "target_version": "<exact image reference>" }`
 with `Idempotency-Key` from the Sandbox owner. Use the owner detail's
 `runtime_update.latest_version`, or its retained `target_version` when retrying a
-failed update. HTTP 202 records the request; follow `runtime_update.state` on
+failed update. A failed update stalled at reopening conversations whose retained
+target is no longer the latest is recovered onto the latest runtime instead.
+HTTP 202 records the request; follow `runtime_update.state` on
 Sandbox reads until completion. Busy Agents defer the update until idle, and
 eligible managed Sandboxes retain their original home and conversations. Stale
 or conflicting targets return 409; replay an uncertain request with its original
@@ -740,7 +754,8 @@ Operators with `ControlAnySandbox` can queue the same update across owners using
 operator endpoint does not require an idempotency key: retrying the same pending
 target leaves the request unchanged. It validates the configured latest target
 or an already pinned retry target and audits the actual operator, Sandbox owner,
-and target. Queueing does not interrupt current work; the existing idle checks
+and admitted target. After a stalled reopen is recovered onto the latest runtime,
+its former target returns 409. Queueing does not interrupt current work; the existing idle checks
 and transaction fencing retain the original PVC and conversation identities.
 Operator Sandbox detail exposes `runtime_update` with the pinned target, current
 state, and completion or failure metadata. The owner endpoint still hides

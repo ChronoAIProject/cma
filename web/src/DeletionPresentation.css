@@ -1,6 +1,6 @@
 .deletion-impact {
   display: grid;
-  gap: 16px;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -13,6 +13,14 @@
 .deletion-impact__list {
   display: grid;
   min-width: 0;
+  max-height: min(160px, 20dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.deletion-impact__list:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .deletion-impact__row {

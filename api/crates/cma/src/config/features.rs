@@ -13,8 +13,11 @@ mod ingress_coordinator_tests;
 mod resource_list_tests;
 #[cfg(test)]
 mod segmentation_tests;
+#[cfg(test)]
+mod stale_turn_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub am_startup_health_serving: bool,
     pub visitor_launch_admission: bool,
     pub usage_signed_cursors_enabled: bool,
     pub usage_strict_cursors_enabled: bool,
@@ -35,6 +38,10 @@ pub(crate) struct FeatureFlags {
     pub native_retirement_finality_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub ownership_cleanup_pacing: bool,
+    pub batch_ownership_renewal: bool,
+    /// Contain one receiver's transient housekeeping failure instead of
+    /// stopping the process (#3069). Default off until staging verifies it.
+    pub receiver_housekeeping_containment: bool,
     pub coordinated_ingress: bool,
     pub retained_json: bool,
     pub bounded_raw_output: bool,
@@ -71,6 +78,7 @@ pub(crate) struct FeatureFlags {
     pub agent_file_read_timings: bool,
     pub bounded_response_reads: bool,
     pub bounded_transcript_reads: bool,
+    pub privacy_export_enabled: bool,
     pub bounded_usage_reads: bool,
     pub capacity_recovery_enabled: bool,
     pub segment_adoption_enabled: bool,
@@ -96,6 +104,8 @@ pub(crate) struct FeatureFlags {
     pub retained_context_lookup: bool,
     pub context_diagnostics: bool,
     pub event_driven_reconciliation: bool,
+    pub stale_turn_reconciliation: bool,
+    pub stale_turn_terminal: bool,
     pub agent_connection_observations: bool,
     pub empty_discovery: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
@@ -130,6 +140,7 @@ impl FeatureFlags {
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
         let flags = Self {
+            am_startup_health_serving: flag(lookup, "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED")?,
             pending_home_reconciliation: flag(
                 lookup,
                 "CHRONO_PENDING_HOME_RECONCILIATION_ENABLED",
@@ -169,6 +180,11 @@ impl FeatureFlags {
             )?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
             ownership_cleanup_pacing: flag(lookup, "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED")?,
+            batch_ownership_renewal: flag(lookup, "CHRONO_AM_BATCH_OWNERSHIP_RENEWAL")?,
+            receiver_housekeeping_containment: flag(
+                lookup,
+                "CHRONO_RECEIVER_HOUSEKEEPING_CONTAINMENT_ENABLED",
+            )?,
             coordinated_ingress: flag(lookup, "CHRONO_INGRESS_COORDINATOR_ENABLED")?,
             retained_json: flag(lookup, "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED")?,
             bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
@@ -243,6 +259,8 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED",
             )?,
+            stale_turn_reconciliation: flag(lookup, "CHRONO_STALE_TURN_RECONCILIATION_ENABLED")?,
+            stale_turn_terminal: flag(lookup, "CHRONO_STALE_TURN_TERMINAL_ENABLED")?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
             model_credit_required: flag(lookup, "CHRONO_AGENT_MODEL_CREDIT_REQUIRED")?,
@@ -270,6 +288,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED",
             )?,
+            privacy_export_enabled: flag(lookup, "CHRONO_ACCOUNT_PRIVACY_EXPORT_ENABLED")?,
             bounded_usage_reads: flag(lookup, "CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED")?,
             capacity_recovery_enabled: flag(lookup, "CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED")?,
             segment_adoption_enabled: flag(lookup, "CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED")?,

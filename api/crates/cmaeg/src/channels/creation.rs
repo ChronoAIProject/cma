@@ -48,6 +48,14 @@ pub async fn create(
                 state.write_flags(),
             )
             .map_err(ManagementError::Invalid)?;
+            // Nothing is sent for an unknown provider, so its refusal must not
+            // leave a reserved channel behind (#3068).
+            for consumer in definition.consumers() {
+                state
+                    .providers
+                    .require_allowlisted(&consumer.provider.slug)
+                    .map_err(ManagementError::Provider)?;
+            }
             super::github_sources::validate(state, None, &definition).await?;
             super::custom_execution::validate_providers(&state.providers, &definition)?;
             super::custom_execution::validate_media(state, None, &definition)?;
