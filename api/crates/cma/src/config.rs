@@ -19,6 +19,7 @@ mod startup_schema;
 pub(crate) use startup_schema::StartupSchemaMode;
 mod account_deletion;
 mod control_admission;
+mod legal_terms;
 pub(crate) use control_admission::ControlAdmissionConfig;
 mod admission_log;
 mod anonymous_public;
@@ -149,6 +150,8 @@ impl TrustedProxyConfig {
 #[derive(Clone)]
 pub struct Config {
     pub(crate) account_deletion_enabled: bool,
+    /// Published terms and privacy notice; `None` records no consent.
+    pub(crate) legal_terms: Option<layer2_core::legal_consent::LegalTerms>,
     pub(crate) account_erasure_transaction_drain_seconds: u64,
     pub(crate) global_sandbox_limit: u16,
     pub(crate) agent_log_fleet_percent: u8,
@@ -288,6 +291,7 @@ impl Config {
         let service_authorization =
             ServiceAuthorizationConfig::from_lookup(&mut lookup, features.service_authorization)?;
         let account_deletion_enabled = account_deletion::enabled(&mut lookup)?;
+        let legal_terms = legal_terms::from_lookup(&mut lookup)?;
         let account_erasure_transaction_drain_seconds =
             account_deletion::transaction_drain(&mut lookup)?;
         let global_sandbox_limit = global_admission::from_lookup(&mut lookup)?;
@@ -342,6 +346,7 @@ impl Config {
         Ok(Self {
             global_sandbox_limit,
             account_deletion_enabled,
+            legal_terms,
             account_erasure_transaction_drain_seconds,
             bind,
             http_connection_max_age: http_connections::max_age(&mut lookup)?,

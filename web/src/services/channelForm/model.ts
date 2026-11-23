@@ -104,9 +104,12 @@ export function channelDraft(channel?: Channel, owner = ''): Fields {
     sources: d.sources.map((source) => without(object(source), ['jwks_url'])),
   };
 }
+/** A Custom producer verifies events with the shared HMAC list only under HMAC auth. */
+export const customUsesHmac = (source: Fields): boolean =>
+  source.type === 'custom' && object(source.auth).type === 'hmac';
 /** Private drafts stay local until the matching producer is saved. */
-export function producerCredentialKeys(type: unknown): readonly string[] {
-  switch (type) {
+export function producerCredentialKeys(source: Fields): readonly string[] {
+  switch (source.type) {
     case 'native_lark':
       return ['native_lark'];
     case 'whatsapp':
@@ -118,23 +121,21 @@ export function producerCredentialKeys(type: unknown): readonly string[] {
     case 'nyxid_relay':
       return ['channel_key'];
     case 'custom':
-      return ['replace_hmac', 'hmac_secrets'];
+      return customUsesHmac(source) ? ['replace_hmac', 'hmac_secrets'] : [];
     default:
       return [];
   }
 }
 export function usesHmacCredentials(draft: Fields): boolean {
   return (
-    (!draft.connection_ref && records(draft.sources).some((source) => source.type === 'custom')) ||
+    (!draft.connection_ref && records(draft.sources).some(customUsesHmac)) ||
     records(object(draft.reply).sinks).some((sink) => sink.type === 'result_webhook')
   );
 }
 export function channelCredentials(values: Fields, draft: Fields, create: boolean): Fields {
   const keys = new Set([
     'agent_key',
-    ...(!draft.connection_ref
-      ? records(draft.sources).flatMap((source) => producerCredentialKeys(source.type))
-      : []),
+    ...(!draft.connection_ref ? records(draft.sources).flatMap(producerCredentialKeys) : []),
     // The central channel editor retains explicit management of the shared HMAC list.
     ...(!create || usesHmacCredentials(draft) ? ['replace_hmac', 'hmac_secrets'] : []),
   ]);
