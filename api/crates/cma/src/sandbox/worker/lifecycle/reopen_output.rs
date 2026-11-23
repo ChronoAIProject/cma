@@ -8,12 +8,7 @@ use layer2_core::{now_rfc3339, AgentId};
 use layer3_adapter::{AdapterError, ConversationUpdate};
 use tokio::sync::mpsc;
 
-pub(super) const OUTPUT_REFUSED: &str =
-    "durable reopen output was refused: runtime output receipt is not contiguous with its conversation";
-
-pub(super) fn output_refused(error: &AdapterError) -> bool {
-    matches!(error, AdapterError::Rejected(detail) if detail == OUTPUT_REFUSED)
-}
+pub(super) use crate::agent_manager::relay::{output_refused, OUTPUT_REFUSED};
 
 /// Drain before open returns; ACK ownership passes only after a fenced commit.
 pub(super) async fn drain_while<T>(

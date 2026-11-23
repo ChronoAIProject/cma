@@ -2,6 +2,9 @@ use super::*;
 use layer2_core::sandbox::store::AgentConversationStore;
 use layer2_core::sandbox::SandboxImageRotationPhase;
 
+#[path = "runtime_update_reopen_relay_tests.rs"]
+mod relay;
+
 const TARGET: &str = "registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 #[tokio::test]

@@ -5,6 +5,7 @@ use tokio::sync::mpsc;
 #[derive(Default)]
 pub(in super::super) struct StartupOutput {
     pub cursors: Mutex<Vec<u64>>,
+    pub submitted: Mutex<Vec<u64>>,
     pub acknowledged: Mutex<Vec<u64>>,
 }
 
@@ -41,6 +42,7 @@ impl NativeBackend {
                 })
                 .await
                 .map_err(|_| AdapterError::Unavailable("fixture receiver closed".into()))?;
+            self.reopen_output.submitted.lock().unwrap().push(cursor);
             // The hosted opener cannot become ready until custody is transferred.
             let source = acknowledgements
                 .recv()

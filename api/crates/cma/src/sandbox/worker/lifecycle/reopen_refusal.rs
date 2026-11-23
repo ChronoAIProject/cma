@@ -3,7 +3,6 @@ use std::future::Future;
 use layer2_core::agent_ownership::observed_transport;
 use layer2_core::sandbox::store::{ReopenRefusalFence, SandboxStoreError};
 use layer2_core::sandbox::{Agent, Sandbox, SandboxImageRotationPhase, SandboxLifecycleOperation};
-use layer3_adapter::AdapterError;
 use tokio::time::{timeout_at, Instant};
 
 use super::super::support::{adapter_failure, WorkerFailure};
@@ -75,10 +74,11 @@ pub(super) async fn within_deadline<T>(
         .await
         .map_err(|_| expired())?
         .map_err(|error| {
-            let Some(mut fence) = fence.filter(|_| {
-                output_refused(&error) || (relayed && matches!(error, AdapterError::Rejected(_)))
-            }) else {
+            if !output_refused(&error) {
                 return adapter_failure(error);
+            }
+            let Some(mut fence) = fence else {
+                return WorkerFailure::retryable("reopen refusal checkpoint could not be verified");
             };
             if relayed {
                 let Some(owner) = observed_transport(&fence.agent_id) else {
@@ -88,11 +88,8 @@ pub(super) async fn within_deadline<T>(
                 };
                 fence.owner = Some(owner);
             }
-            let mut failure = if output_refused(&error) {
-                WorkerFailure::terminal_validation("retained conversation output is discontinuous")
-            } else {
-                adapter_failure(error)
-            };
+            let mut failure =
+                WorkerFailure::terminal_validation("retained conversation output is discontinuous");
             failure.reopen_refusal = Some(Box::new(fence));
             failure
         })

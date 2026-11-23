@@ -134,11 +134,13 @@ impl Relay {
             .await
             .map_err(|_| ())?
         };
-        let reply = if verify_refusal {
-            verify_refused_owner(self.coordinator.store.as_ref(), &destination.token, reply).await?
-        } else {
-            reply?
-        };
+        let reply = verify_refused_owner(
+            self.coordinator.store.as_ref(),
+            &destination.token,
+            verify_refusal,
+            reply,
+        )
+        .await?;
         if reply.owner.agent_id != *id
             || reply.owner.instance_id != destination.member.instance_id
             || (destination.token.epoch != 0 && reply.owner != destination.token)
@@ -156,12 +158,13 @@ impl Relay {
 async fn verify_refused_owner<T>(
     store: &dyn layer2_core::agent_ownership::OwnershipStore,
     token: &OwnershipToken,
+    verify_refusal: bool,
     result: Result<T, CallFailure>,
 ) -> Result<T, CallFailure> {
-    if matches!(&result, Err(CallFailure::Runtime(error)) if terminal(error)) {
+    if matches!(&result, Err(CallFailure::Runtime(error)) if output_refused(error)) {
         // A claim invitation proves no owner epoch. Re-dispatch after the peer
         // claims a real epoch before using its refusal to settle the Sandbox.
-        if token.epoch == 0 {
+        if !verify_refusal || token.epoch == 0 {
             return Err(CallFailure::Unavailable);
         }
         bounded(store.check(token)).await.map_err(|_| ())?;
@@ -192,8 +195,7 @@ pub(super) async fn serve(
             receipt,
         })
         .into_response(),
-        Ok(Err(error)) if terminal(&error) => rejected_response(),
-        Ok(Err(error)) => call_failure::response(error),
+        Ok(Err(error)) => failure_response(error),
         _ => http::unavailable(),
     }
 }
@@ -202,6 +204,25 @@ pub(super) async fn serve(
 /// same-process path keeps the error class; the HTTP path must too, or the
 /// caller retries a refusal forever. The error text never crosses the relay.
 const REJECTED: &str = "owner_reopen_rejected";
+// A caller that only knows #3265 treats this code as retryable. The caller
+// must opt in after capturing its checkpoint before accepting the refusal.
+const OUTPUT_DISCONTINUITY: &str = "owner_reopen_output_discontinuity";
+pub(crate) const OUTPUT_REFUSED: &str =
+    "durable reopen output was refused: runtime output receipt is not contiguous with its conversation";
+
+pub(crate) fn output_refused(error: &layer3_adapter::AdapterError) -> bool {
+    matches!(error, layer3_adapter::AdapterError::Rejected(detail) if detail == OUTPUT_REFUSED)
+}
+
+fn failure_response(error: layer3_adapter::AdapterError) -> Response {
+    if output_refused(&error) {
+        rejected_response(OUTPUT_DISCONTINUITY)
+    } else if terminal(&error) {
+        rejected_response(REJECTED)
+    } else {
+        call_failure::response(error)
+    }
+}
 
 /// The refusals the lifecycle treats as terminal validation.
 fn terminal(error: &layer3_adapter::AdapterError) -> bool {
@@ -212,14 +233,14 @@ fn terminal(error: &layer3_adapter::AdapterError) -> bool {
     )
 }
 
-fn rejected_response() -> Response {
+fn rejected_response(code: &'static str) -> Response {
     use axum::response::IntoResponse;
     (
         axum::http::StatusCode::CONFLICT,
         [("content-type", "application/problem+json")],
         Json(serde_json::json!({
             "type": "about:blank", "title": "Agent owner rejected the lifecycle reopen",
-            "status": 409, "code": REJECTED,
+            "status": 409, "code": code,
         })),
     )
         .into_response()
@@ -237,14 +258,15 @@ async fn rejected_from(mut response: reqwest::Response) -> CallFailure {
             _ => return CallFailure::Unavailable,
         }
     }
-    match serde_json::from_slice::<serde_json::Value>(&bytes) {
-        Ok(body) if body["code"] == REJECTED => {
-            CallFailure::Runtime(layer3_adapter::AdapterError::Rejected(
-                "Agent owner rejected the lifecycle reopen".into(),
-            ))
-        }
-        _ => CallFailure::Unavailable,
-    }
+    let Ok(body) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return CallFailure::Unavailable;
+    };
+    let detail = match body["code"].as_str() {
+        Some(OUTPUT_DISCONTINUITY) => OUTPUT_REFUSED,
+        Some(REJECTED) => "Agent owner rejected the lifecycle reopen",
+        _ => return CallFailure::Unavailable,
+    };
+    CallFailure::Runtime(layer3_adapter::AdapterError::Rejected(detail.into()))
 }
 
 #[cfg(test)]
