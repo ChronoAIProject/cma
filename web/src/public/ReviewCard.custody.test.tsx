@@ -170,6 +170,52 @@ it('a late failure cannot resurrect a command after its recovery was removed', a
   expect(sessionStorage.getItem(storageKey)).toBeNull();
 });
 
+it.each(['accepted-first', 'error-first'] as const)(
+  'keeps same-key acceptance after remount when responses arrive %s',
+  async (order) => {
+    const test = fixture();
+    const actor = userEvent.setup();
+    const initial = test.mount();
+    await actor.click(screen.getByRole('checkbox'));
+    await submit(actor);
+    await act(async () => test.reject(failed));
+    initial.unmount();
+
+    let rejectOlder!: (cause: unknown) => void;
+    let acceptNewer!: (value: Launch) => void;
+    vi.mocked(test.client.requests.start)
+      .mockReturnValueOnce(new Promise((_, reject) => (rejectOlder = reject)))
+      .mockReturnValueOnce(new Promise((resolve) => (acceptNewer = resolve)));
+    const older = test.mount();
+    await checkAccount(actor);
+    await submit(actor);
+    older.unmount();
+    test.mount();
+    await checkAccount(actor);
+    expect(test.client.requests.start).toHaveBeenCalledTimes(2);
+    await submit(actor);
+    const calls = vi.mocked(test.client.requests.start).mock.calls;
+    expect(calls).toHaveLength(3);
+    expect(calls[1]).toEqual(calls[0]);
+    expect(calls[2]).toEqual(calls[0]);
+    const retained = sessionStorage.getItem(storageKey);
+    expect(retained).not.toBeNull();
+
+    if (order === 'error-first') {
+      await act(async () => rejectOlder(failed));
+      expect(sessionStorage.getItem(storageKey)).toBe(retained);
+      expect(test.completed).not.toHaveBeenCalled();
+    }
+    await act(async () => acceptNewer(PUBLIC_RECORD));
+    expect(test.completed).toHaveBeenCalledExactlyOnceWith(PUBLIC_RECORD);
+    expect(sessionStorage.getItem(storageKey)).toBeNull();
+    if (order === 'accepted-first') await act(async () => rejectOlder(failed));
+    expect(sessionStorage.getItem(storageKey)).toBeNull();
+    expect(test.completed).toHaveBeenCalledExactlyOnceWith(PUBLIC_RECORD);
+    expect(test.client.requests.start).toHaveBeenCalledTimes(3);
+  },
+);
+
 it('refuses dispatch when a replacement arrives during the owner preflight', async () => {
   const test = fixture();
   const original = {
