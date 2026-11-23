@@ -1,4 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
+import { createClient } from '@cma/client';
 import { afterEach, expect, it, vi } from 'vitest';
 import { CmaClientProvider } from './api/context';
 import { Console } from './Console';
@@ -8,6 +11,11 @@ import { AGENT_DETAIL, AGENT_TRANSCRIPT, agentClient } from './test/agent';
 import { persistDeletion, restoreDeletions } from './deletionRecovery';
 import type { SelectedRetiredAgent } from './useDeletionNoticeReconciliation';
 import { OwnerViewsProvider } from './resources/retainedOwnerViews';
+import { WIRE_AGENT } from './test/rest';
+import { chooseOption, expandNavigationFilters } from './test/select';
+import { retainTaskViewer } from './create/taskIdentity';
+import { openTaskDraftStore } from './create/taskDraftStorage';
+import { readAgentDraft } from './agent/draftStorage';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -128,7 +136,7 @@ it.each(['ready', 'error'] as const)(
     const view = render(draw());
     const message = await screen.findByRole('textbox', { name: 'Message' });
     fireEvent.change(message, { target: { value: 'Keep this unsent draft' } });
-    const history = screen.getByText('The repository is ready.');
+    expect(screen.getByText('The repository is ready.')).toBeVisible();
     await waitFor(() => expect(replay).toHaveBeenCalled());
     const liveSignal = replay.mock.lastCall![1].signal;
     if (outcome === 'ready') {
@@ -139,6 +147,8 @@ it.each(['ready', 'error'] as const)(
     }
     const selection = outcome === 'ready' ? 'Agent computer' : 'Agent details';
     expect(screen.getByRole('complementary', { name: selection })).toBeVisible();
+    const storedDraft = readAgentDraft('owner', 'agt_1');
+    expect(storedDraft.content).toBe('Keep this unsent draft');
     let resolve!: (value: typeof AGENT_TRANSCRIPT) => void;
     let reject!: (error: Error) => void;
     transcript.mockImplementationOnce(
@@ -161,9 +171,8 @@ it.each(['ready', 'error'] as const)(
       expect(document.querySelector('.agent-computer')).toBeNull();
       expect(document.querySelector('.frame')).not.toHaveAttribute('data-details-overlay');
       expect(document.querySelector('.frame')).not.toHaveAttribute('data-details-inline');
-      expect(screen.getByRole('textbox', { name: 'Message' })).toBe(message);
-      expect(message).toHaveValue('Keep this unsent draft');
-      expect(screen.getByText('The repository is ready.')).toBe(history);
+      expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+      expect(readAgentDraft('owner', 'agt_1')).toEqual(storedDraft);
     };
     expectRetained();
     await act(async () => {
@@ -180,8 +189,83 @@ it.each(['ready', 'error'] as const)(
     expect(screen.getByRole('complementary', { name: selection })).toBeVisible();
     if (outcome === 'ready')
       expect(screen.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(message);
-    expect(message).toHaveValue('Keep this unsent draft');
-    expect(screen.getByText('The repository is ready.')).toBe(history);
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Keep this unsent draft');
+    expect(screen.getByText('The repository is ready.')).toBeVisible();
   },
 );
+
+it('reuses a retired request in personal Home after an explicit organization scope selection', async () => {
+  retainTaskViewer('owner');
+  const resourceViews = createClient({
+    baseUrl: 'https://cma.test',
+    fetch: async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/api/v1/organizations')
+        return Response.json({
+          items: [{ id: 'org_research', role: 'admin', display_name: 'Research' }],
+        });
+      if (path === '/api/v1/agents/agt_1')
+        return Response.json({
+          ...WIRE_AGENT,
+          id: 'agt_1',
+          sandbox: { ...WIRE_AGENT.sandbox, status: 'retired' },
+        });
+      if (path.includes('/resource-access/'))
+        return Response.json({
+          owner: { kind: 'person', is_current_person: true },
+          capabilities: ['view_details'],
+          policy_revision: 1,
+          revalidate_at: null,
+        });
+      if (path === '/api/v1/sandboxes' || path === '/api/v1/agents/provenance')
+        return Response.json({ items: [] });
+      throw new Error(`Unexpected request: ${path}`);
+    },
+  });
+  const text = '  Exact admitted task\r\n请求 🧭\n';
+  const readAgentOriginalRequest = vi.fn(async () => ({
+    kind: 'ready' as const,
+    agentId: 'agt_1',
+    text,
+    source: 'admitted-first-task' as const,
+    turnSequence: null,
+  }));
+  const createAgentLifecycle = vi.fn();
+  const runAgent = vi.fn();
+  const client = agentClient({
+    resourceViews,
+    readAgentOriginalRequest,
+    createAgentLifecycle,
+    runAgent,
+  });
+  const onNavigate = vi.fn();
+  function NavigableConsole() {
+    const [route, setRoute] = useState(props.route);
+    return (
+      <CmaClientProvider client={client}>
+        <Console
+          {...props}
+          route={route}
+          authEpoch={7}
+          onNavigate={(next) => {
+            onNavigate(next);
+            setRoute(next);
+          }}
+        />
+      </CmaClientProvider>
+    );
+  }
+  render(<NavigableConsole />);
+  const start = await screen.findByRole('button', { name: 'Start a new agent with this request' });
+  const actor = userEvent.setup();
+  await expandNavigationFilters(actor);
+  await chooseOption(actor, 'Navigation scope', 'Research (Organization)');
+  expect(screen.getByRole('button', { name: 'Navigation scope' })).toHaveTextContent('Research');
+  await actor.click(start);
+  await waitFor(() => expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'home' }));
+  expect(screen.getByRole('button', { name: 'Navigation scope' })).toHaveTextContent('Personal');
+  expect(openTaskDraftStore('owner').read().draft.text).toBe(text);
+  expect(readAgentOriginalRequest).toHaveBeenCalledOnce();
+  expect(createAgentLifecycle).not.toHaveBeenCalled();
+  expect(runAgent).not.toHaveBeenCalled();
+});

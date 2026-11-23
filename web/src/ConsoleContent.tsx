@@ -133,12 +133,8 @@ export function ConsoleContent({
     },
   });
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
-  useDraftAccess(
-    user.id,
-    selectedAgent,
-    agentAccess.state,
-    ready?.detail.id === selectedAgent && ready?.detail.status === 'deleted',
-  );
+  const deleted = ready?.detail.id === selectedAgent && ready?.detail.status === 'deleted';
+  useDraftAccess(user.id, selectedAgent, agentAccess.state, deleted);
   useEffect(() => {
     if (!accessUncertain && agent.state.status === 'ready')
       agent.state.v2?.journal.reconcileDraft();
@@ -254,6 +250,10 @@ export function ConsoleContent({
           detailsOpen={detailsOpen}
           onDetailsOpenChange={setDetailsOpen}
           onNavigate={onNavigate}
+          onPersonalHome={() => {
+            setNavigationScope('');
+            onNavigate({ kind: 'home' });
+          }}
           permissions={permissions}
           actionsBusy={actions.pending}
           onAgentAction={actions.select}
