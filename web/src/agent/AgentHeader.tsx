@@ -73,6 +73,7 @@ export function AgentHeader({
   const [open, setOpen] = useState(false);
   const sidebar = useContext(SidebarContext);
   const remove = moreActions.find((item) => item.id === 'delete_agent');
+  const removeEnvironment = moreActions.find((item) => item.id === 'delete_sandbox');
   const stop = moreActions.find((item) => item.id === 'stop_agent' && !('type' in item));
   const resume = moreActions.find((item) => item.id === OPEN_SANDBOX_TO_RESUME);
   const runtimeUpdate = moreActions.find((item) => item.id === OPEN_RUNTIME_UPDATE);
@@ -109,9 +110,12 @@ export function AgentHeader({
       disabled: !onViewDeletionStatus,
       reason: !onViewDeletionStatus ? 'No deletion is in progress.' : undefined,
     },
-    ...(stop || remove ? [{ type: 'separator', id: 'before-delete' } as const] : []),
+    ...(stop || remove || removeEnvironment
+      ? [{ type: 'separator', id: 'before-delete' } as const]
+      : []),
     ...(stop ? [stop] : []),
     ...(remove && !('type' in remove) ? [{ ...remove, label: 'Delete task', danger: true }] : []),
+    ...(removeEnvironment ? [removeEnvironment] : []),
   ];
   return (
     <header className="agent-toolbar">
@@ -188,6 +192,7 @@ export function AgentHeader({
             else if (
               id === 'stop_agent' ||
               id === 'delete_agent' ||
+              id === 'delete_sandbox' ||
               id === OPEN_SANDBOX_TO_RESUME ||
               id === OPEN_RUNTIME_UPDATE ||
               id === 'export_history' ||

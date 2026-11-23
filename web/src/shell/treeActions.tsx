@@ -132,8 +132,21 @@ export function agentActions(
       (sandbox.status === 'failed' &&
         sandbox.runtimeUpdate?.state === 'failed' &&
         sandbox.runtimeUpdate.completedAt === undefined));
+  const canOfferEnvironmentDeletion =
+    sandbox !== undefined &&
+    viewerId !== undefined &&
+    sandbox.owner === viewerId &&
+    permissions.deleteSandbox &&
+    sandboxHasParkedRuntimeUpdate(sandbox);
+  const environmentDeletionReason = canOfferEnvironmentDeletion
+    ? sandboxDeletionReason(sandbox, { busy, stale })
+    : undefined;
   const recoveryReason =
-    canReviewUpdate && !busy ? 'Use Retry runtime update to review this environment.' : undefined;
+    canReviewUpdate && !busy
+      ? canOfferEnvironmentDeletion && environmentDeletionReason === undefined
+        ? 'Use Retry runtime update to review this environment, or Delete environment… to delete it and all its tasks.'
+        : 'Use Retry runtime update to review this environment.'
+      : undefined;
   if (canReviewUpdate)
     actions.push({
       id: OPEN_RUNTIME_UPDATE,
@@ -154,15 +167,15 @@ export function agentActions(
       reason: busy
         ? ACTION_BUSY
         : !runtimeAvailable
-          ? (recoveryReason ?? REQUIRES_ACTIVE_SANDBOX)
+          ? (agentDeletionBlock(context) ?? recoveryReason ?? REQUIRES_ACTIVE_SANDBOX)
           : undefined,
     });
   if (permissions.deleteAgent) {
     const terminal = status === 'stopped' || status === 'failed';
     const paused = terminal && sandbox?.status === 'paused' && !sandbox.lifecycle?.operation;
     const reason =
-      recoveryReason ??
       agentDeletionBlock(context) ??
+      recoveryReason ??
       (paused
         ? 'Resume the Sandbox before deleting this Agent and its Worktree.'
         : !runtimeAvailable
@@ -193,6 +206,15 @@ export function agentActions(
       reason,
     });
   }
+  if (canOfferEnvironmentDeletion)
+    actions.push({
+      id: 'delete_sandbox',
+      label: 'Delete environment…',
+      icon: <IconTrashOutline16 />,
+      danger: true,
+      disabled: environmentDeletionReason !== undefined,
+      reason: environmentDeletionReason,
+    });
   if (permissions.exportHistory) {
     actions.push({
       id: 'export_retained_conversation',
@@ -217,7 +239,10 @@ function agentDeletionBlock({ sandbox, stale, busy }: AgentActionContext): strin
     return 'Sandbox status is unavailable. Refresh and try again.';
   if (sandbox.status === 'retiring') return 'The Sandbox is being deleted.';
   if (sandbox.status === 'retired') return 'The Sandbox has been deleted.';
-  if (sandbox.status === 'reviving' || sandbox.lifecycle?.operation?.purpose === 'revive')
-    return 'Wait for the Sandbox to finish resuming.';
   if (busy) return ACTION_BUSY;
+  if (
+    (sandbox.status === 'reviving' || sandbox.lifecycle?.operation?.purpose === 'revive') &&
+    !sandboxHasParkedRuntimeUpdate(sandbox)
+  )
+    return 'Wait for the Sandbox to finish resuming.';
 }

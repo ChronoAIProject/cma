@@ -1,3 +1,4 @@
+import { selectAgentAction } from './agentActionDispatch';
 import { useTreeFocus } from './useTreeFocus';
 import { Presence } from '../ui/Presence';
 import { useId, useState } from 'react';
@@ -436,14 +437,14 @@ export function Tree({
                                                   })}
                                                   onNavigate={onNavigate}
                                                   onAction={(kind) =>
-                                                    onAction({
-                                                      kind: kind as
-                                                        | 'stop_agent'
-                                                        | 'delete_agent'
-                                                        | 'export_history'
-                                                        | 'export_retained_conversation',
-                                                      agentId: agent.id,
-                                                    })
+                                                    selectAgentAction(
+                                                      kind,
+                                                      agent.id,
+                                                      onAction,
+                                                      agent.sandboxId === sandbox.id
+                                                        ? sandbox.id
+                                                        : undefined,
+                                                    )
                                                   }
                                                 />
                                               );
