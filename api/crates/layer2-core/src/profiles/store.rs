@@ -81,6 +81,21 @@ pub trait AgentProfileStore: Send + Sync {
         expected_draft_version: u64,
         published_at: String,
     ) -> Result<AgentProfileRevision, ProfileStoreError>;
+
+    /// Publish only revision one for an exact, unpublished private draft.
+    /// Replays must verify the retained aggregate and immutable initial content;
+    /// they must never allocate another revision. Implementations without an
+    /// atomic initial-publication contract fail closed.
+    async fn ensure_initial_agent_profile(
+        &self,
+        _profile: &AgentProfile,
+        _published_at: String,
+    ) -> Result<AgentProfileRevision, ProfileStoreError> {
+        Err(ProfileStoreError::Unavailable(
+            "atomic initial profile publication is unsupported".into(),
+        ))
+    }
+
     async fn agent_profile_revision(
         &self,
         id: &AgentProfileId,
@@ -139,6 +154,21 @@ pub trait WorkspaceProfileStore: Send + Sync {
         expected_draft_version: u64,
         published_at: String,
     ) -> Result<WorkspaceProfileRevision, ProfileStoreError>;
+
+    /// Publish only revision one for an exact, unpublished private draft.
+    /// Replays must verify the retained aggregate and immutable initial content;
+    /// they must never allocate another revision. Implementations without an
+    /// atomic initial-publication contract fail closed.
+    async fn ensure_initial_workspace_profile(
+        &self,
+        _profile: &WorkspaceProfile,
+        _published_at: String,
+    ) -> Result<WorkspaceProfileRevision, ProfileStoreError> {
+        Err(ProfileStoreError::Unavailable(
+            "atomic initial profile publication is unsupported".into(),
+        ))
+    }
+
     async fn workspace_profile_revision(
         &self,
         id: &WorkspaceProfileId,
@@ -199,6 +229,23 @@ pub trait SandboxProfileStore: Send + Sync {
         bounds: ProfileCapacityBounds,
         scanner: &dyn super::PublicValueScanner,
     ) -> Result<SandboxProfileRevision, ProfileStoreError>;
+
+    /// Publish only revision one for an exact, unpublished private draft.
+    /// Replays must verify the retained aggregate and immutable initial content;
+    /// they must never allocate another revision. Implementations without an
+    /// atomic initial-publication contract fail closed.
+    async fn ensure_initial_sandbox_profile(
+        &self,
+        _profile: &SandboxProfile,
+        _published_at: String,
+        _bounds: ProfileCapacityBounds,
+        _scanner: &dyn super::PublicValueScanner,
+    ) -> Result<SandboxProfileRevision, ProfileStoreError> {
+        Err(ProfileStoreError::Unavailable(
+            "atomic initial profile publication is unsupported".into(),
+        ))
+    }
+
     async fn sandbox_profile_revision(
         &self,
         id: &SandboxProfileId,
@@ -340,4 +387,5 @@ mod marketplace_memory;
 mod marketplace_public_values;
 mod marketplace_support;
 mod memory;
+mod memory_publication;
 mod reference_memory;
