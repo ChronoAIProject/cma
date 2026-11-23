@@ -360,12 +360,35 @@ test("production preview rejects a stale build and occupied port without killing
 
 test("command cleans descendant listeners on success, failure, timeout and cancellation", async (t) => {
   const directory = await temporary(t);
+  const child = join(directory, "child.cjs");
+  const parent = join(directory, "parent.cjs");
+  await writeFile(
+    child,
+    `const { createServer } = require('node:http');
+const { writeFileSync } = require('node:fs');
+const marker = process.argv[2];
+const server = createServer();
+server.listen(0, '127.0.0.1', () => {
+  writeFileSync(marker, JSON.stringify({ port: server.address().port }));
+});
+process.on('SIGTERM', () => {});`,
+  );
+  await writeFile(
+    parent,
+    `const { spawn } = require('node:child_process');
+const { existsSync } = require('node:fs');
+const [child, marker, mode] = process.argv.slice(2);
+spawn(process.execPath, [child, marker], { stdio: 'inherit' });
+setInterval(() => {
+  if (!existsSync(marker)) return;
+  if (mode === 'success') process.exit(0);
+  if (mode === 'failure') process.exit(3);
+}, 20);`,
+  );
   for (const mode of ["success", "failure", "timeout", "cancel"]) {
-    const marker = join(directory, mode + ".json");
-    const child = `const s=require('node:http').createServer();s.listen(0,'127.0.0.1',()=>{require('node:fs').writeFileSync(${JSON.stringify(marker)},JSON.stringify({port:s.address().port}));});process.on('SIGTERM',()=>{});`;
-    const parent = `const {spawn}=require('node:child_process');spawn(process.execPath,['-e',${JSON.stringify(child)}],{stdio:'inherit'});setInterval(()=>{if(require('node:fs').existsSync(${JSON.stringify(marker)}) && ${JSON.stringify(mode)}==='success')process.exit(0);if(require('node:fs').existsSync(${JSON.stringify(marker)}) && ${JSON.stringify(mode)}==='failure')process.exit(3);},20);`;
+    const marker = join(directory, mode + " 'quoted' \"marker\" $value\u2028.json");
     const controller = new AbortController();
-    const pending = command(process.execPath, ["-e", parent], {
+    const pending = command(process.execPath, [parent, child, marker, mode], {
       cwd: directory,
       env,
       log: join(directory, mode + ".log"),
