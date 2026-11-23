@@ -141,18 +141,19 @@ it.each([undefined, 'named', 'automatic'] as const)(
       JSON.stringify({ version: 1, intent: { key: 'original-key', body } }),
     );
     const create = vi.fn().mockRejectedValue(new TypeError('Lost response'));
+    const readCapacity = vi.fn(async () => ({
+      ...AVAILABLE_CAPACITY,
+      live: 10,
+      available: 0,
+      counts_by_status: { active: 10 },
+    }));
     render(
       <TaskHome
         client={agentClient({
           taskExperience: taskExperience('owner'),
           readTaskCreationSupport: async () => true,
           readTaskTitleModeSupport: async () => title_mode !== 'automatic',
-          readSandboxCapacity: async () => ({
-            ...AVAILABLE_CAPACITY,
-            live: 10,
-            available: 0,
-            counts_by_status: { active: 10 },
-          }),
+          readSandboxCapacity: readCapacity,
           createAgentLifecycle: create,
         })}
         viewerId="owner"
@@ -160,7 +161,8 @@ it.each([undefined, 'named', 'automatic'] as const)(
         onCreated={vi.fn()}
       />,
     );
-    await screen.findByText('Environment limit reached');
+    await waitFor(() => expect(readCapacity).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: 'Start task' })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: 'Recover original task' }));
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
     expect(create.mock.calls[0]?.[0]).toEqual(body);

@@ -7,6 +7,7 @@ import {
   preparationDraftWriteError,
   readPreparationDraft,
   savePreparationDraft,
+  samePreparationBinding,
   type PreparationDraftBinding,
   type PreparationDraftRecord,
   type PreparationDraftScope,
@@ -52,6 +53,14 @@ export function usePreparationDraft(client: CmaWebClient, scope?: PreparationDra
   }, []);
   const update = (next: Entry) => {
     if (!mounted.current || active.current.client !== client || active.current.key !== key) return;
+    const previous = active.current.entry;
+    if (
+      previous.text === next.text &&
+      previous.record === next.record &&
+      previous.error === next.error &&
+      previous.unread === next.unread
+    )
+      return;
     const value = { ...active.current, entry: next };
     active.current = value;
     setState(value);
@@ -99,7 +108,7 @@ export function usePreparationDraft(client: CmaWebClient, scope?: PreparationDra
     try {
       if (
         entry.record?.binding &&
-        JSON.stringify(entry.record.binding) === JSON.stringify(binding) &&
+        samePreparationBinding(entry.record.binding, binding) &&
         !entry.error &&
         JSON.stringify(readPreparationDraft(scope)) === JSON.stringify(entry.record)
       )

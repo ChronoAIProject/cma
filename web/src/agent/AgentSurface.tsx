@@ -1,4 +1,4 @@
-import { ActiveAgentSurface } from './ActiveAgentSurface';
+import { AgentPreparationBoundary } from './AgentPreparationBoundary';
 import type { AgentSurfaceProps } from './AgentSurfaceProps';
 import { deriveRetiredPresentation } from './retiredPresentation';
 import { RetainedAgentHost } from './RetainedAgentHost';
@@ -40,5 +40,5 @@ export function AgentSurface(props: AgentSurfaceProps) {
       </section>
     );
   }
-  return <ActiveAgentSurface {...props} />;
+  return <AgentPreparationBoundary {...props} />;
 }

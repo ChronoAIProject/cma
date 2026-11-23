@@ -1,7 +1,7 @@
 import { ComputerContext } from './environment/context';
 import { SuggestedReplies } from './SuggestedReplies';
 import { useAgentSuggestions } from './useAgentSuggestions';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { subscriptionService } from '../connections/client';
 import type { AgentResourceState } from './controller';
@@ -31,7 +31,6 @@ import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
 import { AgentInputQueue } from './AgentInputQueue';
 import { agentAttachmentUploader } from './attachmentUpload';
 import { AgentAccessRequests } from './AccessRequestDialog';
-import { AgentLifecycleFollowup } from '../create/AgentLifecycleFollowup';
 import { useAgentConnectionReadiness } from './connectionReadiness';
 import { useOptimisticMessages } from './optimisticMessages';
 import { queuePresentation } from './queuePresentation';
@@ -45,6 +44,7 @@ const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
 
 export function ActiveAgentSurface({
+  lifecycleFeedback,
   computerObservation,
   onViewDeletionStatus,
   suggestedReplies,
@@ -66,7 +66,7 @@ export function ActiveAgentSurface({
   permissions,
   actionsBusy = false,
   onAgentAction,
-}: AgentSurfaceProps) {
+}: AgentSurfaceProps & { readonly lifecycleFeedback?: ReactNode }) {
   const [steeringMode, setSteeringMode] = useState<SteeringMode>('queue');
   const headingRef = useRef<HTMLHeadingElement>(null);
   const state: AgentResourceState =
@@ -297,13 +297,7 @@ export function ActiveAgentSurface({
             }}
           />
 
-          {!readOnly && lifecycleClient !== undefined && viewerId !== undefined ? (
-            <AgentLifecycleFollowup
-              client={lifecycleClient}
-              viewerId={viewerId}
-              agentId={agentId}
-            />
-          ) : null}
+          {lifecycleFeedback}
         </div>
 
         <div className="agent-surface__conversation">

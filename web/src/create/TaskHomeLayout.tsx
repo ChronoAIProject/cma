@@ -76,7 +76,7 @@ export function TaskHomeLayout({
       data-submitted={submitted || undefined}
       aria-labelledby={titleId}
     >
-      {contextual ? (
+      {submitted ? null : contextual ? (
         <h2 className="sr-only" id={titleId}>
           New task in {contextLabel}
         </h2>

@@ -3,6 +3,7 @@ import { orderedProvisioningEvents } from '../create/agentProvisioning';
 
 export interface PreparationFacts {
   readonly receipt?: AgentLifecycleCreateReceipt;
+  readonly requestAccepted?: boolean;
   readonly operation?: AgentLifecycleOperationView;
   readonly readError?: string;
   readonly canonicalTitle?: string;
@@ -15,7 +16,7 @@ export type PreparationStage =
 export function derivePreparationView(facts: PreparationFacts) {
   const operation =
     facts.receipt && facts.operation?.id === facts.receipt.id ? facts.operation : undefined;
-  const accepted = Boolean(facts.receipt);
+  const accepted = Boolean(facts.receipt) || facts.requestAccepted === true;
   const started = facts.initialTask === 'started';
   const ready = facts.environmentReady === true || operation?.status === 'succeeded';
   const stage: PreparationStage = started

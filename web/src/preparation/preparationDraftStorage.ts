@@ -21,6 +21,21 @@ export interface PreparationDraftRecord {
   readonly text: string;
   readonly binding?: PreparationDraftBinding;
 }
+export function samePreparationBinding(
+  left: PreparationDraftBinding | undefined,
+  right: PreparationDraftBinding | undefined,
+) {
+  return (
+    left === right ||
+    (left !== undefined &&
+      right !== undefined &&
+      left.operationId === right.operationId &&
+      left.agentId === right.agentId &&
+      left.sandboxId === right.sandboxId &&
+      left.workspaceId === right.workspaceId &&
+      left.worktreeId === right.worktreeId)
+  );
+}
 export const preparationDraftReadError =
   'Your saved preparation draft could not be read. Restore browser storage and retry. Your original task request is unchanged.';
 export const preparationDraftWriteError =
@@ -97,7 +112,7 @@ export function savePreparationDraft(
   storage: Storage = sessionStorage,
 ) {
   compare(scope, expected, storage);
-  if (expected?.binding && !same(expected.binding, binding))
+  if (expected?.binding && !samePreparationBinding(expected.binding, binding))
     throw new Error('Preparation Agent binding changed.');
   const next: PreparationDraftRecord = {
     version: 1,

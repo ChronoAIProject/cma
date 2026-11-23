@@ -283,10 +283,11 @@ it('shows an accepted request and stale preparation as separate facts with only 
       }}
     />,
   );
-  expect(screen.getByRole('region', { name: 'Submitted task' })).toHaveTextContent(
+  expect(screen.getByRole('region', { name: 'Original request' })).toHaveTextContent(
     'Keep the original message',
   );
-  expect(screen.getByText(/Last confirmed: Preparing/)).toBeVisible();
+  expect(screen.getByText('Request accepted')).toBeVisible();
+  expect(screen.getAllByText('Setup updates interrupted')).toHaveLength(2);
   expect(screen.getByRole('alert')).toHaveTextContent('Status unavailable');
   expect(document.querySelector('time')).toHaveAttribute('datetime', '2026-11-22T06:00:00Z');
   rerender(
@@ -297,7 +298,8 @@ it('shows an accepted request and stale preparation as separate facts with only 
       failure="Status unavailable"
     />,
   );
-  expect(screen.getByText(/Last confirmed: Request accepted/)).toBeVisible();
+  expect(screen.getByText('Request accepted')).toBeVisible();
+  expect(screen.getByText('Acceptance time unavailable')).toBeVisible();
   expect(document.querySelector('time')).toBeNull();
 });
 

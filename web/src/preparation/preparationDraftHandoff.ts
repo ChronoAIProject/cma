@@ -2,6 +2,7 @@ import type { AgentDraft } from '../agent/draft';
 import {
   readPreparationDraft,
   removePreparationDraft,
+  samePreparationBinding,
   type PreparationDraftBinding,
   type PreparationDraftRecord,
 } from './preparationDraftStorage';
@@ -19,7 +20,7 @@ export function transferPreparationDraft(
   const sourceCurrent = () =>
     authorized() &&
     source.scope.owner === owner &&
-    JSON.stringify(source.binding) === JSON.stringify(binding) &&
+    samePreparationBinding(source.binding, binding) &&
     JSON.stringify(readPreparationDraft(source.scope)) === JSON.stringify(source);
   try {
     if (!source.text || !sourceCurrent()) return 'retained';

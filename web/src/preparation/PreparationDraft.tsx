@@ -1,10 +1,16 @@
 import { Button } from '../ui/Button';
-import type { usePreparationDraft } from './usePreparationDraft';
 
 export function PreparationDraft({
   draft,
+  unavailableReason = 'Sending opens when the cloud computer is ready.',
 }: {
-  readonly draft: ReturnType<typeof usePreparationDraft>;
+  readonly unavailableReason?: string;
+  readonly draft: {
+    readonly text: string;
+    readonly change: (text: string) => void;
+    readonly error?: string;
+    readonly retryStorage?: () => void;
+  };
 }) {
   return (
     <div className="preparation-draft">
@@ -19,12 +25,14 @@ export function PreparationDraft({
           placeholder="Keep a follow-up here while setup finishes"
         />
       </label>
-      <p>Sending opens when the cloud computer is ready.</p>
+      <p>{unavailableReason}</p>
       <Button disabled>Send</Button>
       {draft.error ? (
         <div role="alert">
           <p>{draft.error}</p>
-          <Button onClick={draft.retryStorage}>Retry saving draft</Button>
+          {draft.retryStorage ? (
+            <Button onClick={draft.retryStorage}>Retry saving draft</Button>
+          ) : null}
         </div>
       ) : null}
     </div>
