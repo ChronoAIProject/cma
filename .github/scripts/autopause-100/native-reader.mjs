@@ -1,6 +1,7 @@
 import {LocalHttp} from '../scale-tests/lib/http.mjs';
 import {check, hash, safeFailure} from '../scale-tests/lib/checks.mjs';
-import {validateBinding, resource, sandboxEvidence, pvcEvidence, podEvidence, unchanged} from './native-observation.mjs';
+import {validateBinding, resource, claimEvidence, sandboxEvidence, pvcEvidence, podEvidence, unchanged} from './native-observation.mjs';
+import {homeContract} from './native-contract.mjs';
 
 const MAX_PODS = 128;
 
@@ -15,6 +16,9 @@ export function createNativeReader({origin, binding, timeoutMs = 10000, bearer, 
   const namespacePath = `/api/v1/namespaces/${pinned.namespace.name}`;
   const sandboxPath = `/apis/agents.x-k8s.io/v1beta1/namespaces/${pinned.namespace.name}/sandboxes/${pinned.sandbox.name}`;
   const pvcPath = name => `${namespacePath}/persistentvolumeclaims/${name}`;
+  const claimPath = homeContract(pinned).native
+    ? `/apis/extensions.agents.x-k8s.io/v1beta1/namespaces/${pinned.namespace.name}/sandboxclaims/${pinned.home_contract.claim.name}` : null;
+  const claimRoute = '/apis/extensions.agents.x-k8s.io/v1beta1/namespaces/:namespace/sandboxclaims/:claim';
 
   return async function readNativeSnapshot({signal} = {}) {
     const started = performance.now();
@@ -35,6 +39,12 @@ export function createNativeReader({origin, binding, timeoutMs = 10000, bearer, 
     try {
       const namespace = await read(namespacePath, '/api/v1/namespaces/:namespace');
       resource(namespace, 'Namespace', pinned.namespace);
+      let claim;
+      if (claimPath) {
+        stage = 'claim';
+        claim = await read(claimPath, claimRoute);
+        claimEvidence(claim, pinned);
+      }
       stage = 'sandbox';
       const sandbox = await read(sandboxPath, '/apis/agents.x-k8s.io/v1beta1/namespaces/:namespace/sandboxes/:sandbox');
       const observed = sandboxEvidence(sandbox, pinned);
@@ -59,9 +69,10 @@ export function createNativeReader({origin, binding, timeoutMs = 10000, bearer, 
       }
       unchanged(sandbox, await read(sandboxPath,
         '/apis/agents.x-k8s.io/v1beta1/namespaces/:namespace/sandboxes/:sandbox'));
+      if (claimPath) unchanged(claim, await read(claimPath, claimRoute));
       unchanged(namespace, await read(namespacePath, '/api/v1/namespaces/:namespace'));
       combined.throwIfAborted();
-      return {sandbox_id: pinned.sandbox_id, native_uid: pinned.sandbox.uid,
+      return {sandbox_id: pinned.sandbox_id, native_uid: pinned.sandbox.uid, home_contract: pinned.home_contract.kind,
         home_identity: pinned.home_identity, pvcs: pvcs.sort((a, b) => a.name.localeCompare(b.name)),
         pods, ...observed, evidence: {scope: 'READ_ONLY_OBSERVATION', qualification: 'NOT_ASSESSED',
           binding_sha256: hash(JSON.stringify(pinned)), observed_at: new Date().toISOString(),

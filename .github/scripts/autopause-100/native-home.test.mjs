@@ -53,7 +53,11 @@ const changes = [
   spec => { spec.containers[0].volumeMounts[0].subPath = 'state'; },
   spec => { spec.containers[0].volumeMounts[0].subPathExpr = 'home'; },
   spec => { spec.containers[0].volumeMounts[0].readOnly = true; },
+  spec => { spec.containers[0].volumeMounts[0].readOnly = null; },
+  spec => { spec.containers[0].volumeMounts.push(null); },
   spec => { spec.containers[0].volumeDevices = [{name: 'home', devicePath: '/device'}]; },
+  spec => { spec.containers.push({...structuredClone(spec.containers[0]), name: 'sidecar'}); },
+  spec => { spec.ephemeralContainers = [{name: 'debug', volumeMounts: spec.containers[0].volumeMounts}]; },
   spec => { spec.containers[0].volumeMounts.push({name: 'other', mountPath: '/home/cma/shadow'}); },
   spec => { spec.volumes.push({name: 'other', emptyDir: {}}); },
 ];

@@ -1,6 +1,7 @@
 import {isDeepStrictEqual} from 'node:util';
 import {check, hash, isHash} from '../scale-tests/lib/checks.mjs';
 import {runtimeStorage, usesRetainedVolume} from './native-storage.mjs';
+import {homeContract, validateHomeContract, templateStorage, nativeVolumePolicy, claimAuthority} from './native-contract.mjs';
 
 const dns = value => typeof value === 'string' && value.length <= 63
   && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(value);
@@ -29,12 +30,14 @@ export function validateBinding(value) {
     && new Set(value.pvcs.map(pvc => pvc.name)).size === value.pvcs.length
     && new Set(value.pvcs.map(pvc => pvc.uid)).size === value.pvcs.length,
   'native_pvc_bindings_required');
+  validateHomeContract(value);
   return structuredClone(value);
 }
 
 export function resource(value, kind, expected, namespace) {
   const meta = value?.metadata;
-  check(value?.kind === kind && value.apiVersion === (kind === 'Sandbox' ? nativeVersion : 'v1')
+  const version = kind === 'SandboxClaim' ? 'extensions.agents.x-k8s.io/v1beta1' : kind === 'Sandbox' ? nativeVersion : 'v1';
+  check(value?.kind === kind && value.apiVersion === version
     && meta?.name === expected.name && meta.uid === expected.uid
     && (namespace === undefined ? meta.namespace === undefined : meta.namespace === namespace)
     && text(meta.resourceVersion) && !meta.deletionTimestamp, 'native_resource_identity_changed');
@@ -49,12 +52,20 @@ function ownerReferences(value) {
   return owners;
 }
 
-function owned(value, binding) {
+function owned(value, binding, claim = false) {
   const owners = ownerReferences(value);
+  const expected = claim ? binding.home_contract.claim : binding.sandbox;
+  const kind = claim ? 'SandboxClaim' : 'Sandbox';
+  const version = claim ? 'extensions.agents.x-k8s.io/v1beta1' : nativeVersion;
   check(owners.filter(owner => owner.controller === true).length === 1
-    && owners.some(owner => owner.controller === true && owner.kind === 'Sandbox'
-      && owner.apiVersion === nativeVersion && owner.name === binding.sandbox.name
-      && owner.uid === binding.sandbox.uid), 'native_resource_owner_changed');
+    && owners.length === 1 && owners.some(owner => owner.controller === true && owner.kind === kind
+      && owner.apiVersion === version && owner.name === expected.name
+      && owner.uid === expected.uid), 'native_resource_owner_changed');
+}
+
+export function claimEvidence(value, binding) {
+  resource(value, 'SandboxClaim', binding.home_contract.claim, binding.namespace.name);
+  claimAuthority(value, binding);
 }
 
 function runtimeImage(spec, binding) {
@@ -76,10 +87,10 @@ export function sandboxEvidence(value, binding) {
   'native_home_identity_changed');
   check(Number.isSafeInteger(meta.generation) && meta.generation > 0, 'native_generation_invalid');
   check(['Running', 'Suspended'].includes(value.spec?.operatingMode), 'native_mode_invalid');
+  if (homeContract(binding).native) owned(value, binding, true);
   runtimeImage(value.spec.podTemplate?.spec, binding);
-  check(Array.isArray(value.spec.volumeClaimTemplates) && value.spec.volumeClaimTemplates.length === 0,
-    'native_retained_volumes_changed');
-  runtimeStorage(value.spec.podTemplate.spec, binding);
+  templateStorage(value, binding);
+  runtimeStorage(value.spec.podTemplate.spec, binding, true);
   const conditions = value.status?.conditions;
   check(Array.isArray(conditions) && conditions.every(condition => condition
     && text(condition.type) && ['True', 'False', 'Unknown'].includes(condition.status)
@@ -100,14 +111,18 @@ export function sandboxEvidence(value, binding) {
 
 export function pvcEvidence(value, expected, binding) {
   const meta = resource(value, 'PersistentVolumeClaim', expected, binding.namespace.name);
-  // Adoption deliberately detaches the PVC from controller garbage collection.
-  // The previously verified origin and request, not a live Pod, bind this home.
-  check(ownerReferences(value).length === 0
+  if (homeContract(binding).native) {
+    owned(value, binding);
+    nativeVolumePolicy(value, binding);
+  } else {
+    // Legacy adoption detached ownership; native VCT keeps its controller chain.
+    check(ownerReferences(value).length === 0
     && meta.labels?.['cma/home-managed-by'] === binding.deployment
     && meta.annotations?.['cma/home-request-sha256'] === binding.home_request_sha256
     && typeof meta.annotations?.['cma/native-home-origin'] === 'string'
     && hash(meta.annotations['cma/native-home-origin']) === binding.native_origin_sha256,
-  'native_pvc_adoption_changed');
+    'native_pvc_adoption_changed');
+  }
   check(value.spec?.volumeName === expected.volume && value.status?.phase === 'Bound',
     'native_pvc_binding_changed');
   return {name: expected.name, uid: expected.uid, volume: expected.volume};
