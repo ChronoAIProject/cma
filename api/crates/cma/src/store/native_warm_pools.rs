@@ -98,6 +98,27 @@ impl PoolTargetStore for MongoNativeWarmPools {
     async fn begin_candidate_effect(&self, target: &PoolTarget) -> Result<bool, WarmPoolError> {
         self.authorize_candidate_effect(target).await
     }
+
+    async fn candidate_pending(&self, target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        let mut filter = fence(target);
+        filter.insert("preparation.pending_revision", doc! {"$type": "long"});
+        Ok(self
+            .targets
+            .find_one(filter)
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?
+            .is_some())
+    }
+
+    async fn confirm_candidate_barrier(&self, target: &PoolTarget) -> Result<(), WarmPoolError> {
+        let mut filter = fence(target);
+        filter.insert("preparation.pending_revision", doc! {"$type": "long"});
+        self.check_fenced_write(self.targets.update_one(filter, doc! {
+            "$set": {"retiring": true, "target_replicas": 0_i64, "lease": mongodb::bson::Bson::Null,
+                "lease_until": DateTime::from_millis(0), "reconcile_after": DateTime::from_millis(0)},
+            "$inc": {"revision": 1_i64}, "$unset": {"preparation.pending_revision": ""},
+        }).await).await
+    }
     async fn candidate_protected(&self, target: &PoolTarget) -> Result<bool, WarmPoolError> {
         let mut filter = self.scope();
         filter.extend(doc! {"_id": &target.id, "preparation": {"$exists": true}});
@@ -283,15 +304,17 @@ impl PoolTargetStore for MongoNativeWarmPools {
         let mut fields = doc! {"lease":mongodb::bson::Bson::Null,"lease_until":DateTime::from_millis(0),
         "reconcile_after":DateTime::from_millis(DateTime::now().timestamp_millis()+15_000),
         "error": if success { mongodb::bson::Bson::Null } else { "Native warm pool reconciliation is unavailable; the recorded target will retry.".into() }};
+        let mut update = doc! {};
         if success {
             fields.insert("applied_revision", target.revision);
+            update.insert(
+                "$unset",
+                doc! {"preparation.pending_revision": "", "preparation.effect_until": ""},
+            );
         }
-        self.check_fenced_write(
-            self.targets
-                .update_one(fence(target), doc! {"$set":fields})
-                .await,
-        )
-        .await
+        update.insert("$set", fields);
+        self.check_fenced_write(self.targets.update_one(fence(target), update).await)
+            .await
     }
 }
 

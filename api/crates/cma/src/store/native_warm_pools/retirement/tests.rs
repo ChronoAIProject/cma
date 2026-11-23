@@ -442,15 +442,32 @@ async fn frozen_lane_retains_candidate_until_provider_work_settles() {
     assert!(frozen.candidate.is_some());
     assert!(!targets.begin_candidate_effect(&claimed).await.unwrap());
 
-    targets.finish(&claimed, true).await.unwrap();
+    targets.finish(&claimed, false).await.unwrap();
     database
         .collection::<Document>(COLLECTION)
         .update_one(
-            doc! {"_id": candidate.id},
-            doc! {"$set": {"preparation.effect_until": DateTime::from_millis(0)}},
+            doc! {"_id": &candidate.id},
+            doc! {"$set": {
+                "preparation.effect_until": DateTime::from_millis(0),
+                "reconcile_after": DateTime::from_millis(0),
+            }},
         )
         .await
         .unwrap();
+    // A withheld provider result remains unresolved even after both local time bounds.
+    crate::runtime_pointer::operator::set_following(&lanes, &targets, false)
+        .await
+        .unwrap();
+    assert!(lanes
+        .load(ReleasedLane::Agent)
+        .await
+        .unwrap()
+        .unwrap()
+        .candidate
+        .is_some());
+    let recovery = targets.claim_target(&candidate.id).await.unwrap().unwrap();
+    assert!(targets.candidate_pending(&recovery).await.unwrap());
+    targets.confirm_candidate_barrier(&recovery).await.unwrap();
     crate::runtime_pointer::operator::set_following(&lanes, &targets, false)
         .await
         .unwrap();

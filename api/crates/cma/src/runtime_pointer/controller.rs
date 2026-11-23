@@ -293,15 +293,10 @@ impl RuntimePointerController {
             .lanes
             .record_promotion(&current, next, transition.clone(), &mut session)
             .await?;
-        match session.commit_transaction().await {
-            Ok(()) => {}
-            Err(error) if error.contains_label("UnknownTransactionCommitResult") => {
-                if !self.release.lanes.committed(&transition).await? {
-                    return Err(unavailable(error));
-                }
-            }
-            Err(error) => return Err(unavailable(error)),
-        }
+        self.release
+            .lanes
+            .finish_promotion(&mut session, &transition)
+            .await?;
         tracing::info!(?lane, previous = %transition.from_image, active = %transition.to_image, "released runtime promoted");
         self.release.refresh().await?;
         Ok(())

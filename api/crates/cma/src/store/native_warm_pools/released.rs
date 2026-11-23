@@ -47,8 +47,9 @@ impl MongoNativeWarmPools {
                 .update_one(
                     filter,
                     vec![doc! {"$set": {
-                        "preparation.effect_until": {"$add": ["$$NOW", 60_000_i64]},
-                    }}],
+                    "preparation.effect_until": {"$add": ["$$NOW", 60_000_i64]},
+                    "preparation.pending_revision": target.revision,
+                            }}],
                 )
                 .session(&mut session)
                 .await,
@@ -241,6 +242,7 @@ impl MongoNativeWarmPools {
         };
         scope.extend(doc! {"_id": &row.id, "revision": row.revision,
             "lease_until": {"$lte": DateTime::now()},
+            "preparation.pending_revision": {"$exists": false},
             "$expr": {"$lte": [{"$ifNull": ["$preparation.effect_until", DateTime::from_millis(0)]}, "$$NOW"]},
         });
         self.check_fenced_write(
@@ -355,6 +357,7 @@ impl MongoNativeWarmPools {
             "applied_revision": candidate.applied_revision,
             "binding": binding, "error": mongodb::bson::Bson::Null,
             "preparation.observation_id": &observed.observation_id,
+            "preparation.pending_revision": {"$exists": false},
             "activated_at": mongodb::bson::Bson::Null,
             "retired": {"$ne": true}, "retiring": {"$ne": true},
         });

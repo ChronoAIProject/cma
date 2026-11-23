@@ -72,6 +72,48 @@ pub(in crate::store) fn pin_first_dispatch(
     Ok(())
 }
 
+pub(in crate::store) fn pin_replacement_dispatch(
+    store: &MongoSandboxStore,
+    parent: &Sandbox,
+    next: &Sandbox,
+    fields: &mut mongodb::bson::Document,
+) -> Result<(), SandboxStoreError> {
+    use layer2_core::sandbox::SandboxWorkStep;
+
+    let Some(original) = &parent.runtime else {
+        return Ok(());
+    };
+    let generation = next.lifecycle.runtime_generation_high_water;
+    if store.released_lanes.is_none()
+        || parent.work.step != SandboxWorkStep::ProvisionRuntime
+        || next.work.step != SandboxWorkStep::ProvisionRuntime
+        || next.runtime.is_some()
+        || next.profile.content.runtime_image.is_some()
+        || next
+            .lifecycle
+            .home
+            .as_ref()
+            .is_some_and(|home| home.native_pool.is_some())
+        || parent
+            .lifecycle
+            .runtime_generation_high_water
+            .checked_add(1)
+            != Some(generation)
+    {
+        return Ok(());
+    }
+    // The prior binding names the exact non-native image. The replacement
+    // generation starts here, so store its pin before any worker can dispatch.
+    fields.insert(
+        DISPATCH,
+        doc! {
+            "generation": revision(generation)?,
+            "image": &original.runtime_version,
+        },
+    );
+    Ok(())
+}
+
 impl MongoReleasedRuntimes {
     pub(crate) async fn unresolved_legacy_dispatches(
         &self,

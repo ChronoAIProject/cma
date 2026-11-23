@@ -14,6 +14,7 @@ use layer3_adapter::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod candidate;
 mod current;
 mod defaults;
 mod released;
@@ -109,6 +110,12 @@ pub(crate) trait PoolTargetStore: Send + Sync {
     }
     async fn begin_candidate_effect(&self, _target: &PoolTarget) -> Result<bool, WarmPoolError> {
         Ok(false)
+    }
+    async fn candidate_pending(&self, _target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        Ok(false)
+    }
+    async fn confirm_candidate_barrier(&self, _target: &PoolTarget) -> Result<(), WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
     }
     async fn activate(&self, _id: &str) -> Result<(), WarmPoolError> {
         Err(WarmPoolError::Unavailable)
@@ -236,17 +243,7 @@ impl NativeWarmPools {
             if !self.store.candidate_protected(&target).await? {
                 return self.retire_claimed(provider, target).await;
             }
-            if target.binding.is_some()
-                && target.applied_revision == target.revision
-                && target.error.is_none()
-            {
-                self.store.finish(&target, true).await?;
-                return Ok(false);
-            }
-            if !self.store.begin_candidate_effect(&target).await? {
-                self.store.finish(&target, false).await?;
-                return Ok(false);
-            }
+            return self.reconcile_candidate(provider, target).await;
         }
         reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing).await
     }

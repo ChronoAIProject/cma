@@ -150,6 +150,14 @@ async fn apply(
             &mut replacement,
         )
         .map_err(Domain)?;
+    } else {
+        crate::store::released_runtimes::pin_replacement_dispatch(
+            store,
+            &parent,
+            sandbox,
+            &mut replacement,
+        )
+        .map_err(Domain)?;
     }
     let updated = store
         .sandboxes

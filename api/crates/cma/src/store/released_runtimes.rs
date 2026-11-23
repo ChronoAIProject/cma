@@ -13,7 +13,9 @@ use super::durability::majority_collection;
 mod legacy_dispatch;
 mod source;
 mod writers;
-pub(super) use legacy_dispatch::{pin_first_dispatch, reserve_initial_runtime_image};
+pub(super) use legacy_dispatch::{
+    pin_first_dispatch, pin_replacement_dispatch, reserve_initial_runtime_image,
+};
 pub(crate) use source::StoreReleasedRuntime;
 pub(crate) use writers::{BootWriter, ResolverLease};
 
@@ -265,6 +267,25 @@ impl MongoReleasedRuntimes {
                 && row.document_schema_version == SCHEMA_VERSION
                 && row.transition == *expected
         }))
+    }
+
+    pub(crate) async fn finish_promotion(
+        &self,
+        session: &mut ClientSession,
+        transition: &ReleasedTransition,
+    ) -> Result<(), SandboxStoreError> {
+        use super::sandbox_mongo::{commit_transaction, CommitOutcome};
+        match commit_transaction(session).await {
+            CommitOutcome::Committed => Ok(()),
+            CommitOutcome::Retry(_) => Err(SandboxStoreError::Conflict),
+            CommitOutcome::Unknown(error) | CommitOutcome::Failed(error) => {
+                if self.committed(transition).await? {
+                    Ok(())
+                } else {
+                    Err(unavailable(error))
+                }
+            }
+        }
     }
 
     /// Fence the first durable admission of new work in the caller's

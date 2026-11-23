@@ -270,3 +270,59 @@ async fn compatible_first_claim_preserves_its_legacy_dispatch_pin_after_worker_l
     );
     database.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn lost_legacy_warm_runtime_binds_the_reserved_replacement_generation() {
+    use layer2_core::sandbox::store::{SandboxStore, SandboxWorkerStore};
+    use layer2_core::sandbox::{SandboxStatus, SandboxWorkState, SandboxWorkStep};
+
+    let (client, name, mut writer) =
+        crate::store::sandbox_maintenance::mongo_integration_tests::database().await;
+    let database = client.database(&name);
+    writer.released_lanes = Some(MongoReleasedRuntimes::open(&database, "deployment-a"));
+    let writer = writer.with_managed_runtime_version(image('a'));
+    let at = |seconds| {
+        layer2_core::rfc3339_at(
+            std::time::SystemTime::now() + std::time::Duration::from_secs(seconds),
+        )
+    };
+    let mut warm = crate::store::sandbox_maintenance::mongo_integration_tests::active_sandbox(
+        "sbx_lost_legacy_warm",
+    );
+    warm.status = SandboxStatus::Provisioning;
+    warm.runtime.as_mut().unwrap().runtime_version = image('a');
+    warm.work = SandboxWorkState::new(SandboxWorkStep::ProvisionRuntime, at(0));
+    writer.create_sandbox(warm.clone()).await.unwrap();
+    let mut claimed = writer
+        .claim_sandbox_work(&warm.id, "first", at(0), at(60))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let expected = claimed.revision;
+    claimed.runtime = None;
+    claimed.lifecycle.runtime_generation_high_water = 2;
+    claimed.revision += 1;
+    writer.save_sandbox(expected, claimed).await.unwrap();
+    let restarted = writer.with_managed_runtime_version(image('b'));
+    let successor = restarted
+        .claim_sandbox_work(&warm.id, "successor", at(61), at(120))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        restarted
+            .reserve_initial_runtime_image(&successor, 2, &image('b'))
+            .await
+            .unwrap(),
+        image('a')
+    );
+    assert!(matches!(
+        restarted
+            .reserve_initial_runtime_image(&successor, 1, &image('b'))
+            .await,
+        Err(SandboxStoreError::Conflict)
+    ));
+    database.drop().await.unwrap();
+}
