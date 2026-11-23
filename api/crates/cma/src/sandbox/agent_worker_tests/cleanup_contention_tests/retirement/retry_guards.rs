@@ -58,40 +58,92 @@ async fn cleanup_preflight_retry_cannot_commit_after_its_original_lease_expires(
         let claim = fixture.claim(&fixture.h.store, "agent-worker", now).await;
         let parent = fixture.begin_retirement(now).await;
         fixture.retire(parent, now, true).await;
-        let prefix = fixture.logs().await;
-        fixture
-            .fail(1, doc! {"failCommands":["find"],"errorCode":2_i32})
-            .await;
-        let (entered, publishing) = tokio::sync::oneshot::channel();
-        let (resume, release) = std::sync::mpsc::channel();
-        *fixture.commit_session.lock().unwrap() = None;
-        *fixture.publication_barrier.lock().unwrap() = Some((entered, release));
-        let expiry = SystemTime::UNIX_EPOCH
-            + Duration::from_secs(
-                layer2_core::seconds_from_rfc3339(&claim.work.lease.as_ref().unwrap().expires_at)
-                    .unwrap(),
-            );
+        let expiry = claim_expiry(&claim);
         let remaining = Duration::from_secs(3);
-        let worker = fixture.h.worker.clone();
-        let attempt = claim.clone();
-        let execution = tokio::spawn(async move {
-            worker
-                .execute_claimed_for_test(attempt, expiry - remaining)
-                .await
-        });
-        tokio::time::timeout(remaining, publishing)
-            .await
-            .unwrap()
-            .unwrap();
-        tokio::time::sleep(remaining).await;
-        resume.send(()).unwrap();
-        let result = execution.await.unwrap();
-        fixture.clear_fault().await;
-        assert_eq!(result, Err(SandboxStoreError::Conflict));
-        assert!(fixture.commit_session.lock().unwrap().is_none());
-        assert_eq!(fixture.stored().await, claim);
-        assert_eq!(fixture.logs().await, prefix);
-        fixture.converge(&fixture.h.worker, expiry).await;
-        fixture.admin.drop().await.unwrap();
+        assert_expired_retry_is_fenced(&fixture, claim, expiry - remaining, async {
+            tokio::time::sleep(remaining).await;
+        })
+        .await;
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable loopback replica set"]
+async fn cleanup_preflight_retry_caps_stale_scheduler_time_at_the_stored_expiry() {
+    let fixture = Fixture::new(false).await;
+    fixture.delete("original-delete").await;
+    let now = SystemTime::now().max(ledger_hold_tests::due(&fixture.stored().await));
+    let parent = fixture.begin_retirement(now).await;
+    fixture.retire(parent, now, true).await;
+
+    let scheduler_time = SystemTime::now().max(now);
+    let lease = Duration::from_secs(8);
+    // Ownership and admission can delay the claim while the scheduler's
+    // timestamp still supplies its durable expiry.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let claim = fixture
+        .h
+        .store
+        .claim_agent_work(
+            &fixture.agent.id,
+            "agent-worker",
+            rfc3339_at(scheduler_time),
+            rfc3339_at(scheduler_time + lease),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let expiry = claim_expiry(&claim);
+    let stale_cutoff = tokio::time::Instant::now() + expiry.duration_since(scheduler_time).unwrap();
+    assert_expired_retry_is_fenced(&fixture, claim, scheduler_time, async {
+        let remaining = expiry.duration_since(SystemTime::now()).unwrap_or_default();
+        tokio::time::sleep(remaining + Duration::from_millis(50)).await;
+        assert!(SystemTime::now() > expiry);
+        assert!(tokio::time::Instant::now() < stale_cutoff);
+    })
+    .await;
+}
+
+fn claim_expiry(claim: &Agent) -> SystemTime {
+    SystemTime::UNIX_EPOCH
+        + Duration::from_secs(
+            layer2_core::seconds_from_rfc3339(&claim.work.lease.as_ref().unwrap().expires_at)
+                .unwrap(),
+        )
+}
+
+async fn assert_expired_retry_is_fenced(
+    fixture: &Fixture,
+    claim: Agent,
+    now: SystemTime,
+    hold_writer: impl std::future::Future<Output = ()>,
+) {
+    let prefix = fixture.logs().await;
+    fixture
+        .fail(1, doc! {"failCommands":["find"],"errorCode":2_i32})
+        .await;
+    let (entered, publishing) = tokio::sync::oneshot::channel();
+    let (resume, release) = std::sync::mpsc::channel();
+    *fixture.commit_session.lock().unwrap() = None;
+    *fixture.publication_barrier.lock().unwrap() = Some((entered, release));
+    let worker = fixture.h.worker.clone();
+    let attempt = claim.clone();
+    let execution =
+        tokio::spawn(async move { worker.execute_claimed_for_test(attempt, now).await });
+    tokio::time::timeout(Duration::from_secs(3), publishing)
+        .await
+        .unwrap()
+        .unwrap();
+    hold_writer.await;
+    resume.send(()).unwrap();
+    let result = execution.await.unwrap();
+    fixture.clear_fault().await;
+    assert_eq!(result, Err(SandboxStoreError::Conflict));
+    assert!(fixture.commit_session.lock().unwrap().is_none());
+    assert_eq!(fixture.stored().await, claim);
+    assert_eq!(fixture.logs().await, prefix);
+    fixture
+        .converge(&fixture.h.worker, claim_expiry(&claim))
+        .await;
+    fixture.admin.drop().await.unwrap();
 }

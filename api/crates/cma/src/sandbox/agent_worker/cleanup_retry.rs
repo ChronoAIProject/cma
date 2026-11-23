@@ -28,13 +28,16 @@ impl AgentWorker {
             CleanupPreflightError::Read(error) => return Err(error),
         };
         let started = tokio::time::Instant::now();
+        // The scheduler's timestamp can predate ownership and admission I/O.
+        // Never translate that delay into extra time on the stored claim.
+        let cutoff = now.max(SystemTime::now());
         let remaining = claimed
             .work
             .lease
             .as_ref()
             .and_then(|lease| layer2_core::seconds_from_rfc3339(&lease.expires_at))
             .and_then(|seconds| SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
-            .and_then(|expires| expires.duration_since(now).ok())
+            .and_then(|expires| expires.duration_since(cutoff).ok())
             .ok_or(SandboxStoreError::Conflict)?;
         let deadline = started
             .checked_add(remaining)
