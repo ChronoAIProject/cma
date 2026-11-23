@@ -171,7 +171,7 @@ impl MongoStores {
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
         policy: MongoConnectionPolicy,
     ) -> Result<Self, StoreError> {
-        let options = connection_options(uri).await?;
+        let options = connection_options(uri, database).await?;
         let client = Client::with_options(options)
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
         super::isolation::replicas::verify(
@@ -419,10 +419,12 @@ impl MongoStores {
     }
 }
 
-async fn connection_options(uri: &str) -> Result<ClientOptions, StoreError> {
+async fn connection_options(uri: &str, database: &str) -> Result<ClientOptions, StoreError> {
     let mut options = ClientOptions::parse(uri)
         .await
         .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
+    // Every transaction opens with a barrier read in this database (#3217).
+    options.default_database = Some(database.to_owned());
     // Replica ownership changes authority, not the deployment's connection
     // budget. Preserve explicit URI options and driver defaults in both modes.
     super::mongo_latency::observe(&mut options);

@@ -54,6 +54,7 @@ mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
+pub(crate) mod transaction_barrier;
 #[cfg(test)]
 pub(crate) use agent_worker_transaction::skill_result_test_support;
 mod agent_worktree_recovery;

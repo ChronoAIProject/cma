@@ -2,6 +2,7 @@ use super::*;
 use layer2_core::sandbox::{AgentMessageAssembly, AgentUpdateRecorder, DurableAgentUpdateRecorder};
 use layer3_adapter::ConversationUpdate;
 
+mod cancellation_tests;
 mod capacity_tests;
 
 mod control_commit_tests;
