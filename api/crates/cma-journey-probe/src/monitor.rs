@@ -20,6 +20,7 @@ pub struct Monitor {
     pub ledger: Ledger,
     pub heartbeat: Arc<AtomicI64>,
     pub evidence: Arc<AtomicBool>,
+    pub scheduler_ready: Arc<AtomicBool>,
     pub cleanup_failure: Arc<AtomicI64>,
 }
 
@@ -35,10 +36,11 @@ impl Monitor {
 
 async fn ready(State(monitor): State<Monitor>) -> StatusCode {
     let last = monitor.heartbeat.load(Ordering::Relaxed);
+    let scheduler_ready = monitor.scheduler_ready.load(Ordering::Acquire);
     let available = tokio::task::spawn_blocking(move || monitor.ledger.available().is_ok())
         .await
         .unwrap_or(false);
-    if available && last > 0 && now() - last <= 10 {
+    if scheduler_ready && available && last > 0 && now() - last <= 10 {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE

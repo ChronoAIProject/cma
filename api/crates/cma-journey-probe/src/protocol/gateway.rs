@@ -200,7 +200,7 @@ fn consumer<'a>(activity: &'a Value, id: &str) -> Result<&'a Value, Reason> {
 }
 
 fn check_activity(activity: &Value, target: &Gateway, outcome: &mut Outcome) -> Result<(), Reason> {
-    http::same(&activity["source"], "custom")?;
+    http::same(&activity["source"]["type"], "custom")?;
     http::same(&activity["actor"]["id"], target.source.as_str())?;
     http::same(&activity["event_type"], &target.event_type)?;
     if !timestamp(&activity["received_at"]) {

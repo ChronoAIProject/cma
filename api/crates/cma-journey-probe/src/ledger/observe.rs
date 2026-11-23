@@ -8,7 +8,7 @@ use crate::{
     model::{Intent, Mode, Observation, Phase, Reason},
 };
 
-use super::{connect, metadata, Error, Ledger, Result};
+use super::{connect, metadata, misses, Error, Ledger, Result};
 
 pub(super) const RETENTION: i64 = 14 * 86400;
 
@@ -35,10 +35,13 @@ impl Ledger {
     pub fn recovered(&self, intent: &Intent, attempt: u8, result: &Observation) -> Result<()> {
         self.write(|tx, _, _| {
             let key = intent.job.key();
-            tx.execute(
-                "INSERT INTO recovery VALUES (?1,?2,?3,?4)",
+            let changed = tx.execute(
+                "INSERT OR IGNORE INTO recovery VALUES (?1,?2,?3,?4)",
                 (&key, intent.slot, attempt, serde_json::to_string(result)?),
             )?;
+            if changed == 0 {
+                return Ok(());
+            }
             if result.settled {
                 tx.execute(
                     "UPDATE slots SET settled=1 WHERE job=?1 AND slot=?2",
@@ -56,22 +59,39 @@ impl Ledger {
     }
 
     pub fn export(&self, from: i64, until: i64, config: &Config) -> Result<()> {
+        let mut output = io::BufWriter::new(io::stdout().lock());
+        self.export_to(from, until, config, &mut output)?;
+        output.flush()?;
+        Ok(())
+    }
+
+    pub fn export_to(
+        &self,
+        from: i64,
+        until: i64,
+        config: &Config,
+        output: &mut impl Write,
+    ) -> Result<()> {
         if from < 0 || until <= from || until - from > RETENTION {
             return Err(Error::Capacity);
         }
-        let conn = connect(&self.state, false)?;
-        if metadata(&conn)?.domain != self.domain {
+        let mut connection = connect(&self.state, false)?;
+        let snapshot = connection.transaction()?;
+        if metadata(&snapshot)?.domain != self.domain {
             return Err(Error::Fence);
         }
-        let mut output = io::BufWriter::new(io::stdout().lock());
         write_line(
-            &mut output,
-            &json!({"schema":1,"environment":config.environment,"location":config.location,
-            "revision":config.revision,"candidate":config.candidate,"runner_sha":option_env!("CMA_JOURNEY_BUILD_SHA"),
-            "from":from,"until":until,"deterministic_enabled":config.deterministic_enabled,"funded_enabled":config.funded_enabled}),
+            output,
+            &json!({"schema":2,"environment":config.environment,"location":config.location,
+            "from":from,"until":until}),
         )?;
-        export_rows(&conn, &mut output, from, until)?;
-        output.flush()?;
+        let (slots, missed) = export_rows(&snapshot, output, from, until)?;
+        let ranges = misses::export(&snapshot, output, from, until)?;
+        write_line(
+            output,
+            &json!({"kind":"window_counts","slots":slots + ranges,"missed":missed + ranges}),
+        )?;
+        snapshot.commit()?;
         Ok(())
     }
 }
@@ -130,23 +150,38 @@ fn read_metrics(state: &Connection) -> Result<Metrics> {
     })
 }
 
-fn write_line(output: &mut impl Write, data: &serde_json::Value) -> Result<()> {
+pub(super) fn write_line(output: &mut impl Write, data: &serde_json::Value) -> Result<()> {
     serde_json::to_writer(&mut *output, data)?;
     writeln!(output)?;
     Ok(())
 }
 
-fn export_rows(conn: &Connection, output: &mut impl Write, from: i64, until: i64) -> Result<()> {
+fn export_rows(
+    conn: &Connection,
+    output: &mut impl Write,
+    from: i64,
+    until: i64,
+) -> Result<(i64, i64)> {
     let mut query = conn.prepare("SELECT job,slot,attempted_at,intent,first_result,settled FROM slots WHERE slot>=?1 AND slot<?2 ORDER BY slot,job")?;
     let mut recoveries =
         conn.prepare("SELECT result FROM recovery WHERE job=?1 AND slot=?2 ORDER BY attempt")?;
     let mut rows = query.query((from, until))?;
+    let mut counts = (0, 0);
     while let Some(row) = rows.next()? {
         let job: String = row.get(0)?;
         let slot: i64 = row.get(1)?;
         let attempt: Option<i64> = row.get(2)?;
         let intent: Option<String> = row.get(3)?;
         let first: Option<String> = row.get(4)?;
+        let first = first
+            .map(|value| serde_json::from_str::<serde_json::Value>(&value))
+            .transpose()?;
+        counts.0 += 1;
+        counts.1 += i64::from(
+            first
+                .as_ref()
+                .is_some_and(|value| value["reason"] == "missed"),
+        );
         let recovery = recoveries
             .query_map((&job, slot), |r| r.get::<_, String>(0))?
             .map(|r| serde_json::from_str::<serde_json::Value>(&r?).map_err(Error::from))
@@ -155,10 +190,10 @@ fn export_rows(conn: &Connection, output: &mut impl Write, from: i64, until: i64
             output,
             &json!({"job":job,"scheduled_at":slot,"attempted_at":attempt,
             "intent":intent.map(|v| serde_json::from_str::<serde_json::Value>(&v)).transpose()?,
-            "first":first.map(|v| serde_json::from_str::<serde_json::Value>(&v)).transpose()?,"settled":row.get::<_, bool>(5)?,"recovery":recovery}),
+            "first":first,"settled":row.get::<_, bool>(5)?,"recovery":recovery}),
         )?;
     }
-    Ok(())
+    Ok(counts)
 }
 
 pub(super) fn count(
@@ -188,6 +223,7 @@ pub(super) fn skipped(at: i64, reason: Reason) -> Observation {
         elapsed_ms: 0,
         settled: true,
         evidence: Default::default(),
+        reconciliation_runner_sha: None,
     }
 }
 

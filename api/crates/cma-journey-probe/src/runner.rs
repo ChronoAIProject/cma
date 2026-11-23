@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     sync::{
         atomic::{AtomicBool, AtomicI64, Ordering},
         Arc,
@@ -24,12 +25,21 @@ pub async fn serve(config: Arc<Config>, ledger: Ledger) -> Result<(), &'static s
     let listener = TcpListener::bind(config.listen)
         .await
         .map_err(|_| "cannot bind monitoring listener")?;
+    serve_on(listener, config, ledger).await
+}
+
+pub(crate) async fn serve_on(
+    listener: TcpListener,
+    config: Arc<Config>,
+    ledger: Ledger,
+) -> Result<(), &'static str> {
     let protocol = Arc::new(Protocol::new(config.clone())?);
     let monitor = Monitor {
         config,
         ledger,
         heartbeat: Arc::new(AtomicI64::new(0)),
         evidence: Arc::new(AtomicBool::new(false)),
+        scheduler_ready: Arc::new(AtomicBool::new(false)),
         cleanup_failure: Arc::new(AtomicI64::new(0)),
     };
     let scheduler = tokio::spawn(run(monitor.clone(), protocol));
@@ -49,16 +59,38 @@ async fn run(monitor: Monitor, protocol: Arc<Protocol>) {
     interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
     let mut jobs = JoinSet::new();
     let mut configured = false;
+    let mut evidence_lost = false;
+    let mut unpublished = VecDeque::new();
     let mut prune_at = 0;
     loop {
         interval.tick().await;
         while let Some(result) = jobs.try_join_next() {
-            if !matches!(result, Ok(true)) {
-                monitor.evidence.store(false, Ordering::Relaxed);
+            match result {
+                Ok(observation) => unpublished.push_back(observation),
+                Err(_) => {
+                    evidence_lost = true;
+                    tracing::error!("journey observation task failed");
+                }
             }
         }
         let at = now();
         monitor.heartbeat.store(at, Ordering::Relaxed);
+        if !unpublished.is_empty() {
+            let ledger = monitor.ledger.clone();
+            let pending = std::mem::take(&mut unpublished);
+            match tokio::task::spawn_blocking(move || persist(&ledger, pending)).await {
+                Ok(remaining) => unpublished = remaining,
+                Err(_) => {
+                    evidence_lost = true;
+                    tracing::error!("journey evidence publication task failed");
+                }
+            }
+        }
+        if evidence_lost || !unpublished.is_empty() {
+            monitor.evidence.store(false, Ordering::Relaxed);
+            monitor.scheduler_ready.store(false, Ordering::Release);
+            continue;
+        }
         if !configured {
             let ledger = monitor.ledger.clone();
             let jobs = monitor.config.jobs();
@@ -79,6 +111,7 @@ async fn run(monitor: Monitor, protocol: Arc<Protocol>) {
         .await;
         let Ok(Ok((intents, recovery, cleaned))) = tick else {
             monitor.evidence.store(false, Ordering::Relaxed);
+            monitor.scheduler_ready.store(false, Ordering::Release);
             continue;
         };
         if should_prune {
@@ -89,31 +122,53 @@ async fn run(monitor: Monitor, protocol: Arc<Protocol>) {
             }
         }
         monitor.evidence.store(cleaned, Ordering::Relaxed);
+        monitor.scheduler_ready.store(cleaned, Ordering::Release);
         for intent in intents {
             let protocol = protocol.clone();
-            let ledger = monitor.ledger.clone();
             jobs.spawn(async move {
-                let result = first(&protocol, &intent).await;
-                trace(&intent, &result);
-                tokio::task::spawn_blocking(move || ledger.first(&intent, &result))
-                    .await
-                    .is_ok_and(|result| result.is_ok())
+                let observation = first(&protocol, &intent).await;
+                trace(&intent, &observation);
+                Completed {
+                    intent,
+                    recovery: None,
+                    observation,
+                }
             });
         }
         for recovery in recovery {
             let protocol = protocol.clone();
-            let ledger = monitor.ledger.clone();
             jobs.spawn(async move {
-                let result = recover(&protocol, &recovery).await;
-                trace(&recovery.intent, &result);
-                tokio::task::spawn_blocking(move || {
-                    ledger.recovered(&recovery.intent, recovery.attempt, &result)
-                })
-                .await
-                .is_ok_and(|result| result.is_ok())
+                let observation = recover(&protocol, &recovery).await;
+                trace(&recovery.intent, &observation);
+                Completed {
+                    intent: recovery.intent,
+                    recovery: Some(recovery.attempt),
+                    observation,
+                }
             });
         }
     }
+}
+
+struct Completed {
+    intent: Intent,
+    recovery: Option<u8>,
+    observation: Observation,
+}
+
+fn persist(ledger: &Ledger, mut pending: VecDeque<Completed>) -> VecDeque<Completed> {
+    while let Some(completed) = pending.front() {
+        let result = match completed.recovery {
+            None => ledger.first(&completed.intent, &completed.observation),
+            Some(attempt) => ledger.recovered(&completed.intent, attempt, &completed.observation),
+        };
+        if result.is_err() {
+            tracing::warn!("journey evidence write failed and will be retried");
+            break;
+        }
+        pending.pop_front();
+    }
+    pending
 }
 
 type Dispatch = (Vec<Intent>, Vec<Recovery>, bool);
@@ -218,7 +273,9 @@ async fn recover(protocol: &Protocol, recovery: &Recovery) -> Observation {
     )
     .await
     .unwrap_or(Err(Reason::Deadline));
-    observation(start, Phase::Reconcile, result, outcome)
+    let mut recorded = observation(start, Phase::Reconcile, result, outcome);
+    recorded.reconciliation_runner_sha = Some(protocol.runner_sha().to_owned());
+    recorded
 }
 
 fn trace(intent: &Intent, observation: &Observation) {
@@ -246,5 +303,64 @@ fn observation(
         elapsed_ms: start.elapsed().as_millis() as u64,
         settled: outcome.settled,
         evidence: outcome.evidence,
+        reconciliation_runner_sha: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+    use tempfile::TempDir;
+    use url::Url;
+
+    use crate::{
+        model::Check,
+        tests::{config, job},
+    };
+
+    use super::*;
+
+    #[test]
+    fn failed_result_is_retained_for_publication_after_storage_recovers() {
+        let directory = TempDir::new().unwrap();
+        let config = config(&Url::parse("http://127.0.0.1/").unwrap(), directory.path());
+        let ledger = Ledger::new(&config);
+        ledger.init().unwrap();
+        let protocol = Protocol::new(config.clone()).unwrap();
+        let job = job(&config, Check::Agent, Mode::Read);
+        let slot = job.slot_at(now());
+        ledger.configure_at(&[(job, true)], slot).unwrap();
+        let intent = protocol.intent(job, slot).unwrap();
+        assert!(matches!(
+            ledger.claim(&intent, slot, None).unwrap(),
+            Claim::Send
+        ));
+        let database = Connection::open(&config.state_path).unwrap();
+        database
+            .execute_batch(
+                "CREATE TRIGGER fail_result BEFORE UPDATE OF first_result ON slots
+            BEGIN SELECT RAISE(ABORT, 'fixture result write failure'); END;",
+            )
+            .unwrap();
+        let completion = Completed {
+            intent,
+            recovery: None,
+            observation: Observation {
+                reason: Reason::Passed,
+                phase: Phase::First,
+                elapsed_ms: 100,
+                completed_at: slot + 1,
+                settled: true,
+                evidence: Default::default(),
+                reconciliation_runner_sha: None,
+            },
+        };
+        let pending = persist(&ledger, VecDeque::from([completion]));
+        assert_eq!(pending.len(), 1);
+        assert!(ledger.available().is_ok());
+        assert!(ledger.metrics().unwrap().jobs[0].times[3].is_none());
+        database.execute_batch("DROP TRIGGER fail_result").unwrap();
+        assert!(persist(&ledger, pending).is_empty());
+        assert_eq!(ledger.metrics().unwrap().jobs[0].times[3], Some(slot + 1));
     }
 }

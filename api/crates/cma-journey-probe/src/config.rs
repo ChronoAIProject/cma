@@ -19,6 +19,7 @@ pub struct Config {
     pub location: String,
     pub revision: String,
     pub candidate: String,
+    pub runner_sha: String,
     pub state_path: PathBuf,
     pub witness_path: PathBuf,
     pub listen: SocketAddr,
@@ -156,6 +157,8 @@ impl Config {
         ]
         .into_iter()
         .all(|v| identifier(v))
+            || !valid_sha(&self.runner_sha)
+            || option_env!("CMA_JOURNEY_BUILD_SHA").is_some_and(|sha| sha != self.runner_sha)
             || self.schedule_offset > 14
             || self.state_path == self.witness_path
         {
@@ -173,16 +176,10 @@ impl Config {
             return Err("expected service origin");
         }
         let r = &self.reference;
-        if ![
-            &r.agent,
-            &r.sandbox,
-            &r.run,
-            &r.channel,
-            &r.event,
-            &r.consumer,
-        ]
-        .into_iter()
-        .all(|v| identifier(v))
+        if ![&r.agent, &r.sandbox, &r.run, &r.event, &r.consumer]
+            .into_iter()
+            .all(|v| identifier(v))
+            || !channel_id(&r.channel)
             || r.answer.trim().is_empty()
             || r.answer.len() > 512
         {
@@ -212,12 +209,12 @@ impl Config {
             if ![
                 &target.agui_agent,
                 &target.responses_agent,
-                &gw.channel,
                 &gw.consumer,
                 &gw.event_type,
             ]
             .into_iter()
             .all(|v| identifier(v))
+                || !channel_id(&gw.channel)
                 || !agents.insert(&target.agui_agent)
                 || !agents.insert(&target.responses_agent)
                 || !channels.insert(&gw.channel)
@@ -313,4 +310,22 @@ fn secure_url(url: &Url) -> bool {
         && url.username().is_empty()
         && url.password().is_none()
         && url.fragment().is_none()
+}
+
+fn valid_sha(sha: &str) -> bool {
+    sha.len() == 40
+        && sha
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn channel_id(value: &str) -> bool {
+    // CMAEG's sealed channel pointers have a separate public 512-byte limit.
+    value.len() <= 512
+        && value.strip_prefix("cmaeg1.ch.").is_some_and(|token| {
+            !token.is_empty()
+                && token
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+        })
 }

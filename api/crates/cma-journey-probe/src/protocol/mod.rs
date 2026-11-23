@@ -43,6 +43,10 @@ impl Protocol {
         Ok(Self { config, client })
     }
 
+    pub fn runner_sha(&self) -> &str {
+        &self.config.runner_sha
+    }
+
     pub fn intent(&self, job: Job, slot: i64) -> Result<Intent, &'static str> {
         let key = Intent::key(&self.config.domain(), job, slot);
         let marker = (job.mode == Mode::Deterministic).then(|| format!("CMA-CHECK-{key}"));
@@ -86,6 +90,7 @@ impl Protocol {
             marker,
             configuration: self.config.revision.clone(),
             candidate: self.config.candidate.clone(),
+            runner_sha: self.config.runner_sha.clone(),
         })
     }
 

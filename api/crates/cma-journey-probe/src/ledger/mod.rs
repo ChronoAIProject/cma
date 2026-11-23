@@ -1,3 +1,4 @@
+mod misses;
 mod observe;
 mod reserve;
 
@@ -177,6 +178,7 @@ impl Ledger {
             )?;
             if path == &self.state {
                 transaction.execute_batch(SCHEMA)?;
+                transaction.execute_batch(misses::SCHEMA)?;
             }
             transaction.commit()?;
         }
@@ -215,8 +217,12 @@ impl Ledger {
     }
 
     pub fn configure(&self, jobs: &[(Job, bool)]) -> Result<()> {
-        let at = now();
+        self.configure_at(jobs, now())
+    }
+
+    pub fn configure_at(&self, jobs: &[(Job, bool)], at: i64) -> Result<()> {
         self.write(|tx, _, _| {
+            tx.execute_batch(misses::SCHEMA)?;
             for &(job, enabled) in jobs {
                 let key = job.key();
                 tx.execute("INSERT INTO jobs(job, offset, enabled_since) VALUES(?1, ?2, ?3)
@@ -254,6 +260,7 @@ impl Ledger {
 
     pub fn prune(&self, at: i64) -> Result<()> {
         self.write(|tx, _, _| {
+            tx.execute("DELETE FROM missed_ranges WHERE last_slot<?1", [at - observe::RETENTION])?;
             tx.execute("DELETE FROM slots WHERE rowid IN (SELECT rowid FROM slots WHERE slot<?1 AND settled=1 LIMIT 2000)", [at - observe::RETENTION])?;
             Ok(())
         })

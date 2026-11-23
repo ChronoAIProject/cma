@@ -79,6 +79,8 @@ impl Protocol {
             }
             let page =
                 http::json(self.get_owner(endpoint, false, "application/json").await?).await?;
+            http::same(&page["object"], "cma.response.output_page")?;
+            http::same(&page["response_id"], response)?;
             append_output(&page["data"], &mut output)?;
             match page["has_more"].as_bool() {
                 Some(false) if page["next_after"].is_null() => {

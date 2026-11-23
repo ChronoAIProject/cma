@@ -23,4 +23,5 @@ url = { workspace = true, features = ["serde"] }
 uuid.workspace = true
 
 [dev-dependencies]
+cmaeg-core = { path = "../cmaeg-core" }
 tempfile = "3"

@@ -24,7 +24,7 @@ use crate::{
     runner::first,
 };
 
-use super::{config, job};
+use super::{channel, config, job};
 
 enum Fault {
     None,
@@ -33,6 +33,7 @@ enum Fault {
     MissingReceipt,
     NoTerminal,
     Credentials,
+    WrongOutputId,
 }
 
 struct Fixture {
@@ -168,7 +169,7 @@ async fn handler(State(state): State<Arc<Fixture>>, request: Request) -> Respons
             if query.contains("agt_read") { agui("agt_read", "reference-answer", false) }
             else { agui("agt_agui_det", &answer(&state, "agt_agui_det"), matches!(state.fault, Fault::NoTerminal)) }
         }
-        "/v1/channels/channel_read/activity/stream" => sse(format!("id: page\nevent: activity\ndata: {}\n\n", json!({
+        path if path == format!("/v1/channels/{}/activity/stream", channel("read")) => sse(format!("id: page\nevent: activity\ndata: {}\n\n", json!({
             "cursor":"page","has_more":false,"limit":50,"retention_days":7,"items":[{"event_id":"event_read","received_at":AT,"consumers":[{"consumer_id":"consumer_read","state":"completed"}]}]}))),
         "/api/v1/agui/run" => {
             assert_eq!(parts.method, Method::POST);
@@ -186,26 +187,43 @@ async fn handler(State(state): State<Arc<Fixture>>, request: Request) -> Respons
             if matches!(state.fault, Fault::MissingReceipt) { Json(Value::Null).into_response() }
             else { Json(json!({"threadId":"agt_agui_det","runId":"3","status":"completed"})).into_response() }
         }
-        "/api/v2/agents/agt_responses_det/responses" => {
+
+        "/api/v2/agents/agt_responses_det/responses" | "/api/v2/agents/agt_responses_paid/responses" => {
             let body: Value = serde_json::from_slice(&bytes).unwrap();
-            let test_marker = marker(body["input"].as_str().unwrap());
-            admit(&state, &parts.headers, &body, "agt_responses_det", test_marker);
-            responses(test_marker)
+            let agent = body["conversation"].as_str().unwrap();
+            let prompt = body["input"].as_str().unwrap();
+            let test_answer = if agent.ends_with("_det") { marker(prompt) } else { "Funded short answer" };
+            admit(&state, &parts.headers, &body, agent, test_answer);
+            responses(agent, test_answer)
         }
-        "/api/v2/agents/agt_responses_det/responses/receipt" => {
+        "/api/v2/agents/agt_responses_det/responses/receipt" | "/api/v2/agents/agt_responses_paid/responses/receipt" => {
             exact_lookup(&state, &parts.headers, &bytes);
-            Json(receipt("agt_responses_det")).into_response()
+            let agent = path.split('/').nth(4).unwrap();
+            Json(receipt(agent)).into_response()
         }
         "/api/v2/commands/cmd_agui" => Json(receipt("agt_agui_det")).into_response(),
-        "/api/v2/commands/cmd_responses" => Json(receipt("agt_responses_det")).into_response(),
-        "/api/v2/responses/resp_responses" => Json(response("completed", &[item(&answer(&state, "agt_responses_det"))])).into_response(),
-        "/api/v2/responses/resp_responses/output" => Json(json!({"data":[item(&answer(&state, "agt_responses_det"))],"has_more":false,"next_after":null})).into_response(),
+        "/api/v2/commands/cmd_responses_det" | "/api/v2/commands/cmd_responses_paid" => Json(receipt(&response_agent(path))).into_response(),
+        "/api/v2/responses/resp_responses_det" | "/api/v2/responses/resp_responses_paid" => {
+            let agent = response_agent(path);
+            Json(response(&agent, "completed", &[item(&answer(&state, &agent))])).into_response()
+        }
+        "/api/v2/responses/resp_responses_det/output" | "/api/v2/responses/resp_responses_paid/output" => {
+            let agent = response_agent(path);
+            let admitted = response_id(&agent);
+            let final_page = parts.uri.query().is_some();
+            let wrong = matches!(state.fault, Fault::WrongOutputId) && final_page;
+            let text = answer(&state, &agent);
+            let split = text.len() / 2;
+            let output = if final_page { &text[split..] } else { &text[..split] };
+            Json(json!({"object":"cma.response.output_page","response_id":if wrong { "resp_other" } else { &admitted },
+                "data":[item(output)],"has_more":!final_page,"next_after":(!final_page).then_some("indexed:2")})).into_response()
+        }
         "/custom/det" => gateway(&state, &parts.headers, &bytes),
-        "/v1/channels/channel_det/activity/history" => {
+        path if path == format!("/v1/channels/{}/activity/history", channel("det")) => {
             let state_map = state.admissions.lock().unwrap();
             let (_, (body, _)) = state_map.iter().find(|(key,_)| !key.contains('/')).unwrap();
             let cloud: Value = serde_json::from_str(body).unwrap();
-            Json(json!({"has_more":false,"items":[{"activity":{"event_id":cloud["id"],"source":"custom","actor":{"id":cloud["source"]},"event_type":"journey.test","received_at":AT,"consumers":[{"consumer_id":"consumer_det","state":"completed","conversation_id":"conv_gateway","response_id":"resp_gateway","accepted_at":AT,"completed_at":AT,"deliveries":[{"step":"answer","destination":"origin","outcome":"buffered"}]}]}}]})).into_response()
+            Json(json!({"has_more":false,"items":[{"activity":{"event_id":cloud["id"],"source":cmaeg_core::activity::SourceKind::Custom,"actor":{"id":cloud["source"]},"event_type":"journey.test","received_at":AT,"consumers":[{"consumer_id":"consumer_det","state":"completed","conversation_id":"conv_gateway","response_id":"resp_gateway","accepted_at":AT,"completed_at":AT,"deliveries":[{"step":"answer","destination":"origin","outcome":"buffered"}]}]}}]})).into_response()
         }
         _ => StatusCode::NOT_FOUND.into_response(),
     }
@@ -293,7 +311,7 @@ fn receipt(agent: &str) -> Value {
     let alias = if agent == "agt_agui_det" {
         "agui"
     } else {
-        "responses"
+        agent.trim_start_matches("agt_")
     };
     json!({"object":"cma.agent.command","turn_sequence":3,"receipt":{"agent_id":agent,"command_id":format!("cmd_{alias}"),"response_id":format!("resp_{alias}"),"agent_order":1,"event_cursor":0,"admitted_at":AT}})
 }
@@ -304,19 +322,19 @@ fn part(text: &str) -> Value {
 fn item(text: &str) -> Value {
     json!({"type":"message","id":"msg_resp","status":"completed","role":"assistant","content":[part(text)]})
 }
-fn response(status: &str, output: &[Value]) -> Value {
-    json!({"object":"response","id":"resp_responses","status":status,"conversation":{"id":"agt_responses_det"},"output":output,"completed_at":42})
+fn response(agent: &str, status: &str, output: &[Value]) -> Value {
+    json!({"object":"response","id":response_id(agent),"status":status,"conversation":{"id":agent},"output":output,"completed_at":42})
 }
 
-fn responses(answer: &str) -> Response {
+fn responses(agent: &str, answer: &str) -> Response {
     let frames = [
         (
             "response.created",
-            json!({"response":response("queued", &[])}),
+            json!({"response":response(agent, "queued", &[])}),
         ),
         (
             "response.in_progress",
-            json!({"response":response("in_progress", &[])}),
+            json!({"response":response(agent, "in_progress", &[])}),
         ),
         (
             "response.output_item.added",
@@ -344,7 +362,7 @@ fn responses(answer: &str) -> Response {
         ),
         (
             "response.completed",
-            json!({"response":response("completed", &[item(answer)])}),
+            json!({"response":response(agent, "completed", &[item(answer)])}),
         ),
     ];
     let wire = frames
@@ -357,12 +375,15 @@ fn responses(answer: &str) -> Response {
         })
         .collect();
     let mut response = sse(wire);
+    response.headers_mut().insert(
+        "x-cma-command-id",
+        format!("cmd_{}", agent.trim_start_matches("agt_"))
+            .parse()
+            .unwrap(),
+    );
     response
         .headers_mut()
-        .insert("x-cma-command-id", "cmd_responses".parse().unwrap());
-    response
-        .headers_mut()
-        .insert("x-cma-response-id", "resp_responses".parse().unwrap());
+        .insert("x-cma-response-id", response_id(agent).parse().unwrap());
     response
 }
 
@@ -395,4 +416,32 @@ fn gateway(state: &Fixture, headers: &HeaderMap, bytes: &[u8]) -> Response {
     sse(format!(
         "event: cmaeg.message\ndata: {data}\n\nevent: cmaeg.completed\ndata: {data}\n\n"
     ))
+}
+
+fn response_id(agent: &str) -> String {
+    format!("resp_{}", agent.trim_start_matches("agt_"))
+}
+
+fn response_agent(path: &str) -> String {
+    let id = path.split('/').nth(4).unwrap();
+    let name = id.trim_start_matches("cmd_").trim_start_matches("resp_");
+    format!("agt_{name}")
+}
+
+#[tokio::test]
+async fn output_page_must_match_admitted_response_in_both_modes() {
+    for mode in [Mode::Deterministic, Mode::Funded] {
+        let dir = TempDir::new().unwrap();
+        let (server, task) = serve(Fault::WrongOutputId).await;
+        let config = config(&server.base, dir.path());
+        let protocol = Protocol::new(config.clone()).unwrap();
+        let intent = protocol
+            .intent(job(&config, Check::Responses, mode), now())
+            .unwrap();
+        let result = first(&protocol, &intent).await;
+        assert_eq!(result.reason, Reason::Contract, "{mode:?}");
+        assert!(result.evidence.delivery_at.is_some() && result.evidence.receipt_at.is_some());
+        assert_eq!(server.admissions.lock().unwrap().len(), 1);
+        task.abort();
+    }
 }

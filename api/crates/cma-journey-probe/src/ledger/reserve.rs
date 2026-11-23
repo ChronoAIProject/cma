@@ -5,7 +5,7 @@ use crate::{
     model::{Intent, Mode, Reason},
 };
 
-use super::{observe::count, optional, Error, Ledger, Result};
+use super::{misses, optional, Error, Ledger, Result};
 
 const MAX_SLOTS: i64 = 400_000;
 const MAX_PENDING: i64 = 3;
@@ -32,28 +32,23 @@ impl Ledger {
             if last.is_some_and(|value| value >= intent.slot) || intent.slot < since || intent.slot > at {
                 return Ok(Claim::Seen);
             }
-            let historical_end = intent.slot - job.mode.interval();
-            let historical_start = last.map_or_else(|| job.slot_at(since.saturating_sub(1)) + job.mode.interval(), |slot| slot + job.mode.interval());
-            if historical_end >= historical_start {
-                let missed = 1 + (historical_end - historical_start) / job.mode.interval();
-                count(tx, &key, "first", Reason::Missed.label(), missed)?;
-            }
+            misses::record(tx, intent, since, last, at)?;
             tx.execute("UPDATE jobs SET last_slot=?2 WHERE job=?1", (&key, intent.slot))?;
             if at >= intent.slot + job.mode.deadline() {
-                return skip(tx, &key, intent.slot, at, Reason::Missed);
+                return skip(tx, intent, &key, at, Reason::Missed);
             }
             let capped: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM slots ORDER BY slot LIMIT 1 OFFSET ?1)", [MAX_SLOTS - 1], |r| r.get(0))?;
             if capped {
                 return Err(Error::Capacity);
             }
             if job.mode != Mode::Read && busy(tx, &intent.target)? {
-                return skip(tx, &key, intent.slot, at, Reason::Busy);
+                return skip(tx, intent, &key, at, Reason::Busy);
             }
             let cost = match job.mode {
                 Mode::Funded => {
                     let budget = budget.ok_or(Error::Fence)?;
                     if !allows(tx, at, budget)? {
-                        return skip(tx, &key, intent.slot, at, Reason::Budget);
+                        return skip(tx, intent, &key, at, Reason::Budget);
                     }
                     budget.max_attempt_cost
                 }
@@ -151,11 +146,17 @@ fn allows(tx: &Transaction<'_>, at: i64, budget: Budget) -> Result<bool> {
     Ok(true)
 }
 
-fn skip(tx: &Transaction<'_>, key: &str, slot: i64, at: i64, reason: Reason) -> Result<Claim> {
+fn skip(
+    tx: &Transaction<'_>,
+    intent: &Intent,
+    key: &str,
+    at: i64,
+    reason: Reason,
+) -> Result<Claim> {
     let result = super::observe::skipped(at, reason);
     tx.execute(
-        "INSERT INTO slots(job,slot,first_result,settled,next_recovery) VALUES(?1,?2,?3,1,?2)",
-        (key, slot, serde_json::to_string(&result)?),
+        "INSERT INTO slots(job,slot,first_result,settled,next_recovery,intent) VALUES(?1,?2,?3,1,?2,?4)",
+        (key, intent.slot, serde_json::to_string(&result)?, serde_json::to_string(intent)?),
     )?;
     super::observe::first_metrics(tx, key, &result)?;
     Ok(Claim::Skipped(reason))

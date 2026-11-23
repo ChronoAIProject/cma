@@ -505,6 +505,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
+ "cmaeg-core",
  "html5ever",
  "reqwest",
  "ring",

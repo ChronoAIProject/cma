@@ -99,6 +99,7 @@ pub struct Intent {
     pub marker: Option<String>,
     pub configuration: String,
     pub candidate: String,
+    pub runner_sha: String,
     pub request_digest: String,
 }
 
@@ -131,6 +132,8 @@ pub struct Observation {
     pub elapsed_ms: u64,
     pub settled: bool,
     pub evidence: Evidence,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciliation_runner_sha: Option<String>,
 }
 
 pub fn now() -> i64 {
