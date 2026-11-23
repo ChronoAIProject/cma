@@ -52,13 +52,14 @@ async function setup(page: Page, baseURL: string, initial = record(false)) {
   const identity = (await build.json()) as { revision: string };
   const expectedRevision = process.env.CMA_EXPECTED_BUILD_SHA ?? process.env.GITHUB_SHA;
   if (expectedRevision) expect(identity.revision).toBe(expectedRevision);
-  await test
-    .info()
-    .attach('served-build-identity', {
-      body: JSON.stringify(identity),
-      contentType: 'application/json',
-    });
-  const row = page.getByRole('treeitem').filter({ hasText: 'Team workspace' });
+  await test.info().attach('served-build-identity', {
+    body: JSON.stringify(identity),
+    contentType: 'application/json',
+  });
+  const row = page
+    .getByRole('treeitem', { includeHidden: true })
+    .filter({ hasText: 'Team workspace' });
+  await expect(row).toBeAttached();
   if (!(await row.isVisible())) await page.getByRole('button', { name: 'Show navigation' }).click();
   await row.focus();
   await page.keyboard.press('Enter');
