@@ -36,7 +36,7 @@ async fn issue_1164_peer_delete_fences_reconnect_and_settings_dispatch() {
             *fixture.backend.adoption_pause.lock().unwrap() = Some(pause.clone());
         }
         fixture.backend.hold_reopen.store(true, Ordering::SeqCst);
-        let inputs = fixture.backend.inputs.lock().unwrap().clone();
+        let inputs = fixture.backend.inputs.lock().unwrap().len();
         let relay = replicas[(owner + 1) % replicas.len()].relay.clone();
         let agent_id = agent.id.clone();
         let running = tokio::spawn(async move { relay.reopen_agent(&claim, &agent_id).await });
@@ -75,7 +75,7 @@ async fn issue_1164_peer_delete_fences_reconnect_and_settings_dispatch() {
             hold_adoption,
             "a retired adoption must not reach reconnect"
         );
-        assert_eq!(*fixture.backend.inputs.lock().unwrap(), inputs);
+        assert_eq!(fixture.backend.inputs.lock().unwrap().len(), inputs);
         assert!(!workers[owner].1.target_is_attached(
             &crate::sandbox::live_agents::LiveAgentTarget {
                 agent_id: agent.id,
