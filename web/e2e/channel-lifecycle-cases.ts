@@ -47,7 +47,19 @@ async function setup(page: Page, baseURL: string, initial = record(false)) {
     return route.fulfill({ status: 404, json: { detail: 'Unexpected local request' } });
   });
   await page.goto('/event-gateway');
+  const build = await page.request.get('/build-info.json');
+  expect(build.ok()).toBe(true);
+  const identity = (await build.json()) as { revision: string };
+  const expectedRevision = process.env.CMA_EXPECTED_BUILD_SHA ?? process.env.GITHUB_SHA;
+  if (expectedRevision) expect(identity.revision).toBe(expectedRevision);
+  await test
+    .info()
+    .attach('served-build-identity', {
+      body: JSON.stringify(identity),
+      contentType: 'application/json',
+    });
   const row = page.getByRole('treeitem').filter({ hasText: 'Team workspace' });
+  if (!(await row.isVisible())) await page.getByRole('button', { name: 'Show navigation' }).click();
   await row.focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'Team workspace', exact: true })).toBeVisible();
@@ -61,6 +73,7 @@ export function channelLifecycleCases() {
       baseURL,
     }, info) => {
       await page.addInitScript((value) => localStorage.setItem('cma:appearance', value), theme);
+      await page.setViewportSize({ width: 390, height: 1000 });
       const { state, writes, boundary } = await setup(page, baseURL!);
       for (const width of [390, 1440]) {
         await page.setViewportSize({ width, height: 1000 });
@@ -74,7 +87,19 @@ export function channelLifecycleCases() {
           () => document.documentElement.scrollWidth > innerWidth,
         );
         expect(overflow).toBe(false);
-        await page.screenshot({ path: info.outputPath(`lifecycle-${theme}-${width}.png`) });
+        const notice = page.getByRole('status').filter({ hasText: 'Creation incomplete' });
+        await expect
+          .poll(() =>
+            notice.evaluate((element) => {
+              const bounds = element.getBoundingClientRect();
+              return bounds.left >= 0 && bounds.right <= innerWidth && bounds.width > 200;
+            }),
+          )
+          .toBe(true);
+        await page.screenshot({
+          path: info.outputPath(`lifecycle-${theme}-${width}.png`),
+          animations: 'disabled',
+        });
       }
       await page.getByRole('button', { name: /^Channel: Team workspace/ }).click();
       const dialog = page.getByRole('dialog', { name: 'Channel settings' });
@@ -92,6 +117,27 @@ export function channelLifecycleCases() {
         );
       expect(writes).toEqual([]);
       await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+      await page
+        .getByRole('button', { name: 'Producer: Telegram (NyxID relay)', exact: true })
+        .click();
+      const producer = page.getByRole('dialog');
+      await expect(
+        producer.getByRole('button', { name: 'Save producer', exact: true }),
+      ).toBeDisabled();
+      await expect(
+        producer.getByRole('button', { name: 'Check configuration', exact: true }),
+      ).toBeDisabled();
+      await expect(
+        producer.getByRole('button', { name: 'Review message', exact: true }),
+      ).toBeDisabled();
+      await producer
+        .locator('form')
+        .first()
+        .evaluate((form) =>
+          form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+        );
+      expect(writes).toEqual([]);
+      await producer.getByRole('button', { name: 'Close', exact: true }).click();
       state.row = record(true, 4);
       await page.getByRole('button', { name: 'Refresh channel status', exact: true }).click();
       await expect(page.getByRole('status').filter({ hasText: 'Setup complete' })).toBeVisible();
