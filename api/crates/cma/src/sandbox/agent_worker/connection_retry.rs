@@ -76,7 +76,14 @@ impl AgentWorker {
                 .map(|seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
                 .ok_or_else(|| SandboxStoreError::Corrupt("invalid agent update time".into()))?;
             let at = (now + started.elapsed()).max(durable_at);
-            if !same_connection_claim(claimed, &current, &self.config.holder, at) {
+            if !same_connection_claim(claimed, &current, &self.config.holder, at)
+                && !super::connection_recovery_progress::same_recovery_claim(
+                    claimed,
+                    &current,
+                    &self.config.holder,
+                    at,
+                )
+            {
                 return Err(SandboxStoreError::Conflict);
             }
             match self

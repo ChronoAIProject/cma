@@ -139,6 +139,21 @@ jobs:
           path: "${{ runner.temp }}/cma-channel-setup"
           retention-days: 1
       -
+        name: "Local credential recovery contracts"
+        id: credential_setup
+        timeout-minutes: 5
+        env:
+          CMA_CREDENTIAL_EVIDENCE_DIR: "${{ runner.temp }}/cma-credential-setup"
+        run: "node node_modules/playwright/cli.js test --config e2e/credential-setup-ci.config.ts"
+      -
+        name: "Credential recovery failure evidence"
+        if: "failure() && steps.credential_setup.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "credential-recovery-failure"
+          path: "${{ runner.temp }}/cma-credential-setup"
+          retention-days: 1
+      -
         name: "Local resource lifecycle contracts"
         id: resource_lifecycle
         timeout-minutes: 5

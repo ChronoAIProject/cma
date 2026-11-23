@@ -101,6 +101,7 @@ export function OwnerAgentHeader({
           {client.resourceViews ? (
             <AgentShareLinksDialog
               client={client.resourceViews}
+              ownerId={header.viewerId}
               agentId={detail.id}
               open={dialog === 'share'}
               onClose={() => setDialog(undefined)}
