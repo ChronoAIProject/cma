@@ -28,7 +28,9 @@ pub(super) use adoption::{
 pub(super) use agent_replay::replay_proof_revision;
 pub(crate) use model::NativePreparedPlan;
 use model::Record;
+#[cfg(test)]
 pub(super) use tools::prepared_conversation;
+pub(super) use tools::prepared_conversation_transaction;
 pub(crate) use work::NativePreparedClaim;
 pub(crate) use workspace_proof::NativePreparedWorkspaceProof;
 

@@ -130,6 +130,23 @@ OMARCHY_RETENTION_STEPS = {
   'Omarchy package bundle is never deleted' => 'ruby .github/scripts/omarchy-package-retention.rb'
 }.freeze
 
+# pacman refuses a pinned package once the key that signed it has expired, so
+# each Omarchy build first warns before, and fails by name after, that date
+# (#3040). The step stays offline, reading the committed signing-key record,
+# and warn-only until expiry; the weekly omarchy-key-expiry workflow fails
+# earlier and re-derives the record from the locked URLs.
+KEY_EXPIRY_STEP = {
+  'name' => 'Arch packager key expiry',
+  'run' => "python3 -B .github/scripts/omarchy_key_expiry_tests.py\npython3 -B .github/scripts/omarchy_key_expiry.py\n"
+}.freeze
+
+def check_key_expiry(steps)
+  found = steps.select { |s| s['name'] == KEY_EXPIRY_STEP['name'] }
+  build = steps.index { |s| s['id'] == 'build' }
+  require_check(found == [KEY_EXPIRY_STEP] && build && steps.index(found.first) < build,
+    'Omarchy must check its packager key expiry offline, warn-only, unconditionally and before building')
+end
+
 def validate(documents, actions)
   require_runtime_inventory(documents)
   check_component_cache_writers(documents)
@@ -257,7 +274,7 @@ def validate(documents, actions)
   serialized = JSON.generate(documents)
   require_check(!serialized.include?('continue-on-error":true,"run'), 'product gate bypass')
   synthetic = structure.select { |s| s['name'] == 'Synthetic authority and observer regressions' }
-  command = 'node --test .github/scripts/staging-authority.test.mjs .github/scripts/public-journey-evidence.test.mjs .github/scripts/deployment-observer.test.mjs'
+  command = 'node --test .github/scripts/staging-authority.test.mjs .github/scripts/public-journey-evidence.test.mjs .github/scripts/connection-journey-evidence.test.mjs .github/scripts/connection-campaign.test.mjs .github/scripts/deployment-observer.test.mjs'
   require_check(synthetic.size == 1 && synthetic.first['run'] == command &&
     !synthetic.first.key?('if') && !synthetic.first.key?('continue-on-error'), 'synthetic authority and observer suites must run')
   repo_job = documents.fetch('ci-repo').fetch('jobs').fetch('structure')
@@ -265,6 +282,7 @@ def validate(documents, actions)
   require_check(!serialized.match?(%r{ci-contract\.rb|staging-authority\.mjs|deployment-observer\.mjs|gh workflow run|gh api[^\n]*dispatches|kubectl}),
     'live authority, observer or mutation tooling retained')
   check_omarchy_archive(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'))
+  check_key_expiry(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'))
   check_os_refresh(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'), 'Omarchy')
   check_os_refresh(documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps'), 'Images')
 end
@@ -336,9 +354,8 @@ ARTIFACT_READER = {'contents' => 'read', 'actions' => 'read'}.freeze
 COMPOSITE_KEYS = {'run' => %w[name id if run env continue-on-error working-directory shell],
                   'uses' => %w[name id if uses with env continue-on-error]}.freeze
 DOWNLOAD_MINUTES = 1..10
-# Production publication is owned separately. Its two single unbounded
-# downloads are the follow-up for this rule; the count may only shrink.
-UNBOUNDED_DOWNLOADS = {'publish' => 2}.freeze
+# Every artifact download is bounded; the follow-up count stays empty.
+UNBOUNDED_DOWNLOADS = {}.freeze
 
 def check_artifact_downloads(workflows, actions)
   actions.each do |reference, action|
@@ -475,7 +492,13 @@ run_rule = "staging-deploy/report: gh run download must be bounded by its step's
  [count_rule, ->(w, _) { report_steps.call(w) << {'uses' => pinned, 'with' => {'name' => 'evidence'}} }],
  [count_rule, ->(w, _) { report_steps.call(w) << {'uses' => third_party, 'with' => {'name' => 'evidence'}} }],
  [count_rule, ->(w, _) { w['publish']['jobs']['release']['steps'] << {'uses' => pinned, 'with' => {'name' => 'evidence'}} }],
- [count_rule, ->(w, _) { w['publish']['jobs'].each_value { |job| job.fetch('steps', []).reject! { |s| s.fetch('uses', '').match?(DOWNLOAD_ACTION) } } }],
+ [count_rule, ->(w, _) {
+   steps = w['publish']['jobs']['release']['steps']
+   steps.reject! { |s| s['id'] == 'notes-download-retry' || s['name'] == 'Explain the unavailable release notes artifact' }
+   steps.find { |s| s['id'] == 'notes-download' }.tap { |s| s.delete('timeout-minutes'); s.delete('continue-on-error') }
+ }],
+ ['publish/release: the download repeat must be identical, bounded and able to fail the job',
+  ->(w, _) { w['publish']['jobs']['release']['steps'].find { |s| s['id'] == 'notes-download-retry' }['with']['name'] = 'other' }],
  [run_rule, ->(w, _) { report_steps.call(w) << {'run' => 'gh run download "$GITHUB_RUN_ID" -n evidence'} }],
  [run_rule, ->(w, _) { report_steps.call(w) << {'run' => 'gh run download "$GITHUB_RUN_ID" -n evidence', 'timeout-minutes' => 60} }],
  ['bounded download regressions must run in Repository checks',
@@ -585,7 +608,7 @@ end
  {'run' => 'node .github/scripts/home-backup/inventory.mjs fixture'}].each do |bypass|
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][restore_index].merge!(bypass) }
 end
-%w[staging-authority public-journey-evidence deployment-observer].each do |suite|
+%w[staging-authority public-journey-evidence connection-journey-evidence connection-campaign deployment-observer].each do |suite|
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]['run'].sub!(" .github/scripts/#{suite}.test.mjs", '') }
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]['run'].sub!("#{suite}.test.mjs", "#{suite}.mjs") }
 end
@@ -596,6 +619,20 @@ mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]
 %w[staging-authority.mjs deployment-observer.mjs].each do |tool|
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'] << {'run' => "node .github/scripts/#{tool}"} }
 end
+omarchy_steps = ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'] }
+key_expiry = ->(d) { omarchy_steps.call(d).find { |s| s['name'] == KEY_EXPIRY_STEP['name'] } }
+[->(d) { omarchy_steps.call(d).delete(key_expiry.call(d)) },
+ ->(d) { omarchy_steps.call(d).insert(omarchy_steps.call(d).index { |s| s['id'] == 'build' }, key_expiry.call(d).dup) },
+ ->(d) { step = omarchy_steps.call(d).delete(key_expiry.call(d)); omarchy_steps.call(d).insert(omarchy_steps.call(d).index { |s| s['id'] == 'build' } + 1, step) },
+ ->(d) { key_expiry.call(d)['continue-on-error'] = true },
+ ->(d) { key_expiry.call(d)['if'] = 'false' },
+ ->(d) { key_expiry.call(d)['run'] = 'true' },
+ ->(d) { key_expiry.call(d)['run'].sub!('omarchy_key_expiry.py', 'omarchy_key_expiry.py || true') },
+ ->(d) { key_expiry.call(d)['run'].sub!(/^.*_tests\.py\n/, '') },
+ ->(d) { key_expiry.call(d)['run'].sub!("omarchy_key_expiry.py\n", "omarchy_key_expiry.py --verify-record\n") },
+ ->(d) { key_expiry.call(d)['run'].sub!("omarchy_key_expiry.py\n", "omarchy_key_expiry.py --refresh\n") },
+ ->(d) { key_expiry.call(d)['run'].sub!("omarchy_key_expiry.py\n", "omarchy_key_expiry.py --fail-days 30\n") },
+ ->(d) { key_expiry.call(d)['env'] = {'GITHUB_STEP_SUMMARY' => '/dev/null'} }].each { |mutate| mutations << mutate }
 [['ci-images', 'images'], ['ci-omarchy', 'omarchy']].each do |file, job|
   ['removed', 'optional', 'skipped', 'fake-success', 'late'].each do |change|
     mutations << lambda do |d|

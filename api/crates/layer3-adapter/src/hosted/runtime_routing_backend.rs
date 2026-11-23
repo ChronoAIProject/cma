@@ -405,6 +405,16 @@ impl HostedBackend for RuntimeBackends {
     ) -> Result<Option<RuntimeObservation>> {
         self.for_handle(handle)?.adopt(handle, request).await
     }
+    async fn adopt_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeObservation>> {
+        self.for_handle(handle)?
+            .adopt_with_home(handle, request, home)
+            .await
+    }
     async fn inspect_native_runtime(
         &self,
         handle: &RuntimeHandle,

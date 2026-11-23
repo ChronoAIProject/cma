@@ -1,3 +1,7 @@
+import {
+  registerComputerSkillsRedesignCases,
+  registerDesktopMotionCases,
+} from './redesign-agent.cases';
 import { test, expect } from '@playwright/test';
 import { binding, cursor, LocalAgentV2 } from './agent-v2.fixture';
 
@@ -270,98 +274,7 @@ for (const width of [1600, 1024, 390]) {
   }
 }
 
-for (const reducedMotion of ['no-preference', 'reduce'] as const) {
-  test(`LOCAL desktop loading and timed handoffs with motion ${reducedMotion}`, async ({
-    page,
-    baseURL,
-  }, info) => {
-    const fixture = new LocalAgentV2();
-    fixture.boundary.agent = { ...fixture.boundary.agent, desktop: true };
-    try {
-      await page.setViewportSize({ width: 1600, height: 1000 });
-      await page.emulateMedia({ reducedMotion });
-      await fixture.route(page, baseURL!);
-      const desktopStream = await desktopBoundary(page, false);
-      await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
-        route.fulfill({
-          json: {
-            object: 'cma.agent.event_head',
-            schema_version: 1,
-            agent_id: 'agt_contract',
-            incarnation: 'a'.repeat(64),
-            through_cursor: cursor(fixture.items.length),
-            active_turn: null,
-          },
-        }),
-      );
-      await page.goto('/agents/agt_contract');
-      await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
-      const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
-      const control = desktop.getByRole('button', { name: 'Take control', exact: true });
-      await expect(desktop.getByRole('status')).toContainText('Loading the desktop screen');
-      await expect(control).toBeDisabled();
-      await expect(desktop.locator('.agent-desktop__loading')).toBeVisible();
-      const shimmer = await desktop
-        .locator('.skeleton')
-        .first()
-        .evaluate((e) => getComputedStyle(e, '::after').animationName);
-      expect(shimmer).toBe(reducedMotion === 'reduce' ? 'none' : 'skeleton-shimmer');
-      await page.screenshot({ path: info.outputPath(`loading-${reducedMotion}.png`) });
-      desktopStream.paint();
-      await expect(control).toBeEnabled();
-      await expect(desktop.locator('.agent-desktop__loading')).toHaveCount(0);
-      await page.clock.install();
-      // Leave ample room for real screenshot/protocol work; component tests
-      // cover the exact 4,999/5,000ms boundary with a fully stopped clock.
-      await control.click();
-      await expect(desktop.locator('.agent-desktop__notice')).toContainText('You have control');
-      expect(
-        await desktop
-          .locator('.agent-desktop__notice')
-          .evaluate((e) => getComputedStyle(e).pointerEvents),
-      ).toBe('none');
-      await page.clock.fastForward(3_000);
-      await expect(desktop.locator('.agent-desktop__notice')).toBeVisible();
-      await desktop.locator('canvas').click();
-      await page.keyboard.down('Control');
-      await page.mouse.down();
-      await expect
-        .poll(() =>
-          desktopStream.inputs.some((x) => x.kind === 'key' && x.down && x.keysym === 0xffe3),
-        )
-        .toBe(true);
-      fixture.append({ type: 'turn_started', turn_sequence: 1 }, binding);
-      fixture.live('text_delta', 'Using the shared desktop.');
-      await expect(desktop.getByRole('status')).toContainText(
-        'Agent is in control · Working in Desktop',
-      );
-      await expect(control).toBeEnabled();
-      await expect(desktop.locator('.agent-desktop__notice')).toContainText(
-        'The Agent has control',
-      );
-      await expect
-        .poll(() =>
-          desktopStream.inputs.some((x) => x.kind === 'key' && !x.down && x.keysym === 0xffe3),
-        )
-        .toBe(true);
-      expect(desktopStream.inputs.filter((x) => x.kind === 'pointer').at(-1)?.buttons).toBe(0);
-      await page.mouse.up();
-      await page.keyboard.up('Control');
-      await page.screenshot({ path: info.outputPath(`handoff-${reducedMotion}.png`) });
-      await page.clock.fastForward(3_000);
-      await expect(desktop.locator('.agent-desktop__notice')).toBeVisible();
-      await page.clock.fastForward(2_400);
-      await expect(desktop.locator('.agent-desktop__notice')).toHaveCount(0);
-      await expect(desktop.getByRole('status')).toContainText(
-        'Agent is in control · Working in Desktop',
-      );
-      expect(fixture.writes).toEqual([]);
-      expect(desktopStream.connections).toHaveLength(1);
-    } finally {
-      await fixture.close(page);
-    }
-  });
-}
+registerDesktopMotionCases();
 
 test('LOCAL Workspace tabs and the 1180px sidebar threshold respect keyboard and manual choices', async ({
   page,
@@ -581,3 +494,5 @@ for (const completion of ['before End', 'after End'] as const) {
     }
   });
 }
+
+registerComputerSkillsRedesignCases();
