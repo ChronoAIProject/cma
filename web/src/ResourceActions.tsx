@@ -35,6 +35,7 @@ export function useResourceActions(
   viewerId = 'current',
   onNavigate?: (route: AppRoute) => void,
   enabled = true,
+  deletionRevision = 0,
 ) {
   // Commands may settle after navigation; target matching belongs to the current view.
   const changed = useRef(onChanged);
@@ -48,6 +49,11 @@ export function useResourceActions(
     return request === undefined || request.accepted ? undefined : { request, restored: true };
   });
   const [deletionRequests, setDeletionRequests] = useState(() => restoreDeletions(viewerId));
+  const [deletionScope, setDeletionScope] = useState({ viewerId, revision: deletionRevision });
+  if (deletionScope.viewerId !== viewerId || deletionScope.revision !== deletionRevision) {
+    setDeletionScope({ viewerId, revision: deletionRevision });
+    setDeletionRequests(restoreDeletions(viewerId));
+  }
   const refreshDeletions = () => {
     setDeletionRequests(restoreDeletions(viewerId));
   };
@@ -58,15 +64,13 @@ export function useResourceActions(
       ...current.filter((item) => item.action.sandboxId !== request.action.sandboxId),
       request,
     ]);
-  const [deletingSandboxIds, setDeletingSandboxIds] = useState<ReadonlySet<string>>(() => {
-    return new Set(
-      restoreDeletions(viewerId).flatMap((request) =>
-        request.accepted && request.action.kind === 'delete_sandbox'
-          ? [request.action.sandboxId]
-          : [],
-      ),
-    );
-  });
+  const deletingSandboxIds = new Set(
+    deletionRequests.flatMap((request) =>
+      request.accepted && request.action.kind === 'delete_sandbox'
+        ? [request.action.sandboxId]
+        : [],
+    ),
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const keys = useRef(new CommandKeys());
@@ -309,10 +313,6 @@ export function useResourceActions(
                 changed.current(deletion.request.action);
               }}
               onAccepted={(request) => {
-                if (request.action.kind === 'delete_sandbox') {
-                  const sandboxId = request.action.sandboxId;
-                  setDeletingSandboxIds((current) => new Set([...current, sandboxId]));
-                }
                 setDeletionRequests((current) => [
                   ...current.filter((item) => item.key !== request.key),
                   request,
