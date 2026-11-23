@@ -3,6 +3,7 @@
 use super::super::{corrupt, SandboxReconciler};
 use layer2_core::sandbox::{Sandbox, SandboxStoreError};
 use layer3_adapter::RuntimeObservation;
+use sha2::{Digest, Sha256};
 use std::time::SystemTime;
 
 const ATTEMPTS: usize = 3;
@@ -67,7 +68,11 @@ impl SandboxReconciler {
                     // One unreachable runtime must not stop the process. The
                     // hold keeps its runtime, Claim and home protected, and a
                     // deferred binding already skips every startup cleanup.
-                    tracing::warn!(target: "cma_startup", parent: None, attempt,
+                    // Hashed like other lifecycle diagnostics, so an operator can
+                    // find a wedged runtime without logging its identifier.
+                    let sandbox_hash =
+                        format!("{:x}", Sha256::digest(sandbox.id.as_str().as_bytes()));
+                    tracing::warn!(target: "cma_startup", parent: None, attempt, sandbox_hash,
                         "Sandbox runtime unavailable during startup binding; deferred to background reconciliation");
                     hold.unavailable();
                     return Ok(false);
