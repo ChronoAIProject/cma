@@ -5,6 +5,9 @@ use crate::hosted::HostedControlTransport;
 #[path = "native_close_effect_tests.rs"]
 mod close_effect;
 
+#[path = "native_close_lane_tests.rs"]
+mod close_lane;
+
 #[path = "native_http_reserve_tests.rs"]
 mod session_reserve;
 

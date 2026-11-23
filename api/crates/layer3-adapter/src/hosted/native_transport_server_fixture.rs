@@ -298,6 +298,14 @@ fn persistent_response(request: &str) -> String {
                 conversation_id: None,
             }))
         },
+        RequestFrame::CloseAgent(request) => ResponseFrame::CloseAgent(FencedReceipt::new(
+            request.authority_fence,
+            crate::wire::AgentCloseReceipt {
+                operation_id: request.request.operation_id,
+                request_sha256: request.request.request_sha256,
+                agent_id: request.request.agent_id,
+            },
+        )),
         RequestFrame::Install(request) => ResponseFrame::Install(crate::InstallReceipt {
             operation_id: request.operation_id,
             request_sha256: request.request_sha256,

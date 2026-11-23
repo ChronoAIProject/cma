@@ -21,14 +21,14 @@ fn timestamp_us() -> u128 {
 
 #[derive(Default)]
 struct CheckoutFields {
-    control: bool,
+    lane: String,
     fresh: bool,
 }
 
 impl Visit for CheckoutFields {
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         if field.name() == "lane" {
-            self.control = format!("{value:?}") == "Control";
+            self.lane = format!("{value:?}");
         }
     }
 
@@ -39,15 +39,18 @@ impl Visit for CheckoutFields {
     }
 }
 
-#[derive(Clone, Default)]
-struct CloseCheckout(Arc<OnceLock<u128>>);
+#[derive(Clone)]
+struct CloseCheckout {
+    lane: &'static str,
+    time: Arc<OnceLock<u128>>,
+}
 
 impl<S: tracing::Subscriber> Layer<S> for CloseCheckout {
     fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
         let mut fields = CheckoutFields::default();
         event.record(&mut fields);
-        if fields.control && fields.fresh {
-            self.0
+        if fields.lane == self.lane && fields.fresh {
+            self.time
                 .set(timestamp_us())
                 .expect("one fresh close checkout");
         }
@@ -71,7 +74,7 @@ async fn stage(control: &mut BufReader<TcpStream>, name: &str) -> u128 {
     micros.parse().unwrap()
 }
 
-async fn exercise(receiver: &std::ffi::OsStr, mode: NativeRuntimeTransport) {
+async fn exercise(receiver: &std::ffi::OsStr, mode: NativeRuntimeTransport, lane_enabled: bool) {
     let coordination = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mut runtime = tokio::process::Command::new(receiver)
         .args(["--exact", RECEIVER_TEST, "--ignored", "--nocapture"])
@@ -98,11 +101,13 @@ async fn exercise(receiver: &std::ffi::OsStr, mode: NativeRuntimeTransport) {
         .unwrap();
 
     let handle = handle();
-    // Give Close a second slot using a separate pool state with the same
-    // capacity authority and Pod binding. Both exchanges use the normal
-    // control route, independently of any proposed CloseAgent lane.
-    let mut closer = (*fixture.transport).clone();
-    closer.state = Arc::new(Mutex::new(TransportState::default()));
+    let mut closer = (*fixture.transport)
+        .clone()
+        .with_native_close_agent_lane(lane_enabled);
+    if !lane_enabled {
+        // Characterize the receiver independently by using a separate pool.
+        closer.state = Arc::new(Mutex::new(TransportState::default()));
+    }
     let ordinary = fixture.transport.exchange(&handle, RequestFrame::Resources);
     tokio::pin!(ordinary);
     let held_at = tokio::select! {
@@ -113,7 +118,14 @@ async fn exercise(receiver: &std::ffi::OsStr, mode: NativeRuntimeTransport) {
 
     let close = crate::AgentCloseRequest::new("agent:agent-1:close:v1", AgentSlot::new("agent-1"));
     let request = RequestFrame::CloseAgent(FencedRequest::new(FENCE, close.clone()));
-    let checkpoint = CloseCheckout::default();
+    let checkpoint = CloseCheckout {
+        lane: if lane_enabled {
+            "CloseAgent"
+        } else {
+            "Control"
+        },
+        time: Arc::new(OnceLock::new()),
+    };
     let close_exchange = scope(TestAuthority::new(FENCE), closer.exchange(&handle, request))
         .with_subscriber(tracing_subscriber::registry().with(checkpoint.clone()));
     let (wire_at, effect_at, ack_at, response) = tokio::time::timeout(Duration::from_secs(8), async {
@@ -136,7 +148,7 @@ async fn exercise(receiver: &std::ffi::OsStr, mode: NativeRuntimeTransport) {
     })
     .await
     .expect("second connection must complete CloseAgent with Resources still held");
-    let checkout_at = *checkpoint.0.get().expect("fresh Control checkout");
+    let checkout_at = *checkpoint.time.get().expect("fresh close checkout");
     let ResponseFrame::CloseAgent(receipt) = response else {
         panic!("expected successful fenced CloseAgent receipt, received {response:?}");
     };
@@ -151,7 +163,7 @@ async fn exercise(receiver: &std::ffi::OsStr, mode: NativeRuntimeTransport) {
             && effect_at <= ack_at
     );
     eprintln!(
-        "{mode:?} checkout_us={} wire_us={} effect_us={} acknowledgement_us={}",
+        "{mode:?} lane_enabled={lane_enabled} checkout_us={} wire_us={} effect_us={} acknowledgement_us={}",
         checkout_at - held_at,
         wire_at - held_at,
         effect_at - held_at,
@@ -178,8 +190,13 @@ async fn authorized_close_takes_effect_while_ordinary_response_is_held() {
         NativeRuntimeTransport::KubernetesExec,
         NativeRuntimeTransport::KubernetesPortforward,
     ] {
-        tokio::time::timeout(Duration::from_secs(20), exercise(&receiver, mode))
+        for lane_enabled in [false, true] {
+            tokio::time::timeout(
+                Duration::from_secs(20),
+                exercise(&receiver, mode, lane_enabled),
+            )
             .await
-            .unwrap_or_else(|_| panic!("{mode:?} runtime effect control timed out"));
+            .unwrap_or_else(|_| panic!("{mode:?} lane_enabled={lane_enabled} timed out"));
+        }
     }
 }
