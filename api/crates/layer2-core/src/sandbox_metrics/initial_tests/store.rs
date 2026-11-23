@@ -6,14 +6,14 @@ use std::sync::{
 };
 pub(super) const AT: u64 = 1_800_000_000;
 pub(super) const REPORT: &str = "umr_00000000000000000000000000000001";
-const SANDBOX: &str = "sbx_00000000000000000000000000000001";
+pub(super) const SANDBOX: &str = "sbx_00000000000000000000000000000001";
 
 pub(super) struct Store {
     pub calls: Mutex<Vec<&'static str>>,
     pub revoked: AtomicBool,
     snapshots: AtomicUsize,
     fault: &'static str,
-    report: Report,
+    pub report: Report,
 }
 impl Store {
     pub fn new(fault: &'static str, admin: bool) -> Self {
@@ -92,13 +92,66 @@ impl MetricsStore for Store {
         }
     }
     async fn resolve_agent(&self, _: &Scope, _: &str) -> Result<String> {
-        panic!("initial reads must not admit or reselect resources")
+        self.call("resolve");
+        if self.revoked.load(Ordering::SeqCst) {
+            return Err(MetricsError::NotFound);
+        }
+        Ok(SANDBOX.into())
     }
     async fn authorize_sandbox(&self, _: &Scope, _: &str) -> Result<()> {
-        panic!("membership authorization owns selected-resource checks")
+        self.call("selected");
+        if self.revoked.load(Ordering::SeqCst) {
+            return Err(MetricsError::NotFound);
+        }
+        Ok(())
     }
-    async fn submit(&self, _: Scope, _: ReportQuery, _: u64) -> Result<Report> {
-        panic!("initial report read must not create a job")
+    async fn submit(&self, _: Scope, query: ReportQuery, _: u64) -> Result<Report> {
+        self.call("submit");
+        let mut report = self.report.clone();
+        if self.fault != "submit-query" {
+            report.query = query;
+            report.effective_range = report.query.effective_range(AT);
+        }
+        if self.fault == "post-submit-revocation" {
+            self.revoked.store(true, Ordering::SeqCst);
+        }
+        Ok(report)
+    }
+    async fn latest(
+        &self,
+        scope: &Scope,
+        selection: &ViewSelection,
+        at: u64,
+    ) -> Result<ReportView> {
+        self.call("latest");
+        if self.fault == "view-disabled" {
+            return Err(MetricsError::ViewDisabled);
+        }
+        let report = self
+            .submit(scope.clone(), selection.query.clone(), at)
+            .await?;
+        let pending = report.status == ReportStatus::Pending;
+        let mut view = ReportView {
+            schema_version: 1,
+            window: selection.window,
+            requested_range: selection.query.range(),
+            generated_at: (!pending).then_some(AT),
+            stale: false,
+            refresh: ViewRefresh {
+                state: if pending {
+                    RefreshState::Pending
+                } else {
+                    RefreshState::Idle
+                },
+                report_id: pending.then(|| report.report_id.clone()),
+                retry_after_seconds: 2,
+            },
+            report,
+        };
+        if self.fault == "view-range" {
+            view.requested_range.from += 1;
+        }
+        Ok(view)
     }
     async fn report(&self, _: &Scope, _: &str, _: u64) -> Result<Report> {
         self.call("report");

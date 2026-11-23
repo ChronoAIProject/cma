@@ -9,36 +9,26 @@ impl MetricsService {
         now: u64,
     ) -> Result<ReportView> {
         let scope = authorize(caller, admin)?;
+        let view = self.select_latest(&scope, input, now).await?;
+        self.store.reauthorize(&view.report).await?;
+        self.store.verify_snapshot(&view.report).await?;
+        Ok(view)
+    }
+
+    pub(super) async fn select_latest(
+        &self,
+        scope: &Scope,
+        input: ViewInput,
+        now: u64,
+    ) -> Result<ReportView> {
         let mut selection = input.validate(now)?;
-        if !admin && selection.query.filters.owner.is_some() {
-            return Err(MetricsError::Invalid(
-                "Owner parameters are forbidden on owner routes.".into(),
-            ));
-        }
-        if let Some(agent) = &selection.query.filters.agent_id {
-            let sandbox = self.store.resolve_agent(&scope, agent).await?;
-            if selection
-                .query
-                .filters
-                .sandbox_id
-                .as_ref()
-                .is_some_and(|id| id != &sandbox)
-            {
-                return Err(MetricsError::Invalid(
-                    "Agent and Sandbox selections disagree.".into(),
-                ));
-            }
-            selection.query.filters.sandbox_id = Some(sandbox);
-        }
-        if let Some(id) = &selection.query.filters.sandbox_id {
-            self.store.authorize_sandbox(&scope, id).await?;
-        }
+        self.select_resources(scope, &mut selection.query).await?;
         self.store.check_read_budget()?;
-        let view = self.store.latest(&scope, &selection, now).await?;
+        let view = self.store.latest(scope, &selection, now).await?;
         if view.schema_version != 1
             || view.window != selection.window
             || view.requested_range != selection.query.range()
-            || !selection.matches(&scope, &view.report)?
+            || !selection.matches(scope, &view.report)?
         {
             return Err(MetricsError::Unavailable);
         }
@@ -56,8 +46,6 @@ impl MetricsService {
                     && view.refresh.report_id.as_deref() == Some(&view.report.report_id) => {}
             _ => return Err(MetricsError::Unavailable),
         }
-        self.store.reauthorize(&view.report).await?;
-        self.store.verify_snapshot(&view.report).await?;
         Ok(view)
     }
 }

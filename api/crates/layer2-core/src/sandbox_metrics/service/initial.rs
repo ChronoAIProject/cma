@@ -34,6 +34,66 @@ impl MetricsService {
         if report.scope != scope || report.report_id != id {
             return Err(MetricsError::NotFound);
         }
+        let initial = self
+            .initial_data(caller, &report, &projection, started, at)
+            .await?;
+        Ok(InitialReport { report, initial })
+    }
+
+    pub async fn submit_initial(
+        &self,
+        caller: &Caller,
+        admin: bool,
+        input: InitialReportInput,
+        at: u64,
+    ) -> Result<InitialReport> {
+        let started = tokio::time::Instant::now();
+        let scope = authorize(caller, admin)?;
+        input.projection.validate(admin)?;
+        let mut query = input.query.validate(at)?;
+        self.select_resources(&scope, &mut query).await?;
+        self.store.check_read_budget()?;
+        let report = self.store.submit(scope.clone(), query.clone(), at).await?;
+        if report.scope != scope {
+            return Err(MetricsError::NotFound);
+        }
+        if report.query != query {
+            return Err(MetricsError::Unavailable);
+        }
+        let initial = self
+            .initial_data(caller, &report, &input.projection, started, at)
+            .await?;
+        Ok(InitialReport { report, initial })
+    }
+
+    pub async fn latest_initial(
+        &self,
+        caller: &Caller,
+        admin: bool,
+        input: InitialViewInput,
+        at: u64,
+    ) -> Result<InitialView> {
+        let started = tokio::time::Instant::now();
+        let scope = authorize(caller, admin)?;
+        input.projection.validate(admin)?;
+        let view = self.select_latest(&scope, input.selection, at).await?;
+        let initial = self
+            .initial_data(caller, &view.report, &input.projection, started, at)
+            .await?;
+        Ok(InitialView { view, initial })
+    }
+
+    async fn initial_data(
+        &self,
+        caller: &Caller,
+        report: &Report,
+        projection: &InitialProjection,
+        started: tokio::time::Instant,
+        at: u64,
+    ) -> Result<Option<InitialData>> {
+        if !query::opaque_id(&report.report_id, "umr_") {
+            return Err(MetricsError::Unavailable);
+        }
         if report.expires_at <= at {
             return Err(MetricsError::Expired);
         }
@@ -41,39 +101,33 @@ impl MetricsService {
             if report.schema_version != 1 || report.report_complete || report.summary.is_some() {
                 return Err(MetricsError::Unavailable);
             }
-            self.store.reauthorize(&report).await?;
+            self.store.reauthorize(report).await?;
             if at.saturating_add(started.elapsed().as_secs()) >= report.expires_at {
                 return Err(MetricsError::Expired);
             }
-            return Ok(InitialReport {
-                report,
-                initial: None,
-            });
+            return Ok(None);
         }
         if report.status != ReportStatus::Ready {
             return Err(MetricsError::Unavailable);
         }
-        validate_initial_report(&report)?;
-        let generation = self.store.initial_snapshot_generation(&report).await?;
+        validate_initial_report(report)?;
+        let generation = self.store.initial_snapshot_generation(report).await?;
         if generation == 0 {
             return Err(MetricsError::Unavailable);
         }
-        self.store.reauthorize(&report).await?;
-        let initial = InitialGrant {
+        self.store.reauthorize(report).await?;
+        InitialGrant {
             store: self.store.as_ref(),
             caller,
-            report: &report,
-            projection: &projection,
+            report,
+            projection,
             generation,
             started,
             at,
         }
         .read()
-        .await?;
-        Ok(InitialReport {
-            report,
-            initial: Some(initial),
-        })
+        .await
+        .map(Some)
     }
 }
 

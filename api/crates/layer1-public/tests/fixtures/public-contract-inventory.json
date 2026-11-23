@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 311,
+  "openapi_operations": 317,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -4218,6 +4218,86 @@
         "invalid_json",
         "json_content_type_required",
         "store_failed"
+      ]
+    },
+    "POST /api/v1/usage/metrics/initial/reports": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/initial/mod.rs# Strict initial projections require current authority, bounded complete responses and typed refusal.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "POST /api/v1/usage/metrics/initial/view": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/initial/mod.rs# Strict initial projections require current authority, bounded complete responses and typed refusal.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired",
+        "report_view_disabled"
+      ]
+    },
+    "POST /api/v1/usage/metrics/initial/reports/{report}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/initial/mod.rs# Strict initial projections require current authority, bounded complete responses and typed refusal.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "POST /api/v1/admin/usage/metrics/initial/reports": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/initial/mod.rs# Strict initial projections require current authority, bounded complete responses and typed refusal.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "POST /api/v1/admin/usage/metrics/initial/view": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/initial/mod.rs# Strict initial projections require current authority, bounded complete responses and typed refusal.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired",
+        "report_view_disabled"
+      ]
+    },
+    "POST /api/v1/admin/usage/metrics/initial/reports/{report}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/initial/mod.rs# Strict initial projections require current authority, bounded complete responses and typed refusal.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
       ]
     }
   },

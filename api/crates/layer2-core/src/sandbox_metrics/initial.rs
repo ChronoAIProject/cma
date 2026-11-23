@@ -167,3 +167,24 @@ pub(super) fn validate_initial_series(
     }
     Ok(())
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InitialReportInput {
+    pub query: ReportInput,
+    pub projection: InitialProjection,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InitialViewInput {
+    pub selection: ViewInput,
+    pub projection: InitialProjection,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InitialView {
+    pub view: ReportView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial: Option<InitialData>,
+}

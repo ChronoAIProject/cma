@@ -222,6 +222,42 @@ async fn initial_service_reads_complete_bound_projections_and_rechecks_live_owne
             .charts
             .iter()
             .all(|chart| chart.lines.len() == 1 && chart.lines[0].id == "total"));
+        let selected = if retained {
+            service
+                .latest_initial(
+                    &caller,
+                    true,
+                    InitialViewInput {
+                        selection: ViewInput::default(),
+                        projection: projection.clone(),
+                    },
+                    report.as_of,
+                )
+                .await
+                .unwrap()
+                .view
+                .report
+        } else {
+            service
+                .submit_initial(
+                    &caller,
+                    true,
+                    InitialReportInput {
+                        query: ReportInput {
+                            from: Some(report.query.from),
+                            to: Some(report.query.to),
+                            step_seconds: Some(report.query.step_seconds),
+                            filters: report.query.filters.clone(),
+                        },
+                        projection: projection.clone(),
+                    },
+                    report.as_of,
+                )
+                .await
+                .unwrap()
+                .report
+        };
+        assert_eq!(selected.report_id, report.report_id);
         store
             .collection("sandboxes")
             .insert_one(doc! {"_id":state(1, now()).sandbox_id.as_str(),"owner":"transferred"})

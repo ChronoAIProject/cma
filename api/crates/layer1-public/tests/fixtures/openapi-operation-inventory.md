@@ -900,4 +900,10 @@ SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both exp
 | `PATCH /api/v1/agents/{id}/preferences` | UpdateAgentPreferencesRequest; key | - | 200 AgentPreferencesView |
 
 | `POST /api/v1/telemetry/browser` | Anonymous, bounded browser diagnostic category; no durable receipt. |
+| `POST /api/v1/usage/metrics/initial/reports` | UsageInitialCreate | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/usage/metrics/initial/view` | UsageInitialViewInput | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/usage/metrics/initial/reports/{report}` | UsageInitialProjection | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/admin/usage/metrics/initial/reports` | UsageInitialCreate | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/admin/usage/metrics/initial/view` | UsageInitialViewInput | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/admin/usage/metrics/initial/reports/{report}` | UsageInitialProjection | - | 200 complete initial data / 202 descriptor only |
 <!-- openapi-operations:end -->
