@@ -67,7 +67,23 @@ async fn fixture(
         std::future::pending::<()>().await;
     }));
     manager.register_lifecycle(lifecycle).unwrap();
+    assert!(!manager.coordinator.is_registered());
+    assert!(!manager.is_ready());
+    assert!(manager.supervisor.lock().await.is_none());
+    assert!(manager
+        .coordinator
+        .store
+        .membership()
+        .await
+        .unwrap()
+        .members
+        .is_empty());
+    let (first, concurrent) = tokio::join!(manager.activate(), manager.activate());
+    first.unwrap();
+    concurrent.unwrap();
+    let task = manager.supervisor.lock().await.as_ref().unwrap().id();
     manager.activate().await.unwrap();
+    assert_eq!(manager.supervisor.lock().await.as_ref().unwrap().id(), task);
     let authority = manager
         .coordinator
         .acquire(&AgentId("contained-drain-agent".into()))
