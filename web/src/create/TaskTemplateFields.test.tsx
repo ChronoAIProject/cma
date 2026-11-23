@@ -59,7 +59,10 @@ it.each(taskTemplates)(
         expect(create).not.toHaveBeenCalled();
         expect(screen.getByLabelText(field.label)).toHaveFocus();
       }
-      fill(field.label, `Synthetic ${field.key}`);
+      fill(
+        field.label,
+        field.key === 'link' ? 'https://example.com/synthetic.csv' : `Synthetic ${field.key}`,
+      );
     }
     expect(start).toBeEnabled();
     expect(screen.getByRole('region', { name: 'Task preview · read-only' })).toBeVisible();
@@ -72,7 +75,12 @@ it.each(taskTemplates)(
     const template = parseTaskTemplate({
       id: definition.id,
       version: 1,
-      fields: Object.fromEntries(definition.fields.map(({ key }) => [key, `Synthetic ${key}`])),
+      fields: Object.fromEntries(
+        definition.fields.map(({ key }) => [
+          key,
+          key === 'link' ? 'https://example.com/synthetic.csv' : `Synthetic ${key}`,
+        ]),
+      ),
     });
     expect(create.mock.calls[0]![0]).toMatchObject({
       template,
