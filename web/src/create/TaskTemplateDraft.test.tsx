@@ -248,7 +248,8 @@ it.each([1, 2])(
     );
     setup();
     click('Write a task without a template');
-    click('Switch and keep draft');
+    if (version === 2) click('Switch and keep draft');
+    else expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Your task')).toHaveValue(version === 1 ? '' : 'Separate text');
     click(version === 1 ? 'Resume research template' : 'Resume document template');
     expect(screen.getByLabelText(version === 1 ? 'Topic' : 'Subject')).toHaveValue(
@@ -421,3 +422,19 @@ it('keeps template drafts editable through full capacity without creating anythi
   expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
   expect(create).not.toHaveBeenCalled();
 });
+
+it.each(taskTemplates)(
+  'exits an untouched $id template without prompting or losing separate text',
+  ({ id, name, fields }) => {
+    const view = setup();
+    fill('Your task', 'Independent text survives');
+    click(name);
+    click('Write a task without a template');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Your task')).toHaveValue('Independent text survives');
+    click(`Resume ${id} template`);
+    for (const field of fields) expect(screen.getByLabelText(field.label)).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(view.create).not.toHaveBeenCalled();
+  },
+);

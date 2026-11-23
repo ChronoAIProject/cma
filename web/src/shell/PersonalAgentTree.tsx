@@ -1,3 +1,4 @@
+import { selectAgentAction } from './agentActionDispatch';
 import { useEffect, useMemo } from 'react';
 import {
   TASK_GROUPS,
@@ -214,14 +215,12 @@ export function PersonalAgentTree({
                   onAction={(kind) =>
                     kind === 'view_environment'
                       ? onNavigate({ kind: 'sandbox', sandboxId: sandbox.id })
-                      : onAction({
-                          kind: kind as
-                            | 'stop_agent'
-                            | 'delete_agent'
-                            | 'export_history'
-                            | 'export_retained_conversation',
-                          agentId: agent.id,
-                        })
+                      : selectAgentAction(
+                          kind,
+                          agent.id,
+                          onAction,
+                          agent.sandboxId === sandbox.id ? sandbox.id : undefined,
+                        )
                   }
                 />
               );

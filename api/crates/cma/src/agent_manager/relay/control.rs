@@ -8,7 +8,7 @@ use axum::{
 };
 use std::net::SocketAddr;
 
-pub(super) const DRAIN: &str = "/internal/agent-manager/v1/drain";
+pub(crate) const DRAIN: &str = "/internal/agent-manager/v1/drain";
 
 #[derive(Clone)]
 struct Control {
@@ -71,7 +71,15 @@ async fn admission(State(state): State<Control>, request: Request, next: Next) -
         );
         return StatusCode::FORBIDDEN.into_response();
     }
-    match state.manager.drain().await {
+    let admission = request
+        .extensions()
+        .get::<crate::startup::Admission>()
+        .cloned();
+    let result = match admission {
+        Some(admission) => admission.drain().await,
+        None => state.manager.drain().await,
+    };
+    match result {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => {
             tracing::warn!(

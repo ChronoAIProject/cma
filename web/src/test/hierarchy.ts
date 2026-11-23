@@ -101,3 +101,26 @@ export function parkedRuntimeUpdateFixture(): SandboxDetail {
     },
   };
 }
+
+export function parkedRuntimeResultFixture(
+  purpose: 'image_rotation' | 'revive' = 'image_rotation',
+): SandboxDetail {
+  const base = parkedRuntimeUpdateFixture();
+  return {
+    ...base,
+    status: purpose === 'revive' ? 'reviving' : 'rotating',
+    runtimeUpdate: undefined,
+    lifecycle: {
+      ...base.lifecycle!,
+      operation: { ...base.lifecycle!.operation!, purpose },
+      result: {
+        state: 'failed',
+        code: 'runtime_update_parked',
+        operationId: 'update-operation',
+        startedAt: base.lifecycle!.operation!.startedAt,
+        continuing: false,
+        actions: ['observe'],
+      },
+    },
+  };
+}
