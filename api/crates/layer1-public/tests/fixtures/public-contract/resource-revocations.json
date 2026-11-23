@@ -1,0 +1,646 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "revocation-post-pending",
+      "operation": "POST /api/v1/resource-revocations",
+      "scenario": "revocation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-revocations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "original"
+        },
+        "body": {
+          "kind": "agent",
+          "id": "agt_share",
+          "share_id": "share",
+          "expected_revision": 1,
+          "change": {
+            "kind": "revoke"
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "operation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "selector": {
+            "kind": "agent",
+            "agent_id": "agt_share"
+          },
+          "share_id": "share",
+          "expected_revision": 1,
+          "state": "pending",
+          "participants": 2,
+          "stopped": 1,
+          "unresolved_effects": 1,
+          "deadline_unix_ms": 11000,
+          "deadline_exceeded": true,
+          "receipt": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-post-anonymous",
+      "operation": "POST /api/v1/resource-revocations",
+      "scenario": "revocation_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-revocations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "original"
+        },
+        "body": {
+          "kind": "agent",
+          "id": "agt_share",
+          "share_id": "share",
+          "expected_revision": 1,
+          "change": {
+            "kind": "revoke"
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-post-outsider",
+      "operation": "POST /api/v1/resource-revocations",
+      "scenario": "revocation_outsider",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-revocations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "original"
+        },
+        "body": {
+          "kind": "agent",
+          "id": "agt_share",
+          "share_id": "share",
+          "expected_revision": 1,
+          "change": {
+            "kind": "revoke"
+          }
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-post-disabled",
+      "operation": "POST /api/v1/resource-revocations",
+      "scenario": "revocation_disabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-revocations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "original"
+        },
+        "body": {
+          "kind": "agent",
+          "id": "agt_share",
+          "share_id": "share",
+          "expected_revision": 1,
+          "change": {
+            "kind": "revoke"
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_revocation_unavailable",
+          "title": "resource_revocation_unavailable",
+          "status": 503,
+          "detail": "Revocation could not be confirmed. Keep the original command key and check its status or retry.",
+          "code": "resource_revocation_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-post-unknown",
+      "operation": "POST /api/v1/resource-revocations",
+      "scenario": "revocation_unknown",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-revocations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "original"
+        },
+        "body": {
+          "kind": "agent",
+          "id": "agt_share",
+          "share_id": "share",
+          "expected_revision": 1,
+          "change": {
+            "kind": "revoke"
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_revocation_unavailable",
+          "title": "resource_revocation_unavailable",
+          "status": 503,
+          "detail": "Revocation could not be confirmed. Keep the original command key and check its status or retry.",
+          "code": "resource_revocation_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-post-conflict",
+      "operation": "POST /api/v1/resource-revocations",
+      "scenario": "revocation_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-revocations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "original"
+        },
+        "body": {
+          "kind": "agent",
+          "id": "agt_share",
+          "share_id": "share",
+          "expected_revision": 1,
+          "change": {
+            "kind": "revoke"
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency_key_reused",
+          "title": "idempotency_key_reused",
+          "status": 409,
+          "detail": "The key was used for another share command.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-post-closing",
+      "operation": "POST /api/v1/resource-revocations",
+      "scenario": "revocation_closing",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-revocations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "original"
+        },
+        "body": {
+          "kind": "agent",
+          "id": "agt_share",
+          "share_id": "share",
+          "expected_revision": 1,
+          "change": {
+            "kind": "revoke"
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_revocation_conflict",
+          "title": "resource_revocation_conflict",
+          "status": 409,
+          "detail": "Another share change is pending. Keep the original command key.",
+          "code": "resource_revocation_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-post-capacity",
+      "operation": "POST /api/v1/resource-revocations",
+      "scenario": "revocation_capacity",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-revocations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "original"
+        },
+        "body": {
+          "kind": "agent",
+          "id": "agt_share",
+          "share_id": "share",
+          "expected_revision": 1,
+          "change": {
+            "kind": "revoke"
+          }
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_revocation_capacity",
+          "title": "resource_revocation_capacity",
+          "status": 429,
+          "detail": "Revocation capacity is temporarily unavailable. Retry the same command key.",
+          "code": "resource_revocation_capacity"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-post-missing-key",
+      "operation": "POST /api/v1/resource-revocations",
+      "scenario": "revocation_missing_key",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-revocations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "agent",
+          "id": "agt_share",
+          "share_id": "share",
+          "expected_revision": 1,
+          "change": {
+            "kind": "revoke"
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-post-invalid_revision",
+      "operation": "POST /api/v1/resource-revocations",
+      "scenario": "revocation_invalid_revision",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/resource-revocations",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "original"
+        },
+        "body": {
+          "kind": "agent",
+          "id": "agt_share",
+          "share_id": "share",
+          "expected_revision": 0,
+          "change": {
+            "kind": "revoke"
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_share_command",
+          "title": "invalid_share_command",
+          "status": 400,
+          "detail": "Share command or resource selector is invalid.",
+          "code": "invalid_share_command"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-get-pending",
+      "operation": "GET /api/v1/resource-revocations/{operation_id}",
+      "scenario": "revocation_pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-revocations/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?kind=agent&id=agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "operation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "selector": {
+            "kind": "agent",
+            "agent_id": "agt_share"
+          },
+          "share_id": "share",
+          "expected_revision": 1,
+          "state": "pending",
+          "participants": 2,
+          "stopped": 1,
+          "unresolved_effects": 1,
+          "deadline_unix_ms": 11000,
+          "deadline_exceeded": true,
+          "receipt": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-get-anonymous",
+      "operation": "GET /api/v1/resource-revocations/{operation_id}",
+      "scenario": "revocation_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-revocations/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?kind=agent&id=agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-get-outsider",
+      "operation": "GET /api/v1/resource-revocations/{operation_id}",
+      "scenario": "revocation_outsider",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-revocations/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?kind=agent&id=agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-get-disabled",
+      "operation": "GET /api/v1/resource-revocations/{operation_id}",
+      "scenario": "revocation_disabled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-revocations/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?kind=agent&id=agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_revocation_unavailable",
+          "title": "resource_revocation_unavailable",
+          "status": 503,
+          "detail": "Revocation could not be confirmed. Keep the original command key and check its status or retry.",
+          "code": "resource_revocation_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-get-unknown",
+      "operation": "GET /api/v1/resource-revocations/{operation_id}",
+      "scenario": "revocation_unknown",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-revocations/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?kind=agent&id=agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_revocation_unavailable",
+          "title": "resource_revocation_unavailable",
+          "status": 503,
+          "detail": "Revocation could not be confirmed. Keep the original command key and check its status or retry.",
+          "code": "resource_revocation_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-predecessor-pending",
+      "operation": "DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}",
+      "scenario": "revocation_pending",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/resource-shares/agent/agt_share/share?expected_revision=1",
+        "headers": {
+          "idempotency-key": "original"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json",
+          "link": "</api/v1/resource-revocations/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?kind=agent&id=agt_share>; rel=\"status\""
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_revocation_pending",
+          "title": "resource_revocation_pending",
+          "status": 409,
+          "detail": "Revocation is pending. Access removal has not been confirmed.",
+          "code": "resource_revocation_pending"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-get-evidence",
+      "operation": "GET /api/v1/resource-revocations/{operation_id}",
+      "scenario": "revocation_evidence",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-revocations/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?kind=agent&id=agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "operation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "selector": {
+            "kind": "agent",
+            "agent_id": "agt_share"
+          },
+          "share_id": "share",
+          "expected_revision": 1,
+          "state": "evidence_received",
+          "participants": 2,
+          "stopped": 2,
+          "unresolved_effects": 1,
+          "deadline_unix_ms": 11000,
+          "deadline_exceeded": true,
+          "receipt": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "revocation-get-effective",
+      "operation": "GET /api/v1/resource-revocations/{operation_id}",
+      "scenario": "revocation_effective",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/resource-revocations/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?kind=agent&id=agt_share",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "operation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "selector": {
+            "kind": "agent",
+            "agent_id": "agt_share"
+          },
+          "share_id": "share",
+          "expected_revision": 1,
+          "state": "effective",
+          "participants": 2,
+          "stopped": 2,
+          "unresolved_effects": 1,
+          "deadline_unix_ms": 11000,
+          "deadline_exceeded": false,
+          "receipt": {
+            "operation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "share": {
+              "id": "share",
+              "owner": {
+                "kind": "person",
+                "subject": "owner-a"
+              },
+              "selector": {
+                "kind": "agent",
+                "agent_id": "agt_share"
+              },
+              "target_org_id": "org",
+              "mode": "view",
+              "issuer_actor": {
+                "kind": "human",
+                "subject": "owner-a"
+              },
+              "created_at": "2026-01-01T00:00:00Z",
+              "revoked_at": "2026-01-01T00:00:01Z",
+              "revision": 2
+            },
+            "actor": {
+              "kind": "human",
+              "subject": "owner-a"
+            },
+            "at": "2026-01-01T00:00:01Z",
+            "policy_revision": 2
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
