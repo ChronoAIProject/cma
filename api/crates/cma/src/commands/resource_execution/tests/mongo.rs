@@ -7,6 +7,7 @@ mod effects;
 mod fixture;
 mod http;
 mod process;
+mod process_compatibility;
 mod public_status;
 mod supervision;
 mod sweep;

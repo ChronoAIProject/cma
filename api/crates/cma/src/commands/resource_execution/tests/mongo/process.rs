@@ -4,8 +4,16 @@ use mongodb::bson::doc;
 use std::{process::Stdio, time::Duration};
 use tokio::process::{Child, Command};
 
-fn spawn(fixture: &Fixture, pause: bool) -> Child {
-    Command::new(std::env::current_exe().unwrap())
+pub(super) fn spawn(fixture: &Fixture, pause: bool) -> Child {
+    spawn_binary(fixture, pause, std::env::current_exe().unwrap())
+}
+
+pub(super) fn spawn_binary(
+    fixture: &Fixture,
+    pause: bool,
+    binary: impl AsRef<std::ffi::OsStr>,
+) -> Child {
+    Command::new(binary)
         .args(["--exact", CHILD, "--ignored", "--nocapture"])
         .env("CMA_REVOCATION_CHILD_DATABASE", fixture.database().name())
         .env(
