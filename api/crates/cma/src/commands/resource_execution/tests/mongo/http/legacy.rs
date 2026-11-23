@@ -47,9 +47,10 @@ fn links(reply: &reqwest::Response, status: Option<&str>) {
         .iter()
         .map(|value| value.to_str().unwrap())
         .collect();
+    let discovery = crate::REST_LINKS;
     let expected: Vec<_> = status
         .into_iter()
-        .chain(std::iter::once(crate::REST_LINKS.to_str().unwrap()))
+        .chain(std::iter::once(discovery.to_str().unwrap()))
         .collect();
     assert_eq!(actual, expected);
 }
