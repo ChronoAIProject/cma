@@ -109,6 +109,14 @@
   white-space: nowrap;
 }
 
+.page-header[data-wrap-identity] h1.page-header__title,
+.page-header[data-wrap-identity] .page-header__crumbs a,
+.page-header[data-wrap-identity] .page-header__crumbs span {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 /*
  * The title takes focus only so a view can move the reader to it on open;
  * it is not a control, so it draws no ring (the base :focus-visible rule
