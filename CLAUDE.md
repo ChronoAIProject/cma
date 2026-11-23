@@ -432,7 +432,9 @@ It suspends the native Sandbox, changes its image and generation, and reopens
 the original conversations on the same PVC/home. IDs and original pool/claim/home
 authority remain unchanged. An initially paused Sandbox returns to paused unless
 new owner work supersedes that intent. Failures retain their exact phase and
-pinned target for retry. Custom-image Sandboxes are excluded.
+pinned target for retry; a recovery stalled at conversation reopen on a
+superseded target is retried on the latest runtime instead. Custom-image
+Sandboxes are excluded.
 
 An owner/control/message/creation revival from Paused uses the latest managed
 runtime on that same retained native Sandbox and home. Already admitted updates
