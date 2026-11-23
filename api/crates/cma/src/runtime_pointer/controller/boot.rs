@@ -118,14 +118,19 @@ impl RuntimePointerController {
         Ok(())
     }
 
-    pub(crate) async fn await_active_ready(&self, admission: Option<&crate::startup::Admission>) -> Result<(), String> {
+    pub(crate) async fn await_active_ready(
+        &self,
+        admission: Option<&crate::startup::Admission>,
+    ) -> Result<(), String> {
         for _ in 0..3 {
             let before = self.release.snapshot();
             let ready = self
                 .pools
                 .await_default_ready_as(admission, Some((&self.release.lanes, &self.writer)))
                 .await;
-            if admission.is_some_and(crate::startup::Admission::is_draining) { return Ok(()) }
+            if admission.is_some_and(crate::startup::Admission::is_draining) {
+                return Ok(());
+            }
             let after = self
                 .release
                 .refresh()

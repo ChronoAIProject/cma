@@ -69,27 +69,48 @@ async fn warm_pools(
         controller.register_boot().await?;
         shutdown.push(controller.spawn_heartbeat(booting, shutdown.subscribe()));
         if !controller.following_configured() {
-            controller.set_following(false).await.map_err(|error| error.to_string())?;
+            controller
+                .set_following(false)
+                .await
+                .map_err(|error| error.to_string())?;
         }
     }
     if admission.is_some_and(Admission::is_draining) {
         return Ok(writer_ready);
     }
-    observe("default_warm_pool_configuration", async {
-        match &composition.runtime_pointer {
-            Some(controller) => controller.bootstrap().await,
-            None => composition.native_warm_pools.ensure_default().await
-                .map_err(|error| format!("native warm pool default is not usable: {error:?}")),
-        }
-    }, |_| None).await?;
-    if !admission.is_some_and(Admission::is_draining) {
-        observe("default_warm_pool_readiness", async {
+    observe(
+        "default_warm_pool_configuration",
+        async {
             match &composition.runtime_pointer {
-                Some(controller) => controller.await_active_ready(admission).await,
-                None => composition.native_warm_pools.await_default_ready_until(admission).await
-                    .map_err(|error| format!("native warm pool startup readiness failed: {error:?}")),
+                Some(controller) => controller.bootstrap().await,
+                None => composition
+                    .native_warm_pools
+                    .ensure_default()
+                    .await
+                    .map_err(|error| format!("native warm pool default is not usable: {error:?}")),
             }
-        }, |_| None).await?;
+        },
+        |_| None,
+    )
+    .await?;
+    if !admission.is_some_and(Admission::is_draining) {
+        observe(
+            "default_warm_pool_readiness",
+            async {
+                match &composition.runtime_pointer {
+                    Some(controller) => controller.await_active_ready(admission).await,
+                    None => composition
+                        .native_warm_pools
+                        .await_default_ready_until(admission)
+                        .await
+                        .map_err(|error| {
+                            format!("native warm pool startup readiness failed: {error:?}")
+                        }),
+                }
+            },
+            |_| None,
+        )
+        .await?;
     }
     Ok(writer_ready)
 }

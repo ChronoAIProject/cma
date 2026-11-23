@@ -279,11 +279,19 @@ impl MongoReleasedRuntimes {
             CommitOutcome::Committed => Ok(()),
             CommitOutcome::Retry(_) => Err(SandboxStoreError::Conflict),
             CommitOutcome::Unknown(error) | CommitOutcome::Failed(error) => {
-                if self.committed(transition).await? {
-                    Ok(())
-                } else {
-                    Err(unavailable(error))
-                }
+                // A commit may be durable before the receipt becomes visible
+                // to another majority read. Reconcile the same immutable
+                // transition within a bounded window, including after failover.
+                let visible = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                    loop {
+                        if self.committed(transition).await? {
+                            return Ok::<_, SandboxStoreError>(());
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
+                })
+                .await;
+                visible.unwrap_or_else(|_| Err(unavailable(error)))
             }
         }
     }

@@ -107,7 +107,11 @@ impl NativeWarmPools {
         }
     }
 
-    async fn retire_during_startup(&self, stopping: &impl Fn() -> bool, writer: Option<StartupWriter<'_>>) {
+    async fn retire_during_startup(
+        &self,
+        stopping: &impl Fn() -> bool,
+        writer: Option<StartupWriter<'_>>,
+    ) {
         if self.retire_superseded(stopping, writer).await.is_err() {
             tracing::warn!("superseded native pool retirement during startup will retry");
         }
@@ -117,7 +121,11 @@ impl NativeWarmPools {
     /// generic reconciler's unbound path would configure a freshly inserted
     /// default at zero replicas and empty a pool that release preparation
     /// prewarmed, which `step` deliberately adopts instead.
-    async fn retire_superseded(&self, stopping: &impl Fn() -> bool, writer: Option<StartupWriter<'_>>) -> Result<(), WarmPoolError> {
+    async fn retire_superseded(
+        &self,
+        stopping: &impl Fn() -> bool,
+        writer: Option<StartupWriter<'_>>,
+    ) -> Result<(), WarmPoolError> {
         let Some(provider) = self.adapter.native_pools() else {
             return Ok(());
         };
@@ -125,7 +133,11 @@ impl NativeWarmPools {
             if stopping() {
                 break;
             }
-            if target.retired || (!target.retiring && (self.current_plan(&target)? || self.store.candidate_protected(&target).await?)) {
+            if target.retired
+                || (!target.retiring
+                    && (self.current_plan(&target)?
+                        || self.store.candidate_protected(&target).await?))
+            {
                 continue;
             }
             // Plans are immutable and retirement only advances, so a claimed
@@ -138,7 +150,8 @@ impl NativeWarmPools {
                     }
                 }
                 Ok(())
-            }).await?;
+            })
+            .await?;
         }
         Ok(())
     }
