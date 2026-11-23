@@ -6,7 +6,7 @@ import { ApiError, type Launch } from '@cma/client';
 import { AuthContextProvider, useAuth } from '../auth/context';
 import { PUBLIC_RECORD, PUBLIC_USER, publicClient } from '../test/public';
 import { PublicJourney } from './PublicJourney';
-import { readIntent } from './intent';
+import { createIntent, readIntent, writeIntent } from './intent';
 
 const route = { kind: 'public_trigger', publicId: 'lifetime-test' } as const;
 const path = '/t/lifetime-test';
@@ -237,30 +237,49 @@ it.each(['accepted', 'credential refusal', 'settled refusal', 'unknown'] as cons
   },
 );
 
-it.each(['pending', 'accepted'] as const)(
-  'recovers the same command after leaving it %s',
-  async (timing) => {
-    const response = deferred<Launch>();
-    const client = publicClient();
-    vi.mocked(client.requests.createOrResume).mockReturnValueOnce(response.promise);
-    const test = setup(client);
-    await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
-    const retained = sessionStorage.getItem(key);
-    test.show(false);
-    if (timing === 'accepted') {
-      await act(async () => response.resolve(PUBLIC_RECORD));
-      expect(sessionStorage.getItem(key)).toBe(retained);
-      expect(test.navigate).not.toHaveBeenCalled();
-    }
-    test.show(true);
-    await screen.findByRole('heading', { name: 'Research assistant' });
+it.each(
+  (['pending', 'accepted'] as const).flatMap((timing) =>
+    [-1, 0, 1, -30 * 60 * 1000].map((offset) => ({ timing, offset })),
+  ),
+)('recovers the same $timing command at expiry offset $offset', async ({ timing, offset }) => {
+  const response = deferred<Launch>();
+  const client = publicClient();
+  vi.mocked(client.requests.createOrResume).mockReturnValueOnce(response.promise);
+  const test = setup(client);
+  await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
+  const retained = sessionStorage.getItem(key);
+  const original = readIntent(path)!;
+  test.show(false);
+  if (timing === 'accepted') {
     await act(async () => response.resolve(PUBLIC_RECORD));
-    await waitFor(() => expect(test.navigate).toHaveBeenCalledOnce());
-    expect(test.navigate).toHaveBeenCalledWith(
-      { kind: 'launch', launchId: PUBLIC_RECORD.id },
-      { replace: true },
-    );
-    expect(client.requests.createOrResume).toHaveBeenCalledOnce();
-    expect(readIntent(path)).toBeUndefined();
-  },
-);
+    expect(sessionStorage.getItem(key)).toBe(retained);
+    expect(test.navigate).not.toHaveBeenCalled();
+  }
+  vi.spyOn(Date, 'now').mockReturnValue(original.expiresAt + offset);
+  test.show(true);
+  await screen.findByRole('heading', { name: 'Research assistant' });
+  await act(async () => response.resolve(PUBLIC_RECORD));
+  await waitFor(() => expect(test.navigate).toHaveBeenCalledOnce());
+  expect(test.navigate).toHaveBeenCalledWith(
+    { kind: 'launch', launchId: PUBLIC_RECORD.id },
+    { replace: true },
+  );
+  expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(readIntent(path)).toBeUndefined();
+});
+
+it('keeps an expired submitted packet without dispatch or re-key when its result is absent', async () => {
+  const original = { ...createIntent(route), owner: PUBLIC_USER.id, submitted: true };
+  writeIntent(original);
+  const retained = sessionStorage.getItem(key);
+  vi.spyOn(Date, 'now').mockReturnValue(original.expiresAt);
+  const test = setup();
+  expect(await screen.findByRole('alert')).toHaveTextContent('Your original request is saved');
+  await test.user.click(screen.getByRole('button', { name: 'Open in CMA' }));
+  const retry = screen.queryByRole('button', { name: 'Try again' });
+  if (retry !== null) await test.user.click(retry);
+  expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
+  expect(test.navigate).not.toHaveBeenCalled();
+  expect(sessionStorage.getItem(key)).toBe(retained);
+  expect(readIntent(path)).toEqual(original);
+});

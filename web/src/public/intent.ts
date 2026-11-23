@@ -19,6 +19,11 @@ export function writeIntent(intent: BrowserIntent): void {
   sessionStorage.setItem(KEY, JSON.stringify(intent));
 }
 
+export function hasCurrentConsent(intent: BrowserIntent): boolean {
+  const now = Date.now();
+  return intent.expiresAt > now && intent.expiresAt <= now + LIFETIME;
+}
+
 export function createIntent(
   route: Extract<AppRoute, { kind: 'public_trigger' }>,
   choice?: LaunchRepeatChoice,
@@ -59,14 +64,15 @@ export function readIntent(path: string): BrowserIntent | undefined {
       typeof intent.key !== 'string' ||
       typeof intent.publicId !== 'string' ||
       typeof intent.expiresAt !== 'number' ||
-      intent.expiresAt <= Date.now() ||
-      intent.expiresAt > Date.now() + LIFETIME ||
+      !Number.isFinite(intent.expiresAt) ||
       typeof intent.submitted !== 'boolean' ||
       intent.body?.start_if_ready !== true
     )
       return undefined;
     if (
       (intent.owner !== undefined && typeof intent.owner !== 'string') ||
+      (intent.submitted && typeof intent.owner !== 'string') ||
+      (!intent.submitted && !hasCurrentConsent(intent as BrowserIntent)) ||
       (intent.credentialRecovery !== undefined &&
         (typeof intent.owner !== 'string' ||
           (intent.credentialRecovery !== 'refused' && intent.credentialRecovery !== 'retry'))) ||

@@ -21,7 +21,12 @@ import { Button } from '../ui/Button';
 import { publicCopy } from '../vocabulary/needs';
 import { refusalSentence } from '../vocabulary/errors';
 import type { PublicClient } from './client';
-import { admit, isSettledQuotaRefusal, isUnsettledCommand } from './admission';
+import {
+  AdmissionRecoveryError,
+  admit,
+  isSettledQuotaRefusal,
+  isUnsettledCommand,
+} from './admission';
 import { createIntent, forgetIntent, readIntent, writeIntent, type BrowserIntent } from './intent';
 import { Landing } from './Landing';
 import { Progress } from './Progress';
@@ -89,6 +94,7 @@ function Entry({
     intent?.credentialRecovery === undefined ? undefined : credentialSetupMessage,
   );
   const [signingInBusy, setSigningInBusy] = useState(false);
+  const [blockedOwner, setBlockedOwner] = useState<string>();
   const [pending, setPending] = useState<{
     owner: string;
     client: PublicClient;
@@ -104,6 +110,7 @@ function Entry({
   const [existing, setExisting] = useState<ExistingLaunchAgent>();
   const [revision, setRevision] = useState(0);
   const owner = state.status === 'authenticated' ? state.user.id : undefined;
+  const recoveryBlocked = owner !== undefined && blockedOwner === owner;
   const credentialReturnTo = routePath({ kind: 'public_trigger', publicId: route.publicId });
   const allowed =
     state.status === 'authenticated' && state.user.capabilities.includes('launch_triggers');
@@ -141,6 +148,11 @@ function Entry({
         onNavigate({ kind: 'launch', launchId: result.id }, { replace: true });
       } catch (cause) {
         if (controller.signal.aborted) return;
+        if (cause instanceof AdmissionRecoveryError) {
+          setBlockedOwner(owner);
+          setError(cause.message);
+          return;
+        }
         let repeat: ExistingLaunchAgent | undefined;
         try {
           repeat = repeatChoiceFrom(cause);
@@ -262,7 +274,7 @@ function Entry({
     };
   }, [allowed, intent, needsSignIn, owner, preview?.availability, submit]);
   const start = (options?: SignInOptions, choice?: LaunchRepeatChoice) => {
-    if (busy || needsSignIn || state.status === 'checking') return;
+    if (busy || recoveryBlocked || needsSignIn || state.status === 'checking') return;
     if (state.status === 'authenticated' && !allowed) {
       setError(publicCopy.readOnly);
       return;
@@ -319,7 +331,7 @@ function Entry({
         <Landing
           preview={preview}
           anonymous={state.status === 'anonymous'}
-          busy={busy || needsSignIn || state.status === 'checking'}
+          busy={busy || recoveryBlocked || needsSignIn || state.status === 'checking'}
           onStart={() => start()}
           onRegister={() => start({ screen: 'register' })}
         />
@@ -341,7 +353,7 @@ function Entry({
               />
             ) : (
               <Button
-                disabled={busy}
+                disabled={busy || recoveryBlocked}
                 onClick={() => {
                   if (preview === undefined) {
                     setError(undefined);

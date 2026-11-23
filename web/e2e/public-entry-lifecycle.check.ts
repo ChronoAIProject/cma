@@ -44,9 +44,11 @@ for (const exit of ['route', 'owner'] as const) {
         await page.goBack();
         await expect(page.getByRole('dialog')).toBeVisible();
       } else {
+        await expect(page.getByRole('region', { name: 'CMA sign-in required' })).toHaveCount(0);
         flow.setSubject('different-owner');
         await page.evaluate(() => window.dispatchEvent(new Event('focus')));
         await expect.poll(() => flow.sessions.includes('different-owner')).toBe(true);
+        await expect(page.getByRole('region', { name: 'CMA sign-in required' })).toBeVisible();
         await expect(
           page.getByRole('button', { name: 'Check signed-in account', exact: true }),
         ).toHaveCount(0);
@@ -114,28 +116,89 @@ for (const outcome of ['accepted', 'credential-refusal', 'forbidden'] as const) 
   });
 }
 
-test('LOCAL same-owner Entry re-entry observes the original in-flight command once', async ({
-  page,
-  baseURL,
-}) => {
-  const flow = await entryFixture(page, baseURL!, 'command');
-  try {
-    await flow.prepare();
-    await flow.waitHeld();
-    const retained = await flow.stored();
-    await page.goBack();
-    await expect(page.getByRole('dialog')).toBeVisible();
-    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Try it', exact: true })).toBeDisabled();
-    expect(await flow.stored()).toBe(retained);
-    expect(flow.posts).toHaveLength(1);
-    await flow.release();
-    await expect(page).toHaveURL(`${baseURL}/launches/${flow.accepted.id}`);
-    await expect(page.getByText('In progress', { exact: true })).toBeVisible();
-    expect(await flow.stored()).toBeNull();
-    expect(flow.posts).toHaveLength(1);
-    flow.finish();
-  } finally {
-    flow.releaseGate();
+for (const timing of ['pending', 'accepted'] as const) {
+  for (const offset of [-1, 0, 1, -30 * 60 * 1000]) {
+    test(`LOCAL same-owner Entry recovers ${timing} at expiry offset ${offset}`, async ({
+      page,
+      baseURL,
+    }, info) => {
+      await page.clock.setFixedTime(new Date('2026-11-23T00:10:00Z'));
+      const flow = await entryFixture(page, baseURL!, 'command');
+      try {
+        await flow.prepare();
+        await flow.waitHeld();
+        const original = (await flow.packet())!;
+        const retained = await flow.stored();
+        const documentId = await flow.documentId();
+        await page.goBack();
+        await expect(page.getByRole('dialog')).toBeVisible();
+        if (timing === 'accepted') {
+          await flow.release();
+          await expect(page).toHaveURL(`${baseURL}/launches/${flow.previous.id}`);
+          expect(await flow.stored()).toBe(retained);
+        }
+        await page.clock.setFixedTime(new Date(original.expiresAt + offset));
+        await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+        if (timing === 'pending') {
+          await expect(page.getByRole('button', { name: 'Try it', exact: true })).toBeDisabled();
+          expect(await flow.stored()).toBe(retained);
+          expect(flow.posts).toHaveLength(1);
+          await flow.release();
+        }
+        await expect(page).toHaveURL(`${baseURL}/launches/${flow.accepted.id}`);
+        await expect(page.getByText('In progress', { exact: true })).toBeVisible();
+        expect(await flow.stored()).toBeNull();
+        expect(await flow.documentId()).toBe(documentId);
+        expect(flow.posts).toHaveLength(1);
+        expect(flow.posts[0]?.key).toBe(original.key);
+        expect(JSON.parse(flow.posts[0]!.body!)).toEqual(original.body);
+        await page.screenshot({ path: info.outputPath('recovered-original.png') });
+        flow.finish();
+      } finally {
+        flow.releaseGate();
+      }
+    });
   }
-});
+}
+
+for (const loss of ['reload', 'unknown', 'fenced'] as const) {
+  test(`LOCAL expired Entry preserves its original request after ${loss}`, async ({
+    page,
+    baseURL,
+  }, info) => {
+    await page.clock.setFixedTime(new Date('2026-11-23T00:10:00Z'));
+    const flow = await entryFixture(
+      page,
+      baseURL!,
+      'command',
+      loss === 'reload' ? 'accepted' : loss,
+    );
+    try {
+      await flow.prepare();
+      await flow.waitHeld();
+      const original = (await flow.packet())!;
+      const retained = await flow.stored();
+      await page.goBack();
+      await expect(page.getByRole('dialog')).toBeVisible();
+      await flow.release();
+      expect(await flow.stored()).toBe(retained);
+      if (loss === 'reload') {
+        await page.reload();
+        await expect(page.getByRole('dialog')).toBeVisible();
+      }
+      await page.clock.setFixedTime(new Date(original.expiresAt + 1));
+      await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await expect(page.getByRole('alert')).toContainText('Your original request is saved');
+      await expect(page.getByRole('button', { name: 'Try it', exact: true })).toBeDisabled();
+      await expect(page.getByRole('button', { name: 'Try again', exact: true })).toBeDisabled();
+      await expect(page).toHaveURL(`${baseURL}/t/public_contract`);
+      expect(await flow.stored()).toBe(retained);
+      expect(flow.posts).toHaveLength(1);
+      expect(flow.posts[0]?.key).toBe(original.key);
+      await page.screenshot({ path: info.outputPath('retained-original.png') });
+      flow.finish();
+    } finally {
+      flow.releaseGate();
+    }
+  });
+}

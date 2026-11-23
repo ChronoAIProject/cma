@@ -2,13 +2,14 @@ import { expect, type Page, type Request } from '@playwright/test';
 import type { Launch, TriggerPreview } from '@cma/client';
 import { LocalStartup, recorded } from './agent-startup-fixtures';
 
-export type Outcome = 'accepted' | 'credential-refusal' | 'forbidden';
+export type Outcome = 'accepted' | 'credential-refusal' | 'forbidden' | 'unknown' | 'fenced';
 export interface EntryPacket {
   id: string;
   key: string;
   owner?: string;
   body: unknown;
   submitted: boolean;
+  expiresAt: number;
   credentialRecovery?: string;
 }
 
@@ -41,13 +42,21 @@ export async function entryFixture(
   let held: Request | undefined;
   let handled = false;
   let ended = false;
+  let failed = false;
+  let status: number | undefined;
   const sessions: string[] = [];
   const posts: { owner: string; key?: string; body: string | null }[] = [];
   page.on('requestfinished', (request) => {
     if (request === held) ended = true;
   });
   page.on('requestfailed', (request) => {
-    if (request === held) ended = true;
+    if (request === held) {
+      ended = true;
+      failed = true;
+    }
+  });
+  page.on('response', (response) => {
+    if (response.request() === held) status = response.status();
   });
   await page.addInitScript(() => {
     window.open = () => null;
@@ -109,10 +118,14 @@ export async function entryFixture(
                 code:
                   outcome === 'credential-refusal'
                     ? 'sandbox_credential_setup_required'
-                    : 'forbidden',
+                    : outcome === 'unknown'
+                      ? 'service_unavailable'
+                      : outcome === 'fenced'
+                        ? 'idempotency_recovery_required'
+                        : 'forbidden',
                 title: 'Synthetic refusal',
               },
-              outcome === 'credential-refusal' ? 409 : 403,
+              outcome === 'unknown' ? 503 : outcome === 'forbidden' ? 403 : 409,
             );
         } finally {
           handled = true;
@@ -185,6 +198,19 @@ export async function entryFixture(
       await expect(page.getByRole('button', { name: 'Try it', exact: true })).toBeEnabled();
     },
     finish: () => {
+      if (mode === 'command') {
+        expect(ended).toBe(true);
+        expect(failed).toBe(false);
+        expect(status).toBe(
+          outcome === 'accepted'
+            ? 201
+            : outcome === 'unknown'
+              ? 503
+              : outcome === 'forbidden'
+                ? 403
+                : 409,
+        );
+      }
       expect(boundary.errors).toEqual([]);
       expect(boundary.unexpected).toEqual([]);
       expect(boundary.writes).toEqual([]);
