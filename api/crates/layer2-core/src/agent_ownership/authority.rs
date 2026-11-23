@@ -5,7 +5,10 @@ use tokio::sync::watch;
 use tokio::time::Instant;
 
 use super::{transport::RegisteredReceiver, OwnershipError, OwnershipStore, OwnershipToken};
+mod provenance;
+mod retirement;
 mod validity;
+pub(super) use retirement::CleanupState;
 use validity::Validity;
 
 tokio::task_local! {
@@ -39,11 +42,13 @@ pub struct Authority {
     pub(super) retry_evidence:
         std::sync::OnceLock<Arc<layer3_adapter::owner_protocol::OwnershipEvidence>>,
     pub token: OwnershipToken,
+    pub(super) policy: super::MaintenancePolicy,
+    pub(super) settlement_watch: layer3_adapter::owner_protocol::ReceiverSettlementWatch,
     pub(super) retiring: AtomicBool,
     pub(super) receiver_failure:
         std::sync::OnceLock<layer3_adapter::owner_protocol::OwnershipFailure>,
     pub(super) receiver_failure_recording: std::sync::OnceLock<watch::Receiver<bool>>,
-    pub(super) handoff_complete: tokio::sync::Mutex<bool>,
+    pub(super) cleanup: tokio::sync::Mutex<CleanupState>,
     validity: watch::Sender<Validity>,
     active_work: watch::Sender<usize>,
     pub(super) store: Option<Arc<dyn OwnershipStore>>,
@@ -53,14 +58,20 @@ pub struct Authority {
 
 impl Authority {
     pub fn new(token: OwnershipToken, deadline: Instant) -> Arc<Self> {
-        let validity = watch::channel(Validity::Live { until: deadline }).0;
+        let validity = watch::channel(Validity::Live {
+            until: deadline,
+            heartbeat_mark: None,
+        })
+        .0;
         Arc::new(Self {
             retry_evidence: Default::default(),
             token,
+            policy: super::MaintenancePolicy::Legacy,
+            settlement_watch: Default::default(),
             retiring: AtomicBool::new(false),
             receiver_failure: Default::default(),
             receiver_failure_recording: Default::default(),
-            handoff_complete: tokio::sync::Mutex::new(false),
+            cleanup: tokio::sync::Mutex::new(CleanupState::default()),
             validity,
             active_work: watch::channel(0).0,
             store: None,
@@ -74,14 +85,29 @@ impl Authority {
         deadline: Instant,
         store: Arc<dyn OwnershipStore>,
     ) -> Arc<Self> {
-        let validity = watch::channel(Validity::Live { until: deadline }).0;
+        Self::with_store_policy(token, deadline, store, super::MaintenancePolicy::Legacy)
+    }
+
+    pub(super) fn with_store_policy(
+        token: OwnershipToken,
+        deadline: Instant,
+        store: Arc<dyn OwnershipStore>,
+        policy: super::MaintenancePolicy,
+    ) -> Arc<Self> {
+        let validity = watch::channel(Validity::Live {
+            until: deadline,
+            heartbeat_mark: None,
+        })
+        .0;
         Arc::new(Self {
             retry_evidence: Default::default(),
             token,
+            policy,
+            settlement_watch: Default::default(),
             retiring: AtomicBool::new(false),
             receiver_failure: Default::default(),
             receiver_failure_recording: Default::default(),
-            handoff_complete: tokio::sync::Mutex::new(false),
+            cleanup: tokio::sync::Mutex::new(CleanupState::default()),
             validity,
             active_work: watch::channel(0).0,
             store: Some(store),
@@ -111,7 +137,10 @@ impl Authority {
             let now = Instant::now();
             state.observe(now);
             if state.deadline().is_some() && now < next {
-                *state = Validity::Live { until: next };
+                *state = Validity::Live {
+                    until: next,
+                    heartbeat_mark: None,
+                };
                 renewed = true;
             } else {
                 state.revoke(now);
@@ -160,7 +189,7 @@ impl Authority {
                 Validity::ReceiverCancelled { .. } => {
                     outcome = ReceiverCancellation::AlreadySafelyCancelled;
                 }
-                Validity::Live { until } => {
+                Validity::Live { until, .. } => {
                     *state = Validity::ReceiverCancelled {
                         previous_until: until,
                     };
@@ -281,7 +310,8 @@ mod tests {
             assert_eq!(
                 *authority.validity.borrow(),
                 Validity::Expired {
-                    previous_until: until
+                    previous_until: until,
+                    mark: None
                 }
             );
             authority.revoke();
@@ -289,7 +319,8 @@ mod tests {
             assert_eq!(
                 *authority.validity.borrow(),
                 Validity::Expired {
-                    previous_until: until
+                    previous_until: until,
+                    mark: None
                 }
             );
         }

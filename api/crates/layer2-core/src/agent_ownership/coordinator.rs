@@ -10,11 +10,13 @@ use tokio::sync::{watch, Mutex};
 use tokio::time::Instant;
 
 use super::{
-    candidates, Authority, Member, OwnershipError, OwnershipLease, OwnershipStore, OwnershipToken,
-    STORE_DEADLINE_MS,
+    candidates, Authority, MaintenancePolicy, Member, OwnershipError, OwnershipLease,
+    OwnershipStore, OwnershipToken, STORE_DEADLINE_MS,
 };
 use crate::AgentId;
 
+#[path = "coordinator_handoff.rs"]
+mod handoff;
 #[path = "coordinator_heartbeat.rs"]
 mod heartbeat;
 #[path = "coordinator_renewal.rs"]
@@ -22,6 +24,17 @@ mod renewal;
 #[cfg(test)]
 #[path = "coordinator_renewal_tests.rs"]
 mod renewal_tests;
+#[path = "coordinator_retirement.rs"]
+mod retirement;
+#[path = "coordinator_retry.rs"]
+mod retry;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lifecycle {
+    Serving,
+    Draining,
+    Failed,
+}
 
 /// One process incarnation. Membership or authority invariant loss revokes it;
 /// an unavailable renewal cancels only its still-live captured Agent authority,
@@ -29,12 +42,17 @@ mod renewal_tests;
 pub struct OwnershipCoordinator {
     pub instance_id: String,
     pub store: Arc<dyn OwnershipStore>,
+    policy: MaintenancePolicy,
+    capacity: usize,
+    cleanup_slots: tokio::sync::Semaphore,
     owned: Mutex<BTreeMap<AgentId, Arc<Authority>>>,
     acquisition: Mutex<()>,
     cancelled_cursor: AtomicUsize,
     member_deadline: std::sync::Mutex<Instant>,
     skipped_heartbeats: AtomicU32,
     draining: AtomicBool,
+    lifecycle: watch::Sender<Lifecycle>,
+    retry: Mutex<super::heartbeat_retry::RetryState>,
     failed: watch::Sender<bool>,
     pub(super) cleanup_pacing: super::cleanup_pacing::CleanupPacing,
 }
@@ -52,6 +70,15 @@ impl OwnershipCoordinator {
         member: Member,
         enabled: bool,
     ) -> Result<Arc<Self>, OwnershipError> {
+        Self::register_with_policy(store, member, enabled, MaintenancePolicy::Legacy).await
+    }
+
+    pub async fn register_with_policy(
+        store: Arc<dyn OwnershipStore>,
+        member: Member,
+        cleanup_pacing: bool,
+        policy: MaintenancePolicy,
+    ) -> Result<Arc<Self>, OwnershipError> {
         let capacity = member.max_owned_agents as usize;
         let started = Instant::now();
         let instance_id = member.instance_id.clone();
@@ -65,15 +92,24 @@ impl OwnershipCoordinator {
         Ok(Arc::new(Self {
             instance_id,
             store,
+            policy,
+            capacity,
+            cleanup_slots: tokio::sync::Semaphore::new(4),
             owned: Mutex::new(BTreeMap::new()),
             acquisition: Mutex::new(()),
             cancelled_cursor: AtomicUsize::new(0),
             member_deadline: std::sync::Mutex::new(deadline),
             skipped_heartbeats: AtomicU32::new(0),
             draining: AtomicBool::new(false),
+            lifecycle: watch::channel(Lifecycle::Serving).0,
+            retry: Mutex::new(super::heartbeat_retry::RetryState::new()),
             failed: watch::channel(false).0,
-            cleanup_pacing: super::cleanup_pacing::CleanupPacing::new(enabled, capacity),
+            cleanup_pacing: super::cleanup_pacing::CleanupPacing::new(cleanup_pacing, capacity),
         }))
+    }
+
+    pub fn contains_failures(&self) -> bool {
+        self.policy == MaintenancePolicy::ContainFailures
     }
 
     pub fn is_ready(&self) -> bool {
@@ -88,6 +124,14 @@ impl OwnershipCoordinator {
 
     pub fn failure_signal(&self) -> watch::Receiver<bool> {
         self.failed.subscribe()
+    }
+
+    pub async fn maintenance_stopped(&self) {
+        let _ = self
+            .lifecycle
+            .subscribe()
+            .wait_for(|state| *state != Lifecycle::Serving)
+            .await;
     }
 
     /// Returns existing current authority. A new acquisition is declined with
@@ -105,6 +149,9 @@ impl OwnershipCoordinator {
         }
         let cancelled = match self.owned.lock().await.get(id).cloned() {
             Some(authority) if authority.is_current() => return Ok(Some(authority)),
+            Some(authority) if self.contains_failures() && authority.retirement_pending() => {
+                return Ok(None)
+            }
             Some(authority) if authority.receiver_cancelled() => Some(authority),
             Some(_) => return Err(OwnershipError::Stale),
             None => None,
@@ -112,6 +159,9 @@ impl OwnershipCoordinator {
         // A skipped heartbeat may begin an outage that ends in failure: adopt
         // nothing new until a heartbeat succeeds. Existing authority stays.
         if self.skipped_heartbeats.load(Ordering::Acquire) > 0 {
+            return Ok(None);
+        }
+        if self.contains_failures() && self.owned.lock().await.len() >= self.capacity {
             return Ok(None);
         }
         let started = Instant::now();
@@ -132,11 +182,12 @@ impl OwnershipCoordinator {
         {
             return Ok(None);
         }
-        let authority = Authority::with_store(
-            lease.token,
-            deadline(started, membership.now_ms, lease.expires_at_ms)?,
-            self.store.clone(),
-        );
+        let until = deadline(started, membership.now_ms, lease.expires_at_ms)?;
+        let authority = if self.contains_failures() {
+            Authority::with_store_policy(lease.token, until, self.store.clone(), self.policy)
+        } else {
+            Authority::with_store(lease.token, until, self.store.clone())
+        };
         let mut owned = self.owned.lock().await;
         if !self.is_ready() {
             authority.revoke();
@@ -166,6 +217,16 @@ impl OwnershipCoordinator {
     /// Returns cooperative handoff candidates; callers may defer busy Agents.
     /// A skipped heartbeat tick renews nothing and returns no candidates.
     pub async fn maintain(&self) -> Result<Vec<Arc<Authority>>, OwnershipError> {
+        if self.contains_failures() {
+            return self.maintain_step().await.map(|step| match step {
+                super::MaintenanceStep::Confirmed { hints, .. } => hints,
+                super::MaintenanceStep::RetryAt(_) | super::MaintenanceStep::Draining => Vec::new(),
+            });
+        }
+        self.maintain_legacy().await
+    }
+
+    async fn maintain_legacy(&self) -> Result<Vec<Arc<Authority>>, OwnershipError> {
         let result = self.maintain_inner().await;
         if result.is_err() {
             self.fail().await;
@@ -273,7 +334,16 @@ impl OwnershipCoordinator {
     /// intermediate candidate sets while receiver IO is blocked.
     pub async fn cancelled_receivers(&self) -> Vec<Arc<Authority>> {
         let owned = self.owned.lock().await;
-        let cancelled: Vec<_> = owned.values().filter(|a| a.receiver_cancelled()).collect();
+        let cancelled: Vec<_> = owned
+            .values()
+            .filter(|a| {
+                if self.contains_failures() {
+                    a.retirement_pending()
+                } else {
+                    a.receiver_cancelled()
+                }
+            })
+            .collect();
         if cancelled.is_empty() {
             return Vec::new();
         }
@@ -302,7 +372,16 @@ impl OwnershipCoordinator {
     }
 
     pub fn stop_admission(&self) {
+        let _deadline = self.member_deadline.lock().unwrap();
         self.draining.store(true, Ordering::Release);
+        self.lifecycle.send_if_modified(|state| {
+            if *state == Lifecycle::Serving {
+                *state = Lifecycle::Draining;
+                true
+            } else {
+                false
+            }
+        });
     }
 
     pub async fn begin_drain(&self) -> Vec<Arc<Authority>> {
@@ -317,81 +396,12 @@ impl OwnershipCoordinator {
         owned
     }
 
-    pub async fn handoff<F>(
-        &self,
-        authority: &Arc<Authority>,
-        revoke_transport: F,
-    ) -> Result<(), OwnershipError>
-    where
-        F: std::future::Future<Output = Result<(), OwnershipError>>,
-    {
-        // Serialize exact-token retirement through receiver confirmation and
-        // durable release. Cancellation leaves completion false for safe retry.
-        let mut complete = authority.handoff_complete.lock().await;
-        if *complete {
-            return Ok(());
-        }
-        authority.retiring.store(true, Ordering::Release);
-        authority.revoke();
-        // Do not shorten the lease until every receiving runtime's cleanup
-        // obligation is settled. Delayed input/ACK packets may be in flight.
-        bounded(revoke_transport).await?;
-        // Cooperative cleanup also ends its retry episode. Old completion
-        // must not clear observations belonging to a replacement authority.
-        if self
-            .owned
-            .lock()
-            .await
-            .get(&authority.token.agent_id)
-            .is_some_and(|current| Arc::ptr_eq(current, authority))
-        {
-            self.cleanup_pacing
-                .receiver_cleanup_completed(&authority.token.agent_id);
-        }
-        bounded(self.store.release(&authority.token)).await?;
-        let mut owned = self.owned.lock().await;
-        if owned
-            .get(&authority.token.agent_id)
-            .is_some_and(|current| Arc::ptr_eq(current, authority))
-        {
-            owned.remove(&authority.token.agent_id);
-        }
-        *complete = true;
-        Ok(())
-    }
-
-    /// Drop only cancelled local custody after a successful durable observation
-    /// proves a newer epoch replaced it. Absence may race an uncertain renewal,
-    /// so it retains the cancelled token until ACK/release or a new acquisition.
-    /// This never releases a lease or changes a replacement epoch.
-    pub async fn forget_cancelled(
-        &self,
-        authority: &Arc<Authority>,
-    ) -> Result<bool, OwnershipError> {
-        if !authority.receiver_cancelled() {
-            return Ok(false);
-        }
-        let mut complete = authority.handoff_complete.lock().await;
-        if *complete {
-            return Ok(true);
-        }
-        let owner = bounded(self.store.owner(&authority.token.agent_id)).await?;
-        if owner.is_none_or(|lease| lease.token.epoch <= authority.token.epoch) {
-            return Ok(false);
-        }
-        let mut owned = self.owned.lock().await;
-        if owned
-            .get(&authority.token.agent_id)
-            .is_some_and(|current| Arc::ptr_eq(current, authority))
-        {
-            owned.remove(&authority.token.agent_id);
-        }
-        *complete = true;
-        Ok(true)
-    }
-
     pub async fn fail(&self) {
-        self.failed.send_replace(true);
+        {
+            let _deadline = self.member_deadline.lock().unwrap();
+            self.failed.send_replace(true);
+            self.lifecycle.send_replace(Lifecycle::Failed);
+        }
         for authority in self.owned.lock().await.values() {
             authority.revoke();
         }
@@ -414,7 +424,9 @@ fn deadline(started: Instant, now_ms: i64, expires_ms: i64) -> Result<Instant, O
         .checked_sub(now_ms)
         .filter(|remaining| *remaining > 0)
         .ok_or(OwnershipError::Stale)?;
-    let until = started + Duration::from_millis(remaining as u64);
+    let until = started
+        .checked_add(Duration::from_millis(remaining as u64))
+        .ok_or(OwnershipError::Stale)?;
     if until <= Instant::now() {
         Err(OwnershipError::Stale)
     } else {

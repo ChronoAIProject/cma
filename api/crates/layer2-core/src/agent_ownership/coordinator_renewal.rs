@@ -8,13 +8,40 @@ impl OwnershipCoordinator {
         started: Instant,
         now_ms: i64,
     ) -> Result<(), OwnershipError> {
-        let obsolete =
-            || authority.retiring.load(Ordering::Acquire) || authority.receiver_cancelled();
+        self.renew_owned_with_episode(authority, started, now_ms, None)
+            .await
+    }
+
+    pub(super) async fn renew_owned_with_episode(
+        &self,
+        authority: &Arc<Authority>,
+        started: Instant,
+        now_ms: i64,
+        episode: Option<super::super::heartbeat_retry::TransientEpisode>,
+    ) -> Result<(), OwnershipError> {
+        if self.contains_failures() {
+            if let Some(error) = authority.settlement_error() {
+                return Err(error);
+            }
+        }
+        let obsolete = || {
+            authority.retiring.load(Ordering::Acquire)
+                || authority.receiver_cancelled()
+                || (self.contains_failures() && authority.retirement_pending())
+        };
+        let normalize = || {
+            self.contains_failures()
+                && self.is_ready()
+                && episode.is_some_and(|episode| authority.retire_retry_expiry(episode))
+        };
         let fatal = |stage, error| self.maintenance_error(stage, Some(authority), error);
         if obsolete() {
             return Ok(());
         }
         if !self.is_ready() || !authority.is_current() {
+            if normalize() || (self.is_ready() && obsolete()) {
+                return Ok(());
+            }
             return Err(fatal("owner_dispatch_deadline", OwnershipError::Stale));
         }
         let renewal = tokio::time::timeout(
@@ -25,7 +52,7 @@ impl OwnershipCoordinator {
         let result = tokio::select! {
             biased;
             _ = authority.revoked() => {
-                if !obsolete() {
+                if !obsolete() && !normalize() {
                     return Err(fatal("owner_active_deadline", OwnershipError::Stale));
                 }
                 // A deliberate handoff/cancellation must not revive authority.
@@ -50,6 +77,9 @@ impl OwnershipCoordinator {
                     return Ok(());
                 }
                 if !self.is_ready() || !authority.is_current() {
+                    if normalize() || (self.is_ready() && obsolete()) {
+                        return Ok(());
+                    }
                     return Err(fatal("owner_result_deadline", OwnershipError::Stale));
                 }
                 return match authority.renew_until(until) {

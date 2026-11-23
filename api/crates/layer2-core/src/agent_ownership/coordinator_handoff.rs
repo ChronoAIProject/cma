@@ -1,0 +1,92 @@
+use super::*;
+
+impl OwnershipCoordinator {
+    pub async fn handoff<F>(
+        &self,
+        authority: &Arc<Authority>,
+        revoke_transport: F,
+    ) -> Result<(), OwnershipError>
+    where
+        F: std::future::Future<Output = Result<(), OwnershipError>>,
+    {
+        if self.contains_failures() {
+            authority.begin_retirement(super::super::RetirementIntent::Cooperative)?;
+            let until = Instant::now() + Duration::from_secs(6);
+            let result = retirement::within(
+                until,
+                self.settle_retirement(authority, revoke_transport, until),
+            )
+            .await
+            .map(|_| ());
+            return authority.settlement_error().map_or(result, Err);
+        }
+        // Serialize exact-token retirement through receiver confirmation and
+        // durable release. Cancellation leaves completion false for safe retry.
+        let mut complete = authority.cleanup.lock().await;
+        if complete.settlement.is_some() {
+            return Ok(());
+        }
+        authority.retiring.store(true, Ordering::Release);
+        authority.revoke();
+        // Do not shorten the lease until every receiving runtime's cleanup
+        // obligation is settled. Delayed input/ACK packets may be in flight.
+        bounded(revoke_transport).await?;
+        // Cooperative cleanup also ends its retry episode. Old completion
+        // must not clear observations belonging to a replacement authority.
+        if self
+            .owned
+            .lock()
+            .await
+            .get(&authority.token.agent_id)
+            .is_some_and(|current| Arc::ptr_eq(current, authority))
+        {
+            self.cleanup_pacing
+                .receiver_cleanup_completed(&authority.token.agent_id);
+        }
+        bounded(self.store.release(&authority.token)).await?;
+        let mut owned = self.owned.lock().await;
+        if owned
+            .get(&authority.token.agent_id)
+            .is_some_and(|current| Arc::ptr_eq(current, authority))
+        {
+            owned.remove(&authority.token.agent_id);
+        }
+        complete.settlement = Some(super::super::Settlement::Released);
+        Ok(())
+    }
+
+    /// Drop only cancelled local custody after a successful durable observation
+    /// proves a newer epoch replaced it. Absence may race an uncertain renewal,
+    /// so it retains the cancelled token until ACK/release or a new acquisition.
+    /// This never releases a lease or changes a replacement epoch.
+    pub async fn forget_cancelled(
+        &self,
+        authority: &Arc<Authority>,
+    ) -> Result<bool, OwnershipError> {
+        if !authority.receiver_cancelled() {
+            return Ok(false);
+        }
+        let mut complete = authority.cleanup.lock().await;
+        if complete.settlement.is_some() {
+            return Ok(true);
+        }
+        let owner = bounded(self.store.owner(&authority.token.agent_id)).await?;
+        if owner
+            .as_ref()
+            .is_none_or(|lease| lease.token.epoch <= authority.token.epoch)
+        {
+            return Ok(false);
+        }
+        let mut owned = self.owned.lock().await;
+        if owned
+            .get(&authority.token.agent_id)
+            .is_some_and(|current| Arc::ptr_eq(current, authority))
+        {
+            owned.remove(&authority.token.agent_id);
+        }
+        complete.settlement = Some(super::super::Settlement::Superseded {
+            newer_epoch: owner.unwrap().token.epoch,
+        });
+        Ok(true)
+    }
+}

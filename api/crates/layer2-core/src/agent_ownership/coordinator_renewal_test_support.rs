@@ -17,6 +17,7 @@ pub(super) struct Store {
     pub(super) delay: StdMutex<Duration>,
     pub(super) all: AtomicBool,
     pub(super) heartbeat_mode: AtomicUsize,
+    pub(super) heartbeat_starts: StdMutex<Vec<Instant>>,
     pub(super) calls: AtomicUsize,
     active: AtomicUsize,
     pub(super) maximum: AtomicUsize,
@@ -38,6 +39,7 @@ impl OwnershipStore for Store {
         self.inner.register(member).await
     }
     async fn heartbeat(&self, id: &str, draining: bool) -> Result<Membership, OwnershipError> {
+        self.heartbeat_starts.lock().unwrap().push(Instant::now());
         // Modes 7-11 fail before the store row changes; 1 and 6 lose a committed reply.
         match self.heartbeat_mode.load(Ordering::SeqCst) {
             7 => {
@@ -57,6 +59,10 @@ impl OwnershipStore for Store {
         }
         let mut membership = self.inner.heartbeat(id, draining).await?;
         match self.heartbeat_mode.load(Ordering::SeqCst) {
+            12 => {
+                self.entered.notify_one();
+                self.resume.notified().await;
+            }
             1 => tokio::time::sleep(Duration::from_secs(10)).await,
             2 => membership.members[0].protocol += 1,
             3 => membership.members[0].draining = true,
@@ -135,6 +141,10 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) async fn new(count: usize) -> Self {
+        Self::with_policy(count, MaintenancePolicy::Legacy).await
+    }
+
+    pub(super) async fn with_policy(count: usize, policy: MaintenancePolicy) -> Self {
         let store = Arc::new(Store {
             inner: MemoryOwnershipStore::default(),
             reply: StdMutex::new(Reply::Error(OwnershipError::Unavailable(
@@ -143,6 +153,7 @@ impl Fixture {
             delay: StdMutex::new(Duration::ZERO),
             all: AtomicBool::new(false),
             heartbeat_mode: AtomicUsize::new(0),
+            heartbeat_starts: StdMutex::new(Vec::new()),
             calls: AtomicUsize::new(0),
             active: AtomicUsize::new(0),
             maximum: AtomicUsize::new(0),
@@ -150,7 +161,7 @@ impl Fixture {
             entered: Notify::new(),
             resume: Notify::new(),
         });
-        let manager = OwnershipCoordinator::register(
+        let manager = OwnershipCoordinator::register_with_policy(
             store.clone(),
             Member {
                 instance_id: "renewal-member".into(),
@@ -161,6 +172,8 @@ impl Fixture {
                 owned_agents: 0,
                 max_owned_agents: 256,
             },
+            false,
+            policy,
         )
         .await
         .unwrap();
