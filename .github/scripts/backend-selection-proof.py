@@ -94,11 +94,11 @@ def mongo_filters(source, registry_directory=None):
     names = dict(shlex.split(line)[1].split("=", 1) for line in source.splitlines()
                  if line.startswith(("readonly scale_test=", "readonly owner_allocation_test=",
                                      "readonly audit_bounds_test=", "readonly diagnostics_test=",
-                                     "readonly scan_cooperation_test=", "readonly bson_ceiling_test=", "readonly first_response_test=",
+                                     "readonly scan_cooperation_test=", "readonly bson_ceiling_test=", "readonly first_response_test=", "readonly history_test=",
                                      "readonly observation_budget_test=")))
     default = re.search(r"local selection_filter=([\"'])(.*?)\1", source)
     predicates = {"all": default.group(2) if default else "all()"}
-    optional = ("owner-allocation", "audit-bounds", "diagnostics", "scan-cooperation", "bson-ceiling", "first-response", "cpu-profile",
+    optional = ("owner-allocation", "audit-bounds", "diagnostics", "scan-cooperation", "bson-ceiling", "first-response", "history", "cpu-profile",
                 "observation-budget")
     for mode in ("scale", *optional, "ordinary"):
         line = next((line.strip() for line in source.splitlines()
@@ -167,7 +167,7 @@ def main():
     new_source = (ROOT / ".github/scripts/mongo-contract-tests.sh").read_text()
     before_filters = mongo_filters(old_source, baseline / "mongo-contract-suites")
     after_filters = mongo_filters(new_source)
-    isolated = ("owner-allocation", "audit-bounds", "diagnostics", "scan-cooperation", "bson-ceiling", "first-response")
+    isolated = ("owner-allocation", "audit-bounds", "diagnostics", "scan-cooperation", "bson-ceiling", "first-response", "history")
     mongo_sets = {}
     for mode in isolated:
         mongo_sets[mode] = list_tests(["-E", after_filters[mode], "--run-ignored", "only"])[0]

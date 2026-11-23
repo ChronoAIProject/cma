@@ -120,6 +120,7 @@ pub(super) fn lifecycle_config(
         access_transport_migration: config.agent_access_transport_migration.clone(),
         managed_documents_enabled: config.document_storage.is_some(),
         event_driven_reconciliation: config.features.event_driven_reconciliation,
+        stale_turn_reconciliation: config.features.stale_turn_reconciliation,
         skip_ineligible_reconciliation: config
             .agent_manager_replicas
             .as_ref()

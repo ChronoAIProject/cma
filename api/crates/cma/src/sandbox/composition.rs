@@ -61,6 +61,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub event_driven_reconciliation: bool,
+    pub stale_turn_reconciliation: bool,
     pub skip_ineligible_reconciliation: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
@@ -81,6 +82,7 @@ pub(crate) struct SandboxLifecycleComposition {
     agent: AgentScheduler,
     capacity_worker: Arc<AgentWorker>,
     capacity_recovery: Option<SandboxScheduler>,
+    stale_turns: Option<super::stale_turn_reconciliation::Worker>,
     titles: AgentTitleScheduler,
     suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
     updates: Arc<DurableAgentUpdateRecorder>,
@@ -117,6 +119,17 @@ impl SandboxLifecycleComposition {
         );
         let sandbox_admitted = Arc::clone(&dependencies.store.sandbox_admitted);
         let agent_admitted = Arc::clone(&dependencies.store.agent_admitted);
+        let stale_turns = if config.stale_turn_reconciliation {
+            config.ownership.as_ref().map(|ownership| {
+                super::stale_turn_reconciliation::Worker::new(
+                    dependencies.store.clone(),
+                    ownership.clone(),
+                    dependencies.registry.clone(),
+                )
+            })
+        } else {
+            None
+        };
         let warmup = super::warmup::LegacyWarmSandboxCleanup {
             store: dependencies.store.clone(),
             adapter: dependencies.adapter.clone(),
@@ -280,6 +293,7 @@ impl SandboxLifecycleComposition {
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
             capacity_worker: agent_worker.clone(),
             capacity_recovery: None,
+            stale_turns,
             agent: AgentScheduler::new(agent_worker, agent_admitted)
                 .with_event_driven_reconciliation(
                     Arc::clone(&dependencies.store.agent_parent_ready),
@@ -341,6 +355,12 @@ impl SandboxLifecycleComposition {
                 scheduler
                     .spawn_supervised(shutdown.subscribe(), workers.get("agent_capacity_recovery")),
             );
+        }
+        if let Some(worker) = self.stale_turns {
+            shutdown.push(worker.spawn(
+                shutdown.subscribe(),
+                workers.get("agent_stale_turn_reconciliation"),
+            ));
         }
         shutdown.push(self.warmup.spawn(shutdown.subscribe()));
         let signal = shutdown.subscribe();

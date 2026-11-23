@@ -1,4 +1,5 @@
 use super::*;
+mod parked_runtime_update;
 mod predecessor;
 use crate::sandbox::{
     lifecycle_test_support, SandboxLifecycleOperation, SandboxReviveCause, SandboxRevivePhase,

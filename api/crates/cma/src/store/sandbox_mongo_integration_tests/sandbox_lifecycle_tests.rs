@@ -22,6 +22,7 @@ mod wake_tests;
 
 mod commit_tests;
 pub(super) mod failed_result_tests;
+mod reopen_deadline_tests;
 
 fn checkpoint(epoch: u64) -> SandboxCheckpointRef {
     let archive = b"durable conversation archive".to_vec();

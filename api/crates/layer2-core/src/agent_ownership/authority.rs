@@ -103,6 +103,10 @@ impl Authority {
             .is_some_and(|deadline| Instant::now() < deadline)
     }
 
+    pub(super) fn established_deadline(&self) -> Option<Instant> {
+        *self.deadline.borrow()
+    }
+
     pub fn renew_until(&self, next: Instant) -> Result<(), OwnershipError> {
         let mut renewed = false;
         self.deadline.send_modify(|deadline| {
