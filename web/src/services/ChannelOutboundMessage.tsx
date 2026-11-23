@@ -1,3 +1,4 @@
+import { useChannelWriteGuard } from './useChannelWriteGuard';
 import { useEffect, useRef, useState } from 'react';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
@@ -20,6 +21,7 @@ import { outboundSeparateMessageEnabled, outboundStatus } from './outboundStatus
 import { PreviousOutboundDelivery } from './PreviousOutboundDelivery';
 
 interface Props {
+  readonly writable?: boolean;
   readonly owner: string;
   readonly channel: Channel;
   readonly selection: ChannelSelection;
@@ -30,7 +32,8 @@ interface Props {
 export function ChannelOutboundMessage(props: Props) {
   return <Composer key={JSON.stringify([props.owner, props.channel.record_id])} {...props} />;
 }
-function Composer({ owner, channel, selection, denied, onAvailability }: Props) {
+function Composer({ owner, channel, selection, denied, onAvailability, writable = true }: Props) {
+  const canWrite = useChannelWriteGuard(writable);
   const capabilities = useRelayCapabilities();
   const journal = useOutboundJournal(owner, channel.record_id);
   const { draft, receipt, uncertain = false, preparationExpired = false } = journal.intent ?? {};
@@ -68,6 +71,7 @@ function Composer({ owner, channel, selection, denied, onAvailability }: Props) 
     !!selectedRoute && (!!message.trim() || media.length > 0) && !mediaError && !mediaUnavailable;
 
   async function act(action: 'prepare' | 'send' | 'read' | 'cancel') {
+    if ((action === 'prepare' || action === 'send') && !canWrite()) return;
     if (active.current || (journal.error && action !== 'read')) return;
     if (
       action === 'send' &&
@@ -199,7 +203,10 @@ function Composer({ owner, channel, selection, denied, onAvailability }: Props) 
         before sending it.
       </p>
       {!receipt && !draft && enabled ? (
-        <fieldset disabled={pending || !!journal.error} className="channel-form-section">
+        <fieldset
+          disabled={!writable || pending || !!journal.error}
+          className="channel-form-section"
+        >
           <Choice
             label="Saved destination"
             value={selectedRoute}
@@ -246,7 +253,9 @@ function Composer({ owner, channel, selection, denied, onAvailability }: Props) 
       <div className="channel-form-actions">
         {!receipt && (draft || enabled) ? (
           <Button
-            disabled={pending || !!journal.error || (!draft && (!enabled || !canReview))}
+            disabled={
+              !writable || pending || !!journal.error || (!draft && (!enabled || !canReview))
+            }
             onClick={() => void act('prepare')}
           >
             {draft ? 'Check saved request' : 'Review message'}
@@ -254,7 +263,7 @@ function Composer({ owner, channel, selection, denied, onAvailability }: Props) 
         ) : null}
         {status?.send ? (
           <Button
-            disabled={pending || !!journal.error || !enabled || mediaUnavailable}
+            disabled={!writable || pending || !!journal.error || !enabled || mediaUnavailable}
             onClick={() => void act('send')}
           >
             Send message

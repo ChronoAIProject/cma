@@ -1,56 +1,74 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
-import { hasChannelAddress, type Channel, type ChannelListItem } from './ChannelEditor';
+import { hasChannelAddress, type ChannelListItem } from './channelTypes';
+import { channelResponseMatches } from './channelEvidence';
 import { segment, ServiceError, serviceRequest, type Denied } from './client';
 
 /** Legacy records retain their original opaque address; never invent a replacement ID. */
 export function ExistingChannel({
   channel,
+  originalAddress,
   denied,
-  children,
+  onRead,
+  onUnavailable,
 }: {
   readonly channel: ChannelListItem;
+  readonly originalAddress?: string;
   readonly denied: Denied;
-  readonly children: (channel: Channel) => ReactNode;
+  readonly onRead: (channel: ChannelListItem) => void;
+  readonly onUnavailable: (record: string) => void;
 }) {
-  const [resolved, setResolved] = useState<Channel>();
-  const address = useRef<string | undefined>(undefined);
+  const active = useRef<AbortController | undefined>(undefined);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string>();
+  const [observed, setObserved] = useState(channel);
+  if (channel !== observed) {
+    setObserved(channel);
+    setBusy(!hasChannelAddress(channel));
+    setError(undefined);
+  }
+  const read = useCallback(
+    (id?: string) => {
+      active.current?.abort();
+      const controller = new AbortController();
+      active.current = controller;
+      return serviceRequest<ChannelListItem>(
+        'event-gateway',
+        id ? `/v1/channels/${segment(id)}` : `/v1/channel-records/${segment(channel.record_id)}`,
+        { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]) },
+      )
+        .then((value) => {
+          if (controller.signal.aborted) return;
+          if (
+            !channelResponseMatches(channel, value) ||
+            !hasChannelAddress(value) ||
+            (id && value.channel_id !== id) ||
+            (originalAddress && value.channel_id !== originalAddress)
+          )
+            throw new Error(
+              'This channel ID belongs to another channel or its version could not be confirmed. Use the original ID for this record and refresh.',
+            );
+          onRead(value);
+        })
+        .catch((reason: unknown) => {
+          if (controller.signal.aborted) return;
+          if (reason instanceof ServiceError && [401, 403].includes(reason.status))
+            denied(reason.status);
+          onUnavailable(channel.record_id);
+          setError(reason instanceof Error ? reason.message : 'The channel could not be opened.');
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setBusy(false);
+        });
+    },
+    [channel, originalAddress, denied, onRead, onUnavailable],
+  );
   useEffect(() => {
-    const controller = new AbortController();
-    void serviceRequest<ChannelListItem>(
-      'event-gateway',
-      (channel.channel_id ?? address.current)
-        ? `/v1/channels/${segment((channel.channel_id ?? address.current)!)}`
-        : `/v1/channel-records/${segment(channel.record_id)}`,
-      { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]) },
-    )
-      .then((value) => {
-        if (
-          !controller.signal.aborted &&
-          value.record_id === channel.record_id &&
-          hasChannelAddress(value)
-        ) {
-          address.current = value.channel_id;
-          setResolved(value);
-        }
-      })
-      .catch((reason: unknown) => {
-        if (
-          !controller.signal.aborted &&
-          reason instanceof ServiceError &&
-          [401, 403].includes(reason.status)
-        )
-          denied(reason.status);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setBusy(false);
-      });
-    return () => controller.abort();
-  }, [channel.record_id, channel.channel_id, channel.version, denied]);
-  if (resolved && resolved.version >= channel.version) return children(resolved);
+    if (!hasChannelAddress(channel)) void read(channel.channel_id ?? originalAddress);
+    return () => active.current?.abort();
+  }, [channel, originalAddress, read]);
+  if (hasChannelAddress(channel)) return null;
   return (
     <>
       <p>This existing channel keeps its original configuration and address.</p>
@@ -62,30 +80,11 @@ export function ExistingChannel({
           onSubmit={(event) => {
             event.preventDefault();
             const id = String(new FormData(event.currentTarget).get('channel_id')).trim();
-            if (!id) return;
-            setBusy(true);
-            setError(undefined);
-            void serviceRequest<ChannelListItem>('event-gateway', `/v1/channels/${segment(id)}`)
-              .then((value) => {
-                if (
-                  value.record_id !== channel.record_id ||
-                  !hasChannelAddress(value) ||
-                  value.channel_id !== id
-                )
-                  throw new Error(
-                    'This channel ID belongs to another channel. Use the original ID for this record.',
-                  );
-                address.current = value.channel_id;
-                setResolved(value);
-              })
-              .catch((reason: unknown) => {
-                if (reason instanceof ServiceError && [401, 403].includes(reason.status))
-                  denied(reason.status);
-                setError(
-                  reason instanceof Error ? reason.message : 'The channel could not be opened.',
-                );
-              })
-              .finally(() => setBusy(false));
+            if (id && !busy) {
+              setBusy(true);
+              setError(undefined);
+              void read(id);
+            }
           }}
         >
           <label>
