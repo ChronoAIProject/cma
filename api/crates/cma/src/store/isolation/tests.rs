@@ -13,6 +13,67 @@ async fn real_allocation_buckets_activate_only_with_confined_namespace_grants() 
 }
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn real_cancelled_terminal_command_can_end_its_own_session_under_the_exact_runtime_grant() {
+    use mongodb::{
+        options::{ClientOptions, Credential},
+        Client,
+    };
+    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_terminal_grant_{}", uuid::Uuid::new_v4().simple());
+    let db = admin.database(&name);
+    db.run_command(role(&name)).await.unwrap();
+    let password = uuid::Uuid::new_v4().to_string();
+    db.run_command(doc! {"createUser":"terminal-runtime","pwd":&password,
+    "roles":[{"role":"cma_am_runtime","db":&name}]})
+        .await
+        .unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.credential = Some(
+        Credential::builder()
+            .username("terminal-runtime".to_owned())
+            .password(password)
+            .source(name.clone())
+            .build(),
+    );
+    let runtime = Client::with_options(options).unwrap();
+    let agents = runtime.database(&name).collection::<Document>("agents");
+    let mut session = runtime.start_session().await.unwrap();
+    session.start_transaction().await.unwrap();
+    agents
+        .find_one(doc! {})
+        .session(&mut session)
+        .await
+        .expect("the runtime grant reads agents");
+    // Control: the credential really is confined to its grant.
+    let foreign = runtime
+        .database(&format!("{name}_foreign"))
+        .collection::<Document>("agents")
+        .find_one(doc! {})
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(foreign.kind.as_ref(), mongodb::error::ErrorKind::Command(c) if c.code == 13),
+        "the runtime credential must be refused outside its grant"
+    );
+    // The guard's recovery command needs no privilege beyond owning the session (#3288).
+    crate::store::transaction_terminal::kill_session(&runtime, session.id())
+        .await
+        .expect("a runtime credential may end its own session");
+    assert!(
+        agents
+            .find_one(doc! {})
+            .session(&mut session)
+            .await
+            .is_err(),
+        "ending the session aborts its open transaction"
+    );
+    drop(session);
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
     use futures_util::TryStreamExt as _;
     use mongodb::{
