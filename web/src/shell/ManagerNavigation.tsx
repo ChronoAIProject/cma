@@ -7,6 +7,8 @@ import {
   useState,
   type Ref,
 } from 'react';
+import { DeletionProgressList } from './DeletionProgressList';
+import { runtimeAttention, type RuntimeAttention } from './runtimeAttention';
 import { SkeletonRows } from '../ui/Skeleton';
 import type { AgentDetail } from '../api/types';
 import type { AppRoute } from '../routing/routes';
@@ -27,11 +29,15 @@ export interface EnvironmentNavigationHandle {
 }
 
 export function ManagerNavigation(props: Parameters<typeof ViewerNavigation>[0]) {
-  return <ViewerNavigation key={props.viewerId} {...props} />;
+  return <ViewerNavigation key={`${props.viewerId}:${props.authEpoch ?? 0}`} {...props} />;
 }
 
 function ViewerNavigation({
   ref,
+  authEpoch = 0,
+  selectedRetired,
+  attention,
+  unknownDeletingSandboxIds,
   client,
   scope,
   choices,
@@ -53,6 +59,14 @@ function ViewerNavigation({
   onAction,
 }: {
   readonly ref?: Ref<EnvironmentNavigationHandle>;
+  readonly authEpoch?: number;
+  readonly selectedRetired?: {
+    readonly detail: AgentDetail;
+    readonly viewerId: string;
+    readonly authEpoch: number;
+  };
+  readonly attention?: RuntimeAttention;
+  readonly unknownDeletingSandboxIds?: ReadonlySet<string>;
   readonly client?: ResourceViewsClient;
   readonly scope: string;
   readonly choices: NavigationScopeChoices;
@@ -150,6 +164,50 @@ function ViewerNavigation({
     if (scrollport.current)
       scrollport.current.scrollTop = view === 'agent' ? taskReturn.scrollTop : 0;
   }, [view, sidebar?.collapsed, taskReturn.scrollTop]);
+  const retired =
+    scope === '' &&
+    selectedRetired?.viewerId === viewerId &&
+    selectedRetired.authEpoch === authEpoch &&
+    route.kind === 'agent' &&
+    route.agentId === selectedRetired.detail.id &&
+    selectedRetired.detail.sandbox.status === 'retired' &&
+    selectedRetired.detail.worktree.agentId === selectedRetired.detail.id &&
+    selectedRetired.detail.worktree.workspaceId === selectedRetired.detail.workspace.id &&
+    selectedRetired.detail.worktree.sandboxId === selectedRetired.detail.sandbox.id
+      ? selectedRetired.detail
+      : undefined;
+  const observedAttention =
+    attention ??
+    runtimeAttention(navigation, {
+      accepted: deletingSandboxIds,
+      unknown: unknownDeletingSandboxIds ?? new Set(),
+    });
+  const deletions = new Map<
+    string,
+    { id: string; name: string; status?: AgentDetail['sandbox']['status']; unknown?: boolean }
+  >();
+  if (scope === '') {
+    for (const id of deletingSandboxIds) deletions.set(id, { id, name: 'Environment' });
+    for (const id of unknownDeletingSandboxIds ?? [])
+      if (!deletions.has(id)) deletions.set(id, { id, name: 'Environment', unknown: true });
+    if (navigation.status === 'ready')
+      for (const { sandbox } of navigation.items) {
+        if (sandbox.status === 'retiring' || deletions.has(sandbox.id))
+          deletions.set(sandbox.id, {
+            ...deletions.get(sandbox.id),
+            id: sandbox.id,
+            name: sandbox.name,
+            status: sandbox.status,
+            unknown: sandbox.status === 'retiring' ? false : deletions.get(sandbox.id)?.unknown,
+          });
+        if (
+          !navigation.refreshError &&
+          sandbox.status === 'retired' &&
+          !deletions.get(sandbox.id)?.unknown
+        )
+          deletions.delete(sandbox.id);
+      }
+  }
   const navigationPanel = (panelView: NavigationView) => (
     <ScopedNavigation
       route={panelView === 'agent' && view === 'sandbox' ? taskReturn.route : route}
@@ -170,6 +228,10 @@ function ViewerNavigation({
               </Button>
             ) : null}
             <Tree
+              selectedRetired={retired}
+              onShowAll={() => filters.select('agent', 'all')}
+              attention={observedAttention}
+              showDeletionProgress={false}
               currentTask={
                 currentAgent && (currentActivity !== undefined || currentTurnId !== undefined)
                   ? { agent: currentAgent, status: currentActivity, turnId: currentTurnId }
@@ -285,6 +347,7 @@ function ViewerNavigation({
           ) : null}
         </TreeCreationScope>
       </div>
+      <DeletionProgressList sandboxes={[...deletions.values()]} onViewStatus={onViewDeletion} />
     </div>
   );
 }

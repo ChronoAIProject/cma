@@ -18,8 +18,7 @@ it('discloses the exact counted environments and navigates without retrying an u
       onSelect={onSelect}
     />,
   );
-  expect(screen.getByRole('button', { name: 'First environment' })).not.toBeVisible();
-  await user.click(screen.getByText('2 updates failed · Fix'));
+  expect(screen.getByRole('button', { name: 'First environment' })).toBeVisible();
   expect(screen.getByText('2 updates failed · Fix')).toBeVisible();
   expect(container.querySelector('.character-avatar')).toHaveAttribute('data-motion', 'still');
   expect(screen.getByRole('button', { name: 'Second environment' })).toHaveAttribute(

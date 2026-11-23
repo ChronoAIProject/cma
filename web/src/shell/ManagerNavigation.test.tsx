@@ -94,7 +94,7 @@ it('shows visible task states alongside characters and respects parent lifecycle
   const view = render(draw('active', 'ready'));
   const cases = [
     ['active', 'ready', 'idle', 'still', 'brand', 'Ready', 'Status unavailable', 'neutral'],
-    ['active', 'starting', 'preparing', 'live', 'brand', 'Starting', 'Preparing', 'ongoing'],
+    ['active', 'starting', 'preparing', 'still', 'brand', 'Starting', 'Preparing', 'ongoing'],
     ['active', 'working', 'thinking', 'live', 'brand', 'Working', 'Working', 'ongoing'],
     [
       'active',

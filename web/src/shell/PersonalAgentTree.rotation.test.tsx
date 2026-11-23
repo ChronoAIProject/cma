@@ -104,8 +104,11 @@ describe('Agent navigation during environment updates', () => {
       const onNavigate = vi.fn();
       const onAction = vi.fn();
       const { container } = render(tree({ items: items({ status }), onNavigate, onAction }));
-      const group = screen.getByRole('group', { name: 'Needs attention' });
-      const row = within(group).getByRole('treeitem');
+      expect(screen.queryByRole('group', { name: 'Needs attention' })).not.toBeInTheDocument();
+      expect(screen.getByText('1 updates failed · Fix')).toBeVisible();
+      const row = within(
+        screen.getByRole('list', { name: 'Environments with failed updates' }),
+      ).getByRole('treeitem');
       expect(row).toHaveTextContent('Runtime update failed');
       expect(row).toHaveAccessibleName(/Runtime update failed/);
       if (status === 'ready') expect(row).toHaveTextContent('Turn ended');
@@ -116,7 +119,7 @@ describe('Agent navigation during environment updates', () => {
       expect(container.querySelector('[data-pose="preparing"]')).toBeNull();
       const actor = userEvent.setup();
       await actor.click(screen.getByRole('button', { name: 'Options for Agent one' }));
-      expect(screen.getByRole('menuitem', { name: /^Delete/ })).toHaveAttribute(
+      expect(screen.getByRole('menuitem', { name: /^Delete(?: Available|$)/ })).toHaveAttribute(
         'aria-disabled',
         'true',
       );
@@ -188,9 +191,8 @@ describe('Agent navigation during environment updates', () => {
       );
       expect(screen.queryByRole('treeitem')).not.toBeInTheDocument();
       expect(screen.queryByRole('group', { name: 'Needs attention' })).not.toBeInTheDocument();
-      if (state === 'retired')
-        expect(screen.queryByText(/Deletion progress/)).not.toBeInTheDocument();
-      else expect(screen.getByText(/Deletion progress/)).toBeInTheDocument();
+      if (state === 'retired') expect(screen.queryByText(/Cleaning up/)).not.toBeInTheDocument();
+      else expect(screen.getByText(/Cleaning up/)).toBeInTheDocument();
     },
   );
 
