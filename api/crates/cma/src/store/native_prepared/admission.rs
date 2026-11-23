@@ -61,6 +61,12 @@ pub(in crate::store) async fn claim_ready(
     {
         return Ok(ClaimOutcome::Miss("miss_released_runtime_mismatch"));
     }
+    // A target written by a process with an earlier home renderer names homes
+    // whose replay the runtime would refuse. Provision normally until this
+    // process's preparation worker replaces that target.
+    if !desired.renders_current_home() {
+        return Ok(ClaimOutcome::Miss("miss_prepared_home_rendering"));
+    }
     let database = store.client.database(&store.sandboxes.namespace().db);
     let Some(operation)=database.collection::<crate::store::agent_lifecycle_operations::LifecycleRecord>(crate::store::agent_lifecycle_operations::COLLECTION)
         .find_one(doc!{"_id":operation_id,"owner":sandbox.owner.as_str(),"status":{"$in":["queued","running"]}})

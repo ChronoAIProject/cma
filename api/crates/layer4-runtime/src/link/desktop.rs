@@ -9,6 +9,7 @@ use std::sync::Arc;
 use axum::extract::{ws::WebSocket, State, WebSocketUpgrade};
 use axum::response::{IntoResponse, Response};
 use futures_util::{SinkExt as _, StreamExt as _};
+use layer3_adapter::desktop_ownership::wire::{DESKTOP_STATE_FAILED, DESKTOP_STATE_HEADER};
 use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 
 use super::{protocol_failure, runtime_failure};
@@ -102,12 +103,19 @@ async fn upgrade(
 }
 
 fn unavailable(retryable: bool) -> Response {
-    protocol_failure(
+    let mut response = protocol_failure(
         axum::http::StatusCode::SERVICE_UNAVAILABLE,
         "desktop_unavailable",
         "the desktop display service is unavailable",
         retryable,
-    )
+    );
+    if !retryable {
+        response.headers_mut().insert(
+            DESKTOP_STATE_HEADER,
+            axum::http::HeaderValue::from_static(DESKTOP_STATE_FAILED),
+        );
+    }
+    response
 }
 
 fn ownership(

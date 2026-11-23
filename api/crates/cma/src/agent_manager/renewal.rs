@@ -12,7 +12,7 @@ struct RenewalFailure {
 pub(super) fn spawn(manager: &Arc<AgentManager>) {
     let weak = Arc::downgrade(manager);
     let coordinator = manager.coordinator.clone();
-    // Start during composition: dependency startup may exceed a lease.
+    // Start at activation, when membership is first registered.
     tokio::spawn(async move {
         let result = run(coordinator.clone(), move |candidates| {
             let weak = weak.clone();
