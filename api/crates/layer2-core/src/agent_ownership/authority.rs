@@ -6,6 +6,7 @@ use tokio::time::Instant;
 
 use super::{transport::RegisteredReceiver, OwnershipError, OwnershipStore, OwnershipToken};
 mod provenance;
+mod renewal;
 mod retirement;
 mod validity;
 pub(super) use retirement::CleanupState;
@@ -49,6 +50,7 @@ pub struct Authority {
         std::sync::OnceLock<layer3_adapter::owner_protocol::OwnershipFailure>,
     pub(super) receiver_failure_recording: std::sync::OnceLock<watch::Receiver<bool>>,
     pub(super) cleanup: tokio::sync::Mutex<CleanupState>,
+    pub(super) renewal: std::sync::Mutex<Option<Arc<super::lease_operation::LeaseWrite>>>,
     validity: watch::Sender<Validity>,
     active_work: watch::Sender<usize>,
     pub(super) store: Option<Arc<dyn OwnershipStore>>,
@@ -72,6 +74,7 @@ impl Authority {
             receiver_failure: Default::default(),
             receiver_failure_recording: Default::default(),
             cleanup: tokio::sync::Mutex::new(CleanupState::default()),
+            renewal: std::sync::Mutex::new(None),
             validity,
             active_work: watch::channel(0).0,
             store: None,
@@ -108,12 +111,29 @@ impl Authority {
             receiver_failure: Default::default(),
             receiver_failure_recording: Default::default(),
             cleanup: tokio::sync::Mutex::new(CleanupState::default()),
+            renewal: std::sync::Mutex::new(None),
             validity,
             active_work: watch::channel(0).0,
             store: Some(store),
             receivers: Default::default(),
             confirmed_receivers: Default::default(),
         })
+    }
+
+    pub(super) fn unpublished(token: OwnershipToken, store: Arc<dyn OwnershipStore>) -> Arc<Self> {
+        let mut authority = Self::with_store_policy(
+            token,
+            Instant::now(),
+            store,
+            super::MaintenancePolicy::ContainFailures,
+        );
+        let inner = Arc::get_mut(&mut authority).unwrap();
+        inner.validity.send_replace(Validity::Unpublished);
+        inner.cleanup.get_mut().local_quiescent = true;
+        inner
+            .retiring
+            .store(true, std::sync::atomic::Ordering::Release);
+        authority
     }
 
     pub fn is_current(&self) -> bool {

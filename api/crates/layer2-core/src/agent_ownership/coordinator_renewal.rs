@@ -44,10 +44,13 @@ impl OwnershipCoordinator {
             }
             return Err(fatal("owner_dispatch_deadline", OwnershipError::Stale));
         }
-        let renewal = tokio::time::timeout(
-            Duration::from_millis(STORE_DEADLINE_MS),
-            self.store.renew(&authority.token),
-        );
+        let renewal = tokio::time::timeout(Duration::from_millis(STORE_DEADLINE_MS), async {
+            if self.contains_failures() {
+                authority.renew_store_owned().await
+            } else {
+                self.store.renew(&authority.token).await
+            }
+        });
         tokio::pin!(renewal);
         let result = tokio::select! {
             biased;

@@ -36,18 +36,18 @@ impl OwnershipCoordinator {
         if self
             .owned
             .lock()
-            .await
+            .unwrap()
             .get(&authority.token.agent_id)
-            .is_some_and(|current| Arc::ptr_eq(current, authority))
+            .is_some_and(|slot| slot.owns(authority))
         {
             self.cleanup_pacing
                 .receiver_cleanup_completed(&authority.token.agent_id);
         }
         bounded(self.store.release(&authority.token)).await?;
-        let mut owned = self.owned.lock().await;
+        let mut owned = self.owned.lock().unwrap();
         if owned
             .get(&authority.token.agent_id)
-            .is_some_and(|current| Arc::ptr_eq(current, authority))
+            .is_some_and(|slot| slot.owns(authority))
         {
             owned.remove(&authority.token.agent_id);
         }
@@ -63,6 +63,9 @@ impl OwnershipCoordinator {
         &self,
         authority: &Arc<Authority>,
     ) -> Result<bool, OwnershipError> {
+        if self.contains_failures() {
+            return Ok(false);
+        }
         if !authority.receiver_cancelled() {
             return Ok(false);
         }
@@ -77,10 +80,10 @@ impl OwnershipCoordinator {
         {
             return Ok(false);
         }
-        let mut owned = self.owned.lock().await;
+        let mut owned = self.owned.lock().unwrap();
         if owned
             .get(&authority.token.agent_id)
-            .is_some_and(|current| Arc::ptr_eq(current, authority))
+            .is_some_and(|slot| slot.owns(authority))
         {
             owned.remove(&authority.token.agent_id);
         }

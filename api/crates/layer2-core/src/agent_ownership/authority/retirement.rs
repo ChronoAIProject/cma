@@ -21,7 +21,8 @@ impl Authority {
                     *state = Validity::Retiring { intent };
                     accepted = true;
                 }
-                Validity::Retiring { .. }
+                Validity::Unpublished
+                | Validity::Retiring { .. }
                 | Validity::RetryExpired { .. }
                 | Validity::ReceiverCancelled { .. } => accepted = true,
                 _ => (),
@@ -38,7 +39,8 @@ impl Authority {
     pub fn retirement_pending(&self) -> bool {
         matches!(
             self.observe_validity(),
-            Validity::Retiring { .. }
+            Validity::Unpublished
+                | Validity::Retiring { .. }
                 | Validity::RetryExpired { .. }
                 | Validity::ReceiverCancelled { .. }
         )

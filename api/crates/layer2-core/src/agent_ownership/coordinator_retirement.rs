@@ -36,9 +36,18 @@ impl OwnershipCoordinator {
         }
         // A receiver that always times out must not starve the independent
         // newer-owner proof. This opportunity survives a dropped attempt.
-        if state.observe_next {
+        if state.observe_next || self.is_draining() {
             state.observe_next = false;
-            match stage(until, self.observe_successor(authority)).await {
+            let observation_until = until.min(Instant::now() + STAGE_BUDGET);
+            match within(observation_until, async {
+                let proof = self.observe_successor(authority).await?;
+                if proof.is_some() {
+                    authority.abort_renewal_until(observation_until).await?;
+                }
+                Ok(proof)
+            })
+            .await
+            {
                 Ok(Some(settlement)) => {
                     self.complete_retirement(authority, &mut state, settlement)
                         .await;
@@ -54,10 +63,39 @@ impl OwnershipCoordinator {
             return Err(error);
         }
         result?;
-        stage(until, self.store.release(&authority.token)).await?;
+        let release_until = until.min(Instant::now() + STAGE_BUDGET);
+        within(release_until, async {
+            authority.join_renewal_until(release_until).await?;
+            self.store.release(&authority.token).await
+        })
+        .await?;
         self.complete_retirement(authority, &mut state, Settlement::Released)
             .await;
         Ok(Settlement::Released)
+    }
+
+    pub async fn drain_authority_until(
+        &self,
+        authority: &Arc<Authority>,
+        until: Instant,
+    ) -> Result<Settlement, OwnershipError> {
+        if !self.is_draining() {
+            return Err(OwnershipError::Stale);
+        }
+        // Shutdown may own generically fenced authorities as well as ordinary
+        // retirements. It supplies no provenance for serving-time recovery.
+        authority.revoke();
+        let until = until.min(Instant::now() + ATTEMPT_BUDGET);
+        let result = within(
+            until,
+            self.settle_retirement(
+                authority,
+                authority.revoke_transports_after_local_drain(),
+                until,
+            ),
+        )
+        .await;
+        authority.settlement_error().map_or(result, Err)
     }
 
     pub async fn retirement_background(
@@ -137,9 +175,9 @@ impl OwnershipCoordinator {
     pub(super) async fn exact_slot(&self, authority: &Arc<Authority>) -> bool {
         self.owned
             .lock()
-            .await
+            .unwrap()
             .get(&authority.token.agent_id)
-            .is_some_and(|current| Arc::ptr_eq(current, authority))
+            .is_some_and(|slot| slot.owns(authority))
     }
 
     pub(super) async fn complete_retirement(
@@ -148,14 +186,19 @@ impl OwnershipCoordinator {
         state: &mut CleanupState,
         settlement: Settlement,
     ) {
-        let mut owned = self.owned.lock().await;
+        let mut owned = self.owned.lock().unwrap();
         if owned
             .get(&authority.token.agent_id)
-            .is_some_and(|current| Arc::ptr_eq(current, authority))
+            .is_some_and(|slot| slot.owns(authority))
         {
             self.cleanup_pacing
                 .receiver_cleanup_completed(&authority.token.agent_id);
-            owned.remove(&authority.token.agent_id);
+            if owned
+                .get(&authority.token.agent_id)
+                .is_some_and(|slot| slot.acquisition.is_none())
+            {
+                owned.remove(&authority.token.agent_id);
+            }
         }
         state.settlement = Some(settlement);
     }

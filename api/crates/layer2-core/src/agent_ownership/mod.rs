@@ -6,6 +6,7 @@
 mod placement;
 pub use placement::candidates;
 mod heartbeat_retry;
+mod lease_operation;
 mod policy;
 pub use policy::{MaintenancePolicy, MaintenanceStep, RetirementIntent, Settlement};
 mod authority;

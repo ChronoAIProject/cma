@@ -117,11 +117,17 @@ impl TransportAuthority for Authority {
             let membership = bounded(store.membership()).await.inspect_err(|error| {
                 self.receiver_error("receiver_membership", error);
             })?;
-            let lease = bounded(store.renew(&self.token))
-                .await
-                .inspect_err(|error| {
-                    self.receiver_error("receiver_store_renew", error);
-                })?;
+            let lease = async {
+                if self.policy == super::MaintenancePolicy::ContainFailures {
+                    self.renew_store_owned().await
+                } else {
+                    bounded(store.renew(&self.token)).await
+                }
+            }
+            .await
+            .inspect_err(|error| {
+                self.receiver_error("receiver_store_renew", error);
+            })?;
             if lease.token != self.token {
                 self.receiver_error("receiver_same_token", &OwnershipError::Stale);
                 return Err(OwnershipError::Stale);

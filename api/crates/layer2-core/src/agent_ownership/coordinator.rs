@@ -15,10 +15,16 @@ use super::{
 };
 use crate::AgentId;
 
+#[path = "coordinator_acquisition.rs"]
+mod acquisition;
+#[path = "coordinator_custody.rs"]
+mod custody;
 #[path = "coordinator_handoff.rs"]
 mod handoff;
 #[path = "coordinator_heartbeat.rs"]
 mod heartbeat;
+#[path = "coordinator_legacy_acquire.rs"]
+mod legacy_acquire;
 #[path = "coordinator_renewal.rs"]
 mod renewal;
 #[cfg(test)]
@@ -28,6 +34,8 @@ mod renewal_tests;
 mod retirement;
 #[path = "coordinator_retry.rs"]
 mod retry;
+#[path = "coordinator_slot.rs"]
+mod slot;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Lifecycle {
@@ -45,7 +53,7 @@ pub struct OwnershipCoordinator {
     policy: MaintenancePolicy,
     capacity: usize,
     cleanup_slots: tokio::sync::Semaphore,
-    owned: Mutex<BTreeMap<AgentId, Arc<Authority>>>,
+    owned: std::sync::Mutex<BTreeMap<AgentId, slot::Slot>>,
     acquisition: Mutex<()>,
     cancelled_cursor: AtomicUsize,
     member_deadline: std::sync::Mutex<Instant>,
@@ -95,7 +103,7 @@ impl OwnershipCoordinator {
             policy,
             capacity,
             cleanup_slots: tokio::sync::Semaphore::new(4),
-            owned: Mutex::new(BTreeMap::new()),
+            owned: std::sync::Mutex::new(BTreeMap::new()),
             acquisition: Mutex::new(()),
             cancelled_cursor: AtomicUsize::new(0),
             member_deadline: std::sync::Mutex::new(deadline),
@@ -137,68 +145,20 @@ impl OwnershipCoordinator {
     /// Returns existing current authority. A new acquisition is declined with
     /// None, without a store call, while the latest heartbeat tick was skipped.
     pub async fn acquire(&self, id: &AgentId) -> Result<Option<Arc<Authority>>, OwnershipError> {
-        if !self.is_ready() {
-            return Err(OwnershipError::Stale);
-        }
-        // Serialize local acquisitions, including uncertain retries, without
-        // holding the owned-map lock across IO needed by renewal and drain.
-        // Only the store CAS grants authority between processes.
-        let _acquisition = self.acquisition.lock().await;
-        if !self.is_ready() {
-            return Err(OwnershipError::Stale);
-        }
-        let cancelled = match self.owned.lock().await.get(id).cloned() {
-            Some(authority) if authority.is_current() => return Ok(Some(authority)),
-            Some(authority) if self.contains_failures() && authority.retirement_pending() => {
-                return Ok(None)
-            }
-            Some(authority) if authority.receiver_cancelled() => Some(authority),
-            Some(_) => return Err(OwnershipError::Stale),
-            None => None,
-        };
-        // A skipped heartbeat may begin an outage that ends in failure: adopt
-        // nothing new until a heartbeat succeeds. Existing authority stays.
-        if self.skipped_heartbeats.load(Ordering::Acquire) > 0 {
-            return Ok(None);
-        }
-        if self.contains_failures() && self.owned.lock().await.len() >= self.capacity {
-            return Ok(None);
-        }
-        let started = Instant::now();
-        let membership = bounded(self.store.membership()).await?;
-        let Some(lease) = bounded(self.store.acquire(id, &self.instance_id)).await? else {
-            return Ok(None);
-        };
-        if lease.token.instance_id != self.instance_id || lease.token.agent_id != *id {
-            return Err(OwnershipError::Invalid(
-                "acquisition returned another owner's token".into(),
-            ));
-        }
-        // An uncertain late renewal may leave the cancelled exact token live.
-        // A new caller can receive authority only for a strictly newer epoch.
-        if cancelled
-            .as_ref()
-            .is_some_and(|old| lease.token.epoch <= old.token.epoch)
-        {
-            return Ok(None);
-        }
-        let until = deadline(started, membership.now_ms, lease.expires_at_ms)?;
-        let authority = if self.contains_failures() {
-            Authority::with_store_policy(lease.token, until, self.store.clone(), self.policy)
+        if self.contains_failures() {
+            self.acquire_contained(id).await
         } else {
-            Authority::with_store(lease.token, until, self.store.clone())
-        };
-        let mut owned = self.owned.lock().await;
-        if !self.is_ready() {
-            authority.revoke();
-            return Err(OwnershipError::Stale);
+            self.acquire_legacy(id).await
         }
-        owned.insert(id.clone(), authority.clone());
-        Ok(Some(authority))
     }
 
     pub async fn owned(&self) -> Vec<Arc<Authority>> {
-        self.owned.lock().await.values().cloned().collect()
+        self.owned
+            .lock()
+            .unwrap()
+            .values()
+            .filter_map(|slot| slot.authority.clone())
+            .collect()
     }
 
     pub async fn local(&self, id: &AgentId) -> Option<Arc<Authority>> {
@@ -207,8 +167,9 @@ impl OwnershipCoordinator {
         }
         self.owned
             .lock()
-            .await
+            .unwrap()
             .get(id)
+            .and_then(|slot| slot.authority.as_ref())
             .filter(|authority| authority.is_current())
             .cloned()
     }
@@ -277,7 +238,13 @@ impl OwnershipCoordinator {
             }
             *current = member_deadline;
         }
-        let owned: Vec<_> = self.owned.lock().await.values().cloned().collect();
+        let owned: Vec<_> = self
+            .owned
+            .lock()
+            .unwrap()
+            .values()
+            .filter_map(|slot| slot.authority.clone())
+            .collect();
         let renewals = stream::iter(owned.clone())
             .map(|authority| async move {
                 self.renew_owned(&authority, started, membership.now_ms)
@@ -333,9 +300,10 @@ impl OwnershipCoordinator {
     /// Select cleanup at consumption time: the renewal watch may discard
     /// intermediate candidate sets while receiver IO is blocked.
     pub async fn cancelled_receivers(&self) -> Vec<Arc<Authority>> {
-        let owned = self.owned.lock().await;
+        let owned = self.owned.lock().unwrap();
         let cancelled: Vec<_> = owned
             .values()
+            .filter_map(|slot| slot.authority.as_ref())
             .filter(|a| {
                 if self.contains_failures() {
                     a.retirement_pending()
@@ -372,21 +340,50 @@ impl OwnershipCoordinator {
     }
 
     pub fn stop_admission(&self) {
-        let _deadline = self.member_deadline.lock().unwrap();
-        self.draining.store(true, Ordering::Release);
-        self.lifecycle.send_if_modified(|state| {
-            if *state == Lifecycle::Serving {
-                *state = Lifecycle::Draining;
-                true
-            } else {
-                false
+        {
+            let _deadline = self.member_deadline.lock().unwrap();
+            self.draining.store(true, Ordering::Release);
+            self.lifecycle.send_if_modified(|state| {
+                if *state == Lifecycle::Serving {
+                    *state = Lifecycle::Draining;
+                    true
+                } else {
+                    false
+                }
+            });
+        }
+        if self.contains_failures() {
+            for authority in self
+                .owned
+                .lock()
+                .unwrap()
+                .values()
+                .filter_map(|slot| slot.authority.as_ref())
+            {
+                authority.revoke();
             }
-        });
+        }
     }
 
     pub async fn begin_drain(&self) -> Vec<Arc<Authority>> {
         self.stop_admission();
-        let owned: Vec<_> = self.owned.lock().await.values().cloned().collect();
+        if self.contains_failures() {
+            if self
+                .prepare_drain(Instant::now() + Duration::from_secs(23))
+                .await
+                .is_err()
+            {
+                self.fail().await;
+            }
+            return self.owned().await;
+        }
+        let owned: Vec<_> = self
+            .owned
+            .lock()
+            .unwrap()
+            .values()
+            .filter_map(|slot| slot.authority.clone())
+            .collect();
         for authority in &owned {
             authority.revoke();
         }
@@ -402,7 +399,13 @@ impl OwnershipCoordinator {
             self.failed.send_replace(true);
             self.lifecycle.send_replace(Lifecycle::Failed);
         }
-        for authority in self.owned.lock().await.values() {
+        for authority in self
+            .owned
+            .lock()
+            .unwrap()
+            .values()
+            .filter_map(|slot| slot.authority.as_ref())
+        {
             authority.revoke();
         }
     }

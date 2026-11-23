@@ -20,6 +20,7 @@ pub(super) enum Validity {
     RetryExpired {
         proof: TrustedRetryExpiry,
     },
+    Unpublished,
     Revoked,
 }
 

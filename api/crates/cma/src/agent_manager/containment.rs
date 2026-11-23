@@ -145,7 +145,7 @@ impl AgentManager {
                 .try_collect::<Vec<_>>()
                 .await
         };
-        tokio::try_join!(cleanup, discovery)?;
+        tokio::try_join!(cleanup, discovery, self.coordinator.poll_acquisitions())?;
         Ok(())
     }
 }

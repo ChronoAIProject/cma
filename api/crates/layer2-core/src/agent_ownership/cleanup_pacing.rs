@@ -106,7 +106,7 @@ impl CleanupPacing {
         })
     }
 
-    fn deferred(&self, id: &AgentId) -> bool {
+    pub(super) fn deferred(&self, id: &AgentId) -> bool {
         if !self.enabled {
             return false;
         }

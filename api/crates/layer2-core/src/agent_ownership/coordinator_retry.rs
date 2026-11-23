@@ -47,7 +47,13 @@ impl OwnershipCoordinator {
         };
         // Keep adoption blocked through reply validation and owner normalization.
         self.skipped_heartbeats.store(1, Ordering::Release);
-        for authority in self.owned.lock().await.values() {
+        for authority in self
+            .owned
+            .lock()
+            .unwrap()
+            .values()
+            .filter_map(|slot| slot.authority.as_ref())
+        {
             authority.mark_heartbeat(episode.generation());
         }
         let result = tokio::select! {
