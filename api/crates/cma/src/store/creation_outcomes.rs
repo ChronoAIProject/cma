@@ -92,16 +92,14 @@ impl CreationOutcomes {
     }
 
     async fn read_record(
-        &self,
+        records: &Collection<Document>,
         identity: &Identity<'_>,
         session: &mut ClientSession,
     ) -> Result<Option<Record>, StatusCode> {
-        let row = self
-            .records
+        let row = records
             .find_one(doc! {
                 "_id": record_id(identity), "owner": identity.owner.as_str(),
             })
-            .selection_criteria(reads::primary())
             .max_time(IO_BUDGET)
             .session(session)
             .await
@@ -143,7 +141,7 @@ impl CreationOutcomes {
         if period.epoch != self.config.epoch {
             return Ok(Begin::Closed);
         }
-        if let Some(row) = self.read_record(identity, session).await? {
+        if let Some(row) = Self::read_record(&self.records, identity, session).await? {
             return Ok(Begin::Existing {
                 operation_id: row.operation_id,
                 cached_response: None,

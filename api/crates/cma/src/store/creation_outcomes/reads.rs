@@ -10,30 +10,42 @@ impl CreationOutcomes {
         identity: &Identity<'_>,
         query: &LookupRequest,
     ) -> Result<Outcome, StatusCode> {
-        let mut session = self
-            .database
-            .client()
+        let client = self.database.client();
+        let mut session = client
             .start_session()
             .snapshot(true)
             .await
             .map_err(unavailable)?;
-        // Snapshot reads outside a transaction see majority-committed data.
-        self.resolve_snapshot(identity, query, &mut session).await
+        // The driver keeps an inherited read concern level when it adds the
+        // session's snapshot time. Supply snapshot explicitly on this handle.
+        let snapshot = client.database_with_options(
+            self.database.name(),
+            mongodb::options::DatabaseOptions::builder()
+                .read_concern(mongodb::options::ReadConcern::snapshot())
+                .selection_criteria(mongodb::options::SelectionCriteria::ReadPreference(
+                    mongodb::options::ReadPreference::Primary,
+                ))
+                .build(),
+        );
+        self.resolve_snapshot(&snapshot, identity, query, &mut session)
+            .await
     }
 
     async fn resolve_snapshot(
         &self,
+        snapshot: &Database,
         identity: &Identity<'_>,
         query: &LookupRequest,
         session: &mut ClientSession,
     ) -> Result<Outcome, StatusCode> {
         let Some(period) = identity.period().map_err(identity_error)? else {
-            return self.legacy(identity, query, session).await;
+            return self.legacy(snapshot, identity, query, session).await;
         };
         if period.epoch != self.config.epoch {
             return Ok(unknown(UnknownReason::CoverageUnavailable));
         }
-        if let Some(row) = self.read_record(identity, session).await? {
+        let records = snapshot.collection(COLLECTION);
+        if let Some(row) = Self::read_record(&records, identity, session).await? {
             if query.claim_id.is_some() {
                 return Err(StatusCode::CONFLICT);
             }
@@ -64,14 +76,14 @@ impl CreationOutcomes {
                     code,
                     row.operation_id,
                 )),
-                Evidence::Pending => self.pending(&row, session).await,
+                Evidence::Pending => Self::pending(snapshot, &row, session).await,
             };
         }
         if query.claim_id.is_some() || query.operation_id.is_some() {
             return Ok(unknown(UnknownReason::NoDurableEvidence));
         }
-        if self.is_closed(period.day, session).await?
-            && owner_day_covered(&self.database, identity.owner, period.day, session).await?
+        if self.is_closed(&records, period.day, session).await?
+            && owner_day_covered(snapshot, identity.owner, period.day, session).await?
         {
             Ok(Outcome::never_received(&identity.digest(), &period))
         } else {
@@ -80,17 +92,15 @@ impl CreationOutcomes {
     }
 
     async fn pending(
-        &self,
+        snapshot: &Database,
         row: &Record,
         session: &mut ClientSession,
     ) -> Result<Outcome, StatusCode> {
         if let Some(id) = &row.operation_id {
-            let operation = self
-                .database
+            let operation = snapshot
                 .collection::<Document>(super::super::agent_lifecycle_operations::COLLECTION)
                 .find_one(doc! {"_id": id, "owner": &row.owner})
                 .projection(doc! {"status":1,"document_schema_version":1})
-                .selection_criteria(primary())
                 .max_time(IO_BUDGET)
                 .session(session)
                 .await
@@ -131,7 +141,6 @@ pub(super) async fn owner_day_covered(
         .find_one(doc! {"subject_hash":subject_hash(owner)})
         .sort(doc! {"requested_at":-1})
         .projection(doc! {"requested_at":1,"status":1,"document_schema_version":1})
-        .selection_criteria(primary())
         .max_time(IO_BUDGET)
         .session(session)
         .await
@@ -149,10 +158,6 @@ pub(super) async fn owner_day_covered(
             .and_then(|seconds| i64::try_from(seconds / SECONDS_PER_DAY).ok())
             .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     Ok(day > barrier_day)
-}
-
-pub(super) fn primary() -> mongodb::options::SelectionCriteria {
-    mongodb::options::SelectionCriteria::ReadPreference(mongodb::options::ReadPreference::Primary)
 }
 
 pub(super) fn unknown(reason: UnknownReason) -> Outcome {

@@ -89,14 +89,13 @@ impl CreationOutcomes {
 
     pub(super) async fn is_closed(
         &self,
+        records: &Collection<Document>,
         day: i64,
         session: &mut ClientSession,
     ) -> Result<bool, StatusCode> {
-        let row = self
-            .records
+        let row = records
             .find_one(self.coverage_filter())
             .projection(doc! {"closed_day":1})
-            .selection_criteria(reads::primary())
             .max_time(IO_BUDGET)
             .session(session)
             .await

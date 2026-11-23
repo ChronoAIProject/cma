@@ -11,26 +11,29 @@ const MAX_RECEIPT_BYTES: i64 = 65_536;
 impl CreationOutcomes {
     pub(super) async fn legacy(
         &self,
+        snapshot: &Database,
         identity: &Identity<'_>,
         query: &LookupRequest,
         session: &mut ClientSession,
     ) -> Result<Outcome, StatusCode> {
         match identity.operation {
             Operation::Sandbox if self.config.legacy_custody => {
-                self.legacy_claim(identity, query, session).await
+                Self::legacy_claim(snapshot, identity, query, session).await
             }
             Operation::Sandbox => Ok(unknown(UnknownReason::CoverageUnavailable)),
-            Operation::AgentBootstrap => self.legacy_lifecycle(identity, query, session).await,
+            Operation::AgentBootstrap => {
+                Self::legacy_lifecycle(snapshot, identity, query, session).await
+            }
         }
     }
 
     async fn legacy_claim(
-        &self,
+        snapshot: &Database,
         identity: &Identity<'_>,
         query: &LookupRequest,
         session: &mut ClientSession,
     ) -> Result<Outcome, StatusCode> {
-        let Some(row) = self.read_claim(identity, session).await? else {
+        let Some(row) = Self::read_claim(snapshot, identity, session).await? else {
             return Ok(unknown(UnknownReason::NoDurableEvidence));
         };
         if identity.algorithm != Algorithm::Sha256Wire {
@@ -93,7 +96,7 @@ impl CreationOutcomes {
             .start_session()
             .await
             .map_err(unavailable)?;
-        let Some(row) = self.read_claim(identity, &mut session).await? else {
+        let Some(row) = Self::read_claim(&self.database, identity, &mut session).await? else {
             return Ok(begin);
         };
         // This namespace is permanently single-generation and the exact identity
@@ -106,7 +109,7 @@ impl CreationOutcomes {
     }
 
     async fn read_claim(
-        &self,
+        database: &Database,
         identity: &Identity<'_>,
         session: &mut ClientSession,
     ) -> Result<Option<Document>, StatusCode> {
@@ -124,11 +127,9 @@ impl CreationOutcomes {
                 "outcome":{"$cond":[{"$and":[{"$eq":[{"$type":"$outcome"},"binData"]},{"$lte":[size,MAX_RECEIPT_BYTES]},{"$eq":[{"$type":"$expires_at"},"date"]},{"$gt":["$expires_at","$$NOW"]}]},"$outcome","$$REMOVE"]},
             }},
         ];
-        let mut cursor = self
-            .database
+        let mut cursor = database
             .collection::<Document>(super::super::operation::OPERATIONS)
             .aggregate(pipeline)
-            .selection_criteria(reads::primary())
             .max_time(IO_BUDGET)
             .session(&mut *session)
             .await
@@ -157,15 +158,15 @@ impl CreationOutcomes {
     }
 
     async fn legacy_lifecycle(
-        &self,
+        snapshot: &Database,
         identity: &Identity<'_>,
         query: &LookupRequest,
         session: &mut ClientSession,
     ) -> Result<Outcome, StatusCode> {
-        let row = self.database.collection::<Document>(super::super::agent_lifecycle_operations::COLLECTION)
+        let row = snapshot.collection::<Document>(super::super::agent_lifecycle_operations::COLLECTION)
             .find_one(doc! {"owner":identity.owner.as_str(),"key":identity.key})
             .projection(doc! {"status":1,"creation_wire":1,"sandbox_id":1,"document_schema_version":1,"input.request.sandbox_id":1,"input.request.workspace_id":1})
-            .selection_criteria(reads::primary()).max_time(IO_BUDGET).session(&mut *session).await.map_err(unavailable)?;
+            .max_time(IO_BUDGET).session(&mut *session).await.map_err(unavailable)?;
         let Some(row) = row else {
             return Ok(unknown(UnknownReason::NoDurableEvidence));
         };
@@ -209,10 +210,10 @@ impl CreationOutcomes {
         {
             return Ok(unknown(UnknownReason::NoDurableEvidence));
         }
-        let origin = self.database.collection::<Document>("sandboxes")
+        let origin = snapshot.collection::<Document>("sandboxes")
             .find_one(doc! {"owner":identity.owner.as_str(),"origin_type":"lifecycle","origin_operation_id":operation_id})
             .projection(doc! {"_id":1,"document_schema_version":1,"record.owner":1,"record.origin":1})
-            .selection_criteria(reads::primary()).max_time(IO_BUDGET).session(session).await.map_err(unavailable)?;
+            .max_time(IO_BUDGET).session(session).await.map_err(unavailable)?;
         if let Some(origin) = origin {
             let version = origin
                 .get_i64("document_schema_version")
