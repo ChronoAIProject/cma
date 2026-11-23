@@ -57,11 +57,13 @@ pub(super) async fn assemble(
         return Err(corrupt().into());
     }
     let publications = collection(store, PUBLICATIONS);
-    if let Some(row) = publications
-        .find_one(doc! {"_id":super::super::publication::identity(
-            current.id.as_str(), captured.incarnation(), &input.operation.key,
-        )})
-        .session(scope.session())
+    if let Some(row) = scope
+        .find_one(
+            &publications,
+            doc! {"_id":super::super::publication::identity(
+                current.id.as_str(), captured.incarnation(), &input.operation.key,
+            )},
+        )
         .await
         .map_err(TransactionLogError::Driver)?
     {
@@ -249,11 +251,14 @@ async fn certify_evidence(
         let id = after.get_str("_id").map_err(|_| corrupt())?;
         let kind = after.get_str("kind").map_err(|_| corrupt())?;
         let key = after.get_str("entity_key").map_err(|_| corrupt())?;
-        let before = collection
-            .find_one(doc! {"_id":id})
-            .session(&mut *session)
-            .await
-            .map_err(TransactionLogError::Driver)?;
+        let before = crate::store::stale_turns::find_with_proof_budget(
+            &collection,
+            doc! {"_id":id},
+            &mut *session,
+            false,
+        )
+        .await
+        .map_err(TransactionLogError::Driver)?;
         let record = before
             .as_ref()
             .map(|row| projection::read_evidence(head, kind, key, row.clone()))
