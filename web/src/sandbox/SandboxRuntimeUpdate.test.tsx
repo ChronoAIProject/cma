@@ -65,6 +65,29 @@ describe('owner runtime update control', () => {
     },
   );
 
+  it('does not advise retry when the client lacks the update method', () => {
+    render(
+      <SandboxRuntimeUpdate
+        {...props()}
+        sandboxStatus="rotating"
+        update={{
+          ...available,
+          state: 'failed',
+          failure: {
+            code: 'terminal_validation',
+            message:
+              'The runtime update stopped at its current step. Retry the runtime update. Recovery can use the latest runtime on your retained home.',
+          },
+        }}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('Retry is unavailable in this client.');
+    expect(screen.getByRole('alert')).not.toHaveTextContent(
+      /retry the runtime update|latest runtime/i,
+    );
+    expect(screen.getByRole('button', { name: 'Retry runtime update' })).toBeDisabled();
+  });
+
   it('replaces older server guidance for an unavailable retry without asserting home retention', () => {
     const updateSandboxRuntime = vi.fn();
     render(
@@ -227,6 +250,7 @@ describe('owner runtime update control', () => {
           ...available,
           currentVersion: null,
           state: 'failed',
+          canUpdate: false,
           failure: { code: 'restore_failed', message: 'Restore needs attention.' },
         }}
       />,

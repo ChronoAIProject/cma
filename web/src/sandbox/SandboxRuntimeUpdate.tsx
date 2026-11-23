@@ -34,12 +34,13 @@ const legacyFailureMessage =
   'The runtime update paused safely. Your home and conversations are retained. Retry the update to continue.';
 
 function failedUpdateMessage(update: RuntimeUpdate, canRetry: boolean): string {
+  const detail = statusCopy.failed.detail;
+  if (update.canUpdate && !canRetry) return `${detail} Retry is unavailable in this client.`;
   const reported = update.failure?.message;
   if (reported && reported !== legacyFailureMessage) return reported;
-  const detail = statusCopy.failed.detail;
-  if (canRetry) return `${detail} Retry the runtime update to continue.`;
-  if (!update.canUpdate) return `${detail} Contact the deployment operator for recovery help.`;
-  return detail;
+  return canRetry
+    ? `${detail} Retry the runtime update to continue.`
+    : `${detail} Contact the deployment operator for recovery help.`;
 }
 
 export function SandboxRuntimeUpdate({
