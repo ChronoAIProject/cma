@@ -25,7 +25,7 @@ impl OwnershipCoordinator {
             }
             let mut active = Vec::with_capacity(chunk.len());
             for &owner in chunk {
-                if let Some(until) = self.renewal_dispatch_deadline(owner)? {
+                if let Some(until) = self.live_renewal_deadline(owner, "owner_dispatch_deadline")? {
                     active.push((owner, until));
                 }
             }
@@ -65,26 +65,6 @@ impl OwnershipCoordinator {
         };
         *heartbeat = sample;
         Ok(true)
-    }
-
-    fn renewal_dispatch_deadline(
-        &self,
-        owner: &Authority,
-    ) -> Result<Option<Instant>, OwnershipError> {
-        if renewal_obsolete(owner) {
-            return Ok(None);
-        }
-        owner
-            .established_deadline()
-            .filter(|until| self.is_ready() && *until > Instant::now())
-            .map(Some)
-            .ok_or_else(|| {
-                self.maintenance_error(
-                    "owner_dispatch_deadline",
-                    Some(owner),
-                    OwnershipError::Stale,
-                )
-            })
     }
 
     async fn renew_chunk(

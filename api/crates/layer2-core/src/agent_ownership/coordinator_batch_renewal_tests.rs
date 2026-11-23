@@ -1,5 +1,7 @@
+use super::super::renewal::BEFORE_RENEWAL_DEADLINE;
 use super::support::{BatchReply, RenewalEvent};
 use super::*;
+use std::cell::Cell;
 
 #[tokio::test(start_paused = true)]
 async fn batch_renewal_orders_exact_tokens_and_bounds_chunks() {
@@ -135,6 +137,57 @@ async fn batch_renewal_rejects_wrong_receipts_and_never_falls_back_on_uncertaint
     ));
     stale.assert_failed();
     assert_eq!(stale.store.batch_events.lock().unwrap().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancellation_during_a_renewal_deadline_check_keeps_the_peer_serving() {
+    for (stage, dispatches, partial) in [
+        ("owner_dispatch_deadline", 1, false),
+        ("owner_dispatch_deadline", 2, true),
+        ("owner_result_deadline", 1, false),
+    ] {
+        for retire in [false, true] {
+            let fixture = Fixture::with_batch(2, true, true).await;
+            if partial {
+                *fixture.store.batch_reply.lock().unwrap() = BatchReply::Partial;
+            }
+            let [target, peer] = fixture.owners.as_slice() else {
+                panic!("expected two authorities");
+            };
+            let original = peer.established_deadline();
+            let target_id = target.token.agent_id.clone();
+            let checks = Cell::new(0);
+            BEFORE_RENEWAL_DEADLINE
+                .scope(
+                    Box::new(move |owner, current_stage| {
+                        if owner.token.agent_id == target_id && current_stage == stage {
+                            checks.set(checks.get() + 1);
+                            if checks.get() == dispatches {
+                                if retire {
+                                    owner.retiring.store(true, Ordering::Release);
+                                    owner.revoke();
+                                } else {
+                                    assert_eq!(
+                                        owner.cancel_receiver(),
+                                        ReceiverCancellation::CancelledWhileLive
+                                    );
+                                }
+                            }
+                        }
+                    }),
+                    async {
+                        tokio::time::advance(Duration::from_millis(100)).await;
+                        fixture.manager.maintain().await.unwrap();
+                    },
+                )
+                .await;
+
+            assert!(target.established_deadline().is_none(), "{stage}");
+            assert!(peer.established_deadline() > original, "{stage}");
+            assert!(fixture.manager.is_ready(), "{stage}");
+            assert!(!*fixture.manager.failure_signal().borrow(), "{stage}");
+        }
+    }
 }
 
 #[tokio::test(start_paused = true)]
