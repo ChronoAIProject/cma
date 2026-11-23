@@ -24,7 +24,7 @@ use std::time::SystemTime;
 
 use crate::warm_pools::tests::runtime_pointer::lifecycle_backend::{Backend, SnapshotFixture};
 
-pub(super) struct Lifecycle {
+pub(in super::super) struct Lifecycle {
     store: Arc<MongoSandboxStore>,
     released: Arc<StoreReleasedRuntime>,
     service: Arc<SandboxService>,
@@ -35,7 +35,7 @@ pub(super) struct Lifecycle {
 }
 
 impl ControllerReplica<'_> {
-    pub(super) async fn lifecycle(&self) -> TestResult<&Lifecycle> {
+    pub(in super::super) async fn lifecycle(&self) -> TestResult<&Lifecycle> {
         self.lifecycle
             .get_or_try_init(|| {
                 Lifecycle::new(
@@ -157,7 +157,12 @@ impl Lifecycle {
             )
             .await;
         }
-        let sandbox = self
+        let sandbox = self.create_agent_sandbox(key).await?;
+        self.drive_active(&sandbox.id).await
+    }
+
+    pub(in super::super) async fn create_agent_sandbox(&self, key: &str) -> TestResult<Sandbox> {
+        Ok(self
             .service
             .create(
                 &owner(),
@@ -168,8 +173,7 @@ impl Lifecycle {
                     origin: SandboxOrigin::Manual,
                 },
             )
-            .await?;
-        self.drive_active(&sandbox.id).await
+            .await?)
     }
 
     pub(super) async fn sandbox(&self, id: &SandboxId) -> TestResult<Sandbox> {
@@ -232,7 +236,7 @@ impl Lifecycle {
         self.sandbox(id).await
     }
 
-    pub(super) async fn drive_active(&self, id: &SandboxId) -> TestResult<Sandbox> {
+    pub(in super::super) async fn drive_active(&self, id: &SandboxId) -> TestResult<Sandbox> {
         for _ in 0..24 {
             let sandbox = self.sandbox(id).await?;
             if sandbox.status == SandboxStatus::Active && sandbox.lifecycle.operation.is_none() {

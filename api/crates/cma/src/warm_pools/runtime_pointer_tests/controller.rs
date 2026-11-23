@@ -50,7 +50,7 @@ impl From<Lane> for ReleasedLane {
     }
 }
 
-struct ControllerReplica<'a> {
+pub(super) struct ControllerReplica<'a> {
     controller: RuntimePointerController,
     pools: Arc<NativeWarmPools>,
     replica: &'a Replica,
@@ -67,7 +67,7 @@ pub(super) async fn wire<'a>(
     Box::new(bind_controller(replica, resolve, follow_pointer).await)
 }
 
-async fn bind_controller(
+pub(super) async fn bind_controller(
     replica: &Replica,
     resolve: impl Fn(Lane) -> Result<String, &'static str> + Send + Sync + 'static,
     follow_pointer: bool,

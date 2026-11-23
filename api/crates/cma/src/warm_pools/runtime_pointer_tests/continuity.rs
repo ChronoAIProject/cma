@@ -166,8 +166,12 @@ async fn registry_outage_preserves_admission_and_blocks_ready_candidate() {
 async fn promotion_keeps_the_original_claim_until_its_adoption_finishes() {
     let rig = Rig::new().await;
     let leader = rig.controller(&rig.first).await;
-    let follower = rig.controller(&rig.second).await;
-    rig.boot(leader.as_ref(), follower.as_ref()).await;
+    let registry = rig.registry.clone();
+    let follower =
+        controller::bind_controller(&rig.second, move |lane| registry.resolve(lane), true).await;
+    rig.boot(leader.as_ref(), &follower).await;
+    let lifecycle = follower.lifecycle().await.unwrap();
+    let creating = lifecycle.create_agent_sandbox("in-flight").await.unwrap();
     let old = rig.fixture.plan(Lane::Agent, 'a', capacity());
     let (claimed, resume) = rig.second.provider.hold_claim();
     let change_release = async {
@@ -180,7 +184,7 @@ async fn promotion_keeps_the_original_claim_until_its_adoption_finishes() {
         resume.send(()).unwrap();
         claim
     };
-    let (allocated, claim) = tokio::join!(follower.admit(Lane::Agent, "in-flight"), change_release);
+    let (allocated, claim) = tokio::join!(lifecycle.drive_active(&creating.id), change_release);
     let allocated = allocated.unwrap();
     assert_eq!(runtime(&allocated), image(Lane::Agent, 'a'));
     let home = allocated.lifecycle.home.unwrap();
