@@ -3,8 +3,7 @@ import type { AgentActionOptions } from './actionOptions';
 import type { AgentCommand, ApprovalDecision } from './controller';
 import type { MessageAcceptance } from './controllerTypes';
 import { ApiError, type AnswerContext } from '@cma/client';
-import { currentAgentStatus } from './status';
-import { STOPPED_AGENT_MESSAGE, STOP_RESPONSE_GUIDANCE } from './stopAgentCopy';
+import { stoppedInputMessage } from './controllerError';
 import { submitV2Control, recoverV2Control } from './transport/controls';
 import {
   submitV2Interruption,
@@ -315,23 +314,11 @@ export function useAgentActions({
               ? 'answer_changed'
               : undefined,
           );
-        if (!controller.signal.aborted && !onIdentityChange(error)) {
-          const latest = stateRef.current;
-          const stoppedInput =
-            !approving &&
-            !accepted &&
-            error instanceof ApiError &&
-            error.status === 409 &&
-            (error.code === 'agent_not_ready' || error.code === 'agent_command_not_admissible') &&
-            latest.status === 'ready' &&
-            latest.detail.id === agentId &&
-            currentAgentStatus(latest.detail, latest.conversation) === 'stopped';
+        if (!controller.signal.aborted && !onIdentityChange(error))
           setActionError(
-            stoppedInput
-              ? `${STOPPED_AGENT_MESSAGE} ${STOP_RESPONSE_GUIDANCE}`
-              : errorMessage(error),
+            (!approving && !accepted && stoppedInputMessage(error, stateRef.current, agentId)) ||
+              errorMessage(error),
           );
-        }
       } finally {
         if (actionAbortRef.current === controller) {
           actionAbortRef.current = undefined;
