@@ -1,6 +1,12 @@
-import { createPortal } from 'react-dom';
-import { NavigationSettingsContext, SidebarContext } from './sidebarContext';
-import { useContext, useLayoutEffect, useRef, useState } from 'react';
+import { SidebarContext } from './sidebarContext';
+import {
+  useContext,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Ref,
+} from 'react';
 import { SkeletonRows } from '../ui/Skeleton';
 import type { AgentDetail } from '../api/types';
 import type { AppRoute } from '../routing/routes';
@@ -13,16 +19,19 @@ import type { ActivityStatus } from '../agent/activityStatus';
 import { Tree, type TreeAction, type TreePermissions } from './Tree';
 import type { NavigationState } from './navigation';
 import { NavigationFilters, type NavigationView } from './NavigationFilters';
-import { Menu } from '../ui/Menu';
-import { IconSettingsOutline16, IconComputerOutline16 } from '../ui/icons';
 import { TreeCreationScope } from './treeCreationScope';
 import { useNavigationFilterState } from './navigationFilterState';
+
+export interface EnvironmentNavigationHandle {
+  openEnvironments(options?: { readonly scope?: 'personal'; readonly sandboxId?: string }): void;
+}
 
 export function ManagerNavigation(props: Parameters<typeof ViewerNavigation>[0]) {
   return <ViewerNavigation key={props.viewerId} {...props} />;
 }
 
 function ViewerNavigation({
+  ref,
   client,
   scope,
   choices,
@@ -43,6 +52,7 @@ function ViewerNavigation({
   onAgentIntent,
   onAction,
 }: {
+  readonly ref?: Ref<EnvironmentNavigationHandle>;
   readonly client?: ResourceViewsClient;
   readonly scope: string;
   readonly choices: NavigationScopeChoices;
@@ -64,9 +74,7 @@ function ViewerNavigation({
   readonly onAction: (action: TreeAction) => void;
 }) {
   const [view, setView] = useState<NavigationView>('agent');
-  const settingsHost = useContext(NavigationSettingsContext);
   const sidebar = useContext(SidebarContext);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [environmentsOpened, setEnvironmentsOpened] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -109,6 +117,13 @@ function ViewerNavigation({
     }
     setView(next);
   }
+  useImperativeHandle(ref, () => ({
+    openEnvironments(options) {
+      selectView('sandbox');
+      if (options?.scope === 'personal' && scope !== '') onScope('');
+      if (options?.sandboxId) onNavigate({ kind: 'sandbox', sandboxId: options.sandboxId });
+    },
+  }));
   useLayoutEffect(() => {
     if (currentAgent === undefined || navigation.status !== 'ready') return;
     const summary = navigation.items
@@ -218,42 +233,6 @@ function ViewerNavigation({
   );
   return (
     <div ref={root} className="manager-navigation">
-      <Button
-        variant="ghost"
-        placement="manager-navigation__environments"
-        icon={<IconComputerOutline16 />}
-        onClick={() => selectView('sandbox')}
-      >
-        Manage environments
-      </Button>
-      {settingsHost
-        ? createPortal(
-            <Menu
-              open={settingsOpen}
-              label="Navigation settings"
-              items={[{ id: 'environments', label: 'Manage environments' }]}
-              onClose={() => setSettingsOpen(false)}
-              onSelect={() => {
-                setSettingsOpen(false);
-                selectView('sandbox');
-              }}
-              anchor={
-                <button
-                  type="button"
-                  className="sidebar__toggle"
-                  aria-label="Settings"
-                  title="Settings"
-                  aria-haspopup="menu"
-                  aria-expanded={settingsOpen}
-                  onClick={() => setSettingsOpen((open) => !open)}
-                >
-                  <IconSettingsOutline16 />
-                </button>
-              }
-            />,
-            settingsHost,
-          )
-        : null}
       <NavigationFilters
         scope={
           client === undefined ? undefined : (

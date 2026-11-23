@@ -73,7 +73,7 @@ it.each(['Provisioning', 'Installing'])(
       label,
     );
     const tree = within(group.parentElement!);
-    await user.click(tree.getByText('Deletion progress (1)'));
+    await user.click(tree.getByText('Cleaning up 1 sandboxes'));
     expect(tree.getByRole('button', { name: 'View status for retiring fixture' })).toBeVisible();
     expect(screen.queryByText('retired fixture')).not.toBeInTheDocument();
     view.rerender(

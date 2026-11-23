@@ -5,7 +5,10 @@ import { IconWarningOutline16 } from '../ui/icons/IconWarningOutline16';
 import { IconCopyOutline16 } from '../ui/icons/IconCopyOutline16';
 import './DeletionProgressList.css';
 
-type DeletingSandbox = Pick<SandboxSummary, 'id' | 'name' | 'status'>;
+type DeletingSandbox = Pick<SandboxSummary, 'id' | 'name'> & {
+  readonly status?: SandboxSummary['status'];
+  readonly unknown?: boolean;
+};
 
 function DeletionProgressRow({
   sandbox,
@@ -26,7 +29,11 @@ function DeletionProgressRow({
       </code>
       <span className="deletion-progress__state">
         <IconWarningOutline16 />
-        {sandbox.status === 'retiring' ? 'Deleting' : 'Deletion requested'}
+        {sandbox.unknown
+          ? 'Deletion not confirmed'
+          : sandbox.status === 'retiring'
+            ? 'Deleting'
+            : 'Deletion requested'}
       </span>
       <p className="deletion-progress__note">
         Still counts toward your environment limit until cleanup is confirmed.
@@ -76,7 +83,11 @@ export function DeletionProgressList({
   if (sandboxes.length === 0) return null;
   return (
     <details className="deletion-progress">
-      <summary>Deletion progress ({sandboxes.length})</summary>
+      <summary>
+        {sandboxes.some((sandbox) => sandbox.unknown)
+          ? `${sandboxes.length} deletions need checking`
+          : `Cleaning up ${sandboxes.length} sandboxes`}
+      </summary>
       <ul className="deletion-progress__list" aria-label="Sandbox deletion progress">
         {sandboxes.map((sandbox) => (
           <DeletionProgressRow key={sandbox.id} sandbox={sandbox} onViewStatus={onViewStatus} />
