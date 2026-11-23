@@ -8,7 +8,8 @@ use mongodb::IndexModel;
 
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 
-const MAX_SESSION_ID_BYTES: usize = 128;
+pub(super) const MAX_SESSION_ID_BYTES: usize = 128;
+pub(super) const EXPIRY_INDEX: &str = "sandbox_session_expiry";
 
 mod exclusive;
 
@@ -164,7 +165,7 @@ pub(super) async fn ensure_indexes(
                 .keys(doc! { "sandbox_id": 1, "lease_expires_at": 1 })
                 .options(
                     IndexOptions::builder()
-                        .name("sandbox_session_expiry".to_owned())
+                        .name(EXPIRY_INDEX.to_owned())
                         .build(),
                 )
                 .build(),
