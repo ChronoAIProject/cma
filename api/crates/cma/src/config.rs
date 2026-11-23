@@ -19,6 +19,7 @@ mod startup_schema;
 pub(crate) use startup_schema::StartupSchemaMode;
 mod account_deletion;
 mod control_admission;
+mod legal_terms;
 pub(crate) use control_admission::ControlAdmissionConfig;
 mod admission_log;
 mod anonymous_public;
@@ -55,7 +56,9 @@ mod quiet_output;
 mod task_experience;
 pub(crate) use features::home_backup::HomeBackupConfig;
 pub(crate) use features::FeatureFlags;
+mod service_authorization;
 pub(crate) use gateway::GatewayConfig;
+pub(crate) use service_authorization::ServiceAuthorizationConfig;
 mod bot_father;
 mod browser_session;
 mod documents;
@@ -147,6 +150,8 @@ impl TrustedProxyConfig {
 #[derive(Clone)]
 pub struct Config {
     pub(crate) account_deletion_enabled: bool,
+    /// Published terms and privacy notice; `None` records no consent.
+    pub(crate) legal_terms: Option<layer2_core::legal_consent::LegalTerms>,
     pub(crate) account_erasure_transaction_drain_seconds: u64,
     pub(crate) global_sandbox_limit: u16,
     pub(crate) agent_log_fleet_percent: u8,
@@ -194,6 +199,7 @@ pub struct Config {
     pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
     pub(crate) home_backup: HomeBackupConfig,
+    pub(crate) service_authorization: Option<ServiceAuthorizationConfig>,
     pub(crate) agent_manager_replicas: Option<AgentManagerReplicas>,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
@@ -282,7 +288,10 @@ impl Config {
             return Err("CHRONO_HOME_BACKUP_EXPIRY_ENABLED requires a qualified deletion provider; retention preparation cannot be enabled".into());
         }
         let home_backup = HomeBackupConfig::from_lookup(&mut lookup, features.home_backup_enabled)?;
+        let service_authorization =
+            ServiceAuthorizationConfig::from_lookup(&mut lookup, features.service_authorization)?;
         let account_deletion_enabled = account_deletion::enabled(&mut lookup)?;
+        let legal_terms = legal_terms::from_lookup(&mut lookup)?;
         let account_erasure_transaction_drain_seconds =
             account_deletion::transaction_drain(&mut lookup)?;
         let global_sandbox_limit = global_admission::from_lookup(&mut lookup)?;
@@ -337,6 +346,7 @@ impl Config {
         Ok(Self {
             global_sandbox_limit,
             account_deletion_enabled,
+            legal_terms,
             account_erasure_transaction_drain_seconds,
             bind,
             http_connection_max_age: http_connections::max_age(&mut lookup)?,
@@ -381,6 +391,7 @@ impl Config {
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
             home_backup,
+            service_authorization,
             agent_manager_replicas,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,

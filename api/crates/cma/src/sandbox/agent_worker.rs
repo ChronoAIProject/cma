@@ -26,7 +26,10 @@ pub(super) use cleanup_retry::same_cleanup_claim;
 mod completion_lookup;
 mod connection;
 mod connection_output;
+mod connection_recovery_progress;
 mod connection_retry;
+#[cfg(test)]
+pub(super) use connection_recovery_progress::same_recovery_claim;
 mod create_completion;
 mod first_message;
 mod first_message_publication;

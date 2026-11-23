@@ -7,13 +7,18 @@ impl ProviderHostedControlTransport {
         handle: &RuntimeHandle,
         endpoint: &RuntimeEndpoint,
         launch: &FencedRequest<AgentLaunch>,
+        ownership: Option<&ownership::ReceiverLease>,
         timing: &mut super::super::startup_timing::StartupTiming,
         class: RuntimeWorkloadClass,
     ) -> crate::Result<(FencedReceipt<AgentOpenReceipt>, Socket)> {
         let opening = async {
-            let response = self
-                .exchange_at(handle, endpoint, RequestFrame::OpenAgent(launch.clone()))
-                .await?;
+            let response = match ownership {
+                Some(lease) => self.open_on_receiver_lease(endpoint, launch, lease).await?,
+                None => {
+                    self.exchange_at(handle, endpoint, RequestFrame::OpenAgent(launch.clone()))
+                        .await?
+                }
+            };
             let receipt = match response {
                 ResponseFrame::OpenAgent(receipt) => receipt,
                 ResponseFrame::Failure(failure) => {

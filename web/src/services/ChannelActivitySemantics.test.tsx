@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, it } from 'vitest';
 import { ChannelActivityView } from './ChannelActivity';
 import { ChannelActivityPreview } from './ChannelActivityPreview';
@@ -53,6 +53,7 @@ it('updates event facts in place and retains a generic label for old receipts', 
   );
   expect(screen.getByText('Message edited · discord')).toBeVisible();
   expect(screen.getByText('Participant ·', { exact: false })).toBeVisible();
+  fireEvent.click(screen.getByText('Event details'));
   expect(document.querySelector('time[datetime="2026-10-27T07:59:00Z"]')).toBeVisible();
   expect(screen.queryByText(/Message deleted/)).not.toBeInTheDocument();
   rerender(

@@ -49,6 +49,30 @@ impl AgentSandboxBackend {
         self.startup_breaker.reset(handle);
     }
 
+    /// Adopts a native VCT runtime from its persisted home attachment rather
+    /// than rediscovering that home through Kubernetes reads.
+    pub(super) async fn adopt_persisted_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeObservation>> {
+        let object = timed(
+            Stage::NativeIdentity,
+            self.client
+                .validate_native_request_with_home(handle, request, home),
+        )
+        .await?;
+        self.bind_adopted(handle, request, &object).await?;
+        // Binding may wait or deliver bootstrap. Its earlier observation cannot
+        // authorize the returned runtime after either boundary completes.
+        timed(
+            Stage::NativeIdentity,
+            self.refreshed_adoption_observation(handle, request, Some(home)),
+        )
+        .await
+    }
+
     pub(super) async fn bind_adopted(
         &self,
         handle: &RuntimeHandle,

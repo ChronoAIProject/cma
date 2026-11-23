@@ -7,6 +7,16 @@
 | `GET /api/v1/account/deletion` | Read the authenticated owner's deletion status, including when new requests are disabled. |
 | `POST /api/v1/account/deletion` | Request deletion with explicit confirmation and `Idempotency-Key`; return 202 with a durable receipt. Replays remain available when new requests are disabled. |
 
+### Legal consent
+
+The deployment operator publishes at most one current version of its terms and
+privacy notice. Without one, both operations answer 404 `legal_terms_not_configured`.
+
+| Operation | Behavior |
+|---|---|
+| `GET /api/v1/account/legal-consent` | Read the current terms version, its document URLs and when the verified human owner accepted that version (`null` until accepted). |
+| `PUT /api/v1/account/legal-consent` | Accept the exact current `version`; a repeat keeps the original acceptance time, and any other version is refused with 409 `legal_terms_version_mismatch`. An owner without a recorded browser sign-in gets 409 `legal_consent_sign_in_required` and must sign in again. |
+
 ### Event Worker Profiles
 
 These owner-scoped resources compose three published CMA profile revisions into
@@ -63,6 +73,8 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/resource-shares/{kind}/{id}/{share_id}` | - | - | 200 ResourceShareView |
 | `PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}` | UpdateShareBody; key | - | 200 ShareReceiptView |
 | `DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}` | -; key | expected_revision* | 200 ShareReceiptView |
+| `POST /api/v1/resource-revocations` | RevocationBody; key | - | 202 RevocationStatusView |
+| `GET /api/v1/resource-revocations/{operation_id}` | - | kind*, id* | 200 RevocationStatusView |
 | `POST /api/v1/cmaeg/worker-credentials/classify` | WorkerCredentialDigest | Gateway service bearer only | 200 WorkerCredentialClassificationView; 400/401/403/503 ProblemDocument |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}` | PutBindingRequest | - | 200 BindingView; 400/401/403/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}` | - | - | 200 BindingView; 401/403/404/409/503 ProblemDocument |

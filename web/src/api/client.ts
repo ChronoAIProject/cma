@@ -175,6 +175,8 @@ export class AgentLifecycleCreateError extends Error {
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
   readonly usageViews?: import('../usage/client').UsageClient;
+  /** The verified owner's acceptance of the deployment's published terms. */
+  readonly legalConsent?: Pick<Cma['legalConsent'], 'status' | 'accept'>;
   readonly readSuggestedReplies?: (
     agentId: string,
     scope: { readonly turn_sequence: number; readonly answer_sequence: number },

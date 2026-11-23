@@ -16,6 +16,7 @@ import {
   TransportError,
   ValidationError,
 } from './errors.js';
+import { MAX_REVOCATION_LINK_LENGTH } from './resource-revocation-links.js';
 
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
@@ -357,6 +358,10 @@ export function errorFromBody(
   const extensions = Object.freeze(
     Object.fromEntries(Object.entries(body).filter(([key]) => !standard.has(key))),
   );
+  const statusLink =
+    code === 'resource_revocation_pending' && response.status === 409
+      ? response.headers.get('link')
+      : null;
   return new ApiError(
     response.status,
     detail,
@@ -364,6 +369,7 @@ export function errorFromBody(
     requestId,
     retryAfterMilliseconds(response),
     extensions,
+    statusLink !== null && statusLink.length <= MAX_REVOCATION_LINK_LENGTH ? statusLink : undefined,
   );
 }
 

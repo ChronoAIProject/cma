@@ -79,6 +79,25 @@ function visible(value: boolean) {
 const exhausted = 'Could not reconnect automatically. Choose Reconnect to try again.';
 const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
+it('keeps the reconnect status while a refresh briefly withholds the runtime version', async () => {
+  const { discover, redraw } = mount(new ApiError(503, 'Synthetic failure'), {
+    runtimeVersion: 'runtime-one',
+  });
+  await advance(0);
+  expect(discover).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+  // An availability refresh withholds the version, then restores the same one.
+  // The retry is still waiting out its backoff; nothing is connecting yet.
+  redraw({ runtimeVersion: undefined });
+  expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+  redraw({ runtimeVersion: 'runtime-one' });
+  expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+  expect(discover).toHaveBeenCalledTimes(1);
+  await advance(1000);
+  expect(discover).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+});
+
 it('stops after one initial and six automatic discoveries with no loading timers', async () => {
   const { discover } = mount(new ApiError(503, 'Synthetic failure'));
   await advance(61_000);

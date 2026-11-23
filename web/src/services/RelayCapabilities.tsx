@@ -48,6 +48,7 @@ export interface RelayAuthoringCapabilities {
 export interface RelayDiscovery {
   readonly status: 'loading' | 'ready' | 'legacy' | 'failed';
   readonly authoring?: RelayAuthoringCapabilities;
+  readonly managedTelegramSetup?: boolean;
   readonly agentTools?: readonly AgentToolCapability[];
   readonly retry?: () => void;
 }
@@ -60,6 +61,10 @@ export interface AgentToolCapability {
   readonly open_world: boolean;
 }
 interface CapabilityView {
+  readonly platforms?: readonly {
+    readonly id: string;
+    readonly connection_methods: readonly string[];
+  }[];
   readonly relay_authoring?: RelayAuthoringCapabilities | null;
   readonly agent_tools?: readonly AgentToolCapability[] | null;
 }
@@ -90,6 +95,12 @@ export function RelayCapabilitiesProvider({
           setDiscovery({
             status: value.relay_authoring ? 'ready' : 'legacy',
             authoring: value.relay_authoring ?? undefined,
+            managedTelegramSetup:
+              value.platforms?.some(
+                (platform) =>
+                  platform.id === 'telegram' &&
+                  platform.connection_methods.includes('managed_create'),
+              ) === true,
             agentTools: value.agent_tools ?? undefined,
           });
       },
