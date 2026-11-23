@@ -69,7 +69,7 @@ impl AgentManager {
         cleanup_pacing: bool,
         policy: MaintenancePolicy,
     ) -> Result<Arc<Self>, String> {
-        let coordinator = OwnershipCoordinator::register_with_policy(
+        let coordinator = OwnershipCoordinator::prepare_with_policy(
             store
                 .agent_ownership
                 .clone()
@@ -88,9 +88,7 @@ impl AgentManager {
             },
             cleanup_pacing,
             policy,
-        )
-        .await
-        .map_err(|_| "Agent Manager membership registration failed")?;
+        );
         registry.install_ownership(coordinator.clone());
         let manager = Arc::new(Self {
             coordinator,
@@ -107,7 +105,6 @@ impl AgentManager {
             supervisor: tokio::sync::Mutex::new(None),
             supervisor_outcome: OnceLock::new(),
         });
-        *manager.supervisor.try_lock().unwrap() = Some(renewal::spawn(&manager));
         Ok(manager)
     }
 
@@ -120,12 +117,20 @@ impl AgentManager {
             .map_err(|_| "Agent Manager lifecycle already registered".into())
     }
 
-    pub fn activate(&self) -> Result<(), String> {
+    pub async fn activate(self: &Arc<Self>) -> Result<(), String> {
         if self.lifecycle.get().is_none() {
             return Err("Agent Manager lifecycle drain is missing".into());
         }
+        let mut supervisor = self.supervisor.lock().await;
+        self.coordinator
+            .activate()
+            .await
+            .map_err(|_| "Agent Manager membership registration failed")?;
         if !self.coordinator.is_ready() {
             return Err("Agent Manager membership expired during startup".into());
+        }
+        if supervisor.is_none() {
+            *supervisor = Some(renewal::spawn(self));
         }
         self.serving.store(true, Ordering::Release);
         Ok(())

@@ -86,7 +86,7 @@ pub(crate) async fn serve() -> Result<(), String> {
     );
     let workers = Phase::new("worker_start");
     if let Some(manager) = &composition.agent_manager {
-        if let Err(error) = manager.activate() {
+        if let Err(error) = manager.activate().await {
             workers.finish("error", None);
             return Err(error);
         }

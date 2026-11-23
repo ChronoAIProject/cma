@@ -67,7 +67,7 @@ async fn fixture(
         std::future::pending::<()>().await;
     }));
     manager.register_lifecycle(lifecycle).unwrap();
-    manager.activate().unwrap();
+    manager.activate().await.unwrap();
     let authority = manager
         .coordinator
         .acquire(&AgentId("contained-drain-agent".into()))

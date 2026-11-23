@@ -17,6 +17,8 @@ use crate::AgentId;
 
 #[path = "coordinator_acquisition.rs"]
 mod acquisition;
+#[path = "coordinator_activation.rs"]
+mod activation;
 #[path = "coordinator_custody.rs"]
 mod custody;
 #[path = "coordinator_handoff.rs"]
@@ -63,6 +65,8 @@ pub struct OwnershipCoordinator {
     retry: Mutex<super::heartbeat_retry::RetryState>,
     failed: watch::Sender<bool>,
     pub(super) cleanup_pacing: super::cleanup_pacing::CleanupPacing,
+    registration: std::sync::Mutex<Option<Member>>,
+    registered: AtomicBool,
 }
 
 impl OwnershipCoordinator {
@@ -87,33 +91,9 @@ impl OwnershipCoordinator {
         cleanup_pacing: bool,
         policy: MaintenancePolicy,
     ) -> Result<Arc<Self>, OwnershipError> {
-        let capacity = member.max_owned_agents as usize;
-        let started = Instant::now();
-        let instance_id = member.instance_id.clone();
-        let membership = bounded(store.register(member)).await?;
-        let member = membership
-            .members
-            .iter()
-            .find(|member| member.instance_id == instance_id)
-            .ok_or(OwnershipError::Stale)?;
-        let deadline = deadline(started, membership.now_ms, member.expires_at_ms)?;
-        Ok(Arc::new(Self {
-            instance_id,
-            store,
-            policy,
-            capacity,
-            cleanup_slots: tokio::sync::Semaphore::new(4),
-            owned: std::sync::Mutex::new(BTreeMap::new()),
-            acquisition: Mutex::new(()),
-            cancelled_cursor: AtomicUsize::new(0),
-            member_deadline: std::sync::Mutex::new(deadline),
-            skipped_heartbeats: AtomicU32::new(0),
-            draining: AtomicBool::new(false),
-            lifecycle: watch::channel(Lifecycle::Serving).0,
-            retry: Mutex::new(super::heartbeat_retry::RetryState::new()),
-            failed: watch::channel(false).0,
-            cleanup_pacing: super::cleanup_pacing::CleanupPacing::new(cleanup_pacing, capacity),
-        }))
+        let coordinator = Self::prepare_with_policy(store, member, cleanup_pacing, policy);
+        coordinator.activate().await?;
+        Ok(coordinator)
     }
 
     pub fn contains_failures(&self) -> bool {
@@ -377,6 +357,7 @@ impl OwnershipCoordinator {
             }
             return self.owned().await;
         }
+        let _acquisition = self.acquisition.lock().await;
         let owned: Vec<_> = self
             .owned
             .lock()
@@ -389,7 +370,9 @@ impl OwnershipCoordinator {
         }
         // Failure to advertise drain never restores local authority. In that
         // case peers can still take over after the expiring durable lease.
-        let _ = bounded(self.store.heartbeat(&self.instance_id, true)).await;
+        if self.is_registered() {
+            let _ = bounded(self.store.heartbeat(&self.instance_id, true)).await;
+        }
         owned
     }
 

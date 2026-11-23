@@ -223,7 +223,7 @@ async fn uncertain_receiver_revoke_retains_original_expiry_without_renewing_reti
 }
 
 #[tokio::test(start_paused = true)]
-async fn slow_acquisition_cannot_block_renewal_or_publish_authority_after_drain() {
+async fn slow_acquisition_cannot_block_renewal_and_drain_takes_custody_of_it() {
     let store = Arc::new(PausedRenew {
         inner: Arc::new(MemoryOwnershipStore::default()),
         entered: Notify::new(),
@@ -243,24 +243,37 @@ async fn slow_acquisition_cannot_block_renewal_or_publish_authority_after_drain(
         async move { coordinator.acquire(&AgentId("slow".into())).await }
     });
     store.entered.notified().await;
-    // Both complete while the other acquisition's store response is held.
+    // Renewal completes while the other acquisition's store response is held.
     coordinator.maintain().await.unwrap();
     assert!(healthy.is_current());
-    let owned = coordinator.begin_drain().await;
-    assert_eq!(owned.len(), 1);
+    // Drain closes admission at once, then joins the held acquisition so the
+    // lease it committed is drained instead of being left to expire.
+    let draining = tokio::spawn({
+        let coordinator = coordinator.clone();
+        async move { coordinator.begin_drain().await }
+    });
+    tokio::task::yield_now().await;
+    assert!(coordinator.is_draining());
     store.resume.notify_one();
     assert!(matches!(
         acquiring.await.unwrap(),
         Err(OwnershipError::Stale)
     ));
-    assert_eq!(coordinator.owned().await.len(), 1);
+    let owned = draining.await.unwrap();
+    assert_eq!(owned.len(), 2);
+    assert!(owned.iter().all(|authority| !authority.is_current()));
     assert!(!healthy.is_current());
+    let slow = owned
+        .iter()
+        .find(|authority| authority.token.agent_id == AgentId("slow".into()))
+        .unwrap();
+    coordinator.handoff(slow, async { Ok(()) }).await.unwrap();
     assert!(store
         .inner
         .owner(&AgentId("slow".into()))
         .await
         .unwrap()
-        .is_some());
+        .is_none());
 }
 
 #[tokio::test(start_paused = true)]

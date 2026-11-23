@@ -55,6 +55,15 @@ impl OwnershipCoordinator {
         let mut owned = self.owned.lock().unwrap();
         if !self.is_ready() {
             authority.revoke();
+            if self.is_draining() {
+                owned.insert(
+                    id.clone(),
+                    slot::Slot {
+                        authority: Some(authority),
+                        acquisition: None,
+                    },
+                );
+            }
             return Err(OwnershipError::Stale);
         }
         owned.insert(

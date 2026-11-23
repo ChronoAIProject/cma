@@ -66,7 +66,7 @@ async fn actual_housekeeping_recovers_inactive_and_cooperative_retirements_witho
         manager
             .register_lifecycle(crate::agent_lifecycle::LifecycleDrain::fixture(1))
             .unwrap();
-        manager.activate().unwrap();
+        manager.activate().await.unwrap();
         let old = manager.coordinator.acquire(&old_id).await.unwrap().unwrap();
         let healthy = manager
             .coordinator

@@ -31,7 +31,9 @@ impl OwnershipCoordinator {
             .collect::<Vec<_>>()
             .await;
         // Advertising failure cannot reopen local admission or erase custody.
-        let _ = retirement::stage(until, self.store.heartbeat(&self.instance_id, true)).await;
+        if self.is_registered() {
+            let _ = retirement::stage(until, self.store.heartbeat(&self.instance_id, true)).await;
+        }
         let mut error = None;
         for result in std::iter::once(acquisitions).chain(renewals) {
             if let Err(reason) = result {
