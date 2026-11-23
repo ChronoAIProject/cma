@@ -73,6 +73,10 @@ impl Fixture {
         }
     }
 
+    pub fn app(&self) -> &str {
+        &self.app
+    }
+
     pub async fn fault(&self, command: &str, count: i32, unknown: bool, delay: bool) -> i64 {
         self.commands.lock().unwrap().clear();
         let mut data = doc! {

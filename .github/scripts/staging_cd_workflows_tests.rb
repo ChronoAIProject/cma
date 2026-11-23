@@ -93,6 +93,26 @@ class StagingWorkflowTest < Minitest::Test
     assert File.file?(File.join(ROOT, 'scripts/omarchy_key_expiry.py'))
   end
 
+  # A setup step with no bound once held the staging queue for five hours: the
+  # publish job allows 300 minutes for builds, and a stalled apt mirror used it all.
+  def test_every_release_step_is_bounded_well_inside_its_job
+    workflow('staging-release')['jobs'].each do |name, job|
+      limit = job.fetch('timeout-minutes').to_i
+      job.fetch('steps').each do |step|
+        label = step['name'] || step['uses']
+        bound = step['timeout-minutes']
+        refute_nil bound, "#{name}: step without a bound: #{label}"
+        assert_operator bound.to_i, :<, limit, "#{name}: #{label} may use the whole job"
+      end
+      setup = job['steps'].reject { |s| s['name'] == 'Build once, scan every layer, and publish exact bytes' }
+      assert setup.all? { |s| s['timeout-minutes'].to_i <= 15 }, "#{name}: setup and upload steps must fail within 15 minutes"
+    end
+    transport = File.read(File.join(ROOT, 'scripts/staging_cd_transport.sh'))
+    %w[Acquire::http::Timeout DPkg::Lock::Timeout].each { |option| assert_includes transport, option }
+    assert_match(/timeout --kill-after=\d+ \d+ sudo apt-get/, transport)
+    assert_includes File.read(File.join(ROOT, 'scripts/install-image-gitleaks.sh')), '--max-time'
+  end
+
   def test_all_mutation_paths_share_one_set_lock_without_serializing_publication
     manual = workflow('redeploy-staging')['jobs']['deploy']
     automatic = workflow('staging-promote')['jobs']['deploy']
@@ -740,7 +760,9 @@ class StagingWorkflowTest < Minitest::Test
     env = workflow('staging-cd').fetch('env')
     %w[CARGO_NET_RETRY PIP_RETRIES RUSTUP_MAX_RETRIES].each { |key| assert_operator env.fetch(key).to_i, :>=, 3 }
     transport = File.read(File.join(__dir__, 'staging_cd_transport.sh'))
-    assert_equal 2, transport.scan('sudo apt-get -o Acquire::Retries=5 ').size
+    # One bounded apt invocation, used for both the index update and the install.
+    assert_equal 1, transport.scan('sudo apt-get -o Acquire::Retries=3 ').size
+    assert_equal %w[update install], transport.scan(/^apt_bounded (update|install)\b/).flatten
     refute_match(/apt-get (?!-o Acquire::Retries)/, transport)
     gitleaks = workflow('ci-repo')['jobs']['secrets']['steps'].find { |step| step['name'] == 'gitleaks' }['run']
     [File.read(File.join(__dir__, 'install-image-gitleaks.sh')), gitleaks].each do |script|

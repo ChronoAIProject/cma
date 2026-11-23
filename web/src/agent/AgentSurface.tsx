@@ -71,7 +71,6 @@ interface AgentSurfaceProps {
   readonly detailsOpen: boolean;
   readonly onDetailsOpenChange: (open: boolean) => void;
   readonly onNavigate: (route: AppRoute) => void;
-  /** What the viewer may do to this Agent from its header. */
   readonly permissions?: TreePermissions;
   /** Another resource action is still being confirmed. */
   readonly actionsBusy?: boolean;
@@ -235,13 +234,13 @@ export function AgentSurface({
     observed,
   );
   const reviewEnvironment = setupRoute ? () => onNavigate(setupRoute) : undefined;
+  const currentSandbox = observed?.sandbox.id === detail.sandbox.id ? observed.sandbox : undefined;
   const headerMenu = agentHeaderMenu(status, readOnly ? undefined : permissions, {
-    sandbox: observed?.sandbox.id === detail.sandbox.id ? observed.sandbox : undefined,
+    sandbox: currentSandbox,
     viewerId,
     stale: observed?.stale,
     busy: actionsBusy,
   });
-  // A subscription Agent can be signed in again from the header menu.
   const signInAgain =
     !readOnly && verified?.services.some((service) => service.service === subscriptionService);
   const uploadAttachment = agentAttachmentUploader(
@@ -299,8 +298,12 @@ export function AgentSurface({
           }}
           moreActions={headerMenu}
           onReviewEnvironment={reviewEnvironment}
-          onMoreAction={agentHeaderActionHandler(agentId, readOnly, onAgentAction, () =>
-            onNavigate({ kind: 'sandbox', sandboxId: detail.sandbox.id }),
+          onMoreAction={agentHeaderActionHandler(
+            agentId,
+            readOnly,
+            onAgentAction,
+            () => onNavigate({ kind: 'sandbox', sandboxId: detail.sandbox.id }),
+            currentSandbox?.id,
           )}
         />
 

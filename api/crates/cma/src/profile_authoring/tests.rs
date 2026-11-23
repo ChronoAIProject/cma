@@ -600,10 +600,33 @@ async fn skill_cursor_refusals_are_distinct_from_catalogue_outages() {
         if status == 400 {
             assert!(matches!(error, AuthoringSourceError::InvalidQuery(_)));
         } else {
-            assert!(matches!(error, AuthoringSourceError::Unavailable(_)));
+            // The stage and status name the failing dependency (#2270).
+            assert!(matches!(
+                &error,
+                AuthoringSourceError::Unavailable(detail)
+                    if *detail == format!("skill search answered HTTP {status}")
+            ));
         }
         assert!(!error.to_string().contains("upstream detail"));
     }
+}
+
+#[tokio::test]
+async fn one_refused_version_read_names_its_stage_and_status() {
+    let upstream = Upstream::start().await;
+    let source = upstream.source(None);
+    upstream.skills(json!([{"guid":"research","name":"Research"}]), false, None);
+    upstream.response(
+        &format!("{SKILLS}/skills/research/versions"),
+        403,
+        json!({"error":"upstream detail"}),
+    );
+    let error = source.skills(&owner(), &query(), None).await.unwrap_err();
+    assert!(matches!(
+        &error,
+        AuthoringSourceError::Unavailable(detail) if detail == "skill versions answered HTTP 403"
+    ));
+    assert!(!error.to_string().contains("upstream detail"));
 }
 
 #[tokio::test]

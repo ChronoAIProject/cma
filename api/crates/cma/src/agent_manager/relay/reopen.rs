@@ -10,6 +10,9 @@ use layer2_core::{
     sandbox::{AgentWorkReceipt, Sandbox, SandboxWorkLease},
     SandboxId,
 };
+use tokio::time::Instant;
+
+const REOPEN_LIMIT: Duration = Duration::from_secs(layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS);
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,6 +54,7 @@ impl Relay {
         sandbox: &Sandbox,
         id: &AgentId,
     ) -> Result<AgentWorkReceipt, CallFailure> {
+        let deadline = Instant::now() + REOPEN_LIMIT;
         let _permit = self
             .acquire(capacity::Class::Control)
             .map_err(|_| CallFailure::RelayCapacity)?;
@@ -62,8 +66,8 @@ impl Relay {
         };
         let reply = if destination.member.instance_id == self.coordinator.instance_id {
             let worker = self.reopen.get().ok_or(())?;
-            let receipt = tokio::time::timeout(
-                Duration::from_secs(60),
+            let receipt = tokio::time::timeout_at(
+                deadline,
                 destination.authority.run(worker.reopen_at_owner(id, &call)),
             )
             .await
@@ -83,12 +87,12 @@ impl Relay {
                 axum::http::header::CONTENT_TYPE,
                 axum::http::HeaderValue::from_static("application/json"),
             );
-            let proof = self.authentication.sign(
+            let headers = self.authentication.signed_headers(
                 &self.coordinator.instance_id,
                 &destination.token,
                 &axum::http::Method::POST,
                 &uri,
-                &headers,
+                headers,
                 &body,
             )?;
             let url = format!(
@@ -96,16 +100,18 @@ impl Relay {
                 destination.member.relay_address.trim_end_matches('/'),
                 uri
             );
-            tokio::time::timeout(Duration::from_secs(60), async {
+            tokio::time::timeout_at(deadline, async {
                 let mut response = self
-                    .client
+                    .reopen_client
                     .post(url)
                     .headers(headers)
-                    .header(PROOF, proof)
                     .body(body)
                     .send()
                     .await
                     .map_err(|_| ())?;
+                if response.status() == reqwest::StatusCode::CONFLICT {
+                    return Err(rejected_from(response).await);
+                }
                 if !response.status().is_success() {
                     return Err(CallFailure::remote(
                         response,
@@ -151,7 +157,7 @@ pub(super) async fn serve(
         return http::unavailable();
     };
     match tokio::time::timeout(
-        Duration::from_secs(60),
+        REOPEN_LIMIT,
         worker.reopen_at_owner(&authority.token.agent_id, &call),
     )
     .await
@@ -161,7 +167,58 @@ pub(super) async fn serve(
             receipt,
         })
         .into_response(),
+        Ok(Err(error)) if terminal(&error) => rejected_response(),
         Ok(Err(error)) => call_failure::response(error),
         _ => http::unavailable(),
     }
 }
+
+/// Closed code for a terminal owner refusal of a relayed reopen (#3265). The
+/// same-process path keeps the error class; the HTTP path must too, or the
+/// caller retries a refusal forever. The error text never crosses the relay.
+const REJECTED: &str = "owner_reopen_rejected";
+
+/// The refusals the lifecycle treats as terminal validation.
+fn terminal(error: &layer3_adapter::AdapterError) -> bool {
+    use layer3_adapter::AdapterError::*;
+    matches!(
+        error,
+        Rejected(_) | Unsupported(_) | OperationIdentityConflict(_) | SkillUpgradeRefused(_)
+    )
+}
+
+fn rejected_response() -> Response {
+    use axum::response::IntoResponse;
+    (
+        axum::http::StatusCode::CONFLICT,
+        [("content-type", "application/problem+json")],
+        Json(serde_json::json!({
+            "type": "about:blank", "title": "Agent owner rejected the lifecycle reopen",
+            "status": 409, "code": REJECTED,
+        })),
+    )
+        .into_response()
+}
+
+/// An unknown 409 stays retryable, exactly as before this code existed.
+async fn rejected_from(mut response: reqwest::Response) -> CallFailure {
+    let mut bytes = Vec::new();
+    while let Ok(Some(chunk)) = response.chunk().await {
+        if chunk.len() > 4096_usize.saturating_sub(bytes.len()) {
+            return CallFailure::Unavailable;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(body) if body["code"] == REJECTED => {
+            CallFailure::Runtime(layer3_adapter::AdapterError::Rejected(
+                "Agent owner rejected the lifecycle reopen".into(),
+            ))
+        }
+        _ => CallFailure::Unavailable,
+    }
+}
+
+#[cfg(test)]
+#[path = "reopen_tests.rs"]
+mod tests;

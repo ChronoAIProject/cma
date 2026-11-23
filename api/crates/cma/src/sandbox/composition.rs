@@ -61,12 +61,15 @@ pub(crate) struct SandboxLifecycleConfig {
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub event_driven_reconciliation: bool,
+    pub stale_turn_reconciliation: bool,
+    pub stale_turn_terminal: bool,
+    pub skip_ineligible_reconciliation: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
-    pub runtime_version: String,
+    pub released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
     pub title_model: String,
 }
 
@@ -80,6 +83,7 @@ pub(crate) struct SandboxLifecycleComposition {
     agent: AgentScheduler,
     capacity_worker: Arc<AgentWorker>,
     capacity_recovery: Option<SandboxScheduler>,
+    stale_turns: Option<super::stale_turn_reconciliation::Worker>,
     titles: AgentTitleScheduler,
     suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
     updates: Arc<DurableAgentUpdateRecorder>,
@@ -116,6 +120,20 @@ impl SandboxLifecycleComposition {
         );
         let sandbox_admitted = Arc::clone(&dependencies.store.sandbox_admitted);
         let agent_admitted = Arc::clone(&dependencies.store.agent_admitted);
+        let stale_turns = if config.stale_turn_reconciliation {
+            config.ownership.as_ref().map(|ownership| {
+                super::stale_turn_reconciliation::Worker::new(
+                    dependencies.store.clone(),
+                    ownership.clone(),
+                    dependencies.registry.clone(),
+                    config
+                        .stale_turn_terminal
+                        .then(|| dependencies.adapter.clone()),
+                )
+            })
+        } else {
+            None
+        };
         let warmup = super::warmup::LegacyWarmSandboxCleanup {
             store: dependencies.store.clone(),
             adapter: dependencies.adapter.clone(),
@@ -135,12 +153,12 @@ impl SandboxLifecycleComposition {
         .with_background_resumption(config.sandbox_reconciliation_reserved_lane)
         .with_runtime_loss_bounded_proof(config.runtime_loss_bounded_proof_enabled)
         .with_profile_agents(Arc::clone(&dependencies.agents))
-        .with_runtime_version(config.runtime_version.clone())
+        .with_released_runtime(config.released.clone())
         .with_platform_spend(dependencies.store.clone())
         .with_failed_runtime_recovery(Arc::new(
-            layer2_core::sandbox::SandboxRuntimeUpdateService::new(
+            layer2_core::sandbox::SandboxRuntimeUpdateService::with_released(
                 dependencies.store.clone(),
-                config.runtime_version.clone(),
+                config.released.clone(),
             )
             .with_unpublished_recovery(Arc::new(
                 super::unpublished_recovery::UnpublishedRuntimeRecovery::new(
@@ -202,6 +220,7 @@ impl SandboxLifecycleComposition {
         )
         .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
         .with_ownership(config.ownership)
+        .with_skip_ineligible_reconciliation(config.skip_ineligible_reconciliation)
         .with_ownership_retry_hints(dependencies.store.ownership_retry_hints())
         .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
         .with_startup_sibling_hold(config.startup_sibling_hold_enabled)
@@ -237,9 +256,10 @@ impl SandboxLifecycleComposition {
         let mut sandbox_config = SandboxWorkerConfig::with_policy_source(
             format!("{}:sandbox", config.holder),
             config.deployment_id,
-            config.runtime_version,
+            config.released.snapshot().agent,
             dependencies.policy,
         )
+        .with_released_runtime(config.released.clone())
         .with_execution(config.execution)
         .with_replicas(config.renewable_work)
         .with_work_retry_policy(config.work_retry_policy_enabled)
@@ -277,6 +297,7 @@ impl SandboxLifecycleComposition {
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
             capacity_worker: agent_worker.clone(),
             capacity_recovery: None,
+            stale_turns,
             agent: AgentScheduler::new(agent_worker, agent_admitted)
                 .with_event_driven_reconciliation(
                     Arc::clone(&dependencies.store.agent_parent_ready),
@@ -318,9 +339,9 @@ impl SandboxLifecycleComposition {
             .capacity_recovery_commands(service)
     }
 
-    pub(crate) async fn initialize(&self) -> Result<(), String> {
+    pub(crate) async fn initialize(&self, stopping: impl Fn() -> bool) -> Result<(), String> {
         self.reconciliation
-            .initialize_before_workers(std::time::SystemTime::now())
+            .initialize_before_workers_until(std::time::SystemTime::now(), stopping)
             .await
             .map_err(|error| format!("sandbox runtime initialization failed: {error}"))
     }
@@ -338,6 +359,12 @@ impl SandboxLifecycleComposition {
                 scheduler
                     .spawn_supervised(shutdown.subscribe(), workers.get("agent_capacity_recovery")),
             );
+        }
+        if let Some(worker) = self.stale_turns {
+            shutdown.push(worker.spawn(
+                shutdown.subscribe(),
+                workers.get("agent_stale_turn_reconciliation"),
+            ));
         }
         shutdown.push(self.warmup.spawn(shutdown.subscribe()));
         let signal = shutdown.subscribe();

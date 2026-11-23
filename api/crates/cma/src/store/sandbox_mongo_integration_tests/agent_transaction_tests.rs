@@ -2,7 +2,7 @@ use super::*;
 use layer2_core::sandbox::{AgentMessageAssembly, AgentUpdateRecorder, DurableAgentUpdateRecorder};
 use layer3_adapter::ConversationUpdate;
 
-mod capacity_tests;
+pub(in crate::store) mod capacity_tests;
 
 mod control_commit_tests;
 mod control_mutation_tests;

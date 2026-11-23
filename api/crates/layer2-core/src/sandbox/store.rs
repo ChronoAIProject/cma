@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
+mod sandbox_events;
+pub use sandbox_events::SandboxEventStore;
+
 use async_trait::async_trait;
 
 use super::{
@@ -74,6 +77,8 @@ pub use agent_admission::{
 mod agent_conversation;
 mod agent_conversation_capacity;
 pub use agent_conversation_capacity::AgentConversationCapacitySettlement;
+mod stale_turn_settlement;
+pub use stale_turn_settlement::StaleTurnSettlement;
 mod agent_message_checkpoint;
 mod agent_reopen;
 pub use agent_conversation::{
@@ -336,22 +341,6 @@ pub trait WorktreeStore: Send + Sync {
         workspace_id: &WorkspaceId,
         page: &PageRequest,
     ) -> Result<Page<Worktree>, SandboxStoreError>;
-}
-
-#[async_trait]
-pub trait SandboxEventStore: Send + Sync {
-    async fn append_sandbox_event(
-        &self,
-        sandbox_id: &SandboxId,
-        appended_at: String,
-        kind: SandboxEventKind,
-    ) -> Result<SandboxEvent, SandboxStoreError>;
-    async fn sandbox_events(
-        &self,
-        sandbox_id: &SandboxId,
-        after: u64,
-        limit: u16,
-    ) -> Result<Vec<SandboxEvent>, SandboxStoreError>;
 }
 
 #[derive(Debug, Clone)]
