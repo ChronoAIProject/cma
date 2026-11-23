@@ -1,8 +1,10 @@
 //! The kernel-neutral sandbox adapter contract.
 use crate::desktop_ownership::{challenge, open, DesktopOwnedRuntime};
+use crate::stale_turn::StaleTurnProducer;
 use tokio::sync::mpsc;
 mod runtime_inspection;
 mod runtime_provision;
+mod validation;
 use crate::{
     AdapterCapabilities, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest,
     AgentOpenRequest, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest, CheckpointReceipt,
@@ -13,14 +15,12 @@ use crate::{
     RuntimeProvisionRequest, SandboxSpec, SetupReceipt, WorkspaceReceipt, WorkspaceRemoveRequest,
     WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest,
 };
+use validation::{require_admitted_context, unsupported};
 /// Drives the complete lifecycle of one sandbox and the agents inside it.
 #[async_trait::async_trait]
 pub trait SandboxAdapter: Send + Sync {
-    /// Advertise only where the pinned runtime supplies a qualified producer seal.
-    fn stale_turn_producer(
-        &self,
-        _handle: &RuntimeHandle,
-    ) -> Option<&dyn crate::stale_turn::StaleTurnProducer> {
+    /// Advertise only for a qualified runtime producer seal.
+    fn stale_turn_producer(&self, _: &RuntimeHandle) -> Option<&dyn StaleTurnProducer> {
         None
     }
     fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
@@ -424,11 +424,7 @@ pub trait SandboxAdapter: Send + Sync {
         operation_sequence: u64,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel> {
-        if operation_sequence == 0 {
-            return Err(unsupported(
-                "context recovery requires an admitted operation",
-            ));
-        }
+        require_admitted_context(operation_sequence)?;
         self.reconnect_agent(handle, authority_fence, request, conversation_id, updates)
             .await
     }
@@ -500,8 +496,4 @@ pub trait SandboxAdapter: Send + Sync {
     async fn resources(&self, handle: &RuntimeHandle) -> Result<ResourceReading>;
 
     async fn teardown(&self, handle: &RuntimeHandle) -> Result<()>;
-}
-
-fn unsupported(detail: &str) -> crate::AdapterError {
-    crate::AdapterError::Unsupported(detail.into())
 }
