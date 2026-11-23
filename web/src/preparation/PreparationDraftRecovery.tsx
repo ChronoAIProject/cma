@@ -88,18 +88,9 @@ export function PreparationDraftRecovery({
   useEffect(() => {
     const record =
       state.identity === identity && state.records.length === 1 ? state.records[0] : undefined;
-    if (
-      !record ||
-      !authorized ||
-      !draft ||
-      draft.content ||
-      draft.attachments.length ||
-      draft.error ||
-      draft.recoveryBlocked ||
-      attempted.current === record.revision
-    )
-      return;
+    if (!record || !authorized || !draft || attempted.current === record.revision) return;
     attempted.current = record.revision;
+    if (draft.content || draft.attachments.length || draft.error || draft.recoveryBlocked) return;
     transfer(record);
   });
   if (state.identity !== identity || !authorized || (!state.records.length && !state.error))

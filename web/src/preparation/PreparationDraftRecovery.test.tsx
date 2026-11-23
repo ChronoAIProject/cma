@@ -103,6 +103,28 @@ it('preserves the exact command-bound destination and source', () => {
   expect(readPreparationDraft(scope)).toEqual(h.source);
 });
 
+it('moves a retained follow-up explicitly after the owner clears a conflicting message', async () => {
+  const h = fixture();
+  saveAgentDraft('owner', 'agt_1', {
+    revision: 'conflicting-revision',
+    content: 'Independent message draft',
+    attachments: [],
+  });
+  render(<h.Host />);
+  expect(screen.getByRole('button', { name: 'Move draft to message' })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Destination'), { target: { value: '' } });
+  expect(screen.getByLabelText('Destination')).toHaveValue('');
+  expect(readAgentDraft('owner', 'agt_1').content).toBe('');
+  expect(readPreparationDraft(scope)).toEqual(h.source);
+  expect(screen.getByRole('button', { name: 'Move draft to message' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Move draft to message' }));
+  await waitFor(() => expect(screen.getByLabelText('Destination')).toHaveValue(text));
+  expect(readAgentDraft('owner', 'agt_1').content).toBe(text);
+  expect(readPreparationDraft(scope)).toBeUndefined();
+  expect(h.client.runAgent).not.toHaveBeenCalled();
+  expect(h.client.createAgentLifecycle).not.toHaveBeenCalled();
+});
+
 it('retains both copies if source removal fails after destination verification', async () => {
   const h = fixture();
   const original = Storage.prototype.removeItem;

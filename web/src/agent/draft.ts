@@ -239,10 +239,9 @@ export function useAgentDraft(
         owner === scope.viewerId &&
         targetAgent === scope.agentId &&
         active.current.entry === entry &&
-        Boolean(entry) &&
-        !entry?.error &&
-        !entry?.unread &&
-        entry?.value.revision === '' &&
+        entry !== undefined &&
+        !entry.error &&
+        !entry.unread &&
         !entry.value.content &&
         entry.value.attachments.length === 0 &&
         entry.value.commandKey === undefined &&
