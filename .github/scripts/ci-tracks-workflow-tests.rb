@@ -170,7 +170,7 @@ def check_merge_group_triggers(workflows)
   end
   require_check(queued.keys == ['ci'], 'only CI may run on merge groups')
   ci = queued.fetch('ci')
-  require_check(ci['permissions'] == {'contents' => 'read'} &&
+  require_check(ci['permissions'] == {'contents' => 'read', 'issues' => 'read'} &&
     ci.fetch('jobs').values.all? { |job| job.fetch('permissions', {}).values.all? { |grant| grant == 'read' } },
     'merge-group CI must remain read-only')
 end
@@ -212,7 +212,12 @@ def validate(documents, actions)
   # Without a branch or path filter every queue entry creates the required
   # checks; a non-develop queue is refused by the selector, not left pending.
   require_check(events['merge_group'] == {'types' => ['checks_requested']}, 'CI must report on every merge group')
-  require_check(ci['permissions'] == {'contents' => 'read'}, 'CI permissions must remain read-only')
+  # Read-only: issues is read for the runtime vulnerability gate's tracking-issue age.
+  require_check(ci['permissions'] == {'contents' => 'read', 'issues' => 'read'}, 'CI permissions must remain read-only')
+  %w[ci-images ci-omarchy].each do |called|
+    require_check(documents.fetch(called)['permissions'] == {'contents' => 'read', 'issues' => 'read'},
+                  "#{called} permissions must remain read-only and within the caller's")
+  end
   # Queue entries run on refs/heads/gh-readonly-queue/develop/pr-N-SHA: their
   # own ref, so a PR (refs/pull/N/merge) or develop push run never cancels one.
   # Develop pushes write the caches PRs restore, so they finish instead of

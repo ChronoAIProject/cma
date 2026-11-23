@@ -29,6 +29,9 @@ concurrency:
   cancel-in-progress: "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"
 permissions:
   contents: "read"
+  # ci-images.yml and ci-omarchy.yml request it for the runtime vulnerability
+  # gate's tracking-issue lookup; a called workflow cannot exceed its caller.
+  issues: "read"
 jobs:
   changes:
     name: "Select tracks"
@@ -159,10 +162,6 @@ jobs:
       components: "[\"web\"]"
   runtime-images:
     name: "Shared runtime images"
-    # The runtime vulnerability gate reads the age of its tracking issue.
-    permissions:
-      contents: "read"
-      issues: "read"
     needs:
       - "changes"
     if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
@@ -171,10 +170,6 @@ jobs:
       components: "[\"runtime\"]"
   omarchy:
     name: "Runtime Omarchy"
-    # The runtime vulnerability gate reads the age of its tracking issue.
-    permissions:
-      contents: "read"
-      issues: "read"
     needs:
       - "changes"
     if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
