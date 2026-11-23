@@ -22,6 +22,8 @@ pub(crate) struct MongoConnectionPolicy {
     pub startup_schema: crate::config::StartupSchemaMode,
     pub shared_observation: bool,
     pub initial_settings: super::settings_defaults::InitialSettings,
+    /// The process's single released-default authority; fixtures may omit it.
+    pub released: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
 }
 
 /// Aggregate-neutral stores opened atomically at process startup.
@@ -161,6 +163,7 @@ impl MongoStores {
                 startup_schema: Default::default(),
                 shared_observation: false,
                 initial_settings: Default::default(),
+                released: None,
             },
         )
         .await
@@ -198,6 +201,7 @@ impl MongoStores {
                 runtime,
                 schema: super::schema::StartupObserver::new(policy.startup_schema),
                 initial_settings: policy.initial_settings,
+                released: policy.released,
             },
         )
         .await
@@ -224,6 +228,7 @@ impl MongoStores {
                 runtime,
                 schema: super::schema::StartupObserver::new(Default::default()),
                 initial_settings: Default::default(),
+                released: None,
             },
         )
         .await
@@ -248,9 +253,12 @@ impl MongoStores {
         )
         .await?
         .with_managed_runtime_version(startup.runtime.0.into());
-        let released_runtime: Arc<dyn layer3_adapter::ReleasedRuntimeSource> = Arc::new(
-            layer3_adapter::PinnedReleasedRuntime::new(startup.runtime.0, None),
-        );
+        let released_runtime = startup.released.clone().unwrap_or_else(|| {
+            Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+                startup.runtime.0,
+                None,
+            ))
+        });
         let sandbox_model = Arc::new(sandbox_model.with_released_runtime(released_runtime.clone()));
         let sandbox_profiles = Arc::new(MongoProfileStore::open(&client, database).await?);
         let sandbox_credentials = Arc::new(
@@ -461,4 +469,5 @@ struct StoreStartup<'a> {
     runtime: (&'a str, Option<&'a layer3_adapter::HomeVolumePolicy>),
     schema: super::schema::StartupObserver,
     initial_settings: super::settings_defaults::InitialSettings,
+    released: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
 }
