@@ -14,6 +14,7 @@ mod options;
 mod owner_allocation;
 mod owner_names;
 mod owners;
+mod ownership;
 mod progress;
 pub(crate) use progress::Progress;
 mod reads;
