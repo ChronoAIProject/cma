@@ -20,6 +20,7 @@ pub(super) async fn strict_pending(
         })
         .await
         .map_err(|_| "Query index inventory unavailable")?;
+    crate::store::agent_log_segments::capture::preview_budget::catalog_response(&response)?;
     strict_missing(&entries(&response)?, desired)
 }
 
