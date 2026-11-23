@@ -58,6 +58,8 @@ pub(crate) use live_agents::record_update_for_test;
 pub(crate) use live_agents::LiveAgentRegistry;
 #[cfg(test)]
 pub(crate) use model_request_budget::tests::assert_metered_title_refusal;
+#[cfg(test)]
+pub(crate) use model_request_budget::tests::durable_http::{auxiliary_request, AuxiliaryKind};
 pub(crate) use policy::LiveSandboxPolicy;
 pub(crate) use runtime_mapping::{runtime_capabilities, runtime_options};
 pub(crate) use title_worker::PlatformTitleEndpoint;

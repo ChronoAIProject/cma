@@ -55,6 +55,8 @@ fn budget(failure: Option<BudgetError>) -> Arc<Budget> {
     })
 }
 
+#[path = "model_request_budget_tests/durable_http.rs"]
+pub(crate) mod durable_http;
 #[path = "model_request_budget_tests/uncertain_http.rs"]
 mod uncertain_http;
 
@@ -113,7 +115,7 @@ async fn title_with_context(
     origin: &str,
     budget: RequestBudgetContext,
 ) -> Result<AgentTitleOutcome, AgentTitleServiceError> {
-    let id = AgentId("agt_request_budget".into());
+    let id = budget.scope.agent_id.clone();
     let store = Arc::new(InMemoryAgentTitleStore::default());
     store.register_agent(id.clone()).unwrap();
     for kind in [
