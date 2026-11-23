@@ -50,6 +50,33 @@ def require_image_secret_scan(documents)
   end
 end
 
+RUNTIME_VULNERABILITY_BASE = "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}"
+
+# Pinned runtime inputs keep building the same packages while the advisory
+# database changes. Their trivy scans report everything, and the gate fails
+# exactly the findings a change owns or that stopped being fresh. Every other
+# image keeps the blanket exit-code gate.
+def require_runtime_vulnerability_gate(documents)
+  images = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
+  blanket = images.find { |s| s['name'] == 'Vulnerability scan' }
+  require_check(blanket && blanket['if'] == "matrix.component != 'runtime'" && blanket.dig('with', 'exit-code') == '1',
+                'non-runtime images must keep the blocking vulnerability scan')
+  [['ci-images', 'images', 'Runtime vulnerability scan', 'Runtime vulnerability gate', 'runtime',
+    '"$RUNNER_TEMP/runtime-vulnerabilities.json"', "matrix.component == 'runtime'"],
+   ['ci-omarchy', 'omarchy', 'Scan tested Omarchy image', 'Omarchy vulnerability gate', 'runtime-omarchy',
+    '"$RUNNER_TEMP/omarchy-evidence/vulnerabilities.json"', nil]].each do |file, job, scan_name, gate_name, component, report, condition|
+    steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
+    scan = steps.index { |s| s['name'] == scan_name }
+    gate = steps.index { |s| s['name'] == gate_name }
+    require_check(scan && gate && gate == scan + 1, "#{file} must gate its runtime vulnerability report right after the scan")
+    require_check(steps[scan].dig('with', 'exit-code') == '0' && steps[scan].dig('with', 'format') == 'json' &&
+                  steps[scan].dig('with', 'severity') == 'HIGH,CRITICAL', "#{file} runtime scan must report JSON for the gate")
+    command = "python3 -B .github/scripts/image_vulnerability_gate.py --component #{component} --report #{report} --base \"$BASE_SHA\""
+    require_check(steps[gate]['run'] == command && !steps[gate].key?('continue-on-error') && steps[gate]['if'] == condition &&
+                  steps[gate].dig('env', 'BASE_SHA') == RUNTIME_VULNERABILITY_BASE, "#{file} runtime vulnerability gate differs")
+  end
+end
+
 def require_pinned_actions(steps, actions, parents = [])
   steps.each do |step|
     reference = step['uses']
@@ -143,7 +170,7 @@ def check_merge_group_triggers(workflows)
   end
   require_check(queued.keys == ['ci'], 'only CI may run on merge groups')
   ci = queued.fetch('ci')
-  require_check(ci['permissions'] == {'contents' => 'read'} &&
+  require_check(ci['permissions'] == {'contents' => 'read', 'issues' => 'read'} &&
     ci.fetch('jobs').values.all? { |job| job.fetch('permissions', {}).values.all? { |grant| grant == 'read' } },
     'merge-group CI must remain read-only')
 end
@@ -175,6 +202,7 @@ end
 def validate(documents, actions)
   require_runtime_inventory(documents)
   require_image_secret_scan(documents)
+  require_runtime_vulnerability_gate(documents)
   check_component_cache_writers(documents)
   check_merge_group_artifacts(documents)
   ci = documents.fetch('ci')
@@ -184,7 +212,12 @@ def validate(documents, actions)
   # Without a branch or path filter every queue entry creates the required
   # checks; a non-develop queue is refused by the selector, not left pending.
   require_check(events['merge_group'] == {'types' => ['checks_requested']}, 'CI must report on every merge group')
-  require_check(ci['permissions'] == {'contents' => 'read'}, 'CI permissions must remain read-only')
+  # Read-only: issues is read for the runtime vulnerability gate's tracking-issue age.
+  require_check(ci['permissions'] == {'contents' => 'read', 'issues' => 'read'}, 'CI permissions must remain read-only')
+  %w[ci-images ci-omarchy].each do |called|
+    require_check(documents.fetch(called)['permissions'] == {'contents' => 'read', 'issues' => 'read'},
+                  "#{called} permissions must remain read-only and within the caller's")
+  end
   # Queue entries run on refs/heads/gh-readonly-queue/develop/pr-N-SHA: their
   # own ref, so a PR (refs/pull/N/merge) or develop push run never cancels one.
   # Develop pushes write the caches PRs restore, so they finish instead of
@@ -545,6 +578,12 @@ report_steps.call(copy) << {'run' => 'gh run download "$GITHUB_RUN_ID" -n eviden
 check_artifact_downloads(copy, actions)
 before_queue = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
 mutations = [
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Vulnerability scan' }['if'] = 'true' },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].reject! { |s| s['name'] == 'Runtime vulnerability gate' } },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Runtime vulnerability gate' }['continue-on-error'] = true },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Runtime vulnerability gate' }['run'] += ' || true' },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].reject! { |s| s['name'] == 'Omarchy vulnerability gate' } },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Omarchy vulnerability gate' }['env']['BASE_SHA'] = '' },
   ->(d) { d['ci-images']['jobs']['images']['steps'].reject! { |s| s['name'] == 'Scan tested image as staging publication does' } },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Scan tested image as staging publication does' }['continue-on-error'] = true },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Scan tested image as staging publication does' }['if'] = "github.event_name == 'merge_group'" },

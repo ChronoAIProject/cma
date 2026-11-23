@@ -226,6 +226,7 @@ impl MongoAgentOwnership {
         token: &OwnershipToken,
         session: &mut ClientSession,
     ) -> Result<Option<OwnershipLease>, AttemptError> {
+        self.open_with_read(&token.instance_id, session).await?;
         // Writing the member row conflicts with drain and prevents renewing an
         // owner from a stale snapshot of membership.
         let member = self
@@ -263,6 +264,7 @@ impl MongoAgentOwnership {
         token: &OwnershipToken,
         session: &mut ClientSession,
     ) -> Result<Option<OwnershipLease>, AttemptError> {
+        self.open_with_read(&token.instance_id, session).await?;
         let mut filter = token_filter(token)?;
         // An expired exact token can release its accounting too; a successor's
         // epoch never matches. Repeated/ambiguous releases are idempotent.
