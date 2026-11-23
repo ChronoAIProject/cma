@@ -1,23 +1,20 @@
 import { ComputerContext } from './environment/context';
 import { SuggestedReplies } from './SuggestedReplies';
-import type { SuggestedReplySet } from './suggestions';
 import { useAgentSuggestions } from './useAgentSuggestions';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { subscriptionService } from '../connections/client';
-import type { AppRoute } from '../routing/routes';
-import type { AgentController, AgentResourceState } from './controller';
+import type { AgentResourceState } from './controller';
+import type { AgentSurfaceProps } from './AgentSurfaceProps';
 import { Composer } from './Composer';
 import { SessionSettings } from './SessionSettings';
 import { modelCatalogReady } from './modelReadiness';
 import { useMessageFeedback } from './useMessageFeedback';
-import type { AgentDraft } from './draft';
 import { OwnerMessageStream } from './OwnerMessageStream';
 import './Agent.css';
 import { OwnerAgentHeader } from './OwnerAgentHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { agentBreadcrumb, agentHeaderMenu, agentHeaderActionHandler } from './headerActions';
-import type { TreeAction, TreePermissions } from '../shell/Tree';
 import { AgentStatusPanel } from './AgentStatusPanel';
 import type { SteeringMode } from './SteeringMode';
 import {
@@ -34,48 +31,18 @@ import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
 import { AgentInputQueue } from './AgentInputQueue';
 import { agentAttachmentUploader } from './attachmentUpload';
 import { AgentAccessRequests } from './AccessRequestDialog';
-import type { CmaWebClient } from '../api/client';
 import { AgentLifecycleFollowup } from '../create/AgentLifecycleFollowup';
 import { useAgentConnectionReadiness } from './connectionReadiness';
 import { useOptimisticMessages } from './optimisticMessages';
 import { queuePresentation } from './queuePresentation';
-import type { AgentViewPosition } from './viewPosition';
-import type { MessageUser } from './MessageIdentity';
 import { agentDisplayTitle } from './presentation';
 import { usePreparedConfiguration } from './preparedConfiguration';
 import { messageSubmission } from './messageSubmission';
 import { useFirstTextSend } from './useFirstTextSend';
 import { composerInputAvailability } from './composerPresentation';
-import type { AgentComputerObservation } from './environment/observation';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
-
-interface AgentSurfaceProps {
-  readonly computerObservation?: AgentComputerObservation;
-  readonly onViewDeletionStatus?: () => void;
-  readonly suggestedReplies?: SuggestedReplySet | null;
-  readonly lifecycleClient?: CmaWebClient;
-  readonly accessUncertain?: boolean;
-  /** Current personal access was checked for this exact Agent before mounting. */
-  readonly accessAuthorized?: boolean;
-  readonly firstSendContext?: { readonly authEpoch: number; readonly visible: boolean };
-  readonly draft?: AgentDraft;
-  readonly viewerId?: string;
-  readonly user?: MessageUser;
-  readonly agentId: string;
-  readonly controller: AgentController;
-  readonly viewPosition?: AgentViewPosition;
-  readonly filesOpen?: boolean;
-  readonly onFilesOpenChange?: (open: boolean) => void;
-  readonly detailsOpen: boolean;
-  readonly onDetailsOpenChange: (open: boolean) => void;
-  readonly onNavigate: (route: AppRoute) => void;
-  readonly permissions?: TreePermissions;
-  /** Another resource action is still being confirmed. */
-  readonly actionsBusy?: boolean;
-  readonly onAgentAction?: (action: TreeAction) => void;
-}
 
 export function AgentSurface({
   computerObservation,
