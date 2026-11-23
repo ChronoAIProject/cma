@@ -105,6 +105,25 @@ impl MongoAgentOwnership {
             .map_err(invalid)
     }
 
+    /// The driver aborts a dropped session only after its transaction's first
+    /// command has returned. A caller cancelled while a first-command write is
+    /// in flight would leave that write's locks on the server until the session
+    /// is reused or the transaction lifetime expires (#3189). On the member row
+    /// that would block every effect fence of this instance. Reading first
+    /// strands at most a lock-free snapshot; the driver aborts any later drop.
+    pub(super) async fn open_with_read(
+        &self,
+        instance: &str,
+        session: &mut ClientSession,
+    ) -> mongodb::error::Result<()> {
+        self.members
+            .find_one(doc! {"_id": instance})
+            .projection(doc! {"_id": 1})
+            .session(session)
+            .await
+            .map(|_| ())
+    }
+
     /// A write in the effect's own transaction creates a conflict with takeover.
     /// A preceding read, even a majority read, would leave a TOCTOU gap.
     #[cfg(test)]
@@ -123,6 +142,9 @@ impl MongoAgentOwnership {
         token: &OwnershipToken,
         session: &mut ClientSession,
     ) -> Result<(), FenceError> {
+        self.open_with_read(&token.instance_id, session)
+            .await
+            .map_err(FenceError::Driver)?;
         let member = self
             .members
             .update_one(
