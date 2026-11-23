@@ -328,4 +328,4 @@ impl AgentTitleGenerator for FencedTitleGenerator {
 
 #[cfg(test)]
 #[path = "title_worker_tests.rs"]
-mod tests;
+pub(super) mod tests;

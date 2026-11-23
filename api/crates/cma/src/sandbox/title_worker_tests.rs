@@ -561,7 +561,7 @@ fn snapshot_identity_binds_owner_lineage_runtime_and_credential() {
 }
 
 #[path = "title_worker_tests/fixtures.rs"]
-mod fixtures;
+pub(in crate::sandbox) mod fixtures;
 use fixtures::{agent, sandbox};
 
 #[tokio::test]

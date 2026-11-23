@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn sandbox() -> Sandbox {
+pub(in crate::sandbox) fn sandbox() -> Sandbox {
     Sandbox {
         id: SandboxId("sbx_title".into()),
         owner: SubjectId::new("owner"),
@@ -71,7 +71,7 @@ pub(super) fn sandbox() -> Sandbox {
     }
 }
 
-pub(super) fn agent() -> Agent {
+pub(in crate::sandbox) fn agent() -> Agent {
     Agent {
         id: AgentId("agt_title".into()),
         worktree_id: WorktreeId("wkt_title".into()),
