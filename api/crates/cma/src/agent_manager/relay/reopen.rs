@@ -3,13 +3,33 @@ use super::call_failure::CallFailure;
 use super::*;
 use axum::{
     extract::State,
+    http::StatusCode,
     response::{IntoResponse, Response},
     Extension, Json,
 };
 use layer2_core::{
-    sandbox::{AgentWorkReceipt, Sandbox, SandboxWorkLease},
+    sandbox::{AgentWorkReceipt, Sandbox, SandboxLifecycleOperation, SandboxWorkLease},
     SandboxId,
 };
+use std::time::SystemTime;
+use tokio::time::Instant;
+
+const REOPEN_LIMIT: Duration = Duration::from_secs(layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS);
+
+pub(crate) fn reopen_budget(sandbox: &Sandbox, now: SystemTime) -> Duration {
+    let Some(SandboxLifecycleOperation::Revive { authority, .. }) =
+        sandbox.lifecycle.operation.as_ref()
+    else {
+        return REOPEN_LIMIT;
+    };
+    let Some(requested) = layer2_core::seconds_from_rfc3339(&authority.requested_at) else {
+        return Duration::ZERO;
+    };
+    let elapsed = now
+        .duration_since(SystemTime::UNIX_EPOCH + Duration::from_secs(requested))
+        .unwrap_or_default();
+    REOPEN_LIMIT.saturating_sub(elapsed)
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,6 +71,14 @@ impl Relay {
         sandbox: &Sandbox,
         id: &AgentId,
     ) -> Result<AgentWorkReceipt, CallFailure> {
+        let budget = reopen_budget(sandbox, SystemTime::now());
+        if budget.is_zero() {
+            return Err(layer3_adapter::AdapterError::Rejected(
+                "retained conversation reopen deadline elapsed".into(),
+            )
+            .into());
+        }
+        let deadline = Instant::now() + budget;
         let _permit = self
             .acquire(capacity::Class::Control)
             .map_err(|_| CallFailure::RelayCapacity)?;
@@ -62,8 +90,8 @@ impl Relay {
         };
         let reply = if destination.member.instance_id == self.coordinator.instance_id {
             let worker = self.reopen.get().ok_or(())?;
-            let receipt = tokio::time::timeout(
-                Duration::from_secs(60),
+            let receipt = tokio::time::timeout_at(
+                deadline,
                 destination.authority.run(worker.reopen_at_owner(id, &call)),
             )
             .await
@@ -96,9 +124,9 @@ impl Relay {
                 destination.member.relay_address.trim_end_matches('/'),
                 uri
             );
-            tokio::time::timeout(Duration::from_secs(60), async {
+            tokio::time::timeout_at(deadline, async {
                 let mut response = self
-                    .client
+                    .reopen_client
                     .post(url)
                     .headers(headers)
                     .header(PROOF, proof)
@@ -107,6 +135,12 @@ impl Relay {
                     .await
                     .map_err(|_| ())?;
                 if !response.status().is_success() {
+                    if response.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY {
+                        return Err(layer3_adapter::AdapterError::Rejected(
+                            "owner runtime refused the retained conversation".into(),
+                        )
+                        .into());
+                    }
                     return Err(CallFailure::remote(
                         response,
                         layer3_adapter::agent_sandbox::RuntimeWorkloadClass::Continuity,
@@ -151,7 +185,7 @@ pub(super) async fn serve(
         return http::unavailable();
     };
     match tokio::time::timeout(
-        Duration::from_secs(60),
+        REOPEN_LIMIT,
         worker.reopen_at_owner(&authority.token.agent_id, &call),
     )
     .await
@@ -161,6 +195,9 @@ pub(super) async fn serve(
             receipt,
         })
         .into_response(),
+        Ok(Err(layer3_adapter::AdapterError::Rejected(_))) => {
+            StatusCode::UNPROCESSABLE_ENTITY.into_response()
+        }
         Ok(Err(error)) => call_failure::response(error),
         _ => http::unavailable(),
     }

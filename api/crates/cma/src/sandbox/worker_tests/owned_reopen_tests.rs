@@ -54,6 +54,14 @@ fn workers(
     harness: &Harness,
     instances: &[Instance],
 ) -> Vec<(Arc<SandboxWorker>, Arc<LiveAgentRegistry>)> {
+    workers_with_renewal(harness, instances, false)
+}
+
+pub(super) fn workers_with_renewal(
+    harness: &Harness,
+    instances: &[Instance],
+    renewable: bool,
+) -> Vec<(Arc<SandboxWorker>, Arc<LiveAgentRegistry>)> {
     instances
         .iter()
         .enumerate()
@@ -80,7 +88,8 @@ fn workers(
                     "test",
                     runtime_image(),
                     harness.policy.clone(),
-                ),
+                )
+                .with_replicas(renewable),
             );
             instance
                 .relay
@@ -224,4 +233,48 @@ async fn uncommitted_owner_reopen_is_idempotent_and_rolls_back_on_lease_loss() {
             AgentStatus::Paused
         );
     }
+}
+
+#[tokio::test]
+async fn issue_1164_revoked_reopen_stage_cannot_remove_a_replacement_epoch() {
+    use layer2_core::agent_ownership::transport_observation_scope;
+
+    let (harness, parent, agent, now) = reopening().await;
+    let (store, instances) = cluster(2).await;
+    let (owner, old_authority) = acquire(&store, &instances, &agent.id).await;
+    let workers = workers(&harness, &instances);
+    let peer = &instances[(owner + 1) % 2].relay;
+    let parent = harness
+        .store
+        .claim_sandbox_work(
+            &parent.id,
+            "lifecycle",
+            rfc3339_at(now),
+            rfc3339_at(SystemTime::now() + Duration::from_secs(60)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let retained = target(&parent, &agent);
+    transport_observation_scope(peer.reopen_agent(&parent, &agent.id))
+        .await
+        .unwrap();
+    assert!(workers[owner].1.target_is_attached(&retained));
+    let coordinator = &instances[owner].coordinator;
+    coordinator
+        .handoff(&old_authority, async { Ok(()) })
+        .await
+        .unwrap();
+    let next = coordinator.acquire(&agent.id).await.unwrap().unwrap();
+    assert!(next.token.epoch > old_authority.token.epoch);
+    transport_observation_scope(peer.reopen_agent(&parent, &agent.id))
+        .await
+        .unwrap();
+    assert!(workers[owner].1.target_is_attached(&retained));
+    assert!(!workers[owner].1.published_target_is_attached(&retained));
+    // Allow the previous epoch's staged watcher to process revocation.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(workers[owner].1.target_is_attached(&retained));
+    next.revoke();
+    until(|| !workers[owner].1.target_is_attached(&retained)).await;
 }
