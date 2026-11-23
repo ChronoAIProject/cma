@@ -28,6 +28,24 @@ impl OwnershipCoordinator {
         // Drain, process failure and local expiry keep their fatal result;
         // is_ready() already refuses at or after the member deadline.
         if !self.is_ready() {
+            let member_deadline = *self.member_deadline.lock().unwrap();
+            let observed_at = Instant::now();
+            let draining = self.draining.load(Ordering::Acquire);
+            let failed = *self.failed.borrow();
+            let prior_skipped_ticks = self.skipped_heartbeats.load(Ordering::Acquire);
+            let remaining = member_deadline.saturating_duration_since(observed_at);
+            tracing::error!(
+                stage = "member_heartbeat",
+                scope = "process",
+                outcome = "fatal",
+                reason,
+                draining,
+                failed,
+                prior_skipped_ticks,
+                member_remaining_ms = u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX),
+                member_deadline_elapsed = observed_at >= member_deadline,
+                "Unavailable member heartbeat cannot skip maintenance"
+            );
             return Err(self.maintenance_error("member_heartbeat", None, error));
         }
         let remaining = self
