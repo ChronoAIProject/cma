@@ -165,18 +165,16 @@ impl ProviderHostedControlTransport {
             .runtime_capacity
             .acquire_request(class)
             .await
-            .map_err(|error| {
+            .inspect_err(|_| {
                 NativeHttpObservation::record_origin(SettlementFailure::Unavailable);
-                error
             })?;
         let slot = self
             .native_slot_for_class(endpoint, lane, class)
             .await
-            .map_err(|error| {
-                if matches!(&error, AdapterError::RuntimeCapacity(_)) {
+            .inspect_err(|error| {
+                if matches!(error, AdapterError::RuntimeCapacity(_)) {
                     NativeHttpObservation::record_origin(SettlementFailure::Unavailable);
                 }
-                error
             })?;
         let mut cancelled = slot.cancellation();
         let exchange = async {

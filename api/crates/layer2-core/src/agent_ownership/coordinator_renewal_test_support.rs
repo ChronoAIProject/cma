@@ -69,6 +69,10 @@ impl OwnershipStore for Store {
             4 => membership.members.clear(),
             5 => membership.members[0].expires_at_ms = membership.now_ms + 500,
             6 => return Err(OwnershipError::Unavailable("heartbeat unavailable".into())),
+            13 => membership.members[0].instance_id = "wrong-member".into(),
+            14 => membership.members[0].expires_at_ms = membership.now_ms,
+            15 => membership.members.push(membership.members[0].clone()),
+            16 => membership.members[0].expires_at_ms = i64::MIN,
             _ => (),
         }
         Ok(membership)

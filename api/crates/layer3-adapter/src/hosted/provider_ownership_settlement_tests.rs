@@ -54,6 +54,55 @@ fn raw_body(body: &str) -> Vec<u8> {
 }
 
 #[tokio::test]
+async fn actual_transport_loss_and_deadline_recover_on_the_same_receiver() {
+    for deadline in [false, true] {
+        let authority = TestAuthority::new(3);
+        let listener = listener().await;
+        let receiver = fence(listener.local_addr().unwrap(), &authority);
+        let reply = json_response(&OwnerAcknowledgement {
+            owner: authority.owner(),
+            protocol: 1,
+        });
+        let (release, wait) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            let (mut first, _) = listener.accept().await.unwrap();
+            let first_request = read_request(&mut first).await;
+            if deadline {
+                wait.await.unwrap();
+            }
+            drop(first);
+            let (mut second, _) = listener.accept().await.unwrap();
+            let second_request = read_request(&mut second).await;
+            assert_eq!(first_request, second_request);
+            second.write_all(&reply).await.unwrap();
+        });
+        let outcome = ReceiverSettlementWatch::default();
+        assert_eq!(
+            receiver
+                .settle_typed(ReceiverConfirmationCustody::PossiblyDelivered, &outcome)
+                .await,
+            Err(if deadline {
+                Failure::Deadline
+            } else {
+                Failure::Unavailable
+            })
+        );
+        assert!(outcome.terminal().is_none());
+        if deadline {
+            release.send(()).unwrap();
+        }
+        assert_eq!(
+            receiver
+                .settle_typed(ReceiverConfirmationCustody::PossiblyDelivered, &outcome)
+                .await,
+            Ok(ReceiverCleanup::Acknowledged)
+        );
+        assert!(outcome.terminal().is_none());
+        server.await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn matching_ack_uses_one_remote_attempt_in_both_projections() {
     for typed in [false, true] {
         let authority = TestAuthority::new(3);

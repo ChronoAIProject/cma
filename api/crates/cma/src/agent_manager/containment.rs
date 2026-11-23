@@ -5,6 +5,9 @@ use layer2_core::{
     sandbox::AgentWorkStep,
 };
 
+#[cfg(test)]
+mod mongo_tests;
+
 #[derive(Default)]
 pub(super) struct IntentTimes {
     entries: BTreeMap<AgentId, Timers>,

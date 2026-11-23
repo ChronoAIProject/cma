@@ -121,3 +121,38 @@ async fn server_failure_still_signals_and_joins_workers() {
     assert!(*signal.borrow());
     assert!(stopped.load(Ordering::Acquire));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unconfirmed_abort_returns_unclean_without_claiming_worker_termination() {
+    let mut shutdown = ShutdownCoordinator::new();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let exited = Exited(stopped.clone());
+    let (release, blocked) = std::sync::mpsc::channel::<()>();
+    let (started, running) = tokio::sync::oneshot::channel();
+    let (finished, observed) = tokio::sync::oneshot::channel();
+    shutdown.push(tokio::spawn(async move {
+        let exit_guard = exited;
+        started.send(()).unwrap();
+        // Model an existing uncooperative worker with a bounded escape hatch.
+        // Aborting its handle cannot interrupt this controlled synchronous wait.
+        let _ = blocked.recv_timeout(Duration::from_secs(3));
+        drop(exit_guard);
+        let _ = finished.send(());
+    }));
+    running.await.unwrap();
+    let result = shutdown
+        .drain_contained_workers(Instant::now() + Duration::from_millis(100))
+        .await;
+    let still_executing = !stopped.load(Ordering::Acquire);
+    release.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(1), observed)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(result.is_err());
+    assert!(
+        still_executing,
+        "a timeout must not imply termination or freed backing"
+    );
+    assert!(stopped.load(Ordering::Acquire));
+}

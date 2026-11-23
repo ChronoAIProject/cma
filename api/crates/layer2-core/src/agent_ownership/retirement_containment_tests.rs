@@ -9,7 +9,10 @@ use std::{
 
 #[tokio::test(start_paused = true)]
 async fn partial_ack_and_release_uncertainty_preserve_custody_and_recover() {
-    for release_mode in [1, 2] {
+    for (intent, release_mode) in [RetirementIntent::Cooperative, RetirementIntent::Inactive]
+        .into_iter()
+        .flat_map(|intent| [1, 2].map(|mode| (intent, mode)))
+    {
         let store = Arc::new(Store::default());
         let manager = manager(store.clone(), false, 2).await;
         let old = manager
@@ -24,6 +27,7 @@ async fn partial_ack_and_release_uncertainty_preserve_custody_and_recover() {
             .unwrap();
         let acked = Receiver::install(&old, "a", false);
         let missing = Receiver::install(&old, "b", true);
+        old.begin_retirement(intent).unwrap();
         assert_eq!(manager.retirement_background(&old).await.unwrap(), None);
         assert_eq!(acked.calls.load(Ordering::SeqCst), 1);
         assert_eq!(store.release_calls.load(Ordering::SeqCst), 0);
@@ -76,17 +80,12 @@ async fn cancellation_before_receiver_poll_keeps_retirement_reserved() {
         .unwrap();
     let receiver = Receiver::install(&old, "receiver", false);
     let lock = old.cleanup.lock().await;
-    let task = tokio::spawn({
-        let manager = manager.clone();
-        let old = old.clone();
-        async move { manager.retirement_background(&old).await }
-    });
-    tokio::task::yield_now().await;
+    let mut attempt = Box::pin(manager.retirement_background(&old));
+    assert!(futures_util::poll!(&mut attempt).is_pending());
     assert!(old.retirement_pending());
     assert!(!old.is_current());
     assert_eq!(receiver.calls.load(Ordering::SeqCst), 0);
-    task.abort();
-    assert!(task.await.unwrap_err().is_cancelled());
+    drop(attempt);
     drop(lock);
     assert_eq!(manager.owned().await.len(), 1);
     assert!(manager

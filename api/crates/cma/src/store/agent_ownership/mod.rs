@@ -267,6 +267,8 @@ fn invalid(error: impl std::fmt::Display) -> OwnershipError {
 }
 
 #[cfg(test)]
+mod mongo_failure_containment_tests;
+#[cfg(test)]
 pub(crate) mod mongo_renewal_faults;
 #[cfg(test)]
 mod mongo_tests;
