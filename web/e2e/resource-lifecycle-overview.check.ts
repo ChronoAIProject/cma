@@ -319,3 +319,91 @@ for (const viewport of [
     noEffects(boundary);
   });
 }
+
+for (const width of [1440, 390]) {
+  for (const recovery of ['manual', 'online'] as const) {
+    test(`LOCAL Environment access recovers from 503 by ${recovery} at ${width}px`, async ({
+      page,
+      baseURL,
+    }, info) => {
+      await page.setViewportSize({ width, height: 900 });
+      const boundary = new LocalStartup();
+      boundary.sandbox.status = 'retired';
+      await boundary.route(page, baseURL!);
+      let unavailable = true;
+      const observations: string[] = [];
+      await page.route(
+        /\/api\/v1\/(organizations|sandboxes|resource-access\/sandbox\/sbx_route)$/,
+        (route) => {
+          const path = new URL(route.request().url()).pathname;
+          expect(route.request().method()).toBe('GET');
+          observations.push(path);
+          return unavailable
+            ? route.fulfill({
+                status: 503,
+                json: { status: 503, detail: 'Fixture status unavailable' },
+              })
+            : route.fallback();
+        },
+      );
+      await page.route(`**/api/v1/sandboxes/${boundary.sandbox.id}`, (route) => {
+        expect(route.request().method()).toBe('GET');
+        observations.push(new URL(route.request().url()).pathname);
+        return route.fallback();
+      });
+      await page.goto(`/sandboxes/${boundary.sandbox.id}`);
+      const heading = page.getByRole('heading', { name: 'Sandbox unavailable', exact: true });
+      await expect(heading).toBeVisible();
+      const result = await page.evaluate(
+        async (id) => (await fetch(`/api/v1/sandboxes/${id}`)).json(),
+        boundary.sandbox.id,
+      );
+      expect(result.status).toBe('retired');
+      await expect(heading).toBeVisible();
+      await expect(
+        page.getByRole('button', { name: 'Retry environment check', exact: true }),
+      ).toBeVisible();
+      for (const theme of ['light', 'dark']) {
+        await page.evaluate(
+          (dark) => document.body.toggleAttribute('data-ds-dark-theme', dark),
+          theme === 'dark',
+        );
+        await page.screenshot({
+          path: info.outputPath(`access-503-${recovery}-${width}-${theme}.png`),
+          fullPage: true,
+        });
+      }
+      unavailable = false;
+      const before = observations.length;
+      if (recovery === 'manual')
+        await page.getByRole('button', { name: 'Retry environment check', exact: true }).click();
+      else await page.evaluate(() => window.dispatchEvent(new Event('online')));
+      await expect(
+        page
+          .locator('.sandbox-page')
+          .getByRole('heading', { name: boundary.sandbox.name, exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.locator('.sandbox-page').getByText('Deleted', { exact: true }),
+      ).toBeVisible();
+      await expect(heading).toHaveCount(0);
+      const reads = observations.slice(before);
+      const access = `/api/v1/resource-access/sandbox/${boundary.sandbox.id}`;
+      const detail = `/api/v1/sandboxes/${boundary.sandbox.id}`;
+      expect(reads.filter((path) => path === access).length).toBeGreaterThanOrEqual(2);
+      expect(reads.indexOf(detail)).toBeGreaterThan(reads.indexOf(access));
+      expect(reads.lastIndexOf(access)).toBeGreaterThan(reads.indexOf(detail));
+      for (const theme of ['light', 'dark']) {
+        await page.evaluate(
+          (dark) => document.body.toggleAttribute('data-ds-dark-theme', dark),
+          theme === 'dark',
+        );
+        await page.screenshot({
+          path: info.outputPath(`access-recovered-${recovery}-${width}-${theme}.png`),
+          fullPage: true,
+        });
+      }
+      noEffects(boundary);
+    });
+  }
+}
