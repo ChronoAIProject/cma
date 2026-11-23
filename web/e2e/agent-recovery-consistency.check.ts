@@ -121,6 +121,8 @@ test('LOCAL running reload shows loading until activity is known, then agrees wi
     await expect(header(page)).toHaveAttribute('title', /Loading activity/);
     await expect.poll(() => fixture.snapshotPending).toBe(true);
     fixture.releaseSnapshot();
+    // The exiting notice keeps its line until removal, so the toggle moves after it settles.
+    await expect(page.getByText('Loading conversation activity.', { exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'View activity', exact: true }).click();
     await expect(page.locator('.thinking__activity')).toContainText(
       'Inspect synthetic file - running',
