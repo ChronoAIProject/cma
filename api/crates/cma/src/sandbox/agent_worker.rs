@@ -80,6 +80,7 @@ pub(crate) struct AgentWorkerConfig {
     pub retirement_reporter:
         Option<Arc<dyn crate::store::native_retirement_action::RetirementRecords>>,
     pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    skip_ineligible_reconciliation: bool,
     pub parent_not_ready_pacing_enabled: bool,
     startup_sibling_hold_enabled: bool,
     pub retry_single_marker_enabled: bool,
@@ -101,6 +102,7 @@ impl AgentWorkerConfig {
         Self {
             retirement_reporter: None,
             ownership: None,
+            skip_ineligible_reconciliation: false,
             ownership_retry_hints: None,
             parent_not_ready_pacing_enabled: false,
             startup_sibling_hold_enabled: false,
@@ -145,6 +147,11 @@ impl AgentWorkerConfig {
 
     pub(crate) fn with_managed_documents(mut self, enabled: bool) -> Self {
         self.managed_documents_enabled = enabled;
+        self
+    }
+
+    pub(crate) fn with_skip_ineligible_reconciliation(mut self, enabled: bool) -> Self {
+        self.skip_ineligible_reconciliation = enabled;
         self
     }
 
