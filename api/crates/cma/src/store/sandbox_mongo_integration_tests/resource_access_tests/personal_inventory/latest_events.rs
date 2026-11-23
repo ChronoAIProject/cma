@@ -130,7 +130,10 @@ async fn personal_provenance_selected_agents_and_latest_event_share_one_snapshot
         .unwrap();
     options.command_event_handler = Some(EventHandler::callback(move |event| {
         if let CommandEvent::Started(event) = event {
-            if event.command.get_str("comment") == Ok("cma.personal_agent_evidence")
+            if matches!(
+                event.command.get_str("comment"),
+                Ok("cma.personal_agent_evidence")
+            )
                 && observed.armed.swap(false, Ordering::SeqCst)
             {
                 observed.entered.notify_one();
