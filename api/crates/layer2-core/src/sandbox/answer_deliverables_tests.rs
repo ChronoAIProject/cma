@@ -760,8 +760,18 @@ async fn agent_deliverable_paths_resolve_within_the_agents_own_worktree() {
             crate::sandbox::agent_filesystem::AgentFileError::NotFound
         ))
     ));
-    for refused in ["/etc/hosts", "../report.docx", "report.docx/"] {
-        assert!(describe(refused).await.is_err(), "{refused}");
+    for refused in ["/etc/hosts", "../report.docx", "", "./", "/home/cma/"] {
+        assert!(
+            matches!(
+                describe(refused).await,
+                Err(DeliverableError::File(
+                    crate::sandbox::agent_filesystem::AgentFileError::Invalid
+                ))
+            ),
+            "{refused}"
+        );
     }
+    // A trailing separator names a directory; it never reaches a file.
+    assert!(describe("report.docx/").await.is_err());
     let _ = std::fs::remove_dir_all(root);
 }

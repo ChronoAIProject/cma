@@ -9,11 +9,17 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+// Suites that share a config split its entries between them, so each owned
+// command keeps a meaningful bound (#3303). Exactly one of them is the
+// remainder: it also runs every entry the config registers later that no
+// sibling claims, so the suites together always run the whole config.
 export const suites = {
   design: {
     config: "design-correction",
-    files: ["design-correction", "task-home-states", "theme-palette"],
+    files: ["design-correction", "task-home-states"],
+    remainder: true,
   },
+  palette: { config: "design-correction", files: ["theme-palette"] },
   shell: { config: "agent-settings", files: ["shell-layout"] },
   auth: { config: "auth-return-target", files: ["auth-return-target"] },
 };
@@ -22,7 +28,7 @@ const json = (path, value) => writeFile(path, JSON.stringify(value, null, 2) + "
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 
 export function argumentsFor(args, env) {
-  assert.equal(args.length, 1, "Supply exactly one suite: design, shell or auth");
+  assert.equal(args.length, 1, `Supply exactly one suite: ${Object.keys(suites).join(", ")}`);
   assert.ok(Object.hasOwn(suites, args[0]), "Unknown browser suite");
   for (const key of Object.keys(env)) {
     if (!env[key]) continue;
@@ -55,8 +61,20 @@ export function configure(original, options) {
       assert.equal(project.use?.[key], undefined, `Projects cannot override owned evidence: ${key}`);
   }
   const matches = [original.testMatch].flat();
-  for (const file of suites[suite].files)
-    assert.ok(matches.includes(`${file}.check.ts`), `Missing browser entry: ${file}`);
+  const siblings = Object.entries(suites).filter(([, other]) => other.config === suites[suite].config);
+  assert.equal(
+    siblings.filter(([, other]) => other.remainder).length,
+    siblings.length > 1 ? 1 : 0,
+    "A shared browser config needs exactly one remainder suite",
+  );
+  // Every sibling's entries must still exist: removing one from the config
+  // would otherwise drop it from every suite without failing.
+  for (const [, other] of siblings)
+    for (const file of other.files)
+      assert.ok(matches.includes(`${file}.check.ts`), `Missing browser entry: ${file}`);
+  const claimed = siblings
+    .filter(([name]) => name !== suite)
+    .flatMap(([, other]) => other.files.map((file) => `${file}.check.ts`));
   const result = {
     ...original,
     testDir: join(web, "e2e"),
@@ -70,7 +88,11 @@ export function configure(original, options) {
     },
   };
   if (suite === "shell") result.testMatch = "shell-layout.check.ts";
-  if (suite === "design") {
+  if (siblings.length > 1)
+    result.testMatch = suites[suite].remainder
+      ? matches.filter((entry) => !claimed.includes(entry))
+      : suites[suite].files.map((file) => `${file}.check.ts`);
+  if (suites[suite].config === suites.design.config) {
     assert.equal(original.webServer?.reuseExistingServer, false, "Design must own its server");
     assert.match(original.webServer.command, /^npm run dev -- --host 127\.0\.0\.1 --port \d+ --strictPort$/);
     if (p7)
@@ -336,7 +358,8 @@ export async function runSuite(suite, { repository = root, env = process.env, si
       `import original from ${JSON.stringify(original)};\nimport {configure} from ${JSON.stringify(helper)};\nexport default configure(original,${JSON.stringify({ suite, web, origin, output, setup, server, p7 })});\n`,
     );
     receipt.configSha256 = hash(await readFile(config));
-    if (suite !== "design") preview = await startProductionPreview(web, port, source.revision);
+    if (suites[suite].config !== suites.design.config)
+      preview = await startProductionPreview(web, port, source.revision);
     signal?.throwIfAborted();
     for (const phase of ["discovery", "execution"]) {
       const args = [
