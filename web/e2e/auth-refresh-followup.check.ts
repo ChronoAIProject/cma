@@ -1,5 +1,5 @@
 import { expect, test, type Request } from '@playwright/test';
-import type { Launch } from '@cma/client';
+import type { Launch, TriggerPreview } from '@cma/client';
 import { LocalStartup, recorded } from './agent-startup-fixtures';
 
 test('LOCAL queued identity refresh changes accounts without replaying a retained Launch', async ({
@@ -75,6 +75,11 @@ test('LOCAL queued identity refresh changes accounts without replaying a retaine
         ? reply(current)
         : reply({ title: 'Not found', code: 'not_found' }, 404);
     }
+    if (url.pathname === '/api/v1/triggers/public/public_contract')
+      return reply({
+        ...recorded<TriggerPreview>('triggers.json', 'triggers-preview'),
+        always_review: true,
+      });
     if (url.pathname === `/api/v1/launches/${draft.id}/requirements`)
       return reply(current.requirements);
     if (url.pathname === `/api/v1/agui/launches/${draft.id}/events`)
