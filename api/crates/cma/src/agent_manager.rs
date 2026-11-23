@@ -2,6 +2,8 @@
 mod containment;
 mod drain;
 mod drain_contained;
+#[cfg(test)]
+mod drain_contained_mongo_tests;
 mod drain_episode;
 pub(crate) use drain_episode::DrainCause;
 mod maintenance;
@@ -37,6 +39,7 @@ pub(crate) struct AgentManager {
     lifecycle: OnceLock<crate::agent_lifecycle::LifecycleDrain>,
     containment_times: Mutex<containment::IntentTimes>,
     supervisor: tokio::sync::Mutex<Option<tokio::task::JoinHandle<Result<(), ()>>>>,
+    supervisor_outcome: OnceLock<Result<(), String>>,
 }
 
 impl AgentManager {
@@ -102,6 +105,7 @@ impl AgentManager {
             lifecycle: OnceLock::new(),
             containment_times: Mutex::default(),
             supervisor: tokio::sync::Mutex::new(None),
+            supervisor_outcome: OnceLock::new(),
         });
         *manager.supervisor.try_lock().unwrap() = Some(renewal::spawn(&manager));
         Ok(manager)

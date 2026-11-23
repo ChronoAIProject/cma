@@ -71,6 +71,9 @@ impl AgentManager {
         let mut retained = tokio::time::timeout_at(until, self.supervisor.lock())
             .await
             .map_err(|_| "Agent Manager supervisor join was not confirmed")?;
+        if let Some(outcome) = self.supervisor_outcome.get() {
+            return outcome.clone();
+        }
         let Some(supervisor) = retained.as_mut() else {
             return Ok(());
         };
@@ -84,12 +87,16 @@ impl AgentManager {
                     .map_err(|_| "Agent Manager supervisor termination was not confirmed")?
             }
         };
-        retained.take();
-        match result {
+        let outcome = match result {
             Ok(Ok(())) => Ok(()),
             Ok(Err(())) => Err("Agent Manager supervisor reported an ownership failure".into()),
             Err(error) if error.is_cancelled() => Ok(()),
             Err(_) => Err("Agent Manager supervisor terminated unexpectedly".into()),
-        }
+        };
+        // A cancelled drain caller may resume receiver cleanup, but cannot
+        // forget a supervisor result that was already observed and consumed.
+        let outcome = self.supervisor_outcome.get_or_init(|| outcome).clone();
+        retained.take();
+        outcome
     }
 }
