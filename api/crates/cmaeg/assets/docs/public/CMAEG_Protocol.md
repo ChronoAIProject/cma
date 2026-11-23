@@ -815,7 +815,8 @@ start above one because reservation and binding completion are separate writes.
 channel, including its exact callback URL, after a lost response. Other owners
 receive 404. Failed or uncertain provider calls retain their pending reservation
 for explicit retry or deletion; the caller must reconcile that identity before
-allocating another. This is management recovery, not durable event delivery.
+allocating another. A provider that is not allowlisted is refused with 400
+`invalid_request` before any reservation is written. This is management recovery, not durable event delivery.
 Deletion releases the reservation; callers must never reuse a retired record UUID
 or race cleanup against an outstanding create attempt.
 
