@@ -30,7 +30,7 @@ function verify(job, suite) {
     /failure\(\) && steps\.new_agent_request\.outcome == 'failure'/,
   );
   for (const contract of [
-    /testMatch:\s*\[\s*'new-agent-request\.check\.ts',\s*'task-draft-ownership\.check\.ts',\s*'task-templates\.check\.ts',\s*'public-journeys\.check\.ts',?\s*\]/,
+    /testMatch:\s*\[\s*'new-agent-request\.check\.ts',\s*'task-draft-ownership\.check\.ts',\s*'task-templates\.check\.ts',\s*'public-journeys\.check\.ts',\s*'home-simplification\.check\.ts',\s*'preparation-simplification\.check\.ts',?\s*\]/,
     /projects: browserProjects\(\)/,
     /workers: 1/,
     /retries: 0/,
@@ -53,6 +53,8 @@ test("omitted execution, filtered tests, retries and reused previews fail the co
   for (const [from, to] of [
     ["'task-templates.check.ts'", "'other.check.ts'"],
     ["'public-journeys.check.ts'", "'other.check.ts'"],
+    ["'home-simplification.check.ts'", "'other.check.ts'"],
+    ["'preparation-simplification.check.ts'", "'other.check.ts'"],
     ["retries: 0", "retries: 1"],
     ["reuseExistingServer: false", "reuseExistingServer: true"],
   ])
