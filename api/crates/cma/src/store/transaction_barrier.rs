@@ -18,14 +18,25 @@ use mongodb::{
 /// authorized in both shared-schema and isolated modes.
 const COLLECTION: &str = "agents";
 
+/// Test clients carry no configured database. They read this one instead, so
+/// every test transaction opens exactly as production does. No test creates or
+/// drops it, so its intent lock never waits behind another test's DDL.
+#[cfg(test)]
+const TEST_DATABASE: &str = "cma_transaction_barrier_tests";
+
 /// The barrier reads the transaction's own database: the one its client was
 /// configured with. Production clients always carry it (`connection_options`
-/// and the runtime routing client); a client without one skips the barrier.
+/// and the runtime routing client); outside tests a client without one skips
+/// the barrier rather than read a database its credential may not cover.
 /// The read is an `_id` lookup that matches nothing. A stranded barrier holds
 /// only an intent-shared lock on `agents`, which conflicts with no write.
 pub(crate) async fn open(session: &mut ClientSession) -> Result<()> {
-    let Some(database) = session.client().default_database() else {
-        return Ok(());
+    let database = match session.client().default_database() {
+        Some(database) => database,
+        #[cfg(test)]
+        None => session.client().database(TEST_DATABASE),
+        #[cfg(not(test))]
+        None => return Ok(()),
     };
     database
         .collection::<Document>(COLLECTION)
