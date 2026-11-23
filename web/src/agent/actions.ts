@@ -76,10 +76,15 @@ export function useAgentActions({
         actionAbortRef.current !== undefined ||
         ((commandsBlocked || currentCommandsBlocked.current) && typeof approval !== 'string') ||
         !inputAvailability.allowed
-      )
+      ) {
+        if (typeof approval === 'string' && mode === 'send') onRefused?.();
         return;
+      }
       const current = stateRef.current;
-      if (current.status !== 'ready' || current.detail.id !== agentId) return;
+      if (current.status !== 'ready' || current.detail.id !== agentId) {
+        if (typeof approval === 'string' && mode === 'send') onRefused?.();
+        return;
+      }
       if (
         historyIncomplete &&
         typeof approval !== 'string' &&
@@ -108,8 +113,10 @@ export function useAgentActions({
       if (
         current.detail.status === 'starting' &&
         (session === undefined || typeof approval !== 'string')
-      )
+      ) {
+        if (typeof approval === 'string' && mode === 'send') onRefused?.();
         return;
+      }
       if (session === undefined) replayAbortRef.current?.abort();
       const controller = new AbortController();
       actionAbortRef.current = controller;
