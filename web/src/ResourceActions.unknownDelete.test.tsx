@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ApiError } from '@cma/client';
 import { useResourceActions } from './ResourceActions';
+import { useDeletionNoticeReconciliation } from './useDeletionNoticeReconciliation';
 import { AGENT_DETAIL, agentClient } from './test/agent';
 import { sandboxFixture, workspaceFixture } from './test/hierarchy';
 import type { AgentStatus, SandboxDetail } from './api/types';
@@ -44,10 +45,17 @@ function fixture() {
     removeWorkspace,
   });
   function Actions({ allowDelete = true }: { allowDelete?: boolean }) {
-    const actions = useResourceActions(client, vi.fn(), undefined, 'owner', undefined, true, {
-      stopAgent: true,
-      deleteAgent: allowDelete,
-    });
+    const observed = useDeletionNoticeReconciliation(client, 'owner', 0, true);
+    const actions = useResourceActions(
+      observed.client,
+      vi.fn(),
+      undefined,
+      'owner',
+      undefined,
+      true,
+      { stopAgent: true, deleteAgent: allowDelete },
+      observed.settlements,
+    );
     return (
       <>
         <button
@@ -138,7 +146,7 @@ it.each([
     await click('Delete parent environment');
     expect(screen.getByRole('dialog')).toHaveAccessibleName('Delete Sandbox');
     expect(screen.getByRole('checkbox')).not.toBeChecked();
-    await click('Cancel');
+    await click('Keep environment');
     await tick(1000);
     f.state.sandbox = { ...f.state.sandbox, status: 'active' };
     await click('Delete original Agent');

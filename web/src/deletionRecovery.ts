@@ -87,20 +87,23 @@ export function restoreDeletion(viewerId: string): DeletionRequest | undefined {
   return requests.find((request) => !request.accepted) ?? requests.at(-1);
 }
 
+export function sameDeletionRequest(left: DeletionRequest, right: DeletionRequest): boolean {
+  return (
+    left.key === right.key &&
+    JSON.stringify(left.action) === JSON.stringify(right.action) &&
+    (left.stop === undefined) === (right.stop === undefined) &&
+    (!right.stop ||
+      (['key', 'sandboxId', 'workspaceId', 'worktreeId'] as const).every(
+        (field) => left.stop?.[field] === right.stop?.[field],
+      ))
+  );
+}
+
 function matchingDeletion(
   viewerId: string,
   expected: DeletionRequest,
 ): DeletionRequest | undefined {
-  return restoreDeletions(viewerId).find(
-    (retained) =>
-      retained.key === expected.key &&
-      JSON.stringify(retained.action) === JSON.stringify(expected.action) &&
-      (retained.stop === undefined) === (expected.stop === undefined) &&
-      (!expected.stop ||
-        (['key', 'sandboxId', 'workspaceId', 'worktreeId'] as const).every(
-          (field) => retained.stop?.[field] === expected.stop?.[field],
-        )),
-  );
+  return restoreDeletions(viewerId).find((retained) => sameDeletionRequest(retained, expected));
 }
 
 // Independent keys prevent a second request or another tab from overwriting an

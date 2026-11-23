@@ -56,18 +56,12 @@ export function SandboxCapacityPanel({
         ) : near ? (
           <p className="sandbox-capacity-home__near">
             <span>1 environment slot left</span>
-            <small>
-              {value.live}/{value.limit} Sandbox environments used
-            </small>
           </p>
         ) : (
           <div className="sandbox-capacity-home__message">
             <IconWarningOutline16 />
             <div>
               <strong>All {value.limit} Sandbox environment slots are in use</strong>
-              <p>
-                {value.live}/{value.limit} Sandbox environments used
-              </p>
               {retiring ? (
                 <p>
                   {retiring}{' '}
@@ -82,6 +76,12 @@ export function SandboxCapacityPanel({
         )}
         {!near ? (
           <div className="sandbox-capacity__actions">
+            <Button
+              variant={capacity.error ? 'outline' : 'primary'}
+              onClick={() => setManage(true)}
+            >
+              Manage environments
+            </Button>
             {capacity.error ? (
               <Button
                 variant="outline"
@@ -96,9 +96,6 @@ export function SandboxCapacityPanel({
                 Refresh Sandbox capacity
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={() => setManage(true)}>
-              Manage environments
-            </Button>
             <DocsLink view="environments-and-capacity">
               Help with environments and capacity
             </DocsLink>

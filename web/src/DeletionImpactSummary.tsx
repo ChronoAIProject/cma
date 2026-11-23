@@ -119,7 +119,12 @@ function ImpactPreview({ client, viewerId, action, observation, available }: Imp
               ? 'This deletes the whole Sandbox environment, including all Agents, Workspaces, and files inside it.'
               : 'This deletes the Workspace, its Agents, Worktrees, and runtime files. Its Sandbox environment remains.'}
           </span>
-          <span className="deletion-impact__list" role="list" aria-label="Known affected resources">
+          <span
+            className="deletion-impact__list"
+            role="list"
+            aria-label="Known affected resources"
+            tabIndex={0}
+          >
             {agents.map((agent) => (
               <span className="deletion-impact__row" role="listitem" key={agent.id}>
                 <CharacterAvatar

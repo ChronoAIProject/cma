@@ -3,6 +3,7 @@ import { usePresenceExiting } from './ui/Presence';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CmaWebClient } from './api/client';
 import { detailReadSource } from './api/detailReads';
+import { deletionWasSettled } from './useDeletionNoticeReconciliation';
 import {
   DeletionBlocked,
   stopDeletionBlock,
@@ -19,10 +20,9 @@ import {
   type AgentDeletionPermissions,
 } from './deletion';
 import { forgetDeletion, persistDeletion, acknowledgeRetainedDeletion } from './deletionRecovery';
-import { RiskConfirmation } from './ui/RiskConfirmation';
 import { Modal } from './ui/Modal';
 import { Button } from './ui/Button';
-import { DeletionImpactSummary } from './DeletionImpactSummary';
+import { DeletionConfirmation } from './DeletionConfirmation';
 import { DeletionStatusPanel } from './DeletionStatusPanel';
 import { transitionRefreshDelay } from './sandbox/lifecycle';
 import { readableError } from './vocabulary/errors';
@@ -35,6 +35,7 @@ export function DeletionDialog({
   onChanged,
   onAccepted,
   onAbandoned,
+  onRequestChanged,
   backgroundOnAcceptance = false,
   agentPermissions,
   enabled = true,
@@ -47,6 +48,7 @@ export function DeletionDialog({
   readonly onChanged: () => void;
   readonly onAccepted?: (request: DeletionRequest) => void;
   readonly onAbandoned?: (request: DeletionRequest) => void;
+  readonly onRequestChanged?: (request: DeletionRequest | undefined) => void;
   readonly backgroundOnAcceptance?: boolean;
   readonly agentPermissions?: AgentDeletionPermissions;
   readonly enabled?: boolean;
@@ -65,6 +67,7 @@ export function DeletionDialog({
   const inFlight = useRef(false);
   const backgrounded = useRef(false);
   const changed = useRef(onChanged);
+  const requestChanged = useRef(onRequestChanged);
   const completed = useRef(false);
   const autoDelete = useRef(false);
   const blockedRevision = useRef(0);
@@ -98,7 +101,8 @@ export function DeletionDialog({
   }, [scope]);
   useEffect(() => {
     changed.current = onChanged;
-  }, [onChanged]);
+    requestChanged.current = onRequestChanged;
+  }, [onChanged, onRequestChanged]);
   const target = deletionTarget(request.action);
   const persist = useCallback(
     (value: DeletionRequest | undefined) => {
@@ -111,6 +115,7 @@ export function DeletionDialog({
         latestRequest.current = value;
         setRequest(value);
       }
+      requestChanged.current?.(value);
       return value;
     },
     [identity.viewerId, request.key],
@@ -192,6 +197,7 @@ export function DeletionDialog({
             if (request.action.kind === 'delete_sandbox')
               void refreshSandboxCapacity(client, viewerId);
             forgetDeletion(identity.viewerId, request.key);
+            requestChanged.current?.(undefined);
             changed.current();
           } else
             timer = setTimeout(poll, request.accepted ? transitionRefreshDelay(startedAt) : 1500);
@@ -237,6 +243,7 @@ export function DeletionDialog({
       const beforeRead = blockedRevision.current;
       const blocked = () =>
         completed.current ||
+        deletionWasSettled(client, latestRequest.current) ||
         blockedBeforeDelete(latestRequest.current) ||
         blockedRevision.current !== beforeRead;
       const current = () =>
@@ -246,8 +253,7 @@ export function DeletionDialog({
         !lifetime.controller.signal.aborted &&
         enabled &&
         !exiting;
-      if (!current() || inFlight.current || request.accepted || blockedBeforeDelete(request))
-        return;
+      if (!current() || blocked() || inFlight.current || request.accepted) return;
       if (
         !started &&
         (observation === undefined || readError !== undefined || observation.blocked !== undefined)
@@ -332,7 +338,7 @@ export function DeletionDialog({
           persist(submitted);
         }
         await requestDeletion(client, submitted);
-        if (!current()) {
+        if (!current() || blocked()) {
           acknowledgeRetainedDeletion(identity.viewerId, submitted);
           return;
         }
@@ -424,33 +430,16 @@ export function DeletionDialog({
   const name = observation?.name ?? target;
   if (!started && !observation?.complete)
     return (
-      <RiskConfirmation
-        open
-        title={`Delete ${target}`}
-        description={
-          <DeletionImpactSummary
-            key={JSON.stringify([viewerId, request.action])}
-            client={client}
-            viewerId={viewerId}
-            action={request.action}
-            observation={observation}
-            available={observation !== undefined && readError === undefined}
-          />
-        }
-        acknowledgeLabel={`I understand this ${target} will be deleted.`}
-        confirmLabel={observation?.stopsAgent ? 'Stop and delete' : `Delete ${target}`}
-        confirmDisabled={
-          !enabled ||
-          observation === undefined ||
-          readError !== undefined ||
-          observation.blocked !== undefined
-        }
-        status={observation === undefined ? 'Checking deletion availability.' : observation.blocked}
-        failure={commandError ?? readError}
+      <DeletionConfirmation
+        client={client}
+        viewerId={viewerId}
+        action={request.action}
+        observation={observation}
+        enabled={enabled}
+        readError={readError}
+        commandError={commandError}
         onCancel={close}
-        onConfirm={() => {
-          void submit();
-        }}
+        onConfirm={() => void submit()}
       />
     );
   return (
