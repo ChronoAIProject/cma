@@ -123,12 +123,14 @@ async fn apply_existing(
         return Ok(());
     };
     let key = turn_key(current, turn);
-    let Some(document) = store
-        .model_budget
-        .find_one(doc! {"_id": &key})
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?
+    let Some(document) = crate::store::stale_turns::find_with_proof_budget(
+        &store.model_budget,
+        doc! {"_id": &key},
+        &mut *session,
+        false,
+    )
+    .await
+    .map_err(ApplyError::Driver)?
     else {
         return Ok(());
     };
@@ -154,16 +156,18 @@ async fn apply_existing(
             .saturating_add(record.reservation.policy.max_unobserved_units)
             > record.reservation.reserved_units
     {
-        let mut owner: OwnerBudget = store
-            .model_budget
-            .find_one(doc! {"_id": owner_key(current)})
-            .session(&mut *session)
-            .await
-            .map_err(ApplyError::Driver)?
-            .as_ref()
-            .map(decode)
-            .transpose()?
-            .ok_or_else(|| domain(BudgetError::Unavailable))?;
+        let mut owner: OwnerBudget = crate::store::stale_turns::find_with_proof_budget(
+            &store.model_budget,
+            doc! {"_id": owner_key(current)},
+            &mut *session,
+            false,
+        )
+        .await
+        .map_err(ApplyError::Driver)?
+        .as_ref()
+        .map(decode)
+        .transpose()?
+        .ok_or_else(|| domain(BudgetError::Unavailable))?;
         // Existing observations do not prove a complete provider settlement.
         // Keep the full allowance as a debit until an authoritative source can reconcile.
         let before = record.reservation.reserved_units;
