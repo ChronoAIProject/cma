@@ -164,6 +164,3 @@
 .agent-toolbar__actions button[aria-controls='agent-files-panel'][aria-expanded='false'] {
   background: transparent;
 }
-.menu[aria-label='More Agent actions'] {
-  max-width: min(360px, calc(100vw - 24px));
-}
