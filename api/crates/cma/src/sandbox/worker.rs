@@ -189,7 +189,7 @@ pub(crate) struct SandboxWorker {
     funding: Arc<dyn SandboxFundingAdapter>,
     reopen_relay: std::sync::OnceLock<std::sync::Weak<crate::agent_manager::relay::Relay>>,
     reopen_agents: std::sync::OnceLock<Arc<dyn layer2_core::sandbox::store::AgentStore>>,
-    reopen_gate: tokio::sync::Mutex<()>,
+    reopen_gates: std::sync::Mutex<lifecycle::ReopenGates>,
     pending_reopens: std::sync::Mutex<
         std::collections::BTreeMap<layer2_core::AgentId, lifecycle::PendingReopen>,
     >,
@@ -216,7 +216,7 @@ impl SandboxWorker {
             funding,
             reopen_relay: std::sync::OnceLock::new(),
             reopen_agents: std::sync::OnceLock::new(),
-            reopen_gate: tokio::sync::Mutex::new(()),
+            reopen_gates: std::sync::Mutex::default(),
             pending_reopens: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         })
     }
@@ -336,6 +336,16 @@ impl SandboxWorker {
             }
         }
         Ok(true)
+    }
+
+    #[cfg(test)]
+    pub(super) async fn resume_claim_for_test(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        layer2_core::agent_ownership::transport_observation_scope(self.run_claimed(sandbox, now, 0))
+            .await
     }
 
     /// A finished attempt must not leave its long capture lease blocking a retry
