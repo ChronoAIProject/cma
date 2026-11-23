@@ -202,7 +202,14 @@ impl HttpAgentTitleGenerator {
                 }
                 body.extend_from_slice(&chunk);
             }
-            return Err(generation_failure(status, &body));
+            let failure = generation_failure(status, &body);
+            // Status only: the body may echo request content (#2266).
+            tracing::warn!(
+                status = status.as_u16(),
+                permanent = failure.is_permanent(),
+                "agent title provider request refused"
+            );
+            return Err(failure);
         }
         if response.headers().get_all(CONTENT_TYPE).iter().count() != 1
             || response
