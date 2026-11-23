@@ -166,7 +166,8 @@ def validate_bundle(directory, prefix, *, family=None, max_archive=None, max_con
     return manifest
 
 
-def dockerfile(operation, max_content=None):
+def dockerfile(operation, max_content=None, *, incremental_subset=False):
+    require(not incremental_subset or operation == "extract", "subset selection is export-only")
     names = ("target",) if operation == "inject-target" else tuple(MOUNTS)
     mounts = " ".join(f"--mount=type=cache,id={MOUNTS[name]},target=/cache/{name},sharing=locked"
                       for name in names)
@@ -179,6 +180,14 @@ def dockerfile(operation, max_content=None):
         return (header + f"COPY {archives} /restore/\n"
                 + f'RUN --network=none {mounts} set -eu; test -n "$CMA_CACHE_TRANSFER"; {commands}\n')
     require(operation == "extract", "unknown cache transfer")
+    if incremental_subset:
+        limit = MAX_CONTENT_BYTES if max_content is None else max_content
+        require(type(limit) is int and 0 < limit < 2**52, "invalid subset byte bound")
+        script = Path(__file__).with_name("staging_cd_cargo_select.sh").read_text()
+        return (header + f"RUN --network=none {mounts} <<'CARGO_SUBSET'\n"
+                + 'test -n "$CMA_CACHE_TRANSFER"\n'
+                + f"set -- /cache/registry /cache/target /out {limit} {MAX_MEMBERS}\n"
+                + script + "\nCARGO_SUBSET\nFROM scratch\nCOPY --from=transfer /out/ /\n")
     return header + f"RUN --network=none {mounts} " + (
         "set -euo pipefail; test -n \"$CMA_CACHE_TRANSFER\"; mkdir /out; "
         f"total=$(du -sk /cache/registry /cache/target | awk '{{n += $1}} END {{print n}}'); "
@@ -189,7 +198,8 @@ def dockerfile(operation, max_content=None):
         "FROM scratch\nCOPY --from=transfer /out/ /\n")
 
 
-def transfer(operation, directory, builder=None, *, namespace=None, timeout=150, max_content=None):
+def transfer(operation, directory, builder=None, *, namespace=None, timeout=150, max_content=None,
+             incremental_subset=False):
     env = {key: value for key, value in os.environ.items()
            if key in ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")}
     command = ["docker", "buildx", "build", "--platform", "linux/amd64", "--progress=plain",
@@ -200,12 +210,12 @@ def transfer(operation, directory, builder=None, *, namespace=None, timeout=150,
         command += ["--builder", builder]
     if operation in ("inject", "inject-target"):
         command += ["--output", "type=cacheonly", "--file", "-", str(directory)]
-        subprocess.run(command, input=dockerfile(operation, max_content), text=True, check=True,
+        subprocess.run(command, input=dockerfile(operation, max_content, incremental_subset=incremental_subset), text=True, check=True,
                        timeout=timeout, env=env)
     else:
         with tempfile.TemporaryDirectory(prefix="cma-cache-context-") as empty:
             command += ["--output", f"type=local,dest={directory}", "--file", "-", empty]
-            subprocess.run(command, input=dockerfile(operation, max_content), text=True, check=True,
+            subprocess.run(command, input=dockerfile(operation, max_content, incremental_subset=incremental_subset), text=True, check=True,
                            timeout=timeout, env=env)
 
 

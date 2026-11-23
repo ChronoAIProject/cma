@@ -123,6 +123,7 @@ class CacheTests(unittest.TestCase):
                 for call in transfer.call_args_list:
                     self.assertEqual((call.kwargs["timeout"], call.kwargs["max_content"]),
                                      (module.TRANSFER_SECONDS, module.MAX_EXPANDED_BYTES))
+                    self.assertEqual(call.kwargs.get("incremental_subset", False), call.args[0] == "extract")
             with patch.object(module, 'MAX_BUNDLE_BYTES', 100 * size):
                 self.assertTrue(cache.export_mounts())
                 self.assertEqual(cache.export_headroom, "ok")
