@@ -1,5 +1,6 @@
 import { act, render, fireEvent, screen, renderHook } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
+import { ApiError } from '@cma/client';
 import {
   useDeletionNoticeReconciliation,
   reconcileDeletionRequests,
@@ -96,7 +97,7 @@ it.each(['key', 'sandboxId', 'workspaceId', 'worktreeId'] as const)(
   },
 );
 
-it.each(['Agent preflight', 'parent preflight', 'Delete reply'] as const)(
+it.each(['Agent preflight', 'parent preflight', 'Delete reply', 'Delete refusal'] as const)(
   'invalidates pending %s when an existing read settles late acceptance',
   async (stage) => {
     persistDeletion('owner', { ...request, accepted: false });
@@ -144,19 +145,27 @@ it.each(['Agent preflight', 'parent preflight', 'Delete reply'] as const)(
         await pending;
         return parent;
       });
-    else deleteAgent.mockReturnValueOnce(pending);
+    else
+      deleteAgent.mockImplementationOnce(async () => {
+        await pending;
+        if (stage === 'Delete refusal') throw new ApiError(409, 'Late refusal');
+      });
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Check request' }));
     });
     persistDeletion('owner', request);
+    const writes = vi.spyOn(localStorage, 'setItem');
     readAgent.mockResolvedValue(terminal);
     await act(async () => {
       await observedClient.readAgent(AGENT_DETAIL.id);
       expect(restoreDeletions('owner')).toEqual([]);
+      writes.mockClear();
       finish();
     });
-    expect(deleteAgent).toHaveBeenCalledTimes(stage === 'Delete reply' ? 1 : 0);
+    expect(deleteAgent).toHaveBeenCalledTimes(stage.startsWith('Delete') ? 1 : 0);
     expect(stopAgent).not.toHaveBeenCalled();
+    expect(writes).not.toHaveBeenCalled();
+    writes.mockRestore();
     expect(restoreDeletions('owner')).toEqual([]);
     expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
   },

@@ -348,7 +348,7 @@ export function DeletionDialog({
         changed.current();
         onAccepted?.(accepted);
       } catch (error: unknown) {
-        if (!current()) return;
+        if (!current() || blocked()) return;
         autoDelete.current = false;
         setCommandError(
           error instanceof Error && error.name !== 'AbortError'
