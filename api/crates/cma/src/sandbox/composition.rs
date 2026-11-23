@@ -318,9 +318,9 @@ impl SandboxLifecycleComposition {
             .capacity_recovery_commands(service)
     }
 
-    pub(crate) async fn initialize(&self) -> Result<(), String> {
+    pub(crate) async fn initialize(&self, stopping: impl Fn() -> bool) -> Result<(), String> {
         self.reconciliation
-            .initialize_before_workers(std::time::SystemTime::now())
+            .initialize_before_workers_until(std::time::SystemTime::now(), stopping)
             .await
             .map_err(|error| format!("sandbox runtime initialization failed: {error}"))
     }
