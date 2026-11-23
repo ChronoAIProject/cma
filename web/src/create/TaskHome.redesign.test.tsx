@@ -117,7 +117,7 @@ it('keeps a zero-limit empty account editable with one truthful capacity status 
   expect(screen.getByLabelText('Topic')).toHaveValue('Retain this research');
 });
 
-it('uses first-visit copy only after an empty personal read succeeds, never across scopes', () => {
+it('uses neutral empty-state copy only after an empty personal read succeeds, never across scopes', () => {
   const props = {
     titleId: 'home-title',
     contextual: false,
@@ -128,7 +128,7 @@ it('uses first-visit copy only after an empty personal read succeeds, never acro
   const { rerender } = render(
     <TaskHomeLayout {...props} home={{ navigation: { status: 'loading' } }} />,
   );
-  expect(screen.queryByText('Your first agent starts here')).not.toBeInTheDocument();
+  expect(screen.queryByText('Your next agent starts here')).not.toBeInTheDocument();
   rerender(
     <TaskHomeLayout
       {...props}
@@ -136,16 +136,18 @@ it('uses first-visit copy only after an empty personal read succeeds, never acro
     />,
   );
   expect(screen.getByRole('alert')).toHaveTextContent('Access unavailable');
-  expect(screen.queryByText('Your first agent starts here')).not.toBeInTheDocument();
+  expect(screen.queryByText('Your next agent starts here')).not.toBeInTheDocument();
   rerender(
     <TaskHomeLayout
       {...props}
       home={{ navigation: { status: 'ready', items: [], refreshError: 'Stale list' } }}
     />,
   );
-  expect(screen.queryByText('Your first agent starts here')).not.toBeInTheDocument();
+  expect(screen.queryByText('Your next agent starts here')).not.toBeInTheDocument();
   rerender(<TaskHomeLayout {...props} home={{ navigation: { status: 'ready', items: [] } }} />);
   expect(screen.getByRole('heading', { name: 'Give it a job.' })).toBeVisible();
+  expect(screen.getByText('Your next agent starts here')).toBeVisible();
+  expect(screen.queryByText('Your first agent starts here')).not.toBeInTheDocument();
   rerender(
     <TaskHomeLayout
       {...props}
@@ -153,7 +155,7 @@ it('uses first-visit copy only after an empty personal read succeeds, never acro
     />,
   );
   expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
-  expect(screen.queryByText('Your first agent starts here')).not.toBeInTheDocument();
+  expect(screen.queryByText('Your next agent starts here')).not.toBeInTheDocument();
 });
 
 it.each([
@@ -285,7 +287,7 @@ it('shows an accepted request and stale preparation as separate facts with only 
     'Keep the original message',
   );
   expect(screen.getByText(/Last confirmed: Preparing/)).toBeVisible();
-  expect(screen.getByText(/The latest status has not been confirmed/)).toBeVisible();
+  expect(screen.getByRole('alert')).toHaveTextContent('Status unavailable');
   expect(document.querySelector('time')).toHaveAttribute('datetime', '2026-11-22T06:00:00Z');
   rerender(
     <TaskCreationStatus
@@ -297,4 +299,24 @@ it('shows an accepted request and stale preparation as separate facts with only 
   );
   expect(screen.getByText(/Last confirmed: Request accepted/)).toBeVisible();
   expect(document.querySelector('time')).toBeNull();
+});
+
+it('uses neutral copy for returning owners whose earlier workspaces were removed', () => {
+  const items = navigationFixture().map((item) => ({
+    ...item,
+    workspaces: item.workspaces.map((workspace) => ({ ...workspace, status: 'removed' as const })),
+  }));
+  render(
+    <TaskHomeLayout
+      titleId="returning-owner"
+      contextual={false}
+      submitted={false}
+      onNavigate={vi.fn()}
+      home={{ navigation: { status: 'ready', items } }}
+    >
+      Composer
+    </TaskHomeLayout>,
+  );
+  expect(screen.getByText('Your next agent starts here')).toBeVisible();
+  expect(screen.queryByText('Your first agent starts here')).not.toBeInTheDocument();
 });

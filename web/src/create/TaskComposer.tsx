@@ -53,7 +53,7 @@ export function TaskComposer({
             className="task-home__input"
             aria-label="Your task"
             aria-keyshortcuts={shortcut}
-            placeholder="What would you like your Agent to do?"
+            placeholder="Describe the job. It gets its own cloud computer to do it."
             ref={input}
             value={text}
             aria-invalid={validation !== undefined}

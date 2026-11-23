@@ -31,6 +31,7 @@ import { useConnectionGate } from '../connections/useConnectionGate';
 import '../ui/Input.css';
 import './AgentLifecycleCard.css';
 import './TaskHome.css';
+import './TaskStartLayout.css';
 import './TaskFeedback.css';
 
 const recoverTask = { label: 'Recover original task', kind: 'recover' } as const;
@@ -382,38 +383,51 @@ function TaskHomeContent({
         pending={lifecycle.pending}
         preparing={preparing}
         resolvedCommit={agent?.workspace.resolvedCommit}
+        recovery={
+          <>
+            {intent && !intent.receipt && !lifecycle.connection ? (
+              <Button
+                variant="outline"
+                placement="task-home__action"
+                disabled={lifecycle.pending || lifecycle.blocked}
+                onClick={() => {
+                  setRecovering(true);
+                  void lifecycle.submit();
+                }}
+              >
+                {recoverTask.label}
+              </Button>
+            ) : null}
+            {lifecycle.connection ? (
+              <Button
+                variant="outline"
+                placement="task-home__action"
+                disabled={lifecycle.pending || lifecycle.blocked || connections.pending}
+                onClick={() => {
+                  if (viewerId && lifecycle.connection)
+                    void connections.checkAndRun(
+                      lifecycle.connection.target,
+                      viewerId,
+                      () => void lifecycle.submit(),
+                    );
+                }}
+              >
+                {continueTask.label}
+              </Button>
+            ) : null}
+            {failure && intent?.receipt ? (
+              <Button
+                variant="outline"
+                placement="task-home__action"
+                onClick={lifecycle.retryStatus}
+              >
+                {retryTaskStatus.label}
+              </Button>
+            ) : null}
+          </>
+        }
       />
-      {intent && !intent.receipt && !lifecycle.connection ? (
-        <Button
-          variant="outline"
-          placement="task-home__action"
-          disabled={lifecycle.pending || lifecycle.blocked}
-          onClick={() => {
-            setRecovering(true);
-            void lifecycle.submit();
-          }}
-        >
-          {recoverTask.label}
-        </Button>
-      ) : null}
       {connections.dialog}
-      {lifecycle.connection ? (
-        <Button
-          variant="outline"
-          placement="task-home__action"
-          disabled={lifecycle.pending || lifecycle.blocked || connections.pending}
-          onClick={() => {
-            if (viewerId && lifecycle.connection)
-              void connections.checkAndRun(
-                lifecycle.connection.target,
-                viewerId,
-                () => void lifecycle.submit(),
-              );
-          }}
-        >
-          {continueTask.label}
-        </Button>
-      ) : null}
       {quotaFailed ? (
         <p role="alert">
           The Sandbox environment limit is now reached. Your task draft is saved. Manage
@@ -443,15 +457,10 @@ function TaskHomeContent({
           {draft.error}
         </p>
       ) : null}
-      {failure ? (
+      {failure && !intent ? (
         <p className="task-home__alert" role="alert">
           {failure}
         </p>
-      ) : null}
-      {failure && intent?.receipt ? (
-        <Button variant="outline" placement="task-home__action" onClick={lifecycle.retryStatus}>
-          {retryTaskStatus.label}
-        </Button>
       ) : null}
       {connections.error ? (
         <p className="task-home__alert" role="alert">
