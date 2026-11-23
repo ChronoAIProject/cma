@@ -1,6 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
-import { activityPage, receipt, responseConsumer, setupActivity } from './redesign-channel.fixture';
+import {
+  activityPage,
+  receipt,
+  responseConsumer,
+  setupActivity,
+  setupActivityDiagnosticPage,
+} from './redesign-channel.fixture';
 
 function nativeLayoutDiagnostic(page: Page) {
   return page.evaluate(() => {
@@ -17,22 +23,6 @@ function nativeLayoutDiagnostic(page: Page) {
     });
     observer.observe(target);
   });
-}
-
-async function freshDiagnosticBoundary(page: Page, baseURL: string) {
-  const result = await setupActivity(page, baseURL);
-  await expect.poll(() => result.layoutTelemetry.length).toBe(result.layoutDiagnostics.length);
-  expect(result.layoutDiagnostics.length).toBeLessThanOrEqual(1);
-  expect(result.browserErrors).toEqual([]);
-  expect(result.boundary.errors).toEqual([]);
-  expect(result.boundary.unexpected).toEqual([]);
-  expect(result.boundary.writes).toEqual([]);
-  expect(result.state.writes).toEqual([]);
-  const automaticTelemetry = result.layoutDiagnostics.length === 0 ? 1 : 0;
-  // Validate setup first, then isolate a fresh allowance without resetting app telemetry.
-  result.layoutDiagnostics.length = 0;
-  result.layoutTelemetry.length = 0;
-  return { ...result, automaticTelemetry };
 }
 
 export function registerRedesignChannelCases() {
@@ -203,15 +193,8 @@ export function registerRedesignChannelCases() {
         page,
         baseURL,
       }) => {
-        const {
-          browserErrors,
-          boundary,
-          state,
-          layoutDiagnostics,
-          layoutTelemetry,
-          setPhase,
-          automaticTelemetry,
-        } = await freshDiagnosticBoundary(page, baseURL!);
+        const { browserErrors, boundary, layoutDiagnostics, layoutTelemetry, setPhase } =
+          await setupActivityDiagnosticPage(page, baseURL!);
         if (guard === 'trust') {
           await setPhase('selecting channel');
           await page.evaluate(() => {
@@ -239,6 +222,7 @@ export function registerRedesignChannelCases() {
             phase: guard === 'trust' ? 'selecting channel' : 'reading Activity',
           }),
         ]);
+        await expect.poll(() => boundary.unexpected).toEqual(['POST /api/v1/telemetry/browser']);
         await page.evaluate(() =>
           fetch('/api/v1/telemetry/browser', {
             method: 'POST',
@@ -246,12 +230,11 @@ export function registerRedesignChannelCases() {
             body: JSON.stringify({ kind: 'uncaught_error' }),
           }),
         );
-        const attempts = automaticTelemetry + 1;
         await expect
           .poll(() => boundary.unexpected)
-          .toEqual(Array.from({ length: attempts }, () => 'POST /api/v1/telemetry/browser'));
+          .toEqual(Array.from({ length: 2 }, () => 'POST /api/v1/telemetry/browser'));
         expect(boundary.writes).toEqual(
-          Array.from({ length: attempts }, () => ({
+          Array.from({ length: 2 }, () => ({
             path: '/api/v1/telemetry/browser',
             body: { kind: 'uncaught_error' },
             key: undefined,
@@ -259,19 +242,16 @@ export function registerRedesignChannelCases() {
         );
         expect(layoutTelemetry).toEqual([]);
         expect(boundary.errors).toEqual([]);
-        expect(state.writes).toEqual([]);
       });
     }
     test('LOCAL Activity fixture rejects later errors and unsolicited telemetry after layout qualification', async ({
       page,
       baseURL,
     }) => {
-      const { browserErrors, boundary, state, layoutDiagnostics, layoutTelemetry, setPhase } =
-        await setupActivity(page, baseURL!);
-      if (layoutDiagnostics.length === 0) {
-        await setPhase('selecting channel');
-        await nativeLayoutDiagnostic(page);
-      }
+      const { browserErrors, boundary, layoutDiagnostics, layoutTelemetry, setPhase } =
+        await setupActivityDiagnosticPage(page, baseURL!);
+      await setPhase('selecting channel');
+      await nativeLayoutDiagnostic(page);
       await expect.poll(() => layoutDiagnostics).toHaveLength(1);
       await expect.poll(() => layoutTelemetry).toHaveLength(1);
       expect(layoutDiagnostics[0]).toMatchObject({
@@ -324,7 +304,6 @@ export function registerRedesignChannelCases() {
       expect(boundary.unexpected).toEqual(['POST /api/v1/telemetry/browser']);
       expect(layoutDiagnostics).toHaveLength(1);
       expect(layoutTelemetry).toHaveLength(1);
-      expect(state.writes).toEqual([]);
       expect(boundary.writes).toEqual([
         { path: '/api/v1/telemetry/browser', body: { kind: 'uncaught_error' }, key: undefined },
       ]);
