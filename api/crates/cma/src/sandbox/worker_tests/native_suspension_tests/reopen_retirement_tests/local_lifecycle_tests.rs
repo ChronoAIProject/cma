@@ -1,7 +1,150 @@
 use super::*;
 use crate::agent_manager::relay::tests::{acquire, cluster, Instance};
 use crate::sandbox::worker_tests::owned_reopen_tests::workers_with_renewal;
-use layer2_core::sandbox::store::{SandboxStore, SandboxWorkerStore};
+use layer2_core::sandbox::store::{SandboxEventStore, SandboxStore, SandboxWorkerStore};
+
+#[tokio::test]
+async fn issue_1164_old_revive_admission_does_not_expire_a_fresh_reopen_phase() {
+    for with_conversation in [true, false] {
+        let (fixture, mut reopening, mut now) = if with_conversation {
+            let (fixture, reopening, _, now) = retained_reopen_tests::restored_reopen().await;
+            (fixture, reopening, now)
+        } else {
+            let fixture = Fixture::native().await;
+            let created = fixture.harness.create().await;
+            let mut now = start_time(&created);
+            let active = fixture
+                .drive(
+                    &created.id,
+                    &mut now,
+                    SandboxStatus::Active,
+                    &runtime_image(),
+                )
+                .await;
+            let paused = fixture.pause(&active, &mut now).await;
+            fixture
+                .harness
+                .store
+                .schedule_sandbox_lifecycle(SandboxLifecycleCommand::revive(
+                    paused.id.clone(),
+                    paused.owner,
+                    rfc3339_at(now),
+                    SandboxReviveCause::ExplicitRequest,
+                ))
+                .await
+                .unwrap();
+            let mut reopening = fixture.harness.stored(&active.id).await;
+            for _ in 0..10 {
+                if matches!(
+                    reopening.lifecycle.operation,
+                    Some(SandboxLifecycleOperation::Revive {
+                        phase: SandboxRevivePhase::ConversationReopen,
+                        ..
+                    })
+                ) {
+                    break;
+                }
+                now += Duration::from_secs(6);
+                fixture.step(&active.id, now, &runtime_image()).await;
+                reopening = fixture.harness.stored(&active.id).await;
+            }
+            (fixture, reopening, now)
+        };
+        let Some(SandboxLifecycleOperation::Revive {
+            authority,
+            phase: SandboxRevivePhase::ConversationReopen,
+            ..
+        }) = reopening.lifecycle.operation.as_mut()
+        else {
+            panic!("fixture did not enter ConversationReopen")
+        };
+        authority.requested_at = rfc3339_at(SystemTime::now() - Duration::from_secs(1801));
+        let previous = reopening.revision;
+        reopening.revision += 1;
+        fixture
+            .harness
+            .store
+            .save_sandbox(previous, reopening.clone())
+            .await
+            .unwrap();
+        let active = fixture
+            .drive(
+                &reopening.id,
+                &mut now,
+                SandboxStatus::Active,
+                &runtime_image(),
+            )
+            .await;
+        assert_eq!(active.lifecycle.home, reopening.lifecycle.home);
+    }
+}
+
+#[tokio::test]
+async fn issue_1164_reopen_retries_keep_the_first_attempts_deadline() {
+    let (fixture, mut reopening, _, mut now) = retained_reopen_tests::restored_reopen().await;
+    let wall = SystemTime::now();
+    let Some(SandboxLifecycleOperation::Revive { authority, .. }) =
+        reopening.lifecycle.operation.as_mut()
+    else {
+        panic!("fixture is missing its revive operation");
+    };
+    authority.requested_at = rfc3339_at(wall - Duration::from_secs(1900));
+    let previous = reopening.revision;
+    reopening.revision += 1;
+    reopening.work.attempts = 2;
+    let store = &fixture.harness.store;
+    store
+        .save_sandbox(previous, reopening.clone())
+        .await
+        .unwrap();
+    let failed = || SandboxEventKind::WorkStepFailed {
+        step: SandboxWorkStep::RunLifecycleOperation,
+        failure: layer2_core::sandbox::TypedFailure {
+            class: "retryable_transient".into(),
+            detail: "synthetic reopen interruption".into(),
+        },
+    };
+    for (seconds_ago, event) in [
+        (1850, failed()),
+        (
+            1820,
+            SandboxEventKind::WorkStepCompleted {
+                step: SandboxWorkStep::RunLifecycleOperation,
+            },
+        ),
+        (1801, failed()),
+        (1, failed()),
+    ] {
+        store
+            .append_sandbox_event(
+                &reopening.id,
+                rfc3339_at(wall - Duration::from_secs(seconds_ago)),
+                event,
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        store
+            .lifecycle_retry_started_at(
+                &reopening.id,
+                &rfc3339_at(wall - Duration::from_secs(1900)),
+            )
+            .await
+            .unwrap(),
+        Some(rfc3339_at(wall - Duration::from_secs(1801))),
+    );
+    fixture.backend.reject_reopen.store(true, Ordering::SeqCst);
+    now += Duration::from_secs(6);
+    fixture.step(&reopening.id, now, &runtime_image()).await;
+    let expired = fixture.harness.stored(&reopening.id).await;
+    assert_eq!(expired.status, SandboxStatus::Failed);
+    assert_eq!(expired.lifecycle.home, reopening.lifecycle.home);
+    assert_eq!(
+        expired.failure.unwrap().detail,
+        "retained conversation reopen deadline elapsed",
+    );
+}
 
 async fn ready_on_wall_clock(fixture: &Fixture, mut reopening: Sandbox) -> (Sandbox, SystemTime) {
     // The lifecycle fixture advances a logical worker clock in six-second

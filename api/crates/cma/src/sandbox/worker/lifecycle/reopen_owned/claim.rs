@@ -2,7 +2,7 @@ use std::{future::Future, time::Duration};
 
 use layer2_core::{
     sandbox::{
-        store::{SandboxMutationGuard, WORK_RENEW_SECONDS},
+        store::{SandboxMutationGuard, SandboxStoreError, WORK_RENEW_SECONDS},
         Sandbox,
     },
     seconds_from_rfc3339,
@@ -97,6 +97,46 @@ impl<'a> Claim<'a> {
             return Err(refused());
         }
         Ok(result)
+    }
+
+    /// Once the owner returns a receipt, a transient store read cannot revoke
+    /// its stage. Retry within the last proven expiry, with no extension inferred
+    /// from an unavailable store.
+    pub(super) async fn read_staged<T, F>(&self, mut request: impl FnMut() -> F) -> Result<T>
+    where
+        F: Future<Output = std::result::Result<T, SandboxStoreError>>,
+    {
+        while Instant::now() < self.expires {
+            let read =
+                timeout_at(self.expires.min(Instant::now() + READ_INTERVAL), request()).await;
+            if Instant::now() >= self.expires {
+                break;
+            }
+            match read {
+                Ok(Ok(value)) => return Ok(value),
+                Ok(Err(SandboxStoreError::Unavailable(_))) | Err(_) => {
+                    tracing::debug!(sandbox_id = %self.guard.sandbox_id, "retrying staged reopen store read");
+                    sleep_until(
+                        self.expires
+                            .min(Instant::now() + Duration::from_millis(100)),
+                    )
+                    .await;
+                }
+                Ok(Err(_)) => return Err(refused()),
+            }
+        }
+        Err(refused())
+    }
+
+    pub(super) async fn read_staged_parent(&self) -> Result<Sandbox> {
+        self.read_staged(|| {
+            self.worker
+                .dependencies
+                .store
+                .get_sandbox(&self.guard.sandbox_id)
+        })
+        .await?
+        .ok_or_else(refused)
     }
 
     pub(super) fn observe(&mut self, parent: &Sandbox) -> Result<()> {

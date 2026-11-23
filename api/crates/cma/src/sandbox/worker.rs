@@ -338,6 +338,16 @@ impl SandboxWorker {
         Ok(true)
     }
 
+    #[cfg(test)]
+    pub(super) async fn resume_claim_for_test(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        layer2_core::agent_ownership::transport_observation_scope(self.run_claimed(sandbox, now, 0))
+            .await
+    }
+
     /// A finished attempt must not leave its long capture lease blocking a retry
     /// after unrelated metadata cleanup wins the revision CAS. Re-read current
     /// state, preserve its changes, and release only our unchanged operation.

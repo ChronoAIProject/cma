@@ -15,7 +15,7 @@ use layer3_adapter::{AdapterError, AgentOpenRequest};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Weak},
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 use tokio::sync::Mutex;
 use tokio::time::Instant;
@@ -68,13 +68,8 @@ impl SandboxWorker {
         {
             return Err(refused());
         }
-        let budget = crate::agent_manager::relay::reopen_budget(&sandbox, SystemTime::now());
-        if budget.is_zero() {
-            return Err(AdapterError::Rejected(
-                "retained conversation reopen deadline elapsed".into(),
-            ));
-        }
-        let deadline = Instant::now() + budget;
+        let deadline =
+            Instant::now() + Duration::from_secs(layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS);
         let agent = agents
             .get_agent(id)
             .await
@@ -236,8 +231,11 @@ impl SandboxWorker {
                     let mut claim =
                         Claim::from_observation(&cleanup.worker, &guard.sandbox, observed_expiry);
                     loop {
-                        let parent = claim.read().await?;
-                        let current = claim.read_while(agents.get_agent(&id)).await?;
+                        let parent = claim.read_staged_parent().await?;
+                        if guard.sandbox.matches(&parent) {
+                            claim.observe(&parent)?;
+                        }
+                        let current = claim.read_staged(|| agents.get_agent(&id)).await?;
                         if let Some(current) = current {
                             if current.status == AgentStatus::Ready
                                 && current.conversation.runtime_generation == Some(generation)
@@ -252,7 +250,7 @@ impl SandboxWorker {
                             {
                                 // Retirement may follow the first parent
                                 // read while this Agent still reports Ready.
-                                let published = claim.read().await?;
+                                let published = claim.read_staged_parent().await?;
                                 if !matches!(
                                     published.status,
                                     SandboxStatus::Reviving
@@ -289,12 +287,7 @@ impl SandboxWorker {
                         delay = (delay * 2).min(Duration::from_secs(2));
                     }
                 };
-                if !matches!(
-                    authority
-                        .run(tokio::time::timeout_at(deadline, watching))
-                        .await,
-                    Ok(Ok(Ok(())))
-                ) {
+                if !matches!(authority.run(watching).await, Ok(Ok(()))) {
                     tracing::debug!(agent_id = %id, "owner reopen stage ended before publication");
                 }
                 // Drop rolls back only this exact staged nonce, never a published

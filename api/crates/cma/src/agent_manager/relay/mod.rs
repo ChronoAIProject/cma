@@ -17,7 +17,7 @@ pub(crate) use queued_cancellation::{
     Charged as ChargedQueuedCancellation, DeferQueuedCancellationActivity,
 };
 mod reopen;
-pub(crate) use reopen::{reopen_budget, ReopenCall};
+pub(crate) use reopen::ReopenCall;
 
 use environment_diagnostics::Refusal;
 use layer2_core::agent_ownership::{

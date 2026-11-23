@@ -1,5 +1,7 @@
 //! Gap-free Mongo event stream for sandbox lifecycle changes.
 
+mod retry;
+
 use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::{SandboxEventStore, SandboxStoreError, MAX_PAGE_SIZE};
 use layer2_core::sandbox::{SandboxEvent, SandboxEventKind};
@@ -270,6 +272,14 @@ async fn reconcile_append_after_unknown(
 
 #[async_trait::async_trait]
 impl SandboxEventStore for MongoSandboxStore {
+    async fn lifecycle_retry_started_at(
+        &self,
+        sandbox_id: &SandboxId,
+        admitted_at: &str,
+    ) -> Result<Option<String>, SandboxStoreError> {
+        retry::started_at(self, sandbox_id, admitted_at).await
+    }
+
     async fn append_sandbox_event(
         &self,
         sandbox_id: &SandboxId,

@@ -8,28 +8,12 @@ use axum::{
     Extension, Json,
 };
 use layer2_core::{
-    sandbox::{AgentWorkReceipt, Sandbox, SandboxLifecycleOperation, SandboxWorkLease},
+    sandbox::{AgentWorkReceipt, Sandbox, SandboxWorkLease},
     SandboxId,
 };
-use std::time::SystemTime;
 use tokio::time::Instant;
 
 const REOPEN_LIMIT: Duration = Duration::from_secs(layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS);
-
-pub(crate) fn reopen_budget(sandbox: &Sandbox, now: SystemTime) -> Duration {
-    let Some(SandboxLifecycleOperation::Revive { authority, .. }) =
-        sandbox.lifecycle.operation.as_ref()
-    else {
-        return REOPEN_LIMIT;
-    };
-    let Some(requested) = layer2_core::seconds_from_rfc3339(&authority.requested_at) else {
-        return Duration::ZERO;
-    };
-    let elapsed = now
-        .duration_since(SystemTime::UNIX_EPOCH + Duration::from_secs(requested))
-        .unwrap_or_default();
-    REOPEN_LIMIT.saturating_sub(elapsed)
-}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,14 +55,7 @@ impl Relay {
         sandbox: &Sandbox,
         id: &AgentId,
     ) -> Result<AgentWorkReceipt, CallFailure> {
-        let budget = reopen_budget(sandbox, SystemTime::now());
-        if budget.is_zero() {
-            return Err(layer3_adapter::AdapterError::Rejected(
-                "retained conversation reopen deadline elapsed".into(),
-            )
-            .into());
-        }
-        let deadline = Instant::now() + budget;
+        let deadline = Instant::now() + REOPEN_LIMIT;
         let _permit = self
             .acquire(capacity::Class::Control)
             .map_err(|_| CallFailure::RelayCapacity)?;

@@ -62,6 +62,15 @@ pub(super) fn workers_with_renewal(
     instances: &[Instance],
     renewable: bool,
 ) -> Vec<(Arc<SandboxWorker>, Arc<LiveAgentRegistry>)> {
+    workers_with_reopen_store(harness, instances, renewable, harness.store.clone())
+}
+
+fn workers_with_reopen_store(
+    harness: &Harness,
+    instances: &[Instance],
+    renewable: bool,
+    reopen_store: Arc<dyn AgentStore>,
+) -> Vec<(Arc<SandboxWorker>, Arc<LiveAgentRegistry>)> {
     instances
         .iter()
         .enumerate()
@@ -93,10 +102,106 @@ pub(super) fn workers_with_renewal(
             );
             instance
                 .relay
-                .install_reopen(worker.clone(), harness.store.clone());
+                .install_reopen(worker.clone(), reopen_store.clone());
             (worker, registry)
         })
         .collect()
+}
+
+struct TransientAgentRead {
+    store: Arc<InMemorySandboxStore>,
+    fail_next: AtomicBool,
+    failed: Notify,
+}
+
+#[async_trait::async_trait]
+impl AgentStore for TransientAgentRead {
+    async fn create_agent(&self, agent: Agent) -> Result<(), SandboxStoreError> {
+        self.store.create_agent(agent).await
+    }
+
+    async fn get_agent(
+        &self,
+        id: &layer2_core::AgentId,
+    ) -> Result<Option<Agent>, SandboxStoreError> {
+        if self.fail_next.swap(false, Ordering::SeqCst) {
+            self.failed.notify_one();
+            return Err(SandboxStoreError::Unavailable(
+                "synthetic transient Agent read".into(),
+            ));
+        }
+        self.store.get_agent(id).await
+    }
+
+    async fn save_agent(&self, revision: u64, agent: Agent) -> Result<(), SandboxStoreError> {
+        self.store.save_agent(revision, agent).await
+    }
+
+    async fn list_agents(
+        &self,
+        owner: &SubjectId,
+        page: &layer2_core::sandbox::store::PageRequest,
+    ) -> Result<layer2_core::sandbox::store::Page<Agent>, SandboxStoreError> {
+        self.store.list_agents(owner, page).await
+    }
+}
+
+#[tokio::test]
+async fn issue_1164_transient_read_after_receipt_preserves_staged_attachment() {
+    use layer2_core::agent_ownership::transport_observation_scope;
+
+    let (harness, parent, agent, now) = reopening().await;
+    let reads = Arc::new(TransientAgentRead {
+        store: harness.store.clone(),
+        fail_next: AtomicBool::new(false),
+        failed: Notify::new(),
+    });
+    let (store, instances) = cluster(2).await;
+    let (owner, _authority) = acquire(&store, &instances, &agent.id).await;
+    let workers = workers_with_reopen_store(&harness, &instances, false, reads.clone());
+    let caller = (owner + 1) % 2;
+    let parent = harness
+        .store
+        .claim_sandbox_work(
+            &parent.id,
+            &format!("replica-{caller}"),
+            rfc3339_at(now),
+            rfc3339_at(SystemTime::now() + Duration::from_secs(60)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let peer = &instances[caller].relay;
+    let receipt = transport_observation_scope(peer.reopen_agent(&parent, &agent.id))
+        .await
+        .unwrap();
+    let retained = target(&parent, &agent);
+    let original = workers[owner]
+        .1
+        .staged_attachment(&retained, agent.work.next_fence)
+        .unwrap()
+        .unwrap();
+    reads.fail_next.store(true, Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(3), reads.failed.notified())
+        .await
+        .unwrap();
+    let repeated = transport_observation_scope(peer.reopen_agent(&parent, &agent.id))
+        .await
+        .unwrap();
+    assert_eq!(repeated, receipt);
+    assert_eq!(
+        workers[owner]
+            .1
+            .staged_attachment(&retained, agent.work.next_fence)
+            .unwrap(),
+        Some(original),
+    );
+    assert!(workers[caller]
+        .0
+        .resume_claim_for_test(parent, now)
+        .await
+        .unwrap());
+    until(|| workers[owner].1.published_target_is_attached(&retained)).await;
 }
 
 fn target(parent: &Sandbox, agent: &Agent) -> LiveAgentTarget {
