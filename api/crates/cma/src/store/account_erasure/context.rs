@@ -29,6 +29,10 @@ pub(super) struct Context {
     // The cursor stores resource IDs, never stale lease/key authority snapshots.
     #[serde(skip)]
     pub sandboxes: Vec<Document>,
+    /// Share IDs on personal Sandboxes, re-read on every refresh and never
+    /// persisted. Resource-execution evidence names shares only by ID (#3296).
+    #[serde(skip)]
+    pub shares: BTreeSet<String>,
 }
 impl Context {
     pub fn ids(&self, set: Set) -> Vec<String> {
@@ -279,6 +283,16 @@ impl Context {
             self.sandboxes.clear();
         }
         self.exclude_protected();
+        self.shares.clear();
+        let personal = self.ids(Set::Sandboxes);
+        if !personal.is_empty() {
+            let filter = doc! {"sandbox_id":{"$in":personal}};
+            for row in rows(db, "resource_shares", filter, &self.subject).await? {
+                if let Ok(id) = row.get_str("_id") {
+                    self.shares.insert(id.to_owned());
+                }
+            }
+        }
         self.bounds()
     }
 }

@@ -84,11 +84,13 @@ pub(super) fn matches(rule: Erasure, row: &Document, context: &Context) -> bool 
         Erasure::ProvenAbsent(paths) => {
             let mut values = vec![context.subject.clone()];
             values.extend(context.sets.values().flatten().cloned());
+            values.extend(context.shares.iter().cloned());
             has(paths, &values)
         }
         Erasure::ProvenAbsentJson(fields) => {
             let mut values = vec![context.subject.clone()];
             values.extend(context.sets.values().flatten().cloned());
+            values.extend(context.shares.iter().cloned());
             fields.iter().any(|field| match row.get(*field) {
                 None => false,
                 Some(Bson::String(text)) => serde_json::from_str::<serde_json::Value>(text)
@@ -229,6 +231,7 @@ mod json_residue_tests {
         context
             .sets
             .insert(Set::Sandboxes, ["sbx_erased".to_owned()].into());
+        context.shares.insert("shr_erased".into());
         context
     }
 
@@ -243,6 +246,19 @@ mod json_residue_tests {
         let unreadable = doc! {"_id": "d", "record": "{not json"};
         let wrong_type = doc! {"_id": "e", "record": 7_i32};
         let absent = doc! {"_id": "activation", "share_id": "shr_x"};
+        let share = doc! {"_id": "h", "record": r#"{"key":{"share_id":"shr_erased"}}"#};
+        let receipt = doc! {"_id": "grant_receipt:o", "share_id": "shr_erased"};
+        assert!(matches(rule, &share, &context));
+        assert!(matches(
+            Erasure::ProvenAbsent(&["share_id"]),
+            &receipt,
+            &context
+        ));
+        assert!(!matches(
+            Erasure::ProvenAbsent(&["share_id"]),
+            &absent,
+            &context
+        ));
         let document = doc! {"_id": "f", "record": {"owner": "someone-else"}};
         let named_document = doc! {"_id": "g", "record": {"owner": ["subject-erased"]}};
         assert!(!matches(rule, &document, &context));

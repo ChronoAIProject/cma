@@ -93,21 +93,39 @@ async fn proven_absent_known_lineage_blocks_without_subject_projection() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn serialized_resource_execution_residue_blocks_erasure() {
-    for (collection, record) in [
+    let record = |value: &str| doc! {"_id": "execution", "protocol": 1_i32, "record": value};
+    for (collection, row) in [
         (
             "resource_revocation_operations_v1",
-            r#"{"intent":{"actor":"acct:a"}}"#,
+            record(r#"{"intent":{"actor":"acct:a"}}"#),
         ),
         (
             "resource_execution_records_v1",
-            r#"{"member":{"sandbox_id":"sbx_a"}}"#,
+            record(r#"{"member":{"sandbox_id":"sbx_a"}}"#),
         ),
-        ("resource_execution_grants_v1", "{unreadable"),
-        ("resource_execution_effects_v1", r#"{"effect":["sbx_a"]}"#),
+        ("resource_execution_grants_v1", record("{unreadable")),
+        (
+            "resource_execution_effects_v1",
+            record(r#"{"effect":["sbx_a"]}"#),
+        ),
+        // Grants name the erased Sandbox's share only by its ID.
+        (
+            "resource_execution_grants_v1",
+            record(r#"{"key":{"origin":"d","share_id":"shr_a"}}"#),
+        ),
+        (
+            "resource_execution_grants_v1",
+            doc! {"_id": "execution", "protocol": 1_i32, "origin": "d", "share_id": "shr_a", "epoch": 1_i64},
+        ),
     ] {
         let db = database().await;
         sandbox(&db, "acct:a", "sbx_a").await;
-        let row = doc! {"_id": "execution", "protocol": 1_i32, "record": record};
+        put(
+            &db,
+            "resource_shares",
+            doc! {"_id": "shr_a", "sandbox_id": "sbx_a"},
+        )
+        .await;
         put(&db, collection, row.clone()).await;
         let subject = SubjectId::new("acct:a");
         let mut inventory = ErasureInventory::default();
