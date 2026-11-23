@@ -109,7 +109,7 @@ pub(in crate::store) async fn refuse_with_operation(
     fence: &CreationFence,
     id: &str,
     lease: &str,
-    message: &str,
+    operation_failure: Document,
 ) -> Result<bool, StoreError> {
     for _ in 0..4 {
         let mut session = database.client().start_session().await.map_err(driver)?;
@@ -120,19 +120,24 @@ pub(in crate::store) async fn refuse_with_operation(
             let mut filter = pending(owner.as_str(), fence);
             filter.insert("operation_id", id);
             filter.insert("operation", "agent_bootstrap");
-            let result = database.collection::<Document>(COLLECTION)
+            let result = database
+                .collection::<Document>(COLLECTION)
                 .update_one(filter, refusal(RefusalCode::SandboxLimitReached))
-                .session(&mut session).await?;
-            if result.matched_count != 1 { return Ok(false) }
+                .session(&mut session)
+                .await?;
+            if result.matched_count != 1 {
+                return Ok(false);
+            }
             let mut operation_filter = live_operation(owner.as_str(), id, lease);
             operation_filter.insert("sandbox_id", Bson::Null);
-            let result = database.collection::<Document>(LIFECYCLES)
-                .update_one(operation_filter, vec![doc! {"$set":{
-                    "status":"failed", "phase":"failed", "updated_at":"$$NOW",
-                    "error":{"$literal":message}, "lease_token":Bson::Null, "lease_expires_at":Bson::Null,
-                }}]).session(&mut session).await?;
+            let result = database
+                .collection::<Document>(LIFECYCLES)
+                .update_one(operation_filter, operation_failure.clone())
+                .session(&mut session)
+                .await?;
             Ok(result.matched_count == 1)
-        }.await;
+        }
+        .await;
         match attempt {
             Ok(true) => {}
             Ok(false) => {

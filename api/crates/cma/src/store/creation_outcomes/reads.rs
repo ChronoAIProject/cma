@@ -14,19 +14,11 @@ impl CreationOutcomes {
             .database
             .client()
             .start_session()
+            .snapshot(true)
             .await
             .map_err(unavailable)?;
-        session
-            .start_transaction()
-            .read_concern(mongodb::options::ReadConcern::snapshot())
-            .selection_criteria(mongodb::options::SelectionCriteria::ReadPreference(
-                mongodb::options::ReadPreference::Primary,
-            ))
-            .await
-            .map_err(unavailable)?;
-        let result = self.resolve_snapshot(identity, query, &mut session).await;
-        session.abort_transaction().await.map_err(unavailable)?;
-        result
+        // Snapshot reads outside a transaction see majority-committed data.
+        self.resolve_snapshot(identity, query, &mut session).await
     }
 
     async fn resolve_snapshot(
@@ -98,6 +90,7 @@ impl CreationOutcomes {
                 .collection::<Document>(super::super::agent_lifecycle_operations::COLLECTION)
                 .find_one(doc! {"_id": id, "owner": &row.owner})
                 .projection(doc! {"status":1,"document_schema_version":1})
+                .selection_criteria(primary())
                 .max_time(IO_BUDGET)
                 .session(session)
                 .await
@@ -138,6 +131,7 @@ pub(super) async fn owner_day_covered(
         .find_one(doc! {"subject_hash":subject_hash(owner)})
         .sort(doc! {"requested_at":-1})
         .projection(doc! {"requested_at":1,"status":1,"document_schema_version":1})
+        .selection_criteria(primary())
         .max_time(IO_BUDGET)
         .session(session)
         .await
@@ -155,6 +149,10 @@ pub(super) async fn owner_day_covered(
             .and_then(|seconds| i64::try_from(seconds / SECONDS_PER_DAY).ok())
             .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     Ok(day > barrier_day)
+}
+
+pub(super) fn primary() -> mongodb::options::SelectionCriteria {
+    mongodb::options::SelectionCriteria::ReadPreference(mongodb::options::ReadPreference::Primary)
 }
 
 pub(super) fn unknown(reason: UnknownReason) -> Outcome {

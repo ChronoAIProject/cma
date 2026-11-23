@@ -32,6 +32,7 @@ impl InlineAgentLifecycle {
         caller: &Caller,
         request: &AgentLifecycleCreateRequest,
         key: &str,
+        expected_operation: Option<&str>,
     ) -> Result<Option<AgentLifecycleCreateReceipt>, AgentLifecycleProvisioningError> {
         let Some(record) = self
             .operations
@@ -41,6 +42,9 @@ impl InlineAgentLifecycle {
         else {
             return Ok(None);
         };
+        if expected_operation.is_some_and(|expected| expected != record.id) {
+            return Err(AgentLifecycleProvisioningError::Unavailable);
+        }
         self.operations
             .resume_connection(&caller.subject, &record.id)
             .await
@@ -66,7 +70,7 @@ impl InlineAgentLifecycle {
             return Ok(None);
         }
         // Another caller with this exact intent may have committed during the read.
-        if let Some(receipt) = self.replay_receipt(caller, request, key).await? {
+        if let Some(receipt) = self.replay_receipt(caller, request, key, None).await? {
             return Ok(Some(receipt));
         }
         Err(AgentLifecycleProvisioningError::SandboxLimitReached {

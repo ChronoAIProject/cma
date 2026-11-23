@@ -176,17 +176,6 @@ impl InlineAgentLifecycle {
                     .await
             }
             Err(error) => {
-                if let (Some(fence), AgentLifecycleProvisioningError::SandboxLimitReached { .. }) =
-                    (&creation_fence, &error)
-                {
-                    if self
-                        .operations
-                        .fail_fenced_creation(&caller.subject, &lease, fence, &error.to_string())
-                        .await?
-                    {
-                        return Ok(());
-                    }
-                }
                 let failure = self
                     .failure_metadata_enabled
                     .get()
@@ -204,8 +193,26 @@ impl InlineAgentLifecycle {
                         _ => None,
                     })
                     .flatten();
+                let message = error.to_string();
+                if let (Some(fence), AgentLifecycleProvisioningError::SandboxLimitReached { .. }) =
+                    (&creation_fence, &error)
+                {
+                    if self
+                        .operations
+                        .fail_fenced_creation(
+                            &caller.subject,
+                            &lease,
+                            fence,
+                            &message,
+                            failure.clone(),
+                        )
+                        .await?
+                    {
+                        return Ok(());
+                    }
+                }
                 self.operations
-                    .fail_with_metadata(&lease, &error.to_string(), failure)
+                    .fail_with_metadata(&lease, &message, failure)
                     .await
             }
         }

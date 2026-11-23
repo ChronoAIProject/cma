@@ -101,6 +101,7 @@ impl MongoAgentLifecycleStore {
         lease: &LifecycleLease,
         fence: &layer2_core::sandbox::store::CreationFence,
         message: &str,
+        failure: Option<layer1_public::rest::AgentLifecycleFailure>,
     ) -> Result<bool, StoreError> {
         if !self.supports_creation(fence) {
             return Err(StoreError::Unavailable(
@@ -117,7 +118,7 @@ impl MongoAgentLifecycleStore {
             fence,
             &lease.id,
             &lease.token,
-            message,
+            super::writes::failure_update(message, failure)?,
         )
         .await
     }

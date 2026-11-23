@@ -128,6 +128,7 @@ impl CreationOutcomes {
             .database
             .collection::<Document>(super::super::operation::OPERATIONS)
             .aggregate(pipeline)
+            .selection_criteria(reads::primary())
             .max_time(IO_BUDGET)
             .session(&mut *session)
             .await
@@ -164,7 +165,7 @@ impl CreationOutcomes {
         let row = self.database.collection::<Document>(super::super::agent_lifecycle_operations::COLLECTION)
             .find_one(doc! {"owner":identity.owner.as_str(),"key":identity.key})
             .projection(doc! {"status":1,"creation_wire":1,"sandbox_id":1,"document_schema_version":1,"input.request.sandbox_id":1,"input.request.workspace_id":1})
-            .max_time(IO_BUDGET).session(&mut *session).await.map_err(unavailable)?;
+            .selection_criteria(reads::primary()).max_time(IO_BUDGET).session(&mut *session).await.map_err(unavailable)?;
         let Some(row) = row else {
             return Ok(unknown(UnknownReason::NoDurableEvidence));
         };
@@ -211,7 +212,7 @@ impl CreationOutcomes {
         let origin = self.database.collection::<Document>("sandboxes")
             .find_one(doc! {"owner":identity.owner.as_str(),"origin_type":"lifecycle","origin_operation_id":operation_id})
             .projection(doc! {"_id":1,"document_schema_version":1,"record.owner":1,"record.origin":1})
-            .max_time(IO_BUDGET).session(session).await.map_err(unavailable)?;
+            .selection_criteria(reads::primary()).max_time(IO_BUDGET).session(session).await.map_err(unavailable)?;
         if let Some(origin) = origin {
             let version = origin
                 .get_i64("document_schema_version")

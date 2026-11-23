@@ -27,6 +27,11 @@ async fn closed_miss_uses_one_read_only_snapshot_with_point_reads() {
     let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
+    let app_name = format!(
+        "creation-snapshot-fixture-{}",
+        uuid::Uuid::new_v4().simple()
+    );
+    options.app_name = Some(app_name.clone());
     options.command_event_handler = Some(EventHandler::callback(move |event| {
         if let CommandEvent::Started(event) = event {
             captured
@@ -53,7 +58,7 @@ async fn closed_miss_uses_one_read_only_snapshot_with_point_reads() {
             .iter()
             .map(|(name, _)| name.as_str())
             .collect::<Vec<_>>(),
-        ["find", "find", "find", "abortTransaction"]
+        ["find", "find", "find"]
     );
     let first_read = &commands[0].1;
     assert_eq!(
@@ -82,12 +87,36 @@ async fn closed_miss_uses_one_read_only_snapshot_with_point_reads() {
         .get_document("filter")
         .unwrap()
         .contains_key("subject_hash"));
-    for (_, command) in &commands[..3] {
+    let session = first_read.get_document("lsid").unwrap();
+    let mut snapshot_times = Vec::new();
+    for (index, (_, command)) in commands.iter().enumerate() {
+        assert_eq!(command.get_document("lsid").unwrap(), session);
+        assert!(!command.contains_key("txnNumber"));
+        let concern = command.get_document("readConcern").unwrap();
+        assert_eq!(concern.get_str("level").unwrap(), "snapshot");
+        if index > 0 {
+            snapshot_times.push(concern.get_timestamp("atClusterTime").unwrap());
+        }
         assert!(matches!(
             command.get("maxTimeMS"),
             Some(mongodb::bson::Bson::Int32(750) | mongodb::bson::Bson::Int64(750))
         ));
     }
+    assert_eq!(snapshot_times[0], snapshot_times[1]);
+    let admin = store.database.client().database("admin");
+    admin
+        .run_command(doc! {
+            "configureFailPoint": "failCommand", "mode": {"times":1},
+            "data": {"failCommands":["find"], "appName":app_name, "errorCode":246},
+        })
+        .await
+        .unwrap();
+    let result = reader.lookup(&original, &request).await;
+    admin
+        .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
+        .await
+        .unwrap();
+    assert_eq!(result, Err(StatusCode::SERVICE_UNAVAILABLE));
     store.database.drop().await.unwrap();
 }
 
@@ -131,6 +160,7 @@ async fn opaque_lifecycle_key_requires_original_wire_evidence_and_exact_new_orig
                 deployment: request.deployment.clone(),
                 wire_digest: request.fingerprint.digest.clone(),
                 fence: None,
+                replay_operation_id: None,
             }),
         )
         .await

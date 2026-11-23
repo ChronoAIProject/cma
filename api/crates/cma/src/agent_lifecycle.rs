@@ -57,6 +57,9 @@ pub(crate) use tasks::{DrainTimeout as LifecycleDrainTimeout, TaskScope as Lifec
 #[path = "agent_lifecycle_workspace.rs"]
 mod workspace;
 
+#[cfg(test)]
+pub(crate) use workspace::tests::fixture::creation_test_router;
+
 #[path = "agent_lifecycle_admission.rs"]
 mod admission;
 #[path = "agent_lifecycle_desktop.rs"]

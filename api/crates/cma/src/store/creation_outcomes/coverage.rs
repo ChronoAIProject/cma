@@ -96,6 +96,7 @@ impl CreationOutcomes {
             .records
             .find_one(self.coverage_filter())
             .projection(doc! {"closed_day":1})
+            .selection_criteria(reads::primary())
             .max_time(IO_BUDGET)
             .session(session)
             .await

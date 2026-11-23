@@ -101,6 +101,7 @@ impl CreationOutcomes {
             .find_one(doc! {
                 "_id": record_id(identity), "owner": identity.owner.as_str(),
             })
+            .selection_criteria(reads::primary())
             .max_time(IO_BUDGET)
             .session(session)
             .await

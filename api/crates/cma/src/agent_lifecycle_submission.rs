@@ -10,7 +10,11 @@ impl InlineAgentLifecycle {
         idempotency_key: &str,
         submission: Option<layer1_public::rest::creation_outcomes::Submission>,
     ) -> Result<AgentLifecycleCreateReceipt, AgentLifecycleProvisioningError> {
+        let replay_operation = submission
+            .as_ref()
+            .and_then(|submission| submission.replay_operation_id.as_deref());
         if idempotency_key.starts_with(layer1_public::rest::creation_outcomes::KEY_PREFIX)
+            && replay_operation.is_none()
             && submission
                 .as_ref()
                 .is_none_or(|submission| submission.fence.is_none())
@@ -39,10 +43,13 @@ impl InlineAgentLifecycle {
             self.require_task_experience(caller, &request)?;
         }
         if let Some(receipt) = self
-            .replay_receipt(caller, &request, idempotency_key)
+            .replay_receipt(caller, &request, idempotency_key, replay_operation)
             .await?
         {
             return Ok(receipt);
+        }
+        if replay_operation.is_some() {
+            return Err(AgentLifecycleProvisioningError::Unavailable);
         }
         self.require_task_experience(caller, &request)?;
         if request.sandbox_id.is_some() {

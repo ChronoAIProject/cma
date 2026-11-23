@@ -19,6 +19,7 @@ pub struct Submission {
     pub deployment: String,
     pub wire_digest: String,
     pub fence: Option<CreationFence>,
+    pub replay_operation_id: Option<String>,
 }
 
 pub enum Begin {
@@ -163,7 +164,7 @@ pub(in crate::rest) async fn begin_submission(
         return Err(problem(StatusCode::BAD_REQUEST));
     };
     let versioned = key.starts_with(KEY_PREFIX);
-    let fence = if versioned {
+    let (fence, replay_operation_id) = if versioned {
         let identity = Identity {
             owner: &caller.subject,
             deployment: backend.deployment(),
@@ -176,7 +177,7 @@ pub(in crate::rest) async fn begin_submission(
             .period()
             .map_err(|error| problem(identity_status(error)))?;
         match backend.begin(&identity).await.map_err(problem)? {
-            Begin::Acquired(fence) => Some(fence),
+            Begin::Acquired(fence) => (Some(fence), None),
             Begin::Existing {
                 cached_response: Some(bytes),
                 ..
@@ -187,26 +188,18 @@ pub(in crate::rest) async fn begin_submission(
             Begin::Existing {
                 operation_id: Some(id),
                 ..
-            } if operation == Operation::AgentBootstrap => {
-                return Err((
-                    StatusCode::ACCEPTED,
-                    Json(crate::rest::AgentLifecycleCreateReceipt {
-                        id,
-                        status: "provisioning".into(),
-                    }),
-                )
-                    .into_response());
-            }
+            } if operation == Operation::AgentBootstrap => (None, Some(id)),
             Begin::Existing { .. } | Begin::Closed => {
                 return Err(problem(StatusCode::CONFLICT));
             }
         }
     } else {
-        None
+        (None, None)
     };
     Ok(Some(Submission {
         deployment: backend.deployment().to_owned(),
         wire_digest: digest.to_owned(),
         fence,
+        replay_operation_id,
     }))
 }

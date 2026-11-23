@@ -365,7 +365,7 @@ pub trait AgentLifecycleProvisioner: Send + Sync {
         idempotency_key: &str,
         submission: super::creation_outcomes::Submission,
     ) -> Result<AgentLifecycleCreateReceipt, AgentLifecycleProvisioningError> {
-        if submission.fence.is_some() {
+        if submission.fence.is_some() || submission.replay_operation_id.is_some() {
             return Err(AgentLifecycleProvisioningError::Unavailable);
         }
         self.create(

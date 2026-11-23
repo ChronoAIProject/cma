@@ -2,6 +2,8 @@ use super::*;
 use contract::{Algorithm, RequestFingerprint, UnknownReason};
 use layer2_core::sandbox::store::{SandboxAdmission, SandboxAdmissionName, SandboxAdmissionStore};
 
+#[path = "mongo_lifecycle_route_tests.rs"]
+mod mongo_lifecycle_route_tests;
 #[path = "mongo_lookup_tests.rs"]
 mod mongo_lookup_tests;
 
@@ -380,6 +382,7 @@ async fn lifecycle_links_original_wire_and_fences_a_stale_worker() {
                 deployment: original.deployment.to_owned(),
                 wire_digest: original.wire_digest.to_owned(),
                 fence: Some(fence.clone()),
+                replay_operation_id: None,
             }),
         )
         .await
@@ -424,7 +427,7 @@ async fn lifecycle_links_original_wire_and_fences_a_stale_worker() {
     admission.creation_fence = Some(fence.clone());
     sandbox_store.admit_sandbox(admission).await.unwrap();
     assert!(!operations
-        .fail_fenced_creation(&owner, &lease, &fence, "synthetic refusal")
+        .fail_fenced_creation(&owner, &lease, &fence, "synthetic refusal", None)
         .await
         .unwrap());
     assert!(matches!(right.lookup(&original, &query).await.unwrap(),

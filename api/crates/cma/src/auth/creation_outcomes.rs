@@ -16,15 +16,16 @@ use layer1_public::{
 use layer2_core::{Authorization, Capability, SubjectId};
 
 use super::{
+    cookie_authorization,
     nyxid_proxy::{self, jwt},
+    persistence::SubjectAuthState,
     AuthMode, AuthState, AUTH_COOKIE, AUTH_COOKIE_DOMAIN,
 };
 
 struct Authority {
-    subject: SubjectId,
-    incarnation: String,
-    authorization: Authorization,
-    expires_at: Option<SystemTime>,
+    owner: SubjectAuthState,
+    ceiling: Option<Authorization>,
+    expires_at: SystemTime,
     session: Option<super::persistence::SecretDigest>,
 }
 
@@ -57,21 +58,13 @@ impl AuthState {
                 .subject(&subject)
                 .await
                 .map_err(|_| UNAVAILABLE)?
+                .filter(|owner| owner.subject == subject)
                 .ok_or(StatusCode::FORBIDDEN)?;
-            if owner.subject != subject
-                || owner
-                    .tokens
-                    .as_ref()
-                    .is_none_or(|tokens| tokens.expires_at <= SystemTime::now())
-            {
-                return Err(UNAVAILABLE);
-            }
             let asserted = crate::permissions::capabilities_from_permissions(identity.permissions);
             return Ok(Authority {
-                subject,
-                incarnation: owner.incarnation,
-                authorization: nyxid_proxy::intersect(&asserted, &owner.authorization),
-                expires_at: Some(identity.expires_at),
+                owner,
+                ceiling: Some(asserted),
+                expires_at: identity.expires_at,
                 session: None,
             });
         }
@@ -97,47 +90,50 @@ impl AuthState {
             .await
             .map_err(|_| UNAVAILABLE)?
             .ok_or(StatusCode::UNAUTHORIZED)?;
-        if owner.subject != login.subject
-            || owner
-                .tokens
-                .as_ref()
-                .is_none_or(|tokens| tokens.expires_at <= SystemTime::now())
-        {
+        if owner.subject != login.subject {
             return Err(UNAVAILABLE);
         }
         Ok(Authority {
-            subject: owner.subject,
-            incarnation: owner.incarnation,
-            authorization: owner.authorization,
-            expires_at: Some(login.expires_at),
+            owner,
+            ceiling: None,
+            expires_at: login.expires_at,
             session: Some(id),
         })
     }
 
     async fn check_creation_standing(&self, authority: &Authority) -> Result<(), StatusCode> {
-        if !authority.authorization.allows(Capability::UseOwnSandboxes)
+        let unavailable = |_| StatusCode::SERVICE_UNAVAILABLE;
+        let owner = &authority.owner;
+        if authority.expires_at <= SystemTime::now()
             || authority
-                .expires_at
-                .is_some_and(|expiry| expiry <= SystemTime::now())
+                .ceiling
+                .as_ref()
+                .is_some_and(|ceiling| !ceiling.allows(Capability::UseOwnSandboxes))
         {
             return Err(StatusCode::FORBIDDEN);
         }
-        let current = self
-            .store
-            .subject(&authority.subject)
-            .await
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-            .filter(|owner| {
-                owner.subject == authority.subject
-                    && owner.incarnation == authority.incarnation
-                    && owner.authorization.allows(Capability::UseOwnSandboxes)
-            })
-            .ok_or(StatusCode::FORBIDDEN)?;
-        if current
+        if owner
             .tokens
+            .as_ref()
             .is_none_or(|tokens| tokens.expires_at <= SystemTime::now())
         {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
+        }
+        let verified =
+            cookie_authorization::request_for_browser_cookie(self, &owner.subject, owner.clone())
+                .await
+                .map_err(unavailable)?
+                .ok_or(StatusCode::FORBIDDEN)?;
+        let effective = authority
+            .ceiling
+            .as_ref()
+            .map_or(verified.authorization.clone(), |ceiling| {
+                nyxid_proxy::intersect(ceiling, &verified.authorization)
+            });
+        if !effective.allows(Capability::UseOwnSandboxes)
+            || self.owner_session_authority(&verified).is_none()
+        {
+            return Err(StatusCode::FORBIDDEN);
         }
         if let Some(session) = &authority.session {
             let current = self
@@ -146,17 +142,23 @@ impl AuthState {
                 .await
                 .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
             if !current.is_some_and(|login| {
-                login.subject == authority.subject && login.expires_at > SystemTime::now()
+                login.subject == owner.subject && login.expires_at > SystemTime::now()
             }) {
                 return Err(StatusCode::FORBIDDEN);
             }
         }
         if self
             .standing
-            .authoritative(&authority.subject)
+            .authoritative(&owner.subject)
             .await
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
         {
+            return Err(StatusCode::FORBIDDEN);
+        }
+        cookie_authorization::require_current_custody(self, owner)
+            .await
+            .map_err(unavailable)?;
+        if authority.expires_at <= SystemTime::now() {
             return Err(StatusCode::FORBIDDEN);
         }
         Ok(())
@@ -175,10 +177,10 @@ pub(super) async fn attach(auth: &Arc<AuthState>, mut request: Request, next: Ne
         auth.check_creation_standing(&authority).await?;
         request
             .extensions_mut()
-            .insert(AuthenticatedSubject(authority.subject.clone()));
+            .insert(AuthenticatedSubject(authority.owner.subject.clone()));
         request
             .extensions_mut()
-            .insert(AuthorizedLookup(authority.subject.clone()));
+            .insert(AuthorizedLookup(authority.owner.subject.clone()));
         let response = next.run(request).await;
         if response.status().is_success() || response.status() == StatusCode::CONFLICT {
             auth.check_creation_standing(&authority).await?;
