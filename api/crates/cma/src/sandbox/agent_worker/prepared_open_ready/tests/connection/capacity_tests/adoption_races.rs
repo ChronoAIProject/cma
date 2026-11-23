@@ -250,11 +250,15 @@ async fn owner_cleanup_supersedes_staged_adoption() {
     use layer2_core::sandbox::AgentStopReason;
     for delete in [false, true] {
         let (fixture, full) = selected(None).await;
-        // The paused publication owns its process-local Agent write lock.
-        // Run cleanup through a separate store, as another replica would.
-        let store = MongoSandboxStore::open(&fixture.client, &fixture.name)
-            .await
-            .unwrap();
+        let store = if delete {
+            Arc::new(
+                MongoSandboxStore::open(&fixture.client, &fixture.name)
+                    .await
+                    .unwrap(),
+            )
+        } else {
+            fixture.store.clone()
+        };
         let worker = fixture.worker.clone();
         let barrier = adoption_probe::arm(&fixture.name, Boundary::Admitted);
         let finish = tokio::spawn(async move {

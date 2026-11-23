@@ -101,13 +101,24 @@ async fn admit(
             .permits(current, &operation, AdmissionKind::Activation)
             .map_err(ApplyError::Domain)?;
         (admission, false)
-    } else if previous.is_none() && source.fresh {
+    } else if previous == source.prior_retired {
+        if !store.segment_adoption_enabled {
+            return Err(witness::unresolved());
+        }
         if !writer_gate::selects_pending_worker(&database, current, session).await? {
+            if previous.is_some() {
+                return Err(witness::unresolved());
+            }
             return Ok(None);
         }
         let admission =
             writer_admission::admit_pending_worker(&database, current, &operation, &now, session)
                 .await?;
+        let marker = match previous {
+            Some(ref retired) if retired.permits_replacement(current) => retired.document()?,
+            Some(_) => return Err(witness::unresolved()),
+            None => doc! {"$exists":false},
+        };
         let result = store.agents.update_one(doc! {
             "_id": current.id.as_str(),
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
@@ -116,7 +127,7 @@ async fn admit(
             "work_lease_holder": &lease.holder,
             "work_lease_fence": signed(lease.fence, "pending publication fence").map_err(|_| witness::unresolved())?,
             "work_lease_expires_at": &lease.expires_at,
-            witness::FIELD: {"$exists":false},
+            witness::FIELD: marker,
         }, doc! {"$set":{witness::FIELD:expected}})
             .session(&mut *session).await.map_err(ApplyError::Driver)?;
         if result.matched_count != 1 {

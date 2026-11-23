@@ -7,6 +7,33 @@ pub(super) struct Lineage {
     worktree: Worktree,
 }
 
+pub(super) async fn matches_retained(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    sandbox: &Sandbox,
+    expected: &Binary,
+    session: &mut mongodb::ClientSession,
+) -> Result<bool, TransactionLogError> {
+    let workspace = store
+        .workspaces
+        .find_one(doc! {"_id":agent.workspace_id.as_str()})
+        .session(&mut *session)
+        .await
+        .map_err(TransactionLogError::Driver)?;
+    let worktree = store
+        .worktrees
+        .find_one(doc! {"_id":agent.worktree_id.as_str()})
+        .session(&mut *session)
+        .await
+        .map_err(TransactionLogError::Driver)?;
+    let (Some(workspace), Some(worktree)) = (workspace, worktree) else {
+        return Ok(false);
+    };
+    let workspace = crate::store::workspaces::read_workspace(&workspace)?;
+    let worktree = read_worktree(&worktree)?;
+    Ok(publication::request_digest(&(sandbox, &workspace, &worktree))? == *expected)
+}
+
 pub(super) async fn read(
     store: &MongoSandboxStore,
     agent: &Agent,

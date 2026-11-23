@@ -251,12 +251,22 @@ async fn apply(
         (claim, current_agent_row.as_ref())
     {
         let current = read_agent(current_row).map_err(ClaimError::Domain)?;
-        if super::agent_worker_transaction::pending_adoption::witness::blocks_claim(
+        if !super::agent_worker_transaction::pending_adoption::witness::fence_replacement(
+            store,
             current_row,
             &current,
+            &parent,
+            session,
         )
-        .map_err(ClaimError::Domain)?
-        {
+        .await
+        .map_err(|error| match error {
+            super::agent_log_integrity::TransactionLogError::Domain(error) => {
+                ClaimError::Domain(error)
+            }
+            super::agent_log_integrity::TransactionLogError::Driver(error) => {
+                ClaimError::Driver(error)
+            }
+        })? {
             return Ok(false);
         }
         if store.ownership_retry_hints_active() {

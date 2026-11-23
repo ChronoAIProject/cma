@@ -352,12 +352,16 @@ impl AgentWorkerStore for MongoSandboxStore {
             };
             let mut agent = super::agents::read_agent(&row)?;
             if super::agent_worker_transaction::pending_adoption::witness::blocks_claim(
-                &row, &agent,
+                self, &row, &agent,
             )? {
-                super::agent_worker_transaction::pending_adoption::witness::retire_expired(
-                    self, &row, &agent, &now,
-                )
-                .await?;
+                let retired =
+                    super::agent_worker_transaction::pending_adoption::retirement::retire_expired(
+                        self, &row, &agent, &now,
+                    )
+                    .await?;
+                if retired && self.segment_adoption_enabled {
+                    continue;
+                }
                 return Ok(None);
             }
             if self.ownership_retry_hints_active() {

@@ -17,6 +17,7 @@ use layer2_core::sandbox::{
 use mongodb::bson::Binary;
 
 mod lineage;
+pub(in crate::store) mod retirement;
 mod staging;
 #[cfg(test)]
 pub(crate) mod test_hooks;
@@ -26,7 +27,7 @@ use witness::{State, Witness};
 pub(super) struct Source {
     current: Agent,
     witness: Witness,
-    fresh: bool,
+    prior_retired: Option<Witness>,
 }
 
 pub(super) struct Prepared {
@@ -42,16 +43,55 @@ impl Prepared {
         self.witness.operation()
     }
 
+    pub(super) fn lease_live(&self) -> bool {
+        self.witness.lease_live()
+    }
+
     pub(super) fn fence_fields(
         &self,
         filter: &mut Document,
         fields: &mut Document,
     ) -> Result<(), ApplyError> {
         filter.insert(witness::FIELD, self.witness.document()?);
+        filter.insert("$expr", self.witness.lease_server_expression());
         let mut published = self.witness.clone();
         published.state = State::Published;
         fields.insert(witness::FIELD, published.document()?);
         Ok(())
+    }
+
+    pub(super) async fn bind_sandbox_event(
+        &self,
+        store: &MongoSandboxStore,
+        event: &SandboxEvent,
+        session: &mut mongodb::ClientSession,
+    ) -> Result<(), ApplyError> {
+        let mut published = self.witness.clone();
+        published.state = State::Published;
+        let expected = published.document()?;
+        published.sandbox_event_seq = Some(event.seq);
+        let saved = store
+            .agents
+            .update_one(
+                doc! {"_id":event_agent(&event.kind)?, witness::FIELD:expected},
+                doc! {"$set":{witness::FIELD:published.document()?}},
+            )
+            .session(session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        if saved.matched_count != 1 {
+            return Err(witness::unresolved());
+        }
+        Ok(())
+    }
+}
+
+fn event_agent(kind: &layer2_core::sandbox::SandboxEventKind) -> Result<&str, ApplyError> {
+    match kind {
+        layer2_core::sandbox::SandboxEventKind::AgentStatusChanged { agent_id, .. } => {
+            Ok(agent_id.as_str())
+        }
+        _ => Err(witness::unresolved()),
     }
 }
 
@@ -114,6 +154,7 @@ pub(super) async fn select(
         return Ok(());
     }
     let persisted = Witness::read(row)?;
+    let mut prior_retired = None;
     if let Some(witness) = persisted {
         if witness.expected_revision == mutation.expected_agent_revision {
             let operation = identity(mutation, &witness.lineage)?;
@@ -134,7 +175,8 @@ pub(super) async fn select(
                 .map_err(ApplyError::Domain)?
                 {
                     writer_reconcile::Outcome::Recorded(_) => {
-                        return Err(ApplyError::PendingReplayed)
+                        require_sandbox_event(store, &witness, mutation, scope).await?;
+                        return Err(ApplyError::PendingReplayed);
                     }
                     writer_reconcile::Outcome::Unknown => return Err(witness::unresolved()),
                 }
@@ -144,14 +186,20 @@ pub(super) async fn select(
                 return Err(ApplyError::StagePending(Box::new(Source {
                     current: current.clone(),
                     witness,
-                    fresh: false,
+                    prior_retired: None,
                 })));
             }
             return Err(witness::unresolved());
         }
         // A superseding lifecycle intent will use its own ordinary cleanup paths.
         if witness.state != State::Published && witness::pending_step(current) {
-            return Err(witness::unresolved());
+            if !publication
+                || !store.segment_adoption_enabled
+                || !witness.permits_replacement(current)
+            {
+                return Err(witness::unresolved());
+            }
+            prior_retired = Some(witness);
         }
     }
     if !publication {
@@ -160,11 +208,19 @@ pub(super) async fn select(
     let Some(observed) = observed
         .filter(|_| !segmented && store.segment_adoption_enabled && witness::pending_step(current))
     else {
-        return Ok(());
+        return if prior_retired.is_some() {
+            Err(witness::unresolved())
+        } else {
+            Ok(())
+        };
     };
     let database = store.client.database(&store.agents.namespace().db);
     if !writer_gate::selects_pending_worker_scoped(&database, current, scope).await? {
-        return Ok(());
+        return if prior_retired.is_some() {
+            Err(witness::unresolved())
+        } else {
+            Ok(())
+        };
     }
     cohort(Stage::Scanned, Outcome::Observed);
     match select_source(store, current, mutation, observed, scope).await {
@@ -173,17 +229,55 @@ pub(super) async fn select(
             Err(ApplyError::StagePending(Box::new(Source {
                 current: current.clone(),
                 witness,
-                fresh: true,
+                prior_retired,
             })))
         }
         Ok(None) => {
             cohort(Stage::Skipped, Outcome::Observed);
-            Ok(())
+            if prior_retired.is_some() {
+                Err(witness::unresolved())
+            } else {
+                Ok(())
+            }
         }
         Err(error) => {
             cohort(Stage::Blocked, Outcome::Refused);
             Err(error)
         }
+    }
+}
+
+async fn require_sandbox_event(
+    store: &MongoSandboxStore,
+    witness: &Witness,
+    mutation: &AgentWorkMutation,
+    scope: &mut TransactionScope<'_>,
+) -> Result<(), ApplyError> {
+    match (witness.sandbox_event_seq, &mutation.sandbox_event) {
+        (None, None) => Ok(()),
+        (Some(seq), Some(kind)) => {
+            let expected = SandboxEvent {
+                sandbox_id: mutation.agent.sandbox_id.clone(),
+                seq,
+                appended_at: mutation.appended_at.clone(),
+                kind: kind.clone(),
+            };
+            let row = scope
+                .find_one(
+                    &store.sandbox_events,
+                    doc! {"_id": crate::store::sandbox_events::event_id(&expected.sandbox_id, seq)},
+                )
+                .await
+                .map_err(ApplyError::Driver)?
+                .ok_or_else(witness::unresolved)?;
+            let actual =
+                crate::store::sandbox_events::read_event(&row).map_err(ApplyError::Domain)?;
+            if actual != expected {
+                return Err(witness::unresolved());
+            }
+            Ok(())
+        }
+        _ => Err(witness::unresolved()),
     }
 }
 

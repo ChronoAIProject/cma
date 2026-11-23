@@ -6,6 +6,7 @@ use layer2_core::sandbox::{AgentLogEntry, AgentLogKind, FirstMessageDelivery};
 use mongodb::bson::{doc, serialize_to_bson, Document};
 
 mod adoption_races;
+mod review_tests;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]

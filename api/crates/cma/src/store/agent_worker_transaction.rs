@@ -479,6 +479,9 @@ async fn apply_publication_observed(
         ),
         None => None,
     };
+    if let (Some(adoption), Some(event)) = (guards.adoption, &event) {
+        adoption.bind_sandbox_event(store, event, session).await?;
+    }
     Ok(PublicationReceipt {
         segmented,
         agent: final_agent,

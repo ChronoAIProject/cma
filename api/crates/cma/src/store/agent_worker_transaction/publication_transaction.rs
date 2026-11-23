@@ -98,7 +98,7 @@ async fn run(
     };
     ensure_append_batch_size(mutation.agent_logs.len())?;
     let mut timing = contention::PublicationTiming::new(&mutation);
-    let _writer = store.agent_writes.lock(&mutation.agent.id).await;
+    let mut writer = store.agent_writes.lock(&mutation.agent.id).await;
     timing.acquired();
     let mut history_cache = publication_history::AttemptHistory::default();
     let mut last_transient = None;
@@ -151,7 +151,9 @@ async fn run(
                     .abort_transaction()
                     .await
                     .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+                drop(writer);
                 staged = pending_adoption::prepare(store, *source).await?;
+                writer = store.agent_writes.lock(&mutation.agent.id).await;
                 adoption_not_selected = staged.is_none();
                 attempt -= 1;
                 continue;
@@ -193,6 +195,16 @@ async fn run(
         if receipt.pending_adoption() {
             use pending_adoption::test_hooks::{self, Boundary};
             test_hooks::stop(&store.agents.namespace().db, Boundary::BeforeCommit).await;
+        }
+        if staged
+            .as_ref()
+            .is_some_and(|prepared| !prepared.lease_live())
+        {
+            if let Err(error) = session.abort_transaction().await {
+                tracing::warn!(error_kind = ?error.kind, "Expired pending publication abort was not acknowledged");
+            }
+            cohort(Stage::Blocked, Outcome::KnownAbort);
+            return Err(pending_adoption::witness::unavailable());
         }
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {

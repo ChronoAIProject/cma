@@ -23,9 +23,13 @@ pub(super) struct Witness {
     expires_at: String,
     incarnation: String,
     pub(super) lineage: Binary,
+    source_digest: Binary,
+    effect_digest: Binary,
     key: String,
     fingerprint: Binary,
     appended_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) sandbox_event_seq: Option<u64>,
 }
 
 impl Witness {
@@ -45,9 +49,12 @@ impl Witness {
             expires_at: lease.expires_at.clone(),
             incarnation: incarnation(current),
             lineage,
+            source_digest: publication::result_digest(current).map_err(ApplyError::Domain)?,
+            effect_digest: effect_digest(current).map_err(ApplyError::Domain)?,
             key: operation.key,
             fingerprint: operation.fingerprint,
             appended_at: operation.appended_at,
+            sandbox_event_seq: None,
         })
     }
 
@@ -64,6 +71,8 @@ impl Witness {
                     marker.expected_revision, marker.fence
                 )
             || !valid_digest(&marker.lineage)
+            || !valid_digest(&marker.source_digest)
+            || !valid_digest(&marker.effect_digest)
             || layer2_core::seconds_from_rfc3339(&marker.expires_at).is_none()
             || marker.operation().validate().is_err()
         {
@@ -78,6 +87,31 @@ impl Witness {
             fingerprint: self.fingerprint.clone(),
             appended_at: self.appended_at.clone(),
         }
+    }
+
+    pub(super) fn lease_live(&self) -> bool {
+        layer2_core::seconds_from_rfc3339(&self.expires_at)
+            .zip(layer2_core::seconds_from_rfc3339(
+                &layer2_core::now_rfc3339(),
+            ))
+            .is_some_and(|(expires, now)| now < expires)
+    }
+
+    pub(super) fn permits_replacement(&self, current: &Agent) -> bool {
+        self.state == State::Retired
+            && current.revision > self.expected_revision
+            && current.conversation.last_seq == self.expected_seq
+            && incarnation(current) == self.incarnation
+            && effect_digest(current).is_ok_and(|digest| digest == self.effect_digest)
+            && current
+                .work
+                .lease
+                .as_ref()
+                .is_some_and(|lease| lease.fence > self.fence)
+    }
+
+    pub(super) fn lease_server_expression(&self) -> Document {
+        doc! {"$gt": [{"$dateFromString": {"dateString": "$work_lease_expires_at", "onError": Bson::Null}}, "$$NOW"]}
     }
 
     pub(super) fn document(&self) -> Result<Document, ApplyError> {
@@ -158,49 +192,93 @@ pub(super) fn unresolved() -> ApplyError {
     ApplyError::Domain(unavailable())
 }
 
-pub(super) fn unavailable() -> SandboxStoreError {
+pub(in crate::store) fn unavailable() -> SandboxStoreError {
     SandboxStoreError::Unavailable(
         "Original Agent publication requires exact adoption settlement".into(),
     )
 }
 
 pub(in crate::store) fn blocks_claim(
+    store: &MongoSandboxStore,
     row: &Document,
     agent: &Agent,
 ) -> Result<bool, SandboxStoreError> {
     if !pending_step(agent) {
         return Ok(false);
     }
-    let witness = Witness::read(row).map_err(|_| unavailable())?;
-    Ok(witness.is_some_and(|witness| witness.state != State::Published))
+    Ok(Witness::read(row)
+        .map_err(|_| unavailable())?
+        .is_some_and(|witness| {
+            witness.state == State::Admitted
+                || witness.state == State::Retired && !store.segment_adoption_enabled
+        }))
 }
 
-/// Closing the expired claim writes the same witness as the publication. A
-/// racing commit must either win first or lose its write conflict. Inspecting
-/// a stale snapshot or failing to commit retirement grants no new authority.
-pub(in crate::store) async fn retire_expired(
+pub(super) fn matches_source(witness: &Witness, agent: &Agent) -> Result<bool, ApplyError> {
+    Ok(witness.incarnation == incarnation(agent)
+        && witness.expected_revision == agent.revision
+        && witness.expected_seq == agent.conversation.last_seq
+        && witness.source_digest
+            == publication::result_digest(agent).map_err(ApplyError::Domain)?
+        && agent.work.lease.as_ref().is_some_and(|lease| {
+            lease.fence == witness.fence && lease.expires_at == witness.expires_at
+        }))
+}
+
+pub(super) fn expired(witness: &Witness, now: &str) -> bool {
+    layer2_core::seconds_from_rfc3339(&witness.expires_at)
+        .zip(layer2_core::seconds_from_rfc3339(now))
+        .is_some_and(|(expires, at)| at >= expires)
+}
+
+fn effect_digest(agent: &Agent) -> Result<Binary, SandboxStoreError> {
+    let mut agent = agent.clone();
+    agent.work.lease = None;
+    agent.work.next_fence = 0;
+    agent.revision = 0;
+    agent.updated_at.clear();
+    publication::request_digest(&agent)
+}
+
+pub(in crate::store) async fn fence_replacement(
     store: &MongoSandboxStore,
     row: &Document,
-    agent: &Agent,
-    now: &str,
-) -> Result<(), SandboxStoreError> {
-    let value = Witness::read(row).map_err(|_| unavailable())?;
-    let Some(mut witness) = value
-        .filter(|witness| witness.state == State::Admitted && witness.expires_at.as_str() <= now)
-    else {
-        return Ok(());
-    };
-    let original = witness.document().map_err(|_| unavailable())?;
-    witness.state = State::Retired;
-    let retired = witness.document().map_err(|_| unavailable())?;
-    let result = store.agents.update_one(
-        doc! {"_id": agent.id.as_str(), FIELD: original, "document_schema_version": DOCUMENT_SCHEMA_VERSION},
-        doc! {"$set": {FIELD: retired}},
-    )
-        .write_concern(mongodb::options::WriteConcern::majority())
-        .await.map_err(|_| unavailable())?;
-    if result.matched_count == 1 {
-        cohort(Stage::Blocked, Outcome::KnownAbort);
+    current: &Agent,
+    sandbox: &Sandbox,
+    session: &mut mongodb::ClientSession,
+) -> Result<bool, TransactionLogError> {
+    if !pending_step(current) {
+        return Ok(true);
     }
-    Ok(())
+    let Some(witness) = Witness::read(row).map_err(|_| unavailable())? else {
+        return Ok(true);
+    };
+    match witness.state {
+        State::Admitted => Ok(false),
+        State::Published => Ok(true),
+        State::Retired => {
+            if !store.segment_adoption_enabled
+                || incarnation(current) != witness.incarnation
+                || current.conversation.last_seq != witness.expected_seq
+                || effect_digest(current)? != witness.effect_digest
+                || !lineage::matches_retained(store, current, sandbox, &witness.lineage, session)
+                    .await?
+            {
+                return Ok(false);
+            }
+            let database = store.client.database(&store.agents.namespace().db);
+            for name in [
+                writer_gate::GateName::CapacityRecovery,
+                writer_gate::GateName::Segments,
+            ] {
+                if writer_gate::select_and_fence(&database, name, current, session)
+                    .await?
+                    .is_none()
+                {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+    }
 }

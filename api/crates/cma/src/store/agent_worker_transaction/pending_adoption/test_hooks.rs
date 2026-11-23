@@ -40,8 +40,8 @@ pub(in crate::store::agent_worker_transaction) async fn stop(database: &str, bou
         // The cleanup race uses the real legacy writer for each stop step.
         // Each step independently validates the entire retained prefix.
         let pause_budget = match boundary {
-            Boundary::Admitted => 180,
-            Boundary::BeforeAdmission | Boundary::BeforeCommit => 45,
+            Boundary::Admitted | Boundary::BeforeCommit => 180,
+            Boundary::BeforeAdmission => 45,
         };
         tokio::time::timeout(
             std::time::Duration::from_secs(pause_budget),
