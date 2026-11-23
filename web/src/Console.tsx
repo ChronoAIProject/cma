@@ -54,7 +54,7 @@ import { DocsPage } from './services/DocsPage';
 import { useReportOwner } from './usage/metrics/reportOwner';
 import { OperationsRoute } from './operator/OperationsRoute';
 export function Console(props: ConsoleProps) {
-  const { client, revision } = useDeletionNoticeReconciliation(
+  const { client, settlements } = useDeletionNoticeReconciliation(
     useCmaClient(),
     props.user.id,
     props.authEpoch ?? 0,
@@ -63,13 +63,13 @@ export function Console(props: ConsoleProps) {
   return (
     <CmaReadScope client={client}>
       <OwnerViewsProvider key={props.user.id} viewerId={props.user.id}>
-        <ConsoleContent {...props} deletionRevision={revision} />
+        <ConsoleContent {...props} settlements={settlements} />
       </OwnerViewsProvider>
     </CmaReadScope>
   );
 }
 function ConsoleContent({
-  deletionRevision,
+  settlements,
   user,
   authEpoch = 0,
   visible = true,
@@ -81,7 +81,7 @@ function ConsoleContent({
   sidebarCollapsed: sharedCollapsed,
   onSidebarCollapsedChange,
   onServiceNavigate,
-}: ConsoleProps & { readonly deletionRevision: number }) {
+}: ConsoleProps & Pick<ReturnType<typeof useDeletionNoticeReconciliation>, 'settlements'>) {
   const surfaceRef = useViewArrival(routePath(route), true, false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const selectedAgent = route.kind === 'agent' ? route.agentId : undefined;
@@ -166,7 +166,7 @@ function ConsoleContent({
     user.id,
     onNavigate,
     !accessUncertain,
-    deletionRevision,
+    settlements,
   );
   const { canStartNewAgent, canCreateInScope, newAgentUnavailable, permissions } =
     consoleCreationAccess(

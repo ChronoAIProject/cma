@@ -37,6 +37,11 @@ it('settles only the accepted request proved terminal by an existing read', asyn
   expect(restoreDeletions('owner')).toEqual([other]);
   expect(restoreDeletions('another-owner')).toEqual([request]);
   expect(view.result.current.revision).toBe(1);
+  expect(view.result.current.settlements).toEqual({
+    client: view.result.current.client,
+    viewerId: 'owner',
+    requests: [request],
+  });
   expect(readSandbox).toHaveBeenCalledTimes(2);
 });
 

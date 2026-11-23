@@ -25,6 +25,7 @@ export function DeletionDialog({
   restored,
   onChanged,
   onAccepted,
+  onRequestChanged,
   backgroundOnAcceptance = false,
   onClose,
 }: {
@@ -34,6 +35,7 @@ export function DeletionDialog({
   readonly restored: boolean;
   readonly onChanged: () => void;
   readonly onAccepted?: (request: DeletionRequest) => void;
+  readonly onRequestChanged?: (request: DeletionRequest | undefined) => void;
   readonly backgroundOnAcceptance?: boolean;
   readonly onClose: () => void;
 }) {
@@ -48,14 +50,17 @@ export function DeletionDialog({
   const inFlight = useRef(false);
   const backgrounded = useRef(false);
   const changed = useRef(onChanged);
+  const requestChanged = useRef(onRequestChanged);
   const completed = useRef(false);
   useEffect(() => {
     changed.current = onChanged;
-  }, [onChanged]);
+    requestChanged.current = onRequestChanged;
+  }, [onChanged, onRequestChanged]);
   const target = deletionTarget(request.action);
   const persist = (value: DeletionRequest | undefined) => {
     if (value === undefined) forgetDeletion(viewerId, request.key);
     else persistDeletion(viewerId, value);
+    requestChanged.current?.(value);
   };
 
   useEffect(() => {
@@ -95,6 +100,7 @@ export function DeletionDialog({
           if (next.inProgress && !request.accepted) {
             const accepted = { ...request, accepted: true };
             persistDeletion(viewerId, accepted);
+            requestChanged.current?.(accepted);
             setRequest(accepted);
             setStarted(true);
             changed.current();
@@ -104,6 +110,7 @@ export function DeletionDialog({
             if (request.action.kind === 'delete_sandbox')
               void refreshSandboxCapacity(client, viewerId);
             forgetDeletion(viewerId, request.key);
+            requestChanged.current?.(undefined);
             changed.current();
           } else
             timer = setTimeout(poll, request.accepted ? transitionRefreshDelay(startedAt) : 1500);
