@@ -11,7 +11,7 @@ use mongodb::{
 use serde::Deserialize;
 
 use super::{ScanError, StaleTurnStore};
-use crate::store::sandbox_mongo::is_duplicate_key;
+use crate::store::sandbox_mongo::{is_duplicate_key, DOCUMENT_SCHEMA_VERSION};
 
 const PAGE_SIZE: u32 = 128;
 // This outlasts the ten-second worker deadline and allows a one-second
@@ -69,6 +69,10 @@ impl StaleTurnStore {
                 vec![doc! {"$replaceWith": {"$cond": [
                     expired,
                     {"$mergeObjects": ["$$ROOT", {
+                    // Replica startup checks every row in the owner collection.
+                    "document_schema_version": {"$ifNull": [
+                        "$document_schema_version", DOCUMENT_SCHEMA_VERSION,
+                    ]},
                     "scan_token": {"$literal": &token},
                     "scan_started_at": "$$NOW",
                     "scan_expires_at": {"$add": ["$$NOW", LEASE_MILLISECONDS]},
@@ -82,6 +86,9 @@ impl StaleTurnStore {
             .await;
         match row {
             Ok(Some(row)) => {
+                if row.get_i64("document_schema_version").ok() != Some(DOCUMENT_SCHEMA_VERSION) {
+                    return Err(ScanError::Invalid);
+                }
                 if row.get_str("scan_token").ok() != Some(token.as_str()) {
                     return Ok(None);
                 }
@@ -129,6 +136,7 @@ impl StaleTurnStore {
             .state
             .update_one(
                 doc! {"_id": {"scan": SCAN_ID}, "scan_token": &lease.token,
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "$expr": {"$gt": ["$scan_expires_at", "$$NOW"]}},
                 vec![doc! {"$set": fields}, doc! {"$unset": "scan_token"}],
             )

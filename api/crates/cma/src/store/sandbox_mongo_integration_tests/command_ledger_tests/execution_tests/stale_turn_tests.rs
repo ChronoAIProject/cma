@@ -211,3 +211,57 @@ async fn stale_turn_scan_resumes_at_last_examined_row_and_fences_previous_holder
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn stale_turn_scan_cursor_allows_replica_ownership_startup() {
+    use crate::store::agent_ownership::MongoAgentOwnership;
+    use layer2_core::agent_ownership::{
+        Member, OwnershipStore, DEFAULT_MAX_OWNED_AGENTS, PROTOCOL_VERSION,
+    };
+
+    let (client, name) = database("stale_turn_restart").await;
+    let (store, agent, _, _, _, _) = composed(&client, &name).await;
+    let ownership = MongoAgentOwnership::open(&client, &name).await.unwrap();
+    let instance = "replica-before-restart";
+    ownership
+        .register(Member {
+            instance_id: instance.into(),
+            protocol: PROTOCOL_VERSION,
+            relay_address: "http://127.0.0.1:8080".into(),
+            expires_at_ms: 0,
+            draining: false,
+            owned_agents: 0,
+            max_owned_agents: DEFAULT_MAX_OWNED_AGENTS,
+        })
+        .await
+        .unwrap();
+    let owner = ownership
+        .acquire(&agent.id, instance)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let scan = StaleTurnStore::new(store);
+    let lease = scan.claim().await.unwrap().unwrap();
+    let restarted_client = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let restarted = MongoAgentOwnership::open(&restarted_client, &name)
+        .await
+        .unwrap();
+    assert_eq!(
+        restarted.owner(&agent.id).await.unwrap(),
+        Some(owner.clone())
+    );
+
+    assert!(scan
+        .advance(&lease, Some("cmd_examined"), false)
+        .await
+        .unwrap());
+    let after_advance = MongoAgentOwnership::open(&restarted_client, &name)
+        .await
+        .unwrap();
+    assert_eq!(after_advance.owner(&agent.id).await.unwrap(), Some(owner));
+    client.database(&name).drop().await.unwrap();
+}
