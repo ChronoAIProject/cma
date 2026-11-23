@@ -205,6 +205,7 @@ function TaskHomeContent({
     scope: home?.scope,
     navigation: home?.navigation,
     visibleAgentIds: presentation.crew.map(({ agent }) => agent.id),
+    visible: home?.visible,
     enabled: !contextual && !draft.template && !intent,
   });
   return (

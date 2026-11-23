@@ -12,6 +12,7 @@ interface PreviewScope {
   readonly navigation?: NavigationState;
   readonly visibleAgentIds: readonly string[];
   readonly enabled: boolean;
+  readonly visible?: boolean;
 }
 
 export function useCrewReplyPreviews({
@@ -22,9 +23,15 @@ export function useCrewReplyPreviews({
   navigation,
   visibleAgentIds,
   enabled,
+  visible = true,
 }: PreviewScope): Replies {
   const snapshot =
-    enabled && viewerId && !scope && navigation?.status === 'ready' && !navigation.refreshError
+    visible &&
+    enabled &&
+    viewerId &&
+    !scope &&
+    navigation?.status === 'ready' &&
+    !navigation.refreshError
       ? navigation.items
       : undefined;
   const ids = JSON.stringify([...new Set(visibleAgentIds)].slice(0, 3));
@@ -81,5 +88,5 @@ export function useCrewReplyPreviews({
     };
   }, [client, viewerId, authEpoch, snapshot, ids]);
 
-  return snapshot && !document.hidden && current ? state.replies : {};
+  return visible && snapshot && !document.hidden && current ? state.replies : {};
 }

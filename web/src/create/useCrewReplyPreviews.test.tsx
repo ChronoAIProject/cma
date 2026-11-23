@@ -185,6 +185,32 @@ it('does not start reads while hidden and aborts both workers on unmount', () =>
   expect(test.calls.every(({ signal }) => signal?.aborted)).toBe(true);
 });
 
+it('ignores navigation refreshes while the host is hidden and resumes within its original budget', async () => {
+  const test = pendingClient();
+  const initial = { ...props(test.client), visible: true };
+  const { result, rerender } = renderHook(useCrewReplyPreviews, { initialProps: initial });
+  expect(test.calls).toHaveLength(2);
+  rerender({ ...initial, visible: false });
+  expect(test.calls.every(({ signal }) => signal?.aborted)).toBe(true);
+  const refreshed = { ...initial, navigation: navigation() };
+  rerender({ ...refreshed, visible: false });
+  await act(async () => {
+    test.calls[0]!.resolve(ready('agent-one'));
+    test.calls[1]!.resolve(ready('agent-two'));
+  });
+  expect(result.current).toEqual({});
+  expect(test.calls).toHaveLength(2);
+  rerender(refreshed);
+  expect(test.calls).toHaveLength(4);
+  await act(async () => {
+    test.calls[2]!.resolve(ready('agent-one'));
+    test.calls[3]!.resolve(ready('agent-two'));
+  });
+  expect(test.calls).toHaveLength(5);
+  await act(async () => test.calls[4]!.resolve(ready('agent-three')));
+  expect(Object.keys(result.current)).toEqual(['agent-one', 'agent-two', 'agent-three']);
+});
+
 it('leaves unavailable, absent and mismatched replies blank', async () => {
   const test = pendingClient();
   const { result } = renderHook(useCrewReplyPreviews, { initialProps: props(test.client) });
