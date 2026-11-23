@@ -13,6 +13,9 @@ import {
   shareModes,
   type ShareTarget,
 } from './sharing';
+import { useShareChangeRecovery } from './useShareChangeRecovery';
+import { RevocationStatus } from './RevocationStatus';
+import { UnresolvedRevocations } from './UnresolvedRevocations';
 import { ShareRow } from './ShareRow';
 
 export type ShareCommand = {
@@ -31,10 +34,12 @@ export function ShareScopeEditor({
   client,
   target,
   keys,
+  ownerId,
 }: {
   readonly client: ResourceViewsClient;
   readonly target: ShareTarget;
   readonly keys: CommandKeys;
+  readonly ownerId?: string;
 }) {
   const { kind, id } = target;
   const read = useMemo(
@@ -62,12 +67,25 @@ export function ShareScopeEditor({
     choices.find((choice) => choice.id === org)?.display_name?.trim() ||
     'Organization name unavailable';
   const available = shares !== undefined;
+  const recovery = useShareChangeRecovery(client, target, ownerId, available, sharing.reload);
+  const changing = busy || recovery.busy;
   useEffect(() => {
     if (!available) active.current?.abort();
   }, [available]);
   useEffect(() => () => active.current?.abort(), [client, kind, id]);
   const run = async (command: ShareCommand) => {
-    if (active.current !== undefined || !available) return;
+    if (active.current !== undefined || recovery.busy || !available) return;
+    if (ownerId && command.expected.id) {
+      await recovery.send({
+        key: keys.for(`${kind}:${id}:${command.key}`),
+        shareId: command.expected.id,
+        revision: command.expected.revision - 1,
+        organization: command.expected.organization,
+        mode: command.expected.mode,
+        revoked: command.expected.revoked,
+      });
+      return;
+    }
     const request = new AbortController();
     active.current = request;
     setBusy(true);
@@ -131,7 +149,7 @@ export function ShareScopeEditor({
       <p>This scope includes every current and future Workspace and Agent in the Sandbox.</p>
       <Button
         size="sm"
-        disabled={busy}
+        disabled={changing}
         onClick={() => {
           sharing.reload();
           organizations.reload();
@@ -145,6 +163,40 @@ export function ShareScopeEditor({
         <p role="status">Checking current sharing access</p>
       ) : null}
       {sharing.state.status === 'error' ? <p role="alert">{sharing.state.message}</p> : null}
+      {recovery.error ? <p role="alert">{recovery.error}</p> : null}
+      {recovery.notice ? <p role="status">{recovery.notice}</p> : null}
+      {available ? (
+        <UnresolvedRevocations client={client} owner={ownerId} kind={kind} id={id} />
+      ) : null}
+      {available
+        ? recovery.changes.map((change) => (
+            <div key={change.key} aria-label="Saved share change">
+              <p>
+                {change.revoked
+                  ? 'Revoke access'
+                  : `Change access to ${shareModes.find((item) => item.value === change.mode)?.label ?? change.mode}`}{' '}
+                · {name(change.organization)}
+              </p>
+              {change.operation ? (
+                <RevocationStatus
+                  client={client}
+                  owner={ownerId}
+                  target={target}
+                  intent={change}
+                  expected={change}
+                  onEffective={recovery.complete}
+                />
+              ) : (
+                <>
+                  <p>The result is unconfirmed. Retry the saved request to recover its outcome.</p>
+                  <Button disabled={changing} onClick={() => void recovery.send(change)}>
+                    Retry saved share change
+                  </Button>
+                </>
+              )}
+            </div>
+          ))
+        : null}
       {shares === undefined ? null : (
         <>
           <h3>Current grants</h3>
@@ -159,7 +211,7 @@ export function ShareScopeEditor({
                   name={name(share.target_org_id)}
                   target={target}
                   client={client}
-                  busy={busy}
+                  busy={changing || recovery.changes.some((row) => row.shareId === share.id)}
                   onCommand={run}
                 />
               ))}
@@ -191,7 +243,7 @@ export function ShareScopeEditor({
                 label: choice.display_name?.trim() || 'Organization name unavailable',
               })),
             ]}
-            disabled={busy || choices.length === 0}
+            disabled={changing || choices.length === 0}
             onChange={(value) => {
               setOrganization(value);
               setAcknowledged(false);
@@ -201,7 +253,7 @@ export function ShareScopeEditor({
             label="New share access"
             value={mode}
             options={shareModes}
-            disabled={busy}
+            disabled={changing}
             onChange={(value) => {
               setMode(value);
               setAcknowledged(false);
@@ -214,7 +266,7 @@ export function ShareScopeEditor({
             <input
               type="checkbox"
               checked={acknowledged}
-              disabled={busy}
+              disabled={changing}
               onChange={(event) => setAcknowledged(event.target.checked)}
             />
             I intend to share the whole Sandbox, including its current and future resources.
@@ -226,7 +278,7 @@ export function ShareScopeEditor({
           ) : null}
           <Button
             variant="primary"
-            disabled={busy || selected === undefined || existing || !acknowledged}
+            disabled={changing || selected === undefined || existing || !acknowledged}
             onClick={() =>
               void run({
                 key: `create:${organization}:${mode}`,

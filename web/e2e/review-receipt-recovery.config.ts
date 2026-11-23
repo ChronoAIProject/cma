@@ -3,5 +3,10 @@ import credentialRecovery from './credential-setup.config';
 
 export default defineConfig({
   ...credentialRecovery,
-  testMatch: ['review-receipt-recovery.check.ts', 'review-preflight-lifetime.check.ts'],
+  testMatch: [
+    'review-receipt-recovery.check.ts',
+    'review-recovery-custody.check.ts',
+    'review-acceptance-order.check.ts',
+    'review-preflight-lifetime.check.ts',
+  ],
 });

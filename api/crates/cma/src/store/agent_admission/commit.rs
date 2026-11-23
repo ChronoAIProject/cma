@@ -94,9 +94,21 @@ impl MongoSandboxStore {
                         CommitOutcome::Committed => {
                             return Ok(AgentAdmissionResult::Existing(*creation));
                         }
-                        CommitOutcome::Retry(error) | CommitOutcome::Unknown(error) => {
+                        CommitOutcome::Retry(error) => {
                             last_transient = Some(error.to_string());
                             continue;
+                        }
+                        CommitOutcome::Unknown(_) => {
+                            // Never re-run an admission whose commit may have applied.
+                            return Box::pin(
+                                super::super::agent_admission_records::reconcile_existing(
+                                    self,
+                                    &admission,
+                                    *creation,
+                                    session.operation_time(),
+                                ),
+                            )
+                            .await;
                         }
                         CommitOutcome::Failed(error) => {
                             return Err(SandboxStoreError::Unavailable(error.to_string()));
