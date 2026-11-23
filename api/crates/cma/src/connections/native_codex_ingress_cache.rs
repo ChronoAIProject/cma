@@ -26,6 +26,16 @@ pub(super) struct CacheRead {
     policy: IngressOwnershipPolicy,
 }
 
+#[cfg_attr(
+    all(
+        not(test),
+        not(all(
+            any(all(target_os = "linux", target_env = "gnu"), target_os = "macos"),
+            any(target_arch = "x86_64", target_arch = "aarch64"),
+        )),
+    ),
+    expect(dead_code, reason = "native cache opener unavailable on this target")
+)]
 impl CacheRead {
     pub(super) fn admit(
         input: &SharedOwned<SecretValue>,
