@@ -45,6 +45,7 @@ const legalTerms = optional(object({ version: text, terms_url: text, privacy_url
 const signedOut = object({ legal_terms: legalTerms });
 const signedIn = object({
   api_commands: optional(boolean),
+  privacy_export: optional(boolean),
   usage_reporting: optional(object({ measured_visible: boolean })),
   subject: text,
   capabilities: array(capability),

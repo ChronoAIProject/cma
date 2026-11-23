@@ -73,6 +73,15 @@ pub(super) async fn read(
             if !erasing && authority.is_some() && auth.service_authorization_enabled() {
                 body["service_authorization"] = true.into();
             }
+            if !erasing
+                && auth.privacy_export_enabled
+                && caller.authorization.allows(Capability::UseOwnSandboxes)
+                && authority
+                    .as_ref()
+                    .is_some_and(|Extension(value)| value.subject() == &caller.subject)
+            {
+                body["privacy_export"] = true.into();
+            }
             if let Some(terms) = auth.legal_terms_body().filter(|_| !erasing) {
                 body["legal_terms"] = terms;
             }
