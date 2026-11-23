@@ -2,9 +2,6 @@ use super::*;
 use layer2_core::sandbox::Agent;
 use mongodb::Collection;
 
-// Unconstructed variants drive the deferred acceptance contracts for the
-// remaining transaction-safety corrections (#3112).
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub(in crate::store) enum Operation {
     Channel,
@@ -30,8 +27,6 @@ pub(in crate::store) struct Fixture {
     app: String,
     commands: Arc<Mutex<Vec<(String, Document)>>>,
     observations: Arc<Mutex<Vec<Document>>>,
-    // Read by the deferred acceptance contracts (#3112).
-    #[allow(dead_code)]
     parent: Sandbox,
     pub(in crate::store) original: AgentCreation,
     pub(in crate::store) provenance: AgentCreationProvenance,
@@ -152,6 +147,14 @@ impl Fixture {
             channel,
             reuse,
         }
+    }
+
+    pub(in crate::store) async fn claim(&self) -> Sandbox {
+        self.independent
+            .claim_sandbox_work(&self.parent.id, "metadata-worker", now(), deadline())
+            .await
+            .unwrap()
+            .expect("fixture Sandbox work must be claimable")
     }
 
     pub(in crate::store) async fn run(
@@ -439,4 +442,11 @@ impl Fixture {
             (_, outcome) => panic!("unexpected {operation:?} outcome {outcome:?}"),
         }
     }
+}
+
+pub(in crate::store) fn now() -> String {
+    layer2_core::rfc3339_at(std::time::SystemTime::now())
+}
+pub(in crate::store) fn deadline() -> String {
+    layer2_core::rfc3339_at(std::time::SystemTime::now() + std::time::Duration::from_secs(300))
 }
