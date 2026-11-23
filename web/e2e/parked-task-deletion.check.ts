@@ -125,13 +125,13 @@ for (const purpose of ['image_rotation', 'revive'] as const) {
     await captureThemes(page, info, 'confirmation');
     expect(deletes).toEqual([]);
     expect(boundary.writes).toEqual([]);
-    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await confirmation.getByRole('button', { name: 'Keep environment', exact: true }).click();
     await expect(confirmation).toHaveCount(0);
     expect(deletes).toEqual([]);
     await menu.click();
     await remove.click();
     await confirmation.getByRole('checkbox').check();
-    await confirmation.getByRole('button', { name: 'Delete Sandbox', exact: true }).dblclick();
+    await confirmation.getByRole('button', { name: 'Request deletion', exact: true }).dblclick();
     if (uncertain) {
       const pending = page.getByRole('dialog', { name: 'Deleting Sandbox', exact: true });
       await expect(pending).toContainText('not been confirmed');
