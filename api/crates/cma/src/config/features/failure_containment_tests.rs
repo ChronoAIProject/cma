@@ -39,3 +39,22 @@ fn failure_containment_lookup_failure_is_not_silently_disabled() {
     });
     assert_eq!(result.unwrap_err(), "synthetic configuration unavailable");
 }
+
+#[test]
+fn receiver_only_and_combined_flags_remain_independent() {
+    const RECEIVER: &str = "CHRONO_RECEIVER_HOUSEKEEPING_CONTAINMENT_ENABLED";
+    for combined in [false, true] {
+        for receiver in [false, true] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok(match key {
+                    KEY => Some(combined.to_string()),
+                    RECEIVER => Some(receiver.to_string()),
+                    _ => None,
+                })
+            })
+            .unwrap();
+            assert_eq!(flags.am_failure_containment_enabled, combined);
+            assert_eq!(flags.receiver_housekeeping_containment, receiver);
+        }
+    }
+}

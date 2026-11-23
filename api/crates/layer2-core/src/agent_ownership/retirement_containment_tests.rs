@@ -240,6 +240,9 @@ async fn absence_keeps_the_old_floor_and_generic_revocation_is_not_retirement() 
     assert_eq!(manager.retirement_background(&old).await.unwrap(), None);
     *store.observation.lock().unwrap() = Some(None);
     assert_eq!(manager.retirement_background(&old).await.unwrap(), None);
+    assert!(!manager.forget_unconfirmed_retirement(&old).await.unwrap());
+    assert!(old.cleanup.lock().await.settlement.is_none());
+    assert!(!old.cleanup.lock().await.legacy_forgotten);
     assert_eq!(manager.owned().await.len(), 2);
     assert!(manager
         .acquire(&old.token.agent_id)

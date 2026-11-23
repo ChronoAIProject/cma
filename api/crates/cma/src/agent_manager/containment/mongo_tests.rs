@@ -63,6 +63,7 @@ async fn actual_housekeeping_recovers_inactive_and_cooperative_retirements_witho
         )
         .await
         .unwrap();
+        manager.enable_receiver_containment();
         manager
             .register_lifecycle(crate::agent_lifecycle::LifecycleDrain::fixture(1))
             .unwrap();
@@ -100,6 +101,7 @@ async fn actual_housekeeping_recovers_inactive_and_cooperative_retirements_witho
             .unwrap();
         manager.service_retirements(vec![]).await.unwrap();
         assert!(!old.is_current());
+        assert_eq!(manager.contained.pending(), 0);
         assert!(manager.is_ready() && healthy.is_current());
         assert_eq!(receiver.calls.load(Ordering::Acquire), 1);
         assert!(manager
