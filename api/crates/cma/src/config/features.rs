@@ -15,6 +15,8 @@ mod resource_list_tests;
 mod segmentation_tests;
 #[cfg(test)]
 mod stale_turn_tests;
+#[cfg(test)]
+mod strict_inactivity_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
     pub am_startup_health_serving: bool,
@@ -66,6 +68,7 @@ pub(crate) struct FeatureFlags {
     pub admission_ceilings_writes_enabled: bool,
     pub pending_home_reconciliation: bool,
     pub agent_control_write_coordination: bool,
+    pub strict_inactivity_session_evidence: bool,
     pub bounded_title_reads: bool,
     pub access_snapshot_session: bool,
     pub resource_list_batch_reads: bool,
@@ -281,6 +284,10 @@ impl FeatureFlags {
             agent_control_write_coordination: flag(
                 lookup,
                 "CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED",
+            )?,
+            strict_inactivity_session_evidence: flag(
+                lookup,
+                "CHRONO_STRICT_INACTIVITY_SESSION_EVIDENCE_ENABLED",
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
