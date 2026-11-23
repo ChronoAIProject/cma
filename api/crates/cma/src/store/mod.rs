@@ -54,6 +54,9 @@ mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
+pub(crate) mod stale_turns;
+#[cfg(test)]
+pub(crate) use agent_worker_transaction::adoption_probe;
 #[cfg(test)]
 pub(crate) use agent_worker_transaction::skill_result_test_support;
 mod agent_worktree_recovery;
@@ -125,6 +128,8 @@ pub(crate) mod migrations;
 pub mod mongo;
 mod mongo_diagnostics;
 pub(crate) mod pending_launch_homes;
+#[cfg(test)]
+pub(crate) mod test_visibility;
 #[cfg(test)]
 pub(crate) use mongo_diagnostics::attach_readiness_fixture;
 pub(crate) mod mongo_latency;

@@ -1,5 +1,6 @@
 import type { AgentSummary, SandboxSummary } from '../api/types';
 import { sandboxStatusPresentation } from '../sandbox/presentation';
+import { sandboxHasParkedRuntimeUpdate } from '../sandbox/parkedRuntimeUpdate';
 import { observedTaskStatus, taskWords, type TaskStatus, type CurrentTask } from './taskStatus';
 
 export type EnvironmentTaskGroup =
@@ -31,10 +32,10 @@ export function taskPresentation(
     };
 
   const parent = sandboxStatusPresentation(sandbox);
-  if (parent.status === 'rotating') {
+  const failed = sandboxHasParkedRuntimeUpdate(sandbox);
+  if (parent.status === 'rotating' || failed) {
     const recorded = observedTaskStatus(agent, undefined, currentTask);
     const ended = recorded === 'failed' || recorded === 'stopped';
-    const failed = sandbox.runtimeUpdate?.state === 'failed';
     const group = failed ? 'Needs attention' : 'Updating environment';
     return {
       status: recorded,

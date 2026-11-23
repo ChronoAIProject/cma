@@ -74,7 +74,14 @@ server {
 """
         config += f"        if ($arg_state = store) {{ return 503 '{json.dumps(STORE_DOWN)}'; }}\n"
         config += f"        if ($arg_state = workers) {{ return 503 '{json.dumps(WORKERS_DOWN)}'; }}\n"
-        config += f"        return 200 '{json.dumps(READY)}';\n    }}\n}}\n"
+        config += f"        return 200 '{json.dumps(READY)}';\n    }}\n"
+        # Any API body the web proxy forwards reaches the fake Agent Manager.
+        config += """    location /api/ {
+        client_max_body_size 64m;
+        return 202 '{"reached":"agent-manager"}';
+    }
+}
+"""
         # A different service cannot accidentally satisfy Agent Manager readiness.
         config += "server { listen 18081; return 404; }\n"
         (directory / "default.conf").write_text(config)
@@ -97,6 +104,17 @@ server {
                 if time.monotonic() >= deadline:
                     raise AssertionError(docker("logs", cls.container))
                 time.sleep(0.1)
+
+    @classmethod
+    def post(cls, method, path, size):
+        connection = http.client.HTTPConnection("127.0.0.1", cls.port, timeout=10)
+        try:
+            connection.request(method, path, body=b"x" * size,
+                               headers={"Content-Type": "application/json"})
+            response = connection.getresponse()
+            return response.status, response.read()
+        finally:
+            connection.close()
 
     @classmethod
     def get(cls, path):
@@ -134,6 +152,25 @@ server {
                 self.assertEqual(response[0], 200)
                 self.assertIn(b"SPA fixture", response[2])
                 self.assertFalse(ready(response))
+
+    def test_legal_document_and_artifact_bodies_reach_the_agent_manager(self):
+        # 1 MiB of Markdown or decoded artifact bytes is legal; JSON and base64
+        # expansion must not turn it into an untyped HTML 413 at the proxy.
+        mib = 1024 * 1024
+        for method, path, size in [
+            ("PATCH", "/api/v1/documents/doc-a", 6 * mib + 16 * 1024),
+            ("POST", "/api/v1/documents", 6 * mib + 16 * 1024),
+            ("POST", "/api/agent-manager/v1/documents", 6 * mib + 16 * 1024),
+            ("POST", "/api/v1/agents/agent-a/artifacts", 2 * mib),
+            ("POST", "/api/agent-manager/v1/agents/agent-a/artifacts", 2 * mib),
+        ]:
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.post(method, path, size), (202, b'{"reached":"agent-manager"}')
+                )
+        # The raised bounds are route-scoped; other API routes keep nginx's default.
+        status, _ = self.post("PATCH", "/api/v1/agents/agent-a/settings", mib + 1)
+        self.assertEqual(status, 413)
 
     def test_monitor_rejects_malformed_or_incomplete_assertions(self):
         for body in [b"{", b"null", b"[]", b'{}', b'{"status":"ready"}']:

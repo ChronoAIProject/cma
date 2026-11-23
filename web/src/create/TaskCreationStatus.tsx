@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { AgentLifecycleOperationView } from '../api/client';
 import type { Intent } from './lifecycleIntentStorage';
 import { CharacterAvatar } from '../character/CharacterAvatar';
@@ -12,6 +13,7 @@ export function TaskCreationStatus({
   pending,
   preparing,
   resolvedCommit,
+  recovery,
 }: {
   readonly intent?: Intent;
   readonly operation?: AgentLifecycleOperationView;
@@ -19,6 +21,7 @@ export function TaskCreationStatus({
   readonly pending: boolean;
   readonly preparing: boolean;
   readonly resolvedCommit?: string;
+  readonly recovery?: ReactNode;
 }) {
   if (!intent) return null;
   const status = operation?.status ?? intent.receipt?.status;
@@ -40,9 +43,6 @@ export function TaskCreationStatus({
       <section className="task-submitted" aria-label="Submitted task">
         <h2>Submitted task</h2>
         <p className="task-submitted__text">{intent.body.initial_message}</p>
-        {!intent.receipt && !pending ? (
-          <DocsLink view="recover-and-continue">Help recovering this request</DocsLink>
-        ) : null}
         {intent.body.repository ? (
           <>
             <p className="task-submitted__literal">{intent.body.repository.url}</p>
@@ -85,7 +85,7 @@ export function TaskCreationStatus({
                       </time>
                     </>
                   ) : null}
-                  . The latest status has not been confirmed.
+                  .
                 </p>
               ) : (
                 <p>
@@ -111,6 +111,8 @@ export function TaskCreationStatus({
           {status !== 'failed' ? (
             <p>Task progress and results appear in the conversation.</p>
           ) : null}
+          {failure ? <p role="alert">{failure}</p> : null}
+          {recovery}
           <details className="task-creation__details">
             <summary>Setup details{failure ? ' · last confirmed' : ''}</summary>
             <AgentProvisioningProgress
@@ -121,7 +123,16 @@ export function TaskCreationStatus({
             />
           </details>
         </section>
-      ) : null}
+      ) : (
+        <section className="task-creation__status" aria-label="Task request recovery">
+          <h2>{pending ? 'Sending your task request' : 'Task request needs attention'}</h2>
+          {failure ? <p role="alert">{failure}</p> : null}
+          {recovery}
+          {!pending ? (
+            <DocsLink view="recover-and-continue">Help recovering this request</DocsLink>
+          ) : null}
+        </section>
+      )}
     </div>
   );
 }

@@ -15,6 +15,8 @@ DEPENDENCIES = {
     'visitor_fixture': ('migration_visitor_provider', 'visitor quota and nonempty input-protocol records'),
     'sandbox_control_fixture': ('migration_sandbox_control_fixture', 'retained rejected Sandbox commands'),
     'membership_fixture': ('migration_membership_fixture', 'coordinated member records and exact Pod identity'),
+    'admission_ceilings_fixture': ('migration_admission_ceilings_fixture',
+                                   'operator admission ceilings and stop history writes'),
 }
 
 

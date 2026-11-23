@@ -241,6 +241,20 @@ jobs:
           retention-days: 1
           if-no-files-found: "error"
       -
+        name: "Complete design palette browser contracts"
+        id: p1_palette
+        timeout-minutes: 10
+        run: "node ../.github/scripts/p1-browser-ci.mjs palette"
+      -
+        name: "Design palette browser failure evidence"
+        if: "failure() && steps.p1_palette.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "p1-palette-failure"
+          path: "${{ runner.temp }}/cma-p1-browser/palette"
+          retention-days: 1
+          if-no-files-found: "error"
+      -
         name: "Complete shell browser contracts"
         id: p1_shell
         timeout-minutes: 10
