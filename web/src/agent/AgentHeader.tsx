@@ -35,6 +35,7 @@ export function AgentHeader({
   onDetailsOpenChange,
   menu = [],
   onMenuSelect,
+  onActionsOpenChange,
   moreActions = [],
   onMoreAction,
   filesOpen = false,
@@ -57,6 +58,7 @@ export function AgentHeader({
   readonly onDetailsOpenChange: (open: boolean) => void;
   readonly menu?: readonly MenuEntry[];
   readonly onMenuSelect?: (id: string) => void;
+  readonly onActionsOpenChange?: (open: boolean) => void;
   readonly moreActions?: readonly MenuEntry[];
   readonly onMoreAction?: (id: string) => void;
   readonly sandbox?: ReactNode;
@@ -70,7 +72,11 @@ export function AgentHeader({
   const acceptance = status === 'ready' ? acceptanceForTurn(taskAcceptance, turnId) : undefined;
   const acceptanceLabel = taskAcceptanceLabel(acceptance);
   const acceptanceReason = taskAcceptanceReason(acceptance);
-  const [open, setOpen] = useState(false);
+  const [open, setMenuOpen] = useState(false);
+  const setOpen = (value: boolean) => {
+    setMenuOpen(value);
+    onActionsOpenChange?.(value);
+  };
   const sidebar = useContext(SidebarContext);
   const remove = moreActions.find((item) => item.id === 'delete_agent');
   const stop = moreActions.find((item) => item.id === 'stop_agent' && !('type' in item));
@@ -165,6 +171,7 @@ export function AgentHeader({
         <Menu
           open={open}
           align="end"
+          placement="agent-toolbar__menu"
           label="More Agent actions"
           items={items}
           anchor={

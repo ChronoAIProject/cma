@@ -6,6 +6,7 @@ import { Modal } from '../ui/Modal';
 import { SkillsSettings } from './SkillsSettings';
 import { AgentHeader } from './AgentHeader';
 import { AgentPreferencesDialog } from './AgentPreferencesDialog';
+import { usePromptAvailability } from './usePromptAvailability';
 
 /** Owner-only tools reuse the same public authorization as their Details controls. */
 export function OwnerAgentHeader({
@@ -24,11 +25,23 @@ export function OwnerAgentHeader({
 }) {
   const client = useCmaClient();
   const configBusy = busy || actionsBusy;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const promptReason = usePromptAvailability(
+    client,
+    detail.id,
+    header.viewerId,
+    menuOpen &&
+      !readOnly &&
+      !configBusy &&
+      !!client.readAgentPreferences &&
+      !!client.updateAgentPreferences,
+  );
   const [dialog, setDialog] = useState<'share' | 'skills' | 'rename' | 'prompt'>();
   return (
     <>
       <AgentHeader
         {...header}
+        onActionsOpenChange={setMenuOpen}
         onShare={readOnly || !client.resourceViews ? undefined : () => setDialog('share')}
         menu={[
           {
@@ -54,14 +67,15 @@ export function OwnerAgentHeader({
               readOnly ||
               !client.readAgentPreferences ||
               !client.updateAgentPreferences ||
-              configBusy,
+              configBusy ||
+              promptReason !== undefined,
             reason: readOnly
               ? 'Only the task owner can update its system prompt.'
               : !client.readAgentPreferences || !client.updateAgentPreferences
                 ? 'Task preferences are unsupported by this client.'
                 : configBusy
                   ? 'Wait until the Agent and its pending actions are idle.'
-                  : undefined,
+                  : promptReason,
           },
           {
             id: 'update-skills',
@@ -80,7 +94,8 @@ export function OwnerAgentHeader({
         ]}
         onMenuSelect={(id) => {
           if (id === 'rename-agent') setDialog('rename');
-          else if (id === 'update-prompt') setDialog('prompt');
+          else if (id === 'update-prompt' && !readOnly && !configBusy && promptReason === undefined)
+            setDialog('prompt');
           else if (id === 'update-skills') setDialog('skills');
           else header.onMenuSelect?.(id);
         }}
