@@ -17,9 +17,7 @@ fn frozen_account_pre_backup_census_matches_the_exact_develop_descriptor() {
         digest(format!("archive-census-v2\n{audit:?}\n{}", names.join("\n")).as_bytes()),
         pre_backup_accounts::SHA256
     );
-    let introduced: Vec<_> = crate::store::isolation::COLLECTIONS
-        .iter()
-        .copied()
+    let introduced: Vec<_> = manifest_collections()
         .filter(|name| !pre_backup_accounts::COLLECTIONS.contains(name))
         .collect();
     assert_eq!(

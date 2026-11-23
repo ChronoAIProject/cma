@@ -43,10 +43,9 @@ async fn manifest() -> Manifest {
         schema_sha256: schema_sha256(),
         external: vec![],
         files: vec![],
-        database: crate::store::isolation::COLLECTIONS
-            .iter()
+        database: manifest_collections()
             .map(|name| DatabaseRecord {
-                collection: (*name).into(),
+                collection: name.into(),
                 documents: 0,
                 bytes: 0,
                 sha256: digest(&[]),
@@ -132,16 +131,13 @@ async fn exact_current_and_legacy_censuses_refuse_unknown_duplicate_and_missing_
     mismatched.schema_sha256 = schema_sha256();
     assert!(validate_manifest_census(&mismatched).is_err());
     assert!(matches_current(&old, current.clone()).unwrap());
-    for name in crate::store::isolation::COLLECTIONS
-        .iter()
-        .filter(|name| !legacy::COLLECTIONS.contains(name))
-    {
+    for name in manifest_collections().filter(|name| !legacy::COLLECTIONS.contains(name)) {
         for mode in 0..5 {
             let mut changed = current.clone();
             let extra = changed
                 .database
                 .iter_mut()
-                .find(|r| r.collection == *name)
+                .find(|r| r.collection == name)
                 .unwrap();
             match mode {
                 0 => extra.documents = 1,
