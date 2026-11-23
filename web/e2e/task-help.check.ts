@@ -127,13 +127,17 @@ test('LOCAL Home, full capacity and uncertain task help preserve the draft and o
   await page.goBack();
   await expect(draft).toHaveValue('Keep this original task through help and recovery');
   await expect(page.getByRole('region', { name: 'Sandbox capacity' })).toContainText(
-    'All 1 Sandbox environment slots are in use',
+    'Environment limit reached',
   );
-  await page.getByRole('link', { name: 'Help with environments and capacity' }).click();
+  await page.getByRole('link', { name: 'Help starting a task', exact: true }).click();
+  await page.getByRole('link', { name: 'Docs', exact: true }).click();
+  await page.getByRole('link', { name: /^Environments and capacity/ }).click();
   await expect(
     page.getByRole('heading', { name: 'Environments and capacity', exact: true }),
   ).toBeFocused();
   await expect(page.getByRole('article')).toContainText('A pending deletion is not a free slot');
+  await page.goBack();
+  await page.goBack();
   await page.goBack();
   await expect(draft).toHaveValue('Keep this original task through help and recovery');
   expect(writes).toEqual([]);

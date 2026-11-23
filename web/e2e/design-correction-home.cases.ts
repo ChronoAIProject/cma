@@ -461,6 +461,7 @@ export function registerDesignCorrectionHomeCases() {
         await expect(dialog.getByRole('button', { name: 'Add repo' })).toBeDisabled();
         await dialog.getByLabel('Repository ref').fill('feature/landing');
         await expect(dialog.getByRole('button', { name: 'Add repo' })).toBeEnabled();
+        await page.mouse.move(0, 0);
         await expect(dialog.getByRole('button', { name: 'Add repo' })).toHaveCSS(
           'background-color',
           'rgb(200, 245, 66)',

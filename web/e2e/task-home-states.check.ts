@@ -323,12 +323,18 @@ for (const theme of ['light', 'dark'] as const) {
         await expect(start).toBeEnabled();
       };
       await fits('without-repository');
+      const templates = page.getByRole('button', { name: 'Templates', exact: true });
       await task.focus();
+      await page.keyboard.press('Tab');
+      await expect(templates).toBeFocused();
       await page.keyboard.press('Tab');
       await expect(cloud).toBeFocused();
       await expect(cloud).not.toHaveCSS('box-shadow', 'none');
       await page.keyboard.press('Shift+Tab');
+      await expect(templates).toBeFocused();
+      await page.keyboard.press('Shift+Tab');
       await expect(task).toBeFocused();
+      await page.keyboard.press('Tab');
       await page.keyboard.press('Tab');
       await cloud.press('Enter');
       await expect(page.getByRole('menu', { name: 'Run this task on' })).toBeVisible();
