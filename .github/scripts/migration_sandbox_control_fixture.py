@@ -39,8 +39,14 @@ def manifests(objects):
 
 
 def receipt(value, sandbox_id, revision, terminal=False):
-    require(isinstance(value, dict) and set(value) == {*IDENTITY, 'revision', 'state'},
+    require(isinstance(value, dict) and set(value) - {'lifecycle'} == {*IDENTITY, 'revision', 'state'},
             'control receipt shape differs')
+    # Released readers since c6a804151e add an optional public `lifecycle`
+    # result (`SandboxCommandLifecycleView`); when present it has exactly that.
+    if 'lifecycle' in value:
+        lifecycle = value['lifecycle']
+        require(isinstance(lifecycle, dict) and set(lifecycle) == {'result'}
+                and isinstance(lifecycle['result'], dict), 'control receipt lifecycle differs')
     require(isinstance(value['command_id'], str) and re.fullmatch(r'scmd_[a-f0-9]{32}', value['command_id'])
             and value['sandbox_id'] == sandbox_id and value['command'] == 'pause'
             and type(value['expected_revision']) is int and value['expected_revision'] == revision,

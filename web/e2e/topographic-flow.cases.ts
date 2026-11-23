@@ -339,7 +339,7 @@ export function registerTopographicFlowCases() {
     await expect(page.getByLabel('Topic', { exact: true })).toBeFocused();
     await expect(page.locator('.topographic-backdrop')).toHaveCount(0);
     await page.getByRole('button', { name: 'Write a task without a template' }).click();
-    await page.getByRole('button', { name: 'Switch and keep draft', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Keep this template draft?' })).toHaveCount(0);
     await expect(input).toHaveValue('Keep my separate Home draft.');
     await expect(input).toBeFocused();
     await expect(page.locator('.topographic-backdrop__static')).toBeVisible();

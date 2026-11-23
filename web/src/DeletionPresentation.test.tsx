@@ -42,16 +42,16 @@ it('shows known impact, keeps unchecked deletion inert, and allows dismissal dur
       onClose={close}
     />,
   );
-  expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Keep environment' })).toBeEnabled();
   await screen.findByText('Agent one');
   expect(screen.getByRole('list', { name: 'Known affected resources' })).toHaveTextContent(
     'chrono-bot',
   );
   expect(screen.getByText(/full impact may not be listed/)).toBeVisible();
   expect(screen.getByRole('checkbox')).not.toBeChecked();
-  fireEvent.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Request deletion' }));
   expect(deleteSandbox).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Keep environment' }));
   expect(close).toHaveBeenCalledOnce();
   expect(view.container.querySelector('p p, p div, p ul')).toBeNull();
 });

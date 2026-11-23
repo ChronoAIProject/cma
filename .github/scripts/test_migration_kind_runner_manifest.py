@@ -163,5 +163,59 @@ class KindNodeImageTests(unittest.TestCase):
             self.assertEqual(calls[0][:2], ['kind-not-invoked', 'create'])
 
 
+class ImageLoadTests(unittest.TestCase):
+    def campaign(self, directory, status):
+        plan = Path(directory) / 'plan.json'
+        plan.write_text('{}')
+        campaign = runner.Campaign(Path(directory) / 'run', 'kind-bin', 1, plan)
+        calls = []
+
+        def command(argv, **kwargs):
+            calls.append(argv)
+            if argv[:2] == ['docker', 'info']:
+                return status
+            if argv[:2] == ['docker', 'save']:
+                Path(argv[argv.index('--output') + 1]).write_bytes(b'archive')
+            return ''
+        campaign.command = command
+        return campaign, calls
+
+    def test_classic_store_keeps_kind_load_docker_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            campaign, calls = self.campaign(directory, '[["Backing Filesystem","extfs"]]')
+            campaign.load_image('alias-a')
+            campaign.load_image('alias-b')
+            self.assertEqual(calls, [
+                ['docker', 'info', '--format', '{{json .DriverStatus}}'],
+                ['kind-bin', 'load', 'docker-image', '--name', campaign.cluster, 'alias-a'],
+                ['kind-bin', 'load', 'docker-image', '--name', campaign.cluster, 'alias-b']])
+
+    def test_containerd_store_loads_one_platform_archive_and_removes_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            campaign, calls = self.campaign(directory, '[["driver-type","io.containerd.snapshotter.v1"]]')
+            campaign.load_image('alias-a')
+            save, load = calls[1], calls[2]
+            self.assertEqual(save[:4], ['docker', 'save', '--platform', 'linux/amd64'])
+            archive = save[save.index('--output') + 1]
+            self.assertEqual(load, ['kind-bin', 'load', 'image-archive', '--name', campaign.cluster, archive])
+            self.assertTrue(archive.endswith('.private.tar'))
+            self.assertFalse(Path(archive).exists())
+
+    def test_failed_archive_load_still_removes_the_archive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            campaign, calls = self.campaign(directory, '[["driver-type","io.containerd.snapshotter.v1"]]')
+            saved = campaign.command
+
+            def failing(argv, **kwargs):
+                if argv[1:3] == ['load', 'image-archive']:
+                    calls.append(argv)
+                    raise runner.RunnerError('command failed: kind-bin')
+                return saved(argv, **kwargs)
+            campaign.command = failing
+            with self.assertRaisesRegex(runner.RunnerError, 'command failed'):
+                campaign.load_image('alias-a')
+            self.assertFalse(any(Path(directory, 'run').glob('*.tar')))
+
+
 if __name__ == '__main__':
     unittest.main()

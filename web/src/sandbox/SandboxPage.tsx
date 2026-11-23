@@ -277,6 +277,8 @@ export function SandboxPage({
           ownerId={viewerId}
           revision={sandbox.revision}
           update={sandbox.runtimeUpdate}
+          sandboxStatus={sandbox.status}
+          technicalDetails="disclosure"
           stale={stale}
           busy={busy}
           onAccepted={(receipt) => {
@@ -321,7 +323,7 @@ export function SandboxPage({
             {sandboxLifecycleLabel(sandbox)}
           </Badge>
         }
-        meta={<span className="page-header__chip">{sandbox.id}</span>}
+        meta={<span>Shared environment for your Agents</span>}
         actions={
           <>
             {runtime !== undefined && sandboxHasParkedRuntimeUpdate(sandbox) ? (
