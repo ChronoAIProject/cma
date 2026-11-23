@@ -78,8 +78,11 @@ impl AnswerDeliverableService {
     ) -> Result<DeliverableDescription, DeliverableError> {
         use crate::sandbox::workspace::SANDBOX_HOME;
         let live = |path: String| DeliverableResource::LiveFile { path };
-        // The home itself, `./` and an empty path name a directory, never a file.
-        if matches!(path, "" | "./") || path == SANDBOX_HOME {
+        // Reject references to the current directory or Sandbox home before resolving a file.
+        if matches!(path, "" | "." | "./")
+            || path == SANDBOX_HOME
+            || path == SANDBOX_HOME.trim_end_matches('/')
+        {
             return Err(DeliverableError::File(AgentFileError::Invalid));
         }
         if let Some(home_relative) = path.strip_prefix(SANDBOX_HOME) {

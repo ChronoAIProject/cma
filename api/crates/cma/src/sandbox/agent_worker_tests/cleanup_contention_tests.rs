@@ -4,6 +4,8 @@ use crate::store::MongoSandboxStore;
 use layer2_core::sandbox::store::AgentStopRequest;
 use mongodb::{bson::doc, options::ClientOptions, Client};
 
+mod retirement;
+
 const STEPS: [AgentWorkStep; 7] = [
     AgentWorkStep::FenceInteraction,
     AgentWorkStep::CloseProcess,
