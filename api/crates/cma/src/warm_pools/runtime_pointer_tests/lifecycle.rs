@@ -28,6 +28,7 @@ pub(super) struct Lifecycle {
     store: Arc<MongoSandboxStore>,
     released: Arc<StoreReleasedRuntime>,
     service: Arc<SandboxService>,
+    profiles: Arc<MongoProfileStore>,
     updates: SandboxRuntimeUpdateService,
     worker: Arc<SandboxWorker>,
     profile: SandboxProfileRef,
@@ -57,6 +58,7 @@ impl Lifecycle {
             vec![],
             vec![],
             capacity(),
+            None,
         )
         .await;
         let policy = SandboxPolicy {
@@ -69,7 +71,7 @@ impl Lifecycle {
         };
         let service = SandboxService::new(
             store.clone(),
-            profiles,
+            profiles.clone(),
             policy.clone(),
             Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         );
@@ -115,6 +117,7 @@ impl Lifecycle {
             released,
             store,
             service,
+            profiles,
             worker,
             profile,
         })
@@ -151,6 +154,35 @@ impl Lifecycle {
             .get_sandbox(id)
             .await?
             .ok_or_else(|| format!("fixture Sandbox {id} is missing").into())
+    }
+
+    pub(super) async fn create_pinned_lifecycle_sandbox(
+        &self,
+        operation: crate::store::LifecycleRecord,
+    ) -> TestResult<Sandbox> {
+        let profile = seed_sandbox_profile_with_capacity(
+            self.profiles.as_ref(),
+            SandboxProfileId::generate(),
+            vec![],
+            vec![],
+            capacity(),
+            operation.input.resolved_image,
+        )
+        .await;
+        Ok(self
+            .service
+            .create_for_lifecycle(
+                &owner(),
+                CreateSandbox {
+                    profile,
+                    name: Some(operation.input.request.name),
+                    confirmed_digest: None,
+                    origin: SandboxOrigin::Lifecycle {
+                        operation_id: operation.id,
+                    },
+                },
+            )
+            .await?)
     }
 
     pub(super) async fn request_update(
@@ -195,7 +227,7 @@ impl Lifecycle {
     }
 }
 
-fn owner() -> Caller {
+pub(super) fn owner() -> Caller {
     Caller::new(
         SubjectId::new("owner"),
         Authorization::new([Capability::CreateSandbox, Capability::UseOwnSandboxes]),

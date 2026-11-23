@@ -32,6 +32,14 @@ impl SandboxWorkerStore for MongoSandboxStore {
         super::native_prepared::completed_installation_digest(self, sandbox).await
     }
 
+    async fn admitted_runtime_release(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+    ) -> Result<Option<layer3_adapter::ReleasedRuntime>, SandboxStoreError> {
+        let database = self.client.database(&self.sandboxes.namespace().db);
+        super::agent_lifecycle_operations::released::admitted_release(&database, sandbox).await
+    }
+
     async fn due_sandbox_work(
         &self,
         now: &str,

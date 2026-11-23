@@ -25,6 +25,7 @@ mod agent_control_transaction;
 mod agent_conversation_store;
 mod agent_failure_pacing;
 mod agent_lifecycle_operations;
+pub(crate) use agent_lifecycle_operations::released::managed_lifecycle_release_lane;
 mod agent_log;
 mod agent_log_codec;
 mod agent_log_integrity;
@@ -282,5 +283,15 @@ pub(crate) async fn open_pointer_fixture_pool_store(
     store.released_lanes = Some(released_runtimes::MongoReleasedRuntimes::open(
         database, deployment,
     ));
+    Ok(store)
+}
+
+#[cfg(test)]
+pub(crate) async fn open_pointer_fixture_lifecycle_store(
+    database: &mongodb::Database,
+    released: &released_runtimes::StoreReleasedRuntime,
+) -> Result<MongoAgentLifecycleStore, layer2_core::StoreError> {
+    let mut store = MongoAgentLifecycleStore::open(database).await?;
+    store.released_lanes = Some(released.lanes.clone());
     Ok(store)
 }

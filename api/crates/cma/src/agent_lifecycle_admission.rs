@@ -118,17 +118,7 @@ impl InlineAgentLifecycle {
             ),
             None => None,
         };
-        let lane = if request.machine_included {
-            Some(ReleasedLane::Machine)
-        } else if request.desktop
-            && request.image.is_none()
-            && request.workspace_id.is_none()
-            && request.sandbox_id.is_none()
-        {
-            Some(ReleasedLane::Agent)
-        } else {
-            None
-        };
+        let lane = crate::store::managed_lifecycle_release_lane(&request);
         for attempt in 0..4 {
             let captured = lane
                 .and_then(|_| self.released.get())

@@ -17,7 +17,7 @@ pub(crate) enum LifecycleCreateError {
 impl MongoAgentLifecycleStore {
     pub(super) async fn finish_create(
         &self,
-        record: LifecycleRecord,
+        mut record: LifecycleRecord,
         release: Option<(
             &layer3_adapter::ReleasedRuntime,
             layer2_core::released_runtime::ReleasedLane,
@@ -40,31 +40,46 @@ impl MongoAgentLifecycleStore {
             }
             Err(error) => return Err(StoreError::Unavailable(error.to_string()).into()),
         }
-        let inserted =
-            if let (Some(store), Some((snapshot, lane))) = (&self.released_lanes, release) {
-                let mut session = store
-                    .session()
-                    .await
-                    .map_err(|error| StoreError::Unavailable(error.to_string()))?;
-                match store.fence_snapshot(snapshot, lane, &mut session).await {
-                    Ok(()) => {}
-                    Err(SandboxStoreError::Conflict) => {
-                        return Err(LifecycleCreateError::StaleReleasedRuntime)
-                    }
-                    Err(error) => return Err(StoreError::Unavailable(error.to_string()).into()),
-                }
-                match self
-                    .operations
-                    .insert_one(&record)
-                    .session(&mut session)
-                    .await
-                {
-                    Ok(_) => session.commit_transaction().await,
-                    Err(error) => Err(error),
-                }
-            } else {
-                self.operations.insert_one(&record).await.map(|_| ())
+        let inserted = if let (Some(store), Some((snapshot, lane))) =
+            (&self.released_lanes, release)
+        {
+            let image = match lane {
+                layer2_core::released_runtime::ReleasedLane::Agent => Some(snapshot.agent.as_str()),
+                layer2_core::released_runtime::ReleasedLane::Machine => snapshot.machine.as_deref(),
             };
+            if released::managed_lifecycle_release_lane(&record.input.request) != Some(lane)
+                || image.is_none()
+                || record.input.resolved_image.as_deref() != image
+            {
+                return Err(StoreError::Malformed(
+                    "lifecycle image differs from its released runtime admission".into(),
+                )
+                .into());
+            }
+            record.released_lane = Some(lane);
+            let mut session = store
+                .session()
+                .await
+                .map_err(|error| StoreError::Unavailable(error.to_string()))?;
+            match store.fence_snapshot(snapshot, lane, &mut session).await {
+                Ok(()) => {}
+                Err(SandboxStoreError::Conflict) => {
+                    return Err(LifecycleCreateError::StaleReleasedRuntime)
+                }
+                Err(error) => return Err(StoreError::Unavailable(error.to_string()).into()),
+            }
+            match self
+                .operations
+                .insert_one(&record)
+                .session(&mut session)
+                .await
+            {
+                Ok(_) => session.commit_transaction().await,
+                Err(error) => Err(error),
+            }
+        } else {
+            self.operations.insert_one(&record).await.map(|_| ())
+        };
         match inserted {
             Ok(_) => Ok(CreateResult::Created(record.id)),
             Err(error)

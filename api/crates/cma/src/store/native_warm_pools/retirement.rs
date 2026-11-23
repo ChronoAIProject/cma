@@ -179,6 +179,19 @@ async fn scan(
     if !authorized(store, target, image).await? {
         return Ok(deferred(target, "release_settling"));
     }
+    // Inspect the operation first. If it has finished, the later Sandbox
+    // scan sees any home it created before publishing that outcome.
+    if store.released_lanes.is_some()
+        && crate::store::agent_lifecycle_operations::released::protects_pool(
+            &store.database,
+            target.machine,
+            &target.plan.spec.image.uri,
+        )
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)?
+    {
+        return Ok(deferred(target, "lifecycle_admission"));
+    }
     let mut homes = Vec::new();
     for document in documents(store, "sandboxes", doc! {}).await? {
         let sandbox = crate::store::sandboxes::read_sandbox(&document)

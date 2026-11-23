@@ -27,6 +27,7 @@ use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VER
 mod admission;
 #[cfg(test)]
 mod operator_stop_tests;
+pub(super) mod released;
 pub(crate) use admission::LifecycleCreateError;
 
 pub(crate) const COLLECTION: &str = "agent_lifecycle_operations";
@@ -112,6 +113,9 @@ pub(crate) struct LifecycleRecord {
     pub key: String,
     pub fingerprint: Binary,
     pub input: LifecycleInput,
+    /// Present when the operation's resolved image passed the durable lane fence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub released_lane: Option<layer2_core::released_runtime::ReleasedLane>,
     pub status: String,
     pub phase: String,
     pub events: Vec<LifecycleEvent>,
@@ -248,6 +252,7 @@ impl MongoAgentLifecycleStore {
             key: key.to_owned(),
             fingerprint,
             input,
+            released_lane: None,
             status: "queued".into(),
             phase: "queued".into(),
             events: Vec::new(),

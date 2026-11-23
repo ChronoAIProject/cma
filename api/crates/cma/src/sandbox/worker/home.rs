@@ -48,9 +48,17 @@ impl SandboxWorker {
             .await
             {
                 Ok(Some(home)) if sandbox.lifecycle.home.is_none() => {
-                    // The reservation durably pins the new Sandbox's image: take
-                    // the release once, and admit it only while still current.
-                    let released = self.config.release();
+                    // A fenced lifecycle receipt owns its pin across promotion.
+                    // Other new homes fence the current release when reserved.
+                    let admitted = if home.request.policy.is_native_vct() {
+                        self.dependencies
+                            .store
+                            .admitted_runtime_release(sandbox)
+                            .await?
+                    } else {
+                        None
+                    };
+                    let released = admitted.is_none().then(|| self.config.release()).flatten();
                     let mut request = RuntimeProvisionRequest::new(
                         sandbox.lifecycle.runtime_generation_high_water.max(1),
                         crate::sandbox::runtime_mapping::sandbox_spec(
@@ -58,7 +66,7 @@ impl SandboxWorker {
                             &self.config.deployment_id,
                         ),
                     );
-                    request.released = released.clone();
+                    request.released = admitted.or_else(|| released.clone());
                     let reserved = crate::sandbox::home_native::reserve(
                         self.dependencies.adapter.as_ref(),
                         &request,

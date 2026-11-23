@@ -17,6 +17,8 @@ use mongodb::bson::{DateTime, Document};
 
 #[path = "lifecycle.rs"]
 mod lifecycle;
+#[path = "lifecycle_release.rs"]
+mod lifecycle_release;
 
 struct Resolver<F>(F);
 

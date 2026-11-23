@@ -61,6 +61,7 @@ pub(super) async fn seed_sandbox_profile(
             cpu_millis: 1_000,
             memory_mib: 2_048,
         },
+        None,
     )
     .await
 }
@@ -71,6 +72,7 @@ pub(crate) async fn seed_sandbox_profile_with_capacity(
     commands: Vec<String>,
     workspace_profiles: Vec<WorkspaceProfileRef>,
     capacity: layer3_adapter::SandboxCapacity,
+    runtime_image: Option<String>,
 ) -> SandboxProfileRef {
     profiles
         .create_sandbox_profile(SandboxProfile {
@@ -84,7 +86,7 @@ pub(crate) async fn seed_sandbox_profile_with_capacity(
             forked_from: None,
             uses_count: 0,
             draft: SandboxProfileContent {
-                runtime_image: None,
+                runtime_image,
                 cpu_millis: capacity.cpu_millis,
                 memory_mib: capacity.memory_mib,
                 nyxid_services: vec![ServiceId::new("profile-service")],
