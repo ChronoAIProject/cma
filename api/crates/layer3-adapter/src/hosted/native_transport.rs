@@ -210,6 +210,15 @@ impl ProviderHostedControlTransport {
                 });
             }
             lease.current().await?;
+            if lane == native_pool::NativeHttpLane::CloseAgent {
+                // A close can wait for an earlier close on this connection. Its
+                // negotiated owner must still be current at the send boundary.
+                crate::owner_protocol::current_authority()
+                    .ok_or_else(native_pool::retired)?
+                    .check()
+                    .await?;
+                lease.current().await?;
+            }
             self.native_http_once(endpoint, method, url, body, limit, lease)
                 .await
         };
