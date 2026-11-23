@@ -3,7 +3,7 @@ use std::io::Write;
 use rusqlite::{Connection, Transaction};
 use serde_json::json;
 
-use crate::model::{Intent, Reason};
+use crate::model::{Job, Provenance, Reason};
 
 use super::{
     observe::{count, write_line},
@@ -25,16 +25,17 @@ CREATE INDEX IF NOT EXISTS missed_range_end ON missed_ranges(last_slot);";
 
 pub(super) fn record(
     tx: &Transaction<'_>,
-    intent: &Intent,
+    job: Job,
+    provenance: &Provenance,
     since: i64,
     last: Option<i64>,
+    before: i64,
     observed: i64,
 ) -> Result<()> {
-    let job = intent.job;
     let interval = job.mode.interval();
     let active_start = job.slot_at(since - 1) + interval;
     let first = last.map_or(active_start, |slot| (slot + interval).max(active_start));
-    let end = intent.slot - interval;
+    let end = job.slot_at(before - 1);
     if first <= end {
         let key = job.key();
         // Persist the original UTC slots compactly even after extended downtime.
@@ -46,9 +47,9 @@ pub(super) fn record(
                 end,
                 interval,
                 observed,
-                &intent.configuration,
-                &intent.candidate,
-                &intent.runner_sha,
+                &provenance.configuration,
+                &provenance.candidate,
+                &provenance.runner_sha,
             ),
         )?;
         count(

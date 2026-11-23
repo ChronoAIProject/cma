@@ -10,6 +10,14 @@ use crate::{
 
 use super::{connect, metadata, misses, Error, Ledger, Result};
 
+pub(super) const PLACEHOLDERS: &str = "CREATE TABLE IF NOT EXISTS recovery_placeholders (
+    job TEXT NOT NULL,
+    slot INTEGER NOT NULL,
+    result TEXT NOT NULL,
+    PRIMARY KEY (job, slot),
+    FOREIGN KEY (job, slot) REFERENCES slots(job, slot) ON DELETE CASCADE
+);";
+
 pub(super) const RETENTION: i64 = 14 * 86400;
 
 #[derive(Default)]
@@ -98,8 +106,10 @@ impl Ledger {
 
 fn read_metrics(state: &Connection) -> Result<Metrics> {
     let mut jobs = state.prepare("SELECT job, enabled_since, last_slot,last_attempt,last_completed,last_success,last_receipt,last_terminal,
-            (SELECT count(*) FROM slots WHERE slots.job=jobs.job AND first_result IS NULL),
-            (SELECT min(attempted_at) FROM slots WHERE slots.job=jobs.job AND first_result IS NULL) FROM jobs")?;
+            (SELECT count(*) FROM slots s WHERE s.job=jobs.job AND first_result IS NULL
+                AND NOT EXISTS (SELECT 1 FROM recovery_placeholders p WHERE p.job=s.job AND p.slot=s.slot)),
+            (SELECT min(attempted_at) FROM slots s WHERE s.job=jobs.job AND first_result IS NULL
+                AND NOT EXISTS (SELECT 1 FROM recovery_placeholders p WHERE p.job=s.job AND p.slot=s.slot)) FROM jobs")?;
     let jobs = jobs
         .query_map([], |r| {
             Ok(JobMetrics {
@@ -162,7 +172,11 @@ fn export_rows(
     from: i64,
     until: i64,
 ) -> Result<(i64, i64)> {
-    let mut query = conn.prepare("SELECT job,slot,attempted_at,intent,first_result,settled FROM slots WHERE slot>=?1 AND slot<?2 ORDER BY slot,job")?;
+    let mut query = conn.prepare(
+        "SELECT s.job,s.slot,s.attempted_at,s.intent,s.first_result,s.settled,p.result FROM slots s
+        LEFT JOIN recovery_placeholders p ON p.job=s.job AND p.slot=s.slot
+        WHERE s.slot>=?1 AND s.slot<?2 ORDER BY s.slot,s.job",
+    )?;
     let mut recoveries =
         conn.prepare("SELECT result FROM recovery WHERE job=?1 AND slot=?2 ORDER BY attempt")?;
     let mut rows = query.query((from, until))?;
@@ -182,6 +196,10 @@ fn export_rows(
                 .as_ref()
                 .is_some_and(|value| value["reason"] == "missed"),
         );
+        let placeholder = row
+            .get::<_, Option<String>>(6)?
+            .map(|value| serde_json::from_str::<serde_json::Value>(&value))
+            .transpose()?;
         let recovery = recoveries
             .query_map((&job, slot), |r| r.get::<_, String>(0))?
             .map(|r| serde_json::from_str::<serde_json::Value>(&r?).map_err(Error::from))
@@ -190,7 +208,7 @@ fn export_rows(
             output,
             &json!({"job":job,"scheduled_at":slot,"attempted_at":attempt,
             "intent":intent.map(|v| serde_json::from_str::<serde_json::Value>(&v)).transpose()?,
-            "first":first,"settled":row.get::<_, bool>(5)?,"recovery":recovery}),
+            "first":first,"recovery_placeholder":placeholder,"settled":row.get::<_, bool>(5)?,"recovery":recovery}),
         )?;
     }
     Ok(counts)
@@ -238,12 +256,35 @@ pub(super) fn interrupted(tx: &Transaction<'_>, intent: &Intent, at: i64) -> Res
         },
     );
     result.settled = read;
-    finish(tx, intent, &result)
+    result.phase = Phase::Provisional;
+    let key = intent.job.key();
+    // Recovery may start while the worker still holds an unpublished first observation.
+    let changed = tx.execute(
+        "INSERT INTO recovery_placeholders VALUES (?1,?2,?3)
+        ON CONFLICT(job,slot) DO NOTHING",
+        (&key, intent.slot, serde_json::to_string(&result)?),
+    )?;
+    if changed != 0 {
+        count(
+            tx,
+            &key,
+            Phase::Provisional.label(),
+            result.reason.label(),
+            1,
+        )?;
+    }
+    if read {
+        tx.execute(
+            "UPDATE slots SET settled=1 WHERE job=?1 AND slot=?2",
+            (&key, intent.slot),
+        )?;
+    }
+    Ok(())
 }
 
 fn finish(tx: &Transaction<'_>, intent: &Intent, observation: &Observation) -> Result<()> {
     let key = intent.job.key();
-    let changed = tx.execute("UPDATE slots SET first_result=?3,settled=?4 WHERE job=?1 AND slot=?2 AND first_result IS NULL",
+    let changed = tx.execute("UPDATE slots SET first_result=?3,settled=max(settled,?4) WHERE job=?1 AND slot=?2 AND first_result IS NULL",
         (&key, intent.slot, serde_json::to_string(observation)?, observation.settled))?;
     if changed != 0 {
         first_metrics(tx, &key, observation)?;

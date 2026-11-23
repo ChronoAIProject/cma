@@ -155,6 +155,7 @@ pub fn render(monitor: &Monitor, snapshot: Option<&Metrics>) -> String {
                         _ => "failed",
                     },
                 ),
+                "provisional" => ("recovery_placeholders_total", "unpublished"),
                 "reconciliation" => (
                     "reconciliations_total",
                     if reason == "passed" {

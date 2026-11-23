@@ -88,9 +88,7 @@ impl Protocol {
             request_digest: digest(&body),
             body,
             marker,
-            configuration: self.config.revision.clone(),
-            candidate: self.config.candidate.clone(),
-            runner_sha: self.config.runner_sha.clone(),
+            provenance: self.config.provenance(),
         })
     }
 
@@ -109,7 +107,7 @@ impl Protocol {
 
     pub async fn verify(&self, intent: &Intent, outcome: &mut Outcome) -> Result<(), Reason> {
         // A changed revision can remap a channel, Agent, origin or admission principal.
-        if intent.configuration != self.config.revision {
+        if intent.provenance.configuration != self.config.revision {
             return Err(Reason::Contract);
         }
         match intent.job.check {

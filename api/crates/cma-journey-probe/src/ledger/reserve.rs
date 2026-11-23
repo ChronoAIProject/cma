@@ -32,7 +32,7 @@ impl Ledger {
             if last.is_some_and(|value| value >= intent.slot) || intent.slot < since || intent.slot > at {
                 return Ok(Claim::Seen);
             }
-            misses::record(tx, intent, since, last, at)?;
+            misses::record(tx, job, &intent.provenance, since, last, intent.slot, at)?;
             tx.execute("UPDATE jobs SET last_slot=?2 WHERE job=?1", (&key, intent.slot))?;
             if at >= intent.slot + job.mode.deadline() {
                 return skip(tx, intent, &key, at, Reason::Missed);
@@ -125,7 +125,8 @@ fn busy(tx: &Transaction<'_>, target: &str) -> Result<bool> {
     ))?
     .is_some()
         || tx.query_row(
-            "SELECT count(*)>=?1 FROM slots WHERE first_result IS NULL AND target<>''",
+            "SELECT count(*)>=?1 FROM slots AS s WHERE first_result IS NULL AND target<>''
+                AND NOT EXISTS (SELECT 1 FROM recovery_placeholders AS p WHERE p.job=s.job AND p.slot=s.slot)",
             [MAX_PENDING],
             |r| r.get::<_, bool>(0),
         )?)

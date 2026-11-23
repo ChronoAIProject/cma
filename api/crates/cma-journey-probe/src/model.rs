@@ -29,7 +29,7 @@ labels!(Reason {
     TerminalFailed => "terminal_failed", DeliveryLost => "delivery_lost", Missed => "missed",
     Budget => "budget_exhausted", Busy => "target_unsettled", State => "state_unavailable",
 });
-labels!(Phase { First => "first", Verify => "verification", Reconcile => "reconciliation" });
+labels!(Phase { First => "first", Verify => "verification", Reconcile => "reconciliation", Provisional => "provisional" });
 
 impl Check {
     pub const fn consumer(self) -> &'static str {
@@ -97,10 +97,16 @@ pub struct Intent {
     pub target: String,
     pub body: String,
     pub marker: Option<String>,
+    #[serde(flatten)]
+    pub provenance: Provenance,
+    pub request_digest: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Provenance {
     pub configuration: String,
     pub candidate: String,
     pub runner_sha: String,
-    pub request_digest: String,
 }
 
 impl Intent {

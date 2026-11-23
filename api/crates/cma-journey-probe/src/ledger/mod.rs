@@ -13,7 +13,7 @@ use thiserror::Error;
 
 use crate::{
     config::Config,
-    model::{now, Job},
+    model::{now, Job, Provenance},
 };
 
 #[derive(Debug, Error)]
@@ -37,6 +37,7 @@ pub struct Ledger {
     state: PathBuf,
     witness: PathBuf,
     domain: String,
+    provenance: Provenance,
 }
 
 const META: &str = "CREATE TABLE fence (
@@ -157,6 +158,7 @@ impl Ledger {
             state: config.state_path.clone(),
             witness: config.witness_path.clone(),
             domain: config.domain(),
+            provenance: config.provenance(),
         }
     }
 
@@ -179,6 +181,7 @@ impl Ledger {
             if path == &self.state {
                 transaction.execute_batch(SCHEMA)?;
                 transaction.execute_batch(misses::SCHEMA)?;
+                transaction.execute_batch(observe::PLACEHOLDERS)?;
             }
             transaction.commit()?;
         }
@@ -223,15 +226,32 @@ impl Ledger {
     pub fn configure_at(&self, jobs: &[(Job, bool)], at: i64) -> Result<()> {
         self.write(|tx, _, _| {
             tx.execute_batch(misses::SCHEMA)?;
+            tx.execute_batch(observe::PLACEHOLDERS)?;
             for &(job, enabled) in jobs {
                 let key = job.key();
-                tx.execute("INSERT INTO jobs(job, offset, enabled_since) VALUES(?1, ?2, ?3)
-                        ON CONFLICT(job) DO UPDATE SET enabled_since = CASE WHEN excluded.enabled_since IS NULL
-                        THEN NULL ELSE COALESCE(jobs.enabled_since, excluded.enabled_since) END
-                        WHERE jobs.offset=excluded.offset", (&key, job.offset, enabled.then_some(at)))?;
-                let offset: i64 = tx.query_row("SELECT offset FROM jobs WHERE job=?1", [&key], |r| r.get(0))?;
-                if offset != job.offset {
-                    return Err(Error::Fence);
+                let stored: Option<(i64, Option<i64>, Option<i64>)> = optional(tx.query_row(
+                    "SELECT offset,enabled_since,last_slot FROM jobs WHERE job=?1",
+                    [&key],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                ))?;
+                if let Some((offset, since, last_slot)) = stored {
+                    if offset != job.offset {
+                        return Err(Error::Fence);
+                    }
+                    if let (false, Some(since)) = (enabled, since) {
+                        // Close the outgoing enabled interval using the same UTC schedule as dispatch.
+                        misses::record(tx, job, &self.provenance, since, last_slot, at, at)?;
+                    }
+                    let enabled_since = enabled.then_some(since.unwrap_or(at));
+                    tx.execute(
+                        "UPDATE jobs SET enabled_since=?2 WHERE job=?1",
+                        (&key, enabled_since),
+                    )?;
+                } else {
+                    tx.execute(
+                        "INSERT INTO jobs(job,offset,enabled_since) VALUES (?1,?2,?3)",
+                        (&key, job.offset, enabled.then_some(at)),
+                    )?;
                 }
             }
             Ok(())

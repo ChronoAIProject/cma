@@ -18,7 +18,9 @@ impl Protocol {
             .targets(intent.job.mode)
             .ok_or(Reason::Contract)?
             .gateway;
-        if target.channel != intent.target || intent.configuration != self.config.revision {
+        if target.channel != intent.target
+            || intent.provenance.configuration != self.config.revision
+        {
             return Err(Reason::Contract);
         }
         Ok(target)

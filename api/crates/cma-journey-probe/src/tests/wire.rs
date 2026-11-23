@@ -445,3 +445,5 @@ async fn output_page_must_match_admitted_response_in_both_modes() {
         task.abort();
     }
 }
+
+mod publication;

@@ -67,9 +67,12 @@ fn duplicate_claim_and_rollback_are_fenced() {
     };
     restarted.recovered(&intent, 1, &result).unwrap();
     let metrics = restarted.metrics().unwrap();
-    assert!(metrics
-        .counts
-        .contains(&(job.key(), "first".into(), "unknown_submission".into(), 1)));
+    assert!(metrics.counts.contains(&(
+        job.key(),
+        "provisional".into(),
+        "unknown_submission".into(),
+        1
+    )));
     assert!(metrics
         .counts
         .contains(&(job.key(), "reconciliation".into(), "passed".into(), 1)));
@@ -227,4 +230,55 @@ fn export_clips_missed_ranges_preserves_provenance_and_skips_disabled_slots() {
     assert_eq!(slot["intent"]["configuration"], config.revision);
     assert_eq!(output.last().unwrap()["missed"], 6);
     assert_eq!(output.last().unwrap()["slots"], 6);
+}
+
+#[test]
+fn disablement_records_missed_slots_from_the_outgoing_enabled_interval() {
+    let dir = TempDir::new().unwrap();
+    let config = config(&Url::parse("http://127.0.0.1/").unwrap(), dir.path());
+    let protocol = Protocol::new(config.clone()).unwrap();
+    let ledger = Ledger::new(&config);
+    ledger.init().unwrap();
+    let check = job(&config, Check::Agui, Mode::Deterministic);
+    let slot = check.slot_at(now());
+    ledger.configure_at(&[(check, true)], slot).unwrap();
+    assert!(matches!(
+        ledger
+            .claim(&protocol.intent(check, slot).unwrap(), slot + 30, None)
+            .unwrap(),
+        Claim::Skipped(Reason::Missed)
+    ));
+    let restarted = Ledger::new(&config);
+    restarted
+        .configure_at(&[(check, false)], slot + 950)
+        .unwrap();
+    restarted
+        .configure_at(&[(check, false)], slot + 990)
+        .unwrap();
+    restarted
+        .configure_at(&[(check, true)], slot + 1500)
+        .unwrap();
+    let next = protocol.intent(check, slot + 1500).unwrap();
+    assert!(matches!(
+        restarted.claim(&next, slot + 1530, None).unwrap(),
+        Claim::Skipped(Reason::Missed)
+    ));
+    let mut output = Vec::new();
+    restarted
+        .export_to(slot + 1, slot + 1500, &config, &mut output)
+        .unwrap();
+    let output: Vec<serde_json::Value> = std::str::from_utf8(&output)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let ranges: Vec<_> = output
+        .iter()
+        .filter(|row| row["kind"] == "missed_range")
+        .collect();
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0]["first_scheduled_at"], slot + 300);
+    assert_eq!(ranges[0]["last_scheduled_at"], slot + 900);
+    assert_eq!(output.last().unwrap()["slots"], 3);
+    assert_eq!(output.last().unwrap()["missed"], 3);
 }

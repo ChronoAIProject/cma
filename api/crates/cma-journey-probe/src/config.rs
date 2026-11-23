@@ -10,7 +10,7 @@ use reqwest::header::HeaderValue;
 use serde::Deserialize;
 use url::Url;
 
-use crate::model::{Check, Job, Mode, Reason};
+use crate::model::{Check, Job, Mode, Provenance, Reason};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -242,6 +242,14 @@ impl Config {
             }
         }
         Ok(())
+    }
+
+    pub fn provenance(&self) -> Provenance {
+        Provenance {
+            configuration: self.revision.clone(),
+            candidate: self.candidate.clone(),
+            runner_sha: self.runner_sha.clone(),
+        }
     }
 
     pub fn domain(&self) -> String {
