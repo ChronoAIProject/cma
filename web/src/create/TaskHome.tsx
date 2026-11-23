@@ -94,10 +94,15 @@ function TaskHomeContent({
   const [recovering, setRecovering] = useState(false);
   const titleId = useId();
   const errorId = useId();
-  const draft = useTaskDraft(viewerId, workspaceId, sandboxId);
+  const templateV1Availability = useTaskTemplateAvailability(client);
+  const templateV2Availability = useTaskTemplateAvailability(client, 2);
+  const allowTemplateV2 =
+    policy.confirmed && policy.task_home_admission && templateV2Availability === 'supported';
+  const draft = useTaskDraft(viewerId, workspaceId, sandboxId, allowTemplateV2);
   const input = useRef<HTMLTextAreaElement>(null);
   const [validation, setValidation] = useState<TemplateIssue>();
-  const templateAvailability = useTaskTemplateAvailability(client);
+  const templateAvailability =
+    draft.template?.version === 2 ? templateV2Availability : templateV1Availability;
   const templateSupported =
     templateAvailability === 'checking' ? undefined : templateAvailability === 'supported';
   const form = useRef<HTMLFormElement>(null);
@@ -296,6 +301,7 @@ function TaskHomeContent({
           <TaskTemplatePanel
             template={draft.template}
             availability={templateAvailability}
+            allowV2={allowTemplateV2}
             issue={validation}
             errorId={errorId}
             onChange={(template) => {

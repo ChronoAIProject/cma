@@ -25,6 +25,7 @@ function setup(overrides: Partial<CmaWebClient> = {}, viewerId = 'owner', worksp
     taskExperience: taskExperience(viewerId),
     readTaskCreationSupport: async () => true,
     readTaskTemplateSupport: async () => true,
+    readTaskTemplateV2Support: async () => true,
     readSandboxCapacity: async () => AVAILABLE_CAPACITY,
     createAgentLifecycle: create,
     ...overrides,
@@ -76,7 +77,7 @@ it.each(taskTemplates)(
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
     const template = parseTaskTemplate({
       id: definition.id,
-      version: 1,
+      version: 2,
       fields: Object.fromEntries(
         definition.fields.map(({ key }) => [
           key,
@@ -95,6 +96,7 @@ it.each([false, undefined, 'failure'] as const)(
   'preserves fields when template support is %s',
   async (support) => {
     const { create } = setup({
+      readTaskTemplateV2Support: async () => false,
       readTaskTemplateSupport:
         support === undefined
           ? undefined
@@ -150,6 +152,7 @@ it('requires fresh template support when the client changes', async () => {
   const client = {
     ...view.props.client,
     readTaskTemplateSupport: () => new Promise<boolean>(() => {}),
+    readTaskTemplateV2Support: () => new Promise<boolean>(() => {}),
   };
   view.rerender(<TaskHome {...view.props} client={client} />);
   expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
@@ -278,5 +281,45 @@ it.each([false, true])(
       expect(retained.result.current.template).toBeUndefined();
       expect(retained.result.current.text).toBe('');
     }
+  },
+);
+
+it.each([
+  {
+    name: 'Research a topic',
+    fields: [
+      [
+        'Topic',
+        'Compare three established methods. Cite public sources and provide a concise table.',
+      ],
+    ],
+    expected:
+      'Research the following topic:\n\nCompare three established methods. Cite public sources and provide a concise table.\n\nSummarize the key findings, with links to sources.',
+  },
+  {
+    name: 'Write code',
+    fields: [
+      ['Language', 'JavaScript'],
+      ['What should the code do?', 'Create a small accessible form on a new branch.'],
+    ],
+    expected:
+      'Write a JavaScript script for the following task:\n\nCreate a small accessible form on a new branch.',
+  },
+])(
+  'previews and submits grammatical $name instructions without rewriting user sentences',
+  async ({ name, fields, expected }) => {
+    const { create } = setup();
+    await ready();
+    fireEvent.click(screen.getByRole('button', { name }));
+    for (const [label, value] of fields) fill(label!, value!);
+    expect(screen.getByRole('region', { name: 'Task preview · read-only' })).toHaveTextContent(
+      expected.replace(/\s+/g, ' '),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(create.mock.calls[0]![0]).toMatchObject({
+      initial_message: expected,
+      template: { version: 2 },
+    });
   },
 );

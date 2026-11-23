@@ -377,3 +377,52 @@ test('LOCAL composer and Details use model and skill catalogs in responsive cont
   expect(boundary.unexpected).toEqual([]);
   expect(boundary.errors).toEqual([]);
 });
+
+for (const colorScheme of ['dark', 'light'] as const) {
+  test(`LOCAL prompt action explains unsupported runtime before opening an editor in ${colorScheme}`, async ({
+    page,
+    baseURL,
+  }, info) => {
+    const boundary = new LocalStartup();
+    await boundary.route(page, baseURL!);
+    await page.emulateMedia({ colorScheme });
+    await page.addInitScript((theme) => localStorage.setItem('cma:appearance', theme), colorScheme);
+    let supported = false;
+    let reads = 0;
+    const writes: string[] = [];
+    await page.route('**/api/v1/agents/agt_contract/preferences', (route) => {
+      if (route.request().method() !== 'GET') {
+        writes.push(route.request().method());
+        return route.abort();
+      }
+      reads += 1;
+      return route.fulfill({
+        json: {
+          revision: 0,
+          system_prompt: 'Synthetic instructions',
+          prompt_pending: false,
+          prompt_supported: supported,
+        },
+      });
+    });
+    await page.goto('/agents/agt_contract');
+    const more = page.getByRole('button', { name: 'More Agent actions', exact: true });
+    await more.click();
+    const prompt = page.getByRole('menuitem', { name: /^Update system prompt/ });
+    await expect(prompt).toContainText('This runtime does not support system prompt updates.');
+    await expect(prompt).toHaveAttribute('aria-disabled', 'true');
+    await prompt.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog', { name: 'Update system prompt' })).toHaveCount(0);
+    expect(reads).toBe(1);
+    expect(writes).toEqual([]);
+    await capture(page, info, `prompt-unsupported-${colorScheme}`, page.getByRole('menu'));
+    await page.keyboard.press('Escape');
+    supported = true;
+    await more.click();
+    await expect(prompt).toHaveAttribute('aria-disabled', 'false');
+    await prompt.click();
+    await expect(page.getByRole('textbox', { name: 'Agent system prompt' })).toBeEditable();
+    expect(writes).toEqual([]);
+  });
+}

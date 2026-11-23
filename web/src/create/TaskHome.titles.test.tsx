@@ -16,6 +16,7 @@ it('preserves compiled template input alongside supported automatic title intent
     taskExperience: taskExperience('owner'),
     readTaskCreationSupport: async () => true,
     readTaskTemplateSupport: async () => true,
+    readTaskTemplateV2Support: async () => true,
     readTaskTitleModeSupport: async () => true,
     createAgentLifecycle: create,
   });

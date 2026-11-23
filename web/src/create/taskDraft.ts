@@ -47,7 +47,12 @@ export function discardSubmittedTaskDraft(
   }
 }
 
-export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: string) {
+export function useTaskDraft(
+  owner?: string,
+  workspaceId?: string,
+  sandboxId?: string,
+  allowV2 = false,
+) {
   const key = taskDraftStorageKey(owner, workspaceId, sandboxId);
   useLayoutEffect(() => {
     mountedDrafts.set(key, (mountedDrafts.get(key) ?? 0) + 1);
@@ -153,7 +158,8 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
       return switchDraft(
         keepTaskTemplate(
           retained,
-          retained.templates?.find((template) => template.id === id) ?? emptyTemplate(id),
+          retained.templates?.find((template) => template.id === id) ??
+            emptyTemplate(id, allowV2 ? 2 : 1),
         ),
       );
     },

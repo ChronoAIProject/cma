@@ -16,7 +16,10 @@ async function openEditor(page: Page, mode: Mode) {
   await page.getByRole('button', { name: 'More Agent actions' }).click();
   await page
     .getByRole('menuitem', {
-      name: mode === 'rename' ? 'Rename' : 'Update system prompt',
+      name:
+        mode === 'rename'
+          ? 'Rename'
+          : /^Update system prompt(?:$| Review the pending system prompt change\.)/,
       exact: true,
     })
     .click();
