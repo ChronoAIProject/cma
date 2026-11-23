@@ -88,7 +88,11 @@ for (const change of ['revoke', 'set_mode'] as const) {
         expect(readShareChanges('owner', target)).toEqual([]);
         expect(readRevocationEvidence(scope)).toEqual([]);
       } else {
-        await screen.findByRole('alert');
+        await screen.findByText(
+          control === 'unavailable'
+            ? /Revocation could not be confirmed. Your original request is saved/
+            : /saved recovery information could not be updated/,
+        );
         await waitFor(() => expect(test.reads.length).toBeGreaterThan(0));
         expect(readShareChanges('owner', target)).toEqual([expect.objectContaining(test.saved)]);
         if (control !== 'operation-save')
