@@ -104,10 +104,14 @@ export function DeletionDialog({
     (value: DeletionRequest | undefined) => {
       if (value === undefined) forgetDeletion(identity.viewerId, request.key);
       else {
+        value = persistDeletion(
+          identity.viewerId,
+          latestRequest.current.accepted ? latestRequest.current : value,
+        );
         latestRequest.current = value;
-        persistDeletion(identity.viewerId, value);
         setRequest(value);
       }
+      return value;
     },
     [identity.viewerId, request.key],
   );
@@ -232,7 +236,9 @@ export function DeletionDialog({
       const lifetime = activeScope.current;
       const beforeRead = blockedRevision.current;
       const blocked = () =>
-        blockedBeforeDelete(latestRequest.current) || blockedRevision.current !== beforeRead;
+        completed.current ||
+        blockedBeforeDelete(latestRequest.current) ||
+        blockedRevision.current !== beforeRead;
       const current = () =>
         lifetime !== undefined &&
         activeScope.current === lifetime &&
@@ -276,8 +282,8 @@ export function DeletionDialog({
                 worktreeId: observation.agent!.worktreeId,
               },
             };
-      persist(submitted);
       try {
+        if (persist(submitted)?.accepted) return;
         if (submitted.action.kind === 'delete_agent' && (authority || submitted.stop)) {
           if (!authority || identity.client !== client || identity.viewerId !== viewerId)
             throw new DeletionBlocked('Current Agent access must be checked before continuing.');
@@ -290,7 +296,7 @@ export function DeletionDialog({
             [],
             { ...authority, stopBeforeDelete: submitted.stop !== undefined },
           );
-          if (!current() || blocked()) return;
+          if (!current() || blocked() || persist(submitted)?.accepted) return;
           setObservation(fresh);
           const refusal = stopDeletionBlock(submitted, fresh) ?? fresh.blocked;
           if (refusal) throw new DeletionBlocked(refusal);
@@ -319,7 +325,7 @@ export function DeletionDialog({
             return;
           }
         }
-        if (!current() || blocked()) return;
+        if (!current() || blocked() || persist(submitted)?.accepted) return;
         autoDelete.current = false;
         if (submitted.stop) {
           submitted = { ...submitted, deleteSent: true };

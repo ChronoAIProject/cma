@@ -1,6 +1,7 @@
 import { restoreDeletions as predecessorRestore } from './test/deletionRecoveryPredecessor';
 import { afterEach, expect, it } from 'vitest';
 import {
+  acknowledgeRetainedDeletion,
   deletionStorageKey,
   forgetDeletion,
   persistDeletion,
@@ -136,5 +137,37 @@ it.each([false, true])(
     persistDeletion('owner', recorded);
     expect(restoreDeletion('owner')).toEqual(recorded);
     expect(predecessorRestore('owner')).toEqual([]);
+  },
+);
+
+it.each([first, combined])(
+  'never downgrades an accepted receipt with a stale write: %j',
+  (request) => {
+    const accepted = { ...request, accepted: true, deleteSent: true };
+    persistDeletion('owner', accepted);
+    const saved = persistDeletion('owner', { ...request, accepted: false, deleteSent: false });
+    expect(restoreDeletions('owner')).toEqual([accepted]);
+    expect(saved).toEqual(accepted);
+  },
+);
+
+it.each(['viewer', 'action', 'key', 'stop', 'sandboxId', 'workspaceId', 'worktreeId'] as const)(
+  'does not borrow late acceptance from a different %s',
+  (difference) => {
+    const retained = { ...combined, deleteSent: true };
+    persistDeletion('owner', retained);
+    const sent: DeletionRequest =
+      difference === 'action'
+        ? { ...retained, action: { kind: 'delete_agent', agentId: 'another' } }
+        : difference === 'key'
+          ? { ...retained, key: 'another-delete' }
+          : difference === 'stop'
+            ? { ...retained, stop: { ...retained.stop!, key: 'another-stop' } }
+            : difference === 'viewer'
+              ? retained
+              : { ...retained, stop: { ...retained.stop!, [difference]: 'another-parent' } };
+    acknowledgeRetainedDeletion(difference === 'viewer' ? 'another-owner' : 'owner', sent);
+    expect(restoreDeletions('owner')).toEqual([retained]);
+    expect(restoreDeletions('another-owner')).toEqual([]);
   },
 );

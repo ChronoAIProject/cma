@@ -87,16 +87,34 @@ export function restoreDeletion(viewerId: string): DeletionRequest | undefined {
   return requests.find((request) => !request.accepted) ?? requests.at(-1);
 }
 
+function matchingDeletion(
+  viewerId: string,
+  expected: DeletionRequest,
+): DeletionRequest | undefined {
+  return restoreDeletions(viewerId).find(
+    (retained) =>
+      retained.key === expected.key &&
+      JSON.stringify(retained.action) === JSON.stringify(expected.action) &&
+      (retained.stop === undefined) === (expected.stop === undefined) &&
+      (!expected.stop ||
+        (['key', 'sandboxId', 'workspaceId', 'worktreeId'] as const).every(
+          (field) => retained.stop?.[field] === expected.stop?.[field],
+        )),
+  );
+}
+
 // Independent keys prevent a second request or another tab from overwriting an
 // accepted or uncertain deletion. The old single-request key remains readable.
-export function persistDeletion(viewerId: string, request: DeletionRequest): void {
+export function persistDeletion(viewerId: string, request: DeletionRequest): DeletionRequest {
+  const retained = matchingDeletion(viewerId, request);
+  if (retained?.accepted) request = retained;
   try {
     if (request.stop) {
       localStorage.setItem(
         `${combinedPrefix(viewerId)}${encodeURIComponent(request.key)}`,
         JSON.stringify({ version: 1, request }),
       );
-      return;
+      return request;
     }
     localStorage.setItem(
       `${requestPrefix(viewerId)}${encodeURIComponent(request.key)}`,
@@ -108,6 +126,7 @@ export function persistDeletion(viewerId: string, request: DeletionRequest): voi
   } catch {
     // Browser recovery is optional; the mounted dialog retains the original key.
   }
+  return request;
 }
 
 export function forgetDeletion(viewerId: string, key: string): void {
@@ -122,16 +141,7 @@ export function forgetDeletion(viewerId: string, key: string): void {
 }
 
 export function acknowledgeRetainedDeletion(viewerId: string, sent: DeletionRequest): void {
-  const retained = restoreDeletions(viewerId).find((request) => request.key === sent.key);
-  if (
-    !retained?.stop ||
-    !sent.stop ||
-    retained.deleteSent === false ||
-    JSON.stringify(retained.action) !== JSON.stringify(sent.action) ||
-    !(['key', 'sandboxId', 'workspaceId', 'worktreeId'] as const).every(
-      (field) => retained.stop![field] === sent.stop![field],
-    )
-  )
-    return;
+  const retained = matchingDeletion(viewerId, sent);
+  if (!retained?.stop || retained.deleteSent === false) return;
   persistDeletion(viewerId, { ...retained, accepted: true });
 }

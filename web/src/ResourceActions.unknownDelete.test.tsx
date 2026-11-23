@@ -329,3 +329,130 @@ it('does not retry Delete from a stale preflight after a newer parent refusal', 
   expect(f.remove).toHaveBeenCalledOnce();
   expect(restoreDeletions('owner')[0]?.key).toBe(original.key);
 });
+
+it.each(['before reopen', 'after reopen', 'during Agent read', 'during parent read'] as const)(
+  'keeps late acceptance authoritative when it arrives %s',
+  async (arrival) => {
+    const f = fixture();
+    let accept!: () => void;
+    f.remove.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          accept = resolve;
+        }),
+    );
+    f.remove.mockRejectedValueOnce(new ApiError(503, 'Retry reply unknown'));
+    const view = render(<f.Actions />);
+    await start();
+    f.state.status = 'stopped';
+    await tick(1500);
+    const sent = restoreDeletions('owner')[0]!;
+    expect(f.remove).toHaveBeenCalledOnce();
+    f.state.sandbox = { ...f.state.sandbox, status: 'rotating' };
+    await tick(1500);
+    await click('End this request');
+    await tick(1000);
+    f.state.sandbox = { ...f.state.sandbox, status: 'active' };
+    if (arrival !== 'before reopen') await click('Delete original Agent');
+    let finishPreflight: (() => void) | undefined;
+    if (arrival.startsWith('during')) {
+      const pendingRead = new Promise<void>((resolve) => {
+        finishPreflight = resolve;
+      });
+      if (arrival === 'during Agent read')
+        f.read.mockImplementationOnce(async (id) => {
+          await pendingRead;
+          return {
+            ...AGENT_DETAIL,
+            id,
+            status: 'stopped',
+            worktree: { ...AGENT_DETAIL.worktree, agentId: id },
+          };
+        });
+      else
+        f.readParent.mockImplementationOnce(async () => {
+          await pendingRead;
+          return f.state.sandbox;
+        });
+      await click('Check request');
+    }
+    await act(async () => accept());
+    await tick();
+    expect(restoreDeletions('owner')[0]).toMatchObject({ key: sent.key, accepted: true });
+    if (finishPreflight) {
+      await act(finishPreflight);
+      await tick();
+    } else {
+      if (arrival === 'before reopen') await click('Delete original Agent');
+      const check = screen.queryByRole('button', { name: 'Check request' });
+      if (check) {
+        fireEvent.click(check);
+        await tick();
+      }
+    }
+    expect(f.remove).toHaveBeenCalledOnce();
+    expect(f.stop).toHaveBeenCalledOnce();
+    expect(restoreDeletions('owner')[0]).toMatchObject({ key: sent.key, accepted: true });
+    expect(screen.queryByRole('button', { name: 'Check request' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'End this request' })).not.toBeInTheDocument();
+    expect(screen.getByText(/Delete request accepted/)).toBeInTheDocument();
+    await close();
+    view.unmount();
+    render(<f.Actions />);
+    await click('Delete original Agent');
+    expect(screen.getByText(/Delete request accepted/)).toBeInTheDocument();
+    expect(f.remove).toHaveBeenCalledOnce();
+  },
+);
+
+it('does not recreate a completed receipt when retry preflight finishes after cleanup', async () => {
+  const f = fixture();
+  let accept!: () => void;
+  f.remove.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        accept = resolve;
+      }),
+  );
+  render(<f.Actions />);
+  await start();
+  f.state.status = 'stopped';
+  await tick(1500);
+  f.state.sandbox = { ...f.state.sandbox, status: 'rotating' };
+  await tick(1500);
+  await click('End this request');
+  await tick(1000);
+  f.state.sandbox = { ...f.state.sandbox, status: 'active' };
+  await click('Delete original Agent');
+  let finish!: () => void;
+  const pendingRead = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  f.read.mockImplementationOnce(async (id) => {
+    await pendingRead;
+    return {
+      ...AGENT_DETAIL,
+      id,
+      status: 'stopped',
+      worktree: { ...AGENT_DETAIL.worktree, agentId: id },
+    };
+  });
+  await click('Check request');
+  f.read.mockResolvedValue({
+    ...AGENT_DETAIL,
+    status: 'deleted',
+    worktree: { ...AGENT_DETAIL.worktree, agentId: AGENT_DETAIL.id, status: 'removed' },
+  });
+  await tick(1500);
+  expect(restoreDeletions('owner')).toEqual([]);
+  expect(screen.getByRole('dialog')).toHaveAccessibleName('Agent deleted');
+  await act(async () => accept());
+  await act(async () => finish());
+  await tick();
+  expect(restoreDeletions('owner')).toEqual([]);
+  expect(f.remove).toHaveBeenCalledOnce();
+  expect(f.stop).toHaveBeenCalledOnce();
+  await click('Done');
+  await tick(1000);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
