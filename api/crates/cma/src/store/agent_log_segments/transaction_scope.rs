@@ -104,10 +104,26 @@ impl<'session> TransactionScope<'session> {
         collection: &Collection<Document>,
         filter: Document,
     ) -> Result<Option<Document>, mongodb::error::Error> {
+        crate::store::stale_turns::find_with_proof_budget(
+            collection,
+            crate::store::work_schema::for_collection(collection, filter),
+            &mut *self.session,
+            false,
+        )
+        .await
+    }
+
+    pub(in crate::store) async fn find_projected(
+        &mut self,
+        collection: &Collection<Document>,
+        filter: Document,
+        projection: Document,
+    ) -> Result<Option<Document>, mongodb::error::Error> {
         collection
             .find_one(crate::store::work_schema::for_collection(
                 collection, filter,
             ))
+            .projection(projection)
             .session(&mut *self.session)
             .await
     }
@@ -121,16 +137,31 @@ impl<'session> TransactionScope<'session> {
         sort: Document,
         limit: u32,
     ) -> Result<Vec<Document>, mongodb::error::Error> {
+        self.find_projected_page(collection, filter, sort, limit, None)
+            .await
+    }
+
+    pub(in crate::store) async fn find_projected_page(
+        &mut self,
+        collection: &Collection<Document>,
+        filter: Document,
+        sort: Document,
+        limit: u32,
+        projection: Option<Document>,
+    ) -> Result<Vec<Document>, mongodb::error::Error> {
         page::validate_limit(limit)?;
-        let mut cursor = collection
+        let query = collection
             .find(crate::store::work_schema::for_collection(
                 collection, filter,
             ))
             .sort(sort)
             .limit(i64::from(limit))
-            .batch_size(limit)
-            .session(&mut *self.session)
-            .await?;
+            .batch_size(limit);
+        let query = match projection {
+            Some(projection) => query.projection(projection),
+            None => query,
+        };
+        let mut cursor = query.session(&mut *self.session).await?;
         page::collect(cursor.stream(&mut *self.session), limit).await
     }
 
