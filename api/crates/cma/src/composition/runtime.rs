@@ -113,6 +113,7 @@ pub(super) fn lifecycle_config(
         managed_documents_enabled: config.document_storage.is_some(),
         event_driven_reconciliation: config.features.event_driven_reconciliation,
         stale_turn_reconciliation: config.features.stale_turn_reconciliation,
+        stale_turn_terminal: config.features.stale_turn_terminal,
         skip_ineligible_reconciliation: config
             .agent_manager_replicas
             .as_ref()
