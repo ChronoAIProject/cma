@@ -96,9 +96,11 @@ export function DeletionStatusPanel({
       </p>
       {!complete && !request.accepted ? (
         <p>
-          {stopping
-            ? 'Stop and delete keeps the original requests. Close preserves them; reopen to check or continue.'
-            : 'Check request retries the original delete request with the same reference.'}
+          {blocked
+            ? 'End this request to stop further steps. Commands already sent may still finish. Deleting later requires a new confirmation.'
+            : stopping
+              ? 'Stop and delete keeps the original requests. Close preserves them; reopen to check or continue.'
+              : 'Check request retries the original delete request with the same reference.'}
         </p>
       ) : null}
       {target === 'Agent' ? (

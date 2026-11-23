@@ -173,7 +173,7 @@ export function useResourceActions(
         return;
       }
       setDeletion(
-        retained === undefined || retained.accepted
+        retained === undefined || retained.accepted || retained.stop?.phase === 'blocked'
           ? {
               request: {
                 action: action as DeleteAction,
@@ -323,6 +323,7 @@ export function useResourceActions(
                 ]);
                 setDeletion(undefined);
               }}
+              onAbandoned={(request) => keys.current.settle(JSON.stringify(request.action))}
               onClose={() => {
                 setDeletion(undefined);
                 refreshDeletions();

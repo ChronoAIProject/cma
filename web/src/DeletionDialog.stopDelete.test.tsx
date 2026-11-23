@@ -411,3 +411,51 @@ it('does not upgrade a restored ordinary Delete request into Stop consent', asyn
   expect(f.remove).not.toHaveBeenCalled();
   expect(screen.getByText(/cannot continue until the Agent is stopped/)).toBeInTheDocument();
 });
+
+it('only explicitly retries uncertain Stop when a stopped poll is withdrawn by a fresh working read', async () => {
+  const f = fixture();
+  f.stop.mockRejectedValueOnce(new ApiError(503, 'Stop reply unknown'));
+  render(<DeletionDialog {...f.props} />);
+  await confirm();
+  const original = restoreDeletion('owner')!;
+  expect(f.stop).toHaveBeenCalledOnce();
+  expect(original.stop?.phase).toBe('requested');
+  f.read.mockResolvedValueOnce({ ...AGENT_DETAIL, status: 'stopped' });
+  await tick(1500);
+  expect(f.remove).not.toHaveBeenCalled();
+  expect(f.stop).toHaveBeenCalledOnce();
+  expect(screen.getByText('Stop reply unknown')).toBeInTheDocument();
+  expect(restoreDeletion('owner')).toEqual(original);
+  fireEvent.click(screen.getByRole('button', { name: 'Retry stop request' }));
+  await tick();
+  expect(f.stop).toHaveBeenCalledTimes(2);
+  expect(f.stop.mock.calls[1]).toEqual(f.stop.mock.calls[0]);
+  expect(f.remove).not.toHaveBeenCalled();
+  await tick(4500);
+  expect(f.stop).toHaveBeenCalledTimes(2);
+  f.state.status = 'stopped';
+  await tick(1500);
+  expect(f.remove).toHaveBeenCalledExactlyOnceWith(AGENT_DETAIL.id, {
+    idempotencyKey: original.key,
+  });
+});
+
+it('requires an explicit check after an uncertain Stop even when polling later confirms stopped', async () => {
+  const f = fixture();
+  f.stop.mockRejectedValueOnce(new ApiError(503, 'Stop reply unknown'));
+  render(<DeletionDialog {...f.props} />);
+  await confirm();
+  const original = restoreDeletion('owner')!;
+  f.state.status = 'stopped';
+  await tick(3000);
+  expect(f.stop).toHaveBeenCalledOnce();
+  expect(f.remove).not.toHaveBeenCalled();
+  expect(restoreDeletion('owner')).toEqual(original);
+  fireEvent.click(screen.getByRole('button', { name: 'Retry stop request' }));
+  await tick();
+  expect(f.stop).toHaveBeenCalledOnce();
+  expect(f.remove).toHaveBeenCalledExactlyOnceWith(AGENT_DETAIL.id, {
+    idempotencyKey: original.key,
+  });
+  expect(restoreDeletion('owner')?.stop?.key).toBe(original.stop?.key);
+});

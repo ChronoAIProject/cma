@@ -29,6 +29,7 @@ export function DeletionDialog({
   restored,
   onChanged,
   onAccepted,
+  onAbandoned,
   backgroundOnAcceptance = false,
   agentPermissions,
   enabled = true,
@@ -40,6 +41,7 @@ export function DeletionDialog({
   readonly restored: boolean;
   readonly onChanged: () => void;
   readonly onAccepted?: (request: DeletionRequest) => void;
+  readonly onAbandoned?: (request: DeletionRequest) => void;
   readonly backgroundOnAcceptance?: boolean;
   readonly agentPermissions?: AgentDeletionPermissions;
   readonly enabled?: boolean;
@@ -218,140 +220,147 @@ export function DeletionDialog({
     };
   }, [client, request, revision, viewerId, exiting, authority, identity, enabled, block, persist]);
 
-  const submit = useCallback(async () => {
-    const lifetime = activeScope.current;
-    const blocked = () => latestRequest.current.stop?.phase === 'blocked';
-    const current = () =>
-      lifetime !== undefined &&
-      activeScope.current === lifetime &&
-      lifetime.token === scope &&
-      !lifetime.controller.signal.aborted &&
-      enabled &&
-      !exiting;
-    if (!current() || inFlight.current || request.accepted || request.stop?.phase === 'blocked')
-      return;
-    if (
-      !started &&
-      (observation === undefined || readError !== undefined || observation.blocked !== undefined)
-    )
-      return;
-    if (request.stop && (!authority?.permissions.stopAgent || !authority.permissions.deleteAgent)) {
-      block('Your current access does not allow this Stop and delete request.');
-      return;
-    }
-    if (!request.stop && observation?.stopsAgent && (started || !authority)) {
-      setCommandError('This delete request cannot continue until the Agent is stopped.');
-      return;
-    }
-    inFlight.current = true;
-    setStarted(true);
-    setSendingScope(scope);
-    setCommandError(undefined);
-    const submitted: DeletionRequest =
-      request.stop || !observation?.stopsAgent
-        ? request
-        : {
-            ...request,
-            stop: {
-              key: crypto.randomUUID(),
-              phase: 'requested',
-              sandboxId: observation.sandboxId!,
-              workspaceId: observation.agent!.workspaceId,
-              worktreeId: observation.agent!.worktreeId,
-            },
-          };
-    persist(submitted);
-    try {
-      if (submitted.action.kind === 'delete_agent' && (authority || submitted.stop)) {
-        if (!authority || identity.client !== client || identity.viewerId !== viewerId)
-          throw new DeletionBlocked('Current Agent access must be checked before continuing.');
-        const fresh = await observeDeletion(
-          detailReadSource(client),
-          submitted.action,
-          lifetime!.controller.signal,
-          false,
-          [],
-          [],
-          { ...authority, stopBeforeDelete: submitted.stop !== undefined },
-        );
-        if (!current() || blocked()) return;
-        setObservation(fresh);
-        const refusal = stopDeletionBlock(submitted, fresh) ?? fresh.blocked;
-        if (refusal) throw new DeletionBlocked(refusal);
-        if (!submitted.stop && fresh.stopsAgent)
-          throw new Error(
-            'The Agent is running again. Close this request and review Stop and delete.',
-          );
-        if (submitted.stop && fresh.agent?.status !== 'stopped') {
-          autoDelete.current = true;
-          if (submitted.stop.phase === 'requested') {
-            await client.stopAgent(submitted.action.agentId, {
-              idempotencyKey: submitted.stop.key,
-            });
-            if (!current() || blocked()) return;
-            const stoppedRequest = {
-              ...submitted,
-              stop: { ...submitted.stop, phase: 'accepted' as const },
+  const submit = useCallback(
+    async (source: 'user' | 'observation' = 'user') => {
+      const lifetime = activeScope.current;
+      const blocked = () => latestRequest.current.stop?.phase === 'blocked';
+      const current = () =>
+        lifetime !== undefined &&
+        activeScope.current === lifetime &&
+        lifetime.token === scope &&
+        !lifetime.controller.signal.aborted &&
+        enabled &&
+        !exiting;
+      if (!current() || inFlight.current || request.accepted || request.stop?.phase === 'blocked')
+        return;
+      if (
+        !started &&
+        (observation === undefined || readError !== undefined || observation.blocked !== undefined)
+      )
+        return;
+      if (
+        request.stop &&
+        (!authority?.permissions.stopAgent || !authority.permissions.deleteAgent)
+      ) {
+        block('Your current access does not allow this Stop and delete request.');
+        return;
+      }
+      if (!request.stop && observation?.stopsAgent && (started || !authority)) {
+        setCommandError('This delete request cannot continue until the Agent is stopped.');
+        return;
+      }
+      inFlight.current = true;
+      setStarted(true);
+      setSendingScope(scope);
+      if (source === 'user') setCommandError(undefined);
+      const submitted: DeletionRequest =
+        request.stop || !observation?.stopsAgent
+          ? request
+          : {
+              ...request,
+              stop: {
+                key: crypto.randomUUID(),
+                phase: 'requested',
+                sandboxId: observation.sandboxId!,
+                workspaceId: observation.agent!.workspaceId,
+                worktreeId: observation.agent!.worktreeId,
+              },
             };
-            persist(stoppedRequest);
+      persist(submitted);
+      try {
+        if (submitted.action.kind === 'delete_agent' && (authority || submitted.stop)) {
+          if (!authority || identity.client !== client || identity.viewerId !== viewerId)
+            throw new DeletionBlocked('Current Agent access must be checked before continuing.');
+          const fresh = await observeDeletion(
+            detailReadSource(client),
+            submitted.action,
+            lifetime!.controller.signal,
+            false,
+            [],
+            [],
+            { ...authority, stopBeforeDelete: submitted.stop !== undefined },
+          );
+          if (!current() || blocked()) return;
+          setObservation(fresh);
+          const refusal = stopDeletionBlock(submitted, fresh) ?? fresh.blocked;
+          if (refusal) throw new DeletionBlocked(refusal);
+          if (!submitted.stop && fresh.stopsAgent)
+            throw new Error(
+              'The Agent is running again. Close this request and review Stop and delete.',
+            );
+          if (submitted.stop && fresh.agent?.status !== 'stopped') {
+            autoDelete.current = true;
+            if (source === 'user' && submitted.stop.phase === 'requested') {
+              await client.stopAgent(submitted.action.agentId, {
+                idempotencyKey: submitted.stop.key,
+              });
+              if (!current() || blocked()) return;
+              const stoppedRequest = {
+                ...submitted,
+                stop: { ...submitted.stop, phase: 'accepted' as const },
+              };
+              persist(stoppedRequest);
+            }
+            setRevision((value) => value + 1);
+            return;
           }
-          setRevision((value) => value + 1);
-          return;
+        }
+        if (!current() || blocked()) return;
+        autoDelete.current = false;
+        await requestDeletion(client, submitted);
+        if (!current()) return;
+        const accepted = { ...submitted, accepted: true };
+        persist(accepted);
+        backgrounded.current = backgroundOnAcceptance;
+        changed.current();
+        onAccepted?.(accepted);
+      } catch (error: unknown) {
+        if (!current()) return;
+        autoDelete.current = false;
+        setCommandError(
+          error instanceof Error && error.name !== 'AbortError'
+            ? error.message
+            : readableError(error, 'The request could not be confirmed. Check its current status.'),
+        );
+        if (
+          submitted.stop &&
+          (error instanceof DeletionBlocked ||
+            (error instanceof ApiError && [400, 401, 403, 404, 409, 422].includes(error.status)))
+        )
+          block(error.message);
+        if (
+          !submitted.stop &&
+          error instanceof ApiError &&
+          [400, 401, 403, 404, 422].includes(error.status)
+        ) {
+          persist(undefined);
+          setStarted(false);
+        }
+      } finally {
+        if (current()) {
+          inFlight.current = false;
+          setSendingScope(undefined);
         }
       }
-      if (!current() || blocked()) return;
-      autoDelete.current = false;
-      await requestDeletion(client, submitted);
-      if (!current()) return;
-      const accepted = { ...submitted, accepted: true };
-      persist(accepted);
-      backgrounded.current = backgroundOnAcceptance;
-      changed.current();
-      onAccepted?.(accepted);
-    } catch (error: unknown) {
-      if (!current()) return;
-      setCommandError(
-        error instanceof Error && error.name !== 'AbortError'
-          ? error.message
-          : readableError(error, 'The request could not be confirmed. Check its current status.'),
-      );
-      if (
-        submitted.stop &&
-        (error instanceof DeletionBlocked ||
-          (error instanceof ApiError && [400, 401, 403, 404, 409, 422].includes(error.status)))
-      )
-        block(error.message);
-      if (
-        !submitted.stop &&
-        error instanceof ApiError &&
-        [400, 401, 403, 404, 422].includes(error.status)
-      ) {
-        persist(undefined);
-        setStarted(false);
-      }
-    } finally {
-      if (current()) {
-        inFlight.current = false;
-        setSendingScope(undefined);
-      }
-    }
-  }, [
-    scope,
-    identity,
-    viewerId,
-    block,
-    enabled,
-    exiting,
-    request,
-    started,
-    observation,
-    readError,
-    authority,
-    persist,
-    client,
-    backgroundOnAcceptance,
-    onAccepted,
-  ]);
+    },
+    [
+      scope,
+      identity,
+      viewerId,
+      block,
+      enabled,
+      exiting,
+      request,
+      started,
+      observation,
+      readError,
+      authority,
+      persist,
+      client,
+      backgroundOnAcceptance,
+      onAccepted,
+    ],
+  );
   useEffect(() => {
     if (
       autoDelete.current &&
@@ -363,13 +372,24 @@ export function DeletionDialog({
       !observation.blocked &&
       readError === undefined
     )
-      void submit();
+      void submit('observation');
   }, [request, sending, observation, readError, submit]);
-  const close = () => {
+  const invalidate = () => {
     activeScope.current?.controller.abort();
     activeScope.current = undefined;
     autoDelete.current = false;
+  };
+  const close = () => {
+    invalidate();
     if (!started || completed.current) persist(undefined);
+    onClose();
+  };
+  const abandon = () => {
+    const value = latestRequest.current;
+    if (value.stop?.phase !== 'blocked' || value.accepted) return;
+    invalidate();
+    persist(undefined);
+    onAbandoned?.(value);
     onClose();
   };
   const name = observation?.name ?? target;
@@ -426,6 +446,9 @@ export function DeletionDialog({
             >
               {request.stop?.phase === 'requested' ? 'Retry stop request' : 'Check request'}
             </Button>
+          ) : null}
+          {request.stop?.phase === 'blocked' && !request.accepted && !observation?.complete ? (
+            <Button onClick={abandon}>End this request</Button>
           ) : null}
           {readError === undefined ? null : (
             <Button onClick={() => setRevision((value) => value + 1)}>Refresh status</Button>
