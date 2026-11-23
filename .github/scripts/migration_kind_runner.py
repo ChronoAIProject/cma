@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Run the 12d/13b/12d reader-writer campaign on one disposable kind cluster.
 
-The runner owns only a uniquely named cluster and a synthetic Mongo authority.
-It never reads an existing Secret and never uses pod exec. A caller supplies a
-fixture command; that command must write and verify the reviewed collection and
-document-shape fixtures for the current stage. The runner preserves Mongo while
+The runner owns only a uniquely named cluster and synthetic Mongo authority.
+It never reads an existing Secret or uses pod exec. The supplied fixture must
+write and verify reviewed shapes for each stage. The runner preserves Mongo while
 replacing only the API reader, then records the rollback boot after 13b writes.
 """
 import argparse
@@ -26,6 +25,7 @@ from migration_kind_pods import PodSelectionError, select_ready_api_pod
 from migration_kind_manifests import IDENTITY, NAMESPACE, RUNTIME, manifests, mongo_documents
 from migration_redaction import EvidenceRedactor
 from migration_boot_observation import observe_boot
+from migration_image_preflight import ImagePreflight
 import migration_catalog as catalog
 SOURCE = re.compile(r"^[a-f0-9]{40}$")
 IMAGE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?/)+"
@@ -332,7 +332,8 @@ class Campaign:
 def run(args):
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
-    command = lambda argv: subprocess.check_output(argv, text=True, stderr=subprocess.PIPE)
+    command = ImagePreflight(output, lambda argv: subprocess.check_output(
+        argv, text=True, stderr=subprocess.PIPE))
     old = checked_identity(command, args.old_image, args.old_source)
     new = checked_identity(command, args.new_image, args.new_source)
     plan_path = Path(args.plan)
@@ -379,15 +380,8 @@ def run(args):
         campaign.images = [old_ref, new_ref, mongo_ref, identity_ref]
         objects = manifests(old_ref, runtime_password, admin_password, key, mongo_ref, role,
                             args.runtime_image, identity_ref, identity_credentials)
-        if getattr(args, "bot_fixture", False):
-            from migration_bot_provider import manifests as bot_manifests
-            objects = bot_manifests(objects)
-        if getattr(args, "gateway_fixture", False):
-            from migration_gateway_provider import manifests as gateway_manifests
-            objects = gateway_manifests(objects)
-        if getattr(args, "rate_fixture", False):
-            from migration_rate_fixture import manifests as rate_manifests
-            objects = rate_manifests(objects)
+        from migration_fixture_dependencies import configure, capture
+        objects = configure(objects, args)
         campaign.create(catalog.infrastructure(objects, NAMESPACE, secrets.token_urlsafe(24)))
         previous_catalog = None
         stages = [("old-write", "historical-boot", old_ref, old),
@@ -407,6 +401,11 @@ def run(args):
                 raise RunnerError("reader changed during catalog capture")
             receipt["serving_pod"] = selected
             result["catalogs"].append(receipt)
+            documents = capture(campaign, args, NAMESPACE, mongo_ref, stage, source, image)
+            if documents is not None:
+                if select_ready_api_pod(campaign.reader_pods(), alias, artifact["config"]) != selected:
+                    raise RunnerError("reader changed during document capture")
+                result.setdefault("document_snapshots", []).append({**documents, "serving_pod": selected})
             if previous_catalog is not None:
                 comparison = catalog.compare(previous_catalog, snapshot)
                 result["catalog_comparisons"].append({"to_stage": stage, **comparison})
@@ -415,6 +414,10 @@ def run(args):
             previous_catalog = snapshot
         result["outcome"] = "UNVERIFIED"
         result["reason"] = "Boot/fixture receipts require full application reader-writer coverage review"
+    except (KeyboardInterrupt, SystemExit) as error:
+        result["outcome"] = "CANCELLED"
+        result["reason"] = f"campaign interrupted: {type(error).__name__}"
+        raise
     except Exception as error:
         result["outcome"] = "BLOCKED"
         result["reason"] = str(error)
@@ -424,8 +427,8 @@ def run(args):
         try:
             campaign.cleanup()
             result["cleanup"] = {"cluster_absent": True}
-        except Exception:
-            result["cleanup"] = {"cluster_absent": False}
+        except Exception as error:
+            result["cleanup"] = {"cluster_absent": False, "error": str(error)}
         result["diagnostic_errors"] = campaign.diagnostic_errors
         result["commands"] = campaign.commands
         result["finished_at"] = time.time()
@@ -449,13 +452,8 @@ def main(argv=None):
     parser.add_argument("--mongo-image", default="docker.io/library/mongo@sha256:42545cf0629db918d1a24a2df8bbca6926ed87bfabf59afc85008dd948448cc7")
     parser.add_argument("--runtime-image", default=RUNTIME)
     parser.add_argument("--identity-image", default=IDENTITY)
-    dependency = parser.add_mutually_exclusive_group()
-    dependency.add_argument("--bot-fixture", action="store_true",
-                            help="enable scoped synthetic Bot gateway/key dependencies")
-    dependency.add_argument("--gateway-fixture", action="store_true",
-                            help="enable scoped gateway-record authority in the identity fixture")
-    dependency.add_argument("--rate-fixture", action="store_true",
-                            help="set a one-per-minute input budget in the disposable API")
+    from migration_fixture_dependencies import add_arguments
+    add_arguments(parser)
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--preflight-only", action="store_true",
                         help="validate both local immutable images without creating a cluster")
