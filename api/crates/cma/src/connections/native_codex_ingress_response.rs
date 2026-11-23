@@ -5,10 +5,6 @@ use serde_json::Value;
 use super::ingress_protocol::NativeFrameError;
 
 #[derive(Debug, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "native response owner qualification pending")
-)]
 pub(super) enum NativeResponseView<'a> {
     Result(&'a Value),
     Completed { login_id: &'a str, success: bool },
