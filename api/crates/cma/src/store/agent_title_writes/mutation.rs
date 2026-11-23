@@ -21,7 +21,11 @@ impl TitleMutation {
             ..
         } = self
         {
-            if !state.effect.permits_title(title, *source) {
+            // Only a fallback-only claim, taken after the original capability
+            // expired, may publish over an unresolved provider effect (#2266).
+            if !state.effect.permits_title(title, *source)
+                || state.effect.unknown() && claim.mode() != AgentTitleClaimMode::FallbackOnly
+            {
                 return Some(TitleOutcome::Automatic(false));
             }
             if !state

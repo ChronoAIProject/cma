@@ -2,7 +2,7 @@
 use serde::Serialize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use super::{Sandbox, SandboxStatus};
+use super::{Sandbox, SandboxLifecycleOperation, SandboxStatus, SandboxWorkStep};
 
 mod admission;
 pub use admission::SandboxLifecycleAdmission;
@@ -136,7 +136,12 @@ impl SandboxLifecycleResult {
             } else {
                 return None;
             };
-            Self::from_admission(operation_id, started_at, now, false)?
+            let parked = runtime_update_parked(sandbox);
+            let mut result = Self::from_admission(operation_id, started_at, now, parked)?;
+            if parked {
+                result.code = Some("runtime_update_parked");
+            }
+            result
         };
         if owner_can_retire
             && retirement_admissible(sandbox)
@@ -222,6 +227,29 @@ fn retirement_admissible(sandbox: &Sandbox) -> bool {
         && next.begin_retirement(sandbox.updated_at.clone()).is_ok()
         && next.validate().is_ok()
         && sandbox.validate_retirement_archive_successor(&next).is_ok()
+}
+
+fn runtime_update_parked(sandbox: &Sandbox) -> bool {
+    let Some(request) = sandbox.runtime_update_request() else {
+        return false;
+    };
+    if request.started_at.is_none()
+        || request.completed_at.is_some()
+        || request.failure.is_none()
+        || sandbox.work.step != SandboxWorkStep::None
+        || sandbox.work.lease.is_some()
+        || sandbox.admitted_runtime_update_target() != Some(request.target_version.as_str())
+    {
+        return false;
+    }
+    match (&sandbox.status, &sandbox.lifecycle.operation) {
+        (
+            SandboxStatus::Rotating,
+            Some(SandboxLifecycleOperation::ImageRotation { authority, .. }),
+        ) => request.started_at.as_deref() == Some(authority.requested_at.as_str()),
+        (SandboxStatus::Reviving, Some(SandboxLifecycleOperation::Revive { .. })) => true,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
