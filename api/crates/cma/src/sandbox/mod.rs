@@ -30,6 +30,7 @@ pub(crate) mod retained_recovery;
 pub(crate) mod runtime_attachment;
 mod runtime_mapping;
 mod scheduler;
+mod startup_retry;
 mod suggestion_worker;
 pub(crate) mod suggestions;
 mod title_budget;

@@ -319,10 +319,12 @@ impl SandboxLifecycleComposition {
     }
 
     pub(crate) async fn initialize(&self) -> Result<(), String> {
-        self.reconciliation
-            .initialize_before_workers(std::time::SystemTime::now())
-            .await
-            .map_err(|error| format!("sandbox runtime initialization failed: {error}"))
+        super::startup_retry::retry_unavailable(&super::startup_retry::DELAYS, || {
+            self.reconciliation
+                .initialize_before_workers(std::time::SystemTime::now())
+        })
+        .await
+        .map_err(|error| format!("sandbox runtime initialization failed: {error}"))
     }
 
     pub(crate) fn spawn(
