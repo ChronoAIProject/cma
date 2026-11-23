@@ -14,6 +14,9 @@ mod settings;
 #[path = "drain_tests.rs"]
 mod drain;
 
+#[path = "tests/file_handoff.rs"]
+mod file_handoff;
+
 #[path = "shared_stream_tests.rs"]
 mod shared_streams;
 

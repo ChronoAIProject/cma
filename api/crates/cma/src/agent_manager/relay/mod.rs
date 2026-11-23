@@ -3,6 +3,8 @@ mod authentication;
 mod control;
 pub(crate) use control::{prestop, DRAIN};
 mod environment_diagnostics;
+mod file_read;
+mod forward;
 mod http;
 mod ingress;
 mod live;
