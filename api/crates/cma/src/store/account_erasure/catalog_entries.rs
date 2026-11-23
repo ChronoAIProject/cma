@@ -188,7 +188,13 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("provider_binding_preparations", Owner(&["owner"]) => false),
     entry!("provider_tool_opens", Linked(Agents, &["record.scope.agent_id"]) => false),
     entry!("provider_tool_relays", Linked(Agents, &["agent_id"]) => false),
+    // Opt-in execution evidence keeps identities in its serialized `record`;
+    // erasure fails closed if any row still names the subject (#3296).
+    entry!("resource_execution_effects_v1", ProvenAbsentJson(&["record"]) => false),
+    entry!("resource_execution_grants_v1", ProvenAbsentJson(&["record"]) => false),
+    entry!("resource_execution_records_v1", ProvenAbsentJson(&["record"]) => false),
     entry!("resource_policies", Linked(Sandboxes, &["_id"]) => true, Reference(ReferenceRule::Identities) => false),
+    entry!("resource_revocation_operations_v1", ProvenAbsentJson(&["record"]) => false),
     entry!("resource_share_commands", Linked(Sandboxes, &["sandbox_id"]) => false, Reference(ReferenceRule::ShareReceipts) => false, Reference(ReferenceRule::Identities) => false),
     entry!("resource_shares", Linked(Sandboxes, &["sandbox_id"]) => true, Reference(ReferenceRule::Shares) => true, Reference(ReferenceRule::Shares) => false, Reference(ReferenceRule::Identities) => false),
     entry!("sandbox_admissions", OwnerKey(Subject) => true),
