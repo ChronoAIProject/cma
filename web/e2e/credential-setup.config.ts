@@ -9,7 +9,11 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(baseURL).hostname))
 process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
 export default defineConfig({
   testDir: '.',
-  testMatch: ['credential-setup.check.ts', 'public-entry-lifecycle.check.ts'],
+  testMatch: [
+    'credential-setup.check.ts',
+    'public-entry-lifecycle.check.ts',
+    'public-entry-reload.check.ts',
+  ],
   workers: 1,
   retries: 0,
   forbidOnly: true,
