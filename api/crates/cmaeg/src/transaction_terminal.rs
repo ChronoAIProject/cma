@@ -15,9 +15,10 @@
 //!
 //! The kill runs on the session's own client on purpose: its implicit session
 //! takes the cancelled lsid back off the LIFO pool, so no other operation can
-//! reuse that lsid while the kill is in flight. A same-client operation that
-//! takes the lsid first, before the kill checks out a session, already aborts
-//! the stranded transaction with its newer txnNumber; the late kill then
+//! reuse that lsid while the kill is in flight. A same-client operation may
+//! still take the lsid first, before the kill checks out a session: a
+//! transaction or retryable write then aborts the stranded transaction with
+//! its newer txnNumber, while a plain read does not. Either way the late kill
 //! interrupts that one operation once (11601), which its caller sees as an
 //! ordinary store failure. Closing that window needs the driver to send the
 //! terminal command from its own drop path (#3288).
