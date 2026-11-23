@@ -488,7 +488,7 @@ for (const stage of ["startup", "browser"])
             throw new Error("Cancellation did not finish");
           }),
         ]);
-        assert.equal(outcome.code, signal === "SIGINT" ? 130 : 143);
+        assert.equal(outcome.code, signal === "SIGINT" ? 130 : 143, diagnostics);
         const receipt = JSON.parse(
           await readFile(join(f.env.RUNNER_TEMP, `cma-p1-browser/${suite}/receipt.json`)),
         );
