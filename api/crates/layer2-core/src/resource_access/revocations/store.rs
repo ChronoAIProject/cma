@@ -10,6 +10,7 @@ impl ResourceExecutionStore for Store {
         &self,
         id: &wire::Digest,
     ) -> ExecutionResult<Option<RevocationOperationV1>> {
+        self.before_read(Read::Operation).await;
         let s = self.0.lock().unwrap();
         Ok((id == &s.operation.key.operation_id).then(|| s.operation.clone()))
     }
@@ -19,6 +20,7 @@ impl ResourceExecutionStore for Store {
         after: u32,
         limit: u32,
     ) -> ExecutionResult<Vec<ExecutionRecordV1>> {
+        self.before_read(Read::Members(after)).await;
         let mut s = self.0.lock().unwrap();
         s.pages.push(after);
         if s.change_owner {
@@ -40,6 +42,7 @@ impl ResourceExecutionStore for Store {
         after: u32,
         limit: u32,
     ) -> ExecutionResult<Vec<EffectRecordV1>> {
+        self.before_read(Read::Effects(after)).await;
         Ok(self
             .0
             .lock()
@@ -161,6 +164,7 @@ impl ResourceAccessStore for Store {
         &self,
         _: &ResourceTarget,
     ) -> Result<ResourceAccessSnapshot, ResourceAccessStoreError> {
+        self.before_read(Read::Snapshot).await;
         Ok(self.0.lock().unwrap().snapshot.clone())
     }
 }
@@ -225,6 +229,8 @@ pub(super) async fn setup(count: u32) -> (Arc<Store>, ResourceRevocationService)
         pages: vec![],
         missing_page: false,
         change_owner: false,
+        reads: vec![],
+        gates: vec![],
     })));
     let access = ResourceAccessService::new(store.clone(), Arc::new(Authority));
     let service = ResourceRevocationService::new(access, store.clone())

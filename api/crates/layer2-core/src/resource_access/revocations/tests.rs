@@ -6,6 +6,8 @@ mod fixtures;
 mod snapshot;
 #[path = "store.rs"]
 mod store;
+#[path = "timeouts.rs"]
+mod timeouts;
 use fixtures::*;
 use store::setup;
 struct State {
@@ -16,8 +18,34 @@ struct State {
     pages: Vec<u32>,
     missing_page: bool,
     change_owner: bool,
+    reads: Vec<Read>,
+    gates: Vec<(Read, usize, Arc<tokio::sync::Semaphore>)>,
 }
 struct Store(Mutex<State>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Read {
+    Snapshot,
+    Operation,
+    Members(u32),
+    Effects(u32),
+}
+
+impl Store {
+    async fn before_read(&self, point: Read) {
+        let gate = {
+            let mut state = self.0.lock().unwrap();
+            state.reads.push(point);
+            let occurrence = state.reads.iter().filter(|read| **read == point).count();
+            state.gates.iter().find_map(|(at, nth, gate)| {
+                (*at == point && *nth == occurrence).then(|| gate.clone())
+            })
+        };
+        if let Some(gate) = gate {
+            gate.acquire().await.unwrap().forget();
+        }
+    }
+}
 fn context(subject: &str) -> CallerContext {
     CallerContext {
         credential_source: CredentialSource::Retained,

@@ -3,7 +3,9 @@
 
 use super::{execution::*, *};
 use layer3_adapter::resource_execution_protocol as wire;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
+
+const STATUS_READ_BUDGET: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevocationStage {
@@ -185,30 +187,34 @@ impl ResourceRevocations for ResourceRevocationService {
         operation: &str,
     ) -> ExecutionResult<RevocationStatus> {
         let id = wire::Digest::new(operation).map_err(|_| ExecutionError::AuthorityChanged)?;
-        let operation = self
-            .coordinator
-            .revocation_status(context, credential, selector, &id)
-            .await?;
-        if operation.key.operation_id != id {
-            return Err(ExecutionError::EvidenceMismatch);
-        }
-        let projection = self.project(&operation).await?;
-        // Evidence enumeration can wait on storage. Recheck owner/credential and
-        // incarnation before exposing the already-authorized bounded snapshot.
-        let current = self
-            .coordinator
-            .revocation_status(context, credential, selector, &id)
-            .await?;
-        if current.intent != operation.intent
-            || current.key != operation.key
-            || current.epoch != operation.epoch
-            || current.frozen_members != operation.frozen_members
-            || current.frozen_at_unix_ms != operation.frozen_at_unix_ms
-            || current.deadline_unix_ms != operation.deadline_unix_ms
-        {
-            return Err(ExecutionError::EvidenceMismatch);
-        }
-        Ok(projection)
+        tokio::time::timeout(STATUS_READ_BUDGET, async {
+            let operation = self
+                .coordinator
+                .revocation_status(context, credential, selector, &id)
+                .await?;
+            if operation.key.operation_id != id {
+                return Err(ExecutionError::EvidenceMismatch);
+            }
+            let projection = self.project(&operation).await?;
+            // Evidence enumeration can wait on storage. Recheck owner/credential and
+            // incarnation before exposing the already-authorized bounded snapshot.
+            let current = self
+                .coordinator
+                .revocation_status(context, credential, selector, &id)
+                .await?;
+            if current.intent != operation.intent
+                || current.key != operation.key
+                || current.epoch != operation.epoch
+                || current.frozen_members != operation.frozen_members
+                || current.frozen_at_unix_ms != operation.frozen_at_unix_ms
+                || current.deadline_unix_ms != operation.deadline_unix_ms
+            {
+                return Err(ExecutionError::EvidenceMismatch);
+            }
+            Ok(projection)
+        })
+        .await
+        .map_err(|_| ExecutionError::Unavailable)?
     }
 }
 
