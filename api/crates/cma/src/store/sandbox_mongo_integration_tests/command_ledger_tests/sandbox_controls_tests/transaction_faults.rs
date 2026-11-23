@@ -98,6 +98,7 @@ async fn sandbox_controls_ambiguous_commit_recovers_receipt_without_repeated_tra
     let result = f.store.apply_sandbox_control(&record, proof).await;
     disable(&admin).await;
     assert_eq!(result, Err(SandboxControlError::Unavailable));
+    crate::store::test_visibility::majority_barrier(&admin, &name).await;
     let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
     let stored = reopened
         .sandbox_control(&record.envelope.command_id)

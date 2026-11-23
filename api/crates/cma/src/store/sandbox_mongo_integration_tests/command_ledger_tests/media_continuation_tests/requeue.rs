@@ -22,6 +22,7 @@ async fn media_continuation_unknown_requeue_commit_recovers_same_slot_after_sour
         .await
         .unwrap();
     assert!(matches!(result, Err(CommandLedgerError::Unavailable)));
+    crate::store::test_visibility::majority_barrier(&admin, &f.name).await;
     let reopened = MongoSandboxStore::open(&f.client, &f.name).await.unwrap();
     let queued = reopened
         .reconcile_command(&claimed.receipt.envelope.command_id)
