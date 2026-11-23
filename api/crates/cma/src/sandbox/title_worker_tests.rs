@@ -364,7 +364,7 @@ async fn own_account_runtime_generates_with_scoped_service_custody() {
     let endpoint = Arc::new(PlatformTitleEndpoint {
         platform_base_url: format!("http://{}", listener.local_addr().unwrap()),
     });
-    let router = Router::new().route("/api/v1/proxy/s/chrono-llm/v1/responses", post(scoped));
+    let router = Router::new().route("/api/v1/proxy/s/chrono-llm/responses", post(scoped));
     let server = tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
     });
