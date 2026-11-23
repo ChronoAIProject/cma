@@ -3,6 +3,8 @@ use crate::agent_manager::relay::tests::{acquire, cluster, Instance};
 use crate::sandbox::worker_tests::owned_reopen_tests::workers_with_renewal;
 use layer2_core::sandbox::store::{SandboxEventStore, SandboxStore, SandboxWorkerStore};
 
+mod dispatch;
+
 #[tokio::test]
 async fn issue_1164_old_revive_admission_does_not_expire_a_fresh_reopen_phase() {
     for with_conversation in [true, false] {

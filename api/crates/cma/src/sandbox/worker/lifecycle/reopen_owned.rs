@@ -144,17 +144,20 @@ impl SandboxWorker {
         );
         let (updates, mut receiver) = tokio::sync::mpsc::channel(256);
         let mut claim = Claim::new(self, &guard.sandbox, &sandbox)?;
-        let channel = tokio::time::timeout_at(
-            deadline,
-            claim.follow(async {
-                crate::sandbox::runtime_attachment::adopt_bound_runtime(
+        let channel = tokio::time::timeout_at(deadline, async {
+            claim
+                .follow(crate::sandbox::runtime_attachment::adopt_bound_runtime(
                     self.dependencies.adapter.as_ref(),
                     &sandbox,
                     &self.config.deployment_id,
-                )
+                ))
                 .await
                 .map_err(reopen_failed(id, "adopt_runtime"))?;
-                let channel = drain(
+            if !authority.is_current() || Instant::now() >= claim.expires() {
+                return Err(refuse_at(id, "reconnect_authority"));
+            }
+            let channel = claim
+                .follow(drain(
                     self.dependencies.adapter.reconnect_agent(
                         &runtime,
                         agent.work.next_fence,
@@ -166,30 +169,33 @@ impl SandboxWorker {
                     self.dependencies.updates.as_ref(),
                     id,
                     &guard,
-                )
+                ))
                 .await
                 .map_err(reopen_failed(id, "reconnect"))?;
-                if channel.conversation_id.as_deref() != Some(&conversation) {
-                    return Err(reopen_failed(id, "conversation_mismatch")(
-                        AdapterError::Rejected(
-                            "runtime returned a different retained conversation identity".into(),
-                        ),
-                    ));
+            if channel.conversation_id.as_deref() != Some(&conversation) {
+                return Err(reopen_failed(id, "conversation_mismatch")(
+                    AdapterError::Rejected(
+                        "runtime returned a different retained conversation identity".into(),
+                    ),
+                ));
+            }
+            if let Some(settings) = &agent.conversation.settings {
+                if !authority.is_current() || Instant::now() >= claim.expires() {
+                    return Err(refuse_at(id, "settings_authority"));
                 }
-                if let Some(settings) = &agent.conversation.settings {
-                    drain(
+                claim
+                    .follow(drain(
                         channel.input.send(settings.runtime_input()),
                         &mut receiver,
                         self.dependencies.updates.as_ref(),
                         id,
                         &guard,
-                    )
+                    ))
                     .await
                     .map_err(reopen_failed(id, "settings"))?;
-                }
-                Ok(channel)
-            }),
-        )
+            }
+            Ok(channel)
+        })
         .await
         .map_err(|_| refuse_at(id, "reopen_deadline"))??;
         if !authority.is_current() || Instant::now() >= claim.expires() {

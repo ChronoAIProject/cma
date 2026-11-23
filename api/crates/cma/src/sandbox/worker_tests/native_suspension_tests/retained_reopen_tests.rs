@@ -13,6 +13,13 @@ pub(super) async fn restored_reopen() -> (Fixture, Sandbox, layer2_core::sandbox
 pub(super) async fn restored_reopen_after_pause(
     inactivity: bool,
 ) -> (Fixture, Sandbox, layer2_core::sandbox::Agent, SystemTime) {
+    restored_reopen_with_settings(inactivity, None).await
+}
+
+pub(super) async fn restored_reopen_with_settings(
+    inactivity: bool,
+    settings: Option<layer2_core::sandbox::AgentSettings>,
+) -> (Fixture, Sandbox, layer2_core::sandbox::Agent, SystemTime) {
     let mut fixture = Fixture::native().await;
     let created = fixture.harness.create().await;
     let mut now = start_time(&created);
@@ -39,6 +46,7 @@ pub(super) async fn restored_reopen_after_pause(
         now,
         1,
         Some(uuid::Uuid::new_v4().to_string()),
+        settings,
     )
     .await;
     fixture
