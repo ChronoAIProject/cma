@@ -266,6 +266,10 @@ jobs:
             "$@"
           SKOPEO
           chmod 0700 "$wrapper"
+          # docker run would pull the pinned image implicitly and fail the release
+          # on one registry or CDN hiccup; pull it first with bounded retries.
+          bash .github/scripts/pull-pinned-image.sh \
+            quay.io/skopeo/stable@sha256:4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810
           skopeo_version=$(SKOPEO_HOST_AUTHFILE="$auth_file" "$wrapper" --version)
           if ! printf '%s\n' "$skopeo_version" \
             | grep -Eq '^skopeo version 1\.22\.2( commit: [0-9a-f]{7,40})?$'; then
