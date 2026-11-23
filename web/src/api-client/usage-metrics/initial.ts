@@ -1,5 +1,5 @@
 import type { ResolvedConfig } from '../config.js';
-import { ProtocolError, ValidationError } from '../errors.js';
+import { ApiError, ProtocolError, ValidationError } from '../errors.js';
 import { request, type OperationOptions } from '../http.js';
 import { segment } from '../resources.js';
 import { array, object, optional, type Output } from '../schema.js';
@@ -108,6 +108,16 @@ export type UsageInitialReport = Output<typeof initialReport>;
 export interface UsageInitialView {
   readonly view: UsageMetricView;
   readonly initial?: UsageInitialData;
+}
+/** Only an explicitly missing initial route permits the legacy report path. */
+export function isUsageInitialUnavailable(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    ((error.status === 501 && error.code === 'report_view_disabled') ||
+      (error.status === 404 &&
+        error.code === undefined &&
+        Object.keys(error.extensions).length === 0))
+  );
 }
 const base = (admin: boolean) => `/api/v1/${admin ? 'admin/' : ''}usage/metrics/initial`;
 

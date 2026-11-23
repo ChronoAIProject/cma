@@ -1,4 +1,13 @@
-import { ApiError, ProtocolError, type UsageMetricReport } from '@cma/client';
+import {
+  ApiError,
+  ProtocolError,
+  isUsageInitialUnavailable,
+  type UsageInitialData,
+  type UsageInitialProjection,
+  type UsageInitialReport,
+  type UsageMetricReport,
+  type UsageMetricViewQuery,
+} from '@cma/client';
 import { metricQuery, type MetricsClient, type Selection } from './model';
 import { metricsFailure } from './failure';
 import {
@@ -46,6 +55,9 @@ function commitLatest(
   if (view.report.status !== 'ready' || !view.report.summary) throw new Error('Report failed');
   validateReport(view.report, principal, admin);
   entry.report = view.report;
+  entry.initial = undefined;
+  entry.initialProjection = undefined;
+  entry.initialPending = false;
   entry.generatedAt = view.generated_at ?? undefined;
   entry.stale = view.stale || view.refresh.state !== 'idle';
   entry.latestPending = view.refresh.state === 'pending';
@@ -57,6 +69,123 @@ function commitLatest(
   entry.completedAt = Date.now();
   if (view.refresh.state !== 'pending') entry.observationStartedAt = 0;
   notify(entry);
+}
+
+function initialProjection(selection: Selection, measured: boolean): UsageInitialProjection {
+  return {
+    first_page: { limit: 50, sort: selection.sort, order: selection.order },
+    total_metrics: measured ? ['cpu', 'memory', 'disk'] : [],
+  };
+}
+
+function commitInitial(
+  entry: ReportEntry,
+  report: UsageMetricReport,
+  initial: UsageInitialData | undefined,
+  projection: UsageInitialProjection,
+  principal: string | undefined,
+  admin: boolean,
+) {
+  if (report.status !== 'ready' || !report.summary || !initial)
+    throw new ProtocolError('Initial report is incomplete');
+  validateReport(report, principal, admin);
+  entry.report = report;
+  entry.initial = initial;
+  entry.initialProjection = projection;
+  entry.initialPending = false;
+  entry.generatedAt = undefined;
+  entry.stale = false;
+  entry.latestPending = false;
+  entry.refreshReportId = undefined;
+  entry.pending = undefined;
+  entry.pollAt = 0;
+  entry.error = undefined;
+  entry.retryAt = 0;
+  entry.completedAt = Date.now();
+  entry.observationStartedAt = 0;
+  notify(entry);
+}
+
+async function observeInitialPending(
+  api: MetricsClient,
+  entry: ReportEntry,
+  signal: AbortSignal,
+  principal: string | undefined,
+  admin: boolean,
+  projection: UsageInitialProjection,
+) {
+  const id = entry.refreshReportId;
+  if (!id || !api.initialReport) throw new ProtocolError('Missing initial report reader');
+  while (true) {
+    if (entry.pollAt > Date.now()) await waitForRetry(entry.pollAt - Date.now(), signal);
+    const result: UsageInitialReport = await observeReport<UsageInitialReport>(
+      api,
+      entry,
+      signal,
+      (requestSignal) => api.initialReport!(id, projection, { signal: requestSignal }),
+    );
+    signal.throwIfAborted();
+    validateReport(result.report, principal, admin);
+    if (result.report.report_id !== id) throw new ProtocolError('Initial report identity changed');
+    if (result.report.status === 'ready') {
+      commitInitial(entry, result.report, result.initial, projection, principal, admin);
+      return;
+    }
+    if (result.report.status !== 'pending') throw new ApiError(503, 'Report generation failed');
+    entry.pending = result.report;
+    entry.initialPending = true;
+    entry.pollAt = Date.now() + retryAfterMilliseconds(result.report);
+    notify(entry);
+  }
+}
+
+async function loadInitial(
+  api: MetricsClient,
+  selection: Selection,
+  admin: boolean,
+  entry: ReportEntry,
+  signal: AbortSignal,
+  principal: string | undefined,
+  forceRefresh: boolean,
+  measured: boolean,
+): Promise<boolean> {
+  if (!api.createInitial || !api.initialReport) return false;
+  const projection = initialProjection(selection, measured);
+  if (entry.initialPending && entry.refreshReportId) {
+    await observeInitialPending(api, entry, signal, principal, admin, projection);
+    return true;
+  }
+  const query = metricQuery(selection, admin);
+  const result: UsageInitialReport =
+    selection.range !== '1h' && api.latestInitial
+      ? await observeReport<UsageInitialReport>(api, entry, signal, async (requestSignal) => {
+          const view = await api.latestInitial!(
+            {
+              selection: latestQuery(selection, admin, forceRefresh) as UsageMetricViewQuery,
+              projection,
+            },
+            { signal: requestSignal },
+          );
+          return { report: view.view.report, initial: view.initial };
+        })
+      : await observeReport<UsageInitialReport>(api, entry, signal, (requestSignal) =>
+          api.createInitial!({ query, projection }, { signal: requestSignal }),
+        );
+  signal.throwIfAborted();
+  validateReport(result.report, principal, admin);
+  if (result.report.status === 'ready') {
+    commitInitial(entry, result.report, result.initial, projection, principal, admin);
+    return true;
+  }
+  if (result.report.status !== 'pending') throw new ProtocolError('Report failed');
+  entry.pending = result.report;
+  entry.initialPending = true;
+  entry.refreshReportId = result.report.report_id;
+  entry.pollAt = Date.now() + retryAfterMilliseconds(result.report);
+  entry.refreshing = true;
+  notify(entry);
+  await observeInitialPending(api, entry, signal, principal, admin, projection);
+  return true;
 }
 
 async function loadLatest(
@@ -168,6 +297,9 @@ async function loadLegacy(
   if (report.status !== 'ready' || !report.summary) throw new Error('Report failed');
   validateReport(report, principal, admin);
   entry.report = report;
+  entry.initial = undefined;
+  entry.initialProjection = undefined;
+  entry.initialPending = false;
   entry.generatedAt = undefined;
   entry.latestPending = false;
   entry.pollAt = 0;
@@ -190,6 +322,8 @@ export function startReportLoad(
   forceRefresh: boolean,
   principal: string | undefined,
   background = false,
+  measured = false,
+  initialEnabled = false,
 ) {
   if (entry.authorityBlocked || entry.stopped) return () => {};
   let released = false;
@@ -227,23 +361,34 @@ export function startReportLoad(
     // A deliberate retry may start a replacement, but never erase a server floor.
     if (entry.pollAt > Date.now()) await waitForRetry(entry.pollAt - Date.now(), signal);
     const latestClient = api as LatestMetricsClient;
+    let usedInitial = false;
     let usedLatest = false;
     try {
-      usedLatest = await loadLatest(
-        latestClient,
-        selection,
-        admin,
-        entry,
-        signal,
-        principal,
-        forceRefresh,
-        background,
-      );
+      usedInitial = initialEnabled
+        ? await loadInitial(api, selection, admin, entry, signal, principal, forceRefresh, measured)
+        : false;
     } catch (error) {
-      if (background || !unsupportedLatestRoute(error)) throw error;
+      if (background || !isUsageInitialUnavailable(error)) throw error;
+    }
+    if (!usedInitial) {
+      try {
+        usedLatest = await loadLatest(
+          latestClient,
+          selection,
+          admin,
+          entry,
+          signal,
+          principal,
+          forceRefresh,
+          background,
+        );
+      } catch (latestError) {
+        if (background || !unsupportedLatestRoute(latestError)) throw latestError;
+      }
     }
     signal.throwIfAborted();
-    if (!usedLatest) await loadLegacy(api, selection, admin, entry, signal, principal);
+    if (!usedInitial && !usedLatest)
+      await loadLegacy(api, selection, admin, entry, signal, principal);
   })();
   entry.inFlight = run;
   void run

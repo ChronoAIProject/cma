@@ -14,6 +14,7 @@ export type {
   UsageInitialView,
   UsageInitialData,
 } from './initial.js';
+export { isUsageInitialUnavailable } from './initial.js';
 import { latestView, type UsageMetricViewQuery } from './view.js';
 export { isUsageViewUnavailable, type UsageMetricViewQuery, type UsageMetricView } from './view.js';
 import type { ResolvedConfig } from '../config.js';
