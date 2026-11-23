@@ -49,6 +49,8 @@ pub(crate) mod platform;
 mod sweep;
 #[path = "reconciliation_telemetry.rs"]
 mod telemetry;
+#[path = "reconciliation_transient.rs"]
+mod transient;
 
 pub(crate) trait ReconciliationStore:
     SandboxReconciliationStore + SandboxMaintenanceStore + SandboxStore
@@ -444,7 +446,11 @@ fn fresh_recovery_boundary(sandbox: &Sandbox, floor: SystemTime) -> RecoveryBoun
 }
 
 fn provider_error(error: layer3_adapter::AdapterError) -> SandboxStoreError {
-    SandboxStoreError::Unavailable(format!("sandbox runtime authority is unavailable: {error}"))
+    let mapped = SandboxStoreError::Unavailable(format!(
+        "sandbox runtime authority is unavailable: {error}"
+    ));
+    transient::note(&error, &mapped);
+    mapped
 }
 
 fn corrupt(detail: &str) -> SandboxStoreError {
