@@ -19,6 +19,7 @@ pub(super) struct Store {
     pub(super) heartbeat_mode: AtomicUsize,
     pub(super) heartbeat_starts: StdMutex<Vec<Instant>>,
     pub(super) calls: AtomicUsize,
+    pub(super) releases: AtomicUsize,
     active: AtomicUsize,
     pub(super) maximum: AtomicUsize,
     pub(super) gate: AtomicBool,
@@ -94,6 +95,7 @@ impl OwnershipStore for Store {
         self.inner.acquire(id, instance).await
     }
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
+        self.releases.fetch_add(1, Ordering::SeqCst);
         self.inner.release(token).await
     }
     async fn check(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
@@ -159,6 +161,7 @@ impl Fixture {
             heartbeat_mode: AtomicUsize::new(0),
             heartbeat_starts: StdMutex::new(Vec::new()),
             calls: AtomicUsize::new(0),
+            releases: AtomicUsize::new(0),
             active: AtomicUsize::new(0),
             maximum: AtomicUsize::new(0),
             gate: AtomicBool::new(false),

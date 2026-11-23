@@ -1,6 +1,8 @@
 use super::super::authority::ReceiverCancellation;
 use super::*;
 
+#[path = "coordinator_late_renewal_tests.rs"]
+mod late_reply;
 #[path = "coordinator_renewal_test_support.rs"]
 mod support;
 use support::{Fixture, Reply};

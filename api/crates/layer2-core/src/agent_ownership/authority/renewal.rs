@@ -92,7 +92,9 @@ impl Authority {
 
     fn validate_renewal(&self, lease: &OwnershipLease) -> Result<(), OwnershipError> {
         if lease.token != self.token {
-            return Err(OwnershipError::Stale);
+            return Err(OwnershipError::Invalid(
+                "renewal returned a different ownership token".into(),
+            ));
         }
         if lease.expires_at_ms <= 0 {
             return Err(OwnershipError::Invalid(
