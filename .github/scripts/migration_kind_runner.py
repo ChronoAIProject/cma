@@ -160,6 +160,7 @@ class Campaign:
         if node_image != KIND_NODE and not KIND_NODE_PINNED.fullmatch(node_image):
             raise RunnerError("kind node image must be pinned by digest")
         self.node_image = node_image
+        self.image_store = None
         self.output = Path(output)
         self.output.mkdir(parents=True, exist_ok=True)
         self.kind = kind_bin
@@ -205,6 +206,30 @@ class Campaign:
         # Readers need the original JSON. Only retained evidence is redacted.
         return proc.stdout
 
+    def containerd_store(self):
+        """Whether Docker keeps images in its containerd store (#1327).
+
+        That store cannot `kind load docker-image` a multi-platform image such
+        as the Mongo and Python dependencies, so it exports only linux/amd64.
+        """
+        if self.image_store is None:
+            status = self.command(["docker", "info", "--format", "{{json .DriverStatus}}"], timeout=30)
+            self.image_store = "containerd" if "io.containerd.snapshotter" in status else "classic"
+        return self.image_store == "containerd"
+
+    def load_image(self, image):
+        if not self.containerd_store():
+            self.command([self.kind, "load", "docker-image", "--name", self.cluster, image], timeout=300)
+            return
+        archive = self.output / f"image-{len(self.commands):04d}.private.tar"
+        try:
+            self.command(["docker", "save", "--platform", "linux/amd64", "--output", str(archive), image],
+                         timeout=300)
+            self.command([self.kind, "load", "image-archive", "--name", self.cluster, str(archive)],
+                         timeout=300)
+        finally:
+            archive.unlink(missing_ok=True)
+
     def kubectl(self, args, **kwargs):
         return self.command(["kubectl", "--kubeconfig", str(self.kubeconfig), "--context", f"kind-{self.cluster}"] + args, **kwargs)
 
@@ -230,7 +255,7 @@ class Campaign:
         self.command([self.kind, "create", "cluster", "--name", self.cluster, "--config", str(config_path),
                       "--kubeconfig", str(self.kubeconfig), "--wait", "120s"], timeout=240)
         for image in self.images:
-            self.command([self.kind, "load", "docker-image", "--name", self.cluster, image], timeout=300)
+            self.load_image(image)
         infrastructure = []
         api_manifest = None
         for obj in manifests:
