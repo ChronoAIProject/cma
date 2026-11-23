@@ -1,6 +1,9 @@
 //! Full semantic audits must revoke a disproved, previously trusted checkpoint.
 use super::*;
 
+#[path = "semantic_ingress.rs"]
+pub(super) mod ingress;
+
 pub(in crate::store) async fn audit_checkpoint(
     store: &MongoSandboxStore,
     agent: &Agent,
