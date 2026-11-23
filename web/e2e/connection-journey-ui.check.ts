@@ -75,9 +75,7 @@ for (const [caseId, variant] of [
         const returnLink = page.getByRole('link', { name: 'Return to CMA', exact: true });
         await expect(returnLink).toHaveAttribute('href', `/launches/${launch.id}`);
         expect([null, '_self']).toContain(await returnLink.getAttribute('target'));
-        const verification = journey.verification(page);
-        await returnLink.click();
-        await verification;
+        await journey.returnFromSameTab(page);
       } else {
         const verification = journey.verification(page);
         await popup!.getByRole('link', { name: 'Complete connection', exact: true }).click();
