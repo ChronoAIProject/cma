@@ -31,6 +31,7 @@ import { agentFilesClient } from './rest/agentFiles';
 import { documentsClient } from './rest/documents';
 import { computerClient } from './rest/computer';
 import { exportRawHistory } from './rest/history';
+import { readReplyPreview } from './rest/replyPreview';
 import { BusinessReadError, readBusinessProblem } from './rest/businessReadProblem';
 
 /** The write succeeded; a failed detail read must not release its command key. */
@@ -299,6 +300,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       };
     },
     readRetainedOutput: (id, options) => sdk.agents.retainedOutput(id, options),
+    readAgentReplyPreview: (id, options) => readReplyPreview(sdk, id, options),
     readAgentTranscript: async (id, options) => {
       const value = await sdk.agents.transcript(id, options);
       return {

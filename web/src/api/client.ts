@@ -295,6 +295,10 @@ export interface CmaWebClient {
     id: string,
     options?: import('@cma/client').RetainedOutputOptions,
   ) => Promise<import('@cma/client').RetainedOutputPage>;
+  readonly readAgentReplyPreview?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<import('./replyPreview').ReplyPreview>;
   readAgentTranscript(
     id: string,
     options?: ReadOptions & {
