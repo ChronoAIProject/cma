@@ -62,6 +62,9 @@ jobs:
         name: "Synthetic home restore evidence regressions"
         run: "node --test .github/scripts/home-backup/*.test.mjs"
       -
+        name: "Auto-pause core and native observer regressions"
+        run: "node --test .github/scripts/autopause-100/*.test.mjs"
+      -
         name: "Audit exception policy regressions"
         run: "node --test .github/scripts/audit-policy.test.mjs"
       -
