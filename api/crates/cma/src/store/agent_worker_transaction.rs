@@ -45,6 +45,12 @@ mod prepared_open_ready;
 #[cfg(test)]
 mod prepared_open_ready_tests;
 
+tokio::task_local! {
+    /// Bound a cleanup preflight requeue and any reserve publication to the
+    /// same original work lease, independently of the Agent owner lease.
+    pub(crate) static CLEANUP_RETRY_DEADLINE: tokio::time::Instant;
+}
+
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct PublicationReceipt {
     pub(super) segmented: Option<super::agent_log_segments::writer_commit::Recorded>,

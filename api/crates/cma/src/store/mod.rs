@@ -56,6 +56,7 @@ mod agent_worker_store;
 mod agent_worker_transaction;
 #[cfg(test)]
 pub(crate) use agent_worker_transaction::skill_result_test_support;
+pub(crate) use agent_worker_transaction::CLEANUP_RETRY_DEADLINE;
 mod agent_worktree_recovery;
 mod agent_worktree_recovery_records;
 mod agent_write_coordination;
@@ -170,6 +171,8 @@ mod worker_runtime_supervision_tests;
 pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_normal_capacity as fill_agent_capacity_fixture;
 #[cfg(test)]
 pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_to as fill_agent_capacity_to_fixture;
+#[cfg(test)]
+pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fingerprint as agent_capacity_fixture_fingerprint;
 #[cfg(test)]
 mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;

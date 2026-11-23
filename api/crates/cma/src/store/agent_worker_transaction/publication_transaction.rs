@@ -75,7 +75,15 @@ async fn run(
     };
     ensure_append_batch_size(mutation.agent_logs.len())?;
     let mut timing = contention::PublicationTiming::new(&mutation);
-    let _writer = store.agent_writes.lock(&mutation.agent.id).await;
+    let deadline = CLEANUP_RETRY_DEADLINE.try_with(|deadline| *deadline).ok();
+    let _writer = match deadline {
+        Some(deadline) => store
+            .agent_writes
+            .lock_until(&mutation.agent.id, deadline)
+            .await
+            .ok_or(SandboxStoreError::Conflict)?,
+        None => store.agent_writes.lock(&mutation.agent.id).await,
+    };
     timing.acquired();
     let mut history_cache = publication_history::AttemptHistory::default();
     let mut last_transient = None;
@@ -83,6 +91,9 @@ async fn run(
     for attempt in 0..limit {
         timing.attempt();
         contention::backoff(attempt, jitter).await;
+        if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+            return Err(SandboxStoreError::Conflict);
+        }
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
             Err(error) if positively_aborted(&error) => {
@@ -138,6 +149,12 @@ async fn run(
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
+        // Once commit is sent, the original transaction must settle or
+        // reconcile even if the work lease expires while waiting for Mongo.
+        if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+            let _ = session.abort_transaction().await;
+            return Err(SandboxStoreError::Conflict);
+        }
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
                 history_cache.committed(store);

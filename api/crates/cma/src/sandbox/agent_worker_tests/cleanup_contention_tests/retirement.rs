@@ -11,8 +11,14 @@ use mongodb::{
 use tower::ServiceExt;
 
 mod outcomes;
+mod retry_guards;
 
 const LEASE: Duration = Duration::from_secs(18 * 60);
+
+type PublicationBarrier = (
+    tokio::sync::oneshot::Sender<()>,
+    std::sync::mpsc::Receiver<()>,
+);
 
 struct Fixture {
     h: Harness<MongoSandboxStore>,
@@ -21,6 +27,7 @@ struct Fixture {
     routes: Router,
     agent: Agent,
     commit_session: Arc<Mutex<Option<Document>>>,
+    publication_barrier: Arc<Mutex<Option<PublicationBarrier>>>,
 }
 
 impl Fixture {
@@ -38,6 +45,8 @@ impl Fixture {
         options.app_name = Some(app_name.clone());
         let commit_session = Arc::new(Mutex::new(None));
         let observed = commit_session.clone();
+        let publication_barrier = Arc::new(Mutex::new(None::<PublicationBarrier>));
+        let barrier = publication_barrier.clone();
         options.command_event_handler = Some(EventHandler::callback(move |event| {
             let CommandEvent::Started(event) = event else {
                 return;
@@ -45,6 +54,15 @@ impl Fixture {
             if event.command_name == "commitTransaction" {
                 *observed.lock().unwrap() =
                     Some(event.command.get_document("lsid").unwrap().clone());
+            }
+            if matches!(event.command.get_bool("startTransaction"), Ok(true)) {
+                let pending = barrier.lock().unwrap().take();
+                if let Some((entered, release)) = pending {
+                    tokio::task::block_in_place(|| {
+                        entered.send(()).unwrap();
+                        release.recv_timeout(Duration::from_secs(15)).unwrap();
+                    });
+                }
             }
         }));
         let client = Client::with_options(options).unwrap();
@@ -91,6 +109,7 @@ impl Fixture {
             routes,
             agent,
             commit_session,
+            publication_barrier,
         }
     }
 
@@ -227,14 +246,14 @@ impl Fixture {
                 .count(),
             1
         );
-        assert_eq!(
-            self.logs()
-                .await
-                .iter()
-                .filter(|entry| matches!(entry.kind, AgentLogKind::Deleted))
-                .count(),
-            1
-        );
+        let tail = self
+            .h
+            .store
+            .agent_log_entry(&deleted.id, deleted.conversation.last_seq)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(tail.kind, AgentLogKind::Deleted));
     }
 
     async fn converge(&self, worker: &AgentWorker, now: SystemTime) {

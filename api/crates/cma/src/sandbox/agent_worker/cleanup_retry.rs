@@ -5,6 +5,7 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Agent, AgentWorkStep};
 
 use super::{cleanup::CleanupPreflightError, support::WorkerFailure, AgentWorker};
+use crate::store::CLEANUP_RETRY_DEADLINE;
 
 impl AgentWorker {
     pub(super) async fn finish_cleanup_preflight(
@@ -26,7 +27,26 @@ impl AgentWorker {
             ),
             CleanupPreflightError::Read(error) => return Err(error),
         };
-        self.requeue_cleanup(claimed, failure, now, self.config.retry_delay)
+        let started = tokio::time::Instant::now();
+        let remaining = claimed
+            .work
+            .lease
+            .as_ref()
+            .and_then(|lease| layer2_core::seconds_from_rfc3339(&lease.expires_at))
+            .and_then(|seconds| SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
+            .and_then(|expires| expires.duration_since(now).ok())
+            .ok_or(SandboxStoreError::Conflict)?;
+        let deadline = started
+            .checked_add(remaining)
+            .ok_or(SandboxStoreError::Conflict)?;
+        CLEANUP_RETRY_DEADLINE
+            .scope(deadline, async {
+                let result = self
+                    .requeue_cleanup(claimed, failure, now, self.config.retry_delay)
+                    .await;
+                self.finish_capacity_attempt(claimed, result, now + started.elapsed())
+                    .await
+            })
             .await
     }
 
@@ -58,6 +78,12 @@ impl AgentWorker {
     ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
         for attempt in 0..8 {
+            if CLEANUP_RETRY_DEADLINE
+                .try_with(|deadline| tokio::time::Instant::now() >= *deadline)
+                .unwrap_or(false)
+            {
+                return Err(SandboxStoreError::Conflict);
+            }
             let current = self
                 .dependencies
                 .store
