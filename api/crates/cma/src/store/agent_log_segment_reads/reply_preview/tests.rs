@@ -43,10 +43,11 @@ impl Trace {
 async fn store() -> (MongoSandboxStore, mongodb::Database, Arc<Trace>) {
     let trace = Arc::new(Trace::default());
     let seen = trace.clone();
+    let name = format!("cma_preview_{}", uuid::Uuid::new_v4().simple());
     let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
-    options.app_name = Some("cma-preview-deadline".into());
+    options.app_name = Some(name.clone());
     options.command_event_handler = Some(EventHandler::callback(move |event| {
         if !seen.enabled.load(SeqCst) {
             return;
@@ -77,7 +78,6 @@ async fn store() -> (MongoSandboxStore, mongodb::Database, Arc<Trace>) {
         }
     }));
     let client = Client::with_options(options).unwrap();
-    let name = format!("cma_preview_{}", uuid::Uuid::new_v4().simple());
     let db = client.database(&name);
     schema::migrate(&db).await.unwrap();
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
@@ -394,7 +394,7 @@ async fn deadline_cancels_source_work_without_followup_queries_or_writes() {
     let control = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
-    control.database("admin").run_command(doc! {"configureFailPoint":"failCommand","mode":{"times":1},"data":{"failCommands":["find"],"appName":"cma-preview-deadline","blockConnection":true,"blockTimeMS":2500}}).await.unwrap();
+    control.database("admin").run_command(doc! {"configureFailPoint":"failCommand","mode":{"times":1},"data":{"failCommands":["find"],"appName":db.name(),"blockConnection":true,"blockTimeMS":2500}}).await.unwrap();
     trace.reset();
     let before = std::time::Instant::now();
     assert_eq!(

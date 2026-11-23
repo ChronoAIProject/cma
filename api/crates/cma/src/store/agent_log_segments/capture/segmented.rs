@@ -146,7 +146,7 @@ pub(super) async fn read(
     if let Some(budget) = budget {
         budget.check()?;
     }
-    if let Some(read) = read {
+    if let Some(read) = read.as_mut() {
         read.complete();
     }
     Ok(captured)
@@ -212,7 +212,7 @@ async fn latest(
             raw.as_bytes(),
         ),
     )?;
-    if let Some(read) = read {
+    if let Some(read) = read.as_mut() {
         read.complete();
     }
     Ok(entry)

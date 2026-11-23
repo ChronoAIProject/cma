@@ -236,7 +236,7 @@ pub(super) async fn containing_from(
             seal.ordinal + 1,
             session,
             snapshot,
-            budget.as_deref_mut(),
+            budget,
         )
         .await?;
         next.follows(&seal)?;
