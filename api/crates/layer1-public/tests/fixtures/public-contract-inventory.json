@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 305,
+  "openapi_operations": 311,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -1968,7 +1968,8 @@
         "not_authenticated",
         "resource_access_unavailable",
         "resource_forbidden",
-        "resource_not_found"
+        "resource_not_found",
+        "resource_revocation_pending"
       ]
     },
     "GET /api/v1/gateway/channel-records": {
@@ -4153,6 +4154,70 @@
         "admission_ceilings_writes_unavailable",
         "invalid_request",
         "pending_homes_conflict"
+      ]
+    },
+    "POST /api/v1/resource-revocations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_revocations.rs# Owner-authorized revocation creation and status preserve pending outcomes and original keys.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_not_found",
+        "resource_revocation_unavailable",
+        "missing_idempotency_key",
+        "invalid_share_command",
+        "idempotency_key_reused",
+        "resource_revocation_conflict",
+        "resource_revocation_capacity"
+      ]
+    },
+    "GET /api/v1/resource-revocations/{operation_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_revocations.rs# Owner-authorized revocation creation and status preserve pending outcomes and original keys.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_not_found",
+        "resource_revocation_unavailable"
+      ]
+    },
+    "GET /api/v1/account/privacy-export": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/privacy_export.rs# Verified, personal account export and bounded retained history.",
+      "required_problems": [
+        "privacy_export_owner_session_required",
+        "privacy_export_invalid_page"
+      ]
+    },
+    "GET /api/v1/account/privacy-export/agents/{id}/transcript": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/privacy_export.rs# Verified, personal account export and bounded retained history.",
+      "required_problems": [
+        "privacy_export_owner_session_required",
+        "privacy_export_source_unavailable",
+        "privacy_export_page_too_large"
+      ]
+    },
+    "GET /api/v1/account/legal-consent": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/legal_consent.rs# Owner-only legal consent reads and acceptance of the exact published version use typed refusals.",
+      "required_problems": [
+        "not_authenticated",
+        "legal_consent_requires_owner_session",
+        "legal_terms_not_configured",
+        "store_failed"
+      ]
+    },
+    "PUT /api/v1/account/legal-consent": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/legal_consent.rs# Owner-only legal consent reads and acceptance of the exact published version use typed refusals.",
+      "required_problems": [
+        "not_authenticated",
+        "legal_consent_requires_owner_session",
+        "legal_terms_not_configured",
+        "legal_terms_version_mismatch",
+        "legal_consent_sign_in_required",
+        "invalid_json",
+        "json_content_type_required",
+        "store_failed"
       ]
     }
   },

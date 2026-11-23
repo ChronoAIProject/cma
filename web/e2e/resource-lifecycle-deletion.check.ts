@@ -1,3 +1,4 @@
+import { registerDeletionConfirmationCases } from './redesign-deletion.cases';
 import { test, expect } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import {
@@ -161,7 +162,12 @@ for (const width of [1440, 390]) {
       await expect(confirm).toBeVisible();
       expect(deletes).toEqual([]);
       await confirm.getByRole('checkbox').check();
-      await confirm.getByRole('button', { name: `Delete ${kind}`, exact: true }).click();
+      await confirm
+        .getByRole('button', {
+          name: kind === 'Sandbox' ? 'Request deletion' : `Delete ${kind}`,
+          exact: true,
+        })
+        .click();
       await expect(
         page.getByText(`${kind} delete request accepted. Cleanup continues in the background.`, {
           exact: true,
@@ -239,3 +245,5 @@ for (const width of [1440, 390]) {
     });
   }
 }
+
+registerDeletionConfirmationCases();

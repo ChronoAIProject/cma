@@ -57,11 +57,12 @@ impl RuntimeServices {
                     .clone()
                     .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
             )
-            .with_target_fencing(config.agent_manager_replicas.is_some()),
+            .with_target_fencing(config.agent_manager_replicas.is_some())
+            .with_released_runtime(stores.released_runtime.clone()),
             updates: Arc::new(
-                layer2_core::sandbox::SandboxRuntimeUpdateService::new(
+                layer2_core::sandbox::SandboxRuntimeUpdateService::with_released(
                     stores.sandbox_model.clone(),
-                    config.runtime.sandbox_image.clone(),
+                    stores.released_runtime.clone(),
                 )
                 .with_unpublished_recovery(Arc::new(
                     crate::sandbox::unpublished_recovery::UnpublishedRuntimeRecovery::new(
@@ -92,6 +93,7 @@ pub(super) fn lifecycle_config(
     config: &Config,
     holder: String,
     ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    stores: &MongoStores,
 ) -> crate::sandbox::SandboxLifecycleConfig {
     crate::sandbox::SandboxLifecycleConfig {
         renewable_work: config.agent_manager_replicas.is_some(),
@@ -110,6 +112,11 @@ pub(super) fn lifecycle_config(
         access_transport_migration: config.agent_access_transport_migration.clone(),
         managed_documents_enabled: config.document_storage.is_some(),
         event_driven_reconciliation: config.features.event_driven_reconciliation,
+        stale_turn_reconciliation: config.features.stale_turn_reconciliation,
+        skip_ineligible_reconciliation: config
+            .agent_manager_replicas
+            .as_ref()
+            .is_some_and(|replicas| replicas.skip_ineligible_reconciliation),
         sandbox_reconciliation_reserved_lane: config.features.sandbox_reconciliation_reserved_lane,
         home_policy: config
             .runtime
@@ -119,7 +126,7 @@ pub(super) fn lifecycle_config(
         execution: config.execution,
         holder,
         deployment_id: config.deployment_id.clone(),
-        runtime_version: config.runtime.sandbox_image.clone(),
+        released: stores.released_runtime.clone(),
         title_model: config.default_profiles.agent_model.clone(),
     }
 }

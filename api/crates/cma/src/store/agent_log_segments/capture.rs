@@ -20,6 +20,7 @@ use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::Mong
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::store) enum CaptureMode {
     Snapshot,
+    PrivacyExport,
     // Production transaction capture requires the exclusive TransactionScope.
     // Retain the invalid raw-mode token only for refusal qualification tests.
     #[cfg(test)]
@@ -96,7 +97,7 @@ pub(in crate::store) async fn capture(
     session: &mut ClientSession,
     mode: CaptureMode,
 ) -> Result<CapturedLog, TransactionLogError> {
-    if mode != CaptureMode::Snapshot {
+    if !matches!(mode, CaptureMode::Snapshot | CaptureMode::PrivacyExport) {
         return Err(pending());
     }
     let (row, at) = snapshot::agent(store, current, session).await?;
@@ -109,6 +110,12 @@ pub(in crate::store) async fn capture(
         at,
         database: store.agents.namespace().db,
     };
+    if mode == CaptureMode::PrivacyExport {
+        if super::read_format(&row)?.is_none() {
+            return Err(pending());
+        }
+        return segmented::read(store, current, &row, session, context, true, true).await;
+    }
     source(store, current, &row, session, context, true).await
 }
 
@@ -149,7 +156,7 @@ async fn source(
     snapshot: bool,
 ) -> Result<CapturedLog, TransactionLogError> {
     if super::read_format(row)?.is_some() {
-        segmented::read(store, current, row, session, context, snapshot).await
+        segmented::read(store, current, row, session, context, snapshot, false).await
     } else {
         legacy::read(store, current, row, session, context, snapshot).await
     }

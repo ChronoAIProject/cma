@@ -222,11 +222,7 @@ fn proxy_router(
     model_proxy: bool,
     model_credit_required: bool,
 ) -> Router {
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(600))
-        .build()
-        .expect("credential proxy HTTP client builds");
+    let client = proxy_client(reqwest::Client::builder());
     let state = ProxyState {
         target,
         credential,
@@ -236,6 +232,14 @@ fn proxy_router(
         model_credit_required,
     };
     Router::new().fallback(any(forward)).with_state(state)
+}
+
+fn proxy_client(builder: reqwest::ClientBuilder) -> reqwest::Client {
+    builder
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .expect("credential proxy HTTP client builds")
 }
 
 async fn forward(State(state): State<ProxyState>, request: Request) -> Response {

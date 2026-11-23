@@ -45,7 +45,9 @@ pub(super) fn monitor(
                 }
             };
             let Some(input) = current_input(&registry, &attachment) else {
-                return;
+                // Recovery may already record output while its command route
+                // awaits publication. The consumer owns and cancels this monitor.
+                continue;
             };
             let guard = Arc::new(BudgetInterruptGuard {
                 registry: registry.clone(),
@@ -82,7 +84,7 @@ fn current_input(
                 && entry.nonce == attachment.nonce
                 && entry.conversation_id == attachment.conversation_id
         })
-        .map(|entry| entry.input.clone())
+        .and_then(|entry| entry.input.sender().cloned())
 }
 
 struct BudgetInterruptGuard {

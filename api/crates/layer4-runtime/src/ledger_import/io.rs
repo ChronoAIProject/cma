@@ -9,14 +9,14 @@ use std::path::{Component, Path};
 use super::{changed, invalid, invalid_guard, invalid_io, Budget};
 use crate::failure::Result;
 
-pub(super) struct Directory(pub(super) File);
+pub(crate) struct Directory(pub(super) File);
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Identity {
+pub(crate) struct Identity {
     pub(super) device: u64,
     pub(super) inode: u64,
-    pub(super) bytes: u64,
+    pub(crate) bytes: u64,
     mode: u32,
     links: u64,
     modified: (i64, i64),
@@ -176,7 +176,7 @@ impl Directory {
         Ok((value, crate::command::hex(&reader.hash.finalize())))
     }
 
-    pub(super) fn open(path: &Path) -> Result<Self> {
+    pub(crate) fn open(path: &Path) -> Result<Self> {
         if !path.is_absolute() {
             return Err(invalid_guard("io.open.absolute_path"));
         }
@@ -198,7 +198,7 @@ impl Directory {
         Ok(directory)
     }
 
-    pub(super) fn identity(&self) -> Result<Identity> {
+    pub(crate) fn identity(&self) -> Result<Identity> {
         Ok(self
             .0
             .metadata()
@@ -206,9 +206,13 @@ impl Directory {
             .into())
     }
 
-    pub(super) fn child(&self, name: &str) -> Result<Option<Self>> {
+    pub(crate) fn child(&self, name: &str) -> Result<Option<Self>> {
         self.open_at(name, libc::O_DIRECTORY)
             .map(|file| file.map(Self))
+    }
+
+    pub(crate) fn open_file(&self, name: &str) -> Result<Option<File>> {
+        self.open_at(name, 0)
     }
 
     pub(super) fn open_at(&self, name: &str, flags: i32) -> Result<Option<File>> {
@@ -237,7 +241,7 @@ impl Directory {
         Ok(Some(unsafe { File::from_raw_fd(fd) }))
     }
 
-    pub(super) fn names(&self, budget: &mut Budget) -> Result<Vec<String>> {
+    pub(crate) fn names(&self, budget: &mut Budget) -> Result<Vec<String>> {
         // Opening "." creates an independent enumeration offset. dup() would
         // share the original descriptor's offset across a repeated scan.
         let dot = c".";
@@ -308,13 +312,35 @@ impl Directory {
         Ok(names)
     }
 
-    pub(super) fn read(
+    pub(crate) fn read(
         &self,
         name: &str,
         maximum: u64,
         budget: &mut Budget,
     ) -> Result<(Identity, Vec<u8>)> {
+        self.read_checked(name, maximum, budget, false)
+    }
+
+    pub(crate) fn read_only_record(
+        &self,
+        name: &str,
+        maximum: u64,
+        budget: &mut Budget,
+    ) -> Result<(Identity, Vec<u8>)> {
+        self.read_checked(name, maximum, budget, true)
+    }
+
+    fn read_checked(
+        &self,
+        name: &str,
+        maximum: u64,
+        budget: &mut Budget,
+        read_only: bool,
+    ) -> Result<(Identity, Vec<u8>)> {
         let mut file = self.open_at(name, 0)?.ok_or_else(changed)?;
+        if read_only && !mounted_read_only(&file)? {
+            return Err(invalid());
+        }
         let metadata = file
             .metadata()
             .map_err(|e| invalid_io("io.read.fstat", e))?;
@@ -363,5 +389,24 @@ fn set_errno(value: i32) {
     #[cfg(target_os = "macos")]
     unsafe {
         *libc::__error() = value;
+    }
+}
+
+pub(crate) fn mounted_read_only(file: &File) -> Result<bool> {
+    let mut status = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: file owns a live descriptor and fstatvfs initializes status on success.
+    if unsafe { libc::fstatvfs(file.as_raw_fd(), status.as_mut_ptr()) } != 0 {
+        return Err(invalid_io(
+            "io.mount.fstatvfs",
+            std::io::Error::last_os_error(),
+        ));
+    }
+    // SAFETY: the successful call initialized status.
+    Ok(unsafe { status.assume_init() }.f_flag & libc::ST_RDONLY != 0)
+}
+
+impl Directory {
+    pub(crate) fn mounted_read_only(&self) -> Result<bool> {
+        mounted_read_only(&self.0)
     }
 }

@@ -307,6 +307,16 @@ pub trait HostedBackend: Send + Sync {
         ))
     }
 
+    /// A persisted home supplies identity only; adoption still proves live authority.
+    async fn adopt_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeObservation>> {
+        self.adopt(handle, request).await
+    }
+
     /// Optional native optimization. None selects the unchanged full adoption path.
     /// The returned observation must include status; caller rechecks home afterward.
     async fn inspect_native_runtime(

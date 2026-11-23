@@ -108,6 +108,12 @@ impl<T> AdmittedOperation<'_, T> {
         self.storage.belongs_to(policy)
     }
 
+    /// Compare the future storage's root and optional attachment before polling.
+    /// Returned envelopes, payloads and dynamic errors need separate checks.
+    pub fn shares_custody_domain(&self, policy: &IngressOwnershipPolicy) -> bool {
+        self.storage.shares_custody_domain(policy)
+    }
+
     pub fn requested_bytes(&self) -> usize {
         self.storage.requested_bytes()
     }

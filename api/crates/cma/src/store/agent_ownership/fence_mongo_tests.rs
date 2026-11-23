@@ -40,6 +40,35 @@ fn assert_fresh(commands: &[Document], count: usize) {
     }
 }
 
+#[tokio::test]
+#[ignore = "requires disposable replica set via CHRONO_TEST_MONGODB_FAILPOINT_URI"]
+async fn ownership_fence_known_abort_retries_actual_agent_write_without_changing_token() {
+    let f = Fixture::new().await;
+    let before = f.snapshot().await;
+    let next = mutation(&f.agent);
+    f.fault("update", 1, false, false).await;
+    let result = f
+        .authority
+        .run(f.store.save_agent(f.agent.revision, next.clone()))
+        .await;
+    let commands = f.clear().await;
+    let after = f.snapshot().await;
+    let owner = f.independent.owner(&f.agent.id).await.unwrap().unwrap();
+    f.cleanup().await;
+    result
+        .unwrap()
+        .expect("known-aborted owner fence must retry the Agent transaction");
+    assert_fresh(&commands, 2);
+    assert_eq!(after.0, next);
+    assert_eq!(
+        after.1,
+        before.1 + 1,
+        "aborted member fence cannot accumulate"
+    );
+    assert_eq!(after.2, before.2 + 1, "only one exact owner fence commits");
+    assert_eq!(owner.token, f.authority.token);
+}
+
 async fn ownership_fence_exhaustion_and_unknown_commit_never_publish_or_rebase_case(unknown: bool) {
     let f = Fixture::new().await;
     let before = f.snapshot().await;
@@ -76,5 +105,47 @@ async fn ownership_fence_exhaustion_and_unknown_commit_never_publish_or_rebase_c
     assert_eq!(after, before, "no partial Agent or ownership publication");
 }
 
+#[tokio::test]
+#[ignore = "requires disposable replica set via CHRONO_TEST_MONGODB_FAILPOINT_URI"]
+async fn ownership_fence_rechecks_member_and_exact_epoch_after_known_abort() {
+    let f = Fixture::new().await;
+    let next = mutation(&f.agent);
+    let count = f.fault("update", 1, false, true).await;
+    let pending = tokio::spawn({
+        let store = f.store.clone();
+        let authority = f.authority.clone();
+        let revision = f.agent.revision;
+        async move { authority.run(store.save_agent(revision, next)).await }
+    });
+    f.wait_for_fault(count).await;
+    f.independent.heartbeat("original", true).await.unwrap();
+    f.independent.release(&f.authority.token).await.unwrap();
+    f.independent
+        .register(fixture::member("successor"))
+        .await
+        .unwrap();
+    let successor = f
+        .independent
+        .acquire(&f.agent.id, "successor")
+        .await
+        .unwrap()
+        .unwrap();
+    let result = pending.await.unwrap();
+    let commands = f.clear().await;
+    let after = f.snapshot().await;
+    let owner = f.independent.owner(&f.agent.id).await.unwrap().unwrap();
+    f.cleanup().await;
+    assert_eq!(result.unwrap(), Err(SandboxStoreError::Conflict));
+    assert_fresh(&commands, 2);
+    assert_eq!(
+        after.0, f.agent,
+        "old token cannot publish into the new epoch"
+    );
+    assert!(successor.token.epoch > f.authority.token.epoch);
+    assert_eq!(owner.token, successor.token);
+}
+
+#[path = "fence_mongo_cancellation_tests.rs"]
+mod cancellation;
 #[path = "fence_mongo_tests_cases.rs"]
 mod cases;

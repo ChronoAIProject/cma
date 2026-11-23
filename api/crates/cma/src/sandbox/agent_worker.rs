@@ -26,7 +26,10 @@ pub(super) use cleanup_retry::same_cleanup_claim;
 mod completion_lookup;
 mod connection;
 mod connection_output;
+mod connection_recovery_progress;
 mod connection_retry;
+#[cfg(test)]
+pub(super) use connection_recovery_progress::same_recovery_claim;
 mod create_completion;
 mod first_message;
 mod first_message_publication;
@@ -77,6 +80,7 @@ pub(crate) struct AgentWorkerConfig {
     pub retirement_reporter:
         Option<Arc<dyn crate::store::native_retirement_action::RetirementRecords>>,
     pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    skip_ineligible_reconciliation: bool,
     pub parent_not_ready_pacing_enabled: bool,
     startup_sibling_hold_enabled: bool,
     pub retry_single_marker_enabled: bool,
@@ -98,6 +102,7 @@ impl AgentWorkerConfig {
         Self {
             retirement_reporter: None,
             ownership: None,
+            skip_ineligible_reconciliation: false,
             ownership_retry_hints: None,
             parent_not_ready_pacing_enabled: false,
             startup_sibling_hold_enabled: false,
@@ -142,6 +147,11 @@ impl AgentWorkerConfig {
 
     pub(crate) fn with_managed_documents(mut self, enabled: bool) -> Self {
         self.managed_documents_enabled = enabled;
+        self
+    }
+
+    pub(crate) fn with_skip_ineligible_reconciliation(mut self, enabled: bool) -> Self {
+        self.skip_ineligible_reconciliation = enabled;
         self
     }
 

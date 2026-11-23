@@ -170,6 +170,13 @@ impl BindingAttempt<'_> {
         self.holds.failed(&self.id, "raced");
         self.complete = true;
     }
+
+    /// Retain protection after a transient runtime failure at startup. The
+    /// background sweep retries it with fresh reads under the same fences.
+    pub(super) fn unavailable(mut self) {
+        self.holds.failed(&self.id, "unavailable");
+        self.complete = true;
+    }
 }
 
 impl Drop for BindingAttempt<'_> {

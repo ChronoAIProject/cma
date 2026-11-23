@@ -317,9 +317,20 @@ impl HostedBackend for AgentSandboxBackend {
         // object before exposing a current Running observation.
         timed(
             Stage::NativeIdentity,
-            self.refreshed_adoption_observation(handle, request),
+            self.refreshed_adoption_observation(handle, request, None),
         )
         .await
+    }
+    async fn adopt_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeObservation>> {
+        if !home.request.policy.is_native_vct() {
+            return self.adopt(handle, request).await;
+        }
+        self.adopt_persisted_home(handle, request, home).await
     }
     async fn inspect_native_runtime(
         &self,
