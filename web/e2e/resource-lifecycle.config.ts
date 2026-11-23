@@ -28,6 +28,7 @@ export default defineConfig({
     'resource-lifecycle-history.check.ts',
     'resource-lifecycle-deletion.check.ts',
     'agent-stop-deletion.check.ts',
+    'parked-runtime-status.check.ts',
   ],
   workers: 1,
   retries: 0,

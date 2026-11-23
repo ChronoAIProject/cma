@@ -7,6 +7,8 @@ import {
   sandboxChildStatus,
 } from '../sandbox/lifecycle';
 import { sandboxStatusPresentation } from '../sandbox/presentation';
+import { sandboxHasParkedRuntimeUpdate } from '../sandbox/parkedRuntimeUpdate';
+import { taskPresentation } from './taskPresentation';
 import type { AppRoute } from '../routing/routes';
 import { toneDot } from '../ui/Badge';
 import {
@@ -22,7 +24,7 @@ import { TreeRow } from './TreeRow';
 import { agentActions, sandboxActions, workspaceActions } from './treeActions';
 import { CreationBadge, useTreeCreation } from './treeCreation';
 import './Tree.css';
-import { statusLabel } from '../vocabulary/status';
+import { statusLabel, statusTone } from '../vocabulary/status';
 import { taskActivityOrder } from './taskGroups';
 import { activityLabel, agentSignal, stateMeta, keyboardNavigation } from './treePresentation';
 import { PersonalAgentTree } from './PersonalAgentTree';
@@ -216,6 +218,7 @@ export function Tree({
                         !sandboxBusy && !refreshError && sandboxChildrenAvailable(sandbox);
                       const sandboxExpanded = childrenAvailable && !collapsed.has(sandboxNode);
                       const presentation = sandboxStatusPresentation(sandbox);
+                      const parked = sandboxHasParkedRuntimeUpdate(sandbox);
                       const paused = presentation.status === 'paused';
                       return (
                         <div className="resource-tree__branch" key={sandbox.id}>
@@ -227,7 +230,10 @@ export function Tree({
                             route={{ kind: 'sandbox', sandboxId: sandbox.id }}
                             selected={route.kind === 'sandbox' && route.sandboxId === sandbox.id}
                             expanded={childrenAvailable ? sandboxExpanded : undefined}
-                            reviving={presentation.status === 'reviving'}
+                            reviving={
+                              presentation.status === 'reviving' &&
+                              presentation.group === 'changing'
+                            }
                             meta={
                               <>
                                 <span className="tree-row__state" data-tone={presentation.tone}>
@@ -313,9 +319,14 @@ export function Tree({
                                         }
                                         meta={
                                           <>
-                                            {statusLabel(
-                                              sandboxChildStatus(sandbox, workspace.status),
-                                            )}
+                                            {parked &&
+                                            !['failed', 'removed', 'removing'].includes(
+                                              workspace.status,
+                                            )
+                                              ? presentation.label
+                                              : statusLabel(
+                                                  sandboxChildStatus(sandbox, workspace.status),
+                                                )}
                                             <TreeFactsSummary
                                               channelFacts={channelFacts}
                                               facts={facts}
@@ -358,6 +369,24 @@ export function Tree({
                                                 sandbox,
                                                 agent.status,
                                               );
+                                              const task = parked
+                                                ? taskPresentation(
+                                                    agent,
+                                                    sandbox,
+                                                    refreshError ? 'stale' : 'fresh',
+                                                    currentTask,
+                                                  )
+                                                : undefined;
+                                              const observation =
+                                                task === undefined
+                                                  ? undefined
+                                                  : {
+                                                      label: task.label,
+                                                      tone:
+                                                        task.group === 'Needs attention'
+                                                          ? ('error' as const)
+                                                          : statusTone(agent.status),
+                                                    };
                                               return (
                                                 <TreeRow
                                                   key={agent.id}
@@ -370,6 +399,7 @@ export function Tree({
                                                     agent.id,
                                                     20,
                                                     sandbox.color,
+                                                    observation,
                                                   )}
                                                   route={{ kind: 'agent', agentId: agent.id }}
                                                   selected={
@@ -393,6 +423,7 @@ export function Tree({
                                                         <span>Task time unavailable</span>
                                                       )}
                                                     </>,
+                                                    observation,
                                                   )}
                                                   actions={agentActions(agent.status, permissions, {
                                                     sandbox:
