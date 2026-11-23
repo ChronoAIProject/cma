@@ -131,7 +131,17 @@ export class Harness {
       if (url.origin !== this.config.baseURL || !url.pathname.startsWith('/api/')) return;
       const task = (async () => {
         if (!isJsonMediaType(response.headers()['content-type'] ?? '')) return;
-        const text = await response.text();
+        let text: string;
+        try {
+          text = await response.text();
+        } catch (error) {
+          if (
+            response.request().method() === 'GET' &&
+            response.request().failure()?.errorText === 'net::ERR_ABORTED'
+          )
+            return;
+          throw error;
+        }
         assertCredentialFree(text, this.forbidden);
         if (role === 'signup' && account.subject === '' && response.request().method() === 'POST') {
           const current = await context.request.get(`${this.config.baseURL}/auth/session`);
