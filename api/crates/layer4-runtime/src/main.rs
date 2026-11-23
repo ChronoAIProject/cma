@@ -301,3 +301,4 @@ async fn shutdown_signal() {
         () = terminate => {}
     }
 }
+// Draft exercise of the CI image secret scan; never merged.

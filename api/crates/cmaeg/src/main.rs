@@ -452,3 +452,4 @@ mod database_diagnostics_tests {
         }
     }
 }
+// Draft exercise of the CI image secret scan; never merged.

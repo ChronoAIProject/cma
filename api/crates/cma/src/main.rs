@@ -402,3 +402,4 @@ mod public_signup_abuse_tests;
 #[cfg(test)]
 #[path = "main_tests.rs"]
 mod tests;
+// Draft exercise of the CI image secret scan; never merged.

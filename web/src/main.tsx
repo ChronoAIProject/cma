@@ -86,3 +86,4 @@ if (prepareHistoryDocument()) {
     </StrictMode>,
   );
 }
+// Draft exercise of the CI image secret scan; never merged.
