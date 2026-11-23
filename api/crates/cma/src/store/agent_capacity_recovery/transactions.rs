@@ -92,9 +92,8 @@ pub(in crate::store) async fn reconcile(
         }
         _ => CommitOutcome::Unknown,
     };
-    if store.segment_adoption_enabled
-        && expected.phase
-            == layer2_core::sandbox::agent_capacity_recovery::state::RecoveryPhase::Completed
+    if expected.phase
+        == layer2_core::sandbox::agent_capacity_recovery::state::RecoveryPhase::Completed
         && matches!(result, CommitOutcome::Recorded(_))
     {
         observations::cohort(
@@ -143,9 +142,7 @@ pub(in crate::store) async fn complete(
     let result =
         settlement::complete(store, authorized, claim, confirmation, now, &mut scope).await;
     let outcome = finish(scope.release(), result).await;
-    if store.segment_adoption_enabled {
-        observations::commit(observations::Stage::Completed, &outcome);
-    }
+    observations::commit(observations::Stage::Completed, &outcome);
     outcome
 }
 

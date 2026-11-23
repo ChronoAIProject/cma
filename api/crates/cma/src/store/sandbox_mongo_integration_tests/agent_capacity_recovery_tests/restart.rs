@@ -99,6 +99,9 @@ impl CapacityRecoveryRuntime for Native {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn capacity_completed_mongo_restart_retries_activation_without_republication() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let metrics = recorder.handle();
+    let _recorder = metrics::set_default_local_recorder(&recorder);
     let (client, name) = database("capacity_completed_restart").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let agent = fixture::capacity_fixture(&store).await;
@@ -179,6 +182,30 @@ async fn capacity_completed_mongo_restart_retries_activation_without_republicati
         reopened.clone(),
         transactions::access(&reopened),
     ));
+    assert!(matches!(
+        restarted.admit(&caller, &request).await.unwrap(),
+        CommitOutcome::Recorded(_)
+    ));
+    assert_eq!(
+        restarted.reconcile(&caller, &completed).await.unwrap(),
+        CommitOutcome::Recorded(completed.clone())
+    );
+    let rendered = metrics.render();
+    for (stage, outcome) in [
+        ("completed", "committed"),
+        ("completed", "replay"),
+        ("admitted", "replay"),
+    ] {
+        assert!(
+            rendered.lines().any(|line| {
+                line.starts_with("cma_capacity_recovery_cohort_total{")
+                    && line.contains(&format!("stage=\"{stage}\""))
+                    && line.contains(&format!("outcome=\"{outcome}\""))
+                    && line.ends_with(" 1")
+            }),
+            "{rendered}"
+        );
+    }
     let native = Native::default();
     let router = Arc::new(RecoveryReconnect::new(
         restarted.clone(),

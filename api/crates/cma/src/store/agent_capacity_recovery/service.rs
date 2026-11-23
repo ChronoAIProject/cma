@@ -179,9 +179,7 @@ impl RecoveryService {
                 eprintln!("capacity recovery original lookup refused: {_error:?}");
             })?
         {
-            if self.store.segment_adoption_enabled {
-                cohort(Stage::Admitted, Outcome::Replay);
-            }
+            cohort(Stage::Admitted, Outcome::Replay);
             return Ok(CommitOutcome::Recorded(*work));
         }
         if !self.features.enabled {
