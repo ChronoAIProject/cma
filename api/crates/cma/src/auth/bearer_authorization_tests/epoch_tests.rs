@@ -208,7 +208,8 @@ async fn verification_purpose_alone_never_fences_overlapping_equivalent_authorit
                 Some(&metadata),
                 "fixture-access",
                 None,
-                (!independent_first).then_some("fixture-owner"),
+                // The held call always has the other purpose from the overlap.
+                independent_first.then_some("fixture-owner"),
                 crate::auth::identity_retry::DEADLINE,
             )
             .await
