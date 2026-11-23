@@ -69,6 +69,11 @@ impl SandboxWorker {
                                 .require_current(released)
                                 .map(|()| home)
                                 .map_err(|stale| {
+                                    tracing::info!(
+                                        sandbox_id = %sandbox.id,
+                                        revision = released.revision,
+                                        "home reservation retried after the released runtime changed"
+                                    );
                                     layer3_adapter::AdapterError::Unavailable(stale.to_string())
                                 }),
                             _ => Ok(home),

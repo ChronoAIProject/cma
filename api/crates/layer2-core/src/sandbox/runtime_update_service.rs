@@ -221,6 +221,7 @@ impl SandboxRuntimeUpdateService {
                     target_version
                 };
                 if self.released.require_current(&released).is_err() {
+                    superseded_release(&released).await;
                     continue;
                 }
                 match self.recover_unpublished(&sandbox, target, false).await {
@@ -240,6 +241,7 @@ impl SandboxRuntimeUpdateService {
                 return Ok(sandbox);
             }
             if self.released.require_current(&released).is_err() {
+                superseded_release(&released).await;
                 continue;
             }
             match self.store.save_sandbox(revision, sandbox.clone()).await {
@@ -250,6 +252,16 @@ impl SandboxRuntimeUpdateService {
         }
         Err(SandboxRuntimeUpdateError::Unavailable)
     }
+}
+
+/// A captured release went stale before its write. Name it, then yield so the
+/// retry observes the new release instead of spinning on the old one.
+async fn superseded_release(released: &layer3_adapter::ReleasedRuntime) {
+    tracing::info!(
+        revision = released.revision,
+        "runtime update attempt retried after the released runtime changed"
+    );
+    tokio::task::yield_now().await;
 }
 
 /// Stalled at reopening conversations on an unpublished runtime, which recovery rebuilds.
