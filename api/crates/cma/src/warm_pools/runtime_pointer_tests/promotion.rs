@@ -124,6 +124,13 @@ impl Rig {
     }
 
     async fn boot(&self, first: &dyn PointerReplica, second: &dyn PointerReplica) {
+        self.seed_ready_defaults().await;
+        first.bootstrap().await.unwrap();
+        second.bootstrap().await.unwrap();
+        first.enable_following().await;
+    }
+
+    async fn seed_ready_defaults(&self) {
         self.first.seed_defaults().await;
         for (lane, release) in [(Lane::Agent, 'a'), (Lane::Machine, '1')] {
             let plan = self.fixture.plan(lane, release, capacity());
@@ -134,9 +141,6 @@ impl Rig {
                 .unwrap();
             self.fixture.readiness(&plan, TARGET);
         }
-        first.bootstrap().await.unwrap();
-        second.bootstrap().await.unwrap();
-        first.enable_following().await;
     }
 
     async fn prepare(

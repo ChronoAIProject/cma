@@ -417,7 +417,7 @@ async fn expired_boot_writer_blocks_the_peer_until_its_provider_effect_settles()
         false,
     )
     .await;
-    rig.first.seed_defaults().await;
+    rig.seed_ready_defaults().await;
     first.bootstrap().await.unwrap();
     first.enable_following().await;
     second.controller.register_boot().await.unwrap();
