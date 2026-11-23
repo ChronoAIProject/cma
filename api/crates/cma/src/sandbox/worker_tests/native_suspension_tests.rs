@@ -18,6 +18,7 @@ mod retirement_retry_tests;
 mod retirement_tests;
 mod reviewer_boundary_retained;
 mod runtime_update_tests;
+pub(crate) use runtime_update_tests::exercise_runtime_update_reopen_http;
 mod scheduling_tests;
 mod service_access;
 mod status_reuse_tests;

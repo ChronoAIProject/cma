@@ -35,6 +35,12 @@ async fn runtime_update_reopen_refusal_mongo_fences_checkpoint_owner_and_claim()
     run_case(2, true).await;
 }
 
+#[tokio::test]
+#[ignore = "requires a disposable local MongoDB replica set"]
+async fn runtime_update_reopen_http_requires_the_callers_checkpoint_and_owner_fence() {
+    crate::sandbox::exercise_runtime_update_reopen_http().await;
+}
+
 async fn run_case(count: usize, park: bool) {
     let (client, name, store) = database().await;
     let (mut parent, mut agent) = fixture(&store, "sbx_reopen_output").await;

@@ -19,9 +19,7 @@ enum Caller {
     BeforeCursorRefusal,
 }
 
-#[tokio::test]
-#[ignore = "requires a disposable local MongoDB replica set"]
-async fn runtime_update_reopen_http_requires_the_callers_checkpoint_and_owner_fence() {
+pub(crate) async fn exercise_runtime_update_reopen_http() {
     for mode in [
         Caller::FlagOff,
         Caller::DifferentRelease,

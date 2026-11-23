@@ -4,6 +4,7 @@ use layer2_core::sandbox::SandboxImageRotationPhase;
 
 #[path = "runtime_update_reopen_relay_tests.rs"]
 mod relay;
+pub(crate) use relay::exercise_runtime_update_reopen_http;
 
 const TARGET: &str = "registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 

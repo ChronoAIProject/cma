@@ -72,6 +72,8 @@ mod agent_worker_tests;
 #[cfg(test)]
 mod worker_tests;
 #[cfg(test)]
+pub(crate) use worker_tests::exercise_runtime_update_reopen_http;
+#[cfg(test)]
 pub(crate) use worker_tests::exercise_native_retirement_finality;
 
 pub(crate) mod legacy_credentials;

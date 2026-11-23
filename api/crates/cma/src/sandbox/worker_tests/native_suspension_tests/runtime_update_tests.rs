@@ -3,6 +3,7 @@ use layer2_core::sandbox::store::{SandboxImageRotationRequest, SandboxMaintenanc
 
 #[path = "runtime_update_reopen_refusal_tests.rs"]
 mod reopen_refusal;
+pub(crate) use reopen_refusal::exercise_runtime_update_reopen_http;
 
 async fn active() -> (Fixture, Sandbox, SystemTime) {
     let mut f = Fixture::native().await;
