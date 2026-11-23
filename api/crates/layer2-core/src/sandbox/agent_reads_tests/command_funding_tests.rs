@@ -346,3 +346,6 @@ async fn model_credit_releases_definitive_refusal_and_keeps_the_same_key_winner_
 
 #[path = "command_funding_recovery_tests.rs"]
 mod admission_recovery;
+
+#[path = "command_funding_dispatch_tests.rs"]
+mod dispatch_recovery;

@@ -148,7 +148,9 @@ pub trait ReservationAuthority: Send + Sync {
         page: &PageRequest,
     ) -> Result<Page<AgentCommandId>, FundingError>;
     /// Fence a reserved request only while eligible. Expiration must never
-    /// settle a dispatched effect.
+    /// settle a dispatched effect. Expired proves this exact checkpoint is
+    /// still Reserved and cannot issue a permit; other errors leave the begin
+    /// outcome unconfirmed.
     async fn begin(&self, expected: &Checkpoint) -> Result<Checkpoint, FundingError>;
     /// Accept certified effects from InFlight. A never-started Reserved hold
     /// can be settled only with NotStarted, and must compete atomically with begin.
@@ -242,8 +244,15 @@ impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> Model
         if matches!(held.state, PhaseState::Settled(_)) {
             return Ok(held);
         }
-        let permit = self.authority.begin(&held).await?;
-        require_transition(&held, &permit, PhaseState::InFlight)?;
+        let permit = self.authority.begin(&held).await.map_err(|error| {
+            if error == FundingError::Expired {
+                error
+            } else {
+                FundingError::ReconciliationRequired
+            }
+        })?;
+        require_transition(&held, &permit, PhaseState::InFlight)
+            .map_err(|_| FundingError::ReconciliationRequired)?;
         let effect = self
             .gateway
             .execute(&permit, request)
