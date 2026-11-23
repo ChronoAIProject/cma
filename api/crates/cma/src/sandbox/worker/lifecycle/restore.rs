@@ -227,7 +227,7 @@ impl SandboxWorker {
                 runtime_id: handle.0,
                 runtime_version: replacement_runtime_version(
                     &sandbox,
-                    &self.config.released.snapshot().agent,
+                    &self.config.default_version(self.config.release().as_ref()),
                 ),
                 bound_at: stamp.clone(),
             },

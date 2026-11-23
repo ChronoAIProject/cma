@@ -106,8 +106,10 @@ pub(crate) struct SandboxWorkerConfig {
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
-    /// The released default for new provisioning, read once per Sandbox.
-    pub released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
+    /// Fixed default for fixtures composed without a released authority.
+    pub runtime_version: String,
+    /// The process's released default for new provisioning, when composed.
+    pub released: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
     pub lease_duration: Duration,
     pub retry_delay: Duration,
     pub policy: Arc<dyn SandboxPolicySource>,
@@ -139,10 +141,8 @@ impl SandboxWorkerConfig {
             execution: Default::default(),
             holder: holder.into(),
             deployment_id: deployment_id.into(),
-            released: Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
-                runtime_version.into(),
-                None,
-            )),
+            runtime_version: runtime_version.into(),
+            released: None,
             lease_duration: DEFAULT_LEASE,
             retry_delay: DEFAULT_RETRY,
             policy,
@@ -176,8 +176,38 @@ impl SandboxWorkerConfig {
         mut self,
         released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
     ) -> Self {
-        self.released = released;
+        self.released = Some(released);
         self
+    }
+
+    /// One release for an operation, when this worker has a released authority.
+    pub(crate) fn release(&self) -> Option<layer3_adapter::ReleasedRuntime> {
+        self.released.as_ref().map(|released| released.snapshot())
+    }
+
+    /// One release for a provisioning: the snapshot that renders it and the
+    /// version recorded for `spec`, which keeps any image it already names.
+    pub(crate) fn release_for(
+        &self,
+        spec: &layer3_adapter::SandboxSpec,
+    ) -> (Option<layer3_adapter::ReleasedRuntime>, String) {
+        let released = self.release();
+        let version = spec
+            .runtime_image
+            .clone()
+            .unwrap_or_else(|| self.default_version(released.as_ref()));
+        (released, version)
+    }
+
+    /// The agent-lane default named by `release`, or the fixed fixture default.
+    pub(crate) fn default_version(
+        &self,
+        release: Option<&layer3_adapter::ReleasedRuntime>,
+    ) -> String {
+        release.map_or_else(
+            || self.runtime_version.clone(),
+            |released| released.agent.clone(),
+        )
     }
 
     pub fn with_home_policy(mut self, policy: Option<layer3_adapter::HomeVolumePolicy>) -> Self {
