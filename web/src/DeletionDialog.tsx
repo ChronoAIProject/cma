@@ -190,7 +190,11 @@ export function DeletionDialog({
           />
         }
         acknowledgeLabel={`I understand this ${target} will be deleted.`}
-        confirmLabel={`Delete ${target}`}
+        cancelLabel={request.action.kind === 'delete_sandbox' ? 'Keep environment' : undefined}
+        actionEmphasis={request.action.kind === 'delete_sandbox' ? 'cancel' : undefined}
+        confirmLabel={
+          request.action.kind === 'delete_sandbox' ? 'Request deletion' : `Delete ${target}`
+        }
         confirmDisabled={
           observation === undefined || readError !== undefined || observation.blocked !== undefined
         }
