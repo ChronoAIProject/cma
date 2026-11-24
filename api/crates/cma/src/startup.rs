@@ -73,17 +73,22 @@ async fn serve_inner(
     )
     .await?;
     #[cfg(feature = "qualification-hooks")]
-    let _qualification_server = qualification
-        .map(|(options, registry)| {
-            options.bind(
-                registry,
-                composition
-                    .agent_manager
-                    .as_ref()
-                    .map(|manager| manager.coordinator.clone()),
-            )
-        })
-        .transpose()?;
+    let _qualification_server = if let Some((options, registry)) = qualification {
+        Some(
+            options
+                .bind(
+                    registry,
+                    composition
+                        .agent_manager
+                        .as_ref()
+                        .map(|manager| manager.coordinator.clone()),
+                    &config,
+                )
+                .await?,
+        )
+    } else {
+        None
+    };
     let router = with_cors(
         std::mem::take(&mut composition.router),
         std::mem::take(&mut config.cors_origins),
