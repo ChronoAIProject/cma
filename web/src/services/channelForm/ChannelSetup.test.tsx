@@ -67,7 +67,7 @@ it('retains HMAC credential editing for managed connections with webhook replies
 });
 
 it.each(['loading', 'legacy', 'failed', 'ready'] as const)(
-  'hides new managed setup until explicitly advertised (%s)',
+  'shows Telegram relay guidance without offering managed setup (%s)',
   (status) => {
     const fetcher = vi.fn();
     vi.stubGlobal('fetch', fetcher);
@@ -76,24 +76,58 @@ it.each(['loading', 'legacy', 'failed', 'ready'] as const)(
         <ChannelEditor ownerSubject="local-owner" onDone={vi.fn()} denied={vi.fn()} />
       </RelayCapabilitiesContext>,
     );
+    const producer = screen.getByRole('button', { name: 'Producer 1 connection type' });
+    fireEvent.click(producer);
+    expect(
+      screen.queryByRole('menuitemradio', { name: /managed Telegram/i }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Direct Telegram bot' }));
+    fireEvent.click(producer);
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'NyxID messaging connection' }));
+    expect(
+      screen.getByText(
+        'Connect your Telegram bot in NyxID, then select a relay route for that bot.',
+      ),
+    ).toBeVisible();
     expect(
       screen.queryByLabelText('Use an existing CMA-managed Telegram connection'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Saved Telegram connection' }),
     ).not.toBeInTheDocument();
     expect(fetcher).not.toHaveBeenCalled();
   },
 );
 
-it('retains a selected managed draft when the capability becomes unavailable', async () => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [] }))));
+it('selects a saved Telegram connection in Connection setup and retains it after capability refresh', async () => {
+  const fetcher = vi.fn().mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        items: [{ connection_ref: 'ready-owned', status: 'ready', label: 'My Telegram bot' }],
+      }),
+    ),
+  );
+  vi.stubGlobal('fetch', fetcher);
   const view = (enabled: boolean) => (
     <RelayCapabilitiesContext value={{ status: 'ready', managedTelegramSetup: enabled }}>
       <ChannelEditor ownerSubject="local-owner" onDone={vi.fn()} denied={vi.fn()} />
     </RelayCapabilitiesContext>
   );
   const mounted = render(view(true));
-  fireEvent.click(screen.getByLabelText('Use an existing CMA-managed Telegram connection'));
-  await screen.findByText(/No saved CMA connections/);
+  const setup = within(screen.getByRole('group', { name: 'Connection setup' }));
+  const toggle = setup.getByLabelText('Use an existing CMA-managed Telegram connection');
+  expect(fetcher).not.toHaveBeenCalled();
+  fireEvent.click(toggle);
+  const picker = setup.getByRole('button', { name: 'Saved Telegram connection' });
+  fireEvent.click(picker);
+  fireEvent.click(await screen.findByRole('menuitemradio', { name: 'My Telegram bot' }));
+  expect(picker).toHaveTextContent('My Telegram bot');
   mounted.rerender(view(false));
-  expect(screen.getByLabelText('Use an existing CMA-managed Telegram connection')).toBeChecked();
-  expect(screen.getByRole('button', { name: 'Saved Telegram connection' })).toBeVisible();
+  expect(setup.getByLabelText('Use an existing CMA-managed Telegram connection')).toBeChecked();
+  expect(setup.getByRole('button', { name: 'Saved Telegram connection' })).toHaveTextContent(
+    'My Telegram bot',
+  );
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+    '/api/event-gateway/v1/channel-connections',
+  ]);
 });

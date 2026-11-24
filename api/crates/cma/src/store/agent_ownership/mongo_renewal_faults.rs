@@ -122,7 +122,10 @@ impl RoutedStore {
         let (mode, data) = match fault {
             Fault::KnownAbort => (
                 mongodb::bson::Bson::String("alwaysOn".into()),
-                doc! {"failCommands": ["findAndModify"], "appName": &self.app,
+                // Reject the first transactional command before MongoDB opens
+                // the transaction. Failing the later owner write can strand
+                // the shared member write if the retry deadline cuts off abort.
+                doc! {"failCommands": ["find"], "appName": &self.app,
                 "errorCode": 112_i32, "errorLabels": ["TransientTransactionError"]},
             ),
             Fault::UnknownCommit => (

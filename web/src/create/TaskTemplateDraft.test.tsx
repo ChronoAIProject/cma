@@ -25,6 +25,7 @@ function setup(overrides: Partial<CmaWebClient> = {}) {
       taskExperience: taskExperience('owner'),
       readTaskCreationSupport: async () => true,
       readTaskTemplateSupport: async () => true,
+      readTaskTemplateV2Support: async () => true,
       readSandboxCapacity: async () => AVAILABLE_CAPACITY,
       createAgentLifecycle: create,
       ...overrides,
@@ -247,7 +248,8 @@ it.each([1, 2])(
     );
     setup();
     click('Write a task without a template');
-    click('Switch and keep draft');
+    if (version === 2) click('Switch and keep draft');
+    else expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Your task')).toHaveValue(version === 1 ? '' : 'Separate text');
     click(version === 1 ? 'Resume research template' : 'Resume document template');
     expect(screen.getByLabelText(version === 1 ? 'Topic' : 'Subject')).toHaveValue(
@@ -281,7 +283,10 @@ it('keeps drafts isolated by owner and task scope and clears them on account cha
 it.each([false, true])(
   'retains partial fields when template support is %s without bypassing submit validation',
   async (support) => {
-    const { create } = setup({ readTaskTemplateSupport: async () => support });
+    const { create } = setup({
+      readTaskTemplateSupport: async () => support,
+      readTaskTemplateV2Support: async () => support,
+    });
     await waitFor(() => expect(screen.queryByText('Checking task creation…')).toBeNull());
     click('Write a document');
     fill('Subject', 'Incomplete task');
@@ -376,12 +381,12 @@ it.each(['text', 'template'] as const)(
           initial_message:
             mode === 'text'
               ? 'Same text'
-              : 'Research Same topic and summarize the key findings, with links to sources.',
+              : 'Research the following topic:\n\nSame topic\n\nSummarize the key findings, with links to sources.',
           ...(mode === 'template'
             ? {
                 template: {
                   id: 'research' as const,
-                  version: 1 as const,
+                  version: 2 as const,
                   fields: { topic: 'Same topic' },
                 },
               }
@@ -417,3 +422,19 @@ it('keeps template drafts editable through full capacity without creating anythi
   expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
   expect(create).not.toHaveBeenCalled();
 });
+
+it.each(taskTemplates)(
+  'exits an untouched $id template without prompting or losing separate text',
+  ({ id, name, fields }) => {
+    const view = setup();
+    fill('Your task', 'Independent text survives');
+    click(name);
+    click('Write a task without a template');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Your task')).toHaveValue('Independent text survives');
+    click(`Resume ${id} template`);
+    for (const field of fields) expect(screen.getByLabelText(field.label)).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(view.create).not.toHaveBeenCalled();
+  },
+);

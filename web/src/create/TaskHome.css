@@ -68,7 +68,9 @@
   background: var(--dsw-alias-bg-layer-1);
 }
 .task-home__composer:focus-within {
-  border-color: var(--dsw-specific-task-focus-border);
+  border-color: var(--dsw-alias-state-business-primary);
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
 }
 .task-home__toolbar {
   display: flex;
@@ -102,7 +104,7 @@
 .task-home__input {
   box-sizing: border-box;
   display: block;
-  min-height: 128px;
+  min-height: 96px;
   width: 100%;
   resize: none;
   border: 0;
@@ -149,6 +151,9 @@
   display: grid;
   gap: var(--space-4);
   min-width: 0;
+}
+.task-home__content {
+  gap: var(--space-3);
 }
 .task-home__heading > a {
   color: var(--dsw-alias-label-secondary);
@@ -251,37 +256,9 @@
   flex: 1;
 }
 .task-crew__meta {
-  margin-top: var(--space-5);
+  margin-top: var(--space-3);
   padding-top: var(--space-3);
   border-top: 1px solid var(--dsw-alias-border-l2);
-}
-.task-creation,
-.task-creation__status {
-  display: grid;
-  gap: var(--space-4);
-  min-width: 0;
-}
-.task-creation__status {
-  padding: var(--space-6);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--radius-xl);
-  background: var(--dsw-alias-bg-layer-1);
-}
-.task-creation__heading {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-.task-creation__heading > div {
-  min-width: 0;
-}
-.task-creation__heading h2 {
-  margin: 0;
-  font-size: var(--text-title);
-}
-.task-creation__details summary {
-  cursor: pointer;
-  color: var(--dsw-alias-label-secondary);
 }
 @media (max-width: 800px) {
   .task-crew__cards {
@@ -293,10 +270,8 @@
   .task-home__mascot {
     display: none;
   }
-  .task-creation__heading {
-    flex-wrap: wrap;
-  }
 }
+
 .task-home__shortcut {
   color: var(--dsw-specific-task-weak);
   font: 12.5px/20px var(--ds-font-family-code);
@@ -480,5 +455,10 @@
 @media (max-width: 600px) {
   .task-template-panel {
     padding: var(--space-3);
+  }
+}
+@media (forced-colors: active) {
+  .task-home__composer:focus-within {
+    outline-color: Highlight;
   }
 }

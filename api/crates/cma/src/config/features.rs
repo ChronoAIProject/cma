@@ -1,6 +1,8 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[cfg(test)]
 mod agent_event_page_tests;
+#[cfg(test)]
+mod bounded_inactivity_log_tests;
 pub(super) mod home_backup;
 #[cfg(test)]
 mod home_backup_expiry_tests;
@@ -10,11 +12,15 @@ mod home_backup_tests;
 #[path = "ingress_coordinator_tests.rs"]
 mod ingress_coordinator_tests;
 #[cfg(test)]
+mod native_close_lane_tests;
+#[cfg(test)]
 mod resource_list_tests;
 #[cfg(test)]
 mod segmentation_tests;
 #[cfg(test)]
 mod stale_turn_tests;
+#[cfg(test)]
+mod strict_inactivity_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
     pub am_startup_health_serving: bool,
@@ -47,6 +53,7 @@ pub(crate) struct FeatureFlags {
     pub bounded_raw_output: bool,
     pub output_json_budget: bool,
     pub bounded_update_relay: bool,
+    pub native_close_agent_lane: bool,
     pub bounded_live_fragments: bool,
     pub quiet_output: Option<layer2_core::sandbox::AgentOutputCoalescePolicy>,
     pub retain_read_frames: bool,
@@ -66,6 +73,8 @@ pub(crate) struct FeatureFlags {
     pub admission_ceilings_writes_enabled: bool,
     pub pending_home_reconciliation: bool,
     pub agent_control_write_coordination: bool,
+    pub bounded_inactivity_legacy_log: bool,
+    pub strict_inactivity_session_evidence: bool,
     pub bounded_title_reads: bool,
     pub access_snapshot_session: bool,
     pub resource_list_batch_reads: bool,
@@ -99,12 +108,14 @@ pub(crate) struct FeatureFlags {
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
+    pub reopen_output_refusal_enabled: bool,
     pub cleanup_continuation_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
     pub context_diagnostics: bool,
     pub event_driven_reconciliation: bool,
     pub stale_turn_reconciliation: bool,
+    pub stale_turn_terminal: bool,
     pub agent_connection_observations: bool,
     pub empty_discovery: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
@@ -189,6 +200,7 @@ impl FeatureFlags {
             bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
             output_json_budget: flag(lookup, "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED")?,
             bounded_update_relay: flag(lookup, "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED")?,
+            native_close_agent_lane: flag(lookup, "CHRONO_NATIVE_CLOSE_AGENT_LANE_ENABLED")?,
             bounded_live_fragments: flag(lookup, "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED")?,
             quiet_output: super::quiet_output::from_lookup(lookup)?,
             retain_read_frames: flag(lookup, "CHRONO_READ_FRAME_BUDGET_ENABLED")?,
@@ -235,6 +247,10 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED",
             )?,
+            reopen_output_refusal_enabled: flag(
+                lookup,
+                "CHRONO_RUNTIME_UPDATE_REOPEN_OUTPUT_REFUSAL_ENABLED",
+            )?,
             cleanup_continuation_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_CLEANUP_CONTINUATION_ENABLED",
@@ -259,6 +275,7 @@ impl FeatureFlags {
                 "CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED",
             )?,
             stale_turn_reconciliation: flag(lookup, "CHRONO_STALE_TURN_RECONCILIATION_ENABLED")?,
+            stale_turn_terminal: flag(lookup, "CHRONO_STALE_TURN_TERMINAL_ENABLED")?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
             model_credit_required: flag(lookup, "CHRONO_AGENT_MODEL_CREDIT_REQUIRED")?,
@@ -279,6 +296,14 @@ impl FeatureFlags {
             agent_control_write_coordination: flag(
                 lookup,
                 "CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED",
+            )?,
+            bounded_inactivity_legacy_log: flag(
+                lookup,
+                "CHRONO_BOUNDED_INACTIVITY_LEGACY_LOG_ENABLED",
+            )?,
+            strict_inactivity_session_evidence: flag(
+                lookup,
+                "CHRONO_STRICT_INACTIVITY_SESSION_EVIDENCE_ENABLED",
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,

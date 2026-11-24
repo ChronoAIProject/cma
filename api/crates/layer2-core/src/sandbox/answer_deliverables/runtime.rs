@@ -76,7 +76,15 @@ impl AnswerDeliverableService {
         worktree: &crate::sandbox::Worktree,
         path: &str,
     ) -> Result<DeliverableDescription, DeliverableError> {
+        use crate::sandbox::workspace::SANDBOX_HOME;
         let live = |path: String| DeliverableResource::LiveFile { path };
+        // Reject references to the current directory or Sandbox home before resolving a file.
+        if matches!(path, "" | "." | "./")
+            || path == SANDBOX_HOME
+            || path == SANDBOX_HOME.trim_end_matches('/')
+        {
+            return Err(DeliverableError::File(AgentFileError::Invalid));
+        }
         if let Some(home_relative) = path.strip_prefix(SANDBOX_HOME) {
             return self
                 .describe(access, agent, live(home_relative.to_owned()))
@@ -100,9 +108,6 @@ impl AnswerDeliverableService {
         }
     }
 }
-
-/// The Sandbox home every Agent file path is relative to.
-const SANDBOX_HOME: &str = "/home/cma/";
 
 fn authority_error(error: AgentAccessError) -> DeliverableError {
     if matches!(error, AgentAccessError::Unavailable) {

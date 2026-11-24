@@ -26,8 +26,14 @@ use mongodb::bson::doc;
 pub(in crate::store) mod adoption;
 pub(in crate::store) mod checkpoint;
 
+pub(in crate::store) enum PublicationSource {
+    Conversation,
+    Checkpoint,
+    StaleTurn,
+}
+
 pub(in crate::store) async fn apply(
-    caller: ScanCaller,
+    source: PublicationSource,
     store: &MongoSandboxStore,
     mutation: &AgentConversationMutation,
     capacity: Option<&AgentConversationCapacitySettlement>,
@@ -40,18 +46,34 @@ pub(in crate::store) async fn apply(
         .await
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    let exact_checkpoint = if matches!(source, PublicationSource::StaleTurn) {
+        Some(checkpoint.ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?)
+    } else {
+        None
+    };
     if read_format(&row).map_err(ApplyError::Domain)?.is_none() && adoption.is_none() {
+        let caller = match source {
+            PublicationSource::Conversation => ScanCaller::ConversationPublication,
+            PublicationSource::Checkpoint | PublicationSource::StaleTurn => ScanCaller::Checkpoint,
+        };
         return Box::pin(domain::publication::apply_mutation_with_capacity(
             caller,
             store,
             mutation,
             scope.session(),
             capacity,
+            exact_checkpoint,
         ))
         .await;
     }
     Box::pin(apply_segmented(
-        store, mutation, capacity, checkpoint, adoption, scope, row,
+        store,
+        mutation,
+        capacity,
+        checkpoint,
+        adoption,
+        scope,
+        (row, exact_checkpoint),
     ))
     .await
 }
@@ -65,8 +87,9 @@ async fn apply_segmented(
     checkpoint: Option<&AgentMessageCheckpoint>,
     adoption: Option<&adoption::Prepared>,
     scope: &mut TransactionScope<'_>,
-    row: mongodb::bson::Document,
+    source: (mongodb::bson::Document, Option<&AgentMessageCheckpoint>),
 ) -> Result<ConversationReceipt, ApplyError> {
+    let (row, exact_checkpoint) = source;
     let current = read_agent(&row).map_err(ApplyError::Domain)?;
     let captured = Box::pin(capture::capture_transaction(store, &current, scope)).await?;
     domain::publication::before(store, &current, mutation, scope.session()).await?;
@@ -92,6 +115,12 @@ async fn apply_segmented(
     }
     domain::publication::require_cleanup(&row, &current, mutation)?;
     let logs = domain::conversation_logs(mutation).map_err(ApplyError::Domain)?;
+    if exact_checkpoint.is_some()
+        && writer_plan::needs_normal_rollover(captured.active_head(), &logs)
+            .map_err(ApplyError::Domain)?
+    {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
     let command_dispatch = Box::pin(domain::publication::bind_domain(
         store,
         &current,
@@ -103,8 +132,12 @@ async fn apply_segmented(
     .await?;
     let operation = identity(mutation, capacity.is_some(), checkpoint)?;
     let mut fields = agent_replacement_fields(&mutation.agent).map_err(ApplyError::Domain)?;
-    domain::carry_checkpoint_fields(&row, &current, &mutation.agent, &mut fields)
-        .map_err(ApplyError::Domain)?;
+    if let Some(value) = exact_checkpoint {
+        domain::checkpoint::set_field(&mut fields, value).map_err(ApplyError::Domain)?;
+    } else {
+        domain::carry_checkpoint_fields(&row, &current, &mutation.agent, &mut fields)
+            .map_err(ApplyError::Domain)?;
+    }
     let recorded = Box::pin(writer_commit::publish_prepared(
         store,
         scope,
