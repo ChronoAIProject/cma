@@ -1,16 +1,22 @@
 //! Immutable source observations for a later measured billing ledger.
 use super::{Binding, BindingKind, ProofStatus, Range, SOURCE};
 use layer3_adapter::sandbox_metrics::{RawPhysicalSeries, SourceMetric};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, PartialEq, Serialize)]
 #[cfg_attr(test, derive(Debug))]
-pub struct MeasuredObservation {
+#[serde(transparent)]
+pub struct MeasuredObservation(ObservationV1);
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(Debug))]
+#[serde(deny_unknown_fields)]
+struct ObservationV1 {
     schema_version: u32,
-    source: &'static str,
+    source: String,
     metric: SourceMetric,
     timestamp_ms: u64,
     /// The original IEEE 754 bytes preserve the source quantity until normalization.
@@ -22,7 +28,7 @@ pub struct MeasuredObservation {
 
 impl MeasuredObservation {
     pub fn physical_sample_id(&self) -> &str {
-        &self.physical_sample_id
+        &self.0.physical_sample_id
     }
 
     pub fn evidence_sha256(&self) -> Result<String, EvidenceError> {
@@ -32,6 +38,59 @@ impl MeasuredObservation {
     /// Call after looking up the physical sample ID. An equivalent attribution
     /// is a replay even when a subsequent proof has a different revision.
     pub fn verify_replay(&self, incoming: &Self) -> Result<(), EvidenceError> {
+        self.0.verify_replay(&incoming.0)
+    }
+}
+
+/// A validated durable observation can prove replay without becoming input
+/// to the source-capture path.
+pub struct RetainedObservation(ObservationV1);
+
+impl RetainedObservation {
+    pub fn decode(
+        payload: &[u8],
+        physical_sample_id: &str,
+        evidence_sha256: &str,
+    ) -> Result<Self, EvidenceError> {
+        let observation: ObservationV1 =
+            serde_json::from_slice(payload).map_err(|_| EvidenceError::InvalidSample)?;
+        let physical = PhysicalIdentity::for_binding(
+            &observation.binding,
+            observation.metric,
+            observation.mapping_revision,
+        )?;
+        let expected_id = physical.sample_id(
+            &observation.binding,
+            observation.metric,
+            observation.timestamp_ms,
+        )?;
+        let value = f64::from_be_bytes(observation.source_value_be);
+        let range = observation.binding.range(u64::MAX);
+        if observation.schema_version != SCHEMA_VERSION
+            || observation.source != SOURCE
+            || observation.physical_sample_id != physical_sample_id
+            || expected_id != physical_sample_id
+            || digest(&observation)? != evidence_sha256
+            || !(range.from..range.to).contains(&(observation.timestamp_ms / 1000))
+            || !value.is_finite()
+            || value < 0.0
+        {
+            return Err(EvidenceError::InvalidSample);
+        }
+        Ok(Self(observation))
+    }
+
+    pub fn verify_replay(&self, incoming: &MeasuredObservation) -> Result<(), EvidenceError> {
+        self.0.verify_replay(&incoming.0)
+    }
+
+    pub fn verify_retained_replay(&self, incoming: &Self) -> Result<(), EvidenceError> {
+        self.0.verify_replay(&incoming.0)
+    }
+}
+
+impl ObservationV1 {
+    fn verify_replay(&self, incoming: &Self) -> Result<(), EvidenceError> {
         if self.physical_sample_id != incoming.physical_sample_id
             || self.source_value_be != incoming.source_value_be
             || self.binding.owner_subject != incoming.binding.owner_subject
@@ -71,14 +130,7 @@ pub fn capture_observations(
         return Err(EvidenceError::InvalidSample);
     }
     let proof = binding.range(requested.to).intersect(requested);
-    let from_ms = proof
-        .from
-        .checked_mul(1000)
-        .ok_or(EvidenceError::InvalidSample)?;
-    let to_ms = proof
-        .to
-        .checked_mul(1000)
-        .ok_or(EvidenceError::InvalidSample)?;
+    let (from_ms, to_ms) = millisecond_bounds(proof)?;
     let mut values = BTreeMap::new();
     for source in series {
         if source.metric() != metric || !physical.matches(binding, source) {
@@ -103,24 +155,17 @@ pub fn capture_observations(
     values
         .into_iter()
         .map(|(timestamp_ms, source_value_be)| {
-            let physical_sample_id = digest(&(
-                SOURCE,
-                &binding.cluster,
-                &binding.namespace,
-                metric,
-                &physical,
-                timestamp_ms,
-            ))?;
-            Ok(MeasuredObservation {
+            let physical_sample_id = physical.sample_id(binding, metric, timestamp_ms)?;
+            Ok(MeasuredObservation(ObservationV1 {
                 schema_version: SCHEMA_VERSION,
-                source: SOURCE,
+                source: SOURCE.into(),
                 metric,
                 timestamp_ms,
                 source_value_be,
                 physical_sample_id,
                 mapping_revision,
                 binding: binding.clone(),
-            })
+            }))
         })
         .collect()
 }
@@ -138,6 +183,22 @@ enum PhysicalIdentity<'a> {
 }
 
 impl<'a> PhysicalIdentity<'a> {
+    fn sample_id(
+        &self,
+        binding: &Binding,
+        metric: SourceMetric,
+        timestamp_ms: u64,
+    ) -> Result<String, EvidenceError> {
+        digest(&(
+            SOURCE,
+            &binding.cluster,
+            &binding.namespace,
+            metric,
+            self,
+            timestamp_ms,
+        ))
+    }
+
     fn for_binding(
         binding: &'a Binding,
         metric: SourceMetric,
@@ -210,6 +271,18 @@ impl<'a> PhysicalIdentity<'a> {
                 }
             }
     }
+}
+
+fn millisecond_bounds(range: Range) -> Result<(u64, u64), EvidenceError> {
+    let from = range
+        .from
+        .checked_mul(1000)
+        .ok_or(EvidenceError::InvalidSample)?;
+    let to = range
+        .to
+        .checked_mul(1000)
+        .ok_or(EvidenceError::InvalidSample)?;
+    Ok((from, to))
 }
 
 fn digest(value: &impl Serialize) -> Result<String, EvidenceError> {
