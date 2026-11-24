@@ -24,6 +24,15 @@ impl AgentReadService {
             .lineage
             .agent
             .ok_or_else(|| corrupt("authorized event snapshot has no Agent"))?;
+        self.complete_event_stream_snapshot(agent, authorization.resource().2)
+            .await
+    }
+
+    pub(super) async fn complete_event_stream_snapshot(
+        &self,
+        agent: Agent,
+        personal: bool,
+    ) -> Result<AgentEventStreamSnapshot, AgentReadError> {
         let entries = self.complete_log(&agent).await?;
         fold_agent_log(&agent, &entries).map_err(AgentReadError::Corrupt)?;
         Ok(AgentEventStreamSnapshot {
@@ -37,7 +46,7 @@ impl AgentReadService {
             head: agent.conversation.last_seq,
             history: entries
                 .into_iter()
-                .map(|entry| AgentVisibleLogEntry::from_entry(entry, authorization.resource().2))
+                .map(|entry| AgentVisibleLogEntry::from_entry(entry, personal))
                 .collect(),
         })
     }

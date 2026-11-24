@@ -5,6 +5,15 @@ use layer2_core::OperationStore;
 use std::sync::Arc;
 
 impl AgentProjectionServices {
+    #[cfg(feature = "qualification-hooks")]
+    pub(crate) fn with_qualification(
+        mut self,
+        registry: Option<cma_qualification::Registry>,
+    ) -> Self {
+        self.qualification = registry.map(Arc::new);
+        self
+    }
+
     pub(crate) fn router(&self, operation_records: Arc<dyn OperationStore>) -> Router {
         let agent_routes = AgentRoutesState::new(
             self.agent_page_origin.clone(),
@@ -13,6 +22,11 @@ impl AgentProjectionServices {
             Arc::clone(&self.operations),
             operation_records,
         );
+        #[cfg(feature = "qualification-hooks")]
+        let agent_routes = match &self.qualification {
+            Some(registry) => agent_routes.with_control_checkpoint(registry.clone()),
+            None => agent_routes,
+        };
         let agent_routes = match &self.message_feedback {
             Some(store) => agent_routes.with_message_feedback(store.clone()),
             None => agent_routes,

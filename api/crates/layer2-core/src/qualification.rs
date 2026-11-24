@@ -94,6 +94,19 @@ pub(crate) fn agent_digest(agent: &AgentId) -> [u8; 32] {
     encoder.finalize().into()
 }
 
+impl From<&crate::sandbox::store::AgentControlResult> for ControlSchedule {
+    fn from(result: &crate::sandbox::store::AgentControlResult) -> Self {
+        use crate::sandbox::store::AgentControlResult;
+        Self {
+            agent_revision: result.agent().revision,
+            effect: match result {
+                AgentControlResult::Scheduled(_) => ScheduleEffect::Scheduled,
+                AgentControlResult::Existing(_) => ScheduleEffect::Existing,
+            },
+        }
+    }
+}
+
 /// Instrument only an already captured local renewal invocation.
 pub trait RenewalHook: Send + Sync {
     fn selected(&self, authority: &std::sync::Arc<crate::agent_ownership::Authority>) -> bool;
