@@ -46,6 +46,7 @@ pub(crate) struct AgentManager {
 }
 
 impl AgentManager {
+    #[cfg(test)]
     pub async fn register(
         store: Arc<MongoSandboxStore>,
         registry: Arc<LiveAgentRegistry>,
@@ -66,6 +67,7 @@ impl AgentManager {
         .await
     }
 
+    #[cfg(test)]
     pub async fn register_with_policy(
         store: Arc<MongoSandboxStore>,
         registry: Arc<LiveAgentRegistry>,
