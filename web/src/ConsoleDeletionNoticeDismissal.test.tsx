@@ -91,7 +91,7 @@ it('keeps restored notices off unrelated pages and exposes them inside Environme
   );
   await act(async () => {});
   expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
-  await actor.click(screen.getByRole('button', { name: 'Environments', exact: true }));
+  await actor.click(screen.getByRole('button', { name: 'Environments' }));
   const notice = screen.getByRole('region', { name: 'Deletion request' });
   expect(notice.closest('main')).toBeNull();
   await actor.click(within(notice).getByRole('button', { name: 'Dismiss deletion notice' }));
