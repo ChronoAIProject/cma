@@ -15,7 +15,7 @@ import {
   setAppearance,
   useAppearance,
 } from '../theme/appearance';
-import { BUILD_INFO } from '../shell/build';
+import { BUILD_LOOKUP_TIMEOUT_MS, describeBuilds, readServiceBuilds } from './buildVersions';
 import { ServiceAuthorizationDialog } from './ServiceAuthorizationDialog';
 import { PrivacyExportDialog } from './PrivacyExportDialog';
 import './ProfileMenu.css';
@@ -57,12 +57,29 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [avatarBroken, setAvatarBroken] = useState(false);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [builds, setBuilds] = useState<Awaited<ReturnType<typeof readServiceBuilds>>>();
+  const buildInfo = describeBuilds(builds);
   const fallbackRef = useRef<HTMLElement>(null);
   const copyAttempt = useRef(0);
   const clearCopy = () => {
     copyAttempt.current += 1;
     setCopyState('idle');
   };
+  useEffect(() => {
+    if (!open) return;
+    let current = true;
+    const controller = new AbortController();
+    const deadline = window.setTimeout(() => controller.abort(), BUILD_LOOKUP_TIMEOUT_MS);
+    void readServiceBuilds(controller.signal).then((result) => {
+      window.clearTimeout(deadline);
+      if (current) setBuilds(result);
+    });
+    return () => {
+      current = false;
+      window.clearTimeout(deadline);
+      controller.abort();
+    };
+  }, [open]);
   useEffect(() => {
     if (copyState !== 'failed' || !fallbackRef.current) return;
     const range = document.createRange();
@@ -132,15 +149,16 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
     {
       id: 'build',
       icon: <IconCopyOutline16 />,
+      disabled: builds === undefined,
       label: (
         <span className="profile__build">
           {copyState === 'copied'
             ? 'Build version copied'
-            : `Copy build version · ${BUILD_INFO.label}`}
+            : `Copy build version · ${buildInfo.label}`}
           {copyState === 'failed' && (
             <span className="profile__build-fallback">
               Could not copy. Select the build version to copy it manually.
-              <code ref={fallbackRef}>{BUILD_INFO.copyText}</code>
+              <code ref={fallbackRef}>{buildInfo.copyText}</code>
             </span>
           )}
         </span>
@@ -193,7 +211,7 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
       const copy = async () => {
         try {
           if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
-          await navigator.clipboard.writeText(BUILD_INFO.copyText);
+          await navigator.clipboard.writeText(buildInfo.copyText);
           if (attempt === copyAttempt.current) setCopyState('copied');
         } catch {
           if (attempt === copyAttempt.current) setCopyState('failed');
@@ -240,6 +258,7 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
             aria-label={`Account menu for ${user.displayName ?? user.handle}`}
             onClick={() => {
               clearCopy();
+              setBuilds(undefined);
               setOpen((wasOpen) => !wasOpen);
             }}
           >
