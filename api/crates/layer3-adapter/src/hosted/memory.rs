@@ -20,6 +20,7 @@ use crate::{
 
 #[path = "memory_state.rs"]
 mod state;
+pub use state::InMemoryRuntimeSnapshot;
 use state::{
     channel, digest, fingerprint, memory_observation, refused, remember_operation,
     replay_operation, require_credential,
@@ -42,20 +43,6 @@ mod process;
 mod status;
 #[path = "memory_workspace.rs"]
 mod workspace;
-
-/// Observable in-memory state used by Layer 2 lifecycle tests.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InMemoryRuntimeSnapshot {
-    pub request: ProviderSandboxRequest,
-    pub credential_delivered: bool,
-    pub workspaces: BTreeMap<String, WorkspaceReceipt>,
-    pub worktrees: BTreeMap<(String, String), WorktreeReceipt>,
-    pub homes: BTreeMap<AgentSlot, AgentHomePlan>,
-    pub agents: BTreeMap<AgentSlot, AgentLaunch>,
-    pub writer_fence_captures: u64,
-    pub writers_held: bool,
-    pub restored_object: Option<String>,
-}
 
 #[derive(Debug, Clone)]
 struct MemoryAgent {
