@@ -316,7 +316,7 @@ export function registerRedesignChannelCases() {
   }) => {
     const { state, view, boundary } = await setupActivity(page, baseURL!);
     const initialReads = state.reads.length;
-    state.snapshot = activityPage([
+    const snapshot = activityPage([
       { ...responseConsumer, deliveries: [receipt('confirmed'), receipt('unknown', 'other-team')] },
       {
         ...responseConsumer,
@@ -327,7 +327,7 @@ export function registerRedesignChannelCases() {
         deliveries: [receipt('rejected', 'helper-team')],
       },
     ]);
-    state.snapshot.has_more = true;
+    state.snapshot = { ...snapshot, has_more: true };
     let release!: () => void;
     state.hold = new Promise<void>((resolve) => {
       release = resolve;

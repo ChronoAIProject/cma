@@ -12,7 +12,6 @@ const PATH: &str = "/api/v1/sandboxes/sbx_update/runtime-update";
 pub(crate) mod retained;
 
 pub(crate) async fn update_fixture(configured: bool) -> Fixture {
-    let mut f = fixture(3);
     let mut sandbox = stored_sandbox("sbx_update", "owner", SandboxStatus::Active, 4);
     sandbox.runtime = Some(RuntimeBinding {
         runtime_id: "retained-runtime".into(),
@@ -21,6 +20,11 @@ pub(crate) async fn update_fixture(configured: bool) -> Fixture {
         boot_id: None,
         bound_at: NOW.into(),
     });
+    runtime_update_fixture(sandbox, configured).await
+}
+
+async fn runtime_update_fixture(sandbox: Sandbox, configured: bool) -> Fixture {
+    let mut f = fixture(3);
     f.store.create_sandbox(sandbox).await.unwrap();
     if configured {
         f.state = f
@@ -32,6 +36,90 @@ pub(crate) async fn update_fixture(configured: bool) -> Fixture {
     }
     f.router = hierarchy_router(f.state.clone());
     f
+}
+
+pub(in crate::rest) fn native_runtime_update_sandbox(
+    mut sandbox: Sandbox,
+    custom: bool,
+) -> Sandbox {
+    let home = retained::reopen::home(&sandbox.id);
+    let source = home
+        .native_pool
+        .as_ref()
+        .unwrap()
+        .request
+        .pool
+        .spec
+        .image
+        .uri
+        .clone();
+    sandbox.profile.content.runtime_image = custom.then(|| source.clone());
+    sandbox.runtime = Some(RuntimeBinding {
+        runtime_id: "agent-sandbox:member:sandbox-uid".into(),
+        runtime_version: source,
+        provision_generation: Some(1),
+        boot_id: Some("b".repeat(32)),
+        bound_at: NOW.into(),
+    });
+    sandbox.lifecycle.home = Some(Box::new(home));
+    sandbox.lifecycle.runtime_generation_high_water = 1;
+    sandbox.work = SandboxWorkState::new(SandboxWorkStep::None, NOW.into());
+    sandbox.validate().unwrap();
+    sandbox
+}
+
+pub(in crate::rest) fn assert_managed_update_queued(
+    original: &Sandbox,
+    stored: &Sandbox,
+    view: &Value,
+) {
+    let request = stored.runtime_update_request().unwrap();
+    assert_eq!(request.target_version, "runtime-v2");
+    assert!(!request.automatic);
+    assert!(request.started_at.is_none());
+    assert_eq!(view["runtime_update"]["state"], "queued");
+    assert_eq!(
+        view["runtime_update"]["target_version"],
+        request.target_version
+    );
+    assert_eq!(view["revision"], stored.revision);
+    assert_eq!(stored.revision, original.revision + 1);
+    assert_eq!(stored.id, original.id);
+    assert_eq!(stored.owner, original.owner);
+    assert_eq!(stored.status, original.status);
+    assert_eq!(stored.profile, original.profile);
+    assert_eq!(stored.lifecycle.home, original.lifecycle.home);
+    assert_eq!(stored.runtime, original.runtime);
+}
+
+#[tokio::test]
+async fn owner_managed_runtime_update_refuses_an_explicit_image_on_a_retained_home() {
+    for custom in [true, false] {
+        let original = native_runtime_update_sandbox(
+            stored_sandbox("sbx_update", "owner", SandboxStatus::Active, 4),
+            custom,
+        );
+        let f = runtime_update_fixture(original.clone(), true).await;
+        let (status, body) = json_response(
+            &f.router,
+            authenticated(
+                Method::POST,
+                PATH,
+                Some(json!({"target_version":"runtime-v2"})),
+                Some("managed-update"),
+            ),
+        )
+        .await;
+        let stored = f.store.get_sandbox(&original.id).await.unwrap().unwrap();
+        if custom {
+            assert_eq!(status, StatusCode::CONFLICT, "{body}");
+            assert_eq!(body["code"], "runtime_update_not_available");
+            assert_eq!(stored, original);
+        } else {
+            assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+            assert_managed_update_queued(&original, &stored, &body);
+        }
+    }
 }
 
 #[tokio::test]

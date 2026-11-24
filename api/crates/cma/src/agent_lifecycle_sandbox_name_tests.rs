@@ -64,6 +64,13 @@ fn owner() -> Caller {
     )
 }
 
+fn lease(operation_id: &str) -> LifecycleLease {
+    LifecycleLease {
+        id: operation_id.to_owned(),
+        token: "fixture-claim".into(),
+    }
+}
+
 #[tokio::test]
 async fn full_sandbox_quota_is_a_typed_terminal_failure_without_another_admission() {
     let profile_store = Arc::new(InMemoryProfileStore::default());
@@ -82,9 +89,15 @@ async fn full_sandbox_quota_is_a_typed_terminal_failure_without_another_admissio
     let first = admission(&profiles, &caller, "First", "quota-first").await;
     let original = service.create_for_lifecycle(&caller, first).await.unwrap();
     let second = admission(&profiles, &caller, "Second", "quota-second").await;
-    let error = create_sandbox(&service, &caller, second.profile, "Second", "quota-second")
-        .await
-        .unwrap_err();
+    let error = create_sandbox(
+        &service,
+        &caller,
+        second.profile,
+        "Second",
+        &lease("quota-second"),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(
         error,
         SandboxServiceError::SandboxLimitReached { limit: 1, live: 1 }
@@ -127,27 +140,29 @@ async fn repeated_minimal_agent_creation_has_distinct_sandboxes_and_replays_afte
     };
     service.create_for_lifecycle(&caller, legacy).await.unwrap();
 
+    let first_lease = lease(first_operation);
+    let second_lease = lease(second_operation);
     let (first, second, duplicate) = tokio::join!(
         create_sandbox(
             &service,
             &caller,
             first_request.profile.clone(),
             "New agent",
-            first_operation
+            &first_lease
         ),
         create_sandbox(
             &service,
             &caller,
             second_request.profile,
             "New agent",
-            second_operation
+            &second_lease
         ),
         create_sandbox(
             &service,
             &caller,
             first_request.profile,
             "New agent",
-            first_operation
+            &first_lease
         ),
     );
     let (first, second) = (first.unwrap(), second.unwrap());
@@ -174,7 +189,7 @@ async fn repeated_minimal_agent_creation_has_distinct_sandboxes_and_replays_afte
                 &caller,
                 replay.profile,
                 "New agent",
-                operation_id
+                &lease(operation_id)
             )
             .await
             .unwrap(),
@@ -219,9 +234,15 @@ async fn lifecycle_sandbox_names_preserve_full_operation_identity_with_maximum_u
         // Exercise the Sandbox's byte limit independently of the profile
         // catalog's separate display-name limit.
         let request = admission(&profiles, &caller, "Profile", operation_id).await;
-        let sandbox = create_sandbox(&service, &caller, request.profile, &title, operation_id)
-            .await
-            .unwrap();
+        let sandbox = create_sandbox(
+            &service,
+            &caller,
+            request.profile,
+            &title,
+            &lease(operation_id),
+        )
+        .await
+        .unwrap();
         assert!(sandbox.name.len() <= 64);
         assert!(sandbox.name.ends_with(&format!(" sandbox {operation_id}")));
         assert!(title.starts_with(sandbox.name.split(" sandbox ").next().unwrap()));
@@ -263,7 +284,7 @@ async fn lifecycle_name_rollout_recovers_exact_legacy_admission_without_acceptin
             &caller,
             old_request.profile.clone(),
             "New agent",
-            operation_id
+            &lease(operation_id)
         )
         .await
         .unwrap(),
@@ -276,7 +297,7 @@ async fn lifecycle_name_rollout_recovers_exact_legacy_admission_without_acceptin
         (old_request.profile, "Different title"),
     ] {
         assert!(matches!(
-            create_sandbox(&restarted, &caller, profile, title, operation_id).await,
+            create_sandbox(&restarted, &caller, profile, title, &lease(operation_id)).await,
             Err(SandboxServiceError::SandboxOriginConflict)
         ));
     }
@@ -313,7 +334,14 @@ async fn lifecycle_name_rollout_preserves_name_conflict_from_another_operation()
         .await
         .unwrap();
     assert!(matches!(
-        create_sandbox(&service, &caller, profile, "New agent", operation_id).await,
+        create_sandbox(
+            &service,
+            &caller,
+            profile,
+            "New agent",
+            &lease(operation_id)
+        )
+        .await,
         Err(SandboxServiceError::NameConflict)
     ));
     assert_eq!(

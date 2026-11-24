@@ -87,7 +87,7 @@ export const TASK_GUIDES: Record<HelpTopic, TaskGuide> = {
         state:
           'You may see Awaiting confirmation, an unconfirmed creation, or a message that the task could not be confirmed. A lost connection does not prove the request failed.',
         action:
-          'Return to the original task or conversation with browser Back. Use the recovery action on that request, such as Recover original task or Recover creation. Keep its saved request intact; do not start a replacement or send the same instruction as a new message while the outcome is unknown.',
+          'For a task, return to the original task or conversation and choose Recover original task when offered. For a document in Artifacts, choose Retry creation in the open creation dialog. If you left the dialog, choose Resume creation in Artifacts to reopen the saved request, then choose Retry creation. Keep the original request while its outcome is unknown.',
         completion:
           'A confirmed receipt, recorded progress, or the original message appearing in the conversation establishes what was accepted. If the result remains unknown, keep checking the original request. Help navigation does not retry or submit work.',
       },

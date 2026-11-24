@@ -25,7 +25,7 @@ use futures_util::{stream, StreamExt};
 use serde_json::{json, Value};
 use tokio::{
     net::TcpListener,
-    sync::{oneshot, Semaphore},
+    sync::{oneshot, Notify, Semaphore},
     time::sleep,
 };
 
@@ -54,6 +54,7 @@ pub struct FakeProviderConfig {
     pub malformed_frame: bool,
     pub disconnect_after: Option<usize>,
     pub reject_binding: bool,
+    pub binding_pause: Option<Arc<BindingPause>>,
     /// Exact binding PUT refusals by zero-based attempt; other attempts succeed.
     pub binding_failures: std::collections::BTreeMap<usize, (u16, Value)>,
     pub text: String,
@@ -68,6 +69,12 @@ pub struct FakeProviderConfig {
     pub context_override: Option<Value>,
     pub context_delay: Duration,
     pub context_steps: Vec<(Duration, Option<u16>, Option<String>)>,
+}
+
+#[derive(Debug)]
+pub struct BindingPause {
+    pub accepted: Notify,
+    pub release: Semaphore,
 }
 
 impl Default for FakeProviderConfig {
@@ -92,6 +99,7 @@ impl Default for FakeProviderConfig {
             malformed_frame: false,
             disconnect_after: None,
             reject_binding: false,
+            binding_pause: None,
             binding_failures: std::collections::BTreeMap::new(),
             text: "hello".into(),
             unknown_event: false,
@@ -253,6 +261,10 @@ async fn bind(
             Json(json!({"code":"profile_refused"})),
         )
             .into_response();
+    }
+    if let Some(pause) = &state.config.binding_pause {
+        pause.accepted.notify_one();
+        pause.release.acquire().await.unwrap().forget();
     }
     Json(json!({"binding_id":binding_id,"level":"l3","honoured":["profile"],"refused":[{"field":"context.mcp_servers","reason":"not supported"}]}))
         .into_response()

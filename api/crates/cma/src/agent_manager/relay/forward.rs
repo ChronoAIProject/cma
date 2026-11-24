@@ -7,12 +7,14 @@ use axum::{
 };
 use environment_diagnostics::EnvironmentRead;
 use futures_util::StreamExt as _;
+use reqwest::RequestBuilder;
 use tokio::time::Instant;
 
 pub(super) enum Failure {
     Signature,
     Connect,
     Transport,
+    WriteNotEntered,
 }
 
 pub(super) fn deadline() -> Instant {
@@ -29,7 +31,16 @@ pub(super) fn send(
 ) -> impl std::future::Future<Output = Result<reqwest::Response, Failure>> + use<> {
     let outgoing = prepare(relay, destination, request, body, environment);
     async move {
-        match tokio::time::timeout_at(deadline, outgoing?.send()).await {
+        let (request, write_tag) = outgoing?;
+        match tokio::time::timeout_at(deadline, request.send()).await {
+            Ok(Ok(response))
+                if response.status() == StatusCode::SERVICE_UNAVAILABLE
+                    && write_tag
+                        .as_ref()
+                        .is_some_and(|expected| expected.verify(response.headers())) =>
+            {
+                Err(Failure::WriteNotEntered)
+            }
             Ok(Ok(response)) => Ok(response),
             Ok(Err(error)) if error.is_connect() => Err(Failure::Connect),
             _ => Err(Failure::Transport),
@@ -43,10 +54,14 @@ fn prepare(
     request: &Request,
     body: &[u8],
     environment: Option<&mut EnvironmentRead>,
-) -> Result<reqwest::RequestBuilder, Failure> {
+) -> Result<(RequestBuilder, Option<authentication::WriteNotEntered>), Failure> {
     let mut headers = HeaderMap::new();
     for (name, value) in ingress::headers(request) {
-        if name != file_read::HANDOFF_HEADER && authentication::forwarded(name.as_str()) {
+        if !matches!(
+            name.as_str(),
+            file_read::HANDOFF_HEADER | file_write::NOT_ENTERED_HEADER
+        ) && authentication::forwarded(name.as_str())
+        {
             headers.append(name, value.clone());
         }
     }
@@ -64,6 +79,13 @@ fn prepare(
     if let Some(environment) = environment {
         environment.correlate_hop(headers[PROOF].as_bytes());
     }
+    let write_tag = (relay.authentication.file_write_handoff_enabled()
+        && file_write::eligible(request.uri().path(), request.method(), body))
+    .then(|| {
+        relay
+            .authentication
+            .write_not_entered_verifier(headers[PROOF].as_bytes())
+    });
     let url = format!(
         "{}{}",
         destination.member.relay_address.trim_end_matches('/'),
@@ -72,11 +94,14 @@ fn prepare(
             .path_and_query()
             .map_or("/", |value| value.as_str())
     );
-    Ok(relay
-        .client
-        .request(request.method().clone(), url)
-        .headers(headers)
-        .body(body.to_vec()))
+    Ok((
+        relay
+            .client
+            .request(request.method().clone(), url)
+            .headers(headers)
+            .body(body.to_vec()),
+        write_tag,
+    ))
 }
 
 pub(super) fn handoff(outcome: &Result<reqwest::Response, Failure>) -> Option<&'static str> {
@@ -105,6 +130,9 @@ pub(super) fn finish(
         }
         Err(Failure::Connect | Failure::Transport) => {
             return http::unavailable_with(environment, Refusal::PeerTransport);
+        }
+        Err(Failure::WriteNotEntered) => {
+            return http::unavailable_with(environment, Refusal::PeerResponse);
         }
     };
     let status = response.status();
@@ -149,6 +177,7 @@ pub(super) fn finish(
                 | "proxy-authorization"
                 | "trailer"
                 | file_read::HANDOFF_HEADER
+                | file_write::NOT_ENTERED_HEADER
         ) {
             result.headers_mut().append(name, value.clone());
         }

@@ -121,7 +121,12 @@ pub(super) fn lifecycle_config(
             .agent_manager_replicas
             .as_ref()
             .is_some_and(|replicas| replicas.skip_ineligible_reconciliation),
+        defer_foreign_reconciliation: config
+            .agent_manager_replicas
+            .as_ref()
+            .is_some_and(|replicas| replicas.defer_foreign_reconciliation),
         sandbox_reconciliation_reserved_lane: config.features.sandbox_reconciliation_reserved_lane,
+        sandbox_binding_hold_metrics: config.features.sandbox_binding_hold_metrics,
         home_policy: config
             .runtime
             .home_policy

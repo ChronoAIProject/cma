@@ -130,6 +130,11 @@ impl SandboxReconciler {
         self
     }
 
+    pub(crate) fn with_binding_hold_metrics(mut self, enabled: bool) -> Self {
+        self.binding_holds = self.binding_holds.with_metrics(enabled);
+        self
+    }
+
     pub(crate) fn with_profile_agents(mut self, agents: Arc<AgentService>) -> Self {
         self.profile_agents = Some(agents);
         self
@@ -350,7 +355,8 @@ impl SandboxReconciler {
         let request = RuntimeAdoptionRequest::new(
             observation.generation,
             observation.handle.clone(),
-            sandbox_spec(sandbox, &self.deployment_id),
+            sandbox_spec(sandbox, &self.deployment_id)
+                .map_err(|error| corrupt(&error.to_string()))?,
         )
         .with_expected_image(&binding.runtime_version);
         if measure(
