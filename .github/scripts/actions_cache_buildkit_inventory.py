@@ -5,7 +5,7 @@ import os
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -29,12 +29,25 @@ class RejectRedirect(HTTPRedirectHandler):
         return None
 
 
-def read_json(request, limit):
+def distinct_fields(pairs):
+    fields, result = set(), {}
+    for key, value in pairs:
+        folded = key.casefold()
+        if folded in fields:
+            raise ValueError("ambiguous BuildKit JSON fields")
+        fields.add(folded)
+        result[key] = value
+    return result
+
+
+def read_json(request, limit, *, expected_size=None):
     with build_opener(RejectRedirect()).open(request, timeout=15) as response:
         raw = response.read(limit + 1)
     if len(raw) > limit:
         raise ValueError("cache response exceeds size limit")
-    return json.loads(raw)
+    if expected_size is not None and len(raw) != expected_size:
+        raise ValueError("BuildKit download differs from inventory size")
+    return json.loads(raw, object_pairs_hook=distinct_fields)
 
 
 def indexes(entries):
@@ -44,25 +57,57 @@ def indexes(entries):
                    or not 0 < entry.size <= MAX_INDEX_BYTES for entry in found)
             or len({entry.key for entry in found}) != len(found)):
         raise ValueError("unsupported BuildKit index inventory")
-    return {entry.id: (entry.key, entry.ref, entry.version, entry.size, entry.created) for entry in found}
+    # Reading an index can advance its access timestamp without changing its identity.
+    return {entry.id: replace(entry, accessed=entry.created) for entry in found}
+
+
+def valid_record(record, layer_count):
+    if not isinstance(record, dict) or record.keys() - {"layers", "chains", "digest", "inputs"}:
+        return False
+    direct, chains = record.get("layers", []), record.get("chains", [])
+    if not isinstance(direct, list) or not isinstance(chains, list):
+        return False
+    for row in direct:
+        if not isinstance(row, dict) or row.keys() - {"layer", "createdAt"}:
+            return False
+        # BuildKit's omitempty encoding represents layer zero by omission.
+        value = row.get("layer", 0)
+        if type(value) is not int or not 0 <= value < layer_count:
+            return False
+    for row in chains:
+        if not isinstance(row, dict) or row.keys() - {"layers", "createdAt"}:
+            return False
+        selected = row.get("layers", [])
+        if (not isinstance(selected, list)
+                or any(type(value) is not int or not 0 <= value < layer_count for value in selected)):
+            return False
+    return True
 
 
 def layers(document):
     if not isinstance(document, dict) or document.keys() - {"layers", "records"}:
         raise ValueError("unsupported BuildKit index format")
     rows = document.get("layers", [])
-    if not isinstance(rows, list):
+    records = document.get("records", [])
+    if not isinstance(rows, list) or not isinstance(records, list):
         raise ValueError("invalid BuildKit layers")
     result = set()
     for row in rows:
-        digest = row.get("blob") if isinstance(row, dict) else None
+        if not isinstance(row, dict) or row.keys() - {"blob", "parent", "annotations"}:
+            raise ValueError("unsupported BuildKit layer fields")
+        digest = row.get("blob")
         if not isinstance(digest, str) or not re.fullmatch(DIGEST, digest):
             raise ValueError("invalid BuildKit layer digest")
+        parent = row.get("parent", 0)
+        if type(parent) is not int or not -1 <= parent < len(rows):
+            raise ValueError("unknown BuildKit parent layer")
         result.add("buildkit-blob-1-" + digest)
+    if not all(valid_record(record, len(rows)) for record in records):
+        raise ValueError("unresolved BuildKit record layers")
     return result
 
 
-def read_index(results_url, token, key):
+def read_index(results_url, token, key, expected_size):
     body = json.dumps({"key": key, "restore_keys": [key], "version": CACHE_VERSION}).encode()
     reply = read_json(Request(results_url + RESULTS_LOOKUP, data=body,
                               headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"}),
@@ -74,7 +119,7 @@ def read_index(results_url, token, key):
     if (url.scheme != "https" or not (url.hostname or "").endswith(".blob.core.windows.net")
             or url.username or url.password or url.fragment or url.port not in (None, 443)):
         raise ValueError("unexpected BuildKit index download endpoint")
-    return layers(read_json(signed_url, MAX_INDEX_BYTES))
+    return layers(read_json(signed_url, MAX_INDEX_BYTES, expected_size=expected_size))
 
 
 def snapshot(api, reader, revision, now):
@@ -82,7 +127,7 @@ def snapshot(api, reader, revision, now):
     before = api.entries(sort="created_at", direction="desc")
     pinned = indexes(before)
     with ThreadPoolExecutor(max_workers=8) as pool:
-        reachable = set().union(*pool.map(reader, sorted(value[0] for value in pinned.values())))
+        reachable = set().union(*pool.map(lambda row: reader(row.key, row.size), pinned.values()))
     after = api.entries(sort="created_at", direction="desc")
     if indexes(after) != pinned:
         raise ValueError("BuildKit indexes changed during inventory")
@@ -105,7 +150,7 @@ def main(path, env):
             or url.username or url.password or url.path or url.query or url.fragment or url.port not in (None, 443)):
         raise ValueError("unexpected Actions Results endpoint")
     api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
-    result = snapshot(api, lambda key: read_index(results_url, env["ACTIONS_RUNTIME_TOKEN"], key),
+    result = snapshot(api, lambda key, size: read_index(results_url, env["ACTIONS_RUNTIME_TOKEN"], key, size),
                       env["GITHUB_SHA"], datetime.now(timezone.utc))
     Path(path).write_text(json.dumps(result, default=str) + "\n")
     print(f"BuildKit indexes={result['index_count']} candidate_bytes={result['candidate_bytes']}")
