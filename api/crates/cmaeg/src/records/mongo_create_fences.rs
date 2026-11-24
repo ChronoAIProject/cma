@@ -163,10 +163,10 @@ impl MongoRecords {
                             {
                                 return Err(Error::custom(CancelCreate::RecordPresent));
                             }
-                            if owned_connection_claim(db, identity, keys, session).await? {
-                                return Err(Error::custom(CancelCreate::CreatePending));
-                            }
                             if !fence.cancelled {
+                                if owned_connection_claim(db, identity, keys, session).await? {
+                                    return Err(Error::custom(CancelCreate::CreatePending));
+                                }
                                 db.collection::<Document>(CREATE_FENCES)
                                     .update_one(
                                         doc! {"_id": identity.key()},
@@ -315,11 +315,22 @@ mod tests {
         let db = first.database(&db_name);
         super::super::migrate(&db).await.unwrap();
         let issuer = "https://issuer.example";
-        tokio::try_join!(
+        let (floor, ordinary) = tokio::join!(
             super::super::migrate_create_fence_floor(&db, issuer),
             super::super::migrate(&db),
-        )
-        .unwrap();
+        );
+        ordinary.unwrap();
+        if let Err(error) = floor {
+            assert_eq!(
+                error,
+                RecordError::Unavailable(
+                    "Channel validator migration is in progress or unresolved".into()
+                )
+            );
+            super::super::migrate_create_fence_floor(&db, issuer)
+                .await
+                .unwrap();
+        }
         assert!(super::super::create_fences_floor::verify(&db, issuer)
             .await
             .unwrap());
@@ -498,6 +509,32 @@ mod tests {
             CancelCreate::CreatePending
         );
         assert_eq!(a.get(&owned_id).await, Err(RecordError::NotFound));
+        let mut unrelated = Vec::new();
+        for _ in 0..257 {
+            let id = uuid::Uuid::new_v4().to_string();
+            let sealed = seal_connection(&keys, &id, br#"{"fixture":"unrelated"}"#).unwrap();
+            unrelated.push(doc! {
+                "_id":id, "owner":"alice", "version":1_i64, "schema_version":1,
+                "blob": Binary {subtype: BinarySubtype::Generic, bytes: sealed},
+            });
+        }
+        db.collection::<Document>(CONNECTIONS)
+            .insert_many(unrelated)
+            .await
+            .unwrap();
+        assert_eq!(
+            b.cancel_channel_create(&alice, &keys).await.unwrap(),
+            CancelCreate::FencedAbsent,
+        );
+        let new_id = uuid::Uuid::new_v4().to_string();
+        let never_cancelled = CreateFenceIdentity {
+            record: &new_id,
+            ..alice
+        };
+        assert!(matches!(
+            b.cancel_channel_create(&never_cancelled, &keys).await,
+            Err(RecordError::Unavailable(_)),
+        ));
         db.run_command(doc! {"collMod": super::super::RECORDS, "validationAction": "warn"})
             .await
             .unwrap();
@@ -508,6 +545,52 @@ mod tests {
             b.cancel_channel_create(&alice, &keys).await,
             Err(RecordError::Unavailable(_))
         ));
+        db.drop().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a disposable Mongo replica set"]
+    async fn create_fence_upgrades_populated_channel_records_from_the_old_validator() {
+        let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+        let client = mongodb::Client::with_uri_str(&uri).await.unwrap();
+        let db = client.database(&format!(
+            "old_channel_validator_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let records = MongoRecords::read_failure_fixture(db.clone());
+        super::super::migrate(&db).await.unwrap();
+        let mut old_validator = super::super::schema::record_validator(false);
+        old_validator
+            .get_document_mut("$jsonSchema")
+            .unwrap()
+            .get_document_mut("properties")
+            .unwrap()
+            .remove("guard_revision");
+        db.run_command(doc! {"collMod": super::super::RECORDS, "validator": old_validator})
+            .await
+            .unwrap();
+
+        let existing = uuid::Uuid::new_v4().to_string();
+        records
+            .put(&existing, "alice", b"retained", None)
+            .await
+            .unwrap();
+        super::super::migrate_create_fence_floor(&db, "https://issuer.example")
+            .await
+            .unwrap();
+        assert_eq!(records.get(&existing).await.unwrap().blob, b"retained");
+        let row = db
+            .collection::<Document>(super::super::RECORDS)
+            .find_one(doc! {"_id": existing})
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.get_i64("guard_revision").unwrap(), 1);
+        assert!(
+            super::super::create_fences_floor::verify(&db, "https://issuer.example")
+                .await
+                .unwrap()
+        );
         db.drop().await.unwrap();
     }
 }

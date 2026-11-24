@@ -8,6 +8,102 @@ use mongodb::{
 };
 
 pub(super) const MARKER: &str = "channel_create_fences";
+pub(super) const VALIDATOR_CHANGE: &str = "channel_validator_change";
+const IDLE: i32 = 1;
+const LEGACY_UPGRADE: i32 = 2;
+const FENCED_WRITERS: i32 = 3;
+
+async fn validator_phase(db: &Database) -> Result<Option<i32>, RecordError> {
+    let row = db
+        .collection::<Document>(MIGRATIONS)
+        .find_one(doc! {"_id": VALIDATOR_CHANGE})
+        .read_concern(ReadConcern::majority())
+        .await
+        .map_err(failure)?;
+    row.map(|row| {
+        row.get_i32("version").map_err(|_| {
+            RecordError::Unavailable("Channel validator migration phase is unreadable".into())
+        })
+    })
+    .transpose()
+}
+
+async fn begin_validator_change(db: &Database, next: i32) -> Result<bool, RecordError> {
+    let rows = db.collection::<Document>(MIGRATIONS);
+    let majority = WriteConcern::builder().w(Acknowledgment::Majority).build();
+    rows.update_one(
+        doc! {"_id": VALIDATOR_CHANGE},
+        doc! {"$setOnInsert": {"version": IDLE}},
+    )
+    .upsert(true)
+    .write_concern(majority.clone())
+    .await
+    .map_err(failure)?;
+    let result = rows
+        .update_one(
+            doc! {"_id": VALIDATOR_CHANGE, "version": IDLE},
+            doc! {"$set": {"version": next}},
+        )
+        .write_concern(majority)
+        .await
+        .map_err(failure)?;
+    if result.matched_count == 1 {
+        return Ok(true);
+    }
+    if validator_phase(db).await? == Some(FENCED_WRITERS) {
+        return Ok(next == FENCED_WRITERS);
+    }
+    Err(RecordError::Unavailable(
+        "Channel validator migration is in progress or unresolved".into(),
+    ))
+}
+
+pub(super) async fn upgrade_legacy_validator(
+    db: &Database,
+    validator: Document,
+) -> Result<(), RecordError> {
+    if !begin_validator_change(db, LEGACY_UPGRADE).await? {
+        return Ok(());
+    }
+    let result = set_channel_validator(db, validator).await;
+    // A lost DDL acknowledgement can leave the old operation in flight. Its
+    // durable phase must then prevent installation of the stronger validator.
+    if result.is_ok()
+        || matches!(&result, Err(error)
+        if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(command)
+            if matches!(command.code, 2 | 13 | 26)))
+    {
+        db.collection::<Document>(MIGRATIONS)
+            .update_one(
+                doc! {"_id": VALIDATOR_CHANGE, "version": LEGACY_UPGRADE},
+                doc! {"$set": {"version": IDLE}},
+            )
+            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+            .await
+            .map_err(failure)?;
+    }
+    result.map_err(failure)?;
+    Ok(())
+}
+
+async fn set_channel_validator(
+    db: &Database,
+    validator: Document,
+) -> mongodb::error::Result<Document> {
+    let response = db
+        .run_command(doc! {
+            "collMod": RECORDS, "validator": validator,
+            "validationLevel": "strict", "validationAction": "error",
+            "writeConcern": {"w": "majority"}
+        })
+        .await?;
+    if response.contains_key("writeConcernError") {
+        return Err(mongodb::error::Error::custom(
+            "Channel validator majority acknowledgement is unresolved",
+        ));
+    }
+    Ok(response)
+}
 
 pub fn role(database: &str, migration: bool) -> Document {
     let actions = if migration {
@@ -88,9 +184,11 @@ pub(crate) async fn verify(db: &Database, issuer: &str) -> Result<bool, RecordEr
         .try_collect::<Vec<_>>()
         .await
         .map_err(failure)?;
-    if !row.is_some_and(|row| {
-        row.get_str("issuer").ok() == Some(issuer) && row.get_i32("version").ok() == Some(1)
-    }) || indexes.len() != 1
+    if validator_phase(db).await? != Some(FENCED_WRITERS)
+        || !row.is_some_and(|row| {
+            row.get_str("issuer").ok() == Some(issuer) && row.get_i32("version").ok() == Some(1)
+        })
+        || indexes.len() != 1
         || indexes[0].keys != doc! {"_id": 1}
         || indexes[0]
             .options
@@ -146,6 +244,14 @@ pub async fn migrate(db: &Database, issuer: &str) -> Result<(), RecordError> {
         ));
     }
     let write = WriteConcern::builder().w(Acknowledgment::Majority).build();
+    db.run_command(doc! {
+        "collMod": MIGRATIONS, "validator": schema::migration_validator(),
+        "validationLevel": "strict", "validationAction": "error",
+        "writeConcern": {"w": "majority"}
+    })
+    .await
+    .map_err(failure)?;
+    begin_validator_change(db, FENCED_WRITERS).await?;
     let fence_validator = doc! {"$or": [
         {"$and": [{"_id": "writer_floor"}, {"version": 1}, {"issuer": {"$type": "string"}}]},
         {"$jsonSchema": {"bsonType": "object", "required": ["_id", "revision", "cancelled"],
@@ -192,6 +298,9 @@ pub async fn migrate(db: &Database, issuer: &str) -> Result<(), RecordError> {
         .write_concern(write.clone())
         .await
         .map_err(failure)?;
+    set_channel_validator(db, schema::record_validator(true))
+        .await
+        .map_err(failure)?;
     db.collection::<Document>(RECORDS)
         .update_many(
             doc! {"$or": [{"guard_revision": {"$exists": false}}, {"guard_revision": 0}]},
@@ -200,20 +309,6 @@ pub async fn migrate(db: &Database, issuer: &str) -> Result<(), RecordError> {
         .write_concern(write.clone())
         .await
         .map_err(failure)?;
-    db.run_command(doc! {
-        "collMod": RECORDS, "validator": schema::record_validator(true),
-        "validationLevel": "strict", "validationAction": "error",
-        "writeConcern": {"w": "majority"}
-    })
-    .await
-    .map_err(failure)?;
-    db.run_command(doc! {
-        "collMod": MIGRATIONS, "validator": schema::migration_validator(),
-        "validationLevel": "strict", "validationAction": "error",
-        "writeConcern": {"w": "majority"}
-    })
-    .await
-    .map_err(failure)?;
     db.collection::<Document>(MIGRATIONS)
         .update_one(doc! {"_id": MARKER}, doc! {"$set": {"version": 1}})
         .upsert(true)

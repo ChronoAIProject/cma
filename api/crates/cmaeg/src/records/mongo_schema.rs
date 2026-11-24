@@ -1,4 +1,4 @@
-use super::create_fences::CREATE_FENCES;
+use super::{create_fences::CREATE_FENCES, create_fences_floor};
 use super::{
     failure, COLLECTIONS, CONNECTIONS, INTERACTIONS, MEDIA_CONTINUATIONS, MIGRATIONS, RECORDS,
     SESSIONS, THREAD_FENCES, WHATSAPP_FLOWS,
@@ -185,6 +185,7 @@ pub(crate) fn migration_validator() -> Document {
             {"_id":"worker_tracking_cutover","version":1},
             {"_id":"github_channel_guard","version":1},
             {"_id":"channel_create_fences","version":1},
+            {"_id":create_fences_floor::VALIDATOR_CHANGE,"version":{"$in":[1,2,3]}},
             {"_id":"github_integrations","version":{"$in":[1,2,3,4,5,6]}}]
     }
 }
@@ -229,17 +230,17 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
         .unwrap()
         .insert("expires_at", doc! {"bsonType":"date"});
     for (name, validator) in [
+        (MIGRATIONS, migration_validator()),
         (RECORDS, ordinary.clone()),
         (CONNECTIONS, ordinary),
         (INTERACTIONS, interaction_validator),
-        (MIGRATIONS, migration_validator()),
     ] {
         match db.run_command(doc!{"create":name,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await{
             Ok(_) => {},
             Err(error) if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(command) if command.code == 48) => {
-                // The dedicated writer-floor migration owns the existing
-                // Channel validator. A base migration can overlap installation.
-                if name != RECORDS {
+                if name == RECORDS {
+                    create_fences_floor::upgrade_legacy_validator(db, validator).await?;
+                } else {
                     db.run_command(doc! {
                         "collMod": name, "validator": validator,
                         "validationLevel": "strict", "validationAction": "error"
