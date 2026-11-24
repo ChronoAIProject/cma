@@ -186,8 +186,19 @@ async fn expired_claim_cannot_renew_or_release_a_successor_on_another_client() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
-async fn competing_maintenance_and_open_cannot_both_commit() {
-    for _ in 0..12 {
+async fn competing_maintenance_and_open_cannot_both_commit_first_batch() {
+    race_maintenance_and_open().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
+async fn competing_maintenance_and_open_cannot_both_commit_second_batch() {
+    race_maintenance_and_open().await;
+}
+
+// Each batch runs six races in fresh databases within the per-test budget.
+async fn race_maintenance_and_open() {
+    for _ in 0..6 {
         let f = Fixture::new().await;
         let (opened, paused) = tokio::join!(
             f.left.acquire_exclusive_sandbox_session(&f.request),

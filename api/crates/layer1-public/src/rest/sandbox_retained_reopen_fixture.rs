@@ -134,7 +134,7 @@ impl RetainedReopenVerifier for Verifier {
     }
 }
 
-fn home(id: &SandboxId) -> SandboxHome {
+pub(in crate::rest) fn home(id: &SandboxId) -> SandboxHome {
     use layer3_adapter::agent_sandbox::*;
     let policy = HomeVolumePolicy {
         mode: HomeVolumeMode::NativeVctFullHomeV2,
