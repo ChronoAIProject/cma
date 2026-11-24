@@ -9,7 +9,7 @@ use layer2_core::profiles::{
     WorkspaceProfileContent, WorkspaceProfileRef,
 };
 use layer2_core::trigger_domain::{
-    TriggerInlineTargetMaterializer, TriggerReferenceError, TriggerTarget,
+    TriggerInlineTarget, TriggerInlineTargetMaterializer, TriggerReferenceError, TriggerTarget,
 };
 use layer2_core::SubjectId;
 
@@ -67,11 +67,7 @@ impl TriggerInlineTargetMaterializer for InlineTriggerProfileMaterializer {
         delegated_credential: Option<&str>,
     ) -> Result<TriggerTarget, TriggerReferenceError> {
         if self.image_resolver.retirement_enabled()
-            && existing
-                .inline
-                .as_ref()
-                .is_some_and(|inline| inline.image.is_some())
-            && target.inline == existing.inline
+            && retains_image_settings(target.inline.as_ref(), existing.inline.as_ref())
         {
             // The edit changes no inline settings. Retain the exact profile
             // references from the stored target and avoid creating new profiles.
@@ -92,7 +88,7 @@ impl InlineTriggerProfileMaterializer {
         &self,
         owner: &SubjectId,
         target: &TriggerTarget,
-        existing: Option<&layer2_core::trigger_domain::TriggerInlineTarget>,
+        existing: Option<&TriggerInlineTarget>,
         delegated_credential: Option<&str>,
     ) -> Result<TriggerTarget, TriggerReferenceError> {
         let Some(inline) = &target.inline else {
@@ -213,6 +209,29 @@ impl InlineTriggerProfileMaterializer {
             inline: Some(inline),
         })
     }
+}
+
+fn retains_image_settings(
+    requested: Option<&TriggerInlineTarget>,
+    saved: Option<&TriggerInlineTarget>,
+) -> bool {
+    let (Some(requested), Some(saved)) = (requested, saved) else {
+        return false;
+    };
+    let (Some(image), Some(pin)) = (&requested.image, &saved.image) else {
+        return false;
+    };
+    // Clients can omit the server-resolved digest while resending identical
+    // settings. An explicit digest must agree with the stored one.
+    pin.reference.is_some()
+        && image.id == pin.id
+        && image.version == pin.version
+        && image
+            .reference
+            .as_ref()
+            .is_none_or(|reference| pin.reference.as_ref() == Some(reference))
+        && requested.agent == saved.agent
+        && requested.workspace == saved.workspace
 }
 
 fn unavailable(field: &'static str) -> TriggerReferenceError {
