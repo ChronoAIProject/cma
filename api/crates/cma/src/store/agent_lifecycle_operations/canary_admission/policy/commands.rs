@@ -91,9 +91,7 @@ impl MongoAgentLifecycleStore {
                 return Ok(receipt);
             }
             let fresh = requested.fresh.as_ref().ok_or(CanaryWriteError::Closed)?;
-            if requested.expires_at <= DateTime::now()
-                || fresh.release.release_key != requested.release_key
-            {
+            if fresh.release.release_key != requested.release_key {
                 return Err(CanaryWriteError::Refused);
             }
             fence_owner(database, owner, &mut session).await?;
@@ -110,9 +108,6 @@ impl MongoAgentLifecycleStore {
                 .map_err(|_| invalid_authority())?;
             let current = slot(database, owner, fresh.lane, &mut session).await?;
             if current.as_ref().map_or(0, |grant| grant.revision) != requested.expected_revision
-                || current.as_ref().is_some_and(|grant| {
-                    grant.state == CanaryGrantState::Issued && grant.expires_at > DateTime::now()
-                })
                 || self
                     .operations
                     .find_one(doc! {"owner": owner.as_str(), MANIFEST_DIGEST: &digest})

@@ -163,11 +163,24 @@ pub(super) async fn replace_slot(
     } else {
         filter.insert(&key, doc! {"$exists": false});
     }
-    if let CanaryGrantState::Consumed { .. } = next.state {
-        filter.insert(
-            "$expr",
-            doc! {"$gt": [format!("${key}.expires_at"), "$$NOW"]},
-        );
+    let current_expiry = || format!("${key}.expires_at");
+    match next.state {
+        CanaryGrantState::Issued => {
+            let new_grant_is_live = doc! { "$gt": [next.expires_at, "$$NOW"] };
+            let expiry = if expected.is_some_and(|grant| grant.state == CanaryGrantState::Issued) {
+                doc! { "$and": [
+                    new_grant_is_live,
+                    doc! { "$lte": [current_expiry(), "$$NOW"] },
+                ] }
+            } else {
+                new_grant_is_live
+            };
+            filter.insert("$expr", expiry);
+        }
+        CanaryGrantState::Consumed { .. } => {
+            filter.insert("$expr", doc! { "$gt": [current_expiry(), "$$NOW"] });
+        }
+        CanaryGrantState::Revoked => {}
     }
     let value = mongodb::bson::serialize_to_bson(next).map_err(|_| invalid_authority())?;
     let updated = database
@@ -255,7 +268,6 @@ impl CanaryGrantSlot {
             || self.manifest_digest != digest
             || self.descriptor_sha256 != descriptor
             || !canonical_sha256(&self.consent_sha256)
-            || self.expires_at <= DateTime::now()
             || self.policy_revision != policy_revision
             || self.state != CanaryGrantState::Issued
         {

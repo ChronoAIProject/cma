@@ -357,3 +357,75 @@ async fn canary_grant_receipt_and_revocation_survive_catalog_reassignment() {
     assert_eq!(store.operations.count_documents(doc! {}).await.unwrap(), 1);
     database.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn canary_grant_issuance_and_replacement_use_the_database_clock() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let client = Client::with_uri_str(uri).await.unwrap();
+    let name = format!("cma_canary_expiry_{}", uuid::Uuid::new_v4().simple());
+    let database = client.database(&name);
+    let store = MongoAgentLifecycleStore::open(&database).await.unwrap();
+    let owner = SubjectId::new("grant-expiry-owner");
+    CanaryPolicy::configure(&database, 0, true, "a".repeat(64), "b".repeat(64))
+        .await
+        .unwrap();
+    let database_now = database.run_command(doc! { "hello": 1 }).await.unwrap();
+    let now = *database_now.get_datetime("localTime").unwrap();
+    let mut initial = issue(&owner, release('1', "original"), 1, 0);
+    initial.expires_at = now;
+    assert!(matches!(
+        store.issue_canary_grant(&database, &initial).await,
+        Err(CanaryWriteError::Refused)
+    ));
+    let slots = database.collection::<mongodb::bson::Document>("sandbox_admissions");
+    let owner_filter = doc! { "_id": owner.as_str() };
+    assert!(slots
+        .find_one(owner_filter.clone())
+        .await
+        .unwrap()
+        .is_none());
+
+    initial.expires_at = now.saturating_add_duration(Duration::from_secs(600));
+    let first = store.issue_canary_grant(&database, &initial).await.unwrap();
+    let stored = slots.find_one(owner_filter.clone()).await.unwrap().unwrap();
+    let replacement = issue(&owner, release('2', "replacement"), 1, first.revision);
+    assert!(matches!(
+        store.issue_canary_grant(&database, &replacement).await,
+        Err(CanaryWriteError::Refused)
+    ));
+    assert_eq!(
+        slots.find_one(owner_filter.clone()).await.unwrap(),
+        Some(stored)
+    );
+    assert_eq!(
+        store
+            .issue_canary_grant(&database, &initial)
+            .await
+            .unwrap()
+            .id,
+        first.id
+    );
+
+    slots
+        .update_one(
+            owner_filter,
+            vec![doc! { "$set": { "runtime_canary_slots.agent.expires_at": "$$NOW" } }],
+        )
+        .await
+        .unwrap();
+    let next = store
+        .issue_canary_grant(&database, &replacement)
+        .await
+        .unwrap();
+    assert_ne!(next.id, first.id);
+    assert_eq!(next.revision, first.revision + 1);
+    assert!(matches!(
+        store
+            .redeem_canary(&database, redeem(&initial, &first, "expired"))
+            .await,
+        Err(CanaryWriteError::Refused)
+    ));
+    assert_eq!(store.operations.count_documents(doc! {}).await.unwrap(), 0);
+    database.drop().await.unwrap();
+}
