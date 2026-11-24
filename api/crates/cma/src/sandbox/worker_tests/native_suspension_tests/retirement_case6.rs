@@ -8,6 +8,7 @@ use layer2_core::sandbox::{Agent, AgentWorkReceipt, AgentWorkStep};
 use serde_json::json;
 mod faults;
 mod negatives;
+mod preclose;
 pub(super) mod records;
 mod support;
 use support::*;

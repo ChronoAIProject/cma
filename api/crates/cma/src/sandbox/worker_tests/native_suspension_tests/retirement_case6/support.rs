@@ -133,7 +133,16 @@ pub(super) fn child_worker(
     owner: Option<Arc<OwnershipCoordinator>>,
     name: &str,
 ) -> Arc<AgentWorker> {
-    let mut config = AgentWorkerConfig::new(name, "test").with_ownership(owner);
+    configured_child_worker(
+        f,
+        AgentWorkerConfig::new(name, "test").with_ownership(owner),
+    )
+}
+
+pub(super) fn configured_child_worker(
+    f: &Fixture,
+    mut config: AgentWorkerConfig,
+) -> Arc<AgentWorker> {
     config.retry_delay = Duration::from_secs(5);
     AgentWorker::new(
         AgentWorkerDependencies {
