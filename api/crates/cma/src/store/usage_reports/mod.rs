@@ -3,7 +3,6 @@ mod admission;
 mod allocation_deadline;
 pub(super) use allocation_deadline::{allocation_operation, ALLOCATION_DB_DEADLINE};
 mod budget;
-mod control;
 mod controlled_updates;
 mod diagnostics;
 mod initial_snapshot;
@@ -23,7 +22,7 @@ mod view_authority;
 mod view_finish;
 mod views;
 mod work;
-pub(crate) use cma_am_reporting::{chart_documents, unavailable};
+pub(crate) use cma_am_reporting::{chart_documents, now, unavailable};
 pub(super) use cma_am_reporting::{decode, encode, expires};
 pub(crate) use views::ViewLease;
 pub(crate) use work::ReportLease;
@@ -128,7 +127,12 @@ impl ReportingStore {
         );
         let store = Arc::new(Self {
             budgets,
-            persistence: cma_am_reporting::ReportingStore::new(client, db, key),
+            persistence: cma_am_reporting::ReportingStore::new(
+                client,
+                db,
+                key,
+                tx::REPORTING_POLICY,
+            ),
             circuit,
             notifications: Arc::default(),
             view_policy: Arc::default(),
@@ -141,12 +145,6 @@ impl ReportingStore {
     }
 }
 
-pub(crate) fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
 #[cfg(test)]
 mod tests;
 

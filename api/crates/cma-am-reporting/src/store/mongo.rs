@@ -12,14 +12,16 @@ pub struct ReportingStore {
     pub client: Client,
     pub db: Database,
     pub signer: Arc<CursorSigner>,
+    pub(crate) transaction_policy: tx::Policy,
 }
 
 impl ReportingStore {
-    pub fn new(client: Client, db: Database, key: &[u8]) -> Self {
+    pub fn new(client: Client, db: Database, key: &[u8], transaction_policy: tx::Policy) -> Self {
         Self {
             client,
             db,
             signer: Arc::new(CursorSigner::new(key)),
+            transaction_policy,
         }
     }
 
@@ -29,6 +31,7 @@ impl ReportingStore {
             client,
             db,
             signer: Arc::clone(&self.signer),
+            transaction_policy: self.transaction_policy,
         }
     }
 
