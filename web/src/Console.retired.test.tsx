@@ -62,10 +62,9 @@ it('projects the authorized selected retired Agent despite an empty hierarchy an
   expect(group.querySelector('.character-avatar')).toHaveAttribute('data-motion', 'still');
   expect(screen.getByText('No other agents to show.')).toBeVisible();
   expect(restoreDeletions('owner')).toEqual([sibling]);
-  expect(
-    screen.queryByText('Sandbox delete request accepted. Cleanup continues in the background.'),
-  ).not.toBeInTheDocument();
-  expect(screen.getByText('Sandbox delete request is not confirmed.')).toBeVisible();
+  expect(screen.getByRole('region', { name: 'Deletion request' })).toHaveTextContent(
+    '1 deletion request · 1 unconfirmed',
+  );
   expect(
     screen.getByText('1 deletions need checking').closest('.manager-navigation__list'),
   ).toBeNull();
