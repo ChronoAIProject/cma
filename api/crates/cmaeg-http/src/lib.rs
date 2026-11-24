@@ -2,4 +2,5 @@
 
 pub mod http {
     pub mod docs;
+    pub mod problems;
 }

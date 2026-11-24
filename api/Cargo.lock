@@ -658,8 +658,11 @@ name = "cmaeg-http"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "cmaeg-core",
+ "cmaeg-engine",
  "pulldown-cmark",
  "reqwest",
+ "serde_json",
 ]
 
 [[package]]
