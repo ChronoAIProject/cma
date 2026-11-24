@@ -361,3 +361,18 @@ fn publish_active(
 const fn invalid_execution() -> crate::sandbox::SandboxModelError {
     crate::sandbox::SandboxModelError::invalid_value("sandbox.lifecycle.execution")
 }
+
+pub(super) fn custom_authority_preserved(current: &Sandbox, next: &Sandbox) -> bool {
+    match (
+        &current.lifecycle.custom_runtime,
+        &next.lifecycle.custom_runtime,
+    ) {
+        (None, None) => true,
+        (Some(current), Some(next)) => {
+            current.migration == next.migration
+                && current.source_generation == next.source_generation
+                && current.admission_basis == next.admission_basis
+        }
+        _ => false,
+    }
+}

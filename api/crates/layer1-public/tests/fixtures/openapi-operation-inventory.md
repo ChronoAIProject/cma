@@ -125,7 +125,9 @@ returns 409, including changing an omitted default into an explicit reference.
 | `POST /api/v1/admin/sandboxes/{id}/always-on` | AdminAlwaysOnRequest | - | 200 SandboxView |
 | `GET /api/v1/admin/sandboxes/{id}/events` | - | after, limit | 200 array<object> |
 | `POST /api/v1/admin/sandboxes/{id}/retire` | - | - | 200 object |
+| `POST /api/v1/admin/sandboxes/{id}/runtime-migration` | CustomRuntimeMigrationRequest | - | 202 SandboxView |
 | `POST /api/v1/admin/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest | - | 202 SandboxView |
+| `GET /api/v1/admin/sandboxes/{id}/runtime-update/activity` | - | - | 200 object |
 | `GET /api/v1/admin/admission` | - | - | 200 AdmissionReadView |
 | `POST /api/v1/admin/admission/stop` | AdmissionChangeRequest | - | 200 AdmissionView |
 | `PUT /api/v1/admin/admission/ceilings` | ReplaceCeilingsRequest | - | 200 CeilingsStateView |
@@ -906,6 +908,12 @@ SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both exp
 | `PATCH /api/v1/agents/{id}/preferences` | UpdateAgentPreferencesRequest; key | - | 200 AgentPreferencesView |
 
 | `POST /api/v1/telemetry/browser` | Anonymous, bounded browser diagnostic category; no durable receipt. |
+| `POST /api/v1/usage/metrics/initial/reports` | UsageInitialCreate | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/usage/metrics/initial/view` | UsageInitialViewInput | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/usage/metrics/initial/reports/{report}` | UsageInitialProjection | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/admin/usage/metrics/initial/reports` | UsageInitialCreate | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/admin/usage/metrics/initial/view` | UsageInitialViewInput | - | 200 complete initial data / 202 descriptor only |
+| `POST /api/v1/admin/usage/metrics/initial/reports/{report}` | UsageInitialProjection | - | 200 complete initial data / 202 descriptor only |
 | `GET /api/v1/agents/{id}/original-request` | Read the current owner’s exact admitted Task request without scanning history. |
 | `GET /api/v1/agents/{id}/reply-preview` | Read a bounded certified preview of the latest persisted assistant message. |
 | `POST /api/v1/sandbox-creation-outcomes/lookup` | Read evidence for an exact owner Sandbox creation. |

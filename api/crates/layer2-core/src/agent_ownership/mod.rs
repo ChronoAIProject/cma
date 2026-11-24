@@ -18,6 +18,8 @@ mod receiver_binding;
 pub mod receiver_diagnostics;
 mod transport;
 pub use coordinator::{bounded, OwnershipCoordinator};
+#[cfg(feature = "qualification-hooks")]
+pub use coordinator::{qualification_owner_digest, CapturedOwner, RenewalWindow};
 pub use observations::{observe_transport, observed_transport, transport_observation_scope};
 
 use crate::AgentId;

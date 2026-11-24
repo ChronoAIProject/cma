@@ -22,7 +22,21 @@ for (const admin of [false, true]) {
       const errors: string[] = [];
       const failedAssets: string[] = [];
       page.on('console', (message) => {
-        if (message.type() === 'error') errors.push(`${message.location().url}: ${message.text()}`);
+        if (message.type() !== 'error') return;
+        // The retained image fixture represents a replica that predates the
+        // bounded initial-view routes. The client deliberately falls back to
+        // the legacy report path for this explicit 501 route absence, which
+        // Chromium still reports as a console error. Keep that expected
+        // compatibility signal out of the stale-asset error assertion while
+        // retaining all other network and application errors.
+        const location = message.location().url;
+        if (
+          location.includes('/api/v1/') &&
+          location.includes('/usage/metrics/initial/') &&
+          message.text().includes('status of 501')
+        )
+          return;
+        errors.push(`${location}: ${message.text()}`);
       });
       page.on('pageerror', (error) => errors.push(error.message));
       page.on('response', (response) => {

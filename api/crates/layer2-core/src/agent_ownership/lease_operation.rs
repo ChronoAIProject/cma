@@ -26,7 +26,7 @@ pub(super) struct LeaseWrite {
     result: Mutex<Option<WriteOutcome>>,
 }
 
-const OPERATION_LIMIT: Duration = Duration::from_secs(23);
+pub(super) const OPERATION_LIMIT: Duration = Duration::from_secs(23);
 
 impl LeaseWrite {
     pub(super) fn acquisition(
@@ -67,12 +67,20 @@ impl LeaseWrite {
     }
 
     pub(super) fn renewal(store: Arc<dyn OwnershipStore>, token: OwnershipToken) -> Arc<Self> {
+        Self::renewal_with(async move { store.renew(&token).await })
+    }
+
+    pub(super) fn renewal_with(
+        write: impl std::future::Future<Output = Result<OwnershipLease, OwnershipError>>
+            + Send
+            + 'static,
+    ) -> Arc<Self> {
         let until = Instant::now() + OPERATION_LIMIT;
         Self::spawn(async move {
             if Instant::now() >= until {
                 return WriteOutcome::NotIssued(unresolved());
             }
-            match tokio::time::timeout_at(until, store.renew(&token)).await {
+            match tokio::time::timeout_at(until, write).await {
                 Ok(Ok(lease)) => WriteOutcome::Renewed(lease),
                 Ok(Err(error @ OwnershipError::Unavailable(_))) => WriteOutcome::Uncertain(error),
                 Ok(Err(error)) => WriteOutcome::RenewalRefused(error),

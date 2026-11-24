@@ -428,6 +428,7 @@ dependencies = [
  "cma-allocator-qualification",
  "cma-am-auth",
  "cma-am-mongo-primitives",
+ "cma-qualification",
  "cma-service-auth",
  "cmaeg",
  "cmaeg-core",
@@ -539,6 +540,21 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "cma-qualification"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "layer2-core",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "tokio",
  "uuid",
 ]
 

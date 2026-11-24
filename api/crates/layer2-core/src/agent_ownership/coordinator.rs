@@ -30,6 +30,11 @@ mod handoff;
 mod heartbeat;
 #[path = "coordinator_legacy_acquire.rs"]
 mod legacy_acquire;
+#[cfg(feature = "qualification-hooks")]
+#[path = "coordinator_qualification.rs"]
+mod qualification;
+#[cfg(feature = "qualification-hooks")]
+pub use qualification::{qualification_owner_digest, CapturedOwner, RenewalWindow};
 #[path = "coordinator_renewal.rs"]
 mod renewal;
 #[cfg(test)]
@@ -59,6 +64,8 @@ pub struct OwnershipCoordinator {
     capacity: usize,
     cleanup_slots: tokio::sync::Semaphore,
     owned: std::sync::Mutex<BTreeMap<AgentId, slot::Slot>>,
+    #[cfg(feature = "qualification-hooks")]
+    qualification_renewal: std::sync::OnceLock<Arc<dyn crate::qualification::RenewalHook>>,
     acquisition: Mutex<()>,
     cancelled_cursor: AtomicUsize,
     member_deadline: std::sync::Mutex<Instant>,

@@ -1,7 +1,28 @@
 {
   "version": 1,
-  "openapi_operations": 325,
+  "openapi_operations": 333,
   "operations": {
+    "POST /api/v1/admin/sandboxes/{id}/runtime-migration": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/runtime_migration.rs# Independent operator capabilities, strict identity guards and typed migration or observation outcomes define this route.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "invalid_runtime_migration",
+        "not_authenticated",
+        "runtime_migration_not_admitted",
+        "sandbox_not_found"
+      ]
+    },
+    "GET /api/v1/admin/sandboxes/{id}/runtime-update/activity": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/runtime_migration.rs# Independent operator capabilities, strict identity guards and typed migration or observation outcomes define this route.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "not_authenticated"
+      ]
+    },
     "PUT /api/v1/admin/retained-runtime-policy": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/retained_runtime_transition.rs# Compare-and-set the independent retained admission policy under platform authority.",
@@ -4384,6 +4405,86 @@
         "runtime_canary_forbidden",
         "runtime_canary_invalid",
         "runtime_canary_unavailable"
+      ]
+    },
+    "POST /api/v1/usage/metrics/initial/reports": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/initial/mod.rs# Strict initial projections require current authority, bounded complete responses and typed refusal.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "POST /api/v1/usage/metrics/initial/view": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/initial/mod.rs# Strict initial projections require current authority, bounded complete responses and typed refusal.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired",
+        "report_view_disabled"
+      ]
+    },
+    "POST /api/v1/usage/metrics/initial/reports/{report}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/initial/mod.rs# Strict initial projections require current authority, bounded complete responses and typed refusal.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "POST /api/v1/admin/usage/metrics/initial/reports": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/initial/mod.rs# Strict initial projections require current authority, bounded complete responses and typed refusal.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "POST /api/v1/admin/usage/metrics/initial/view": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/initial/mod.rs# Strict initial projections require current authority, bounded complete responses and typed refusal.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired",
+        "report_view_disabled"
+      ]
+    },
+    "POST /api/v1/admin/usage/metrics/initial/reports/{report}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/initial/mod.rs# Strict initial projections require current authority, bounded complete responses and typed refusal.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
       ]
     }
   },
