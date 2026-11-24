@@ -18,6 +18,7 @@ use super::sandbox_mongo::{
 use super::sandbox_unpublished_recovery::transaction::ApplyError;
 use super::sandbox_unpublished_recovery::transaction::NativeFacts;
 
+mod history;
 mod load;
 #[cfg(test)]
 pub(in crate::store) mod mongo_fixtures;
@@ -27,6 +28,7 @@ mod suspended;
 mod transaction;
 const FIELD: &str = "retained_reopen_receipt_v1";
 
+pub(super) use history::{indexes as receipt_indexes, read as read_history, read_for_service};
 pub(super) use suspended::{admit_suspended, replay};
 
 pub(super) async fn snapshot_in_transaction(
@@ -102,7 +104,12 @@ pub(super) async fn admit(
             }
         };
         // An exact replay needs no write or event and was read at majority.
-        let transaction::Applied::Commit { receipt, event } = applied else {
+        let transaction::Applied::Commit {
+            receipt,
+            event,
+            repeat,
+        } = applied
+        else {
             let transaction::Applied::Replay(accepted) = applied else {
                 unreachable!()
             };
@@ -118,7 +125,7 @@ pub(super) async fn admit(
                 })?;
                 let store = store.clone();
                 return wait_for_reconciliation("retained reopening commit", async move {
-                    transaction::reconcile(&store, &receipt, &event, time).await?;
+                    transaction::reconcile(&store, &receipt, &event, time, repeat).await?;
                     Ok(receipt.accepted)
                 })
                 .await

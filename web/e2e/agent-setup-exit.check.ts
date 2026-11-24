@@ -150,19 +150,19 @@ for (const scenario of [
     }
     expect(writes).toEqual([]);
     await expect(
-      confirmation.getByRole('button', { name: 'Delete Sandbox', exact: true }),
+      confirmation.getByRole('button', { name: 'Request deletion', exact: true }),
     ).toBeDisabled();
-    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await confirmation.getByRole('button', { name: 'Keep environment', exact: true }).click();
     await expect(confirmation).toHaveCount(0);
     expect(writes).toEqual([]);
     await more.click();
     await page.getByRole('menuitem', { name: /^Delete Sandbox/ }).click();
     await expect(confirmation.getByRole('checkbox')).not.toBeChecked();
     await expect(
-      confirmation.getByRole('button', { name: 'Delete Sandbox', exact: true }),
+      confirmation.getByRole('button', { name: 'Request deletion', exact: true }),
     ).toBeDisabled();
     await confirmation.getByRole('checkbox').check();
-    await confirmation.getByRole('button', { name: 'Delete Sandbox', exact: true }).dblclick();
+    await confirmation.getByRole('button', { name: 'Request deletion', exact: true }).dblclick();
     if (scenario.uncertain) {
       await expect(page.getByRole('dialog', { name: 'Deleting Sandbox' })).toContainText(
         'not been confirmed',
@@ -180,13 +180,15 @@ for (const scenario of [
       expect(deletes).toHaveLength(1);
       await retry.click();
     }
-    await expect(
-      page.getByText('Sandbox delete request accepted. Cleanup continues in the background.'),
-    ).toBeVisible();
+    await expect(page.getByText('Deleting 1 environment')).toBeVisible();
     expect(deletes).toHaveLength(scenario.uncertain ? 2 : 1);
     expect(deletes[0]!.key).toBeTruthy();
     if (scenario.uncertain) expect(deletes[1]).toEqual(deletes[0]);
     await page.reload();
+    await page
+      .getByRole('region', { name: 'Deletion request', exact: true })
+      .getByRole('button', { name: 'View status', exact: true })
+      .click();
     await page.getByRole('button', { name: /View Sandbox deletion status/ }).click();
     const progress = page.getByRole('dialog', { name: 'Deleting Sandbox', exact: true });
     await expect(progress).toContainText('still uses one Sandbox slot');

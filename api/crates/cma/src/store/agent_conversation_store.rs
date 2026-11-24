@@ -103,7 +103,7 @@ async fn commit_conversation_inner(
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
         let applied = Box::pin(scoped::apply(
-            ScanCaller::ConversationPublication,
+            scoped::PublicationSource::Conversation,
             store,
             &mutation,
             None,
@@ -260,9 +260,13 @@ async fn replace_agent(
     current: &Agent,
     mutation: &AgentConversationMutation,
     integrity: mongodb::bson::Document,
+    exact_checkpoint: Option<&layer2_core::sandbox::store::AgentMessageCheckpoint>,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
     let mut fields = agent_replacement_fields(&mutation.agent).map_err(ApplyError::Domain)?;
+    if let Some(value) = exact_checkpoint {
+        checkpoint::set_field(&mut fields, value).map_err(ApplyError::Domain)?;
+    }
     fields.insert("agent_log_integrity_v1", integrity);
     fields.insert(
         "last_seq",

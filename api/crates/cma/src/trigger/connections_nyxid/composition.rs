@@ -26,6 +26,16 @@ enum BrokerMode {
 }
 
 impl CmaServiceConnectionBroker {
+    pub(crate) async fn github_connections(
+        &self,
+        owner: &SubjectId,
+    ) -> Option<super::GitHubConnections> {
+        match &self.mode {
+            BrokerMode::Provider(broker) => Some(broker.github_connections(owner).await),
+            BrokerMode::Trusted => None,
+        }
+    }
+
     /// Build the broker from the same auth configuration used by request auth.
     #[allow(
         dead_code,

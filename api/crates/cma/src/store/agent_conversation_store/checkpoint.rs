@@ -10,6 +10,16 @@ use crate::store::sandbox_mongo::record_bson;
 
 pub(in crate::store) const FIELD: &str = "agent_message_checkpoint";
 
+pub(in crate::store) fn set_field(
+    fields: &mut Document,
+    value: &AgentMessageCheckpoint,
+) -> Result<(), SandboxStoreError> {
+    value.validate()?;
+    let encoded = record_bson(value).map_err(SandboxStoreError::Corrupt)?;
+    fields.insert(FIELD, encoded);
+    Ok(())
+}
+
 pub(in super::super) fn carry_fields(
     row: &Document,
     current: &Agent,
@@ -81,6 +91,7 @@ pub(super) async fn carry(
 
 pub(in crate::store) enum Authority {
     Live,
+    StaleTurn,
     Reopen(Box<layer2_core::sandbox::store::AgentReopenGuard>),
     Capacity(Box<layer2_core::sandbox::store::AgentConversationCapacitySettlement>),
 }

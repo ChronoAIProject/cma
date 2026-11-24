@@ -348,7 +348,12 @@ pub(in crate::store) async fn verify(db: &Database) {
         .unwrap();
     let target = serde_json::json!({"type":"workspace","id":"owned-workspace"});
     store
-        .wait_for_connection(&waiting_lease, vec!["api-github".into()], target.clone())
+        .wait_for_connection(
+            &waiting_lease,
+            vec!["api-github".into()],
+            target.clone(),
+            None,
+        )
         .await
         .unwrap();
     let waiting = store

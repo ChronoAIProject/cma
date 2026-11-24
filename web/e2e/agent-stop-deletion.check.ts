@@ -135,8 +135,13 @@ test('LOCAL owner Resume checks the paused Sandbox before one keyed request', as
   noEffects(boundary);
 });
 
-for (const uncertain of [false, true]) {
-  test(`LOCAL header Stop then separate Delete with uncertain stop=${uncertain}`, async ({
+for (const { combined, uncertain } of [
+  { combined: false, uncertain: false },
+  { combined: false, uncertain: true },
+  { combined: true, uncertain: false },
+  { combined: true, uncertain: true },
+]) {
+  test(`LOCAL header ${combined ? 'Stop and delete' : 'standalone Stop then Delete'} with uncertain response=${uncertain}`, async ({
     page,
     baseURL,
   }) => {
@@ -197,32 +202,54 @@ for (const uncertain of [false, true]) {
       const key = route.request().headers()['idempotency-key'];
       expect(key).toBeTruthy();
       deletes.push(key!);
+      expect(boundary.agent.status).toBe('stopped');
+      if (combined && uncertain && deletes.length === 1)
+        return route.fulfill({
+          status: 503,
+          json: { code: 'unavailable', detail: 'Delete response unavailable.' },
+        });
       return route.fulfill({ status: 202, body: '' });
     });
     await page.goto(`/agents/${boundary.agent.id}`);
     const more = page.getByRole('button', { name: 'More Agent actions', exact: true });
     await more.click();
     const remove = page.getByRole('menuitem', { name: /^Delete task/ });
-    await expect(remove).toHaveAttribute('aria-disabled', 'true');
-    await expect(remove).toContainText('Stop this Agent before deleting it and its Worktree.');
-    await page.getByRole('menuitem', { name: 'Stop agent', exact: true }).click();
-    const confirmation = page.getByRole('dialog', { name: 'Stop Agent', exact: true });
-    await expect(confirmation).toContainText('Worktree are retained');
+    await expect(remove).toHaveAttribute('aria-disabled', 'false');
+    const action = combined
+      ? remove
+      : page.getByRole('menuitem', { name: 'Stop agent', exact: true });
+    await action.click();
+    const confirmation = page.getByRole('dialog', {
+      name: combined ? 'Delete Agent' : 'Stop Agent',
+      exact: true,
+    });
+    await expect(confirmation).toContainText(
+      combined ? 'and its Worktree' : 'Worktree are retained',
+    );
     expect(stops).toEqual([]);
     await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(confirmation).toHaveCount(0);
     expect(stops).toEqual([]);
+    expect(deletes).toEqual([]);
     await more.click();
-    await page.getByRole('menuitem', { name: 'Stop agent', exact: true }).press('Enter');
-    await confirmation.getByRole('button', { name: 'Stop Agent', exact: true }).dblclick();
-    const progress = page.getByRole('dialog', { name: 'Stopping Agent', exact: true });
+    await action.press('Enter');
+    if (combined) await confirmation.getByRole('checkbox').check();
+    await confirmation
+      .getByRole('button', { name: combined ? 'Stop and delete' : 'Stop Agent', exact: true })
+      .dblclick();
+    const progress = page.getByRole('dialog', {
+      name: combined ? 'Deleting Agent' : 'Stopping Agent',
+      exact: true,
+    });
     await expect(progress).toBeVisible();
     if (uncertain) {
       await expect(progress.getByRole('alert')).toContainText('Stop response unavailable');
       expect(stops).toHaveLength(1);
       await progress.getByRole('button', { name: 'Retry stop request' }).click();
     }
-    await expect(progress.getByText('Accepted', { exact: true })).toBeVisible();
+    await expect(
+      progress.getByText(combined ? 'Stopping' : 'Accepted', { exact: true }),
+    ).toBeVisible();
     expect(stops).toHaveLength(uncertain ? 2 : 1);
     expect(stops[0]!.key).toBeTruthy();
     if (uncertain) expect(stops[1]).toEqual(stops[0]);
@@ -233,25 +260,39 @@ for (const uncertain of [false, true]) {
       ...boundary.workspace,
       agents: [{ ...boundary.workspace.agents[0]!, status: 'stopped' }, sibling],
     };
+    if (!combined) {
+      await page
+        .getByRole('dialog', { name: 'Agent stopped', exact: true })
+        .getByRole('button', { name: 'Done', exact: true })
+        .click();
+      expect(deletes).toEqual([]);
+      await page.reload();
+      await more.click();
+      await expect(remove).not.toHaveAttribute('aria-disabled', 'true');
+      await remove.click();
+      const deletion = page.getByRole('dialog', { name: 'Delete Agent', exact: true });
+      await expect(deletion).toContainText('and its Worktree');
+      expect(deletes).toEqual([]);
+      await deletion.getByRole('checkbox').check();
+      await deletion.getByRole('button', { name: 'Delete Agent', exact: true }).click();
+    } else if (uncertain) {
+      await expect(progress.getByRole('alert')).toContainText('Delete response unavailable');
+      expect(deletes).toHaveLength(1);
+      await page.reload();
+      await expect(progress).toBeVisible();
+      expect(deletes).toHaveLength(1);
+      await progress.getByRole('button', { name: 'Check request' }).click();
+      await expect.poll(() => deletes.length).toBe(2);
+      expect(deletes[1]).toBe(deletes[0]);
+    }
+    await expect(page.getByText('Deleting 1 Agent')).toBeVisible();
+    expect(deletes).toHaveLength(combined && uncertain ? 2 : 1);
+    expect(deletes[0]).not.toBe(stops[0]!.key);
+    await page.reload();
     await page
-      .getByRole('dialog', { name: 'Agent stopped', exact: true })
-      .getByRole('button', { name: 'Done', exact: true })
+      .getByRole('region', { name: 'Deletion request', exact: true })
+      .getByRole('button', { name: 'View status', exact: true })
       .click();
-    expect(deletes).toEqual([]);
-    await page.reload();
-    await more.click();
-    await expect(remove).not.toHaveAttribute('aria-disabled', 'true');
-    await remove.click();
-    const deletion = page.getByRole('dialog', { name: 'Delete Agent', exact: true });
-    await expect(deletion).toContainText('and its Worktree');
-    expect(deletes).toEqual([]);
-    await deletion.getByRole('checkbox').check();
-    await deletion.getByRole('button', { name: 'Delete Agent', exact: true }).click();
-    await expect(
-      page.getByText('Agent delete request accepted. Cleanup continues in the background.'),
-    ).toBeVisible();
-    expect(deletes).toHaveLength(1);
-    await page.reload();
     await page.getByRole('button', { name: /View Agent deletion status/ }).click();
     await expect(page.getByRole('dialog', { name: 'Deleting Agent', exact: true })).toBeVisible();
     boundary.agent = {
@@ -271,7 +312,7 @@ for (const uncertain of [false, true]) {
     );
     await expect(page.locator('.tree-row[data-node-id="agent:agt_sibling"]')).toBeVisible();
     expect(boundary.sandbox.status).toBe('active');
-    expect(deletes).toHaveLength(1);
+    expect(deletes).toHaveLength(combined && uncertain ? 2 : 1);
     expect(stops).toHaveLength(uncertain ? 2 : 1);
     expect(boundary.writes).toEqual([]);
     expect(boundary.unexpected).toEqual([]);

@@ -1,6 +1,8 @@
 use super::*;
 use crate::store::bindings::schema::indexes_v1 as bindings;
 use mongodb::bson::Bson;
+use std::cell::Cell;
+use tokio::sync::oneshot;
 
 const RECORDED_BINDING_CHECKSUM: &str =
     "0933c5ce3a6bd7688c4573024daa35db28e3d486614f11a41d96d2203ef51867";
@@ -69,12 +71,48 @@ async fn fixture_collections(database: &mongodb::Database) {
 
 pub(in crate::store) async fn prepare_bindings_for_test(database: &mongodb::Database) {
     fixture_collections(database).await;
+    apply_binding_indexes_for_test(database).await.unwrap();
+}
+
+pub(in crate::store) async fn apply_binding_indexes_for_test(
+    database: &mongodb::Database,
+) -> Result<serde_json::Value> {
     let ledger = ledger::Ledger::for_step(
         database.client().clone(),
         database.clone(),
         Step::BindingIndexes,
     );
-    apply_indexes(&ledger, database, &identity()).await.unwrap();
+    apply_indexes(&ledger, database, &identity()).await
+}
+
+type BindingIndexPause = (oneshot::Sender<()>, oneshot::Receiver<()>);
+
+tokio::task_local! {
+    static BINDING_INDEX_PAUSE: Cell<Option<BindingIndexPause>>;
+}
+
+pub(in crate::store) async fn apply_binding_indexes_with_pause_for_test(
+    database: &mongodb::Database,
+    created: oneshot::Sender<()>,
+    resume: oneshot::Receiver<()>,
+) -> Result<serde_json::Value> {
+    BINDING_INDEX_PAUSE
+        .scope(
+            Cell::new(Some((created, resume))),
+            apply_binding_indexes_for_test(database),
+        )
+        .await
+}
+
+pub(in crate::store::migrations) async fn pause_after_binding_index() -> Result<()> {
+    if let Some((created, resume)) = BINDING_INDEX_PAUSE.try_with(Cell::take).ok().flatten() {
+        created.send(()).map_err(|_| "test dropped index receipt")?;
+        tokio::time::timeout(Duration::from_secs(20), resume)
+            .await
+            .map_err(|_| "test did not resume binding migration")?
+            .map_err(|_| "test dropped binding migration release")?;
+    }
+    Ok(())
 }
 
 #[test]

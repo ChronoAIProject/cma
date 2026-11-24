@@ -91,7 +91,9 @@ pub(super) async fn read_only_summary(
     if integrity.head_seq > 0 {
         let raw = point_read(
             store,
-            doc! { "_id": log_id(&agent.id, integrity.head_seq) },
+            // Match the same owner of the log row as the sequence scan before
+            // returning a trusted tail's payload to the integrity validator.
+            doc! { "_id": log_id(&agent.id, integrity.head_seq), "agent_id": agent.id.as_str() },
             false,
             session,
             snapshot,
@@ -184,6 +186,23 @@ pub(in crate::store) async fn quarantine_row(
     }
     fleet::telemetry::record(fleet::telemetry::Event::QuarantineWritten);
     Ok(())
+}
+
+pub(in crate::store) async fn trusted_summary_at_head(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    row: &Document,
+    session: &mut mongodb::ClientSession,
+) -> Result<Option<LogSummary>, TransactionLogError> {
+    // Settlement charges the current tail, so refuse a stale anchor before
+    // the integrity check can read its earlier log row.
+    if !parse_integrity(row)?.is_some_and(|integrity| {
+        integrity.head_seq == agent.conversation.last_seq
+            && integrity.bound_agent_revision == agent.revision
+    }) {
+        return Ok(None);
+    }
+    read_only_summary(store, agent, row, session, false).await
 }
 
 pub(in crate::store) async fn trusted_summary(
