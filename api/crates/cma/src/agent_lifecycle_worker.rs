@@ -96,6 +96,15 @@ impl InlineAgentLifecycle {
         };
         let lease = record.lease()?;
         let attempts = record.attempts;
+        let canary_profiles = match record.verify_canary_worker() {
+            Ok(profiles) => profiles,
+            Err(error) => {
+                return self
+                    .operations
+                    .fail_with_metadata(&lease, &error.to_string(), None)
+                    .await;
+            }
+        };
         let capacity = record.input.captured_capacity(self.bounds);
         let limits = record.input.captured_limits();
         let first_message = validation::admitted_first_message(&record.input);
@@ -121,6 +130,7 @@ impl InlineAgentLifecycle {
                 existing_sandbox_id: record.sandbox_id,
                 existing_agent_id: record.agent_id,
                 actor: record.input.actor,
+                canary_profiles,
             };
             self.preflight_repository(&caller, &mut input, record.repository_commit.as_deref())
                 .await?;

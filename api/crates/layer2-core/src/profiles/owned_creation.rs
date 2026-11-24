@@ -77,7 +77,7 @@ impl PrivateProfileCreationService {
         description: String,
         content: AgentProfileContent,
     ) -> Result<AgentProfileRevision, ProfileCreationError> {
-        let id = crate::AgentProfileId(profile_id_for_owner(owner, "agp", key)?);
+        let id = private_agent_profile_id(owner, key)?;
         self.create_agent_with_id(owner, id, name, description, content, true)
             .await
     }
@@ -173,7 +173,7 @@ impl PrivateProfileCreationService {
         description: String,
         content: WorkspaceProfileContent,
     ) -> Result<WorkspaceProfileRevision, ProfileCreationError> {
-        let id = crate::WorkspaceProfileId(profile_id_for_owner(owner, "wkp", key)?);
+        let id = private_workspace_profile_id(owner, key)?;
         self.create_workspace_with_id(owner, id, name, description, content, true)
             .await
     }
@@ -308,7 +308,7 @@ impl PrivateProfileCreationService {
         key: &str,
         input: PrivateSandboxProfileInput,
     ) -> Result<SandboxProfileRevision, ProfileCreationError> {
-        let id = crate::SandboxProfileId(profile_id_for_owner(owner, "sbp", key)?);
+        let id = private_sandbox_profile_id(owner, key)?;
         self.create_sandbox_configured_with_id(owner, id, input, true)
             .await
     }
@@ -409,6 +409,30 @@ fn profile_id(
     }
     let digest = content_digest(&("private-owned-profile-v1", authority.owner(), kind, key))?;
     Ok(format!("{kind}_{}", &digest[..32]))
+}
+
+/// Predict the private Agent profile ID used by initial publication.
+pub fn private_agent_profile_id(
+    owner: &crate::SubjectId,
+    key: &str,
+) -> Result<crate::AgentProfileId, ProfileCreationError> {
+    profile_id_for_owner(owner, "agp", key).map(crate::AgentProfileId)
+}
+
+/// Predict the private Workspace profile ID used by initial publication.
+pub fn private_workspace_profile_id(
+    owner: &crate::SubjectId,
+    key: &str,
+) -> Result<crate::WorkspaceProfileId, ProfileCreationError> {
+    profile_id_for_owner(owner, "wkp", key).map(crate::WorkspaceProfileId)
+}
+
+/// Predict the private Sandbox profile ID used by initial publication.
+pub fn private_sandbox_profile_id(
+    owner: &crate::SubjectId,
+    key: &str,
+) -> Result<crate::SandboxProfileId, ProfileCreationError> {
+    profile_id_for_owner(owner, "sbp", key).map(crate::SandboxProfileId)
 }
 
 fn profile_id_for_owner(
