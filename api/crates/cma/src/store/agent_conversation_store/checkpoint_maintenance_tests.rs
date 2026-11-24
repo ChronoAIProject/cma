@@ -76,3 +76,98 @@ async fn sandbox_hold_refuses_a_fresh_quiet_checkpoint() {
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn sandbox_hold_refuses_output_log_publication() {
+    let (client, name, store) = database().await;
+    let current = working(&store, "sbx_output_publication_hold").await;
+    let mutation = update(&current, "interrupted Agent output");
+    let output = boundary(&mutation);
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let other = Client::with_uri_str(&uri).await.unwrap();
+    let sandboxes = other.database(&name).collection::<Document>("sandboxes");
+    let sandbox_key = doc! {"_id": current.sandbox_id.as_str()};
+    let agent_key = doc! {"_id": current.id.as_str()};
+    let original_agent = store.agents.find_one(agent_key.clone()).await.unwrap();
+    let original_logs = store.agent_log(&current.id, 0, 100).await.unwrap();
+    let installed = sandboxes
+        .update_one(
+            sandbox_key.clone(),
+            doc! {
+                "$set": {"ledger_maintenance": {"phase": "requested"}}
+            },
+        )
+        .write_concern(WriteConcern::majority())
+        .await
+        .unwrap();
+    assert_eq!(installed.modified_count, 1);
+    let held = sandboxes.find_one(sandbox_key.clone()).await.unwrap();
+    assert_output_refused(&store, &current, &mutation, &output).await;
+    assert_eq!(
+        store.agents.find_one(agent_key.clone()).await.unwrap(),
+        original_agent
+    );
+    assert_eq!(
+        store.agent_log(&current.id, 0, 100).await.unwrap(),
+        original_logs
+    );
+    assert_eq!(sandboxes.find_one(sandbox_key.clone()).await.unwrap(), held);
+    let mut parent = sandboxes
+        .find_one_and_delete(sandbox_key)
+        .write_concern(WriteConcern::majority())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_output_refused(&store, &current, &mutation, &output).await;
+    assert_eq!(
+        store.agents.find_one(agent_key).await.unwrap(),
+        original_agent
+    );
+    assert_eq!(
+        store.agent_log(&current.id, 0, 100).await.unwrap(),
+        original_logs
+    );
+    parent.remove("ledger_maintenance").unwrap();
+    sandboxes
+        .insert_one(parent)
+        .write_concern(WriteConcern::majority())
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .commit_agent_message_update(current.clone(), None, output.clone(), Some(mutation))
+            .await
+            .unwrap(),
+        output.outcome
+    );
+    let after = store.agent_log(&current.id, 0, 100).await.unwrap();
+    assert_eq!(
+        &after[original_logs.len()..],
+        output.outcome.appended.as_slice()
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+async fn assert_output_refused(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    mutation: &AgentConversationMutation,
+    output: &AgentMessageCheckpoint,
+) {
+    assert_eq!(
+        store
+            .commit_agent_message_update(
+                current.clone(),
+                None,
+                output.clone(),
+                Some(mutation.clone()),
+            )
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        store.commit_agent_conversation(mutation.clone()).await,
+        Err(SandboxStoreError::Conflict)
+    );
+}

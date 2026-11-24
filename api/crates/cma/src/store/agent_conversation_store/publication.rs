@@ -187,6 +187,11 @@ pub(in crate::store) async fn before(
     mutation: &AgentConversationMutation,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
+    // Serialize dependent log publication even when this output has no
+    // command admission guard or Sandbox lifecycle write of its own.
+    if !crate::store::work_publication::agent::fence_parent(store, current, session).await? {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
     store
         .fence_agent_effect_transaction(&mutation.agent.id, session)
         .await
