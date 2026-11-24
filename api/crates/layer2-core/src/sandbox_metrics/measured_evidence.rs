@@ -4,6 +4,8 @@ use layer3_adapter::sandbox_metrics::{RawPhysicalSeries, SourceMetric};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub mod interval;
+
 const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, PartialEq, Serialize)]
@@ -84,6 +86,14 @@ impl RetainedObservation {
         Ok(Self(observation))
     }
 
+    pub fn timestamp_ms(&self) -> u64 {
+        self.0.timestamp_ms
+    }
+
+    pub fn shares_physical_series(&self, other: &Self) -> Result<bool, EvidenceError> {
+        self.0.shares_physical_series(&other.0)
+    }
+
     pub fn verify_replay(&self, incoming: &MeasuredObservation) -> Result<(), EvidenceError> {
         self.0.verify_replay(&incoming.0)
     }
@@ -107,6 +117,17 @@ struct Attribution<'a> {
 }
 
 impl ObservationV1 {
+    fn shares_physical_series(&self, other: &Self) -> Result<bool, EvidenceError> {
+        let a = &self.binding;
+        let b = &other.binding;
+        Ok(self.source == other.source
+            && self.metric == other.metric
+            && a.cluster == b.cluster
+            && a.namespace == b.namespace
+            && PhysicalIdentity::for_binding(a, self.metric, self.mapping_revision)?
+                == PhysicalIdentity::for_binding(b, other.metric, other.mapping_revision)?)
+    }
+
     fn attribution(&self) -> Attribution<'_> {
         Attribution {
             physical_sample_id: &self.physical_sample_id,
@@ -193,7 +214,7 @@ pub fn capture_observations(
         .collect()
 }
 
-#[derive(Serialize)]
+#[derive(PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum PhysicalIdentity<'a> {
     Compute {
