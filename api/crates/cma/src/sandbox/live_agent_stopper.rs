@@ -128,6 +128,7 @@ fn validate_stop_work(sandbox: &Sandbox, agent: &Agent) -> Result<(), SandboxDep
         AgentWorkStep::FenceInteraction
             | AgentWorkStep::CloseProcess
             | AgentWorkStep::PublishStopped
+            | AgentWorkStep::RestartTeardown
     ) {
         Ok(())
     } else {

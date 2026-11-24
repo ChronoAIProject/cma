@@ -65,6 +65,7 @@ pub enum AgentWorkStep {
     RemoveWorktree,
     PublishDeleted,
     RestartConversation,
+    RestartTeardown,
     None,
 }
 
@@ -104,6 +105,7 @@ impl AgentWorkStep {
             Self::RemoveWorktree => "remove_worktree",
             Self::PublishDeleted => "publish_deleted",
             Self::RestartConversation => "restart_conversation",
+            Self::RestartTeardown => "restart_teardown",
             Self::None => "none",
         }
     }

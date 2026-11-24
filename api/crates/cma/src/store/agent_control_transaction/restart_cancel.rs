@@ -1,4 +1,5 @@
-//! A restart can release its reserved slot without runtime I/O until dispatch.
+//! Transfer restart custody to Stop or Delete. Before dispatch there is no
+//! runtime effect to reconcile. After dispatch the Agent holds the live slot.
 use super::restart::ACTIVE_RESTART_FIELD;
 use super::restart_dispatch::{read_work, DISPATCH_FIELD};
 use super::*;
@@ -17,6 +18,19 @@ use layer2_core::seconds_from_rfc3339;
 use mongodb::bson::Document;
 
 const CANCELLED: &str = "control_restart_cancelled_v1";
+pub(in crate::store) const TEARDOWN: &str = "control_restart_teardown_v1";
+
+struct Applied {
+    next: Agent,
+    witness: Document,
+    publication: Option<Recorded>,
+    field: &'static str,
+}
+
+enum Attempt {
+    Existing(Box<Agent>),
+    Scheduled(Box<Applied>),
+}
 
 pub(super) async fn schedule(
     store: &MongoSandboxStore,
@@ -30,8 +44,17 @@ pub(super) async fn schedule(
             Err(error) if is_transient(&error) => continue,
             Err(error) => return Err(unavailable(error)),
         };
-        let (next, witness, publication) = match Box::pin(apply(store, operation, scope)).await {
-            Ok(result) => result,
+        let Applied {
+            next,
+            witness,
+            publication,
+            field,
+        } = match Box::pin(apply(store, operation, scope)).await {
+            Ok(Attempt::Scheduled(result)) => *result,
+            Ok(Attempt::Existing(current)) => {
+                let _ = session.abort_transaction().await;
+                return Ok(AgentControlResult::Existing(*current));
+            }
             Err(error) => {
                 let _ = session.abort_transaction().await;
                 match error {
@@ -63,10 +86,14 @@ pub(super) async fn schedule(
                         .await
                         .map_err(|failure| reconciliation_error(failure, &error))?;
                     if observed.agent != next
-                        || observed.row.get_document(CANCELLED).ok() != Some(&witness)
-                        || observed.row.contains_key(ACTIVE_RESTART_FIELD)
-                        || observed.row.contains_key(RESTART_PREDECESSOR_FIELD)
-                        || observed.row.contains_key(DISPATCH_FIELD)
+                        || observed.row.get_document(field).ok() != Some(&witness)
+                        || [
+                            ACTIVE_RESTART_FIELD,
+                            RESTART_PREDECESSOR_FIELD,
+                            DISPATCH_FIELD,
+                        ]
+                        .into_iter()
+                        .any(|key| observed.row.contains_key(key) != (field == TEARDOWN))
                     {
                         return Err(unknown_control("exact restart cancellation is absent"));
                     }
@@ -95,11 +122,14 @@ async fn apply(
     store: &MongoSandboxStore,
     operation: &ControlOperation,
     mut scope: TransactionScope<'_>,
-) -> Result<(Agent, Document, Option<Recorded>), ApplyError> {
+) -> Result<Attempt, ApplyError> {
     let conflict = || ApplyError::Domain(AgentControlStoreError::Conflict);
     let current = scope
         .control_snapshot(store, operation.request.target())
         .await?;
+    if current.row.contains_key(TEARDOWN) {
+        return existing_teardown(operation, &current);
+    }
     let work = read_work(&current.row, &current.agent).map_err(domain)?;
     if current.agent.revision != operation.request.target().expected_revision
         || current.agent.status != AgentStatus::Starting
@@ -107,11 +137,6 @@ async fn apply(
         || current.sandbox.status == SandboxStatus::Rotating
     {
         return Err(conflict());
-    }
-    if work.dispatched_open.is_some() {
-        return Err(ApplyError::Domain(AgentControlStoreError::WorkConflict {
-            step: current.agent.work.step,
-        }));
     }
     let at = match &operation.request {
         ControlRequest::Stop(request) => &request.requested_at,
@@ -127,23 +152,10 @@ async fn apply(
     } else {
         at
     };
-    let (stopped_at, stop_receipt) =
-        restore_owner_stop(&current.row).map_err(ApplyError::Domain)?;
-    let mut next = current.agent.clone();
-    next.status = AgentStatus::Stopped;
-    next.stop_reason = Some(AgentStopReason::Owner);
-    next.stopped_at = Some(stopped_at);
-    next.updated_at.clone_from(stamp);
-    next.work.schedule(AgentWorkStep::None, stamp.clone());
-    let delete = if matches!(operation.request, ControlRequest::Delete(_)) {
-        next.request_delete(stamp.clone()).map_err(|_| conflict())?;
-        operation
-            .delete_after_restart_cancellation()
-            .receipt_update(&next)
-            .map_err(ApplyError::Domain)?
+    let (next, receipts, field) = if work.dispatched_open.is_some() {
+        prepare_handoff(&current, operation, stamp)?
     } else {
-        next.revision = next.revision.checked_add(1).ok_or_else(conflict)?;
-        Document::new()
+        cancel_undispatched(&current, operation, stamp)?
     };
     let active = current.row.get(ACTIVE_RESTART_FIELD).ok_or_else(conflict)?;
     let predecessor = current
@@ -162,7 +174,9 @@ async fn apply(
         "record.conversation.last_seq": last_seq,
         ACTIVE_RESTART_FIELD: active.clone(),
         RESTART_PREDECESSOR_FIELD: predecessor.clone(),
-        DISPATCH_FIELD: {"$exists": false},
+        DISPATCH_FIELD: current.row.get(DISPATCH_FIELD).cloned()
+            .unwrap_or_else(|| mongodb::bson::Bson::Document(doc! {"$exists": false})),
+        TEARDOWN: {"$exists": false},
         STOP_RECEIPT_FIELD: {"$exists": false},
         "channel_reuse_cleanup_execution": {"$exists": false},
         "channel_history_seal": {"$exists": false},
@@ -176,9 +190,8 @@ async fn apply(
         "revision": signed(next.revision, "cancelled restart revision").map_err(|_| conflict())?,
     };
     let mut fields = agent_replacement_fields(&next).map_err(domain)?;
-    fields.insert(CANCELLED, witness.clone());
-    fields.insert(STOP_RECEIPT_FIELD, stop_receipt);
-    fields.extend(delete);
+    fields.insert(field, witness.clone());
+    fields.extend(receipts);
     crate::store::agent_conversation_store::carry_checkpoint_fields(
         &current.row,
         &current.agent,
@@ -244,6 +257,14 @@ async fn apply(
             crate::store::agent_ownership::FenceError::Driver(error) => ApplyError::Driver(error),
         })?;
     fence_control_lineage(store, &current, operation.id(), session).await?;
+    if field == TEARDOWN {
+        return Ok(Attempt::Scheduled(Box::new(Applied {
+            next,
+            witness,
+            publication,
+            field,
+        })));
+    }
     let removed = store
         .agents
         .update_one(
@@ -256,7 +277,81 @@ async fn apply(
     if removed.matched_count != 1 {
         return Err(conflict());
     }
-    Ok((next, witness, publication))
+    Ok(Attempt::Scheduled(Box::new(Applied {
+        next,
+        witness,
+        publication,
+        field,
+    })))
+}
+
+fn existing_teardown(
+    operation: &ControlOperation,
+    current: &ControlSnapshot,
+) -> Result<Attempt, ApplyError> {
+    let (_, stored) =
+        super::restart_teardown::read(&current.row, &current.agent).map_err(domain)?;
+    match (&operation.request, stored.request) {
+        (ControlRequest::Stop(new), ControlRequest::Stop(old)) if new.reason == old.reason => {
+            Ok(Attempt::Existing(Box::new(current.agent.clone())))
+        }
+        (ControlRequest::Stop(_), ControlRequest::Delete(_))
+        | (ControlRequest::Delete(_), ControlRequest::Delete(_)) => {
+            Ok(Attempt::Existing(Box::new(current.agent.clone())))
+        }
+        _ => Err(ApplyError::Domain(AgentControlStoreError::WorkConflict {
+            step: current.agent.work.step,
+        })),
+    }
+}
+
+fn prepare_handoff(
+    current: &ControlSnapshot,
+    operation: &ControlOperation,
+    stamp: &str,
+) -> Result<(Agent, Document, &'static str), ApplyError> {
+    let reason = match &operation.request {
+        ControlRequest::Stop(request) => request.reason.clone(),
+        ControlRequest::Delete(_) => AgentStopReason::Owner,
+    };
+    let mut next = current.agent.clone();
+    next.request_stop(reason, stamp.to_owned())
+        .map_err(|_| ApplyError::Domain(AgentControlStoreError::Conflict))?;
+    // The worker claims a fence beyond every previously allocated Open fence.
+    // Its pinned runtime request serializes with any Open already in transit.
+    next.work.cleanup_not_before = None;
+    next.work.step = AgentWorkStep::RestartTeardown;
+    Ok((next, Document::new(), TEARDOWN))
+}
+
+fn cancel_undispatched(
+    current: &ControlSnapshot,
+    operation: &ControlOperation,
+    stamp: &str,
+) -> Result<(Agent, Document, &'static str), ApplyError> {
+    let conflict = || ApplyError::Domain(AgentControlStoreError::Conflict);
+    let (stopped_at, stop_receipt) =
+        restore_owner_stop(&current.row).map_err(ApplyError::Domain)?;
+    let mut next = current.agent.clone();
+    next.status = AgentStatus::Stopped;
+    next.stop_reason = Some(AgentStopReason::Owner);
+    next.stopped_at = Some(stopped_at);
+    next.updated_at = stamp.to_owned();
+    next.work.schedule(AgentWorkStep::None, stamp.to_owned());
+    let mut receipts = doc! {STOP_RECEIPT_FIELD: stop_receipt};
+    if matches!(operation.request, ControlRequest::Delete(_)) {
+        next.request_delete(stamp.to_owned())
+            .map_err(|_| conflict())?;
+        receipts.extend(
+            operation
+                .delete_after_restart_cancellation()
+                .receipt_update(&next)
+                .map_err(ApplyError::Domain)?,
+        );
+    } else {
+        next.revision = next.revision.checked_add(1).ok_or_else(conflict)?;
+    }
+    Ok((next, receipts, CANCELLED))
 }
 
 fn domain(error: SandboxStoreError) -> ApplyError {

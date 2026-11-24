@@ -60,3 +60,47 @@ pub struct AgentRestartDispatch {
     pub open: AgentOpenRequest,
     pub dispatched_at: String,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRestartTeardown {
+    pub operation_id: String,
+    pub acceptance: AgentRestartAcceptance,
+    pub open: AgentOpenRequest,
+}
+
+impl AgentRestartTeardown {
+    pub fn fence(
+        &self,
+        authority_fence: u64,
+        worktree_path: String,
+        close_successor: bool,
+    ) -> layer3_adapter::wire::AgentRestartFence {
+        use layer3_adapter::wire::{AgentProcessCloseProof, AgentRestartFence};
+        use layer3_adapter::{AgentCloseRequest, AgentSlot};
+        let source = &self.acceptance.source;
+        AgentRestartFence {
+            predecessor: AgentProcessCloseProof {
+                runtime: source.runtime.clone(),
+                close: AgentCloseRequest::new(
+                    source.predecessor_close.operation_id.clone(),
+                    AgentSlot::new(self.acceptance.agent_id.as_str()),
+                ),
+                open_request_sha256: source.predecessor_open.request_sha256.clone(),
+                worktree_path,
+            },
+            successor_operation_id: self.open.operation_id.clone(),
+            authority_fence,
+            successor_open_request_sha256: close_successor
+                .then(|| self.open.request_sha256.clone()),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct AgentRestartTeardownPublication {
+    pub claimed: Agent,
+    pub teardown: AgentRestartTeardown,
+    pub acknowledgement: layer3_adapter::wire::AgentRestartFence,
+    pub parents: super::AgentWorkPublicationParents,
+    pub published_at: String,
+}

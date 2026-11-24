@@ -157,6 +157,20 @@ pub trait AgentWorkerStore: Send + Sync {
         Err(SandboxStoreError::Conflict)
     }
 
+    async fn agent_restart_teardown(
+        &self,
+        _claimed: &Agent,
+    ) -> Result<super::AgentRestartTeardown, SandboxStoreError> {
+        Err(SandboxStoreError::Conflict)
+    }
+
+    async fn publish_agent_restart_teardown(
+        &self,
+        _publication: super::AgentRestartTeardownPublication,
+    ) -> Result<(), SandboxStoreError> {
+        Err(SandboxStoreError::Conflict)
+    }
+
     /// Read the immutable Open request for a previously restarted live Agent.
     async fn restart_connection_open(
         &self,

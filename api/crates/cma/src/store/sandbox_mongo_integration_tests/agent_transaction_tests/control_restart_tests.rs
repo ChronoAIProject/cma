@@ -314,22 +314,6 @@ async fn owner_restart_dispatch_is_durable_and_cannot_be_retargeted() {
         panic!("exact successor Open must own cleanup coverage");
     };
     assert_eq!(pending.operation_id, dispatch.open.operation_id);
-    assert_eq!(
-        store
-            .schedule_agent_stop(AgentStopRequest {
-                target: AgentControlTarget::from(&armed),
-                reason: AgentStopReason::Owner,
-                requested_at: dispatch.dispatched_at.clone(),
-            })
-            .await,
-        Err(AgentControlStoreError::WorkConflict {
-            step: AgentWorkStep::RestartConversation,
-        })
-    );
-    assert_eq!(
-        store.get_agent(&armed.id).await.unwrap(),
-        Some(armed.clone())
-    );
     assert!(armed.work.receipts.iter().all(|receipt| !matches!(
         receipt.step,
         AgentWorkStep::OpenConversation | AgentWorkStep::CloseProcess
@@ -344,9 +328,13 @@ async fn owner_restart_dispatch_is_durable_and_cannot_be_retargeted() {
         ..dispatch
     };
     assert_eq!(
-        store.prepare_agent_restart_dispatch(replay).await.unwrap(),
+        store
+            .prepare_agent_restart_dispatch(replay.clone())
+            .await
+            .unwrap(),
         armed
     );
+    cancellation::exercise_dispatched_teardown(&store, &stopped, replay, &accepted, now).await;
     client.database(&name).drop().await.unwrap();
 }
 

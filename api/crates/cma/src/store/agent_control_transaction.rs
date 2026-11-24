@@ -23,6 +23,7 @@ pub(super) mod restart;
 mod restart_cancel;
 pub(super) mod restart_dispatch;
 mod restart_receipt;
+pub(super) mod restart_teardown;
 mod segmented;
 pub(super) use restart::schedule_restart;
 pub(super) use restart_dispatch::{

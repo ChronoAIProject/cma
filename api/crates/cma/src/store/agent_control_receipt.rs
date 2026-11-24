@@ -76,6 +76,19 @@ pub(super) struct ControlOperation {
 }
 
 impl ControlOperation {
+    pub(super) fn restore(
+        request: ControlRequest,
+        operation_id: String,
+    ) -> Result<Self, AgentControlStoreError> {
+        if !operation_id_is_valid(&operation_id) {
+            return Err(corrupt("stored Agent control operation ID is invalid"));
+        }
+        Ok(Self {
+            request,
+            operation_id,
+        })
+    }
+
     pub(super) fn new(request: ControlRequest) -> Self {
         Self {
             request,
@@ -100,6 +113,13 @@ impl ControlOperation {
     ) -> Result<Document, AgentControlStoreError> {
         let scheduled_revision =
             i64::try_from(scheduled.revision).map_err(|_| AgentControlStoreError::Conflict)?;
+        self.receipt_at(scheduled_revision)
+    }
+
+    pub(super) fn receipt_at(
+        &self,
+        scheduled_revision: i64,
+    ) -> Result<Document, AgentControlStoreError> {
         let receipt = ControlReceipt {
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
             operation_id: self.operation_id.clone(),
@@ -114,9 +134,14 @@ impl ControlOperation {
     }
 
     pub(super) fn delete_after_restart_cancellation(&self) -> Self {
+        self.delete_after_restart_teardown(self.request.target().expected_revision)
+    }
+
+    pub(super) fn delete_after_restart_teardown(&self, revision: u64) -> Self {
         let mut operation = self.clone();
         if let ControlRequest::Delete(request) = &mut operation.request {
             request.target.expected_status = AgentStatus::Stopped;
+            request.target.expected_revision = revision;
         }
         operation
     }

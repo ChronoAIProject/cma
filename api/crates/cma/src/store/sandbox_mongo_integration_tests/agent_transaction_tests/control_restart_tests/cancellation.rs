@@ -7,6 +7,113 @@ use crate::store::{
 use layer2_core::sandbox::store::{AgentLogPublicationIdentity, AgentRestartDispatch};
 use layer3_adapter::{AgentOpenRequest, AgentProcessAction};
 
+pub(super) async fn exercise_dispatched_teardown(
+    store: &MongoSandboxStore,
+    stopped: &Agent,
+    armed: AgentRestartDispatch,
+    acceptance: &layer2_core::sandbox::store::AgentRestartAcceptance,
+    now: SystemTime,
+) {
+    use layer2_core::sandbox::store::{
+        AgentRestartTeardownPublication, AgentWorkPublicationLineage, AgentWorkPublicationParents,
+    };
+    let stop = AgentStopRequest {
+        target: AgentControlTarget::from(&armed.claimed),
+        reason: AgentStopReason::Owner,
+        requested_at: armed.dispatched_at.clone(),
+    };
+    let scheduled = store
+        .schedule_agent_stop(stop.clone())
+        .await
+        .unwrap()
+        .into_agent();
+    assert_eq!(scheduled.status, AgentStatus::Starting);
+    assert_eq!(scheduled.work.step, AgentWorkStep::RestartTeardown);
+    assert_eq!(scheduled.work.cleanup_debt, armed.claimed.work.cleanup_debt);
+    assert!(scheduled.work.lease.is_none());
+    assert!(matches!(
+        store.schedule_agent_stop(stop).await.unwrap(),
+        AgentControlResult::Existing(agent) if agent == scheduled
+    ));
+    assert_eq!(
+        store.prepare_agent_restart_dispatch(armed.clone()).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    let claimed = store
+        .claim_agent_work(
+            &scheduled.id,
+            "teardown-worker",
+            armed.dispatched_at.clone(),
+            layer2_core::rfc3339_at(now + Duration::from_secs(60)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let teardown = store.agent_restart_teardown(&claimed).await.unwrap();
+    assert_eq!(teardown.open, armed.open);
+    assert_eq!(&teardown.acceptance, acceptance);
+    let lease = claimed.work.lease.as_ref().unwrap();
+    assert!(lease.fence > armed.claimed.work.lease.as_ref().unwrap().fence);
+    let sandbox = store
+        .get_sandbox(&claimed.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let workspace = store
+        .get_workspace(&claimed.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let worktree = store
+        .get_worktree(&claimed.worktree_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let acknowledgement = teardown.fence(lease.fence, worktree.path, false);
+    let publication = AgentRestartTeardownPublication {
+        claimed: claimed.clone(),
+        teardown,
+        acknowledgement,
+        parents: AgentWorkPublicationParents {
+            sandbox_revision: sandbox.revision,
+            workspace_revision: workspace.revision,
+            worktree_revision: worktree.revision,
+            lineage: AgentWorkPublicationLineage::Authorized,
+        },
+        published_at: armed.dispatched_at,
+    };
+    let mut incorrect = publication.clone();
+    incorrect.acknowledgement.predecessor.runtime.boot_id = "b".repeat(32);
+    assert_eq!(
+        store.publish_agent_restart_teardown(incorrect).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    let observed = store.get_agent(&claimed.id).await.unwrap().unwrap();
+    assert_eq!(observed, claimed);
+    assert!(observed.status.is_live());
+    store
+        .publish_agent_restart_teardown(publication.clone())
+        .await
+        .unwrap();
+    let restored = store.get_agent(&claimed.id).await.unwrap().unwrap();
+    assert_eq!(restored.status, AgentStatus::Stopped);
+    assert_eq!(restored.stopped_at, stopped.stopped_at);
+    assert_eq!(restored.conversation, stopped.conversation);
+    assert_eq!(restored.work.receipts, stopped.work.receipts);
+    assert!(restored.work.cleanup_debt.is_empty());
+    assert_eq!(
+        store.publish_agent_restart_teardown(publication).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    let mut replay = request(&restored, &acceptance.source, "dispatch", [1; 32]);
+    replay.observed_process = None;
+    assert_eq!(
+        &store.schedule_agent_restart(replay).await.unwrap(),
+        acceptance
+    );
+    assert_eq!(store.get_agent(&restored.id).await.unwrap(), Some(restored));
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn owner_restart_cancellation_preserves_the_closed_process_in_both_log_formats() {
@@ -152,6 +259,48 @@ async fn exercise_cancellation(segmented: bool, delete: bool) {
 }
 
 async fn adopt(client: &Client, name: &str, store: &MongoSandboxStore, agent: &Agent) {
+    use crate::store::agent_log::log_document;
+    for (seq, kind) in [
+        (
+            1,
+            AgentLogKind::Created {
+                workspace_id: agent.workspace_id.clone(),
+                worktree_id: agent.worktree_id.clone(),
+            },
+        ),
+        (
+            2,
+            AgentLogKind::ConversationOpened {
+                conversation_id: agent.conversation.conversation_id.clone().unwrap(),
+                runtime_generation: agent.conversation.runtime_generation.unwrap(),
+            },
+        ),
+    ] {
+        let row = log_document(&AgentLogEntry {
+            agent_id: agent.id.clone(),
+            seq,
+            appended_at: NOW.into(),
+            kind,
+        })
+        .unwrap();
+        let replaced = store
+            .agent_log
+            .replace_one(
+                doc! {"agent_id": agent.id.as_str(), "seq": i64::try_from(seq).unwrap()},
+                row,
+            )
+            .await
+            .unwrap();
+        assert_eq!(replaced.matched_count, 1);
+    }
+    store
+        .agents
+        .update_one(
+            doc! {"_id": agent.id.as_str()},
+            doc! {"$unset": {crate::store::agent_log_integrity::INTEGRITY_FIELD: ""}},
+        )
+        .await
+        .unwrap();
     let db = client.database(name);
     segments::schema::migrate(&db).await.unwrap();
     crate::store::migrations::agent_log_source_keys::prepare_for_test(&db).await;

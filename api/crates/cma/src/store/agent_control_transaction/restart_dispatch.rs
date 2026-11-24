@@ -329,9 +329,17 @@ pub(in crate::store) fn read_work(
 ) -> Result<AgentRestartWork, SandboxStoreError> {
     if agent.status != AgentStatus::Starting
         || agent.work.step != AgentWorkStep::RestartConversation
+        || agent.requested_stop_reason.is_some()
     {
         return Err(SandboxStoreError::Conflict);
     }
+    read_restart_record(row, agent)
+}
+
+pub(super) fn read_restart_record(
+    row: &Document,
+    agent: &Agent,
+) -> Result<AgentRestartWork, SandboxStoreError> {
     let invalid =
         || SandboxStoreError::Corrupt("stored restart and its Agent work disagree".into());
     let acceptance: AgentRestartAcceptance = mongodb::bson::deserialize_from_bson(

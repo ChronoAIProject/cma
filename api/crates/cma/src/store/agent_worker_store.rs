@@ -17,6 +17,20 @@ use super::sandbox_mongo::{MongoSandboxStore, TRANSACTION_ATTEMPTS};
 
 #[async_trait::async_trait]
 impl AgentWorkerStore for MongoSandboxStore {
+    async fn agent_restart_teardown(
+        &self,
+        claimed: &Agent,
+    ) -> Result<layer2_core::sandbox::store::AgentRestartTeardown, SandboxStoreError> {
+        super::agent_control_transaction::restart_teardown::load(self, claimed).await
+    }
+
+    async fn publish_agent_restart_teardown(
+        &self,
+        publication: layer2_core::sandbox::store::AgentRestartTeardownPublication,
+    ) -> Result<(), SandboxStoreError> {
+        super::agent_control_transaction::restart_teardown::publish(self, &publication).await
+    }
+
     async fn agent_restart_work(
         &self,
         claimed: &Agent,

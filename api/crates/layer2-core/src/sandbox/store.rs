@@ -48,7 +48,7 @@ mod agent_control;
 mod agent_restart;
 pub use agent_restart::{
     AgentRestartAcceptance, AgentRestartDispatch, AgentRestartRequest, AgentRestartSource,
-    AgentRestartWork,
+    AgentRestartTeardown, AgentRestartTeardownPublication, AgentRestartWork,
 };
 mod background_checkpoint;
 pub use agent_control::{
