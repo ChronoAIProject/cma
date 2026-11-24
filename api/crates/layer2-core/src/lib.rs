@@ -40,6 +40,8 @@ pub mod platform_service;
 pub mod pressure;
 pub mod pressure_service;
 pub mod profiles;
+#[cfg(feature = "qualification-hooks")]
+pub mod qualification;
 pub mod resource_access;
 mod retry_schedule;
 pub mod sandbox;

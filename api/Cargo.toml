@@ -7,6 +7,7 @@ members = [
     "crates/layer4-runtime",
     "crates/cma",
     "crates/cma-am-mongo-primitives",
+    "crates/cma-qualification",
     "crates/cmaeg-core",
     "crates/cmaeg",
     "crates/cma-image-manager",
