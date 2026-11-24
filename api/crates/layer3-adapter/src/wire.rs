@@ -26,6 +26,9 @@ pub const AGENT_RESOURCES_STATUS_MEDIA_TYPE: &str =
 pub const AGENT_COMPUTER_STATUS_MEDIA_TYPE: &str =
     "application/vnd.chrono.cma.agent-computer-status+json";
 
+pub const GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE: &str =
+    "application/vnd.chrono.cma.github-credential-route-status.v1+json";
+
 /// A stable reference to one agent slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -16,6 +16,16 @@ impl HostedAdapter {
             ));
         }
         self.verify_bound_home(handle).await?;
+        if frame.github_route.is_some()
+            && !self
+                .inspect_runtime_status(handle)
+                .await?
+                .exact_github_credential_route
+        {
+            return Err(AdapterError::Unsupported(
+                "runtime does not support a bound GitHub credential route".into(),
+            ));
+        }
         let operation_id = frame.operation_id.clone();
         match self.exchange(handle, RequestFrame::Credential(frame)).await {
             Ok(ResponseFrame::Credential(CredentialReceipt {
