@@ -62,6 +62,25 @@ class PoolAPI:
         return deepcopy(response)
 
 
+class ReleasedPoolAPI(PoolAPI):
+    """v0.22.0 adds `machine_image` to the list and `machine` to every row."""
+
+    def __init__(self, output, machine_image=None, machine=False):
+        super().__init__(output)
+        self.machine_image, self.machine, self.released = machine_image, machine, True
+
+    def request(self, method, route, body=None, key=None, status=200, bearer=None, use_cookies=True):
+        response = super().request(method, route, body, key, status, bearer, use_cookies)
+        if not self.released:
+            return response
+        rows = response['items'] if method == 'GET' else [response]
+        for row in rows:
+            row['machine'] = self.machine
+        if method == 'GET':
+            response['machine_image'] = self.machine_image
+        return response
+
+
 class WarmPoolFixtureTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -226,6 +245,37 @@ class WarmPoolFixtureTests(unittest.TestCase):
         path.unlink()
         with self.assertRaisesRegex(RuntimeError, 'original system default missing'):
             self.fixture.exercise('new-read-old-write', [])
+
+
+class ReleasedReaderShapeTests(unittest.TestCase):
+    def fixture(self, **shape):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        return WarmPoolFixture(ReleasedPoolAPI(Path(directory.name), **shape))
+
+    def test_released_machine_fields_are_accepted_across_all_stages(self):
+        for machine_image in (None, 'ghcr.io/example-owner/cma-runtime-omarchy@sha256:' + '9' * 64):
+            with self.subTest(machine_image=machine_image):
+                fixture = self.fixture(machine_image=machine_image)
+                for stage in STAGES:
+                    fixture.exercise(stage, [])
+
+    def test_old_and_released_readers_alternate_like_the_campaign(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        api = ReleasedPoolAPI(Path(directory.name))
+        fixture = WarmPoolFixture(api)
+        for stage in STAGES:
+            # Old reader for old-write and old-read-new-write; released otherwise.
+            api.released = stage not in ('old-write', 'old-read-new-write')
+            fixture.exercise(stage, [])
+
+    def test_machine_pool_or_malformed_machine_image_is_refused(self):
+        for shape, message in (({'machine': True}, 'machine image'),
+                               ({'machine': 'false'}, 'machine image'),
+                               ({'machine_image': 5}, 'inventory machine image differs')):
+            with self.subTest(shape=shape), self.assertRaisesRegex(RuntimeError, message):
+                self.fixture(**shape).exercise('old-write', [])
 
 
 if __name__ == '__main__':

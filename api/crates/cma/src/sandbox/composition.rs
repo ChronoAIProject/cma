@@ -54,6 +54,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
+    pub reopen_output_refusal_enabled: bool,
     pub cleanup_continuation_enabled: bool,
     pub bounded_live_fragments: bool,
     pub quiet_output: Option<layer2_core::sandbox::AgentOutputCoalescePolicy>,
@@ -62,6 +63,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub managed_documents_enabled: bool,
     pub event_driven_reconciliation: bool,
     pub stale_turn_reconciliation: bool,
+    pub stale_turn_terminal: bool,
     pub skip_ineligible_reconciliation: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
@@ -125,6 +127,9 @@ impl SandboxLifecycleComposition {
                     dependencies.store.clone(),
                     ownership.clone(),
                     dependencies.registry.clone(),
+                    config
+                        .stale_turn_terminal
+                        .then(|| dependencies.adapter.clone()),
                 )
             })
         } else {
@@ -262,6 +267,7 @@ impl SandboxLifecycleComposition {
         .with_native_create_retry(config.native_create_retry_enabled)
         .with_home_policy(config.home_policy);
         sandbox_config.retirement_finalizer = Some(retirement_finalizer);
+        sandbox_config.reopen_output_refusal_enabled = config.reopen_output_refusal_enabled;
         let sandbox_worker = SandboxWorker::new_with_funding(
             SandboxWorkerDependencies {
                 store: dependencies.store.clone(),
@@ -335,9 +341,9 @@ impl SandboxLifecycleComposition {
             .capacity_recovery_commands(service)
     }
 
-    pub(crate) async fn initialize(&self) -> Result<(), String> {
+    pub(crate) async fn initialize(&self, stopping: impl Fn() -> bool) -> Result<(), String> {
         self.reconciliation
-            .initialize_before_workers(std::time::SystemTime::now())
+            .initialize_before_workers_until(std::time::SystemTime::now(), stopping)
             .await
             .map_err(|error| format!("sandbox runtime initialization failed: {error}"))
     }

@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::future::Future;
 use std::time::{Duration, SystemTime};
 
 use layer2_core::rfc3339_at;
@@ -13,11 +12,12 @@ use layer2_core::sandbox::{
 };
 use layer3_adapter::AgentOpenRequest;
 use tokio::sync::mpsc;
-use tokio::time::{timeout_at, Instant};
+use tokio::time::Instant;
 
-use super::super::support::{adapter_failure, runtime, WorkerFailure};
+use super::super::support::{runtime, WorkerFailure};
 use super::super::SandboxWorker;
 use super::checkpoint::{pinned_checkpoint, require_quiet_agent};
+use super::reopen_refusal::within_deadline;
 use super::support::{lifecycle_lease, model_error};
 use crate::sandbox::live_agents::{LiveAgentAttachment, LiveAgentRegistryError};
 use crate::sandbox::runtime_mapping::{runtime_capabilities, runtime_options};
@@ -84,9 +84,24 @@ impl SandboxWorker {
             self.conversation_reopen_deadline(&sandbox).await?
         };
         for agent in &live {
+            let refusal = match self.reopen_refusal_fence(&sandbox, agent).await {
+                Ok(refusal) => refusal,
+                Err(error) => {
+                    rollback_attachments(self, &attachments);
+                    return Err(error);
+                }
+            };
+            let prove_refusal = refusal.is_some();
             if let Some(relay) = self.reopen_relay.get() {
                 let relay = relay.upgrade().ok_or(SandboxStoreError::Conflict)?;
-                match within_deadline(deadline, relay.reopen_agent(&sandbox, &agent.id)).await {
+                match within_deadline(
+                    deadline,
+                    relay.reopen_agent(&sandbox, &agent.id, prove_refusal),
+                    refusal,
+                    true,
+                )
+                .await
+                {
                     Ok(mut receipt) => {
                         // Lifecycle validation uses the publisher's logical
                         // timestamp, which can differ from the remote clock.
@@ -140,7 +155,10 @@ impl SandboxWorker {
                     self.dependencies.updates.as_ref(),
                     &agent.id,
                     &guard,
+                    prove_refusal,
                 ),
+                refusal,
+                false,
             )
             .await
             {
@@ -177,7 +195,10 @@ impl SandboxWorker {
                         self.dependencies.updates.as_ref(),
                         &agent.id,
                         &guard,
+                        false,
                     ),
+                    None,
+                    false,
                 )
                 .await
                 {
@@ -415,21 +436,6 @@ impl SandboxWorker {
         rollback_attachments(self, &attachments);
         self.handle_lifecycle_failure(sandbox, failure, now).await
     }
-}
-
-async fn within_deadline<T>(
-    deadline: Instant,
-    operation: impl Future<Output = layer3_adapter::Result<T>>,
-) -> Result<T, WorkerFailure> {
-    let expired =
-        || WorkerFailure::terminal_validation("retained conversation reopen deadline elapsed");
-    if Instant::now() >= deadline {
-        return Err(expired());
-    }
-    timeout_at(deadline, operation)
-        .await
-        .map_err(|_| expired())?
-        .map_err(adapter_failure)
 }
 
 fn validate_reopen_set<'a>(

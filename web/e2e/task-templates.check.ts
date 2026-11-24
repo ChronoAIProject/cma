@@ -49,6 +49,7 @@ async function fixture(page: Page, baseURL: string, supported = true) {
         info: { title: 'Synthetic', version: '1' },
         paths: {},
         'x-cma-task-templates-v1': supported,
+        'x-cma-task-templates-v2': supported,
         components: {
           schemas: {
             AgentLifecycleCreateRequest: { properties: { initial_message: { type: 'string' } } },
@@ -104,7 +105,9 @@ for (const theme of ['light', 'dark']) {
       await expect(preview).toHaveText(
         'Fill in the required fields above to generate the task preview.',
       );
-      await expect(page.getByPlaceholder('What would you like your Agent to do?')).toHaveCount(0);
+      await expect(
+        page.getByPlaceholder('Describe the job. It gets its own cloud computer to do it.'),
+      ).toHaveCount(0);
       await expect(page.getByText(/↵ to run/)).toHaveCount(0);
       if (item.id === 'document')
         await page.screenshot({
@@ -180,7 +183,7 @@ for (const theme of ['light', 'dark']) {
         initial_message: previewText,
         template: {
           id: item.id,
-          version: 1,
+          version: 2,
           fields: Object.fromEntries(item.fields.map(([, value, key]) => [key, value])),
         },
       });
@@ -297,7 +300,8 @@ test('LOCAL complete conversion confirms replacement and keeps the template fiel
   await page.getByLabel('Your task').fill('Keep the existing draft until confirmation');
   await page.getByRole('button', { name: 'Research a topic', exact: true }).click();
   await page.getByLabel('Topic', { exact: true }).fill('  Synthetic topic  ');
-  const preview = 'Research Synthetic topic and summarize the key findings, with links to sources.';
+  const preview =
+    'Research the following topic:\n\nSynthetic topic\n\nSummarize the key findings, with links to sources.';
   await page.getByRole('button', { name: 'Write a task without a template' }).click();
   const dialog = page.getByRole('dialog', { name: 'Replace your free-text draft?' });
   await dialog.getByRole('button', { name: 'Keep editing template' }).click();

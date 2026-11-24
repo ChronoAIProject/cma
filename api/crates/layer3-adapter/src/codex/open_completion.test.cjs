@@ -270,3 +270,28 @@ test("canonical binding digest agrees with fixed cross-language JSON vectors", a
     assert.equal(receipt.bindingDigest, vector.bindingDigest, vector.name);
   }
 });
+
+test("current lists only this process's completed live opens for an interrupted first open", async () => {
+  const f = fixture(), params = request(), challenge = "fixture_current_1234";
+  assert.deepEqual(f.proof.current({ challenge }).sessions, []);
+  const release = deferred(), entered = deferred();
+  const work = f.open("new", params, { beforeNative: async () => { entered.resolve(); await release.promise; } });
+  await entered.promise;
+  // An open still running is reported so a caller waits instead of duplicating it.
+  const inFlight = f.proof.current({ challenge });
+  assert.equal(inFlight.opening, true);
+  assert.deepEqual(inFlight.sessions, []);
+  release.resolve();
+  const { sessionId } = await work;
+  const listed = f.proof.current({ challenge });
+  assert.deepEqual({ ...listed, processNonce: undefined }, { version: 1, challenge, processNonce: undefined,
+    opening: false, sessions: [{ sessionId, bindingDigest: digest(params) }] });
+  assert.equal(listed.processNonce, f.read(sessionId, params).processNonce);
+  assert(!JSON.stringify(listed).includes("Bearer"));
+  // A closed session and a failed open never become adoptable.
+  f.proof.retire(sessionId);
+  await assert.rejects(f.open("new", params, { failHistory: true }));
+  assert.deepEqual(f.proof.current({ challenge }).sessions, []);
+  f.proof.retireAll();
+  assert.deepEqual(f.proof.current({ challenge }).sessions, []);
+});

@@ -1,8 +1,10 @@
 //! Authenticated peer relay. Public credentials and durable command IDs survive a hop.
 mod authentication;
 mod control;
-pub(crate) use control::prestop;
+pub(crate) use control::{prestop, DRAIN};
 mod environment_diagnostics;
+mod file_read;
+mod forward;
 mod http;
 mod ingress;
 mod live;
@@ -17,7 +19,7 @@ pub(crate) use queued_cancellation::{
     Charged as ChargedQueuedCancellation, DeferQueuedCancellationActivity,
 };
 mod reopen;
-pub(crate) use reopen::ReopenCall;
+pub(crate) use reopen::{output_refused, ReopenCall, OUTPUT_REFUSED};
 
 use environment_diagnostics::Refusal;
 use layer2_core::agent_ownership::{
