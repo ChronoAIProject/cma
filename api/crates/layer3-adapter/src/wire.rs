@@ -26,6 +26,8 @@ pub const AGENT_RESOURCES_STATUS_MEDIA_TYPE: &str =
 pub const AGENT_COMPUTER_STATUS_MEDIA_TYPE: &str =
     "application/vnd.chrono.cma.agent-computer-status+json";
 
+pub const AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE: &str =
+    "application/vnd.chrono.cma.agent-process-restart-status.v1+json";
 pub const GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE: &str =
     "application/vnd.chrono.cma.github-credential-route-status.v1+json";
 
@@ -44,6 +46,8 @@ pub struct AgentRef {
 pub struct FencedRequest<T> {
     pub authority_fence: u64,
     pub request: T,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_runtime: Option<crate::AgentRestartRuntime>,
 }
 
 impl<T> FencedRequest<T> {
@@ -51,6 +55,7 @@ impl<T> FencedRequest<T> {
         Self {
             authority_fence,
             request,
+            restart_runtime: None,
         }
     }
 }
@@ -266,6 +271,28 @@ pub enum RequestFrame {
 }
 
 impl RequestFrame {
+    pub fn has_unexpected_restart_runtime(&self) -> bool {
+        match self {
+            Self::PrepareAgentResources(request) => request.restart_runtime.is_some(),
+            Self::AddWorktree(request) => request.restart_runtime.is_some(),
+            Self::RemoveWorktree(request) => request.restart_runtime.is_some(),
+            Self::MaterializeAgentHome(request) => request.restart_runtime.is_some(),
+            Self::InstallAgentSkill(request) => request.restart_runtime.is_some(),
+            Self::RemoveAgentHome(request) => request.restart_runtime.is_some(),
+            Self::CloseAgent(request) => request.restart_runtime.is_some(),
+            Self::OpenAgent(request) => {
+                request.restart_runtime.is_some()
+                    && crate::AgentProcessAction::Open
+                        .incarnation(
+                            request.request.agent_id.as_str(),
+                            &request.request.operation_id,
+                        )
+                        .is_none_or(|incarnation| incarnation == 1)
+            }
+            _ => false,
+        }
+    }
+
     pub const fn operation(&self) -> WireOperation {
         match self {
             Self::Browser(_) => WireOperation::Browser,

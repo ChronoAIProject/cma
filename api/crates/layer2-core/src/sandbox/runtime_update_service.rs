@@ -199,7 +199,10 @@ impl SandboxRuntimeUpdateService {
         owner: Option<&SubjectId>,
     ) -> Result<Sandbox, SandboxRuntimeUpdateError> {
         for _ in 0..8 {
-            let latest = self.latest_version();
+            // One release per attempt. An attempt whose release is superseded
+            // before its write admits nothing and retries against the new one.
+            let released = self.released.snapshot();
+            let latest = released.agent.clone();
             let mut sandbox = self
                 .store
                 .get_sandbox(id)
@@ -225,6 +228,9 @@ impl SandboxRuntimeUpdateService {
                 } else {
                     target_version
                 };
+                if self.released.require_current(&released).is_err() {
+                    continue;
+                }
                 match self.recover_unpublished(&sandbox, target, false).await {
                     Ok(recovered) => return Ok(recovered),
                     Err(SandboxStoreError::Conflict) => {
@@ -240,6 +246,9 @@ impl SandboxRuntimeUpdateService {
                 .map_err(|_| SandboxRuntimeUpdateError::NotAvailable)?
             {
                 return Ok(sandbox);
+            }
+            if self.released.require_current(&released).is_err() {
+                continue;
             }
             match self.store.save_sandbox(revision, sandbox.clone()).await {
                 Ok(()) => return Ok(sandbox),

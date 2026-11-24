@@ -9,7 +9,7 @@
 //! that exceeds the bound is passed. Entries exist only while a media chain
 //! is live, so the turn tracker (4 096 live turns) bounds them; an
 //! attachment-free turn with no live chain creates nothing.
-use crate::telemetry::{self, names};
+use crate::channel_hash;
 use cmaeg_core::ids::{ChannelId, ConversationId};
 use dashmap::{mapref::entry::Entry, DashMap};
 use std::{
@@ -20,6 +20,8 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::watch;
+
+pub const FENCE_WAIT: &str = "cmaeg_media_fence_wait_seconds";
 
 pub type ChainKey = (ChannelId, ConversationId);
 
@@ -101,14 +103,14 @@ impl Ticket {
         let released = tokio::time::timeout(max, predecessor.wait_for(|released| *released))
             .await
             .is_ok();
-        metrics::histogram!(names::FENCE_WAIT).record(started.elapsed().as_secs_f64());
+        metrics::histogram!(FENCE_WAIT).record(started.elapsed().as_secs_f64());
         if !released {
             let channel = self
                 .key
                 .as_ref()
-                .map(|(channel, _)| telemetry::channel_hash(channel.as_str()))
+                .map(|(channel, _)| channel_hash(channel.as_str()))
                 .unwrap_or_default();
-            tracing::warn!(channel = %channel, "conversation order fence timed out");
+            tracing::warn!(target: "cmaeg::turns::sequencer", channel = %channel, "conversation order fence timed out");
         }
         released
     }

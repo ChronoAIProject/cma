@@ -1,4 +1,5 @@
 use super::*;
+use crate::hosted::HostedControlTransport;
 
 fn request() -> crate::RuntimeStatusRequest {
     crate::RuntimeStatusRequest {

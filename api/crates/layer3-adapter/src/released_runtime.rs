@@ -16,6 +16,37 @@ pub struct ReleasedRuntime {
     pub machine: Option<String>,
 }
 
+impl ReleasedRuntime {
+    /// The deployment-owned image for `uri` when it is one of this release's
+    /// lanes, labelled with the runtime contract this build supports.
+    pub fn image(&self, uri: &str) -> Option<crate::RuntimeImage> {
+        (uri == self.agent || self.machine.as_deref() == Some(uri))
+            .then(|| released_image(uri.to_owned()))
+    }
+}
+
+/// Metadata for a deployment-owned, pinned CMA runtime image; never a user
+/// image. Cold allocation and administered warm pools use the same contract.
+pub fn released_image(uri: String) -> crate::RuntimeImage {
+    crate::RuntimeImage {
+        uri,
+        labels: std::collections::BTreeMap::from([
+            (
+                crate::RUNTIME_CONTRACT_LABEL.into(),
+                crate::RUNTIME_CONTRACT_VERSION.to_string(),
+            ),
+            (
+                crate::runtime_bootstrap::RUNTIME_BOOTSTRAP_LABEL.into(),
+                "1".into(),
+            ),
+            (
+                crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL.into(),
+                "2".into(),
+            ),
+        ]),
+    }
+}
+
 /// The release a caller captured is no longer current. Retry the admission
 /// against a fresh snapshot; nothing was admitted against the stale one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
