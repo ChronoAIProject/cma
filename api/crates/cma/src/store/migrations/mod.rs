@@ -16,6 +16,7 @@ pub(in crate::store) mod home_backup_catalog;
 mod index_inventory;
 mod index_plan;
 mod index_toolkit;
+pub(in crate::store) mod measured_custody;
 pub(in crate::store) mod opening_index;
 mod sandbox_usage_capture;
 mod steps;
@@ -155,7 +156,7 @@ async fn apply_indexes(
     super::sandbox_mongo::require_transaction_topology(database)
         .await
         .map_err(|_| "migration requires a supported replica set or mongos")?;
-    if step == Step::BindingIndexes {
+    if matches!(step, Step::BindingIndexes | Step::MeasuredCustody) {
         step.inspect(database).await?;
     }
     ledger.initialize().await?;
