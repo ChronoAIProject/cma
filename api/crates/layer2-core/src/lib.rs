@@ -30,6 +30,7 @@ pub mod gateway_interactions;
 pub mod gateway_records;
 pub mod ids;
 pub mod inventory;
+pub mod legal_consent;
 pub mod limits;
 pub mod log;
 pub mod operation;

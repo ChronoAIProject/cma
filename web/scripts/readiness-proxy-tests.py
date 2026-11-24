@@ -3,6 +3,7 @@
 
 Only upstream addresses and the static root change in the application config.
 This verifies the web fallback hop, not the privately managed edge controller.
+The desktop socket route policy is checked statically from the same file.
 """
 
 import http.client
@@ -73,7 +74,14 @@ server {
 """
         config += f"        if ($arg_state = store) {{ return 503 '{json.dumps(STORE_DOWN)}'; }}\n"
         config += f"        if ($arg_state = workers) {{ return 503 '{json.dumps(WORKERS_DOWN)}'; }}\n"
-        config += f"        return 200 '{json.dumps(READY)}';\n    }}\n}}\n"
+        config += f"        return 200 '{json.dumps(READY)}';\n    }}\n"
+        # Any API body the web proxy forwards reaches the fake Agent Manager.
+        config += """    location /api/ {
+        client_max_body_size 64m;
+        return 202 '{"reached":"agent-manager"}';
+    }
+}
+"""
         # A different service cannot accidentally satisfy Agent Manager readiness.
         config += "server { listen 18081; return 404; }\n"
         (directory / "default.conf").write_text(config)
@@ -96,6 +104,17 @@ server {
                 if time.monotonic() >= deadline:
                     raise AssertionError(docker("logs", cls.container))
                 time.sleep(0.1)
+
+    @classmethod
+    def post(cls, method, path, size):
+        connection = http.client.HTTPConnection("127.0.0.1", cls.port, timeout=10)
+        try:
+            connection.request(method, path, body=b"x" * size,
+                               headers={"Content-Type": "application/json"})
+            response = connection.getresponse()
+            return response.status, response.read()
+        finally:
+            connection.close()
 
     @classmethod
     def get(cls, path):
@@ -134,10 +153,54 @@ server {
                 self.assertIn(b"SPA fixture", response[2])
                 self.assertFalse(ready(response))
 
+    def test_legal_document_and_artifact_bodies_reach_the_agent_manager(self):
+        # 1 MiB of Markdown or decoded artifact bytes is legal; JSON and base64
+        # expansion must not turn it into an untyped HTML 413 at the proxy.
+        mib = 1024 * 1024
+        for method, path, size in [
+            ("PATCH", "/api/v1/documents/doc-a", 6 * mib + 16 * 1024),
+            ("POST", "/api/v1/documents", 6 * mib + 16 * 1024),
+            ("POST", "/api/agent-manager/v1/documents", 6 * mib + 16 * 1024),
+            ("POST", "/api/v1/agents/agent-a/artifacts", 2 * mib),
+            ("POST", "/api/agent-manager/v1/agents/agent-a/artifacts", 2 * mib),
+        ]:
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.post(method, path, size), (202, b'{"reached":"agent-manager"}')
+                )
+        # The raised bounds are route-scoped; other API routes keep nginx's default.
+        status, _ = self.post("PATCH", "/api/v1/agents/agent-a/settings", mib + 1)
+        self.assertEqual(status, 413)
+
     def test_monitor_rejects_malformed_or_incomplete_assertions(self):
         for body in [b"{", b"null", b"[]", b'{}', b'{"status":"ready"}']:
             with self.subTest(body=body):
                 self.assertFalse(ready((200, {"content-type": "application/json"}, body)))
+
+
+class DesktopSocketRoutes(unittest.TestCase):
+    """Static policy for both browser desktop socket routes; no container needed."""
+
+    # Agent Manager closes a desktop relay after 30 minutes. An idle RFB stream can
+    # send nothing for longer than nginx's 60 s default, so the proxy must not cut it.
+    RELAY_LIFETIME_SECONDS = 30 * 60
+
+    def test_both_desktop_socket_routes_upgrade_and_stay_open_while_idle(self):
+        config = (ROOT / "web/nginx.conf").read_text()
+        blocks = re.findall(r"location ~ (\S*/desktop/ws\$) \{(.*?)\n    \}", config, re.S)
+        self.assertEqual(
+            [route for route, _ in blocks],
+            [r"^/api/v1/agents/[^/]+/desktop/ws$",
+             r"^/api/agent-manager/v1/agents/[^/]+/desktop/ws$"],
+        )
+        for route, body in blocks:
+            with self.subTest(route=route):
+                self.assertIn("proxy_set_header Upgrade $desktop_websocket_upgrade;", body)
+                self.assertIn("proxy_set_header Connection $desktop_websocket_connection;", body)
+                self.assertIn("proxy_buffering off;", body)
+                timeout = re.search(r"proxy_read_timeout (\d+)s;", body)
+                self.assertIsNotNone(timeout, "the 60 s default would cut an idle desktop")
+                self.assertGreaterEqual(int(timeout[1]), self.RELAY_LIFETIME_SECONDS)
 
 
 if __name__ == "__main__":

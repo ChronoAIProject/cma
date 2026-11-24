@@ -144,7 +144,8 @@ class Identity(BaseHTTPRequestHandler):
         if self.path == '/userinfo':
             header = self.headers.get('Authorization', '')
             actor = self.actor(header[7:]) if header.startswith('Bearer ') else None
-            return self.reply(200, {'sub': actor[0], 'name': 'Local native qualification'}) if actor else self.reply(401, {'error': 'unauthorized'})
+            return self.reply(200, {'sub': actor[0], 'name': 'Local native qualification',
+                                    'permissions': actor[1]}) if actor else self.reply(401, {'error': 'unauthorized'})
         if not self.bearer():
             return self.reply(401, {'error': 'unauthorized'})
         if self.path in ['/api/v1/services', '/api/v1/user-services']:

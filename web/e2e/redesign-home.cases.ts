@@ -12,6 +12,13 @@ async function capture(page: Page, info: TestInfo, theme: string, name: string) 
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
     .toBe(true);
+  await expect
+    .poll(async () => {
+      await page.clock.runFor(50);
+      const box = await page.locator('.task-home').boundingBox();
+      return box ? box.x + box.width : Infinity;
+    })
+    .toBeLessThanOrEqual(page.viewportSize()!.width);
   const content = await page.locator('.task-home').boundingBox();
   expect(content).not.toBeNull();
   expect(content!.x).toBeGreaterThanOrEqual(0);
@@ -38,9 +45,11 @@ export function registerRedesignHomeCases() {
         const fixture = await redesignHomeFixture(page, baseURL!, state);
         await page.goto('/agent-manager');
         const input = page.getByLabel('Your task', { exact: true });
-        if (state === 'empty')
+        if (state === 'empty') {
           await expect(page.getByRole('heading', { name: 'Give it a job.' })).toBeVisible();
-        else
+          await expect(page.getByText('Your next agent starts here')).toBeVisible();
+          await expect(page.getByText('Your first agent starts here')).toHaveCount(0);
+        } else
           await expect(
             page.getByRole('region', { name: 'Your crew' }).getByRole('button'),
           ).toHaveCount(3);
@@ -61,6 +70,14 @@ export function registerRedesignHomeCases() {
           await input.fill('Draft a weekly summary of the sample project.');
           await expect(page.getByText('All 5 Sandbox environment slots are in use')).toBeVisible();
           await expect(page.getByText(/2 environments are being deleted/)).toBeVisible();
+          await expect(page.getByText('5/5 Sandbox environments used')).toHaveCount(0);
+          const manage = await page
+            .getByRole('region', { name: 'Sandbox capacity' })
+            .getByRole('button', { name: 'Manage environments' })
+            .boundingBox();
+          expect(manage!.y + manage!.height).toBeLessThan(900);
+          const templates = await page.locator('.task-home__templates').boundingBox();
+          expect(templates!.y).toBeLessThan(900);
           await expect(
             page.getByRole('button', { name: 'Start task', exact: true }),
           ).toBeDisabled();
@@ -137,7 +154,9 @@ export function registerRedesignHomeCases() {
       await expect(page.getByText(/Last confirmed: Preparing/)).toBeVisible();
       await expect(page.getByRole('button', { name: 'Start another task' })).toHaveCount(0);
       await capture(page, info, theme, '07-stuck');
-      await page.getByRole('button', { name: 'Retry task status' }).click();
+      const recovery = page.getByRole('region', { name: 'Task preparation' });
+      await expect(recovery.getByRole('alert')).toHaveCount(1);
+      await recovery.getByRole('button', { name: 'Retry task status' }).click();
       await page.clock.runFor(500);
       expect(fixture.writes).toEqual(original);
       expect(
@@ -150,8 +169,103 @@ export function registerRedesignHomeCases() {
       await expect(page).toHaveURL(/\/agent-manager$/);
       expect(fixture.boundary.errors).toEqual([]);
     });
-    for (const width of [390, 720]) {
-      test(`LOCAL redesign P1 ${theme} ${width === 390 ? 'narrow' : '720px viewport'} retains reachable actions`, async ({
+    for (const width of [1440, 320, 360, 390, 720]) {
+      test(`LOCAL Home focus ${theme} at ${width}px has contrast and a forced-colors fallback`, async ({
+        page,
+        baseURL,
+      }, info) => {
+        await prepare(page, theme, width);
+        const fixture = await redesignHomeFixture(page, baseURL!, 'empty');
+        await page.goto('/agent-manager');
+        const input = page.getByLabel('Your task', { exact: true });
+        await expect(input).toHaveAttribute(
+          'placeholder',
+          'Describe the job. It gets its own cloud computer to do it.',
+        );
+        await page.getByRole('link', { name: 'Help starting a task' }).focus();
+        await page.keyboard.press('Tab');
+        await expect(input).toBeFocused();
+        const focus = await page.locator('.task-home__composer').evaluate((node) => {
+          const style = getComputedStyle(node);
+          const luminance = (color: string) => {
+            const channels = color
+              .match(/[\d.]+/g)!
+              .slice(0, 3)
+              .map(Number)
+              .map((value) => {
+                const channel = value / 255;
+                return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+              });
+            return channels[0]! * 0.2126 + channels[1]! * 0.7152 + channels[2]! * 0.0722;
+          };
+          const ring = luminance(style.outlineColor);
+          const surfaces = [style.backgroundColor, getComputedStyle(document.body).backgroundColor];
+          return {
+            width: style.outlineWidth,
+            style: style.outlineStyle,
+            contrasts: surfaces.map((surface) => {
+              const background = luminance(surface);
+              return (Math.max(ring, background) + 0.05) / (Math.min(ring, background) + 0.05);
+            }),
+          };
+        });
+        expect(focus.width).toBe('2px');
+        expect(focus.style).toBe('solid');
+        for (const ratio of focus.contrasts) expect(ratio).toBeGreaterThanOrEqual(3);
+        await info.attach('focus-contrast', {
+          body: JSON.stringify(focus),
+          contentType: 'application/json',
+        });
+        await capture(page, info, theme, `focus-${width}`);
+        await page.emulateMedia({ forcedColors: 'active' });
+        await expect(page.locator('.task-home__composer')).toHaveCSS('outline-style', 'solid');
+        await expect(page.locator('.task-home__composer')).toHaveCSS('outline-width', '2px');
+        await capture(page, info, theme, `focus-forced-colors-${width}`);
+        await page.emulateMedia({ forcedColors: 'none', reducedMotion: 'no-preference' });
+        await expect(input).toBeFocused();
+        expect(fixture.writes).toEqual([]);
+      });
+    }
+    test(`LOCAL Home ${theme} receipt recovery retains exact body and key with a newer draft`, async ({
+      page,
+      baseURL,
+    }, info) => {
+      await prepare(page, theme);
+      const fixture = await redesignHomeFixture(page, baseURL!, 'crew');
+      const writes: { body: unknown; key: string | undefined }[] = [];
+      await page.route('**/api/agent-manager/v1/agents', async (route) => {
+        if (route.request().method() !== 'POST') return route.fallback();
+        writes.push({
+          body: route.request().postDataJSON(),
+          key: route.request().headers()['idempotency-key'],
+        });
+        await route.fulfill({ status: 503, json: { code: 'unavailable' } });
+      });
+      await page.goto('/agent-manager');
+      const input = page.getByLabel('Your task', { exact: true });
+      await input.fill('Original retained task');
+      await page.getByRole('button', { name: 'Start task', exact: true }).click();
+      const recovery = page.getByRole('region', { name: 'Task request recovery' });
+      await expect(recovery.getByRole('alert')).toContainText('resend the same request');
+      await expect(recovery.getByRole('alert')).toHaveCount(1);
+      await input.fill('Separate newer draft');
+      await capture(page, info, theme, 'receipt-unconfirmed');
+      for (const width of [320, 360, 390, 720]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.clock.runFor(150);
+        await recovery.getByRole('button', { name: 'Recover original task' }).focus();
+        await capture(page, info, theme, `receipt-unconfirmed-${width}`);
+      }
+      await recovery.getByRole('button', { name: 'Recover original task' }).click();
+      await expect.poll(() => writes.length).toBe(2);
+      expect(writes[1]).toEqual(writes[0]);
+      expect(writes[0]!.key).toBeTruthy();
+      await expect(input).toHaveValue('Separate newer draft');
+      await expect(page).toHaveURL(/\/agent-manager$/);
+      expect(fixture.writes).toEqual([]);
+    });
+    for (const width of [320, 360, 390, 720]) {
+      test(`LOCAL redesign P1 ${theme} ${`${width}px viewport`} retains reachable actions`, async ({
         page,
         baseURL,
       }, info) => {
@@ -168,7 +282,7 @@ export function registerRedesignHomeCases() {
           .getByRole('button', { name: 'Manage environments' });
         await manage.focus();
         await expect(manage).toBeFocused();
-        await capture(page, info, theme, width === 390 ? 'narrow-390' : 'viewport-720');
+        await capture(page, info, theme, `viewport-${width}`);
         await manage.press('Enter');
         await expect(page.getByRole('dialog', { name: 'Manage environments' })).toBeVisible();
         await page.keyboard.press('Escape');
@@ -183,7 +297,7 @@ export function registerRedesignHomeCases() {
     const fixture = await redesignHomeFixture(page, baseURL!, 'navigation-error');
     await page.goto('/agent-manager');
     await expect(page.getByRole('main').getByRole('alert')).toBeVisible();
-    await expect(page.getByText('Your first agent starts here')).toHaveCount(0);
+    await expect(page.getByText('Your next agent starts here')).toHaveCount(0);
     expect(fixture.writes).toEqual([]);
   });
 }
@@ -203,6 +317,12 @@ export function registerRedesignTemplateCases() {
         await expect(page.getByLabel('Document type', { exact: true })).toBeFocused();
         await expect(page.getByRole('button', { name: 'Start task', exact: true })).toBeDisabled();
         if (supported) await capture(page, info, theme, '13-template-empty');
+        await page.getByRole('button', { name: 'Write a task without a template' }).click();
+        await expect(page.getByRole('dialog')).toHaveCount(0);
+        await expect(page.getByLabel('Your task', { exact: true })).toHaveValue(
+          'Independent free-text draft',
+        );
+        await page.getByRole('button', { name: 'Resume document template' }).click();
         await page.getByLabel('Document type', { exact: true }).fill('brief');
         await page.getByLabel('Subject', { exact: true }).fill('sample project');
         await page.getByLabel('Audience', { exact: true }).fill('the product team');
@@ -211,9 +331,11 @@ export function registerRedesignTemplateCases() {
           'Write a brief about sample project for the product team.',
         );
         if (!supported) {
-          await expect(
-            page.getByText('Template tasks are not available on this service.'),
-          ).toBeVisible();
+          const notice = page.getByText('Template tasks are not available on this service.');
+          await expect(notice).toBeVisible();
+          const noticeBox = await notice.boundingBox();
+          const fieldBox = await page.getByLabel('Document type', { exact: true }).boundingBox();
+          expect(noticeBox!.y).toBeLessThan(fieldBox!.y);
           await expect(
             page.getByRole('button', { name: 'Start task', exact: true }),
           ).toBeDisabled();
@@ -225,6 +347,22 @@ export function registerRedesignTemplateCases() {
           theme,
           supported ? '14-template-filled' : '15-template-unavailable',
         );
+        for (const width of [320, 360, 390, 720]) {
+          await page.setViewportSize({ width, height: 900 });
+          await page.clock.runFor(150);
+          await page.getByLabel('Document type', { exact: true }).focus();
+          await expect(page.getByLabel('Document type', { exact: true })).toBeFocused();
+          await capture(
+            page,
+            info,
+            theme,
+            `template-${supported ? 'filled' : 'unavailable'}-${width}`,
+          );
+          await page.getByRole('button', { name: 'Write a task without a template' }).focus();
+          await expect(
+            page.getByRole('button', { name: 'Write a task without a template' }),
+          ).toBeInViewport();
+        }
         if (supported) {
           const text = await preview.textContent();
           await page.getByRole('button', { name: 'Start task', exact: true }).click();

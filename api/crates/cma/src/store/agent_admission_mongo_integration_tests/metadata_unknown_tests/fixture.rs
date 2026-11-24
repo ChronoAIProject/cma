@@ -253,6 +253,11 @@ impl Fixture {
             .expect("disable failpoint before observations and assertions");
     }
 
+    pub(super) async fn clear_and_settle_commit(&self) {
+        self.clear().await;
+        crate::store::test_visibility::majority_barrier(&self.admin, &self.database).await;
+    }
+
     pub(super) async fn fail_insert(&self, code: i32, labels: &[&str]) {
         self.reset_observations();
         let mut data = doc! {

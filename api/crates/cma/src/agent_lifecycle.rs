@@ -84,6 +84,8 @@ pub(crate) struct InlineAgentLifecycle {
     bounds: ProfileCapacityBounds,
     capacity: layer3_adapter::SandboxCapacity,
     machine_sandbox_image: Option<String>,
+    /// When set, the machine image is this source's release at admission.
+    released: OnceLock<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
     operations: Arc<MongoAgentLifecycleStore>,
     native_prepared: Option<Arc<crate::store::MongoSandboxStore>>,
     desktop: Option<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>>,
@@ -139,6 +141,7 @@ impl InlineAgentLifecycle {
             bounds,
             capacity,
             machine_sandbox_image,
+            released: OnceLock::new(),
             operations,
             native_prepared,
             desktop,
@@ -416,8 +419,7 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
                     .await?,
             ),
             None if request.machine_included => self
-                .machine_sandbox_image
-                .clone()
+                .released_machine_image()
                 .ok_or_else(|| {
                     AgentLifecycleProvisioningError::Invalid(
                         "Machine Included is not available in this deployment".into(),

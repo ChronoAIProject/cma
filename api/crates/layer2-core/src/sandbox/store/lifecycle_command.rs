@@ -106,7 +106,7 @@ where
         command: SandboxLifecycleCommand,
     ) -> Result<SandboxLifecycleCommandResult, SandboxStoreError> {
         let mut command = command;
-        command.managed_runtime_version = self.managed_runtime_version().map(str::to_owned);
+        command.managed_runtime_version = self.managed_runtime_version();
         validate_command(&command)?;
         for _ in 0..COMMAND_CAS_ATTEMPTS {
             let current = self

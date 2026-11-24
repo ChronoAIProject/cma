@@ -1,7 +1,9 @@
-//! Revision conflicts defer one binding, without weakening its authority fences.
+//! Revision conflicts and transient runtime failures defer one binding, without
+//! weakening its authority fences.
 use super::super::{corrupt, SandboxReconciler};
 use layer2_core::sandbox::{Sandbox, SandboxStoreError};
 use layer3_adapter::RuntimeObservation;
+use sha2::{Digest, Sha256};
 use std::time::SystemTime;
 
 const ATTEMPTS: usize = 3;
@@ -17,7 +19,7 @@ impl SandboxReconciler {
             return Ok(false);
         };
         for attempt in 1..=ATTEMPTS {
-            let result = async {
+            let (result, transient) = super::super::transient::classify(async {
                 let fresh;
                 let (current, now) = if attempt == 1 {
                     // Inventory and authority reads may outlive the startup
@@ -48,7 +50,7 @@ impl SandboxReconciler {
                     (&fresh, SystemTime::now().max(floor))
                 };
                 self.reconcile_binding(current, inventory, now).await
-            }
+            })
             .await;
             match result {
                 Ok(true) => {
@@ -61,6 +63,19 @@ impl SandboxReconciler {
                         attempt, attempt_limit = ATTEMPTS,
                         retry = attempt < ATTEMPTS,
                         "Sandbox revision conflict during startup binding reconciliation");
+                }
+                Err(SandboxStoreError::Unavailable(_)) if transient => {
+                    // One unreachable runtime must not stop the process. The
+                    // hold keeps its runtime, Claim and home protected, and a
+                    // deferred binding already skips every startup cleanup.
+                    // Hashed like other lifecycle diagnostics, so an operator can
+                    // find a wedged runtime without logging its identifier.
+                    let sandbox_hash =
+                        format!("{:x}", Sha256::digest(sandbox.id.as_str().as_bytes()));
+                    tracing::warn!(target: "cma_startup", parent: None, attempt, sandbox_hash,
+                        "Sandbox runtime unavailable during startup binding; deferred to background reconciliation");
+                    hold.unavailable();
+                    return Ok(false);
                 }
                 Err(error) => return Err(error),
             }

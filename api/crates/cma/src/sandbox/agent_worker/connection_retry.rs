@@ -1,7 +1,7 @@
 //! Do not strand a newly claimed connection lease after known-aborted publication.
 use std::time::{Duration, SystemTime};
 
-use layer2_core::sandbox::store::SandboxStoreError;
+use layer2_core::sandbox::store::{AgentWorkPublicationParents, SandboxStoreError};
 use layer2_core::sandbox::{Agent, AgentWorkStep, FirstMessageRecord};
 
 use super::support::WorkerFailure;
@@ -13,11 +13,12 @@ impl AgentWorker {
         &self,
         agent: Agent,
         attachment: &LiveAgentAttachment,
+        parents: Option<AgentWorkPublicationParents>,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
         match self
-            .try_finish_connection_publication(agent.clone(), attachment, now)
+            .try_finish_connection_publication(agent.clone(), attachment, parents, now)
             .await
         {
             Err(SandboxStoreError::Conflict) => {
@@ -76,7 +77,14 @@ impl AgentWorker {
                 .map(|seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
                 .ok_or_else(|| SandboxStoreError::Corrupt("invalid agent update time".into()))?;
             let at = (now + started.elapsed()).max(durable_at);
-            if !same_connection_claim(claimed, &current, &self.config.holder, at) {
+            if !same_connection_claim(claimed, &current, &self.config.holder, at)
+                && !super::connection_recovery_progress::same_recovery_claim(
+                    claimed,
+                    &current,
+                    &self.config.holder,
+                    at,
+                )
+            {
                 return Err(SandboxStoreError::Conflict);
             }
             match self
