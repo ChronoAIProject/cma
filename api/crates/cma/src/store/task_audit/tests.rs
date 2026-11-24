@@ -159,7 +159,7 @@ async fn message_selection_is_snapshot_consistent_bounded_and_keeps_bad_rows() {
     .unwrap();
     assert_eq!(raced.accepted, 1);
     assert_eq!(raced.classes["invalid_record"], 1);
-    session.abort_transaction().await.unwrap();
+    session.abort_guarded().await.unwrap();
     assert_eq!(observe(&store, &selection).await.unwrap().accepted, 0);
     commands
         .insert_many((0..=MAX_ROWS).map(|n| row(&format!("limit-{n}"), "message", &selection.from)))

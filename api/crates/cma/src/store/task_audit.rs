@@ -2,6 +2,7 @@
 //! Neither sampling nor the explicit query can dispatch, settle or repair work.
 use super::sandbox_mongo::MongoSandboxStore;
 use crate::config::task_audit::Selection;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::doc,
@@ -49,7 +50,7 @@ pub(in crate::store) async fn observe(
             .await
             .map_err(|_| "database")?;
         let result = read(store, selection, from, to, observed, &mut session).await;
-        session.abort_transaction().await.map_err(|_| "database")?;
+        session.abort_guarded().await.map_err(|_| "database")?;
         result
     })
     .await
