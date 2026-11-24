@@ -82,11 +82,11 @@ fn split_out_of_order_samples_replay_and_open_bindings_end_at_the_observation() 
     assert_eq!(
         forward
             .iter()
-            .map(|sample| sample.timestamp_ms)
+            .map(|sample| sample.0.timestamp_ms)
             .collect::<Vec<_>>(),
         [20_000, 39_999]
     );
-    assert_eq!(forward[1].source_value_be, 6.125_f64.to_be_bytes());
+    assert_eq!(forward[1].0.source_value_be, 6.125_f64.to_be_bytes());
 
     let narrower = capture_observations(
         &b,
@@ -97,8 +97,8 @@ fn split_out_of_order_samples_replay_and_open_bindings_end_at_the_observation() 
     )
     .unwrap();
     assert_eq!(
-        forward[1].physical_sample_id,
-        narrower[0].physical_sample_id
+        forward[1].physical_sample_id(),
+        narrower[0].physical_sample_id()
     );
     assert_ne!(
         forward[1].evidence_sha256().unwrap(),
@@ -164,10 +164,13 @@ fn container_restart_and_pod_reuse_create_distinct_physical_samples() {
         Err(EvidenceError::Attribution)
     );
     let restarted = capture(&b, metric, series(&b, metric, &[(30_000, 3.0)]));
-    assert_ne!(before.physical_sample_id, restarted.physical_sample_id);
+    assert_ne!(before.physical_sample_id(), restarted.physical_sample_id());
     b.pod_uid = Some("replacement-pod".into());
     let reused_name = capture(&b, metric, series(&b, metric, &[(30_000, 3.0)]));
-    assert_ne!(restarted.physical_sample_id, reused_name.physical_sample_id);
+    assert_ne!(
+        restarted.physical_sample_id(),
+        reused_name.physical_sample_id()
+    );
 }
 
 #[test]
@@ -179,12 +182,12 @@ fn shared_home_replays_across_generations_but_conflicting_attribution_refuses() 
     b.runtime_generation = Some(2);
     b.revision = 2;
     let replay = capture(&b, metric, source.clone());
-    assert_eq!(first.physical_sample_id, replay.physical_sample_id);
+    assert_eq!(first.physical_sample_id(), replay.physical_sample_id());
     assert_eq!(first.verify_replay(&replay), Ok(()));
 
     b.owner_subject = "other-owner".into();
     let disputed = capture(&b, metric, source.clone());
-    assert_eq!(first.physical_sample_id, disputed.physical_sample_id);
+    assert_eq!(first.physical_sample_id(), disputed.physical_sample_id());
     assert_eq!(
         first.verify_replay(&disputed),
         Err(EvidenceError::ConflictingObservation)
@@ -194,4 +197,43 @@ fn shared_home_replays_across_generations_but_conflicting_attribution_refuses() 
         capture_observations(&b, 1, metric, &[source], WINDOW),
         Err(EvidenceError::Attribution)
     );
+}
+
+#[test]
+fn retained_payload_checks_both_digests_and_preserves_replay_semantics() {
+    let mut b = binding(BindingKind::Compute);
+    let metric = SourceMetric::CpuCounter;
+    let physical = series(&b, metric, &[(30_001, 3.0)]);
+    let original = capture(&b, metric, physical.clone());
+    let encoded = serde_json::to_vec(&original).unwrap();
+    let id = original.physical_sample_id();
+    let digest = original.evidence_sha256().unwrap();
+    let confirmation = RetainedObservation::decode(&encoded, id, &digest).unwrap();
+    let replay = capture_observations(&b, 2, metric, std::slice::from_ref(&physical), WINDOW)
+        .unwrap()
+        .remove(0);
+    assert_eq!(confirmation.verify_replay(&replay), Ok(()));
+
+    b.owner_subject = "other-owner".into();
+    let dispute = capture(&b, metric, physical);
+    let conflicting = RetainedObservation::decode(
+        &serde_json::to_vec(&dispute).unwrap(),
+        id,
+        &dispute.evidence_sha256().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        confirmation.verify_retained_replay(&conflicting),
+        Err(EvidenceError::ConflictingObservation),
+    );
+    assert!(RetainedObservation::decode(&encoded, "foreign-id", &digest).is_err());
+    assert!(RetainedObservation::decode(&encoded, id, "foreign-digest").is_err());
+    let mut corrupt: ObservationV1 = serde_json::from_slice(&encoded).unwrap();
+    corrupt.binding.valid_until = Some(corrupt.timestamp_ms / 1000);
+    assert!(RetainedObservation::decode(
+        &serde_json::to_vec(&corrupt).unwrap(),
+        id,
+        &super::digest(&corrupt).unwrap(),
+    )
+    .is_err());
 }

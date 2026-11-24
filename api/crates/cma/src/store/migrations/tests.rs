@@ -6,6 +6,7 @@ mod activity_page;
 mod collection;
 mod failpoints;
 mod key_order;
+mod measured;
 mod opening;
 mod release_identity;
 mod segments;
