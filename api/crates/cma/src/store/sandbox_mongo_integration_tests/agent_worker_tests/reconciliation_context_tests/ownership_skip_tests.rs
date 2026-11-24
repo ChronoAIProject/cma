@@ -5,6 +5,9 @@ use layer2_core::agent_ownership::{
 use layer3_adapter::ConversationUpdate;
 use tokio::sync::mpsc;
 
+#[path = "continuation_tests.rs"]
+mod continuation;
+
 #[derive(Default)]
 struct MaintenanceProbe(AtomicU64);
 
