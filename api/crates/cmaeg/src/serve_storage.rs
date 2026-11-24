@@ -18,6 +18,12 @@ pub(crate) async fn compose(
 > {
     let custody = crate::channels::mutation::enabled_from_env()?;
     let cancellation = crate::config::channel_cancel_create_enabled()?;
+    let writer_floor_required = crate::config::channel_create_fence_required()?;
+    if cancellation && !writer_floor_required {
+        return Err(
+            "Channel create cancellation requires the retained writer floor setting".into(),
+        );
+    }
     let retained_origins = crate::config::cma_record_origin_aliases()?;
     let owner_key_settings = crate::worker_credentials::config::Settings::from_env()?;
     let independent_store_enabled = [
@@ -29,7 +35,7 @@ pub(crate) async fn compose(
     ]
     .iter()
     .any(|key| std::env::var_os(key).is_some());
-    if (owner_key_settings.tracking || owner_key_settings.owner_keys || cancellation)
+    if (owner_key_settings.tracking || owner_key_settings.owner_keys || writer_floor_required)
         && !independent_store_enabled
     {
         return Err("worker tracking, owner keys, and Channel create cancellation require Gateway-owned Mongo storage".into());
@@ -74,7 +80,7 @@ pub(crate) async fn compose(
         let protected =
             records::mongo::verify_create_fence_floor(&database_handle, service_identity.issuer())
                 .await?;
-        if cancellation && !protected {
+        if writer_floor_required && !protected {
             return Err(
                 "Channel create cancellation requires an installed Gateway writer floor".into(),
             );
