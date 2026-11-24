@@ -76,6 +76,7 @@ export function ServicePicker({
             name: entry.id,
             description: entry.reason,
             catalogId: undefined,
+            detailUrl: undefined,
           })),
           ...state.entries.filter((entry) => !fixed.some((item) => item.id === entry.id)),
           ...value
@@ -84,7 +85,12 @@ export function ServicePicker({
                 !state.entries.some((entry) => entry.id === id) &&
                 !fixed.some((entry) => entry.id === id),
             )
-            .map((id) => ({ id, name: 'Service unavailable', catalogId: undefined })),
+            .map((id) => ({
+              id,
+              name: 'Service unavailable',
+              catalogId: undefined,
+              detailUrl: undefined,
+            })),
         ]
           .filter(
             (entry) => fixed.some((item) => item.id === entry.id) || !isCodexConnection(entry.id),
@@ -115,6 +121,7 @@ export function ServicePicker({
                     id={entry.id}
                     name={entry.name}
                     catalogId={entry.catalogId}
+                    detailUrl={entry.detailUrl}
                   />{' '}
                   {'description' in entry && entry.description !== undefined ? (
                     <small> {entry.description}</small>
