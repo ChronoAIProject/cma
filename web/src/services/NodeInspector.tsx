@@ -101,7 +101,7 @@ function ProducerFacts({ channel, index }: { readonly channel: Channel; readonly
     facts.push(
       ['Sender rule', words(object(admission.senders).type)],
       ['Chat rule', words(object(admission.chats).type)],
-      ['Group rule', words(object(admission.groups).type)],
+      ['Group rule', words(admission.groups)],
     );
   return (
     <>
@@ -163,7 +163,7 @@ export function NodeInspector({
   readonly initialSection?: 'overview' | 'activity';
   readonly sendAvailable?: boolean;
   readonly testsAvailable?: boolean;
-  readonly send?: ReactNode;
+  readonly send?: (configure: () => void) => ReactNode;
   readonly tests?: ReactNode;
   readonly activity?: ReactNode;
   readonly danger?: ReactNode;
@@ -197,6 +197,11 @@ export function NodeInspector({
         : newProducer
           ? 'New producer'
           : (selected?.title ?? 'Node unavailable');
+  function navigate(section: string) {
+    requestedSection.current = section;
+    setActiveSection(section);
+    scrollToConfiguration(section);
+  }
   const sections = [
     ['overview', 'Overview', true],
     ['configuration', 'Configuration', children],
@@ -205,7 +210,7 @@ export function NodeInspector({
       'Tool catalog',
       selection.kind === 'toolsets' ? <ChannelToolsets channel={channel} /> : null,
     ],
-    ['send', 'Send message', send],
+    ['send', 'Send message', send?.(() => navigate(settings[0]?.id ?? `${id}-configuration`))],
     ['tests', 'Tests', tests],
     ['activity', 'Activity', activity],
     ['delete', 'Delete', danger],
@@ -286,11 +291,7 @@ export function NodeInspector({
               type="button"
               key={entry.id}
               aria-current={activeSection === entry.id ? 'location' : undefined}
-              onClick={() => {
-                requestedSection.current = entry.id;
-                setActiveSection(entry.id);
-                scrollToConfiguration(entry.id);
-              }}
+              onClick={() => navigate(entry.id)}
             >
               {entry.label}
             </button>

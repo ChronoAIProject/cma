@@ -25,12 +25,13 @@ interface Props {
   readonly selection: ChannelSelection;
   readonly denied: Denied;
   readonly onAvailability?: (available: boolean) => void;
+  readonly onConfigureRoutes?: () => void;
 }
 /** Account/channel changes reset visible state without erasing uncertain operations. */
 export function ChannelOutboundMessage(props: Props) {
   return <Composer key={JSON.stringify([props.owner, props.channel.record_id])} {...props} />;
 }
-function Composer({ owner, channel, selection, denied, onAvailability }: Props) {
+function Composer({ owner, channel, selection, denied, onAvailability, onConfigureRoutes }: Props) {
   const capabilities = useRelayCapabilities();
   const journal = useOutboundJournal(owner, channel.record_id);
   const { draft, receipt, uncertain = false, preparationExpired = false } = journal.intent ?? {};
@@ -46,11 +47,13 @@ function Composer({ owner, channel, selection, denied, onAvailability }: Props) 
   const source =
     selection.kind === 'producer' ? object(channel.definition.sources[selection.index]) : {};
   const routes = list(source.route_ids).filter(
-    (value): value is string => typeof value === 'string',
+    (value): value is string => typeof value === 'string' && value.trim().length > 0,
   );
   const selectedRoute = routes.includes(route) ? route : (routes[0] ?? '');
   const base = `/v1/channels/${segment(channel.channel_id)}/outbound-messages`;
   const enabled = capabilities.authoring?.outbound_messages_writes_enabled === true;
+  const relay = source.type === 'nyxid_relay';
+  const canCompose = enabled && relay && routes.length > 0;
   const mediaEnabled =
     capabilities.authoring?.native_media_writes_enabled === true &&
     ['telegram', 'lark', 'feishu', 'discord', 'whatsapp'].includes(
@@ -65,7 +68,7 @@ function Composer({ owner, channel, selection, denied, onAvailability }: Props) 
   const hasMedia = (draft?.body.message.native_attachments?.length ?? media.length) > 0;
   const mediaUnavailable = hasMedia && !mediaEnabled;
   const canReview =
-    !!selectedRoute && (!!message.trim() || media.length > 0) && !mediaError && !mediaUnavailable;
+    canCompose && (!!message.trim() || media.length > 0) && !mediaError && !mediaUnavailable;
 
   async function act(action: 'prepare' | 'send' | 'read' | 'cancel') {
     if (active.current || (journal.error && action !== 'read')) return;
@@ -80,7 +83,7 @@ function Composer({ owner, channel, selection, denied, onAvailability }: Props) 
     if (action === 'cancel' && !status?.cancel) return;
     // A retained preparation recovers its exact existing operation. New writes
     // still require current capabilities; a gate change cannot hide its status.
-    if (action === 'prepare' && !draft && (!enabled || !canReview)) return;
+    if (action === 'prepare' && !draft && !canReview) return;
     const captured = draft ?? {
       key: crypto.randomUUID(),
       body: {
@@ -175,11 +178,7 @@ function Composer({ owner, channel, selection, denied, onAvailability }: Props) 
     }
   }
   const available = Boolean(
-    receipt ||
-    draft ||
-    journal.previous ||
-    journal.recoveryError ||
-    (enabled && source.type === 'nyxid_relay'),
+    receipt || draft || journal.previous || journal.recoveryError || (enabled && relay),
   );
   useEffect(() => {
     onAvailability?.(available);
@@ -198,7 +197,13 @@ function Composer({ owner, channel, selection, denied, onAvailability }: Props) 
         Send through a saved NyxID conversation that permits initiated messages. Review the message
         before sending it.
       </p>
-      {!receipt && !draft && enabled ? (
+      {!receipt && !draft && enabled && relay && !routes.length ? (
+        <div>
+          <p>No saved destinations. Add a NyxID route ID to this producer and save it.</p>
+          {onConfigureRoutes ? <Button onClick={onConfigureRoutes}>Configure routes</Button> : null}
+        </div>
+      ) : null}
+      {!receipt && !draft && canCompose ? (
         <fieldset disabled={pending || !!journal.error} className="channel-form-section">
           <Choice
             label="Saved destination"
@@ -217,7 +222,8 @@ function Composer({ owner, channel, selection, denied, onAvailability }: Props) 
             </p>
           ) : null}
         </fieldset>
-      ) : (
+      ) : null}
+      {receipt || draft ? (
         <div>
           <p className="channel-field-hint">
             Destination: {draft?.body.route_id ?? receipt?.route_id}
@@ -225,7 +231,7 @@ function Composer({ owner, channel, selection, denied, onAvailability }: Props) 
           <p>{draft?.body.message.text}</p>
           <OutboundMediaReview items={draft?.body.message.native_attachments ?? []} />
         </div>
-      )}
+      ) : null}
       {mediaUnavailable ? (
         <p className="channel-field-hint" role="status">
           Your attachments are retained. Media sending is currently unavailable on this gateway.
@@ -244,9 +250,9 @@ function Composer({ owner, channel, selection, denied, onAvailability }: Props) 
         />
       ) : null}
       <div className="channel-form-actions">
-        {!receipt && (draft || enabled) ? (
+        {!receipt && (draft || canCompose) ? (
           <Button
-            disabled={pending || !!journal.error || (!draft && (!enabled || !canReview))}
+            disabled={pending || !!journal.error || (!draft && !canReview)}
             onClick={() => void act('prepare')}
           >
             {draft ? 'Check saved request' : 'Review message'}

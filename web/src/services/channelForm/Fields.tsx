@@ -253,8 +253,10 @@ export function StringList({
   max?: number;
   requiredItems?: boolean;
 }) {
+  const error = useServerFieldError(useValidationPath(path));
   return (
     <Section title={label} path={path}>
+      {error ? <p className="channel-field-error">{error}</p> : null}
       {value.map((item, index) => (
         <div className="channel-form-row" key={index}>
           <TextField

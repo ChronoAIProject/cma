@@ -93,7 +93,7 @@ it('hides unavailable section links while retaining pending controls', () => {
       selection={{ kind: 'channel' }}
       sendAvailable={available}
       testsAvailable={available}
-      send={<input aria-label="Pending send" defaultValue="Keep original intent" />}
+      send={() => <input aria-label="Pending send" defaultValue="Keep original intent" />}
       tests={<p>Run check</p>}
     >
       <Editor />
@@ -106,4 +106,29 @@ it('hides unavailable section links while retaining pending controls', () => {
   rerender(tree(true));
   expect(screen.getByLabelText('Pending send')).toHaveValue('Keep original intent');
   expect(within(nav).getByRole('button', { name: 'Send message' })).toBeVisible();
+});
+
+it.each([
+  ['mention_or_reply_to_bot', 'mention or reply to bot'],
+  [undefined, 'Not configured'],
+])('shows the saved group policy %s in the producer overview', (groups, expected) => {
+  const saved = {
+    ...channel,
+    definition: {
+      ...channel.definition,
+      sources: [
+        {
+          type: 'nyxid_relay',
+          platform: 'telegram',
+          admission: { type: 'scoped', senders: { type: 'open' }, chats: { type: 'open' }, groups },
+        },
+      ],
+    },
+  };
+  render(
+    <NodeInspector channel={saved} id="producer" selection={{ kind: 'producer', index: 0 }}>
+      <Editor />
+    </NodeInspector>,
+  );
+  expect(screen.getByText('Group rule').nextElementSibling).toHaveTextContent(expected!);
 });

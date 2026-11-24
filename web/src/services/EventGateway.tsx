@@ -368,15 +368,18 @@ function AddressedChannel({
         testsAvailable={!newProducer}
         onClose={() => setInspecting(false)}
         send={
-          editable ? (
-            <ChannelOutboundMessage
-              owner={session.subject}
-              onAvailability={setSendAvailable}
-              channel={current}
-              selection={selected}
-              denied={denied}
-            />
-          ) : undefined
+          editable
+            ? (configure) => (
+                <ChannelOutboundMessage
+                  owner={session.subject}
+                  onAvailability={setSendAvailable}
+                  onConfigureRoutes={configure}
+                  channel={current}
+                  selection={selected}
+                  denied={denied}
+                />
+              )
+            : undefined
         }
         tests={
           can(session, 'event-gateway', 'channels:test') ? (

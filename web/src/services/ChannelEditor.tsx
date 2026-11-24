@@ -2,6 +2,7 @@ import { HmacCredentialsScope } from './channelForm/HmacCredentialsScope';
 import { ValidationMessageScope } from './channelForm/ValidationPath';
 import { useDraftReloadWarning } from './channelForm/useDraftReloadWarning';
 import { validateConnectorFields } from './channelForm/connectorValidation';
+import { channelNameRequired } from './channelForm/ChannelPolicyFields';
 import { validateReplyFields } from './channelForm/replyValidation';
 import { revealInvalidField } from './channelForm/AdvancedFields';
 import { ValidationError } from './channelForm/ValidationError';
@@ -26,6 +27,7 @@ import {
   object,
   records,
   selectedDraft,
+  text,
   type EditorSection,
   type Fields,
 } from './channelForm/model';
@@ -195,7 +197,12 @@ export function ChannelEditor({
     }
     try {
       const record = baseline?.record_id ?? crypto.randomUUID();
-      const projected = baseline ? selectedDraft(channelDraft(baseline), draft, section) : draft;
+      let projected = baseline ? selectedDraft(channelDraft(baseline), draft, section) : draft;
+      if (kind === 'channel' && (create || section.kind === 'channel')) {
+        const name = text(projected.name).trim();
+        if (!name) throw new Error(`/name: ${channelNameRequired}`);
+        projected = { ...projected, name };
+      }
       const selectedCredentials = baseline
         ? nodeCredentials(credentials, section, projected)
         : channelCredentials(credentials, projected, true);
