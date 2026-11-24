@@ -472,3 +472,19 @@ pub(super) fn compose_setup(
         actor_continuations,
     })
 }
+
+pub(super) fn event_worker_profiles(
+    config: &Config,
+    stores: &MongoStores,
+    settings: &Arc<PlatformSettingsService>,
+) -> Arc<layer2_core::event_workers::EventWorkerProfileService> {
+    layer2_core::event_workers::EventWorkerProfileService::new(
+        stores.event_workers.clone(),
+        layer2_core::bots::PublishedBotProfiles::new(
+            stores.sandbox_profiles.clone(),
+            Arc::clone(settings),
+            config.default_profiles.agent_model.clone(),
+        ),
+        "cma_codex".into(),
+    )
+}

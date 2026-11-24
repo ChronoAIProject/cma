@@ -208,6 +208,7 @@ impl SandboxRetirement for StoredSandboxRetirement {
         self.store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision,
                 sandbox: Box::new(sandbox.clone()),
                 event_at: requested_at,

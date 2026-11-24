@@ -1,5 +1,12 @@
 use super::*;
 impl NativeBackend {
+    pub async fn restart_process(&self) {
+        self.retirement_incarnation.fetch_add(1, Ordering::SeqCst);
+        let rows = self.row.lock().await;
+        let pod = rows.as_ref().unwrap().pod.as_ref().unwrap();
+        self.inner.restart_persistent_process(pod).await.unwrap();
+    }
+
     pub(super) async fn run_recovery_fixture(
         &self,
         _: &RuntimeHandle,

@@ -14,22 +14,22 @@ use layer1_public::rest::{
 };
 use layer2_core::{now_rfc3339, Capability, StoreError, SubjectId};
 use mongodb::{
-    bson::{doc, spec::BinarySubtype, Binary, Bson, DateTime},
+    bson::{doc, Binary, Bson, DateTime},
     error::{Error, ErrorKind, WriteFailure},
     options::{IndexOptions, ReturnDocument},
     Collection, Database, IndexModel,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VERSION};
 
 mod admission;
-pub(super) mod canary_admission;
+pub(crate) mod canary_admission;
 pub(crate) mod canary_key;
 pub(crate) use canary_admission::CanaryProfiles;
 #[cfg(test)]
 mod operator_stop_tests;
+pub(super) mod released;
 pub(crate) use admission::LifecycleCreateError;
 
 pub(crate) const COLLECTION: &str = "agent_lifecycle_operations";
@@ -114,11 +114,20 @@ pub(crate) struct LifecycleRecord {
     pub owner: String,
     pub key: String,
     pub fingerprint: Binary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_wire: Option<CreationWire>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_fence: Option<layer2_core::sandbox::store::CreationFence>,
     pub input: LifecycleInput,
+    /// Present when the operation's resolved image passed the durable lane fence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub released_lane: Option<layer2_core::released_runtime::ReleasedLane>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     canary_admission: Option<canary_admission::CanaryAdmission>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     canary_manifest_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canary_redemption_key: Option<canary_admission::CanaryRedemptionKey>,
     pub status: String,
     pub phase: String,
     pub events: Vec<LifecycleEvent>,
@@ -144,6 +153,13 @@ pub(crate) struct LifecycleRecord {
     pub document_schema_version: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CreationWire {
+    deployment: String,
+    digest: String,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum CreateResult {
     Created(String),
@@ -158,8 +174,10 @@ pub(crate) struct LifecycleLease {
 
 #[derive(Clone)]
 pub(crate) struct MongoAgentLifecycleStore {
+    pub(super) creation_writer_epoch: Option<String>,
     operations: Collection<LifecycleRecord>,
     admission_settings: Collection<mongodb::bson::Document>,
+    pub(super) released_lanes: Option<super::released_runtimes::MongoReleasedRuntimes>,
 }
 
 impl MongoAgentLifecycleStore {
@@ -200,69 +218,17 @@ impl MongoAgentLifecycleStore {
             .map_err(driver)?;
         canary_admission::ensure_admission_indexes(&operations).await?;
         Ok(Self {
+            creation_writer_epoch: None,
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
+            released_lanes: None,
         })
     }
 
-    pub(crate) async fn create(
-        &self,
-        owner: &SubjectId,
-        key: &str,
-        input: LifecycleInput,
-    ) -> Result<CreateResult, LifecycleCreateError> {
-        if canary_key::is_reserved(key) {
-            return Err(StoreError::Malformed("reserved lifecycle key".into()).into());
-        }
-        let bytes = serde_json::to_vec(&input.request)
-            .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
-        let fingerprint = Binary {
-            subtype: BinarySubtype::Generic,
-            bytes: Sha256::digest(&bytes).to_vec(),
-        };
-        if let Some(existing) = self
-            .operations
-            .find_one(doc! { "owner": owner.as_str(), "key": key })
-            .await
-            .map_err(driver)?
-        {
-            schema::require_current(existing.document_schema_version)?;
-            if !same_request(&existing.input.request, &input.request)? {
-                return Err(StoreError::RevisionConflict {
-                    expected: 0,
-                    actual: 1,
-                }
-                .into());
-            }
-            return Ok(CreateResult::Existing(Box::new(existing)));
-        }
-        let now = DateTime::now();
-        let record = LifecycleRecord {
-            id: uuid::Uuid::new_v4().simple().to_string(),
-            owner: owner.to_string(),
-            key: key.to_owned(),
-            fingerprint,
-            input,
-            canary_admission: None,
-            canary_manifest_digest: None,
-            status: "queued".into(),
-            phase: "queued".into(),
-            events: Vec::new(),
-            sandbox_id: None,
-            agent_id: None,
-            repository_commit: None,
-            error: None,
-            failure: None,
-            connection: None,
-            lease_expires_at: None,
-            lease_token: None,
-            attempts: 0,
-            retry_at: None,
-            created_at: now,
-            updated_at: now,
-            document_schema_version: DOCUMENT_SCHEMA_VERSION,
-        };
-        self.finish_create(record).await
+    pub(crate) fn canary_database(&self) -> Database {
+        self.operations
+            .client()
+            .database(&self.operations.namespace().db)
     }
 
     /// Claim queued work or an expired worker, including legacy records whose
@@ -393,6 +359,7 @@ impl LifecycleRecord {
         AgentLifecycleOperationView {
             callback_url: None,
             id: self.id.clone(),
+            accepted_at: self.created_at.try_to_rfc3339_string().ok(),
             status: self.status.clone(),
             phase: self.phase.clone(),
             agent_id: self.agent_id.clone(),

@@ -138,6 +138,8 @@ export class LocalStartup {
         this.unexpected.push(`${request.method()} ${url.pathname}`);
         return reply({ code: 'unexpected_local_write' }, 500);
       }
+      if (/^\/api\/v1\/agents\/[^/]+\/reply-preview$/.test(url.pathname))
+        return reply({ code: 'not_found', detail: 'Optional capability unavailable.' }, 404);
       if (
         this.createdWorkspace &&
         url.pathname === `/api/v1/workspaces/${this.createdWorkspace.id}`
@@ -173,8 +175,11 @@ export class LocalStartup {
             prompt_pending: false,
             prompt_supported: false,
           });
+        case '/api/v1/build-info':
         case '/api/v2/ui/task-experience':
         case '/api/v1/agents/agt_contract/suggestions':
+        case '/api/v1/agents/agt_contract/reply-preview':
+        case '/api/v1/agents/agt_contract/original-request':
           return reply({ code: 'not_found', detail: 'Optional capability unavailable.' }, 404);
         case '/api/v1/agents/agt_contract/files/tree':
           return reply({ path: url.searchParams.get('path') ?? '', entries: [] });

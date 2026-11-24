@@ -18,6 +18,7 @@ pub mod binding_diagnostics;
 mod browser;
 mod browser_control;
 pub mod file_read_diagnostics;
+pub mod file_read_retry;
 pub mod permanent_custody;
 pub mod stale_turn;
 pub use browser::{
@@ -169,7 +170,8 @@ pub use provider_finality::{
     RuntimeProvisionReceipt,
 };
 pub use released_runtime::{
-    PinnedReleasedRuntime, ReleasedRuntime, ReleasedRuntimeSource, StaleReleasedRuntime,
+    released_image, PinnedReleasedRuntime, ReleasedLaneRevisions, ReleasedRuntime,
+    ReleasedRuntimeSource, StaleReleasedRuntime,
 };
 pub use runtime::PlatformServiceRoute;
 pub use runtime::{
@@ -193,9 +195,13 @@ pub use runtime_recovery::{
 };
 pub use runtime_startup::{RuntimeStartupFailure, RuntimeStartupFailureClass, RuntimeStartupProbe};
 pub use runtime_startup_policy::{
-    RuntimeStartupPolicyObservation, RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE,
+    RetainedStartupPolicyControl, RetainedStartupPolicyPredecessor, RetainedStartupPolicyReadback,
+    RetainedStartupPolicyUpgrade, RuntimeStartupPolicyObservation,
+    RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE,
 };
-pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
+pub use runtime_status::{
+    valid_home_identity, AgentRestartRuntime, RuntimeStatus, RuntimeStatusRequest,
+};
 pub use tool_proxy::{ToolProxyRequest, ToolProxyStatus, LOCAL_TOOL_PROXY_URL};
 pub use workspace::{
     SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,

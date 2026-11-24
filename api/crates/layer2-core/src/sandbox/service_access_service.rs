@@ -35,6 +35,7 @@ impl SandboxService {
             .store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision: revision,
                 sandbox: Box::new(sandbox.clone()),
                 event_at: at,

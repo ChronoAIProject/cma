@@ -445,13 +445,13 @@ class AllocationSnapshotTests(unittest.TestCase):
         for group in matrix["include"]:
             self.assertEqual(json.loads(group["tasks"])[0]["reservation"]["version"], "0.10.5")
 
-    def test_unknown_label_prevents_the_entire_batch(self):
+    def test_unsupported_upgrade_label_prevents_the_entire_batch(self):
         server, store = self.fixture(3, reserved=False)
         request = server.request
-        def missing(path, **kwargs):
+        def unsupported(path, **kwargs):
             result = request(path, **kwargs)
-            return dict(result, labels=[]) if path == "pulls/4" else result
-        server.request = missing
+            return dict(result, labels=[{"name": "version-upgrade:other"}]) if path == "pulls/4" else result
+        server.request = unsupported
         with self.assertRaisesRegex(Refusal, "version-upgrade"):
             self.allocate(server, store)
         self.assertEqual(store.planned, [])

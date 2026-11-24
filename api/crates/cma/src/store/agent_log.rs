@@ -486,6 +486,13 @@ impl AgentLogStore for MongoSandboxStore {
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         super::agent_log_segment_reads::projected_usage(self, expected, &mut session).await
     }
+
+    async fn agent_log_reply_preview(
+        &self,
+        agent: &layer2_core::sandbox::Agent,
+    ) -> Result<layer2_core::sandbox::AgentReplyPreview, SandboxStoreError> {
+        super::agent_log_segment_reads::reply_preview::read(self, agent).await
+    }
 }
 
 #[cfg(test)]

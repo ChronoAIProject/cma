@@ -106,6 +106,7 @@ async fn commit_failure(
         store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision: claimed.revision,
                 sandbox: Box::new(failed.clone()),
                 event_at: TWO_MINUTES.into(),

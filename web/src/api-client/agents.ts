@@ -1,4 +1,6 @@
 import { readAgentProjection } from './agents/read-projection.js';
+import { readReplyPreview } from './agents/reply-preview.js';
+import { readOriginalRequest } from './agents/original-request.js';
 import { readRetainedOutput, type RetainedOutputOptions } from './agents/retained-output.js';
 import { CapacityRecovery } from './agents/capacity-recovery.js';
 import {
@@ -119,6 +121,14 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 }
 /** Public Agent REST commands and durable read projections. */
 export class Agents extends AgentDeliverables {
+  originalRequest(id: string, options: OperationOptions = {}) {
+    return readOriginalRequest(this.config, id, options);
+  }
+
+  replyPreview(id: string, options: OperationOptions = {}) {
+    return readReplyPreview(this.config, id, options);
+  }
+
   /** Discover and page retained partial text without changing the original failed outcome. */
   retainedOutput(id: string, options: RetainedOutputOptions = {}) {
     return readRetainedOutput(
@@ -397,7 +407,10 @@ export class Agents extends AgentDeliverables {
     return this.operate(id, '', 'DELETE', options);
   }
 
-  events(id: string, options: EventOptions & { readonly toolOutput?: boolean } = {}) {
+  events(
+    id: string,
+    options: EventOptions & { readonly toolOutput?: boolean; readonly cache?: 'no-store' } = {},
+  ) {
     return readAgentEvents(this.config, id, options);
   }
 

@@ -201,6 +201,14 @@ pub(crate) fn recovery_fence(config: &RuntimeConfig, operation: &Operation) -> R
     )
 }
 
+pub(crate) fn has_process_writer(config: &RuntimeConfig, key: &ResourceKey) -> Result<bool> {
+    Ok(
+        files_with_temporary_policy(config, io::TemporaryFiles::Refuse)?
+            .iter()
+            .any(|file| &file.record.resource == key),
+    )
+}
+
 pub(super) fn authorize(current_records: &[&Record], incoming: &Record) -> Result<bool> {
     let Some(latest) = current(current_records.iter().copied()) else {
         return Ok(true);
@@ -266,17 +274,25 @@ pub(crate) fn records(config: &RuntimeConfig) -> Result<Vec<Record>> {
 }
 
 fn files(config: &RuntimeConfig) -> Result<Vec<io::AuthorityFile>> {
+    let temporary = if config.legacy_journal_recovery_enabled {
+        io::TemporaryFiles::Preserve
+    } else {
+        io::TemporaryFiles::Remove
+    };
+    files_with_temporary_policy(config, temporary)
+}
+
+fn files_with_temporary_policy(
+    config: &RuntimeConfig,
+    temporary: io::TemporaryFiles,
+) -> Result<Vec<io::AuthorityFile>> {
     let mut files = Vec::new();
     let mut budget = crate::mutation_recovery::ScanBudget::new(
         config,
         crate::mutation_recovery::authority_limit(config),
     );
     for root in crate::mutation_scope::roots(config)? {
-        files.extend(io::scan(
-            &root,
-            &mut budget,
-            config.legacy_journal_recovery_enabled,
-        )?);
+        files.extend(io::scan(&root, &mut budget, temporary)?);
     }
     let mut grouped = BTreeMap::<ResourceKey, Vec<&Record>>::new();
     for file in &files {

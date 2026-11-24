@@ -83,6 +83,7 @@ async fn run_case(count: usize, park: bool) {
                     started_at: None,
                     completed_at: None,
                     failure: None,
+                    retained_transition: None,
                 }),
             });
         }
@@ -419,6 +420,7 @@ async fn prove_refusal_fences(
         agent_revision: agent.revision,
         checkpoint: None,
         owner: Some(authority.token.clone()),
+        released: None,
     };
     assert_eq!(
         store
