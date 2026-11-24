@@ -85,6 +85,7 @@ pub fn definition(record: &RecordId, owner: &str, name: &str) -> ChannelDefiniti
             topic_creation: false,
             message_events: false,
             channel_posts: false,
+            member_join_chat_ids: Vec::new(),
             bot_id: "7000000001".into(),
             bot_username: Some("fixture_bot".into()),
             admission: AdmissionPolicy::All {},
