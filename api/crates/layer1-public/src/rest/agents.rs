@@ -1,7 +1,5 @@
 //! CMA Agent collection, detail, creation, and deletion routes.
 
-use std::{future::Future, sync::Arc};
-
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -13,6 +11,12 @@ use layer2_core::profiles::AgentProfileRef;
 use layer2_core::sandbox::{AgentDetailReading, AgentOrigin, CreateAgent};
 use layer2_core::{AgentId, AgentProfileId, Caller, Capability, WorkspaceId};
 
+#[path = "agent_command_execution.rs"]
+mod command_execution;
+use command_execution::execute_empty_command_with_claim;
+pub(super) use command_execution::{
+    execute_command, execute_command_with_claim, execute_empty_command,
+};
 #[path = "agent_state.rs"]
 mod agent_state;
 mod inventory;
@@ -22,7 +26,7 @@ use super::agent_openapi_shapes::{AgentView, CreateAgentRequest};
 use super::agent_shared_shapes::{
     AccessibleAgentListItemView, AccessibleAgentPageView, AccessibleAgentView,
 };
-use super::idempotency::{self, IdempotencyKey, RequestBody};
+use super::idempotency::{IdempotencyKey, RequestBody};
 use super::instance_problem::InstanceProblem;
 use super::profiles_problem::ProfileProblem;
 use super::profiles_sandbox::readable_revision;
@@ -318,18 +322,39 @@ pub(crate) async fn delete_agent(
 ) -> Response {
     let command_state = state.clone();
     let operation_caller = caller.clone();
-    execute_empty_command(
+    let agent_id = AgentId(id.clone());
+    execute_empty_command_with_claim(
         &state,
         &caller,
         key,
         format!("agent:delete:{id}"),
-        move || async move {
-            command_state
-                .agents
-                .delete(&operation_caller, &AgentId(id))
-                .await
-                .map_err(InstanceProblem::from_delete)?;
-            Ok(StatusCode::ACCEPTED.into_response())
+        move |_guard| {
+            #[cfg(feature = "qualification-hooks")]
+            let qualification = command_state.qualification_for(
+                _guard,
+                layer2_core::qualification::ControlOperation::Delete,
+                &agent_id,
+            );
+            async move {
+                #[cfg(feature = "qualification-hooks")]
+                if let Some((checkpoint, context)) = qualification {
+                    let scheduled = command_state
+                        .agents
+                        .delete_with_result(&operation_caller, &agent_id)
+                        .await
+                        .map_err(InstanceProblem::from_delete)?;
+                    checkpoint
+                        .after_schedule(context, (&scheduled).into())
+                        .await;
+                    return Ok(StatusCode::ACCEPTED.into_response());
+                }
+                command_state
+                    .agents
+                    .delete(&operation_caller, &agent_id)
+                    .await
+                    .map_err(InstanceProblem::from_delete)?;
+                Ok(StatusCode::ACCEPTED.into_response())
+            }
         },
     )
     .await
@@ -342,71 +367,6 @@ pub(super) async fn read_view(
 ) -> Result<AgentView, InstanceProblem> {
     let lineage = state.reads.lineage(caller, id).await?;
     Ok(AgentView::from_lineage(lineage, None))
-}
-
-pub(super) async fn execute_command<T, F, Fut>(
-    state: &AgentRoutesState,
-    caller: &Caller,
-    key: IdempotencyKey,
-    operation: String,
-    body: Result<RequestBody<T>, BodyProblem>,
-    execute: F,
-) -> Response
-where
-    T: serde::de::DeserializeOwned,
-    F: FnOnce(T) -> Fut,
-    Fut: Future<Output = Result<Response, InstanceProblem>>,
-{
-    if let Err(problem) = require_use(caller) {
-        return problem.into_response();
-    }
-    let (guard, body, _) = match idempotency::required_command(
-        key,
-        Arc::clone(&state.operation_records),
-        caller,
-        operation,
-        body,
-    )
-    .await
-    {
-        Ok(parts) => parts,
-        Err(response) => return response,
-    };
-    let result: Result<Response, Response> = match body {
-        Ok(body) => execute(body).await.map_err(IntoResponse::into_response),
-        Err(error) => Err(error.into_response()),
-    };
-    guard.finish(result).await
-}
-
-pub(super) async fn execute_empty_command<F, Fut>(
-    state: &AgentRoutesState,
-    caller: &Caller,
-    key: IdempotencyKey,
-    operation: String,
-    execute: F,
-) -> Response
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<Response, InstanceProblem>>,
-{
-    if let Err(problem) = require_use(caller) {
-        return problem.into_response();
-    }
-    let guard = match idempotency::required_empty_command(
-        key,
-        Arc::clone(&state.operation_records),
-        caller,
-        operation,
-    )
-    .await
-    {
-        Ok(guard) => guard,
-        Err(response) => return response,
-    };
-    guard
-        .finish(execute().await.map_err(IntoResponse::into_response))
-        .await
 }
 
 fn require_use(caller: &Caller) -> Result<(), InstanceProblem> {

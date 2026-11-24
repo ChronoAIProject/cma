@@ -37,6 +37,8 @@ pub struct AgentRoutesState {
     pub(in crate::rest) lifecycle: Option<Arc<dyn AgentLifecycleProvisioner>>,
     pub(in crate::rest) lifecycle_operations: Option<Arc<dyn AgentLifecycleOperationReader>>,
     pub(in crate::rest) history_exporter: Option<Arc<dyn AgentHistoryExporter>>,
+    #[cfg(feature = "qualification-hooks")]
+    control_checkpoint: Option<Arc<dyn layer2_core::qualification::ControlCheckpoint>>,
     pub(super) sandbox_profile_readability: Option<Arc<dyn SandboxProfileStore>>,
 }
 
@@ -101,6 +103,8 @@ impl AgentRoutesState {
             lifecycle: None,
             lifecycle_operations: None,
             history_exporter: None,
+            #[cfg(feature = "qualification-hooks")]
+            control_checkpoint: None,
             sandbox_profile_readability: None,
         }
     }
@@ -141,5 +145,34 @@ impl AgentRoutesState {
     ) -> Self {
         self.commands = Some(commands);
         self
+    }
+}
+
+#[cfg(feature = "qualification-hooks")]
+impl AgentRoutesState {
+    pub fn with_control_checkpoint(
+        mut self,
+        checkpoint: Arc<dyn layer2_core::qualification::ControlCheckpoint>,
+    ) -> Self {
+        self.control_checkpoint = Some(checkpoint);
+        self
+    }
+
+    pub(in crate::rest) fn qualification_for(
+        &self,
+        guard: &super::super::idempotency::Idempotency,
+        operation: layer2_core::qualification::ControlOperation,
+        agent: &layer2_core::AgentId,
+    ) -> Option<(
+        Arc<dyn layer2_core::qualification::ControlCheckpoint>,
+        layer2_core::qualification::ControlContext,
+    )> {
+        let super::super::idempotency::Idempotency::Acquired { claim, .. } = guard else {
+            return None;
+        };
+        let checkpoint = self.control_checkpoint.as_ref()?;
+        let context =
+            layer2_core::qualification::ControlContext::from_claim(operation, agent, claim)?;
+        Some((Arc::clone(checkpoint), context))
     }
 }

@@ -20,6 +20,7 @@ mod profiles;
 mod routes;
 mod runtime;
 mod runtime_inventory;
+mod runtime_migration;
 mod state;
 mod stores;
 mod usage;
@@ -43,7 +44,10 @@ use layer2_core::{
 pub(crate) use state::ControlPlaneComposition;
 use std::sync::Arc;
 impl ControlPlaneComposition {
-    async fn assemble(config: &Config) -> Result<Self, String> {
+    async fn assemble(
+        config: &Config,
+        #[cfg(feature = "qualification-hooks")] qualification: Option<cma_qualification::Registry>,
+    ) -> Result<Self, String> {
         let stores = stores::connect(config).await?;
         let creation_outcomes = creation_outcomes::open(config, &stores).await?;
         let (deletions, standing) = account_deletion::compose(config, &stores).await?;
@@ -132,6 +136,8 @@ impl ControlPlaneComposition {
         .with_external_approval_review_origin(auth.approval_review_origin())
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
         let projections = agent_manager::owner_restart(config, &stores, &adapter, projections);
+        #[cfg(feature = "qualification-hooks")]
+        let projections = projections.with_qualification(qualification);
         let (projections, observations) =
             observation::prepare(config, &stores, &agent_manager, projections).await?;
         let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
@@ -185,7 +191,7 @@ impl ControlPlaneComposition {
             .with_detail_timings(config.features.sandbox_detail_timings)
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone())?;
-        let native_warm_pools = runtime.warm_pools;
+        let native_warm_pools = runtime.warm_pools.clone();
         let admin = runtime_inventory::admin_state(
             config.features,
             Arc::clone(&settings),
@@ -194,12 +200,12 @@ impl ControlPlaneComposition {
             Arc::clone(&adapter),
         )
         .with_user_directory(Arc::clone(&users))
-        .with_runtime_updates(runtime.updates.clone())
         .with_maintenance(stores.sandbox_model.clone())
         .with_warm_pools(native_warm_pools.clone())
         .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))
         .with_admission_ceilings(stores::admission_ceilings(&stores, config))
         .with_admission_control(stores::admission_control(&stores, config));
+        let admin = runtime.attach_admin(admin, &stores);
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = profiles::route_state(&stores, &operations, &settings, profile_policy);
         let hierarchy = HierarchyState::new(

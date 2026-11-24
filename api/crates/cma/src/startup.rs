@@ -59,18 +59,25 @@ async fn serve_inner(
     }
     let recorder = telemetry::install()?;
     let _metrics_server = telemetry::server::Server::start(config.metrics_bind, recorder).await?;
+    #[cfg(feature = "qualification-hooks")]
+    let qualification =
+        qualification.map(|options| (options, cma_qualification::Registry::default()));
     let mut composition = observe(
         "composition",
-        ControlPlaneComposition::build(&config),
+        ControlPlaneComposition::build(
+            &config,
+            #[cfg(feature = "qualification-hooks")]
+            qualification.as_ref().map(|(_, registry)| registry.clone()),
+        ),
         |_| None,
     )
     .await?;
     #[cfg(feature = "qualification-hooks")]
-    let _qualification_server = if let Some(options) = qualification {
+    let _qualification_server = if let Some((options, registry)) = qualification {
         Some(
             options
                 .bind(
-                    cma_qualification::Registry::default(),
+                    registry,
                     composition
                         .agent_manager
                         .as_ref()

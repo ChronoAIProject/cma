@@ -33,6 +33,7 @@ pub(super) mod auto_pause;
 pub(super) mod ceilings;
 mod pending_homes;
 pub(super) mod profiles;
+pub(super) mod runtime_migration;
 pub(super) mod runtime_update;
 pub(super) mod sandboxes;
 pub(super) mod settings;
@@ -51,6 +52,9 @@ pub struct AdminState {
     pub(super) sandboxes: Arc<SandboxOperatorService>,
     pub(super) activity: Arc<ActivityService>,
     pub(super) runtime_inventory: Option<Arc<dyn RuntimeInventory>>,
+    pub(super) runtime_migrations:
+        Option<Arc<layer2_core::sandbox::SandboxCustomRuntimeMigrationService>>,
+    pub(super) runtime_activity: Option<Arc<layer2_core::sandbox::RuntimeActivityVerifier>>,
     pub(super) runtime_updates: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
     pub(super) auto_pause: Option<Arc<layer2_core::sandbox::SandboxAutoPauseService>>,
     pub(super) spend: Option<Arc<layer2_core::budget::PlatformSpendService>>,
@@ -74,6 +78,8 @@ impl AdminState {
             runtime_inventory: None,
             runtime_updates: None,
             auto_pause: None,
+            runtime_migrations: None,
+            runtime_activity: None,
             spend: None,
             admission_control: None,
             admission_ceilings: None,
@@ -95,6 +101,16 @@ impl AdminState {
 
     pub fn with_warm_pools(mut self, service: Arc<dyn warm_pools::WarmPoolAdministration>) -> Self {
         self.warm_pools = Some(service);
+        self
+    }
+
+    pub fn with_runtime_migrations(
+        mut self,
+        service: Arc<layer2_core::sandbox::SandboxCustomRuntimeMigrationService>,
+        verifier: Option<Arc<layer2_core::sandbox::RuntimeActivityVerifier>>,
+    ) -> Self {
+        self.runtime_migrations = Some(service);
+        self.runtime_activity = verifier;
         self
     }
 
@@ -150,6 +166,7 @@ pub fn router(state: AdminState) -> Router {
         .merge(auto_pause::routes())
         .merge(sandboxes::routes())
         .merge(runtime_update::routes())
+        .merge(runtime_migration::routes())
         .merge(profiles::routes())
         .merge(triggers::routes())
         .merge(warm_pools::routes())

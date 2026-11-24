@@ -5,34 +5,42 @@ import { command, input, read, type CommandOptions } from './resources.js';
 import { boolean, integer, object, text, type Output } from './schema.js';
 
 export const runtimeCanaryPolicyRequest = object({ expected_revision: integer, open: boolean });
-export const runtimeCanaryPolicyView = object({ revision: integer });
-const grantTarget = { owner: text, release_key: text, expected_revision: integer };
+export const runtimeCanaryPolicy = object({ revision: integer });
 const grantRequest = object({
-  ...grantTarget,
+  owner: text,
+  release_key: text,
+  expected_revision: integer,
   policy_revision: integer,
   consent_sha256: text,
   expires_at: text,
 });
-const revokeRequest = object({ ...grantTarget, grant_id: text });
-const grantView = object({ grant_id: text, revision: integer, policy_revision: integer });
-const redeemRequest = object({
-  grant_id: text,
+const grant = object({ grant_id: text, revision: integer, policy_revision: integer });
+const revokeRequest = object({
+  owner: text,
   release_key: text,
+  grant_id: text,
+  expected_revision: integer,
+});
+const redemptionRequest = object({
+  release_key: text,
+  grant_id: text,
   policy_revision: integer,
   name: text,
   initial_message: text,
 });
 
 export type RuntimeCanaryPolicyRequest = Output<typeof runtimeCanaryPolicyRequest>;
+export type RuntimeCanaryPolicy = Output<typeof runtimeCanaryPolicy>;
 export type RuntimeCanaryGrantRequest = Output<typeof grantRequest>;
+export type RuntimeCanaryGrant = Output<typeof grant>;
 export type RuntimeCanaryRevokeRequest = Output<typeof revokeRequest>;
-export type RuntimeCanaryRedeemRequest = Output<typeof redeemRequest>;
+export type RuntimeCanaryRedemptionRequest = Output<typeof redemptionRequest>;
 
 export class RuntimeCanaries {
   constructor(private readonly config: ResolvedConfig) {}
 
-  configure(body: RuntimeCanaryPolicyRequest, options: OperationOptions = {}) {
-    return read(this.config, '/api/v1/admin/runtime-canary-policy', runtimeCanaryPolicyView, {
+  setPolicy(body: RuntimeCanaryPolicyRequest, options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/runtime-canary-policy', runtimeCanaryPolicy, {
       ...options,
       method: 'PUT',
       body: input(runtimeCanaryPolicyRequest, body),
@@ -40,7 +48,7 @@ export class RuntimeCanaries {
   }
 
   grant(body: RuntimeCanaryGrantRequest, options: OperationOptions = {}) {
-    return read(this.config, '/api/v1/admin/runtime-canary-grants', grantView, {
+    return read(this.config, '/api/v1/admin/runtime-canary-grants', grant, {
       ...options,
       method: 'POST',
       body: input(grantRequest, body),
@@ -49,18 +57,18 @@ export class RuntimeCanaries {
   }
 
   revoke(body: RuntimeCanaryRevokeRequest, options: OperationOptions = {}) {
-    return read(this.config, '/api/v1/admin/runtime-canary-grants/revoke', grantView, {
+    return read(this.config, '/api/v1/admin/runtime-canary-grants/revoke', grant, {
       ...options,
       method: 'POST',
       body: input(revokeRequest, body),
     });
   }
 
-  redeem(body: RuntimeCanaryRedeemRequest, options: CommandOptions) {
+  redeem(body: RuntimeCanaryRedemptionRequest, options: CommandOptions) {
     return read(this.config, '/api/v1/runtime-canary-redemptions', agentLifecycleCreateReceipt, {
       ...command(options),
       method: 'POST',
-      body: input(redeemRequest, body),
+      body: input(redemptionRequest, body),
       expectedStatus: 202,
     });
   }

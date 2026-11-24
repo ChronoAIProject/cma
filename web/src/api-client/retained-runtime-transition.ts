@@ -2,10 +2,10 @@ import type { ResolvedConfig } from './config.js';
 import type { OperationOptions } from './http.js';
 import { input, read } from './resources.js';
 import {
+  runtimeCanaryPolicy,
   runtimeCanaryPolicyRequest,
-  runtimeCanaryPolicyView,
   type RuntimeCanaryPolicyRequest,
-} from './runtime-canaries.js';
+} from './runtime-canary.js';
 import { boolean, integer, object, text, type Output } from './schema.js';
 
 const proposal = object({
@@ -16,7 +16,7 @@ const proposal = object({
   policy_revision: integer,
   journal_recovery: boolean,
 });
-const previewView = object({
+const preview = object({
   predecessor_image: text,
   predecessor_generation: integer,
   predecessor_journal_recovery: boolean,
@@ -32,21 +32,24 @@ const grantRequest = object({
   custody_sha256: text,
   expires_at: text,
 });
-const grantView = object({ grant_id: text });
+const grant = object({ grant_id: text });
 const abortRequest = object({ owner: text, grant_id: text });
-const redeemRequest = object({ grant_id: text });
+const redemption = object({ grant_id: text });
 const receipt = object({ operation_id: text, successor_generation: integer });
 
 export type RetainedRuntimeProposal = Output<typeof proposal>;
+export type RetainedRuntimePreview = Output<typeof preview>;
 export type RetainedRuntimeGrantRequest = Output<typeof grantRequest>;
+export type RetainedRuntimeGrant = Output<typeof grant>;
 export type RetainedRuntimeAbortRequest = Output<typeof abortRequest>;
-export type RetainedRuntimeRedeemRequest = Output<typeof redeemRequest>;
+export type RetainedRuntimeRedemption = Output<typeof redemption>;
+export type RetainedRuntimeReceipt = Output<typeof receipt>;
 
-export class RetainedRuntime {
+export class RetainedRuntimeTransitions {
   constructor(private readonly config: ResolvedConfig) {}
 
-  configure(body: RuntimeCanaryPolicyRequest, options: OperationOptions = {}) {
-    return read(this.config, '/api/v1/admin/retained-runtime-policy', runtimeCanaryPolicyView, {
+  setPolicy(body: RuntimeCanaryPolicyRequest, options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/retained-runtime-policy', runtimeCanaryPolicy, {
       ...options,
       method: 'PUT',
       body: input(runtimeCanaryPolicyRequest, body),
@@ -54,7 +57,7 @@ export class RetainedRuntime {
   }
 
   preview(body: RetainedRuntimeProposal, options: OperationOptions = {}) {
-    return read(this.config, '/api/v1/admin/retained-runtime-preview', previewView, {
+    return read(this.config, '/api/v1/admin/retained-runtime-preview', preview, {
       ...options,
       method: 'POST',
       body: input(proposal, body),
@@ -62,7 +65,7 @@ export class RetainedRuntime {
   }
 
   grant(body: RetainedRuntimeGrantRequest, options: OperationOptions = {}) {
-    return read(this.config, '/api/v1/admin/retained-runtime-grants', grantView, {
+    return read(this.config, '/api/v1/admin/retained-runtime-grants', grant, {
       ...options,
       method: 'POST',
       body: input(grantRequest, body),
@@ -71,18 +74,18 @@ export class RetainedRuntime {
   }
 
   abort(body: RetainedRuntimeAbortRequest, options: OperationOptions = {}) {
-    return read(this.config, '/api/v1/admin/retained-runtime-grants/abort', grantView, {
+    return read(this.config, '/api/v1/admin/retained-runtime-grants/abort', grant, {
       ...options,
       method: 'POST',
       body: input(abortRequest, body),
     });
   }
 
-  redeem(body: RetainedRuntimeRedeemRequest, options: OperationOptions = {}) {
+  redeem(body: RetainedRuntimeRedemption, options: OperationOptions = {}) {
     return read(this.config, '/api/v1/retained-runtime-redemptions', receipt, {
       ...options,
       method: 'POST',
-      body: input(redeemRequest, body),
+      body: input(redemption, body),
       expectedStatus: 202,
     });
   }

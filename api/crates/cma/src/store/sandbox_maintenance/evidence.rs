@@ -228,9 +228,24 @@ pub(super) async fn queued_control(
     id: &layer2_core::SandboxId,
     session: &mut ClientSession,
 ) -> Result<bool, ApplyError> {
-    Ok(store
+    read_queued_control(store, id, session, false).await
+}
+
+pub(super) async fn read_queued_control(
+    store: &MongoSandboxStore,
+    id: &layer2_core::SandboxId,
+    session: &mut ClientSession,
+    snapshot_read: bool,
+) -> Result<bool, ApplyError> {
+    let mut find = store
         .sandbox_controls
         .find_one(doc! {"sandbox_id": id.as_str(), "queued": true})
+        .projection(doc! {"_id": 1})
+        .max_time(std::time::Duration::from_secs(2));
+    if snapshot_read {
+        find = find.read_concern(mongodb::options::ReadConcern::snapshot());
+    }
+    Ok(find
         .session(session)
         .await
         .map_err(ApplyError::Driver)?

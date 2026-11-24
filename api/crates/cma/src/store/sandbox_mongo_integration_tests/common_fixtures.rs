@@ -130,7 +130,7 @@ pub(super) fn credential(sandbox_id: &str, plaintext: &str) -> CredentialMateria
     }
 }
 
-pub(super) fn encryption_key() -> AuthEncryptionKey {
+pub(in crate::store) fn encryption_key() -> AuthEncryptionKey {
     AuthEncryptionKey::from_base64("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
         .expect("test encryption key")
 }
@@ -287,7 +287,7 @@ pub(super) fn workspace_admission(workspace: Workspace) -> WorkspaceAdmission {
     }
 }
 
-pub(super) fn ready_workspace(parent: &Sandbox, id: &str, name: &str) -> Workspace {
+pub(in crate::store) fn ready_workspace(parent: &Sandbox, id: &str, name: &str) -> Workspace {
     let mut workspace = workspace(parent, id, name);
     workspace.resolved_commit = Some("a".repeat(40));
     workspace.status = WorkspaceStatus::Ready;

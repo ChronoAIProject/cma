@@ -109,14 +109,17 @@ export interface UsageInitialView {
   readonly view: UsageMetricView;
   readonly initial?: UsageInitialData;
 }
+const REST_ROUTE_NOT_FOUND = 'https://spec.chrono-ai.fun/cma/1.0/problems/not-found';
+
 /** Only an explicitly missing initial route permits the legacy report path. */
 export function isUsageInitialUnavailable(error: unknown): boolean {
   return (
     error instanceof ApiError &&
     ((error.status === 501 && error.code === 'report_view_disabled') ||
       (error.status === 404 &&
-        error.code === undefined &&
-        Object.keys(error.extensions).length === 0))
+        Object.keys(error.extensions).length === 0 &&
+        (error.code === undefined ||
+          (error.code === 'not_found' && error.problemType === REST_ROUTE_NOT_FOUND))))
   );
 }
 const base = (admin: boolean) => `/api/v1/${admin ? 'admin/' : ''}usage/metrics/initial`;
