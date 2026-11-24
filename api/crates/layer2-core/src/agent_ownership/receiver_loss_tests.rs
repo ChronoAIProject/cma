@@ -140,7 +140,16 @@ async fn cancellation_during_real_renewal_never_revives_or_releases_before_recei
 
 #[tokio::test(start_paused = true)]
 async fn expired_observation_before_late_commit_never_reacquires_the_cancelled_token() {
-    let fixture = Fixture::new(true).await;
+    expiry_before_late_commit(MaintenancePolicy::Legacy).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn contained_expiry_observation_preserves_floor_through_late_same_token_commit() {
+    expiry_before_late_commit(MaintenancePolicy::ContainFailures).await;
+}
+
+async fn expiry_before_late_commit(policy: MaintenancePolicy) {
+    let fixture = Fixture::with_policy(true, policy).await;
     let original = fixture
         .store
         .owner(&fixture.cancelled.token.agent_id)
@@ -180,6 +189,20 @@ async fn expired_observation_before_late_commit_never_reacquires_the_cancelled_t
             .unwrap(),
         "expiry observation must retain a cancelled-token floor across an unknown renewal outcome"
     );
+    if policy == MaintenancePolicy::ContainFailures {
+        // Exercise both the initial local join and the next attempt's actual
+        // absence observation while the same-token renewal is still withheld.
+        for _ in 0..2 {
+            assert_eq!(
+                fixture
+                    .manager
+                    .retirement_background(&fixture.cancelled)
+                    .await
+                    .unwrap(),
+                None
+            );
+        }
+    }
     fixture.store.resume.notify_one();
     assert!(maintaining.await.unwrap().is_ok());
     let committed = fixture
