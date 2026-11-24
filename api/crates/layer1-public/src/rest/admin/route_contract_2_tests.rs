@@ -224,8 +224,10 @@ async fn activity_audit_filter_keeps_security_events_and_requires_read_authority
     let body = response_json(response).await;
     let items = body["items"].as_array().unwrap();
     assert!(items.iter().any(|row| row["action"] == "configure"));
-    assert!(items.iter().any(|row| row["outcome"]["status"] == "refused"));
-    assert!(items.iter().all(|row| {
-        row["action"] != "read" || row["outcome"]["status"] != "succeeded"
-    }));
+    assert!(items
+        .iter()
+        .any(|row| row["outcome"]["status"] == "refused"));
+    assert!(items
+        .iter()
+        .all(|row| { row["action"] != "read" || row["outcome"]["status"] != "succeeded" }));
 }
