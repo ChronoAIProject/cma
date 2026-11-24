@@ -100,7 +100,7 @@ function ViewerNavigation({
   readonly unknownDeletingSandboxIds?: ReadonlySet<string>;
   readonly client?: ResourceViewsClient;
   readonly scope: string;
-  readonly choices: NavigationScopeChoices;
+  readonly choices?: NavigationScopeChoices;
   readonly route: AppRoute;
   readonly viewerId: string;
   readonly navigation: NavigationState & { refresh: () => void };
@@ -138,6 +138,7 @@ function ViewerNavigation({
   const modeChanged = useRef(false);
   const refreshRequestedFor = useRef<string | undefined>(undefined);
   const status = statuses[view];
+  const scopeChoices = choices ?? { options: [], unavailable: false };
   function selectView(next: NavigationView) {
     if (sidebar?.collapsed) {
       modeChanged.current = true;
@@ -246,7 +247,7 @@ function ViewerNavigation({
       route={panelView === 'agent' && view === 'sandbox' ? taskReturn.route : route}
       client={client}
       scope={panelView === 'agent' && view === 'sandbox' ? taskReturn.scope : scope}
-      choices={choices}
+      choices={scopeChoices}
       view={panelView}
       statusFilter={
         panelView === 'agent' && view === 'sandbox' ? taskReturn.status : statuses[panelView]
@@ -338,13 +339,13 @@ function ViewerNavigation({
       <NavigationFilters
         scope={
           client === undefined ? undefined : (
-            <NavigationScopePicker choices={choices} value={scope} onChange={onScope} />
+            <NavigationScopePicker choices={scopeChoices} value={scope} onChange={onScope} />
           )
         }
         scopeSummary={
           client === undefined
             ? undefined
-            : (choices.options.find((option) => option.value === scope)?.label ?? 'Personal')
+            : (scopeChoices.options.find((option) => option.value === scope)?.label ?? 'Personal')
         }
         scopeActive={client !== undefined && scope !== ''}
         view={view}

@@ -18,7 +18,7 @@ mod native_close_lane_tests;
 #[cfg(test)]
 mod resource_list_tests;
 mod rollout_tail;
-pub(super) use rollout_tail::{flag, GRADUATED};
+pub(super) use rollout_tail::flag;
 #[cfg(test)]
 mod segmentation_tests;
 #[cfg(test)]

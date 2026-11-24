@@ -22,6 +22,8 @@ import { ConversationEmpty } from './ConversationEmpty';
 import type { ResourceStatus } from '../character/status';
 import { messageStreamKey } from './streamTimeline';
 import { acceptanceForTurn } from './taskAcceptance';
+import { currentExternalApproval } from './externalApproval';
+import { TurnRetryAction } from './TurnRetryAction';
 
 interface MessageStreamProps {
   readonly retained?: boolean;
@@ -32,6 +34,7 @@ interface MessageStreamProps {
   readonly approvalBusy?: boolean;
   readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
+  readonly onReviewRetry?: (input: string) => void;
   readonly children?: ReactNode;
   readonly emptyMessage?: string;
   /** The Agent's recorded status, which poses the empty conversation's character. */
@@ -57,6 +60,7 @@ export function MessageStream({
   approvalBusy = false,
   approvalReadOnly = false,
   onApproval,
+  onReviewRetry,
   children,
   emptyMessage = 'Tell the Agent what you need in your own words, for example “Compare three project management tools for a small team.”',
   agentStatus,
@@ -87,6 +91,8 @@ export function MessageStream({
   const [projectTimeline] = useState(createStreamTimeline);
   const retained = useRetainedOutput(retainedOutput, conversation);
   const { items, continued, previousRole } = projectTimeline(retained.conversation);
+  const waitingForApproval = currentExternalApproval(conversation) !== undefined;
+  const liveNotices = conversation.recovery.filter((notice) => notice.clearsOn !== undefined);
   const verdictOnPlan =
     taskAcceptance !== undefined &&
     items.some(
@@ -175,9 +181,31 @@ export function MessageStream({
               key={messageStreamKey(entry)}
               entry={entry}
               approvalBusy={approvalBusy}
-              approvalReadOnly={approvalReadOnly}
+              approvalReadOnly={
+                approvalReadOnly ||
+                (entry.kind === 'approval' &&
+                  entry.item.source === 'external' &&
+                  conversation.externalApprovalProjection?.reviewOrigin !== undefined &&
+                  !conversation.externalApprovalProjection.canReview)
+              }
               onApproval={onApproval}
               activeRunId={activeRunId}
+              approvalActive={
+                entry.kind === 'approval' &&
+                entry.item.source === 'external' &&
+                entry.item.runId === activeRunId &&
+                conversation.turnOutcomes?.[entry.item.runId] === undefined
+              }
+              approvalReviewPolicy={conversation.externalApprovalReviewPolicy}
+              recoveryAction={
+                entry.kind === 'recovery' ? (
+                  <TurnRetryAction
+                    conversation={conversation}
+                    notice={entry.item}
+                    onPrepare={approvalReadOnly ? undefined : onReviewRetry}
+                  />
+                ) : undefined
+              }
               taskAcceptance={
                 entry.kind === 'message' || entry.kind === 'plan'
                   ? acceptanceForTurn(taskAcceptance, entry.item.runId)
@@ -198,15 +226,13 @@ export function MessageStream({
           ),
         )}
         <div className="message-stream__live-recovery-slot" aria-live="polite">
-          {conversation.recovery
-            .filter((notice) => notice.clearsOn !== undefined)
-            .map((notice) => (
-              <p className="message__delivery" role="status" key={notice.id}>
-                {notice.title}
-              </p>
-            ))}
+          {(waitingForApproval ? liveNotices.slice(-1) : liveNotices).map((notice) => (
+            <p className="message__delivery" role="status" key={notice.id}>
+              {notice.title}
+            </p>
+          ))}
         </div>
-        {historyOnly ? null : <ActiveThinking conversation={conversation} stopping={stopping} />}
+        <ActiveThinking conversation={conversation} stopping={stopping} />
         {optimisticMessages?.map((message, index) => (
           <article
             className={`message message--user${message.queued ? ' message--queued' : ''}`}

@@ -4,7 +4,7 @@
 /// every environment. Unset means enabled; an explicit `false` remains the
 /// emergency off-switch, and any other value keeps the strict-boolean error.
 /// No startup validation ties these gates to another setting.
-pub(super) const GRADUATED: &[&str] = &[
+pub(crate) const GRADUATED: &[&str] = &[
     "CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED",
     "CHRONO_COMMAND_RECONCILE_PACING_ENABLED",
     "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED",
@@ -13,7 +13,7 @@ pub(super) const GRADUATED: &[&str] = &[
 ];
 
 /// Read one strict boolean rollout gate. Unset is off unless it graduated.
-pub(super) fn flag(
+pub(crate) fn flag(
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     key: &str,
 ) -> Result<bool, String> {
