@@ -66,6 +66,7 @@ fn in_scope(path: &str) -> bool {
         path.split('/').next().unwrap(),
         "agents"
             | "sandboxes"
+            | "sandbox-creation-outcomes"
             | "sandbox-commands"
             | "commands"
             | "agent-delegations"

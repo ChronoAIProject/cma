@@ -8,6 +8,9 @@ use layer2_core::sandbox_metrics::{
 
 #[async_trait]
 impl MetricsStore for ReportingStore {
+    async fn initial_snapshot_generation(&self, report: &Report) -> Result<u64> {
+        self.verify_initial_snapshot(report).await
+    }
     async fn latest(
         &self,
         scope: &Scope,
@@ -112,25 +115,29 @@ impl MetricsStore for ReportingStore {
         self.verify_retained_snapshot(report).await?;
         // Even admin cached membership must not retain another owner's old
         // attribution after a transfer. Owner changes invalidate the snapshot.
-        let pipeline = [
-            doc! {"$match":{"report_id":&report.report_id}},
-            doc! {"$lookup":{"from":super::super::sandbox_usage::STATES,"localField":"sandbox_id","foreignField":"_id","as":"current"}},
-            doc! {"$lookup":{"from":"sandboxes","localField":"sandbox_id","foreignField":"_id","as":"sandbox"}},
-            doc! {"$match":{"$expr":{"$or":[
-                {"$ne":["$owner",{"$arrayElemAt":["$current.owner",0]}]},
-                {"$and":[{"$gt":[{"$size":"$sandbox"},0]},
-                    {"$ne":["$owner",{"$arrayElemAt":["$sandbox.owner",0]}]}]}
-            ]}}},
-            doc! {"$limit":1},
-            doc! {"$project":{"_id":1}},
-        ];
-        let mut cursor = self
-            .collection(ROWS)
-            .aggregate(pipeline)
-            .max_time(DB_DEADLINE)
-            .await
-            .map_err(unavailable)?;
-        if cursor.try_next().await.map_err(unavailable)?.is_some() {
+        let pipeline = ownership::pipeline(&report.report_id);
+        let started = std::time::Instant::now();
+        let mismatch: Result<bool> = async {
+            let mut cursor = self
+                .collection(ROWS)
+                .aggregate(pipeline)
+                .max_time(DB_DEADLINE)
+                .await
+                .map_err(unavailable)?;
+            Ok(cursor.try_next().await.map_err(unavailable)?.is_some())
+        }
+        .await;
+        tracing::debug!(
+            operation = "report_ownership",
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            outcome = match &mismatch {
+                Ok(false) => "matched",
+                Ok(true) => "mismatch",
+                Err(_) => "unavailable",
+            },
+            "sandbox report live ownership check"
+        );
+        if mismatch? {
             return Err(MetricsError::NotFound);
         }
         if let Some(id) = &report.query.filters.sandbox_id {

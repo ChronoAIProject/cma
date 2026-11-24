@@ -9,7 +9,7 @@ pub(super) async fn serve(
     let listener = bind(config.bind).await?;
     let manager = composition.agent_manager.clone();
     let admission = Admission::new();
-    let app = admission.wrap(app, manager.is_some());
+    let app = admission.wrap(app, composition.agent_relay.clone());
     let (http_stop, http_signal) = watch::channel(false);
     let mut server = http_server(listener, app, config.http_connection_max_age, http_signal);
     let mut shutdown = ShutdownCoordinator::new();
@@ -50,7 +50,7 @@ async fn initialize(
     if admission.is_draining() {
         return Ok(());
     }
-    warm_pools(&composition, Some(admission)).await?;
+    let writer_ready = warm_pools(&composition, Some(admission), shutdown).await?;
     if admission.is_draining() {
         return Ok(());
     }
@@ -61,7 +61,7 @@ async fn initialize(
     // The phase check admits activation. If draining wins afterward, the
     // owner joins activation and drains any membership it acquired.
     listening(config);
-    activate_and_start_workers(composition, shutdown, Some(admission)).await
+    activate_and_start_workers(composition, shutdown, Some(admission), writer_ready).await
 }
 
 async fn until_stopping(

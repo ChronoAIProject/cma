@@ -75,9 +75,11 @@ mod agent_channel_usage_tests;
 mod agent_provenance;
 mod agent_provenance_inventory;
 pub use agent_provenance_inventory::agent_provenance_inventory_router;
+mod agent_original_request;
 #[cfg(test)]
 mod agent_provenance_inventory_tests;
 mod agent_reads;
+mod agent_reply_preview;
 pub(crate) mod agent_retained_output;
 mod agent_shared_shapes;
 mod agent_source;
@@ -85,6 +87,8 @@ pub use agent_provenance::agent_provenance_router;
 mod agent_history;
 mod agent_lifecycle;
 mod desktop_creation;
+pub mod retained_runtime_transition;
+pub mod runtime_canary;
 pub use desktop_creation::DesktopCreationScope;
 #[cfg(test)]
 mod agent_provenance_tests;
@@ -164,6 +168,7 @@ mod gateway_interactions;
 mod gateway_records;
 pub use gateway_connections::gateway_connection_record_router;
 pub use gateway_interactions::gateway_interaction_router;
+pub mod creation_outcomes;
 #[cfg(test)]
 mod gateway_records_tests;
 mod hierarchy_shared_shapes;
@@ -207,7 +212,7 @@ pub use agent_lifecycle::{
     AgentLifecycleOperationReadError, AgentLifecycleOperationReader, AgentLifecycleOperationView,
     AgentLifecyclePermissions, AgentLifecycleProfile, AgentLifecycleProvisioner,
     AgentLifecycleProvisioningError, AgentLifecycleRepository, AgentLifecycleSkill,
-    AgentLifecycleTitleMode,
+    AgentLifecycleTitleMode, RepositoryAccessRefusal,
 };
 pub use agent_source::agent_source_router;
 pub use agents::{

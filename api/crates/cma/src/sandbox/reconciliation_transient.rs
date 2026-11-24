@@ -15,8 +15,16 @@ tokio::task_local! {
     static TRANSIENT: RefCell<Option<String>>;
 }
 
+pub(super) fn provider_error(error: AdapterError) -> SandboxStoreError {
+    let mapped = SandboxStoreError::Unavailable(format!(
+        "sandbox runtime authority is unavailable: {error}"
+    ));
+    note(&error, &mapped);
+    mapped
+}
+
 /// Record the mapped error of a transient runtime failure, if inside an attempt.
-pub(super) fn note(error: &AdapterError, mapped: &SandboxStoreError) {
+fn note(error: &AdapterError, mapped: &SandboxStoreError) {
     if let (AdapterError::Unavailable(_), SandboxStoreError::Unavailable(message)) = (error, mapped)
     {
         let _ = TRANSIENT.try_with(|slot| *slot.borrow_mut() = Some(message.clone()));

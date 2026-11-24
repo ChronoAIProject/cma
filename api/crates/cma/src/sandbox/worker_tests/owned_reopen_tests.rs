@@ -172,7 +172,7 @@ async fn issue_1164_transient_read_after_receipt_preserves_staged_attachment() {
         .unwrap()
         .unwrap();
     let peer = &instances[caller].relay;
-    let receipt = transport_observation_scope(peer.reopen_agent(&parent, &agent.id))
+    let receipt = transport_observation_scope(peer.reopen_agent(&parent, &agent.id, false))
         .await
         .unwrap();
     let retained = target(&parent, &agent);
@@ -185,7 +185,7 @@ async fn issue_1164_transient_read_after_receipt_preserves_staged_attachment() {
     tokio::time::timeout(Duration::from_secs(3), reads.failed.notified())
         .await
         .unwrap();
-    let repeated = transport_observation_scope(peer.reopen_agent(&parent, &agent.id))
+    let repeated = transport_observation_scope(peer.reopen_agent(&parent, &agent.id, false))
         .await
         .unwrap();
     assert_eq!(repeated, receipt);
@@ -302,7 +302,7 @@ async fn uncommitted_owner_reopen_is_idempotent_and_rolls_back_on_lease_loss() {
         transport_observation_scope(async {
             let receipt = instances[caller]
                 .relay
-                .reopen_agent(&parent, &agent.id)
+                .reopen_agent(&parent, &agent.id, false)
                 .await
                 .unwrap();
             assert_eq!(observed_transport(&agent.id), Some(authority.token.clone()));
@@ -311,7 +311,7 @@ async fn uncommitted_owner_reopen_is_idempotent_and_rolls_back_on_lease_loss() {
             assert_eq!(
                 instances[caller]
                     .relay
-                    .reopen_agent(&parent, &agent.id)
+                    .reopen_agent(&parent, &agent.id, false)
                     .await
                     .unwrap(),
                 receipt
@@ -320,7 +320,7 @@ async fn uncommitted_owner_reopen_is_idempotent_and_rolls_back_on_lease_loss() {
             obsolete.revision += 1;
             assert!(instances[caller]
                 .relay
-                .reopen_agent(&obsolete, &agent.id)
+                .reopen_agent(&obsolete, &agent.id, false)
                 .await
                 .is_err());
         })
@@ -361,7 +361,7 @@ async fn issue_1164_revoked_reopen_stage_cannot_remove_a_replacement_epoch() {
         .unwrap()
         .unwrap();
     let retained = target(&parent, &agent);
-    transport_observation_scope(peer.reopen_agent(&parent, &agent.id))
+    transport_observation_scope(peer.reopen_agent(&parent, &agent.id, false))
         .await
         .unwrap();
     assert!(workers[owner].1.target_is_attached(&retained));
@@ -372,7 +372,7 @@ async fn issue_1164_revoked_reopen_stage_cannot_remove_a_replacement_epoch() {
         .unwrap();
     let next = coordinator.acquire(&agent.id).await.unwrap().unwrap();
     assert!(next.token.epoch > old_authority.token.epoch);
-    transport_observation_scope(peer.reopen_agent(&parent, &agent.id))
+    transport_observation_scope(peer.reopen_agent(&parent, &agent.id, false))
         .await
         .unwrap();
     assert!(workers[owner].1.target_is_attached(&retained));

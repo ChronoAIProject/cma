@@ -1,6 +1,7 @@
 //! Single-writer Mongo claims for automatic agent-title generation.
 
 use crate::store::agent_log_telemetry::ScanCaller;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use std::time::SystemTime;
 
@@ -63,20 +64,20 @@ pub(super) async fn acquire_claim(
         }
         let claim = match apply_claim(store, request, now, expires_at, &mut session).await {
             Ok(ClaimApply::Settled(claim)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(claim);
             }
             Ok(ClaimApply::Written(claim)) => claim,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 continue;
             }
             Err(ApplyError::Driver(_)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(AgentTitleStoreError::Unavailable);
             }
         };

@@ -1,4 +1,4 @@
-use crate::store::LifecycleBehavior;
+use crate::store::{LifecycleBehavior, LifecycleLease};
 use layer1_public::rest::{
     AgentLifecycleCreateRequest, AgentLifecyclePermissions, AgentLifecycleProfile,
     AgentLifecycleProvisioningError,
@@ -404,6 +404,7 @@ pub(super) fn creation_error(
     use crate::store::LifecycleCreateError;
     match error {
         LifecycleCreateError::AdmissionPaused => AgentLifecycleProvisioningError::AdmissionPaused,
+        LifecycleCreateError::StaleReleasedRuntime => AgentLifecycleProvisioningError::Unavailable,
         LifecycleCreateError::Store(error) => operation_error(error),
     }
 }
@@ -419,28 +420,39 @@ pub(super) fn operation_error(error: layer2_core::StoreError) -> AgentLifecycleP
     }
 }
 
-pub(super) async fn create_sandbox(
+pub(super) async fn create_sandbox_with_fence(
     service: &layer2_core::sandbox::SandboxService,
     caller: &layer2_core::Caller,
     profile: layer2_core::profiles::SandboxProfileRef,
     agent_name: &str,
-    operation_id: &str,
+    lease: &LifecycleLease,
+    creation_fence: Option<layer2_core::sandbox::store::CreationFence>,
 ) -> Result<layer2_core::sandbox::Sandbox, SandboxServiceError> {
     let mut request = layer2_core::sandbox::CreateSandbox {
         profile,
-        name: Some(sandbox_name(agent_name, operation_id)),
+        name: Some(sandbox_name(agent_name, &lease.id)),
         confirmed_digest: None,
         origin: layer2_core::sandbox::SandboxOrigin::Lifecycle {
-            operation_id: operation_id.into(),
+            operation_id: lease.id.clone(),
         },
     };
-    match service.create_for_lifecycle(caller, request.clone()).await {
+    match service
+        .create_for_lifecycle_with_lease(
+            caller,
+            request.clone(),
+            &lease.token,
+            creation_fence.clone(),
+        )
+        .await
+    {
         // A pre-update worker may have committed the old name, then lost the
         // response before persisting its child ID. Replay still verifies the
         // exact owner, operation, profile and historical name in the service.
         Err(SandboxServiceError::SandboxOriginConflict) => {
             request.name = Some(legacy_sandbox_name(agent_name));
-            service.create_for_lifecycle(caller, request).await
+            service
+                .create_for_lifecycle_with_lease(caller, request, &lease.token, creation_fence)
+                .await
         }
         result => result,
     }

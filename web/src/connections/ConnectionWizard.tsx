@@ -17,6 +17,8 @@ import { ConnectionIntentRecovery, savedConnection } from './intentRecovery';
 import { rememberSameTabReturn } from './sameTabReturn';
 import './Connections.css';
 
+export { RepositoryConnectionRepair } from './RepositoryConnectionRepair';
+
 const POLL_MS = 2000;
 
 interface WizardProps {

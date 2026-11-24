@@ -1,9 +1,8 @@
 # Auto-pause campaign core
 
-This directory contains reusable campaign and lifecycle logic, with offline
-contract tests. It supplies no HTTP adapter, launcher, fixture provisioner or
-runtime execution authorization. A current adapter and an approved disposable
-execution lane are prerequisites for native qualification. Refs #1547.
+This directory contains the campaign engine, CMA public API adapter, native
+runtime reader and offline contract tests. Native qualification requires a
+disposable execution lane with a launcher and an owned fixture. Refs #1547.
 
 Run the offline tests from the repository root:
 
@@ -63,6 +62,19 @@ Call `awaitCreatedIdle(read, {poll, awaitInitialIdle, now}, options)`:
 
 Offline tests inject deterministic waits and virtual time to check startup,
 initial-turn progression, refusal and deadline behavior without a cluster.
+
+## CMA public API adapter
+
+`runCmaCampaign` in `cma-public.mjs` uses separate owner and administrator
+credentials and independently reads the Sandbox's native home. The injected
+fixture validates custody and the deployed candidate before setup, prepares the
+owned Agent and original file, provides scheduling observations and controls the
+first synthetic turn. It also cleans up the fixture and restores policy. The
+runner records a successful final result after cleanup returns successfully.
+
+The loopback tests exercise the adapter against synthetic CMA and Kubernetes
+responses. Use the same interface with a running CMA candidate and its native
+Sandbox controller for runtime qualification.
 
 ## Qualification limits
 

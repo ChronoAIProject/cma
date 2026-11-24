@@ -39,6 +39,7 @@ async fn rotate(supervisor: &Supervisor, generation: u64, value: &str) -> Respon
             operation_id: format!("hot-rotation-{generation}"),
             value: RuntimeCredential::new(value),
             custody_generation: Some(generation),
+            github_route: None,
         })),
     )
     .await

@@ -4,6 +4,13 @@ use std::sync::Arc;
 use crate::{config::Config, store::MongoStores};
 
 pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String> {
+    // The one released-default authority, shared by every consumer of new work
+    // and by every store copy handed out while the stores open.
+    let released: Arc<dyn layer3_adapter::ReleasedRuntimeSource> =
+        Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+            config.runtime.sandbox_image.clone(),
+            config.runtime.machine_sandbox_image.clone(),
+        ));
     let mut stores = MongoStores::connect_with_policy(
         &config.mongodb_uri,
         &config.mongodb_database,
@@ -22,6 +29,8 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             initial_settings: crate::store::settings_defaults::InitialSettings::new(
                 config.features.visitor_two_sandbox_defaults,
             ),
+            released: Some(released.clone()),
+            runtime_pointer_required: config.runtime.runtime_pointer.is_some(),
         },
     )
     .await
@@ -47,16 +56,6 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .with_global_sandbox_limit(config.global_sandbox_limit)
             .with_launch_admission_policy(config.features.launch_admission_policy()),
     );
-    // One released-default authority, shared by every consumer of new work.
-    stores.released_runtime = Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
-        config.runtime.sandbox_image.clone(),
-        config.runtime.machine_sandbox_image.clone(),
-    ));
-    stores.sandbox_model = Arc::new(
-        (*stores.sandbox_model)
-            .clone()
-            .with_released_runtime(stores.released_runtime.clone()),
-    );
     stores.sandbox_model = Arc::new(
         (*stores.sandbox_model)
             .clone()
@@ -68,6 +67,10 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .with_public_owner_sandbox_limit(config.public_owner_sandbox_limit)
             .with_platform_counter_shards(config.features.platform_counter_shards)
             .with_agent_control_write_coordination(config.features.agent_control_write_coordination)
+            .with_bounded_inactivity_legacy_log(config.features.bounded_inactivity_legacy_log)
+            .with_strict_inactivity_session_evidence(
+                config.features.strict_inactivity_session_evidence,
+            )
             .with_bounded_close_retries(config.features.bounded_close_retries)
             .with_retry_single_marker(config.features.retry_single_marker_enabled)
             .with_scan_cooperation(config.features.agent_log_scan_cooperative_enabled)
@@ -99,7 +102,8 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
     Ok(Arc::new(
         stores
             .with_empty_discovery(config.features.empty_discovery)
-            .with_writer_policy(config.task_experience.clone()),
+            .with_writer_policy(config.task_experience.clone())
+            .with_creation_writer_epoch(config.creation_writer_epoch.as_deref()),
     ))
 }
 
@@ -127,5 +131,15 @@ pub(super) fn admission_ceilings(
     Arc::new(
         layer2_core::admission::AdmissionCeilingsService::new(stores.admission_ceilings.clone())
             .with_writes_enabled(config.features.admission_ceilings_writes_enabled),
+    )
+}
+
+pub(super) fn admission_control(
+    stores: &MongoStores,
+    config: &Config,
+) -> Arc<layer2_core::admission::AdmissionControlService> {
+    Arc::new(
+        layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
+            .with_writes_enabled(config.features.admission_control_writes_enabled),
     )
 }

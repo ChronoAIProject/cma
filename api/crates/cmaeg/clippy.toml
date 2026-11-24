@@ -1,0 +1,7 @@
+# A cancelled driver commit or abort strands its server transaction and the
+# locks it holds (#3299). Production gateway store code uses the guarded
+# commands; this is the gateway's copy of the Agent Manager rule (#3288).
+disallowed-methods = [
+  { path = "mongodb::ClientSession::abort_transaction", reason = "use transaction_terminal::GuardedTerminal::abort_guarded so cancellation cannot strand the server transaction (#3299)" },
+  { path = "mongodb::ClientSession::commit_transaction", reason = "use transaction_terminal::GuardedTerminal::commit_guarded so cancellation cannot strand the server transaction (#3299)" },
+]

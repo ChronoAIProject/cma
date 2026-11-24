@@ -21,9 +21,15 @@ export function sandboxRetirementDuringRevive(sandbox: SandboxSummary): boolean 
 }
 
 export function sandboxChildrenReadable(sandbox: SandboxSummary): boolean {
-  return ['active', 'credential_rotating', 'paused', 'pausing', 'reviving', 'rotating'].includes(
-    sandbox.status,
-  );
+  return [
+    'active',
+    'credential_rotating',
+    'paused',
+    'pausing',
+    'reviving',
+    'rotating',
+    'failed',
+  ].includes(sandbox.status);
 }
 
 export function sandboxChildStatus(
@@ -37,6 +43,8 @@ export function sandboxChildStatus(
 
 export function sandboxUnavailableNotice(sandbox: SandboxSummary): string | undefined {
   if (sandboxChildrenAvailable(sandbox)) return undefined;
+  if (sandbox.status === 'failed')
+    return 'This Sandbox is unavailable. Review the recorded failure below.';
   if (
     sandboxChildrenReadable(sandbox) &&
     (sandbox.lifecycle?.operation !== undefined ||
@@ -51,8 +59,6 @@ export function sandboxUnavailableNotice(sandbox: SandboxSummary): string | unde
     return 'This Sandbox has been deleted. Its runtime is gone; retained history remains read-only.';
   if (sandbox.status === 'retiring')
     return 'This Sandbox is being deleted. Its Workspaces and Agents are unavailable during cleanup.';
-  if (sandbox.status === 'failed')
-    return 'This Sandbox is unavailable. Review the recorded failure below.';
   if (sandbox.status === 'active')
     return 'Sandbox action availability is not reported. Agent conversations and history remain available.';
   return 'Workspaces and Agents will be available when the Sandbox finishes preparation.';

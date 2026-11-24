@@ -93,6 +93,30 @@ pub(in crate::store) async fn settle_runtime_loss(
     })
 }
 
+pub(in crate::store) async fn settle_owner_stop(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    appended_at: &str,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    let now = layer2_core::seconds_from_rfc3339(appended_at).ok_or_else(|| {
+        ApplyError::Domain(SandboxStoreError::Corrupt(
+            "invalid owner Stop timestamp".into(),
+        ))
+    })?;
+    apply_existing(
+        store,
+        ExistingTurn {
+            current,
+            ended: true,
+            usage: None,
+            now,
+        },
+        session,
+    )
+    .await
+}
+
 fn interrupts_only(logs: &[AgentLogKind], turn: u64) -> bool {
     let mut interrupted = false;
     for log in logs {

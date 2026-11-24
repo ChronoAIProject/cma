@@ -210,6 +210,13 @@ pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crat
                 && receipt.receipt.request_sha256 == request.request.request_sha256
                 && receipt.receipt.agent_id == request.request.agent_id
         }
+        (
+            RequestFrame::ProveAgentProcessClosed(request),
+            ResponseFrame::ProveAgentProcessClosed(proof),
+        ) => request == proof,
+        (RequestFrame::FenceAgentRestart(request), ResponseFrame::FenceAgentRestart(receipt)) => {
+            request == receipt
+        }
         (RequestFrame::CaptureAgent(_), ResponseFrame::CaptureAgent(snapshot)) => {
             !snapshot.conversation_id.is_empty()
                 && valid_sha256(&snapshot.archive_sha256)
@@ -246,9 +253,14 @@ pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crat
                 )
         }
         (RequestFrame::Restore(_), ResponseFrame::Restore(receipt)) => receipt.accepted,
-        (RequestFrame::Credential(request), ResponseFrame::Credential(receipt)) => {
-            receipt.operation_id == request.operation_id && receipt.installed
-        }
+        (RequestFrame::Credential(request), ResponseFrame::Credential(receipt))
+        | (
+            RequestFrame::CredentialForReceiver {
+                credential: request,
+                ..
+            },
+            ResponseFrame::Credential(receipt),
+        ) => receipt.operation_id == request.operation_id && receipt.installed,
         (RequestFrame::Resources, ResponseFrame::Resources(reading)) => reading
             .stall_permille
             .is_none_or(|permille| permille <= 1_000),

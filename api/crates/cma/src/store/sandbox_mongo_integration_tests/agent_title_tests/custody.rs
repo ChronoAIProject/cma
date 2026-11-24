@@ -11,6 +11,7 @@ mod dispatch;
 mod fixtures;
 mod receipts;
 mod retention;
+mod scheduled_refusal;
 use fixtures::*;
 
 #[tokio::test]

@@ -56,6 +56,7 @@ export function bounds(value: unknown): ProfileAuthoringBounds {
 const service = object({
   id: boundedText(128),
   catalog_id: optional(boundedText(128)),
+  detail_url: optional(boundedText(2048)),
   name: boundedText(256),
   description: optional(description),
 });

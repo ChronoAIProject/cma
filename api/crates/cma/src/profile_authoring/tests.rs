@@ -224,7 +224,7 @@ async fn public_authoring_routes_reach_production_adapters_through_core_and_cma_
         "/api/v1/services",
         200,
         json!({"services":[{
-            "id":"service-a","slug":"research","name":"Research","is_active":true
+            "id":"service/a ?#","slug":"research","name":"Research","is_active":true
         }]}),
     );
     upstream.skills(json!([{"guid":"research","name":"Research"}]), false, None);
@@ -240,9 +240,14 @@ async fn public_authoring_routes_reach_production_adapters_through_core_and_cma_
         },
         None,
     );
-    let router = crate::rest_router(layer1_public::rest::profile_authoring_router(service)).layer(
-        axum::middleware::from_fn_with_state(auth, crate::auth::attach_subject),
-    );
+    let router = crate::rest_router(layer1_public::rest::profile_authoring_router(
+        service,
+        Some("https://catalog.example.test".parse().unwrap()),
+    ))
+    .layer(axum::middleware::from_fn_with_state(
+        auth,
+        crate::auth::attach_subject,
+    ));
     let requests = [
         (
             "GET",
@@ -255,7 +260,8 @@ async fn public_authoring_routes_reach_production_adapters_through_core_and_cma_
             "GET",
             "services",
             None,
-            json!([{"id":"research","catalog_id":"service-a","name":"Research"}]),
+            json!([{"id":"research","catalog_id":"service/a ?#","name":"Research",
+                "detail_url":"https://catalog.example.test/services/service%2Fa%20%3F%23"}]),
         ),
         (
             "GET",
@@ -358,9 +364,10 @@ async fn bearer_only_public_clients_can_read_catalogues_without_a_stored_browser
         crate::profile_policy::profile_route_policy().capacity_bounds,
         Arc::new(source),
     );
-    let router = crate::rest_router(layer1_public::rest::profile_authoring_router(service)).layer(
-        axum::middleware::from_fn_with_state(auth.clone(), crate::auth::attach_subject),
-    );
+    let router =
+        crate::rest_router(layer1_public::rest::profile_authoring_router(service, None)).layer(
+            axum::middleware::from_fn_with_state(auth.clone(), crate::auth::attach_subject),
+        );
     for suffix in ["services", "skills"] {
         let response = router
             .clone()
