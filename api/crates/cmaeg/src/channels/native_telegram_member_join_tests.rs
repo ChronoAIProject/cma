@@ -78,11 +78,22 @@ fn telegram_member_join_public_update_distinguishes_omitted_and_empty_lists() {
     source["member_join_chat_ids"] = json!([]);
     assert!(matches!(&project(source.clone())[0],
         cmaeg_core::channel::Source::Telegram { member_join_chat_ids, .. } if member_join_chat_ids.is_empty()));
-    source
-        .as_object_mut()
-        .unwrap()
-        .remove("member_join_chat_ids");
     source["message_events"] = false.into();
-    assert!(matches!(&project(source)[0],
-        cmaeg_core::channel::Source::Telegram { member_join_chat_ids, .. } if member_join_chat_ids.is_empty()));
+    for ids in [None, Some(json!(["-100"]))] {
+        let mut source = source.clone();
+        if let Some(ids) = ids {
+            source["member_join_chat_ids"] = ids;
+        } else {
+            source
+                .as_object_mut()
+                .unwrap()
+                .remove("member_join_chat_ids");
+        }
+        let mut next = saved.clone();
+        next.sources = project(source);
+        next.validate().unwrap();
+        write_gate::check(Some(&saved), &next, write_gate::WriteFlags::default()).unwrap();
+        assert!(matches!(&next.sources[0],
+            cmaeg_core::channel::Source::Telegram { member_join_chat_ids, .. } if member_join_chat_ids.is_empty()));
+    }
 }

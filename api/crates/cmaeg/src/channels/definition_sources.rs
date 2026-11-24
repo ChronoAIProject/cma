@@ -110,32 +110,37 @@ pub(super) fn build_sources(
                 bot_id,
                 bot_username,
                 admission,
-            } => Source::Telegram {
-                topic_lifecycle: *topic_lifecycle,
-                topic_creation: *topic_creation,
-                message_events: *message_events,
-                channel_posts: *channel_posts,
-                member_join_chat_ids: member_join_chat_ids.clone().unwrap_or_else(|| {
-                    if !message_events {
-                        return Vec::new();
-                    }
-                    current
-                        .and_then(|definition| {
-                            definition.sources.iter().find_map(|source| match source {
-                                Source::Telegram {
-                                    bot_id: saved_bot,
-                                    member_join_chat_ids,
-                                    ..
-                                } if saved_bot == bot_id => Some(member_join_chat_ids.clone()),
-                                _ => None,
-                            })
-                        })
-                        .unwrap_or_default()
-                }),
-                bot_id: bot_id.clone(),
-                bot_username: bot_username.clone(),
-                admission: admission.clone(),
-            },
+            } => {
+                let saved_member_joins = current.and_then(|definition| {
+                    definition.sources.iter().find_map(|source| match source {
+                        Source::Telegram {
+                            bot_id: saved_bot,
+                            message_events: true,
+                            member_join_chat_ids,
+                            ..
+                        } if saved_bot == bot_id => Some(member_join_chat_ids),
+                        _ => None,
+                    })
+                });
+                Source::Telegram {
+                    topic_lifecycle: *topic_lifecycle,
+                    topic_creation: *topic_creation,
+                    message_events: *message_events,
+                    channel_posts: *channel_posts,
+                    member_join_chat_ids: if !message_events && saved_member_joins.is_some() {
+                        Vec::new()
+                    } else {
+                        member_join_chat_ids
+                            .as_ref()
+                            .or(saved_member_joins)
+                            .cloned()
+                            .unwrap_or_default()
+                    },
+                    bot_id: bot_id.clone(),
+                    bot_username: bot_username.clone(),
+                    admission: admission.clone(),
+                }
+            }
             SourceRequest::Discord {
                 bot_id,
                 intents,
