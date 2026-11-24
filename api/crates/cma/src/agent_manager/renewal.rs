@@ -9,7 +9,7 @@ struct RenewalFailure {
     error: OwnershipError,
 }
 
-pub(super) fn spawn(manager: &Arc<AgentManager>) {
+pub(super) fn spawn(manager: &Arc<AgentManager>) -> tokio::task::JoinHandle<Result<(), ()>> {
     let weak = Arc::downgrade(manager);
     let coordinator = manager.coordinator.clone();
     // Start at activation, when membership is first registered.
@@ -22,8 +22,14 @@ pub(super) fn spawn(manager: &Arc<AgentManager>) {
             }
         })
         .await;
+        let failed = result.is_err();
         finish(&coordinator, result).await;
-    });
+        if failed {
+            Err(())
+        } else {
+            Ok(())
+        }
+    })
 }
 
 async fn finish(coordinator: &OwnershipCoordinator, result: Result<(), RenewalFailure>) {
@@ -63,6 +69,37 @@ where
     let (latest, mut changes) = tokio::sync::watch::channel(Vec::new());
     let renewing = async {
         let period = Duration::from_millis(HEARTBEAT_INTERVAL_MS);
+        if coordinator.contains_failures() {
+            let mut next_at = Instant::now() + period;
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = coordinator.maintenance_stopped() => {
+                        if coordinator.is_draining() { return Ok(()); }
+                        return Err(RenewalFailure { phase: "ownership_maintenance", error: OwnershipError::Stale });
+                    }
+                    _ = tokio::time::sleep_until(next_at) => (),
+                }
+                use layer2_core::agent_ownership::MaintenanceStep;
+                match coordinator
+                    .maintain_step()
+                    .await
+                    .map_err(|error| RenewalFailure {
+                        phase: "ownership_maintenance",
+                        error,
+                    })? {
+                    MaintenanceStep::Confirmed {
+                        hints,
+                        next_at: next,
+                    } => {
+                        latest.send_replace(hints);
+                        next_at = next;
+                    }
+                    MaintenanceStep::RetryAt(next) => next_at = next,
+                    MaintenanceStep::Draining => return Ok(()),
+                }
+            }
+        }
         let mut ticks = tokio::time::interval_at(Instant::now() + period, period);
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -81,7 +118,17 @@ where
         }
     };
     let housekeeping = async {
-        while changes.changed().await.is_ok() {
+        let period = Duration::from_millis(HEARTBEAT_INTERVAL_MS);
+        let mut ticks = tokio::time::interval_at(Instant::now() + period, period);
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                changed = changes.changed() => if changed.is_err() { break; },
+                _ = ticks.tick(), if coordinator.contains_failures() => (),
+            }
+            if coordinator.is_draining() {
+                break;
+            }
             let candidates = changes.borrow_and_update().clone();
             work(candidates).await.map_err(|error| RenewalFailure {
                 phase: "receiver_housekeeping",

@@ -241,6 +241,7 @@ function MetricsDashboardContent({
             api={api}
             reportId={report.report_id}
             initialPage={initialPage}
+            reportCoverage={report.summary?.allocated_period}
             sort={effectiveSelection.sort}
             order={effectiveSelection.order}
             admin={admin}

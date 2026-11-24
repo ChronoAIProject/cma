@@ -5,6 +5,12 @@ use super::*;
 
 #[async_trait::async_trait]
 impl AgentConversationStore for MongoSandboxStore {
+    async fn commit_turn_timeout(
+        &self,
+        settlement: &layer2_core::sandbox::turn_timeout::TurnTimeoutSettlement,
+    ) -> Result<(), SandboxStoreError> {
+        super::super::turn_timeouts::settle(self, settlement).await
+    }
     async fn commit_agent_capacity_update(
         &self,
         settlement: layer2_core::sandbox::store::AgentConversationCapacitySettlement,

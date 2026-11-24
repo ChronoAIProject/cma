@@ -1,8 +1,11 @@
 //! Authenticated peer relay. Public credentials and durable command IDs survive a hop.
 mod authentication;
 mod control;
-pub(crate) use control::prestop;
+pub(crate) use control::{prestop, DRAIN};
 mod environment_diagnostics;
+mod file_read;
+mod file_write;
+mod forward;
 mod http;
 mod ingress;
 mod live;
@@ -17,7 +20,7 @@ pub(crate) use queued_cancellation::{
     Charged as ChargedQueuedCancellation, DeferQueuedCancellationActivity,
 };
 mod reopen;
-pub(crate) use reopen::ReopenCall;
+pub(crate) use reopen::{output_refused, ReopenCall, OUTPUT_REFUSED};
 
 use environment_diagnostics::Refusal;
 use layer2_core::agent_ownership::{
@@ -113,6 +116,10 @@ impl Relay {
 
     pub(crate) fn enable_settings_owner_routing(&self) {
         self.settings_owner_routing.get_or_init(|| ());
+    }
+
+    pub(crate) fn enable_file_write_handoff(&self) {
+        self.authentication.enable_file_write_handoff();
     }
 
     async fn destination(&self, id: &AgentId) -> Result<Destination, Refusal> {

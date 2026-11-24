@@ -3,7 +3,7 @@ use super::{
     discord::outcome,
     gate::expired,
     intents::{DeliveryOutcome, IntentReceipt},
-    render::{RelayText, Renderer},
+    render::{LiteralText, Renderer},
     send::{refused, unsupported, SendContext, Sender},
 };
 use crate::{
@@ -72,7 +72,7 @@ impl Sender {
             buttons: "inline_keyboard".into(),
             ..Capabilities::native_discord()
         };
-        let (parts, mut rendering) = RelayText.render(&content, &capabilities);
+        let (parts, mut rendering) = LiteralText.render(&content, &capabilities);
         if form {
             crate::interactions::discord_form::report(message, &mut rendering);
         }

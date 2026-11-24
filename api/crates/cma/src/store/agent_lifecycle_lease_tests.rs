@@ -155,7 +155,7 @@ async fn expired_lifecycle_token_refuses_every_worker_write_before_and_after_tak
         assert!(f.first.fail(&lease, "stale").await.is_err());
         assert!(f
             .first
-            .wait_for_connection(&lease, vec![], serde_json::json!({}))
+            .wait_for_connection(&lease, vec![], serde_json::json!({}), None)
             .await
             .is_err());
         assert_eq!(

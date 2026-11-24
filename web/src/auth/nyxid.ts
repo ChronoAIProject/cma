@@ -54,6 +54,7 @@ interface IdentityResponse {
   service_authorization?: unknown;
   privacy_export?: unknown;
   legal_terms?: unknown;
+  binding_diagnostics?: unknown;
 }
 
 /** Published terms, or none when the field is absent or not exactly usable. */
@@ -294,6 +295,7 @@ export function createNyxidAuthProvider(): AuthProvider {
           visitor: body.visitor === true,
           ...(body.service_authorization === true ? { serviceAuthorization: true } : {}),
           ...(body.privacy_export === true ? { privacyExport: true } : {}),
+          ...(body.binding_diagnostics === true ? { bindingDiagnostics: true } : {}),
           ...withLegalTerms(legalTermsFrom(body.legal_terms)),
         },
       };

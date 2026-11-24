@@ -11,10 +11,12 @@ import { sandboxCount } from './sandboxCount';
 import { MetricsNotice } from './MetricsNotice';
 import './UsageInventory.css';
 import type { MetricsFailure } from './failure';
+import type { AllocationCoverageEvidence } from './allocationCoverage';
 
 export function MetricTable({
   api,
   reportId,
+  reportCoverage,
   sort,
   order,
   admin,
@@ -28,6 +30,7 @@ export function MetricTable({
 }: {
   readonly api: MetricsClient;
   readonly reportId: string;
+  readonly reportCoverage?: AllocationCoverageEvidence;
   readonly sort: UsageMetricSort;
   readonly order: 'asc' | 'desc';
   readonly admin: boolean;
@@ -103,6 +106,7 @@ export function MetricTable({
         admin={admin}
         api={api}
         reportId={reportId}
+        reportCoverage={reportCoverage}
         active={active}
         onFailure={onFailure}
       />

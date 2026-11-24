@@ -9,11 +9,17 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+// Suites that share a config split its entries between them, so each owned
+// command keeps a meaningful bound (#3303). Exactly one of them is the
+// remainder: it also runs every entry the config registers later that no
+// sibling claims, so the suites together always run the whole config.
 export const suites = {
   design: {
     config: "design-correction",
-    files: ["design-correction", "task-home-states", "theme-palette"],
+    files: ["design-correction", "task-home-states"],
+    remainder: true,
   },
+  palette: { config: "design-correction", files: ["theme-palette"] },
   shell: { config: "agent-settings", files: ["shell-layout"] },
   auth: { config: "auth-return-target", files: ["auth-return-target"] },
 };
@@ -22,7 +28,7 @@ const json = (path, value) => writeFile(path, JSON.stringify(value, null, 2) + "
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 
 export function argumentsFor(args, env) {
-  assert.equal(args.length, 1, "Supply exactly one suite: design, shell or auth");
+  assert.equal(args.length, 1, `Supply exactly one suite: ${Object.keys(suites).join(", ")}`);
   assert.ok(Object.hasOwn(suites, args[0]), "Unknown browser suite");
   for (const key of Object.keys(env)) {
     if (!env[key]) continue;
@@ -37,7 +43,7 @@ export function argumentsFor(args, env) {
 }
 
 export function configure(original, options) {
-  const { suite, web, origin, output, setup, server, p7 } = options;
+  const { suite, web, origin, output, setup, server } = options;
   assert.equal(original.workers, 1, "Browser suites must use one worker");
   assert.equal(original.retries, 0, "Browser suites cannot retry");
   assert.equal(original.forbidOnly, true, "Browser suites must forbid only");
@@ -55,8 +61,20 @@ export function configure(original, options) {
       assert.equal(project.use?.[key], undefined, `Projects cannot override owned evidence: ${key}`);
   }
   const matches = [original.testMatch].flat();
-  for (const file of suites[suite].files)
-    assert.ok(matches.includes(`${file}.check.ts`), `Missing browser entry: ${file}`);
+  const siblings = Object.entries(suites).filter(([, other]) => other.config === suites[suite].config);
+  assert.equal(
+    siblings.filter(([, other]) => other.remainder).length,
+    siblings.length > 1 ? 1 : 0,
+    "A shared browser config needs exactly one remainder suite",
+  );
+  // Every sibling's entries must still exist: removing one from the config
+  // would otherwise drop it from every suite without failing.
+  for (const [, other] of siblings)
+    for (const file of other.files)
+      assert.ok(matches.includes(`${file}.check.ts`), `Missing browser entry: ${file}`);
+  const claimed = siblings
+    .filter(([name]) => name !== suite)
+    .flatMap(([, other]) => other.files.map((file) => `${file}.check.ts`));
   const result = {
     ...original,
     testDir: join(web, "e2e"),
@@ -70,15 +88,13 @@ export function configure(original, options) {
     },
   };
   if (suite === "shell") result.testMatch = "shell-layout.check.ts";
-  if (suite === "design") {
+  if (siblings.length > 1)
+    result.testMatch = suites[suite].remainder
+      ? matches.filter((entry) => !claimed.includes(entry))
+      : suites[suite].files.map((file) => `${file}.check.ts`);
+  if (suites[suite].config === suites.design.config) {
     assert.equal(original.webServer?.reuseExistingServer, false, "Design must own its server");
     assert.match(original.webServer.command, /^npm run dev -- --host 127\.0\.0\.1 --port \d+ --strictPort$/);
-    if (p7)
-      assert.equal(
-        original.webServer.env?.VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED,
-        "true",
-        "P7 design coverage must explicitly enable the effect",
-      );
     result.webServer = {
       ...original.webServer,
       command: [process.execPath, server].map((arg) => "'" + arg.replaceAll("'", "'\\''") + "'").join(" "),
@@ -147,12 +163,11 @@ export function verifyResults(discovery, execution) {
   return expected;
 }
 
-export async function verifyDevIdentity(origin, revision, p7) {
+export async function verifyDevIdentity(origin, revision) {
   const modules = [];
   for (const path of [
     "/src/shell/build.ts",
     "/@vite/env",
-    ...(p7 ? ["/src/decoration/topographicFeature.ts"] : []),
   ]) {
     const response = await fetch(origin + path, {
       signal: AbortSignal.timeout(4000),
@@ -166,12 +181,6 @@ export async function verifyDevIdentity(origin, revision, p7) {
     modules[1].text.match(/"__CHRONO_BUILD_SHA__"\s*:\s*"([^"]+)"/)?.[1] === revision,
     "Development server revision does not match checkout",
   );
-  if (p7)
-    assert.match(
-      modules[2].text,
-      /"VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED"\s*:\s*"true"/,
-      "Development server has not enabled P7",
-    );
   return { revision, modules };
 }
 
@@ -307,19 +316,11 @@ export async function runSuite(suite, { repository = root, env = process.env, si
       CHRONO_BUILD_ARTIFACT: "local",
       CMA_SOURCE_SHA: source.revision,
     };
-    delete childEnv.VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED;
     const port = await freePort();
     const origin = `http://127.0.0.1:${port}`;
     receipt.port = port;
     const helper = pathToFileURL(fileURLToPath(import.meta.url)).href;
     const original = pathToFileURL(join(web, "e2e", `${suites[suite].config}.config.ts`)).href;
-    const p7 = await readFile(join(web, "src/decoration/topographicFeature.ts")).then(
-      () => true,
-      (error) => {
-        if (error.code === "ENOENT") return false;
-        throw error;
-      },
-    );
     const server = join(output, "server.mjs");
     await writeFile(
       server,
@@ -328,15 +329,16 @@ export async function runSuite(suite, { repository = root, env = process.env, si
     const setup = join(output, "identity.mjs");
     await writeFile(
       setup,
-      `import {verifyDevIdentity} from ${JSON.stringify(helper)};\nimport {writeFile} from 'node:fs/promises';\nexport default async()=>writeFile(${JSON.stringify(join(output, "identity.json"))},JSON.stringify(await verifyDevIdentity(${JSON.stringify(origin)},${JSON.stringify(source.revision)},${p7}),null,2));\n`,
+      `import {verifyDevIdentity} from ${JSON.stringify(helper)};\nimport {writeFile} from 'node:fs/promises';\nexport default async()=>writeFile(${JSON.stringify(join(output, "identity.json"))},JSON.stringify(await verifyDevIdentity(${JSON.stringify(origin)},${JSON.stringify(source.revision)}),null,2));\n`,
     );
     const config = join(output, "config.mts");
     await writeFile(
       config,
-      `import original from ${JSON.stringify(original)};\nimport {configure} from ${JSON.stringify(helper)};\nexport default configure(original,${JSON.stringify({ suite, web, origin, output, setup, server, p7 })});\n`,
+      `import original from ${JSON.stringify(original)};\nimport {configure} from ${JSON.stringify(helper)};\nexport default configure(original,${JSON.stringify({ suite, web, origin, output, setup, server })});\n`,
     );
     receipt.configSha256 = hash(await readFile(config));
-    if (suite !== "design") preview = await startProductionPreview(web, port, source.revision);
+    if (suites[suite].config !== suites.design.config)
+      preview = await startProductionPreview(web, port, source.revision);
     signal?.throwIfAborted();
     for (const phase of ["discovery", "execution"]) {
       const args = [

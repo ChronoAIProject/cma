@@ -1,6 +1,7 @@
 //! Exact period admission over its stored accounting layout. Owner and platform
 //! liability changes share the caller's transaction (contract section 4).
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::admission::{AdmissionCause, AdmissionCeilings};
 use layer2_core::budget::{
     BudgetError, BudgetPolicy, Closure, OperatorAdmissionState, PlatformBudgetPolicy,
@@ -392,7 +393,7 @@ async fn refuse(
     refusal: Refusal,
     session: &mut ClientSession,
 ) -> ApplyError {
-    if let Err(error) = session.abort_transaction().await {
+    if let Err(error) = session.abort_guarded().await {
         tracing::warn!(event = "platform_spend_refusal_abort", error = %error,
             "could not confirm admission abort; closure persistence deferred");
         return domain(refusal.reason);

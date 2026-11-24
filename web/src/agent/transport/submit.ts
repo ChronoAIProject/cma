@@ -9,6 +9,7 @@ interface SubmissionOptions {
   readonly authorize?: () => Promise<void>;
   readonly recovery?: RequestRecovery;
   readonly onAccepted: (receipt: V2ResponseReceipt) => void;
+  readonly onRetained?: (key: string) => void;
   /** Correlation only; identity and journal acceptance still follow separately. */
   readonly onReceiptObserved?: (receipt: V2ResponseReceipt) => void;
 }
@@ -23,6 +24,7 @@ export function submitAgentInput(
   options.signal?.throwIfAborted();
   const recovering = journal.read()?.state === 'pending';
   const retained = journal.retain(input, options.answerContext);
+  options.onRetained?.(retained.key);
   if (recovering) {
     return recoverAgentInput(sdk, journal, options).then((confirmed) => {
       if (!confirmed) throw unconfirmedInput();

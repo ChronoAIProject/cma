@@ -12,6 +12,13 @@ pub struct AgentLogFinalAnswer {
 
 #[async_trait]
 pub trait AgentLogStore: Send + Sync {
+    async fn agent_log_reply_preview(
+        &self,
+        _agent: &Agent,
+    ) -> Result<crate::sandbox::AgentReplyPreview, SandboxStoreError> {
+        Ok(crate::sandbox::AgentReplyPreview::Unavailable)
+    }
+
     /// Publish one exact durable operation. Implementations without keyed
     /// receipts refuse; silently delegating to unkeyed append would discard
     /// retry identity and could repeat an uncertain publication.

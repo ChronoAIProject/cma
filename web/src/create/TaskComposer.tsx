@@ -12,6 +12,7 @@ export function TaskComposer({
   invalid = false,
   onChange,
   onClearTemplate,
+  capacity,
   children,
 }: {
   readonly text: string;
@@ -23,6 +24,7 @@ export function TaskComposer({
   readonly invalid?: boolean;
   readonly onChange: (text: string) => void;
   readonly onClearTemplate?: () => void;
+  readonly capacity?: ReactNode;
   readonly children: ReactNode;
 }) {
   const modifier = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
@@ -51,7 +53,7 @@ export function TaskComposer({
             className="task-home__input"
             aria-label="Your task"
             aria-keyshortcuts={shortcut}
-            placeholder="What would you like your Agent to do?"
+            placeholder="Describe the job. It gets its own cloud computer to do it."
             ref={input}
             value={text}
             aria-invalid={validation !== undefined}
@@ -60,7 +62,10 @@ export function TaskComposer({
           />
         )}
         <div className="task-home__footer">
-          <div className="task-home__toolbar">{children}</div>
+          <div className="task-home__toolbar">
+            {children}
+            <span className="task-home__model">Default model</span>
+          </div>
           {template && onClearTemplate ? (
             <Button variant="ghost" placement="task-home__write" onClick={onClearTemplate}>
               Write a task without a template
@@ -69,6 +74,7 @@ export function TaskComposer({
           {!template || canSubmit ? (
             <span className="task-home__shortcut">{modifier} ↵ to run</span>
           ) : null}
+          {capacity}
           <Button
             type="submit"
             variant="primary"

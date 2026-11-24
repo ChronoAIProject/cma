@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::agent_ownership::{candidates, STORE_DEADLINE_MS};
 use mongodb::options::ReturnDocument;
 use std::time::Duration;
@@ -90,7 +91,7 @@ impl MongoAgentOwnership {
         loop {
             let mut session = self.client.start_session().await.map_err(unavailable)?;
             if let Err(error) = start_transaction(&mut session).await {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if known_aborted(&error) {
                     wait_after_abort(error, &mut delay, last_conflict).await;
                     continue;
@@ -108,11 +109,11 @@ impl MongoAgentOwnership {
             let result = match result {
                 Ok(result) => result,
                 Err(AttemptError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(AttemptError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     if known_aborted(&error) {
                         wait_after_abort(error, &mut delay, last_conflict).await;
                         continue;

@@ -7,6 +7,7 @@ use super::{
         CommitOutcome, MongoSandboxStore, TRANSACTION_ATTEMPTS,
     },
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::{
     sandbox::{
         channel_usage::*,
@@ -85,7 +86,7 @@ impl AgentChannelUsageStore for MongoSandboxStore {
                 Err(_) => return Err(unavailable()),
             };
             let result = read_snapshot(self, id, &mut session).await;
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             match result {
                 Ok(snapshot) => return Ok(snapshot),
                 Err(UsageError::Driver(error)) if is_transient(&error) => continue,
@@ -111,16 +112,16 @@ impl AgentChannelUsageStore for MongoSandboxStore {
             let (event, replay) = match apply(self, &request, &mut session).await {
                 Ok(result) => result,
                 Err(UsageError::Driver(error)) if is_confirmed_body_retry(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     continue;
                 }
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(map_error(error));
                 }
             };
             if replay {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(event);
             }
             match commit_transaction(&mut session).await {
@@ -151,7 +152,7 @@ impl AgentChannelUsageStore for MongoSandboxStore {
                 Err(_) => return Err(unavailable()),
             };
             let result = records::read_history(self, id, page, &mut session).await;
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             match result {
                 Ok(result) => return Ok(result),
                 Err(UsageError::Driver(error)) if is_transient(&error) => continue,

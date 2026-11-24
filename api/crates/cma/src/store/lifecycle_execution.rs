@@ -1,7 +1,8 @@
 use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::{
-    Page, PageRequest, SandboxCheckpointMutation, SandboxLifecycleExecutionStore,
-    SandboxLifecycleMutation, SandboxStoreError, MAX_PAGE_SIZE,
+    AgentConversationStore, AgentMessageSnapshot, Page, PageRequest, ReopenRefusalFence,
+    SandboxCheckpointMutation, SandboxLifecycleExecutionStore, SandboxLifecycleMutation,
+    SandboxStoreError, MAX_PAGE_SIZE,
 };
 use layer2_core::sandbox::Agent;
 use mongodb::bson::doc;
@@ -86,7 +87,22 @@ impl SandboxLifecycleExecutionStore for MongoSandboxStore {
         &self,
         mutation: SandboxLifecycleMutation,
     ) -> Result<(), SandboxStoreError> {
-        super::lifecycle_transaction::commit_lifecycle(self, mutation).await
+        super::lifecycle_transaction::commit_lifecycle(self, mutation, None).await
+    }
+
+    async fn reopen_refusal_snapshot(
+        &self,
+        id: &layer2_core::AgentId,
+    ) -> Result<Option<AgentMessageSnapshot>, SandboxStoreError> {
+        self.agent_message_snapshot(id).await
+    }
+
+    async fn park_sandbox_reopen_refusal(
+        &self,
+        mutation: SandboxLifecycleMutation,
+        fence: ReopenRefusalFence,
+    ) -> Result<(), SandboxStoreError> {
+        super::lifecycle_transaction::commit_lifecycle(self, mutation, Some(fence)).await
     }
 }
 

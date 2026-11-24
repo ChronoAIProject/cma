@@ -179,15 +179,18 @@ fn typed_projections_preserve_wire_fields_and_owner_only_visibility() {
     .unwrap();
     assert_eq!(public["visibility"], "public");
     assert_eq!(public["shares"], json!([]));
+    let registry =
+        crate::model::ImageRegistry::parse("us-docker.pkg.dev/example-project/images".into())
+            .unwrap();
     let source = build();
     let expected = json!({"id":source.id,"image_id":source.image_id,"source":source.source,"phase":source.phase,
-        "error":source.error,"revision":source.revision,"reference":source.reference(),"digest":source.digest,
+        "error":source.error,"revision":source.revision,"reference":registry.reference(&source),"digest":source.digest,
         "created_at_ms":source.created_at_ms,"updated_at_ms":source.updated_at_ms});
     assert_eq!(
-        serde_json::to_value(BuildView::from(build())).unwrap(),
+        serde_json::to_value(BuildView::new(build(), &registry)).unwrap(),
         expected
     );
-    let version = serde_json::to_value(VersionView::from(build())).unwrap();
+    let version = serde_json::to_value(VersionView::new(build(), &registry)).unwrap();
     assert_eq!(version.as_object().unwrap().len(), 6);
     assert!(version.get("source").is_none());
     assert!(version.get("error").is_none());

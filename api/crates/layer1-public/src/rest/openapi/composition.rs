@@ -16,6 +16,10 @@ pub fn document() -> utoipa::openapi::OpenApi {
     document
         .extensions
         .get_or_insert_with(Default::default)
+        .insert("x-cma-task-templates-v2".into(), serde_json::json!(true));
+    document
+        .extensions
+        .get_or_insert_with(Default::default)
         .insert("x-cma-agent-title-mode".into(), serde_json::json!(true));
     document.merge(super::super::agent_capacity_recovery::document());
     document.merge(super::super::agent_retained_output::document());
@@ -36,6 +40,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
     document.merge(crate::rest::sandbox_usage::document());
     document.merge(crate::rest::sandbox_metrics::document());
     document.merge(crate::rest::sandbox_retained_recovery::document());
+    document.merge(crate::rest::runtime_canary::document());
     document.merge(crate::rest::sandbox_commands::document());
     document.merge(crate::rest::bindings::preparation::document());
     document.merge(crate::rest::bindings::inspection::document());

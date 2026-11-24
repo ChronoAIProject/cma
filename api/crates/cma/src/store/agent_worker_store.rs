@@ -4,17 +4,35 @@ use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryOutcome,
-    AgentConnectionRecoveryRequest, AgentStore, AgentWorkMutation, AgentWorkerStore, Page,
+    AgentConnectionRecoveryRequest, AgentStore, AgentWorkClaimDetail as ClaimDetail,
+    AgentWorkClaimError, AgentWorkDiscovery, AgentWorkMutation, AgentWorkerStore, Page,
     PageRequest, SandboxStoreError, StartupWorkFilter, MAX_PAGE_SIZE,
 };
 use mongodb::bson::{doc, Bson};
 use std::time::Duration;
 
-use super::child_writer_claims::{persist, ChildWriterClaim};
+use super::child_writer_claims::{persist_observed, ChildWriterClaim};
 use super::sandbox_mongo::{MongoSandboxStore, TRANSACTION_ATTEMPTS};
 
 #[async_trait::async_trait]
 impl AgentWorkerStore for MongoSandboxStore {
+    async fn has_owner_stop_receipt(
+        &self,
+        agent: &layer2_core::sandbox::Agent,
+    ) -> Result<bool, SandboxStoreError> {
+        let revision = super::sandbox_mongo::signed(agent.revision, "owner Stop revision")
+            .map_err(SandboxStoreError::Corrupt)?;
+        let row = self
+            .agents
+            .find_one(doc! {"_id": agent.id.as_str(), "revision": revision})
+            .projection(doc! {(super::agent_control_receipt::STOP_RECEIPT_FIELD): 1})
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        Ok(row
+            .as_ref()
+            .is_some_and(|row| super::agent_control_receipt::has_owner_stop_receipt(row, agent)))
+    }
+
     async fn agent_create_admission(
         &self,
         agent: &layer2_core::sandbox::Agent,
@@ -264,13 +282,13 @@ impl AgentWorkerStore for MongoSandboxStore {
         &self,
         now: &str,
         limit: u16,
-        holds: &std::collections::BTreeSet<AgentId>,
-        startup: StartupWorkFilter<'_>,
+        filter: AgentWorkDiscovery<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
-        let unrestricted = matches!(startup, StartupWorkFilter::All);
+        let unrestricted = matches!(filter.startup, StartupWorkFilter::All)
+            && filter.acquisition_cooldowns.is_none();
         if unrestricted
             && self
                 .empty_discovery
@@ -287,7 +305,7 @@ impl AgentWorkerStore for MongoSandboxStore {
             let ids = if self.ownership_retry_hints_active() {
                 tokio::time::timeout(
                     std::time::Duration::from_secs(2),
-                    self.due_owned_agent_work(now, limit, holds, startup),
+                    self.due_owned_agent_work(now, limit, filter),
                 )
                 .await
                 .map_err(|_| {
@@ -296,8 +314,7 @@ impl AgentWorkerStore for MongoSandboxStore {
                     )
                 })??
             } else {
-                self.due_owned_agent_work(now, limit, holds, startup)
-                    .await?
+                self.due_owned_agent_work(now, limit, filter).await?
             };
             if unrestricted {
                 self.empty_discovery
@@ -309,7 +326,7 @@ impl AgentWorkerStore for MongoSandboxStore {
         let mut cursor = self
             .agents
             .aggregate(super::agent_failure_pacing::discovery::filtered_pipeline(
-                self, now, limit, holds, startup,
+                self, now, limit, filter,
             ))
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
@@ -341,24 +358,47 @@ impl AgentWorkerStore for MongoSandboxStore {
         now: String,
         lease_expires_at: String,
     ) -> Result<Option<layer2_core::sandbox::Agent>, SandboxStoreError> {
+        self.claim_agent_work_observed(id, holder, now, lease_expires_at)
+            .await
+            .map_err(|error| error.store_error)
+    }
+
+    async fn claim_agent_work_observed(
+        &self,
+        id: &AgentId,
+        holder: &str,
+        now: String,
+        lease_expires_at: String,
+    ) -> Result<Option<layer2_core::sandbox::Agent>, AgentWorkClaimError> {
         for _ in 0..TRANSACTION_ATTEMPTS {
             let Some(row) = self
                 .agents
                 .find_one(doc! {"_id": id.as_str()})
                 .await
-                .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+                .map_err(|error| {
+                    AgentWorkClaimError::with_detail(
+                        SandboxStoreError::Unavailable(error.to_string()),
+                        ClaimDetail::Read,
+                    )
+                })?
             else {
                 return Ok(None);
             };
             let mut agent = super::agents::read_agent(&row)?;
             if super::agent_worker_transaction::pending_adoption::witness::blocks_claim(
                 self, &row, &agent,
-            )? {
+            )
+            .map_err(|error| {
+                AgentWorkClaimError::with_detail(error, ClaimDetail::PublicationCustody)
+            })? {
                 let retired =
                     super::agent_worker_transaction::pending_adoption::retirement::retire_expired(
                         self, &row, &agent, &now,
                     )
-                    .await?;
+                    .await
+                    .map_err(|error| {
+                        AgentWorkClaimError::with_detail(error, ClaimDetail::PublicationCustody)
+                    })?;
                 if retired && self.segment_adoption_enabled {
                     continue;
                 }
@@ -370,7 +410,9 @@ impl AgentWorkerStore for MongoSandboxStore {
                     return Ok(None);
                 }
             }
-            self.recover_agent_work_owner(&mut agent).await?;
+            self.recover_agent_work_owner(&mut agent)
+                .await
+                .map_err(|error| AgentWorkClaimError::with_detail(error, ClaimDetail::Read))?;
             if agent
                 .work
                 .lease
@@ -379,7 +421,10 @@ impl AgentWorkerStore for MongoSandboxStore {
             {
                 return Ok(None);
             }
-            match super::agent_failure_pacing::decision(self, &row, &agent, &now).await? {
+            match super::agent_failure_pacing::decision(self, &row, &agent, &now)
+                .await
+                .map_err(|error| AgentWorkClaimError::with_detail(error, ClaimDetail::Read))?
+            {
                 super::agent_failure_pacing::Decision::Hold => return Ok(None),
                 super::agent_failure_pacing::Decision::Wake => {
                     agent.work.ready_at = now.clone();
@@ -395,7 +440,7 @@ impl AgentWorkerStore for MongoSandboxStore {
                 .claim(holder.to_string(), &now, lease_expires_at.clone())
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
             agent.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
-            match persist(
+            match persist_observed(
                 self,
                 expected,
                 ChildWriterClaim::Agent(Box::new(agent.clone())),
@@ -404,11 +449,13 @@ impl AgentWorkerStore for MongoSandboxStore {
             {
                 Ok(true) => return Ok(Some(agent)),
                 Ok(false) => return Ok(None),
-                Err(SandboxStoreError::Conflict) => tokio::task::yield_now().await,
+                Err(error) if matches!(error.store_error, SandboxStoreError::Conflict) => {
+                    tokio::task::yield_now().await
+                }
                 Err(error) => return Err(error),
             }
         }
-        Err(SandboxStoreError::Conflict)
+        Err(SandboxStoreError::Conflict.into())
     }
 
     async fn commit_agent_skill_result(

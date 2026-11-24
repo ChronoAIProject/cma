@@ -65,8 +65,8 @@ impl AnswerDeliverableService {
     /// An Agent works inside its own worktree and is not told that worktree's
     /// home-relative prefix, so it naturally names a file it produced relative
     /// to its working directory, as `./name`, or by its absolute path. Accept
-    /// those forms by resolving them to the exact home-relative path. The
-    /// documented home-relative form is tried first and wins when both exist.
+    /// those forms by resolving them to the file API's /home-relative path.
+    /// An existing path relative to /home wins when both candidates exist.
     /// Every candidate stays within the Agent's own home and authority, and the
     /// verified reference records the resolved path.
     async fn describe_agent_file(
@@ -76,8 +76,16 @@ impl AnswerDeliverableService {
         worktree: &crate::sandbox::Worktree,
         path: &str,
     ) -> Result<DeliverableDescription, DeliverableError> {
+        use crate::sandbox::workspace::SANDBOX_HOME;
         let live = |path: String| DeliverableResource::LiveFile { path };
-        if let Some(home_relative) = path.strip_prefix(SANDBOX_HOME) {
+        // Reject references to the current directory or Sandbox home before resolving a file.
+        if matches!(path, "" | "." | "./")
+            || path == SANDBOX_HOME
+            || path == SANDBOX_HOME.trim_end_matches('/')
+        {
+            return Err(DeliverableError::File(AgentFileError::Invalid));
+        }
+        if let Some(home_relative) = file_path_under_sandbox_home(path) {
             return self
                 .describe(access, agent, live(home_relative.to_owned()))
                 .await;
@@ -86,7 +94,7 @@ impl AnswerDeliverableService {
         let first = self
             .describe(access, agent, live(relative.to_owned()))
             .await;
-        let Some(prefix) = worktree.path.strip_prefix(SANDBOX_HOME) else {
+        let Some(prefix) = file_path_under_sandbox_home(&worktree.path) else {
             return first;
         };
         match first {
@@ -101,8 +109,11 @@ impl AnswerDeliverableService {
     }
 }
 
-/// The Sandbox home every Agent file path is relative to.
-const SANDBOX_HOME: &str = "/home/cma/";
+fn file_path_under_sandbox_home(path: &str) -> Option<&str> {
+    path.strip_prefix(crate::sandbox::workspace::SANDBOX_HOME)?;
+    // The file API reads from /home, which includes the Agent's cma directory.
+    path.strip_prefix("/home/")
+}
 
 fn authority_error(error: AgentAccessError) -> DeliverableError {
     if matches!(error, AgentAccessError::Unavailable) {

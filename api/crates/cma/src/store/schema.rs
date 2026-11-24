@@ -30,6 +30,7 @@ pub(super) async fn verify_existing_collections(
     }
     if collections.contains(&"agents") {
         super::agent_log_segments::schema::verify(database).await?;
+        super::turn_timeouts::floor::verify(database).await?;
     }
     Ok(())
 }
@@ -126,6 +127,13 @@ pub(super) fn require_current(version: i64) -> Result<(), StoreError> {
 fn unknown_version_filter(collection: &str) -> Document {
     let versions = if matches!(collection, "agents" | "agent_reuse_bindings" | "bots") {
         vec![1_i64, 2]
+    } else if collection == "sandbox_credentials" {
+        vec![
+            1_i64,
+            super::work_schema::RENEWED_VERSION,
+            super::work_schema::PREPARED_VERSION,
+            super::turn_timeouts::floor::VERSION,
+        ]
     } else if matches!(
         collection,
         "sandboxes" | "workspaces" | "sandbox_credentials"

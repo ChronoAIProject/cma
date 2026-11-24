@@ -72,6 +72,14 @@ impl SandboxStore for MongoSandboxStore {
         super::super::retained_reopen::replay(self, id).await
     }
 
+    async fn retained_reopen_history(
+        &self,
+        id: &SandboxId,
+        key_sha256: Option<&str>,
+    ) -> Result<layer2_core::sandbox::RetainedReopenHistory, SandboxStoreError> {
+        super::super::retained_reopen::read_for_service(self, id, key_sha256).await
+    }
+
     async fn retained_suspended_reopen_snapshot(
         &self,
         id: &SandboxId,
@@ -173,6 +181,40 @@ impl SandboxStore for MongoSandboxStore {
             .await
     }
 
+    fn capture_released_runtime(&self) -> Option<layer3_adapter::ReleasedRuntime> {
+        let release = self.released_runtime();
+        (!release.agent.is_empty()).then_some(release)
+    }
+
+    async fn refresh_released_runtime(&self) {
+        if let Some(source) = &self.released {
+            source.refresh_after_stale().await;
+        }
+    }
+
+    async fn reserve_initial_runtime_image(
+        &self,
+        sandbox: &Sandbox,
+        generation: u64,
+        image: &str,
+    ) -> Result<String, SandboxStoreError> {
+        super::super::released_runtimes::reserve_initial_runtime_image(
+            self, sandbox, generation, image,
+        )
+        .await
+    }
+
+    async fn save_sandbox_against_release(
+        &self,
+        expected_revision: u64,
+        sandbox: Sandbox,
+        release: &layer3_adapter::ReleasedRuntime,
+        lane: layer2_core::released_runtime::ReleasedLane,
+    ) -> Result<(), SandboxStoreError> {
+        self.save_sandbox_inner(expected_revision, sandbox, None, Some((release, lane)))
+            .await
+    }
+
     async fn list_sandboxes(
         &self,
         owner: &SubjectId,
@@ -204,6 +246,20 @@ impl MongoSandboxStore {
         expected_revision: u64,
         sandbox: Sandbox,
         acquisition: Option<&Document>,
+    ) -> Result<(), SandboxStoreError> {
+        self.save_sandbox_inner(expected_revision, sandbox, acquisition, None)
+            .await
+    }
+
+    async fn save_sandbox_inner(
+        &self,
+        expected_revision: u64,
+        sandbox: Sandbox,
+        acquisition: Option<&Document>,
+        release: Option<(
+            &layer3_adapter::ReleasedRuntime,
+            layer2_core::released_runtime::ReleasedLane,
+        )>,
     ) -> Result<(), SandboxStoreError> {
         let next = expected_revision
             .checked_add(1)
@@ -240,8 +296,14 @@ impl MongoSandboxStore {
             .map_err(|_| SandboxStoreError::Conflict)?;
         // Even a metadata-only revision must advance the usage watermark;
         // otherwise the next lifecycle edge looks like an unmetered writer gap.
-        super::super::sandbox_usage::save::save(self, expected_revision, &sandbox, acquisition)
-            .await
+        super::super::sandbox_usage::save::save(
+            self,
+            expected_revision,
+            &sandbox,
+            acquisition,
+            release,
+        )
+        .await
     }
 
     async fn sandbox_page(

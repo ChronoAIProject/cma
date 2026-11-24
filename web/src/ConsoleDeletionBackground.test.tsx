@@ -6,6 +6,7 @@ import type { User } from './auth/types';
 import { Console } from './Console';
 import { agentClient } from './test/agent';
 import { sandboxFixture } from './test/hierarchy';
+import { persistDeletion, restoreDeletions } from './deletionRecovery';
 
 it('keeps accepted cleanup optional across navigation and allows deleting another Sandbox', async () => {
   const actor = userEvent.setup();
@@ -49,19 +50,19 @@ it('keeps accepted cleanup optional across navigation and allows deleting anothe
         name: 'I understand this Sandbox will be deleted.',
       }),
     );
-    await actor.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
+    await actor.click(screen.getByRole('button', { name: 'Request deletion' }));
   };
   await remove();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.queryByRole('treeitem', { name: /first/ })).not.toBeInTheDocument();
-  expect(screen.getByText('Deletion progress (1)')).toBeInTheDocument();
+  expect(screen.getByText('Cleaning up 1 sandboxes')).toBeInTheDocument();
   view.rerender(draw('second'));
   await act(async () => {});
   expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();
   await remove();
   expect(deleteSandbox.mock.calls.map(([id]) => id)).toEqual(['first', 'second']);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.getByText('Deletion progress (2)')).toBeInTheDocument();
+  expect(screen.getByText('Cleaning up 2 sandboxes')).toBeInTheDocument();
   view.unmount();
   render(draw('second'));
   await act(async () => {});
@@ -69,4 +70,36 @@ it('keeps accepted cleanup optional across navigation and allows deleting anothe
   await actor.click(screen.getByRole('button', { name: 'View deletion status' }));
   expect(screen.getByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
   expect(deleteSandbox).toHaveBeenCalledTimes(2);
+});
+
+it('reconciles accepted notices when an existing page read proves retirement after re-entry', async () => {
+  const request = {
+    action: { kind: 'delete_sandbox' as const, sandboxId: 'sbx_1' },
+    key: 'synthetic-background-request',
+    accepted: true,
+  };
+  persistDeletion('owner', request);
+  const readSandbox = vi.fn().mockResolvedValue(sandboxFixture('retiring'));
+  const client = agentClient({ readSandbox, listSandboxes: async () => ({ items: [] }) });
+  const draw = (home: boolean) => (
+    <CmaClientProvider client={client}>
+      <Console
+        user={{ id: 'owner', handle: 'Owner', visitor: false, capabilities: ['use_own_sandboxes'] }}
+        route={home ? { kind: 'home' } : { kind: 'sandbox', sandboxId: 'sbx_1' }}
+        onNavigate={vi.fn()}
+        onSignOut={vi.fn()}
+      />
+    </CmaClientProvider>
+  );
+  const view = render(draw(false));
+  await screen.findByText('Sandbox delete request accepted. Cleanup continues in the background.');
+  view.rerender(draw(true));
+  await act(async () => {});
+  expect(restoreDeletions('owner')).toEqual([request]);
+  readSandbox.mockResolvedValue(sandboxFixture('retired'));
+  view.rerender(draw(false));
+  await act(async () => {});
+  expect(screen.queryByText(/Cleanup continues in the background/)).not.toBeInTheDocument();
+  expect(screen.queryByText('Cleaning up 1 sandboxes')).not.toBeInTheDocument();
+  expect(restoreDeletions('owner')).toEqual([]);
 });

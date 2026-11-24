@@ -1,7 +1,56 @@
 {
   "version": 1,
-  "openapi_operations": 317,
+  "openapi_operations": 326,
   "operations": {
+    "PUT /api/v1/admin/runtime-canary-policy": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/runtime_canary.rs# Compare-and-set of admission policy by a platform operator.",
+      "required_problems": [
+        "not_authenticated",
+        "runtime_canary_closed",
+        "runtime_canary_conflict",
+        "runtime_canary_forbidden",
+        "runtime_canary_invalid",
+        "runtime_canary_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/runtime-canary-grants": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/runtime_canary.rs# Issue consent-bound authority for the specified owner and exact release.",
+      "required_problems": [
+        "not_authenticated",
+        "runtime_canary_closed",
+        "runtime_canary_conflict",
+        "runtime_canary_forbidden",
+        "runtime_canary_invalid",
+        "runtime_canary_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/runtime-canary-grants/revoke": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/runtime_canary.rs# Revoke an unconsumed grant by its current revision.",
+      "required_problems": [
+        "not_authenticated",
+        "runtime_canary_conflict",
+        "runtime_canary_forbidden",
+        "runtime_canary_invalid",
+        "runtime_canary_unavailable"
+      ]
+    },
+    "POST /api/v1/runtime-canary-redemptions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/runtime_canary.rs# Create one durable lifecycle operation, with exact owner-scoped replay by idempotency key.",
+      "required_problems": [
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "runtime_canary_closed",
+        "runtime_canary_conflict",
+        "runtime_canary_forbidden",
+        "runtime_canary_invalid",
+        "runtime_canary_unavailable"
+      ]
+    },
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/agent_environment.rs# Authorized read-only Agent environment observations preserve file scope and explicit feature availability without contacting the runtime.",
@@ -166,6 +215,16 @@
         "operator_service_unavailable"
       ]
     },
+    "GET /api/v1/admin/activity/actors": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/activity.rs# The actor search requires Activity and directory read capabilities and exposes bounded identity options.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
     "GET /api/v1/admin/profiles": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
@@ -175,6 +234,18 @@
         "not_authenticated",
         "operator_service_unavailable"
       ]
+    },
+    "GET /api/v1/admin/runtime-binding-holds": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/binding_holds.rs# Authenticated cross-owner readers receive bounded binding observations or a typed refusal.",
+      "required_problems": [
+        "binding_observation_unavailable",
+        "forbidden",
+        "not_authenticated"
+      ],
+      "non_problem_statuses": {
+        "404": "api/crates/layer1-public/src/rest/admin.rs# The admin router omits the diagnostics route when its service is disabled."
+      }
     },
     "GET /api/v1/admin/runtime-inventory": {
       "classification": "openapi",
@@ -1351,6 +1422,17 @@
         "profile_store_unavailable",
         "profile_version_conflict",
         "store_failed"
+      ]
+    },
+    "POST /api/v1/sandbox-creation-outcomes/lookup": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/creation_outcomes/routes.rs # Read original Sandbox creation provenance with owner authority.",
+      "required_problems": [
+        "invalid_creation_identity",
+        "not_authenticated",
+        "permission_denied",
+        "creation_identity_conflict",
+        "creation_outcome_unavailable"
       ]
     },
     "POST /api/v1/sandboxes": {
@@ -3915,6 +3997,7 @@
         "missing_idempotency_key",
         "retained_recovery_consent_required",
         "retained_recovery_authority_changed",
+        "retained_recovery_revision_passed",
         "retained_recovery_not_proved",
         "retained_recovery_unavailable",
         "hierarchy_service_unavailable"
@@ -4218,6 +4301,30 @@
         "invalid_json",
         "json_content_type_required",
         "store_failed"
+      ]
+    },
+    "GET /api/v1/agents/{id}/original-request": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_original_request.rs# async fn read(",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/reply-preview": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_reply_preview.rs# async fn read(",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable"
       ]
     },
     "POST /api/v1/usage/metrics/initial/reports": {

@@ -1,3 +1,4 @@
+import { selectTaskTemplate } from '../test/taskTemplateSelection';
 import type { SandboxCapacity } from '@cma/client';
 import type { CmaWebClient } from '../api/client';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -62,11 +63,11 @@ it('keeps ten parents counted with eight Agents and browses every owner inventor
       onCreated={() => {}}
     />,
   );
-  expect(await screen.findByText('10/10 Sandbox environments used')).toBeVisible();
+  expect(await screen.findByText('Environment limit reached')).toBeVisible();
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Keep this task' } });
   expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
   expect(screen.getByLabelText('Your task')).toBeEnabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Manage environments' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Environments' }));
   const dialog = await screen.findByRole('dialog', { name: 'Manage environments' });
   expect(await within(dialog).findByRole('link', { name: 'Empty paused' })).toHaveAttribute(
     'href',
@@ -194,12 +195,12 @@ it('revalidates an expired snapshot before fresh submission', async () => {
       onCreated={() => {}}
     />,
   );
-  await screen.findByText('9/10 Sandbox environments used');
+  await screen.findByText('1 slot left');
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Check first' } });
   const now = Date.now();
   vi.spyOn(Date, 'now').mockReturnValue(now + 11_000);
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  expect(await screen.findByText('10/10 Sandbox environments used')).toBeVisible();
+  expect(await screen.findByText('Environment limit reached')).toBeVisible();
   expect(read).toHaveBeenCalledTimes(2);
   expect(create).not.toHaveBeenCalled();
 });
@@ -214,6 +215,7 @@ it.each(['ctrlKey', 'metaKey', 'submit'])(
         client={client({
           readSandboxCapacity: async () => snapshot,
           readTaskTemplateSupport: async () => true,
+          readTaskTemplateV2Support: async () => true,
           readTaskTitleModeSupport: async () => true,
           createAgentLifecycle: create,
         })}
@@ -222,8 +224,8 @@ it.each(['ctrlKey', 'metaKey', 'submit'])(
         onCreated={() => {}}
       />,
     );
-    await screen.findByText('9/10 Sandbox environments used');
-    fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+    await screen.findByText('1 slot left');
+    selectTaskTemplate('Research a topic');
     const topic = screen.getByLabelText('Topic');
     fireEvent.change(topic, { target: { value: 'Retained research topic' } });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
@@ -231,7 +233,7 @@ it.each(['ctrlKey', 'metaKey', 'submit'])(
     vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 11_000);
     if (submission === 'submit') fireEvent.submit(topic.closest('form')!);
     else fireEvent.keyDown(topic, { key: 'Enter', [submission]: true });
-    expect(await screen.findByText('10/10 Sandbox environments used')).toBeVisible();
+    expect(await screen.findByText('Environment limit reached')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
     expect(topic).toHaveValue('Retained research topic');
     expect(create).not.toHaveBeenCalled();
@@ -245,9 +247,9 @@ it.each(['ctrlKey', 'metaKey', 'submit'])(
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         title_mode: 'automatic',
-        template: { id: 'research', version: 1, fields: { topic: 'Retained research topic' } },
+        template: { id: 'research', version: 2, fields: { topic: 'Retained research topic' } },
         initial_message:
-          'Research Retained research topic and summarize the key findings, with links to sources.',
+          'Research the following topic:\n\nRetained research topic\n\nSummarize the key findings, with links to sources.',
       }),
       expect.anything(),
     );
@@ -266,9 +268,9 @@ it('converges after committed retirement within fifteen seconds without any subm
       onCreated={() => {}}
     />,
   );
-  await screen.findByText('10/10 Sandbox environments used');
+  await screen.findByText('Environment limit reached');
   snapshot = free;
   await act(() => vi.advanceTimersByTimeAsync(10_000));
-  expect(screen.getByText('9/10 Sandbox environments used')).toBeVisible();
+  expect(screen.getByText('1 slot left')).toBeVisible();
   expect(create).not.toHaveBeenCalled();
 });
