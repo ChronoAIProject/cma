@@ -262,29 +262,9 @@ async fn route_request(
         }
     };
     if destination.member.instance_id == relay.coordinator.instance_id {
-        let retry_file_read = !private
-            && matches!(
-                *request.method(),
-                axum::http::Method::GET | axum::http::Method::HEAD
-            )
-            && request
-                .uri()
-                .path()
-                .strip_prefix("/api/v1/agents/")
-                .and_then(|path| path.split_once('/'))
-                .is_some_and(|(_, suffix)| {
-                    matches!(suffix, "files/tree" | "files/content" | "files/download")
-                });
-        let handler = async {
-            if retry_file_read {
-                layer3_adapter::file_read_retry::scope(next.run(request)).await
-            } else {
-                next.run(request).await
-            }
-        };
         let response = destination
             .authority
-            .run(handler)
+            .run(file_read::run(next, request, file_read))
             .await
             .unwrap_or_else(|_| {
                 if reports_handoff {

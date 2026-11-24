@@ -186,23 +186,25 @@ impl ProviderHostedControlTransport {
             Ok(()) => return Ok(()),
             Err(failed) => failed,
         };
-        if let Some(deadline) = deadline {
-            if failed.retryable && authority.is_current() && crate::file_read_retry::take() {
-                let retry_deadline = attempt_deadline(Some(deadline))?;
-                let reason = failed.failure.observation.reason.as_str();
-                let result = self
-                    .negotiate_attempt(endpoint, authority, identity, retry_deadline, true)
-                    .await;
-                metrics::counter!(
-                    "cma_agent_file_receiver_retries_total",
-                    "reason" => reason,
-                    "outcome" => if result.is_ok() { "recovered" } else { "failed" },
-                )
-                .increment(1);
-                match result {
-                    Ok(()) => return Ok(()),
-                    Err(retry) => failed = retry,
-                }
+        if let Some(deadline) = deadline
+            && failed.retryable
+            && authority.is_current()
+            && crate::file_read_retry::take()
+            && let Ok(retry_deadline) = attempt_deadline(Some(deadline))
+        {
+            let reason = failed.failure.observation.reason.as_str();
+            let result = self
+                .negotiate_attempt(endpoint, authority, identity, retry_deadline, true)
+                .await;
+            metrics::counter!(
+                "cma_agent_file_receiver_retries_total",
+                "reason" => reason,
+                "outcome" => if result.is_ok() { "recovered" } else { "failed" },
+            )
+            .increment(1);
+            match result {
+                Ok(()) => return Ok(()),
+                Err(retry) => failed = retry,
             }
         }
         let failure = failed.failure;
