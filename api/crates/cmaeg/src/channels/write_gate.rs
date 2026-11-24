@@ -54,6 +54,8 @@ pub struct WriteFlags {
     /// Admits native Discord sources and credential revisions after reader rollout.
     pub native_discord: bool,
     pub telegram_message_events: bool,
+    pub telegram_member_joins: bool,
+    pub relay_telegram_member_joins: bool,
     pub discord_thread_history: bool,
     pub telegram_topic_lifecycle: bool,
     pub telegram_topic_creation: bool,
@@ -84,52 +86,8 @@ pub(crate) fn check(
 ) -> Result<(), ValidationError> {
     super::definition_sources::check_github_sources(current, next, flags.github)?;
     super::custom_execution::write_gate(current, next, flags.durable_custom_execution)?;
-    if let Some(index) = next.sources.iter().position(|source| {
-        matches!(
-            source,
-            Source::Telegram {
-                topic_creation: true,
-                ..
-            }
-        ) && !flags.telegram_topic_creation
-            && !current
-                .is_some_and(|old| super::native_telegram::retains_creation_opt_in(old, source))
-    }) {
-        return Err(ValidationError::new(
-            format!("/sources/{index}/topic_creation"),
-            "native_telegram_topic_creation_disabled",
-        ));
-    }
-    if let Some(index) = next.sources.iter().position(|source| {
-        matches!(
-            source,
-            Source::Telegram {
-                topic_lifecycle: true,
-                ..
-            }
-        ) && !flags.telegram_topic_lifecycle
-            && !current.is_some_and(|old| super::native_telegram::retains_topic_opt_in(old, source))
-    }) {
-        return Err(ValidationError::new(
-            format!("/sources/{index}/topic_lifecycle"),
-            "native_telegram_topic_lifecycle_disabled",
-        ));
-    }
-    if let Some(index) = next.sources.iter().position(|source| {
-        matches!(
-            source,
-            Source::Telegram {
-                message_events: true,
-                ..
-            }
-        ) && !flags.telegram_message_events
-            && !current.is_some_and(|old| super::native_telegram::retains_opt_in(old, source))
-    }) {
-        return Err(ValidationError::new(
-            format!("/sources/{index}/message_events"),
-            "native_telegram_message_events_writes_disabled",
-        ));
-    }
+    super::native_telegram::check_write(current, next, flags)?;
+    super::relay_telegram::check_write(current, next, flags.relay_telegram_member_joins)?;
     if let Some(index) = next.sources.iter().position(|source| {
         matches!(
             source,

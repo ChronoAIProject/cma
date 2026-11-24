@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { capabilitiesFrom, createNyxidAuthProvider, handleFor } from './nyxid';
+import { capabilitiesFrom, createNyxidAuthProvider, handleFor, legalTermsFrom } from './nyxid';
 
 /**
  * The identity adapter decides what the whole app believes about who is
@@ -104,7 +104,50 @@ describe('the identity adapter', () => {
 
   it('reports 401 as signed out', async () => {
     stubFetch(() => jsonResponse(401, { authenticated: false }));
-    expect((await createNyxidAuthProvider().current()).status).toBe('anonymous');
+    expect(await createNyxidAuthProvider().current()).toEqual({ status: 'anonymous' });
+  });
+
+  it('carries published legal terms signed out and signed in', async () => {
+    const wire = {
+      version: '2026-11-30',
+      terms_url: 'https://legal.example.test/terms',
+      privacy_url: 'https://legal.example.test/privacy',
+    };
+    const legalTerms = {
+      version: '2026-11-30',
+      termsUrl: 'https://legal.example.test/terms',
+      privacyUrl: 'https://legal.example.test/privacy',
+    };
+    stubFetch(() => jsonResponse(401, { authenticated: false, legal_terms: wire }));
+    expect(await createNyxidAuthProvider().current()).toEqual({ status: 'anonymous', legalTerms });
+    stubFetch(() =>
+      jsonResponse(200, { authenticated: true, subject: '76fe9d91', legal_terms: wire }),
+    );
+    const state = await createNyxidAuthProvider().current();
+    expect(state.status === 'authenticated' && state.user.legalTerms).toEqual(legalTerms);
+  });
+
+  it('ignores legal terms it cannot use', () => {
+    const valid = {
+      version: '1',
+      terms_url: 'https://legal.example.test/t',
+      privacy_url: 'https://legal.example.test/p',
+    };
+    expect(legalTermsFrom(valid)).toEqual({
+      version: '1',
+      termsUrl: 'https://legal.example.test/t',
+      privacyUrl: 'https://legal.example.test/p',
+    });
+    for (const raw of [
+      undefined,
+      null,
+      'terms',
+      { ...valid, version: 'two words' },
+      { ...valid, terms_url: 'http://legal.example.test/t' },
+      { ...valid, privacy_url: 'javascript:alert(1)' },
+      { ...valid, terms_url: 42 },
+    ])
+      expect(legalTermsFrom(raw)).toBeUndefined();
   });
 
   it('treats an unreachable control plane as an error, not as signed out', async () => {

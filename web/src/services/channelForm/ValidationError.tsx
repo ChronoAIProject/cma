@@ -1,3 +1,4 @@
+import { fieldError } from './fieldErrors';
 import { useId, useLayoutEffect, useRef, type RefObject } from 'react';
 import { Button } from '../../ui/Button';
 import { revealInvalidField } from './AdvancedFields';
@@ -35,6 +36,7 @@ export function ValidationError({
 }) {
   const summary = useRef<HTMLDivElement>(null);
   const id = useId();
+  const parsed = fieldError(error);
   useLayoutEffect(() => {
     const field = canEdit && root.current ? errorField(root.current, error) : undefined;
     if (!field) {
@@ -53,7 +55,10 @@ export function ValidationError({
 
   return (
     <div role="alert" tabIndex={-1} ref={summary}>
-      <p id={id}>{error}</p>
+      <p id={id}>
+        {parsed.label ? `${parsed.label}: ` : null}
+        {parsed.message}
+      </p>
       {canEdit ? (
         <Button
           onClick={() => {
@@ -63,10 +68,13 @@ export function ValidationError({
               field.focus();
               return;
             }
-            root.current?.querySelectorAll('details').forEach((details) => {
-              details.open = true;
-            });
-            root.current?.querySelector<HTMLElement>(editable)?.focus();
+            const invalid = root.current?.querySelector<HTMLElement>(
+              'input:invalid, textarea:invalid',
+            );
+            if (invalid) {
+              revealInvalidField(invalid);
+              invalid.focus();
+            } else summary.current?.focus();
           }}
         >
           Review channel fields

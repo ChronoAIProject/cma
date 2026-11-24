@@ -1,8 +1,20 @@
 use super::*;
 use layer2_core::sandbox::store::{AgentProvenanceStore, SandboxStore};
+use layer2_core::sandbox::ServiceConnectionSelection;
 use std::sync::Arc;
 
 pub(crate) async fn approved_fixture() -> (
+    mongodb::Client,
+    String,
+    Arc<MongoSandboxStore>,
+    AgentAccessRecord,
+) {
+    approved_fixture_with_connection(None).await
+}
+
+pub(super) async fn approved_fixture_with_connection(
+    connection: Option<ServiceConnectionSelection>,
+) -> (
     mongodb::Client,
     String,
     Arc<MongoSandboxStore>,
@@ -37,11 +49,12 @@ pub(crate) async fn approved_fixture() -> (
         .await
         .unwrap();
     record = store
-        .approve_agent_access(
+        .approve_agent_access_with_connection(
             &record.requester.owner,
             &record.requester.agent_id,
             &record.id,
             vec![ServiceId::new("github")],
+            connection,
             &[],
             AgentAuthorizationRevision {
                 replay_principal: None,

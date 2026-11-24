@@ -385,6 +385,33 @@ async fn reflected_sandbox_bearer_is_never_accepted_as_title_content() {
 }
 
 #[test]
+fn nyxid_model_services_use_the_service_relative_responses_path() {
+    for (base_path, expected_path) in [
+        (
+            "/api/v1/proxy/s/chrono-llm-public/",
+            "/api/v1/proxy/s/chrono-llm-public/responses",
+        ),
+        (
+            "/api/v1/proxy/s/chrono-llm",
+            "/api/v1/proxy/s/chrono-llm/responses",
+        ),
+        (
+            "/api/v1/proxy/s/chrono-llm-public-preview",
+            "/api/v1/proxy/s/chrono-llm-public-preview/v1/responses",
+        ),
+    ] {
+        let endpoint = ProviderEndpoint {
+            endpoint: format!("https://identity.example{base_path}"),
+        };
+        let generator = HttpAgentTitleGenerator::new(&endpoint, DEPLOYMENT_MODEL).unwrap();
+        assert_eq!(
+            generator.endpoint.as_str(),
+            format!("https://identity.example{expected_path}")
+        );
+    }
+}
+
+#[test]
 fn proxy_endpoint_is_exact_and_rejects_ambiguous_or_credentialed_urls() {
     let generator = HttpAgentTitleGenerator::new(
         &ProviderEndpoint {

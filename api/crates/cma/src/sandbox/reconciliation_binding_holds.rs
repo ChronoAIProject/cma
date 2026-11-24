@@ -9,7 +9,10 @@ use std::{
 use tokio::time::Instant;
 
 #[derive(Default)]
-pub(super) struct BindingHolds(Mutex<BTreeMap<SandboxId, Hold>>);
+pub(super) struct BindingHolds {
+    holds: Mutex<BTreeMap<SandboxId, Hold>>,
+    metrics_enabled: bool,
+}
 
 struct Hold {
     attempts: u32,
@@ -43,9 +46,14 @@ impl Hold {
 }
 
 impl BindingHolds {
+    pub(super) fn with_metrics(mut self, enabled: bool) -> Self {
+        self.metrics_enabled = enabled;
+        self
+    }
+
     /// Scheduling hint only: the same fresh authority checks still run on retry.
     pub(super) fn reserved_retry_due(&self, id: &SandboxId, bounded: bool) -> bool {
-        self.0.lock().unwrap().get(id).is_some_and(|hold| {
+        self.holds.lock().unwrap().get(id).is_some_and(|hold| {
             hold.attempts > 0
                 && Instant::now() >= hold.ready_at
                 && (matches!(hold.reason, "deadline" | "cancelled")
@@ -58,7 +66,7 @@ impl BindingHolds {
         sandbox: &Sandbox,
         inventory: &[RuntimeObservation],
     ) -> Option<BindingAttempt<'a>> {
-        let mut holds = self.0.lock().unwrap();
+        let mut holds = self.holds.lock().unwrap();
         let hold = holds.entry(sandbox.id.clone()).or_insert_with(|| Hold {
             attempts: 0,
             ready_at: Instant::now(),
@@ -81,20 +89,20 @@ impl BindingHolds {
     // Only a complete, validated global scan can retire an absent hold. Fresh
     // pool/owned/provider fences still decide every subsequent reclamation.
     pub(super) fn retain_authority(&self, authority: &BTreeMap<SandboxId, Sandbox>) {
-        self.0
+        self.holds
             .lock()
             .unwrap()
             .retain(|id, _| authority.contains_key(id));
     }
 
     pub(super) fn observe_inventory(&self, sandbox: &Sandbox, inventory: &[RuntimeObservation]) {
-        if let Some(hold) = self.0.lock().unwrap().get_mut(&sandbox.id) {
+        if let Some(hold) = self.holds.lock().unwrap().get_mut(&sandbox.id) {
             hold.protect(sandbox, inventory);
         }
     }
 
     pub(super) fn contains(&self, id: &str) -> bool {
-        self.0
+        self.holds
             .lock()
             .unwrap()
             .values()
@@ -102,13 +110,13 @@ impl BindingHolds {
     }
 
     pub(super) fn protects_runtime(&self, runtime: &RuntimeObservation) -> bool {
-        self.0.lock().unwrap().values().any(|hold| {
+        self.holds.lock().unwrap().values().any(|hold| {
             hold.ids.contains(&runtime.sandbox_id) || hold.handles.contains(runtime.handle.as_str())
         })
     }
 
     pub(super) fn failed(&self, id: &SandboxId, reason: &'static str) {
-        let mut holds = self.0.lock().unwrap();
+        let mut holds = self.holds.lock().unwrap();
         let hold = holds
             .get_mut(id)
             .expect("attempt retains protection until success");
@@ -124,7 +132,7 @@ impl BindingHolds {
     }
 
     fn report(&self) {
-        let holds = self.0.lock().unwrap();
+        let holds = self.holds.lock().unwrap();
         for reason in [
             "cancelled",
             "raced",
@@ -140,6 +148,9 @@ impl BindingHolds {
             }
         }
         tracing::info!(parent: None, held_bindings = holds.len(), "sandbox binding hold summary");
+        if self.metrics_enabled {
+            metrics::gauge!("cma_sandbox_binding_holds_local").set(holds.len() as f64);
+        }
     }
 }
 
@@ -152,7 +163,7 @@ pub(super) struct BindingAttempt<'a> {
 impl BindingAttempt<'_> {
     pub(super) fn observe(&self, sandbox: &Sandbox, inventory: &[RuntimeObservation]) {
         self.holds
-            .0
+            .holds
             .lock()
             .unwrap()
             .get_mut(&self.id)
@@ -160,7 +171,7 @@ impl BindingAttempt<'_> {
             .protect(sandbox, inventory);
     }
     pub(super) fn complete(mut self) {
-        self.holds.0.lock().unwrap().remove(&self.id);
+        self.holds.holds.lock().unwrap().remove(&self.id);
         self.complete = true;
     }
 
@@ -168,6 +179,13 @@ impl BindingAttempt<'_> {
     /// reported separately from cancellation of the sweep operation.
     pub(super) fn raced(mut self) {
         self.holds.failed(&self.id, "raced");
+        self.complete = true;
+    }
+
+    /// Retain protection after a transient runtime failure at startup. The
+    /// background sweep retries it with fresh reads under the same fences.
+    pub(super) fn unavailable(mut self) {
+        self.holds.failed(&self.id, "unavailable");
         self.complete = true;
     }
 }

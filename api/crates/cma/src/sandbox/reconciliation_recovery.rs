@@ -1,7 +1,7 @@
 //! Discovery never supplies cleanup authority or caches a proof across yields.
 use super::{authority::Authority, SandboxReconciler};
 use layer2_core::{
-    sandbox::{store::PageRequest, Sandbox, SandboxStoreError},
+    sandbox::{store::PageRequest, SandboxStoreError},
     SandboxId,
 };
 use layer3_adapter::recovery_diagnostics::{Observation, Reason, Stage};
@@ -64,8 +64,13 @@ impl Schedule {
                 }
             };
             let last = page_authority.items.last_key_value().map(|(id, _)| id);
+            let latest = service.latest_version();
             for (id, sandbox) in &page_authority.items {
-                if !eligible(sandbox, service.latest_version()) {
+                if !sandbox.unpublished_recovery_candidate()
+                    || sandbox
+                        .automatic_unpublished_recovery_target_for_release(&latest)
+                        .is_none()
+                {
                     continue;
                 }
                 if reconciler.binding_holds.contains(id.as_str()) {
@@ -117,16 +122,4 @@ impl Schedule {
         );
         Ok(())
     }
-}
-
-fn eligible(sandbox: &Sandbox, latest: &str) -> bool {
-    sandbox.unpublished_recovery_candidate()
-        && !sandbox.lifecycle.unpublished_recovery_attempted
-        && sandbox.lifecycle.unpublished_recovery.is_none()
-        && sandbox.admitted_runtime_update_target().or_else(|| {
-            sandbox
-                .runtime
-                .as_ref()
-                .map(|binding| binding.runtime_version.as_str())
-        }) == Some(latest)
 }

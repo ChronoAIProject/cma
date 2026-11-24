@@ -18,6 +18,8 @@ pub use account_deletion::{account_deletion_problem, account_deletion_router};
 mod account_deletion_tests;
 mod bot_setups;
 mod bots;
+pub mod legal_consent;
+pub mod privacy_export;
 pub use bot_setups::bot_setup_router;
 pub use bots::bot_router;
 mod agent_access_requests;
@@ -205,7 +207,7 @@ pub use agent_lifecycle::{
     AgentLifecycleOperationReadError, AgentLifecycleOperationReader, AgentLifecycleOperationView,
     AgentLifecyclePermissions, AgentLifecycleProfile, AgentLifecycleProvisioner,
     AgentLifecycleProvisioningError, AgentLifecycleRepository, AgentLifecycleSkill,
-    AgentLifecycleTitleMode,
+    AgentLifecycleTitleMode, RepositoryAccessRefusal,
 };
 pub use agent_source::agent_source_router;
 pub use agents::{

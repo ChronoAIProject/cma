@@ -104,7 +104,10 @@ impl Sandbox {
         at: String,
     ) -> Result<bool, SandboxModelError> {
         self.validate()?;
-        if !valid_version(&target) || seconds_from_rfc3339(&at).is_none() {
+        if self.profile.content.runtime_image.is_some()
+            || !valid_version(&target)
+            || seconds_from_rfc3339(&at).is_none()
+        {
             return Err(invalid());
         }
         if let Some(request) = self

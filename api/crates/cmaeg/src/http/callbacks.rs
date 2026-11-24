@@ -215,7 +215,13 @@ async fn admit_callback(
     let record = channel.definition.record_id.clone();
     let refuse = |reason| authenticated_refusal(state, &record, SOURCE, reason);
     let reject = |error| authenticated_invalid(state, &record, SOURCE, error);
-    let mut facts = match observe(source, &verified.payload, state.media_enabled) {
+    let observation = if state.relay_telegram_member_joins_enabled {
+        crate::ingress::relay::telegram_member_joins::observe(source, &verified.payload)
+    } else {
+        None
+    }
+    .unwrap_or_else(|| observe(source, &verified.payload, state.media_enabled));
+    let mut facts = match observation {
         Ok(Observation::Message(facts)) => facts,
         Ok(Observation::Refused(reason)) => return Err(refuse(reason)),
         Err(error) => return Err(reject(error)),

@@ -212,6 +212,9 @@ async fn uncertain(mode: &str) {
         .run_command(doc! {"killSessions":[original_session]})
         .await
         .unwrap();
+    if mode == "committed" {
+        crate::store::test_visibility::majority_barrier(&admin, &name).await;
+    }
     let reopened = MongoSandboxStore::open(&admin, &name).await.unwrap();
     let after = snapshot(&reopened, &request).await;
     if mode == "committed" {

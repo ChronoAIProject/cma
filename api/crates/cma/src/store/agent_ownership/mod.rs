@@ -20,6 +20,7 @@ mod effects;
 mod failure;
 mod membership;
 mod records;
+mod renewal_batch;
 mod work_discovery;
 use records::{member_from, owner_from, token_filter};
 
@@ -39,6 +40,20 @@ pub(crate) struct MongoAgentOwnership {
 pub(in crate::store) enum FenceError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
+}
+
+pub(in crate::store) enum ObservedFenceError {
+    Read(mongodb::error::Error),
+    Fence(FenceError),
+}
+
+impl ObservedFenceError {
+    pub(in crate::store) fn into_fence_error(self) -> FenceError {
+        match self {
+            Self::Read(error) => FenceError::Driver(error),
+            Self::Fence(error) => error,
+        }
+    }
 }
 
 impl FenceError {
@@ -105,9 +120,28 @@ impl MongoAgentOwnership {
             .map_err(invalid)
     }
 
+    /// The driver aborts a dropped session only after its transaction's first
+    /// command has returned. A caller cancelled while a first-command write is
+    /// in flight would leave that write's locks on the server until the session
+    /// is reused or the transaction lifetime expires (#3189). On the member row
+    /// that would block every effect fence of this instance. Reading first
+    /// strands at most a lock-free snapshot; the driver aborts any later drop.
+    pub(super) async fn open_with_read(
+        &self,
+        instance: &str,
+        session: &mut ClientSession,
+    ) -> mongodb::error::Result<()> {
+        self.members
+            .find_one(doc! {"_id": instance})
+            .projection(doc! {"_id": 1})
+            .session(session)
+            .await
+            .map(|_| ())
+    }
+
     /// A write in the effect's own transaction creates a conflict with takeover.
     /// A preceding read, even a majority read, would leave a TOCTOU gap.
-    /// Callers without their own bounded retry keep the historical classification.
+    #[cfg(test)]
     pub(crate) async fn fence_transaction(
         &self,
         token: &OwnershipToken,
@@ -119,6 +153,29 @@ impl MongoAgentOwnership {
     }
 
     pub(in crate::store) async fn fence_transaction_typed(
+        &self,
+        token: &OwnershipToken,
+        session: &mut ClientSession,
+    ) -> Result<(), FenceError> {
+        self.fence_transaction_observed(token, session)
+            .await
+            .map_err(ObservedFenceError::into_fence_error)
+    }
+
+    pub(super) async fn fence_transaction_observed(
+        &self,
+        token: &OwnershipToken,
+        session: &mut ClientSession,
+    ) -> Result<(), ObservedFenceError> {
+        self.open_with_read(&token.instance_id, session)
+            .await
+            .map_err(ObservedFenceError::Read)?;
+        self.fence_transaction_writes(token, session)
+            .await
+            .map_err(ObservedFenceError::Fence)
+    }
+
+    async fn fence_transaction_writes(
         &self,
         token: &OwnershipToken,
         session: &mut ClientSession,
@@ -225,6 +282,17 @@ impl OwnershipStore for MongoAgentOwnership {
 
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError> {
         self.renew_owner(token).await
+    }
+
+    fn supports_batch_renewal(&self) -> bool {
+        true
+    }
+
+    async fn renew_batch(
+        &self,
+        tokens: &[OwnershipToken],
+    ) -> Result<layer2_core::agent_ownership::RenewalBatch, OwnershipError> {
+        self.renew_owner_batch(tokens).await
     }
 
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
