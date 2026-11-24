@@ -116,6 +116,13 @@ impl HostedAdapter {
         let rendered = self
             .deployment
             .render_runtime(&request.spec, request.generation)?;
+        if let Some(image) = &request.native_canary_image {
+            return self
+                .backend
+                .select_native_canary_pool(&rendered, image, home)
+                .await
+                .map(Some);
+        }
         let image = self
             .native_runtime_images
             .get(&rendered.image.uri)

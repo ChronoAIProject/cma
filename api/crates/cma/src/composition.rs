@@ -158,6 +158,12 @@ impl ControlPlaneComposition {
         .with_task_experience(config.task_experience.clone())
         .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
         .with_managed_repository_preflight(config.features.github_repository_preflight);
+        let runtime_canary_routes = rest::runtime_canary::runtime_canary_router(Arc::new(
+            crate::agent_lifecycle::runtime_canary::Canaries::new(
+                &config.runtime,
+                inline_lifecycle.clone(),
+            )?,
+        ));
         let lifecycle_drain = inline_lifecycle.drain_handle();
         if let Some(manager) = &agent_manager {
             manager.register_lifecycle(lifecycle_drain.clone())?;
@@ -373,6 +379,7 @@ impl ControlPlaneComposition {
         let metadata = routes::agent_metadata(&stores, resource_access.clone(), config);
         let accounts = routes::accounts(config, &stores, deletions, standing, projections.reads());
         let resource_routes = rest::profiles_router(profiles)
+            .merge(runtime_canary_routes)
             .merge(accounts)
             .merge(rest::answer_deliverables_router(deliverables))
             .merge(media::router(media))

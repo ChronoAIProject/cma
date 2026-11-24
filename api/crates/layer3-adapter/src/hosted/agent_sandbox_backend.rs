@@ -97,6 +97,19 @@ impl HostedBackend for AgentSandboxBackend {
             .select_runtime(request, image, home)
             .await
     }
+    async fn select_native_canary_pool(
+        &self,
+        request: &ProviderSandboxRequest,
+        image: &crate::RuntimeImage,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<crate::agent_sandbox::NativePoolBinding> {
+        self.client
+            .warm_pools()
+            .select_runtime_with_cold_policy(request, image, home, true)
+            .await?
+            .ok_or_else(|| crate::AdapterError::Rejected("native canary pool unavailable".into()))
+    }
+
     async fn validate_funding(
         &self,
         request: &ProviderSandboxRequest,

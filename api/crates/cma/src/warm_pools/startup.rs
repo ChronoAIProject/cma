@@ -115,6 +115,7 @@ impl NativeWarmPools {
             .ok_or(WarmPoolError::Unavailable)?;
         let plan = provider
             .plan(&NativePoolSpec {
+                cold_canary: false,
                 image: self.released_images().agent,
                 cpu_millis: self.default_capacity.cpu_millis,
                 memory_mib: self.default_capacity.memory_mib,

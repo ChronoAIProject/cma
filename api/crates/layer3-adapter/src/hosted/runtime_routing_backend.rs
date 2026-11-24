@@ -236,6 +236,23 @@ impl HostedBackend for RuntimeBackends {
             .select_native_pool(request, image, home)
             .await
     }
+    async fn select_native_canary_pool(
+        &self,
+        request: &ProviderSandboxRequest,
+        image: &crate::RuntimeImage,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<crate::agent_sandbox::NativePoolBinding> {
+        self.require_home_routes(home)?;
+        if !self.allocation_provider(request).await? {
+            return Err(AdapterError::Rejected(
+                "runtime canary requires native allocation".into(),
+            ));
+        }
+        self.select(true)?
+            .select_native_canary_pool(request, image, home)
+            .await
+    }
+
     async fn validate_funding(
         &self,
         request: &ProviderSandboxRequest,

@@ -1,6 +1,15 @@
 //! Committed canary authority travels with the immutable lifecycle input.
 
 use super::*;
+
+mod policy;
+pub(crate) use policy::{
+    CanaryLane, CanaryPolicy, CanaryWriteError, PrepareCanaryGrant, RevokeCanaryGrant,
+};
+mod writer;
+pub(crate) use writer::{FreshCanaryRedemption, PreparedCanaryRedemption};
+#[cfg(test)]
+mod writer_tests;
 use layer2_core::profiles::{
     profile_id_for_owner, AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef,
 };
@@ -29,7 +38,7 @@ impl std::fmt::Debug for CanaryAdmission {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct FrozenRelease {
+pub(crate) struct FrozenRelease {
     release_key: String,
     image: RuntimeImage,
     config_digest: String,
@@ -48,6 +57,47 @@ pub(crate) struct CanaryProfiles {
 
 pub(in crate::store) const SANDBOX_PROFILE_ID: &str = "canary_admission.profiles.sandbox.id";
 pub(in crate::store) const MANIFEST_DIGEST: &str = "canary_manifest_digest";
+const REQUEST_KEY_DIGEST: &str = "canary_redemption_key.sha256";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CanaryRedemptionKey {
+    sha256: String,
+    lane: policy::CanaryLane,
+    proof: String,
+}
+
+impl CanaryRedemptionKey {
+    fn new(
+        request_key: &str,
+        lane: policy::CanaryLane,
+        admission: &CanaryAdmission,
+    ) -> Result<Self, StoreError> {
+        let proof = Self::proof(request_key, lane, admission)?;
+        Ok(Self {
+            sha256: request_key.to_owned(),
+            lane,
+            proof,
+        })
+    }
+
+    fn proof(
+        request_key: &str,
+        lane: policy::CanaryLane,
+        admission: &CanaryAdmission,
+    ) -> Result<String, StoreError> {
+        if !policy::canonical_sha256(request_key) {
+            return Err(invalid_authority());
+        }
+        layer2_core::profiles::content_digest(&(
+            "runtime-canary-redemption-key-v1",
+            request_key,
+            lane,
+            &admission.fingerprint,
+        ))
+        .map_err(|_| invalid_authority())
+    }
+}
 
 pub(in crate::store) fn image_digest(image: &str) -> Option<String> {
     let (_, digest) = image.rsplit_once("@sha256:")?;
@@ -88,6 +138,21 @@ pub(super) async fn ensure_admission_indexes(
         )
         .await
         .map_err(driver)?;
+    operations
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { "owner": 1, REQUEST_KEY_DIGEST: 1 })
+                .options(
+                    IndexOptions::builder()
+                        .name("agent_lifecycle_canary_owner_request".to_owned())
+                        .unique(true)
+                        .partial_filter_expression(doc! { REQUEST_KEY_DIGEST: {"$exists": true} })
+                        .build(),
+                )
+                .build(),
+        )
+        .await
+        .map_err(driver)?;
     Ok(())
 }
 
@@ -112,6 +177,19 @@ pub(in crate::store) async fn bind_sandbox(
         .session(session)
         .await?;
     Ok(result.matched_count == 1)
+}
+
+impl From<&crate::config::runtime_canary::Release> for FrozenRelease {
+    fn from(release: &crate::config::runtime_canary::Release) -> Self {
+        Self {
+            release_key: release.release_key.clone(),
+            image: release.image.clone(),
+            config_digest: release.config_digest.clone(),
+            source_revision: release.source_revision.clone(),
+            publication_evidence_sha256: release.publication_evidence_sha256.clone(),
+            capacity: release.capacity,
+        }
+    }
 }
 
 impl CanaryProfiles {
@@ -154,6 +232,11 @@ impl LifecycleRecord {
         {
             return Err(invalid_authority());
         }
+        if let Some(key) = &self.canary_redemption_key {
+            if key.proof != CanaryRedemptionKey::proof(&key.sha256, key.lane, admission)? {
+                return Err(invalid_authority());
+            }
+        }
         Ok(Some(admission.profiles.clone()))
     }
 }
@@ -177,6 +260,48 @@ impl CanaryAdmission {
     }
 }
 
+/// Recover the immutable provider descriptor from the operation that bound this home.
+pub(in crate::store) async fn runtime_image(
+    database: &Database,
+    sandbox: &layer2_core::sandbox::Sandbox,
+) -> Result<Option<RuntimeImage>, layer2_core::sandbox::SandboxStoreError> {
+    use layer2_core::sandbox::{SandboxOrigin, SandboxStoreError};
+    let SandboxOrigin::Lifecycle { operation_id } = &sandbox.origin else {
+        return Ok(None);
+    };
+    if sandbox.profile.content.runtime_image.is_none() {
+        return Ok(None);
+    }
+    let operations = majority_collection::<LifecycleRecord>(database, COLLECTION);
+    let Some(record) = operations
+        .find_one(doc! {"_id": operation_id})
+        .await
+        .map_err(|_| {
+            SandboxStoreError::Unavailable("canary runtime authority read failed".into())
+        })?
+    else {
+        return Ok(None);
+    };
+    let bad =
+        || SandboxStoreError::Corrupt("canary runtime authority does not match the Sandbox".into());
+    let Some(profiles) = record.verify_canary_worker().map_err(|_| bad())? else {
+        return Ok(None);
+    };
+    let authority = record.canary_admission.as_ref().ok_or_else(bad)?;
+    if record.owner != sandbox.owner.as_str()
+        || record.sandbox_id.as_deref() != Some(sandbox.id.as_str())
+        || sandbox.profile.id != profiles.sandbox.id
+        || sandbox.profile.revision != profiles.sandbox.revision
+        || sandbox.profile.content.runtime_image.as_deref()
+            != Some(authority.release.image.uri.as_str())
+        || sandbox.profile.content.cpu_millis != authority.release.capacity.cpu_millis
+        || sandbox.profile.content.memory_mib != authority.release.capacity.memory_mib
+    {
+        return Err(bad());
+    }
+    Ok(Some(authority.release.image.clone()))
+}
+
 fn invalid_authority() -> StoreError {
     StoreError::Malformed("canary operation is missing its committed authority".into())
 }
@@ -189,7 +314,7 @@ impl MongoAgentLifecycleStore {
         record: &mut LifecycleRecord,
         image: RuntimeImage,
     ) -> CanaryProfiles {
-        record.key = canary_key::fixture_key(&record.id);
+        record.key = canary_key::admission_key(&record.id);
         record.input.resolved_image = Some(image.uri.clone());
         record.canary_manifest_digest = image_digest(&image.uri);
         let profiles =

@@ -4,7 +4,7 @@ use axum::http::HeaderValue;
 
 use super::{parse_canonical_https_origin, required};
 
-mod canary;
+pub(crate) mod canary;
 
 const MAX_URL_LENGTH: usize = 2_048;
 const MAX_IMAGE_REFERENCE_LENGTH: usize = 2_048;
@@ -61,7 +61,8 @@ pub(crate) struct RuntimeConfig {
     /// desktop machine. Keeping this separate from the default image prevents
     /// ordinary Agent creation from silently changing its runtime.
     pub machine_sandbox_image: Option<String>,
-    runtime_canary_releases: canary::Catalog,
+    pub(crate) runtime_canary_releases: canary::Catalog,
+    pub(crate) runtime_canary_writes: canary::WriteScope,
     pub sandbox_namespace: String,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub agent_sandbox_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
@@ -161,6 +162,11 @@ impl RuntimeConfig {
             .as_ref()
             .filter(|_| allocate_agent_sandbox && agent_sandbox.is_some());
         let runtime_canary_releases = canary::Catalog::from_lookup(lookup, canary_home)?;
+        let runtime_canary_writes = canary::WriteScope::from_lookup(
+            lookup,
+            allocate_agent_sandbox,
+            &runtime_canary_releases,
+        )?;
         let native_prepared_target = match lookup("CHRONO_NATIVE_PREPARED_TARGET")?.as_deref() {
             None | Some("0") => 0,
             Some("1") => 1,
@@ -297,6 +303,7 @@ impl RuntimeConfig {
             sandbox_image,
             machine_sandbox_image,
             runtime_canary_releases,
+            runtime_canary_writes,
             sandbox_namespace,
             home_policy,
             agent_sandbox_home_policy,

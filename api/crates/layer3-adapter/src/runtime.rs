@@ -128,6 +128,9 @@ pub struct RuntimeProvisionRequest {
     /// mutable coverage must not change an immutable provisioning receipt digest.
     #[serde(skip)]
     pub funded_until: Option<u64>,
+    /// Verified, request-scoped descriptor for a canary's native home.
+    #[serde(skip)]
+    pub native_canary_image: Option<RuntimeImage>,
     pub generation: u64,
     pub spec: SandboxSpec,
 }
@@ -138,6 +141,7 @@ impl RuntimeProvisionRequest {
             generation,
             spec,
             funded_until: None,
+            native_canary_image: None,
         }
     }
 }

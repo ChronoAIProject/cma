@@ -15,6 +15,32 @@ impl SandboxWorker {
         sandbox: &mut Sandbox,
         now: SystemTime,
     ) -> Result<Option<WorkerFailure>, SandboxStoreError> {
+        let canary_image = self
+            .dependencies
+            .store
+            .canary_runtime_image(sandbox)
+            .await?;
+        if let Some(image) = &canary_image {
+            let matches_home = match sandbox.lifecycle.home.as_ref() {
+                Some(home) => home.native_pool.as_ref().is_some_and(|pool| {
+                    pool.request.pool.spec.cold_canary
+                        && &pool.request.pool.spec.image == image
+                        && home.request.policy.is_native_vct()
+                        && home.request.policy.mounts_full_home()
+                }),
+                None => {
+                    sandbox.runtime.is_none()
+                        && self.config.home_policy.as_ref().is_some_and(|policy| {
+                            policy.is_native_vct() && policy.mounts_full_home()
+                        })
+                }
+            };
+            if !matches_home {
+                return Err(SandboxStoreError::Corrupt(
+                    "canary Sandbox requires its exact native full-home allocation".into(),
+                ));
+            }
+        }
         // A Ready warm reservation already verified this exact native home.
         // Keep the owner-side runtime inspection below as the live fence, but
         // avoid repeating the storage read before it. If the runtime vanished,
@@ -46,13 +72,14 @@ impl SandboxWorker {
             .await
             {
                 Ok(Some(home)) if sandbox.lifecycle.home.is_none() => {
-                    let request = RuntimeProvisionRequest::new(
+                    let mut request = RuntimeProvisionRequest::new(
                         sandbox.lifecycle.runtime_generation_high_water.max(1),
                         crate::sandbox::runtime_mapping::sandbox_spec(
                             sandbox,
                             &self.config.deployment_id,
                         ),
                     );
+                    request.native_canary_image = canary_image.clone();
                     match crate::sandbox::home_native::reserve(
                         self.dependencies.adapter.as_ref(),
                         &request,
