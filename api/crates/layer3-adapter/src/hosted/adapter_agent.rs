@@ -234,7 +234,7 @@ pub(super) async fn reconnect_agent(
     .await;
     match result {
         Err(AdapterError::OperationIdentityConflict(_))
-            if request.resume_conversation.is_none() =>
+            if request.resume_conversation.is_none() && request.restart_runtime.is_none() =>
         {
             // Older restores included resume identity in the durable launch digest.
             // Only an exact pre-effect refusal permits this one canonical replay.
@@ -276,7 +276,8 @@ pub(super) async fn open_agent(
             "invalid context recovery authority".into(),
         ));
     }
-    if held_conversation.is_some_and(|id| {
+    let retained_conversation = held_conversation.or(request.resume_conversation.as_deref());
+    if retained_conversation.is_some_and(|id| {
         id.is_empty()
             || id.len() > 512
             || id.trim() != id
@@ -296,6 +297,19 @@ pub(super) async fn open_agent(
         AgentProcessAction::Open,
         request.options.slot.as_str(),
     )?;
+    let restart = AgentProcessAction::Open
+        .incarnation(request.options.slot.as_str(), &request.operation_id)
+        .is_some_and(|incarnation| incarnation > 1);
+    if restart != request.restart_runtime.is_some() {
+        return Err(AdapterError::Rejected(
+            "invalid Agent restart runtime authority".into(),
+        ));
+    }
+    if restart && retained_conversation.is_none() {
+        return Err(AdapterError::Rejected(
+            "Agent restart requires a retained conversation".into(),
+        ));
+    }
     validate_fence(authority_fence)?;
     let launch = adapter.runtime.launch(request)?;
     let mut settings = adapter.runtime.open_settings(request)?;
@@ -371,14 +385,14 @@ pub(super) async fn open_agent(
     settings.context_refresh = adapter
         .bind_context_refresh(handle, request, &settings)
         .await?;
+    let mut fenced = FencedRequest::new(authority_fence, launch);
+    fenced.restart_runtime.clone_from(&request.restart_runtime);
     let (channel, receipt) = adapter
         .backend
         .open_agent(
             handle,
-            FencedRequest::new(authority_fence, launch),
-            held_conversation
-                .map(str::to_owned)
-                .or_else(|| request.resume_conversation.clone()),
+            fenced,
+            retained_conversation.map(str::to_owned),
             settings,
             updates,
         )
@@ -390,7 +404,7 @@ pub(super) async fn open_agent(
         || receipt.receipt.cwd != request.options.working_directory
         || receipt.receipt.home != request.options.home_directory
         || receipt.receipt.conversation_id != channel.conversation_id
-        || held_conversation.is_some_and(|id| channel.conversation_id.as_deref() != Some(id))
+        || retained_conversation.is_some_and(|id| channel.conversation_id.as_deref() != Some(id))
     {
         return Err(AdapterError::Rejected(
             "runtime returned a receipt for another agent open operation".into(),

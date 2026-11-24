@@ -265,3 +265,55 @@ fn rendered_runtime_identity_covers_nonzero_generation_image_and_contract() {
         Err(AdapterError::Rejected(_))
     ));
 }
+
+#[test]
+fn new_work_renders_its_admitted_release_and_recorded_images_win() {
+    let bootstrap = format!("registry.example/runtime@sha256:{}", "a".repeat(64));
+    let released = format!("registry.example/runtime@sha256:{}", "b".repeat(64));
+    let recorded = format!("registry.example/runtime@sha256:{}", "c".repeat(64));
+    let deployment = HostedDeployment {
+        image: crate::released_image(bootstrap.clone()),
+        ..HostedDeployment::default()
+    };
+    let spec = SandboxSpec {
+        sandbox_id: "new-work".into(),
+        ..SandboxSpec::default()
+    };
+    let release = crate::ReleasedRuntime {
+        revision: 7,
+        agent: released.clone(),
+        machine: None,
+    };
+    // A request without a captured release keeps the bootstrap image.
+    let legacy = crate::RuntimeProvisionRequest::new(1, spec.clone());
+    assert_eq!(
+        deployment.render_request(&legacy).unwrap().image.uri,
+        bootstrap
+    );
+    // New work renders the release it was admitted against.
+    let admitted =
+        crate::RuntimeProvisionRequest::new(1, spec.clone()).with_released(release.clone());
+    assert_eq!(
+        deployment.render_request(&admitted).unwrap().image.uri,
+        released
+    );
+    // The snapshot never enters the receipt identity.
+    assert_eq!(
+        serde_json::to_value(&admitted).unwrap(),
+        serde_json::to_value(&legacy).unwrap()
+    );
+    // A recorded image (an existing home or custom image) always wins.
+    let mut pinned = spec;
+    pinned.runtime_image = Some(recorded.clone());
+    let pinned = crate::RuntimeProvisionRequest::new(1, pinned).with_released(release.clone());
+    assert_eq!(
+        deployment.render_request(&pinned).unwrap().image.uri,
+        recorded
+    );
+    // Only this release's lanes carry the deployment contract.
+    assert_eq!(
+        release.image(&released),
+        Some(crate::released_image(released))
+    );
+    assert_eq!(release.image(&recorded), None);
+}
