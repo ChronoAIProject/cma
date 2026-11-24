@@ -51,8 +51,17 @@ impl OwnershipCoordinator {
             #[cfg(feature = "qualification-hooks")]
             if let Some(hook) = self.qualification_renewal.get() {
                 let window = super::qualification::RenewalWindow { started, now_ms };
-                if let Some(outcome) = hook.renew_selected(authority, window).await {
-                    return outcome;
+                if self.contains_failures() {
+                    return authority
+                        .renew_store_qualified(window, || hook.take_renewal(authority, window))
+                        .await;
+                }
+                if let Some(attempt) = hook.take_renewal(authority, window) {
+                    let result = attempt.write.await;
+                    return attempt
+                        .waiter
+                        .deliver(result, window, &authority.token)
+                        .await;
                 }
             }
             if self.contains_failures() {

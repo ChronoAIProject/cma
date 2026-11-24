@@ -95,15 +95,61 @@ pub(crate) fn agent_digest(agent: &AgentId) -> [u8; 32] {
 }
 
 /// Instrument only an already captured local renewal invocation.
-#[async_trait::async_trait]
 pub trait RenewalHook: Send + Sync {
     fn selected(&self, authority: &std::sync::Arc<crate::agent_ownership::Authority>) -> bool;
 
-    async fn renew_selected(
+    fn take_renewal(
         &self,
         authority: &std::sync::Arc<crate::agent_ownership::Authority>,
         window: crate::agent_ownership::RenewalWindow,
-    ) -> Option<
-        Result<crate::agent_ownership::OwnershipLease, crate::agent_ownership::OwnershipError>,
-    >;
+    ) -> Option<RenewalAttempt>;
+}
+
+pub(crate) type RenewalResult =
+    Result<crate::agent_ownership::OwnershipLease, crate::agent_ownership::OwnershipError>;
+
+pub struct RenewalAttempt {
+    pub(crate) write: std::pin::Pin<Box<dyn std::future::Future<Output = RenewalResult> + Send>>,
+    pub(crate) waiter: RenewalWaiter,
+}
+
+impl RenewalAttempt {
+    pub fn new(
+        write: impl std::future::Future<Output = RenewalResult> + Send + 'static,
+        on_caller_drop: impl FnOnce() + Send + 'static,
+    ) -> Self {
+        Self {
+            write: Box::pin(write),
+            waiter: RenewalWaiter(Some(Box::new(on_caller_drop))),
+        }
+    }
+}
+
+/// Dropping this waiter does not cancel or consume the store write.
+pub(crate) struct RenewalWaiter(Option<Box<dyn FnOnce() + Send>>);
+
+impl RenewalWaiter {
+    pub(crate) async fn deliver(
+        mut self,
+        result: RenewalResult,
+        window: crate::agent_ownership::RenewalWindow,
+        token: &crate::agent_ownership::OwnershipToken,
+    ) -> RenewalResult {
+        if result
+            .as_ref()
+            .is_ok_and(|lease| window.accepts(token, lease))
+        {
+            std::future::pending::<()>().await;
+        }
+        self.0.take();
+        result
+    }
+}
+
+impl Drop for RenewalWaiter {
+    fn drop(&mut self) {
+        if let Some(on_caller_drop) = self.0.take() {
+            on_caller_drop();
+        }
+    }
 }

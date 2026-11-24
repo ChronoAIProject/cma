@@ -2,12 +2,10 @@
 
 use super::{ArmError, Registry, MAX_LIFETIME};
 use layer2_core::{
-    agent_ownership::{
-        Authority, CapturedOwner, OwnershipError, OwnershipLease, OwnershipStore, RenewalWindow,
-    },
-    qualification::RenewalHook,
+    agent_ownership::{Authority, CapturedOwner, OwnershipError, OwnershipStore, RenewalWindow},
+    qualification::{RenewalAttempt, RenewalHook},
 };
-use std::{future::pending, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio::{sync::watch, time::Instant};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
@@ -76,20 +74,6 @@ impl Drop for RenewalRegistration {
     }
 }
 
-struct Invocation {
-    evidence: watch::Sender<RenewalEvidence>,
-    completed: bool,
-}
-
-impl Drop for Invocation {
-    fn drop(&mut self) {
-        if !self.completed {
-            self.evidence
-                .send_modify(|evidence| evidence.caller_dropped = true);
-        }
-    }
-}
-
 impl Registry {
     /// The caller prepares a store client dedicated to this one attempt.
     pub fn arm_renewal(
@@ -126,7 +110,7 @@ impl Registry {
         })
     }
 
-    fn take_renewal(
+    fn claim_renewal(
         &self,
         authority: &Arc<Authority>,
     ) -> Option<(SelectedRenewal, RenewalRegistration)> {
@@ -145,7 +129,6 @@ impl Registry {
     }
 }
 
-#[async_trait::async_trait]
 impl RenewalHook for Registry {
     fn selected(&self, authority: &Arc<Authority>) -> bool {
         self.renewal
@@ -161,37 +144,33 @@ impl RenewalHook for Registry {
             })
     }
 
-    async fn renew_selected(
+    fn take_renewal(
         &self,
         authority: &Arc<Authority>,
         window: RenewalWindow,
-    ) -> Option<Result<OwnershipLease, OwnershipError>> {
-        let (work, _registration) = self.take_renewal(authority)?;
-        let mut invocation = Invocation {
-            evidence: work.evidence,
-            completed: false,
+    ) -> Option<RenewalAttempt> {
+        let (work, registration) = self.claim_renewal(authority)?;
+        let token = authority.token.clone();
+        let dropped = work.evidence.clone();
+        let write = async move {
+            work.evidence
+                .send_modify(|evidence| evidence.started = true);
+            let outcome = work.isolated_store.renew(&token).await;
+            let observed = match &outcome {
+                Ok(lease) if window.accepts(&token, lease) => RenewalOutcome::Committed,
+                Ok(_) => RenewalOutcome::Invalid,
+                Err(OwnershipError::Unavailable(_)) => RenewalOutcome::Unavailable,
+                Err(OwnershipError::Stale) => RenewalOutcome::Stale,
+                Err(OwnershipError::IncompatibleProtocol) => RenewalOutcome::Incompatible,
+                Err(OwnershipError::Invalid(_)) => RenewalOutcome::Invalid,
+            };
+            work.evidence
+                .send_modify(|evidence| evidence.result = Some(observed));
+            outcome
         };
-        invocation
-            .evidence
-            .send_modify(|evidence| evidence.started = true);
-        let outcome = work.isolated_store.renew(&authority.token).await;
-        let observed = match &outcome {
-            Ok(lease) if window.accepts(authority, lease) => RenewalOutcome::Committed,
-            Ok(_) => RenewalOutcome::Invalid,
-            Err(OwnershipError::Unavailable(_)) => RenewalOutcome::Unavailable,
-            Err(OwnershipError::Stale) => RenewalOutcome::Stale,
-            Err(OwnershipError::IncompatibleProtocol) => RenewalOutcome::Incompatible,
-            Err(OwnershipError::Invalid(_)) => RenewalOutcome::Invalid,
-        };
-        invocation
-            .evidence
-            .send_modify(|evidence| evidence.result = Some(observed));
-        if observed == RenewalOutcome::Committed {
-            // Even if the plan disarms or the client disconnects, a committed
-            // renewal remains withheld until the original coordinator drops us.
-            pending::<()>().await;
-        }
-        invocation.completed = true;
-        Some(outcome)
+        Some(RenewalAttempt::new(write, move || {
+            dropped.send_modify(|evidence| evidence.caller_dropped = true);
+            drop(registration);
+        }))
     }
 }

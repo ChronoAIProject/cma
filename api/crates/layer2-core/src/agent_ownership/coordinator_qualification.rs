@@ -86,14 +86,15 @@ pub fn qualification_owner_digest(token: &OwnershipToken) -> [u8; 32] {
 }
 
 /// Validate the selected result with the coordinator's original token and time basis.
+#[derive(Clone, Copy)]
 pub struct RenewalWindow {
     pub(super) started: Instant,
     pub(super) now_ms: i64,
 }
 
 impl RenewalWindow {
-    pub fn accepts(&self, authority: &Authority, lease: &super::super::OwnershipLease) -> bool {
-        super::require_same_token(&authority.token, lease).is_ok()
+    pub fn accepts(&self, token: &OwnershipToken, lease: &super::super::OwnershipLease) -> bool {
+        super::require_same_token(token, lease).is_ok()
             && super::deadline(self.started, self.now_ms, lease.expires_at_ms).is_ok()
     }
 }
