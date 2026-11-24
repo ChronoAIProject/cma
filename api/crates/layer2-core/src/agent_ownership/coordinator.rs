@@ -10,13 +10,15 @@ use tokio::sync::{watch, Mutex};
 use tokio::time::Instant;
 
 use super::{
-    candidates, Authority, Member, OwnershipError, OwnershipLease, OwnershipStore, OwnershipToken,
-    STORE_DEADLINE_MS,
+    candidates, Authority, Member, Membership, OwnershipError, OwnershipLease, OwnershipStore,
+    OwnershipToken, STORE_DEADLINE_MS,
 };
 use crate::AgentId;
 
 #[path = "coordinator_activation.rs"]
 mod activation;
+#[path = "coordinator_batch_renewal.rs"]
+mod batch;
 #[path = "coordinator_heartbeat.rs"]
 mod heartbeat;
 #[path = "coordinator_renewal.rs"]
@@ -38,6 +40,7 @@ pub struct OwnershipCoordinator {
     skipped_heartbeats: AtomicU32,
     draining: AtomicBool,
     failed: watch::Sender<bool>,
+    batch_maintenance: Option<Mutex<()>>,
     pub(super) cleanup_pacing: super::cleanup_pacing::CleanupPacing,
     /// The member record held back until activation registers it.
     registration: std::sync::Mutex<Option<Member>>,
@@ -159,6 +162,10 @@ impl OwnershipCoordinator {
     /// Returns cooperative handoff candidates; callers may defer busy Agents.
     /// A skipped heartbeat tick renews nothing and returns no candidates.
     pub async fn maintain(&self) -> Result<Vec<Arc<Authority>>, OwnershipError> {
+        let _batch_guard = match &self.batch_maintenance {
+            Some(lock) => Some(lock.lock().await),
+            None => None,
+        };
         let result = self.maintain_inner().await;
         if result.is_err() {
             self.fail().await;
@@ -167,63 +174,39 @@ impl OwnershipCoordinator {
     }
 
     async fn maintain_inner(&self) -> Result<Vec<Arc<Authority>>, OwnershipError> {
-        if !self.is_ready() {
-            return Err(self.maintenance_error("member_readiness", None, OwnershipError::Stale));
-        }
-        let started = Instant::now();
-        let established_deadline = *self.member_deadline.lock().unwrap();
-        let heartbeat = tokio::time::timeout(
-            Duration::from_millis(STORE_DEADLINE_MS),
-            self.store.heartbeat(&self.instance_id, false),
-        );
-        let heartbeat = tokio::time::timeout_at(established_deadline, heartbeat)
-            .await
-            .map_err(|_| {
-                self.maintenance_error("member_local_deadline", None, OwnershipError::Stale)
-            })?;
-        // Neither membership nor any authority is extended by a skipped tick.
-        let Some(membership) = self.heartbeat_membership(heartbeat)? else {
+        let Some(mut heartbeat) = self.refresh_membership().await? else {
             return Ok(Vec::new());
         };
-        membership
-            .require_compatible()
-            .map_err(|error| self.maintenance_error("member_protocol", None, error))?;
-        let member = membership
-            .members
-            .iter()
-            .find(|member| member.instance_id == self.instance_id)
-            .ok_or_else(|| self.maintenance_error("member_lookup", None, OwnershipError::Stale))?;
-        if member.draining {
-            return Err(self.maintenance_error("member_drain", None, OwnershipError::Stale));
-        }
-        let member_deadline = deadline(started, membership.now_ms, member.expires_at_ms)
-            .map_err(|error| self.maintenance_error("member_store_deadline", None, error))?;
-        {
-            let mut current = self.member_deadline.lock().unwrap();
-            if *current <= Instant::now() {
-                return Err(self.maintenance_error(
-                    "member_local_deadline",
-                    None,
-                    OwnershipError::Stale,
-                ));
-            }
-            *current = member_deadline;
-        }
         let owned: Vec<_> = self.owned.lock().await.values().cloned().collect();
-        let renewals = stream::iter(owned.clone())
-            .map(|authority| async move {
-                self.renew_owned(&authority, started, membership.now_ms)
-                    .await
-            })
-            .buffer_unordered(4)
-            .try_collect::<Vec<_>>();
-        tokio::select! {
-            biased;
-            _ = tokio::time::sleep_until(member_deadline) => {
-                return Err(self.maintenance_error("member_batch_deadline", None, OwnershipError::Stale));
+        if self.batch_maintenance.is_some() {
+            if !self.renew_in_batches(&owned, &mut heartbeat).await? {
+                return Ok(Vec::new());
             }
-            result = renewals => { result?; }
+        } else {
+            let renewals = stream::iter(owned.clone())
+                .map(|authority| {
+                    let started = heartbeat.started;
+                    let now_ms = heartbeat.membership.now_ms;
+                    async move { self.renew_owned(&authority, started, now_ms).await }
+                })
+                .buffer_unordered(4)
+                .try_collect::<Vec<_>>();
+            tokio::select! {
+                biased;
+                _ = tokio::time::sleep_until(heartbeat.member_deadline) => {
+                    return Err(self.maintenance_error("member_batch_deadline", None, OwnershipError::Stale));
+                }
+                result = renewals => { result?; }
+            }
         }
+        self.handoff_candidates(owned, &heartbeat.membership)
+    }
+
+    fn handoff_candidates(
+        &self,
+        owned: Vec<Arc<Authority>>,
+        membership: &Membership,
+    ) -> Result<Vec<Arc<Authority>>, OwnershipError> {
         if !self.is_ready() {
             return Err(self.maintenance_error("member_completion", None, OwnershipError::Stale));
         }
@@ -240,7 +223,7 @@ impl OwnershipCoordinator {
             }
             if candidates(
                 &authority.token.agent_id,
-                &membership,
+                membership,
                 Some(&self.instance_id),
             )?
             .first()

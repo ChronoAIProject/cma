@@ -54,11 +54,15 @@ mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
+pub(crate) mod stale_turns;
+#[cfg(test)]
+pub(crate) use agent_worker_transaction::adoption_probe;
 #[cfg(test)]
 pub(crate) use agent_worker_transaction::skill_result_test_support;
 mod agent_worktree_recovery;
 mod agent_worktree_recovery_records;
 mod agent_write_coordination;
+pub(crate) use agent_write_coordination::CLEANUP_RETRY_DEADLINE;
 mod agents;
 pub mod auth;
 mod billing_authority;
@@ -126,6 +130,8 @@ pub mod mongo;
 mod mongo_diagnostics;
 pub(crate) mod pending_launch_homes;
 #[cfg(test)]
+pub(crate) mod test_visibility;
+#[cfg(test)]
 pub(crate) use mongo_diagnostics::attach_readiness_fixture;
 pub(crate) mod mongo_latency;
 pub(crate) mod mongo_read_telemetry;
@@ -170,6 +176,8 @@ mod worker_runtime_supervision_tests;
 pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_normal_capacity as fill_agent_capacity_fixture;
 #[cfg(test)]
 pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_to as fill_agent_capacity_to_fixture;
+#[cfg(test)]
+pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fingerprint as agent_capacity_fixture_fingerprint;
 #[cfg(test)]
 mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;

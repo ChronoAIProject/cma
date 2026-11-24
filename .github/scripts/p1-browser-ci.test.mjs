@@ -17,6 +17,7 @@ import {
   startProductionPreview,
   command,
   runSuite,
+  suites,
 } from "./p1-browser-ci.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
@@ -56,7 +57,8 @@ const original = () => ({
 });
 
 test("fixed CLI rejects execution bypasses, including inherited selectors", () => {
-  for (const suite of ["design", "shell", "auth"]) assert.equal(argumentsFor([suite], {}), suite);
+  for (const suite of ["design", "palette", "shell", "auth"]) assert.equal(argumentsFor([suite], {}), suite);
+  assert.deepEqual(Object.keys(suites), ["design", "palette", "shell", "auth"]);
   for (const args of [
     [],
     ["unknown"],
@@ -77,7 +79,14 @@ test("wrapper preserves full design, future registrations, projects, timeouts an
   const input = original();
   input.projects = [{ name: "chromium", use: { browserName: "chromium" } }];
   const config = configure(input, options);
-  assert.deepEqual(config.testMatch, input.testMatch);
+  const palette = configure(original(), { ...options, suite: "palette" });
+  // The design config is split, never narrowed: the remainder keeps future
+  // registrations and together the suites run every configured entry once.
+  assert.deepEqual(config.testMatch, ["design-correction.check.ts", "task-home-states.check.ts", "future.check.ts"]);
+  assert.deepEqual(palette.testMatch, ["theme-palette.check.ts"]);
+  assert.deepEqual([...config.testMatch, ...palette.testMatch].sort(), [...input.testMatch].sort());
+  assert.equal(palette.webServer.cwd, options.web);
+  assert.equal(palette.globalSetup, options.setup);
   assert.deepEqual(config.projects, input.projects);
   assert.equal(config.timeout, input.timeout);
   assert.equal(config.webServer.env.VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED, "true");
@@ -124,10 +133,18 @@ test("configuration mutations cannot remove coverage or reuse a server", () => {
     ...["trace", "screenshot", "baseURL"].map((key) => (c) => (c.projects = [{ use: { [key]: "off" } }])),
   ];
   for (const mutate of mutations) {
-    const input = original();
-    mutate(input);
-    assert.throws(() => configure(input, options));
+    for (const suite of ["design", "palette"]) {
+      const input = original();
+      mutate(input);
+      assert.throws(() => configure(input, { ...options, suite }));
+    }
   }
+  for (const entry of ["design-correction.check.ts", "task-home-states.check.ts", "theme-palette.check.ts"])
+    for (const suite of ["design", "palette"]) {
+      const input = original();
+      input.testMatch = input.testMatch.filter((match) => match !== entry);
+      assert.throws(() => configure(input, { ...options, suite }), /Missing browser entry/);
+    }
 });
 
 function report(executed) {
@@ -203,7 +220,8 @@ function verifyWorkflow(job) {
   const mechanics = steps.filter((step) => step.name === "Design, shell and auth gate mechanics");
   assert.equal(mechanics.length, 1);
   assert.equal(mechanics[0].run, "node --test ../.github/scripts/p1-browser-ci.test.mjs");
-  for (const suite of ["design", "shell", "auth"]) {
+  // Every suite needs its own bounded step; a split suite cannot silently stop running.
+  for (const suite of Object.keys(suites)) {
     const selected = steps.filter((step) => step.id === `p1_${suite}`);
     assert.equal(selected.length, 1);
     const step = selected[0];
@@ -228,6 +246,8 @@ test("workflow executes the guard and all suites, fails closed and uploads match
   verifyWorkflow(workflow.jobs.web);
   for (const mutate of [
     (j) => (j.steps = j.steps.filter((s) => s.id !== "p1_shell")),
+    (j) => (j.steps = j.steps.filter((s) => s.id !== "p1_palette")),
+    (j) => (j.steps.find((s) => s.id === "p1_palette").run = "node ../.github/scripts/p1-browser-ci.mjs design"),
     (j) => (j.steps.find((s) => s.name === "Design, shell and auth gate mechanics").run = "true"),
     (j) => (j.steps.find((s) => s.id === "p1_design").run += " --list"),
     (j) => (j.steps.find((s) => s.id === "p1_design")["continue-on-error"] = true),
@@ -410,13 +430,15 @@ for (const suite of ["shell", "design"])
     await closed(receipt.port);
   });
 
-for (const suite of ["shell", "design"])
+for (const suite of ["shell", "design", "palette"])
   test(`real successful ${suite} case binds discovery, execution, checkout and preview cleanup`, async (t) => {
     const f = await fixture(t, "await expect(page.locator('body')).toHaveText('synthetic preview');");
     const receipt = await runSuite(suite, f);
     assert.equal(receipt.status, "passed");
     assert.equal(receipt.revision, f.revision);
-    assert.equal(receipt.cases.length, suite === "shell" ? 1 : 3);
+    // The synthetic design config has three entries; the split runs two and one.
+    assert.equal(receipt.cases.length, { shell: 1, design: 2, palette: 1 }[suite]);
+    assert.equal(receipt.productionPreviewClosed, suite === "shell");
     await closed(receipt.port);
     await assert.rejects(runSuite(suite, f), /EEXIST/);
   });

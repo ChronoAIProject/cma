@@ -10,9 +10,9 @@ function strict<const Value>(parse: Parser<Value>): Parser<Value> {
     return parsed;
   };
 }
-const version = (value: unknown): 1 => {
-  if (value !== 1) throw new ProtocolError('Unsupported task template version');
-  return 1;
+const version = (value: unknown): 1 | 2 => {
+  if (value !== 1 && value !== 2) throw new ProtocolError('Unsupported task template version');
+  return value;
 };
 export const taskTemplate = tagged(
   {

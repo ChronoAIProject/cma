@@ -45,7 +45,7 @@ pub(in crate::auth) fn fixture_stamp(
     store
         .evidence_stamp(
             key,
-            EvidenceScope::new(&auth, &metadata, "fixture", None),
+            EvidenceScope::new(&auth, &metadata, "fixture"),
             &evidence,
         )
         .unwrap()
@@ -59,7 +59,7 @@ fn stamps_bind_exact_authority_and_expiry_but_not_display_or_permission_order() 
         auth.identity_store
             .evidence_stamp(
                 &key,
-                EvidenceScope::new(&auth, &metadata, "fixture", None),
+                EvidenceScope::new(&auth, &metadata, "fixture"),
                 evidence,
             )
             .unwrap()
@@ -125,7 +125,7 @@ fn stamps_bind_exact_authority_and_expiry_but_not_display_or_permission_order() 
     assert!(matches!(
         auth.identity_store.evidence_stamp(
             &key,
-            EvidenceScope::new(&auth, &metadata, "fixture", None),
+            EvidenceScope::new(&auth, &metadata, "fixture"),
             &timed
         ),
         Err(Error::Unavailable(_))
@@ -133,30 +133,24 @@ fn stamps_bind_exact_authority_and_expiry_but_not_display_or_permission_order() 
 }
 
 #[test]
-fn token_provider_resource_purpose_and_process_namespaces_are_distinct() {
+fn token_provider_resource_and_process_namespaces_are_distinct() {
     let (mut auth, mut metadata) = context();
     let store = auth.identity_store.clone();
     let key = store.key("fixture");
     let evidence = evidence();
-    let make =
-        |auth: &AuthState, metadata: &ProviderMetadata, token: &str, subject: Option<&str>| {
-            store
-                .evidence_stamp(
-                    &key,
-                    EvidenceScope::new(auth, metadata, token, subject),
-                    &evidence,
-                )
-                .unwrap()
-        };
-    let original = make(&auth, &metadata, "fixture", None);
-    assert!(original != make(&auth, &metadata, "fixture", Some("synthetic-owner")));
-    assert!(original != make(&auth, &metadata, "nyx_fixture", None));
+    let make = |auth: &AuthState, metadata: &ProviderMetadata, token: &str| {
+        store
+            .evidence_stamp(&key, EvidenceScope::new(auth, metadata, token), &evidence)
+            .unwrap()
+    };
+    let original = make(&auth, &metadata, "fixture");
+    assert!(original != make(&auth, &metadata, "nyx_fixture"));
     assert!(
         original
             != store
                 .evidence_stamp(
                     &store.key("another"),
-                    EvidenceScope::new(&auth, &metadata, "fixture", None),
+                    EvidenceScope::new(&auth, &metadata, "fixture"),
                     &evidence
                 )
                 .unwrap()
@@ -169,10 +163,10 @@ fn token_provider_resource_purpose_and_process_namespaces_are_distinct() {
     ] {
         let mut changed = metadata.clone();
         change(&mut changed);
-        assert!(original != make(&auth, &changed, "fixture", None));
+        assert!(original != make(&auth, &changed, "fixture"));
     }
     metadata.userinfo_endpoint = Some("https://other.example.test/userinfo".into());
-    assert!(original != make(&auth, &metadata, "fixture", None));
+    assert!(original != make(&auth, &metadata, "fixture"));
     let (_, metadata) = context();
     for change in [
         |a: &mut AuthState| a.oauth_api_resource = Some("https://resource.example.test".into()),
@@ -190,7 +184,7 @@ fn token_provider_resource_purpose_and_process_namespaces_are_distinct() {
     ] {
         let (mut other, _) = context();
         change(std::sync::Arc::get_mut(&mut other).unwrap());
-        assert!(original != make(&other, &metadata, "fixture", None));
+        assert!(original != make(&other, &metadata, "fixture"));
     }
     let (other, _) = context();
     assert!(
@@ -199,7 +193,7 @@ fn token_provider_resource_purpose_and_process_namespaces_are_distinct() {
                 .identity_store
                 .evidence_stamp(
                     &key,
-                    EvidenceScope::new(&other, &metadata, "fixture", None),
+                    EvidenceScope::new(&other, &metadata, "fixture"),
                     &evidence
                 )
                 .unwrap()
@@ -207,5 +201,5 @@ fn token_provider_resource_purpose_and_process_namespaces_are_distinct() {
     std::sync::Arc::get_mut(&mut auth).unwrap().mode = AuthMode::Trusted {
         subject: "trusted".into(),
     };
-    assert!(original != make(&auth, &metadata, "fixture", None));
+    assert!(original != make(&auth, &metadata, "fixture"));
 }

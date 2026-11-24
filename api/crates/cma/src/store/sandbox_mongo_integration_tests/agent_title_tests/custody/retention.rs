@@ -107,24 +107,7 @@ async fn title_custody_purge_requires_final_effect_and_permanent_identity() {
         !purge_allowed(&f).await,
         "a result alone does not prove permanent identity retirement"
     );
-    let agent = f.a.get_agent(&f.id).await.unwrap().unwrap();
-    let mut parent = sandbox(agent.sandbox_id.as_str());
-    parent.owner = agent.owner.clone();
-    let mut creation = agent_for_worker(f.id.as_str(), NOW);
-    creation.conversation.last_seq = 1;
-    let provenance = layer2_core::sandbox::AgentCreationProvenance::for_admission(
-        &creation,
-        &parent,
-        layer2_core::resource_access::ResourceOwner::Person {
-            subject: agent.owner.clone(),
-        },
-        None,
-    )
-    .unwrap();
-    f.a.agent_creation_provenance
-        .insert_one(crate::store::agent_provenance::document(&provenance).unwrap())
-        .await
-        .unwrap();
+    insert_provenance(&f).await;
     assert!(purge_allowed(&f).await);
     // Simulate the terminal purge after its transaction proved finality. The
     // retained provenance prevents both production admission and low-level
@@ -147,6 +130,66 @@ async fn title_custody_purge_requires_final_effect_and_permanent_identity() {
         .is_some());
     f.cleanup().await;
 }
+async fn insert_provenance(f: &Fixture) {
+    let agent = f.a.get_agent(&f.id).await.unwrap().unwrap();
+    let mut parent = sandbox(agent.sandbox_id.as_str());
+    parent.owner = agent.owner.clone();
+    let mut creation = agent_for_worker(f.id.as_str(), NOW);
+    creation.conversation.last_seq = 1;
+    let provenance = layer2_core::sandbox::AgentCreationProvenance::for_admission(
+        &creation,
+        &parent,
+        layer2_core::resource_access::ResourceOwner::Person {
+            subject: agent.owner.clone(),
+        },
+        None,
+    )
+    .unwrap();
+    f.a.agent_creation_provenance
+        .insert_one(crate::store::agent_provenance::document(&provenance).unwrap())
+        .await
+        .unwrap();
+}
+
+// #3275: nothing ever resolves an unresolved title effect, so purge finality
+// must not wait for it once no capability can still accept a result.
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn title_custody_purge_accepts_an_unresolved_effect_after_its_claim_deadline() {
+    let f = Fixture::new("purge_unresolved").await;
+    let provider = Provider::new(true).await;
+    assert_eq!(
+        f.service_a
+            .generate_agent_title(&f.id, Some(&context()), Some(&provider.generator))
+            .await,
+        Err(AgentTitleServiceError::EffectUnknown)
+    );
+    insert_provenance(&f).await;
+    // Within the claim deadline a result could still be accepted.
+    assert!(!purge_allowed(&f).await);
+    // Move the retained capability window into the past, keeping its length.
+    f.a.agents
+        .update_one(
+            doc! {"_id": f.id.as_str()},
+            doc! {"$set": {
+                "title_effect_custody.intent.acquired_ms": 1_000_i64,
+                "title_effect_custody.intent.expires_ms": 46_000_i64,
+            }},
+        )
+        .await
+        .unwrap();
+    assert!(f.b.agent_title_effect(&f.id).await.unwrap().unknown());
+    assert!(purge_allowed(&f).await);
+    // Permanent identity is still required.
+    f.a.agent_creation_provenance
+        .delete_one(doc! {"_id": f.id.as_str()})
+        .await
+        .unwrap();
+    assert!(!purge_allowed(&f).await);
+    assert_eq!(provider.calls(), 1);
+    f.cleanup().await;
+}
+
 async fn purge_allowed(f: &Fixture) -> bool {
     let mut session = f.client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();

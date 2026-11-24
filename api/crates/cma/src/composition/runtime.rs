@@ -57,11 +57,12 @@ impl RuntimeServices {
                     .clone()
                     .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
             )
-            .with_target_fencing(config.agent_manager_replicas.is_some()),
+            .with_target_fencing(config.agent_manager_replicas.is_some())
+            .with_released_runtime(stores.released_runtime.clone()),
             updates: Arc::new(
-                layer2_core::sandbox::SandboxRuntimeUpdateService::new(
+                layer2_core::sandbox::SandboxRuntimeUpdateService::with_released(
                     stores.sandbox_model.clone(),
-                    config.runtime.sandbox_image.clone(),
+                    stores.released_runtime.clone(),
                 )
                 .with_unpublished_recovery(Arc::new(
                     crate::sandbox::unpublished_recovery::UnpublishedRuntimeRecovery::new(
@@ -92,6 +93,7 @@ pub(super) fn lifecycle_config(
     config: &Config,
     holder: String,
     ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    stores: &MongoStores,
 ) -> crate::sandbox::SandboxLifecycleConfig {
     crate::sandbox::SandboxLifecycleConfig {
         renewable_work: config.agent_manager_replicas.is_some(),
@@ -103,6 +105,7 @@ pub(super) fn lifecycle_config(
         retry_single_marker_enabled: config.features.retry_single_marker_enabled,
         work_retry_policy_enabled: config.features.work_retry_policy_enabled,
         native_create_retry_enabled: config.features.native_create_retry_enabled,
+        reopen_output_refusal_enabled: config.features.reopen_output_refusal_enabled,
         cleanup_continuation_enabled: config.features.cleanup_continuation_enabled,
         bounded_live_fragments: config.features.bounded_live_fragments,
         coordinated_ingress: config.features.coordinated_ingress,
@@ -110,6 +113,8 @@ pub(super) fn lifecycle_config(
         access_transport_migration: config.agent_access_transport_migration.clone(),
         managed_documents_enabled: config.document_storage.is_some(),
         event_driven_reconciliation: config.features.event_driven_reconciliation,
+        stale_turn_reconciliation: config.features.stale_turn_reconciliation,
+        stale_turn_terminal: config.features.stale_turn_terminal,
         skip_ineligible_reconciliation: config
             .agent_manager_replicas
             .as_ref()
@@ -123,7 +128,7 @@ pub(super) fn lifecycle_config(
         execution: config.execution,
         holder,
         deployment_id: config.deployment_id.clone(),
-        runtime_version: config.runtime.sandbox_image.clone(),
+        released: stores.released_runtime.clone(),
         title_model: config.default_profiles.agent_model.clone(),
     }
 }

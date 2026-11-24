@@ -306,3 +306,5 @@ async fn owner_delete_fences_a_silent_inflight_reopen_and_competing_worker() {
     );
     retire_and_prove(&fixture, &reopening, &agent, now).await;
 }
+
+mod local_lifecycle_tests;

@@ -16,7 +16,7 @@ import {
 } from '../../api/agentFiles';
 import { Alert } from '../../ui/Alert';
 import { Button } from '../../ui/Button';
-import { FileCreateForm } from './FileCreateForm';
+import { FileCreateForm, fileNameIssue } from './FileCreateForm';
 import { FileExplorerFrame, FileLocation } from './FileExplorerFrame';
 import { FileToolbar } from './FileToolbar';
 import { FileRail } from './FileRail';
@@ -283,16 +283,10 @@ export function FileExplorer({
     });
   };
   const createFile = () => {
-    if (
-      blocked ||
-      !create ||
-      !name.trim() ||
-      /[/\\]/.test(name) ||
-      [...name].some((character) => character.charCodeAt(0) < 32) ||
-      name === '.' ||
-      name === '..'
-    ) {
-      setError('Enter a file or folder name without path separators.');
+    if (blocked || !create) return;
+    const issue = fileNameIssue(name);
+    if (issue) {
+      setError(issue);
       return;
     }
     const path = (directory ? `${directory}/` : '') + name;
