@@ -3,7 +3,7 @@ use super::*;
 use crate::store::agent_log_segments::{publication, writer_gate as gate};
 use crate::store::sandbox_mongo::start_transaction;
 use layer2_core::sandbox::{
-    store::{AgentLogPublicationIdentity, AgentLogStore},
+    store::{AgentLogPublicationIdentity, AgentLogStore, SandboxStore},
     AgentLogKind,
 };
 
@@ -75,6 +75,10 @@ async fn keyed_trait_replays_original_entry_after_later_append_and_rejects_chang
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn keyed_trait_adopts_legacy_only_after_durable_gate_admission() {
     let f = fixture(2).await;
+    let mut parent =
+        crate::store::sandbox_mongo_integration_tests::sandbox(f.agent.sandbox_id.as_str());
+    parent.owner = f.agent.owner.clone();
+    f.store.create_sandbox(parent).await.unwrap();
     f.store
         .agents
         .replace_one(
