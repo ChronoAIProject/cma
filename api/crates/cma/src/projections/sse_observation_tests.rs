@@ -1,5 +1,8 @@
-//! Exercise client abort attribution over HTTP against the public AG-UI replay route.
-use super::{fixture_support::attach_identity, fixture_with_terminal, AgentId, AgentLogKind};
+//! Exercise client abort attribution over HTTP against the public SSE routes.
+use super::{
+    fixture_support::{attach_identity, retained_completed_response},
+    fixture_with_terminal, AgentId, AgentLogKind,
+};
 use axum::{
     body::{Body, Bytes},
     extract::Request,
@@ -17,12 +20,13 @@ use tokio::{net::TcpListener, sync::Notify, time::timeout};
 const PATH: &str = "/api/v1/agui/events?thread_id=agt_composed";
 const OBSERVATION: &str = "x-fixture-observation";
 const DEADLINE: Duration = Duration::from_secs(5);
+const MAX_BYTES: usize = 64 * 1024;
 const STARTED: &str = r#""type":"RUN_STARTED""#;
 const FINISHED: &str = r#""type":"RUN_FINISHED""#;
 
 #[derive(Clone, Copy)]
 enum Case {
-    CompletedReplay,
+    CompletedResponse,
     CancelledReplay,
     ClientAbort,
     BodyFailure,
@@ -31,7 +35,7 @@ enum Case {
 impl Case {
     fn id(self) -> &'static str {
         match self {
-            Self::CompletedReplay => "fixture-completed-replay",
+            Self::CompletedResponse => "fixture-completed-response",
             Self::CancelledReplay => "fixture-cancelled-replay",
             Self::ClientAbort => "fixture-deliberate-abort",
             Self::BodyFailure => "fixture-injected-failure",
@@ -40,9 +44,20 @@ impl Case {
 
     fn terminal(self) -> Option<AgentLogKind> {
         match self {
-            Self::CompletedReplay => Some(AgentLogKind::TurnCompleted { turn_sequence: 3 }),
+            Self::CompletedResponse => Some(AgentLogKind::TurnCompleted { turn_sequence: 3 }),
             Self::CancelledReplay => Some(AgentLogKind::TurnInterrupted { turn_sequence: 3 }),
             Self::ClientAbort | Self::BodyFailure => None,
+        }
+    }
+
+    fn metric_route(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Self::CompletedResponse => (
+                "/api/v2/responses/{response_id}/events",
+                "responses_v2",
+                "responses",
+            ),
+            _ => ("/api/v1/agui/events", "agui", "agui"),
         }
     }
 }
@@ -67,9 +82,25 @@ impl Consumer {
                 .unwrap()
                 .expect("run start frame");
             bytes.extend_from_slice(&chunk);
-            assert!(bytes.len() < 64 * 1024, "fixture replay exceeded its bound");
+            assert!(bytes.len() < MAX_BYTES, "fixture replay exceeded its bound");
             if std::str::from_utf8(&bytes).is_ok_and(|text| text.contains(STARTED)) {
                 return String::from_utf8(bytes).unwrap();
+            }
+        }
+    }
+
+    async fn read_body_failure(&mut self, mut bytes: usize) {
+        loop {
+            match self.response.chunk().await {
+                Ok(Some(chunk)) => {
+                    bytes += chunk.len();
+                    assert!(bytes < MAX_BYTES, "fixture replay exceeded its bound");
+                }
+                Ok(None) => panic!("expected an HTTP response body failure"),
+                Err(error) => {
+                    assert!(error.is_decode() && !error.is_timeout(), "{error:?}");
+                    return;
+                }
             }
         }
     }
@@ -128,7 +159,8 @@ async fn fixture_transport(
 }
 
 async fn open_observation(
-    case: Case,
+    observation_id: &str,
+    path: &str,
     app: Router,
     body_dropped: Arc<Notify>,
     fail_body: Option<Arc<Notify>>,
@@ -141,15 +173,14 @@ async fn open_observation(
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let follow = case.terminal().is_none();
     let response = reqwest::Client::builder()
         .no_proxy()
         .http1_only()
         .timeout(DEADLINE)
         .build()
         .unwrap()
-        .get(format!("http://{address}{PATH}&follow={follow}"))
-        .header(OBSERVATION, case.id())
+        .get(format!("http://{address}{path}"))
+        .header(OBSERVATION, observation_id)
         .send()
         .await
         .unwrap();
@@ -158,7 +189,7 @@ async fn open_observation(
         response.headers()[header::CONTENT_TYPE],
         "text/event-stream"
     );
-    assert_eq!(response.headers()[OBSERVATION], case.id());
+    assert_eq!(response.headers()[OBSERVATION], observation_id);
     (Consumer { response }, server)
 }
 
@@ -170,22 +201,23 @@ fn samples<'a>(text: &'a str, metric: &str) -> Vec<&'a str> {
 
 fn assert_counts(metrics: &PrometheusHandle, case: Case, reason: &str, disposition: &str) {
     let text = metrics.render();
+    let (route, kind, protocol) = case.metric_route();
     assert_eq!(
         samples(&text, "cma_sse_contract_opened_total{"),
-        [
-            r#"cma_sse_contract_opened_total{stream_kind="agui",consumer="unknown",protocol="agui"} 1"#
-        ],
+        [format!(
+            r#"cma_sse_contract_opened_total{{stream_kind="{kind}",consumer="unknown",protocol="{protocol}"}} 1"#,
+        )],
     );
     assert_eq!(
         samples(&text, "cma_sse_contract_closed_total{"),
         [format!(
-            r#"cma_sse_contract_closed_total{{stream_kind="agui",consumer="unknown",protocol="agui",reason="{reason}"}} 1"#,
+            r#"cma_sse_contract_closed_total{{stream_kind="{kind}",consumer="unknown",protocol="{protocol}",reason="{reason}"}} 1"#,
         )],
     );
     assert_eq!(
         samples(&text, "cma_sse_observation_closed_total{"),
         [format!(
-            r#"cma_sse_observation_closed_total{{route="/api/v1/agui/events",reason="{disposition}"}} 1"#,
+            r#"cma_sse_observation_closed_total{{route="{route}",reason="{disposition}"}} 1"#,
         )],
     );
     for fixture_value in [case.id(), "agt_composed", "fixture-body-failure"] {
@@ -194,23 +226,37 @@ fn assert_counts(metrics: &PrometheusHandle, case: Case, reason: &str, dispositi
 }
 
 async fn qualify(case: Case) {
+    let fixture = fixture_with_terminal(case.terminal()).await;
+    let path = match case {
+        Case::CompletedResponse => {
+            let id = retained_completed_response(&fixture).await;
+            format!("/api/v2/responses/{id}/events")
+        }
+        Case::CancelledReplay => format!("{PATH}&follow=false"),
+        Case::ClientAbort | Case::BodyFailure => format!("{PATH}&follow=true"),
+    };
     // The server and consumer share this test's current-thread metric recorder.
     let recorder = PrometheusBuilder::new().build_recorder();
     let metrics = recorder.handle();
     let _recording = metrics::set_default_local_recorder(&recorder);
-    let fixture = fixture_with_terminal(case.terminal()).await;
     let body_dropped = Arc::new(Notify::new());
     let fail_body = matches!(case, Case::BodyFailure).then(|| Arc::new(Notify::new()));
     let (mut consumer, server) = open_observation(
-        case,
+        case.id(),
+        &path,
         fixture.router,
         body_dropped.clone(),
         fail_body.clone(),
     )
     .await;
-    let started = consumer.read_started().await;
     let (abort_receipt, reason, disposition) = match case {
-        Case::CompletedReplay | Case::CancelledReplay => {
+        Case::CompletedResponse => {
+            let wire = consumer.response.text().await.unwrap();
+            assert!(wire.contains("event: response.completed"), "{wire}");
+            (None, "normal_terminal", "eof")
+        }
+        Case::CancelledReplay => {
+            let started = consumer.read_started().await;
             let rest = consumer.response.text().await.unwrap();
             let text = started + &rest;
             let terminal = text
@@ -218,25 +264,22 @@ async fn qualify(case: Case) {
                 .find(|line| line.starts_with("data: ") && line.contains(FINISHED))
                 .expect("retained terminal frame");
             let event: serde_json::Value = serde_json::from_str(&terminal[6..]).unwrap();
-            let expected = match case {
-                Case::CompletedReplay => "complete",
-                _ => "interrupt",
-            };
-            assert_eq!(event["outcome"]["type"], expected);
+            assert_eq!(event["outcome"]["type"], "interrupt");
             (None, "finite_replay", "eof")
         }
         Case::ClientAbort => {
+            let started = consumer.read_started().await;
             assert!(!started.contains(FINISHED));
             assert!(samples(&metrics.render(), "cma_sse_contract_closed_total{").is_empty());
             let receipt = consumer.abort();
             (Some(receipt), "drop_unknown", "dropped")
         }
         Case::BodyFailure => {
+            let started = consumer.read_started().await;
             assert!(!started.contains(FINISHED));
             assert!(samples(&metrics.render(), "cma_sse_contract_closed_total{").is_empty());
             fail_body.unwrap().notify_one();
-            let error = consumer.response.chunk().await.unwrap_err();
-            assert!(error.is_decode() && !error.is_timeout(), "{error:?}");
+            consumer.read_body_failure(started.len()).await;
             (None, "server_error", "error")
         }
     };
@@ -268,7 +311,7 @@ async fn qualify(case: Case) {
 
 #[tokio::test]
 async fn sse_completed_turn_reaches_eof_without_a_client_abort() {
-    qualify(Case::CompletedReplay).await;
+    qualify(Case::CompletedResponse).await;
 }
 
 #[tokio::test]
