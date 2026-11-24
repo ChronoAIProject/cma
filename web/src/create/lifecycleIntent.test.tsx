@@ -61,6 +61,47 @@ it('preserves a newer task draft and fences a delayed continuation after discard
   expect(create).toHaveBeenCalledOnce();
 });
 
+it('discards a revisionless receipt while preserving a separately saved identical draft on reload', async () => {
+  const slot = lifecycleStorageKey('owner');
+  const repository = { url: 'https://github.com/example/project', ref: 'main' };
+  sessionStorage.setItem(
+    slot,
+    JSON.stringify({
+      version: 1,
+      intent: {
+        key: 'original-key',
+        body: { name: 'Original', initial_message: 'Inspect the source', repository },
+        receipt: { id: connectionWait.id },
+      },
+    }),
+  );
+  const store = openTaskDraftStore('owner');
+  const newer = {
+    ...store.read().draft,
+    revision: 'new-draft',
+    text: 'Inspect the source',
+    repositoryUrl: repository.url,
+    repositoryRef: repository.ref,
+  };
+  store.save(newer);
+  const create = vi.fn(async () => ({ id: 'fresh-operation' }));
+  const client = agentClient({
+    createAgentLifecycle: create,
+    readAgentLifecycle: async (id) => ({ ...connectionWait, id }),
+  });
+  const first = renderHook(() => useLifecycleIntent(client, 'owner'));
+  await waitFor(() => expect(first.result.current.canDiscardWaiting).toBe(true));
+  act(() => expect(first.result.current.discardWaiting()).toBe(true));
+  expect(sessionStorage.getItem(slot)).toBeNull();
+  first.unmount();
+  const reloaded = renderHook(() => useLifecycleIntent(client, 'owner'));
+  expect(reloaded.result.current.intent).toBeUndefined();
+  expect(openTaskDraftStore('owner').read().draft).toEqual(newer);
+  await act(() => reloaded.result.current.submit({ name: 'Independent task' }));
+  expect(create).toHaveBeenCalledOnce();
+  expect(reloaded.result.current.intent?.key).not.toBe('original-key');
+});
+
 it.each(['queued', 'running', 'unconfirmed', 'admitted'] as const)(
   'preserves %s creation recovery on discard',
   async (state) => {

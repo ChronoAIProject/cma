@@ -36,11 +36,7 @@ export function discardSubmittedTaskDraft(
     const store = openTaskDraftStore(owner, body.workspace_id, body.sandbox_id);
     const saved = store.read();
     if (saved.error) throw new Error(saved.error);
-    if (
-      (revision !== undefined && saved.draft.revision !== revision) ||
-      !matchesTaskDraft(saved.draft, body)
-    )
-      return;
+    if (saved.draft.revision !== revision || !matchesTaskDraft(saved.draft, body)) return;
     const remaining = remainingTaskDraft(saved.draft);
     store.save(
       reason === 'discarded'
