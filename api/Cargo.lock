@@ -426,6 +426,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "cma-allocator-qualification",
+ "cma-am-auth",
  "cma-am-mongo-primitives",
  "cma-qualification",
  "cma-service-auth",
@@ -474,6 +475,13 @@ dependencies = [
 [[package]]
 name = "cma-allocator-qualification"
 version = "0.1.0"
+
+[[package]]
+name = "cma-am-auth"
+version = "0.1.0"
+dependencies = [
+ "layer2-core",
+]
 
 [[package]]
 name = "cma-am-mongo-primitives"
