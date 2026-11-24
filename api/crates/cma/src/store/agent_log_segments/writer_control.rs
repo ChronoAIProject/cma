@@ -1,5 +1,6 @@
 //! Operator control after the shared CLI has verified migration authority and
 //! schema inventory. No service-startup policy writes or automatic activation.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::SandboxStoreError;
 use mongodb::{Client, Database};
 use serde::Serialize;
@@ -82,7 +83,7 @@ pub(in crate::store) async fn execute(
     let status = match result {
         Ok(status) => status,
         Err(error) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(match error {
                 TransactionLogError::Domain(error) => error,
                 TransactionLogError::Driver(error) => driver(error),

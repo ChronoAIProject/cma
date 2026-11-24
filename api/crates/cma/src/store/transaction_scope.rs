@@ -1,4 +1,5 @@
 //! Complete each reporting transaction before returning or opening a fresh snapshot.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::future::BoxFuture;
 use layer2_core::sandbox_metrics::MetricsError;
 use mongodb::{
@@ -77,7 +78,10 @@ where
             .await
             .map_err(super::usage_reports::unavailable)?;
         let result = match session.start_transaction().await {
-            Ok(()) => body(&context, &mut session).await,
+            Ok(()) => match super::transaction_barrier::open(&mut session).await {
+                Ok(()) => body(&context, &mut session).await,
+                Err(error) => Err(mongo(error)),
+            },
             Err(error) => Err(mongo(error)),
         };
         // The driver changes transaction state before sending commit/abort.
@@ -105,10 +109,10 @@ pub(super) trait Transaction: Send {
 #[async_trait::async_trait]
 impl Transaction for ClientSession {
     async fn commit(&mut self) -> mongodb::error::Result<()> {
-        self.commit_transaction().await
+        self.commit_guarded().await
     }
     async fn abort(&mut self) -> mongodb::error::Result<()> {
-        self.abort_transaction().await
+        self.abort_guarded().await
     }
 }
 

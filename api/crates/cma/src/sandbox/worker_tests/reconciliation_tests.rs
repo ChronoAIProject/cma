@@ -236,10 +236,10 @@ async fn startup_reclaims_only_provider_rows_without_a_durable_sandbox() {
     let created = harness.create().await;
     let protected = harness
         .adapter
-        .provision(&sandbox_spec(&created, "test"))
+        .provision(&sandbox_spec(&created, "test").unwrap())
         .await
         .unwrap();
-    let mut orphan_spec = sandbox_spec(&created, "test");
+    let mut orphan_spec = sandbox_spec(&created, "test").unwrap();
     orphan_spec.sandbox_id = "sbx_orphan".into();
     let orphan = harness.adapter.provision(&orphan_spec).await.unwrap();
     reconciler(&harness, fresh_adapter(&harness, None))
@@ -260,7 +260,7 @@ async fn obsolete_provider_generation_is_reclaimed_below_durable_high_water() {
         .adapter
         .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
             2,
-            sandbox_spec(&active, "test"),
+            sandbox_spec(&active, "test").unwrap(),
         ))
         .await
         .unwrap();
@@ -289,7 +289,7 @@ async fn newer_unbound_generation_is_not_reclaimed_during_provisioning() {
         .adapter
         .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
             2,
-            sandbox_spec(&active, "test"),
+            sandbox_spec(&active, "test").unwrap(),
         ))
         .await
         .unwrap();
@@ -316,7 +316,7 @@ async fn startup_completes_global_pagination_before_reclaiming() {
     }
     let protected = harness
         .adapter
-        .provision(&sandbox_spec(&last, "test"))
+        .provision(&sandbox_spec(&last, "test").unwrap())
         .await
         .unwrap();
     reconciler(&harness, fresh_adapter(&harness, None))
@@ -341,7 +341,7 @@ async fn settled_unbound_parents_reclaim_equal_generation_without_touching_newer
             .adapter
             .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
                 2,
-                sandbox_spec(&current, "test"),
+                sandbox_spec(&current, "test").unwrap(),
             ))
             .await
             .unwrap();
@@ -402,7 +402,7 @@ async fn equal_generation_remains_protected_before_initial_binding_publication()
         .adapter
         .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
             1,
-            sandbox_spec(&created, "test"),
+            sandbox_spec(&created, "test").unwrap(),
         ))
         .await
         .unwrap();

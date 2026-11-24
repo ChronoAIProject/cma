@@ -3,6 +3,8 @@ import type { AgentProvenanceInventoryOptions } from '../../agents.js';
 import type { AccessibleSandboxListOptions } from '../../sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'POST /api/v1/sandbox-creation-outcomes/lookup': ({ client, body, options }) =>
+    client.sandboxes.lookupCreation(body, options),
   'POST /api/v1/telemetry/browser': ({ client, body }) =>
     client.reportBrowserFault(
       (body as { kind: import('../../browser-telemetry.js').BrowserFault }).kind,

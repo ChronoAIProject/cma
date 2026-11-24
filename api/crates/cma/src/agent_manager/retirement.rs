@@ -42,8 +42,14 @@ impl AgentManager {
             };
             if eligible {
                 self.registry.detach_owner(&authority.token);
-                if !self.handoff_receiver(authority).await? {
-                    continue;
+                match self.handoff_receiver(authority).await {
+                    Ok(true) => {}
+                    Ok(false) => continue,
+                    Err(error) => {
+                        self.contained
+                            .contain("inactive_retirement", authority, error)?;
+                        continue;
+                    }
                 }
                 self.retired_since
                     .lock()

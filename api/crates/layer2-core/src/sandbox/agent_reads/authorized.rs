@@ -372,6 +372,49 @@ impl AgentReadService {
             .await
             .map_err(access_error)
     }
+
+    pub(super) async fn finish_conversation_read(
+        &self,
+        caller: &Caller,
+        source: &Agent,
+        held: Option<&AuthorizedResource>,
+    ) -> Result<Agent, AgentReadError> {
+        let current = if let Some(held) = held {
+            self.access
+                .as_ref()
+                .ok_or_else(|| {
+                    AgentReadError::Unavailable("resource access service is not composed".into())
+                })?
+                .current_read_snapshot(
+                    held,
+                    &ResourceTarget::Agent {
+                        agent_id: source.id.clone(),
+                    },
+                    ResourceCapability::ViewHistory,
+                )
+                .await
+                .map_err(access_error)?
+                .lineage
+                .agent
+                .ok_or_else(|| corrupt("Agent is absent at release"))?
+        } else {
+            self.owned_lineage(caller, &source.id).await?.agent
+        };
+        require_granted(&current, crate::RuntimeCapability::Conversation)?;
+        if current.id != source.id
+            || current.created_at != source.created_at
+            || current.sandbox_id != source.sandbox_id
+            || current.workspace_id != source.workspace_id
+            || current.worktree_id != source.worktree_id
+            || current.creation_worktree_id() != source.creation_worktree_id()
+            || current.owner != source.owner
+        {
+            return Err(AgentReadError::Unavailable(
+                "conversation source changed".into(),
+            ));
+        }
+        Ok(current)
+    }
 }
 
 pub(super) fn is_personal(authorized: &AuthorizedResource, context: &CallerContext) -> bool {

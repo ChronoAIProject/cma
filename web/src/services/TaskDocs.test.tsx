@@ -62,3 +62,11 @@ it('opens the Event Gateway documentation from the Docs index using application 
     view: 'event_gateway_protocol',
   });
 });
+
+it('names the task and Artifact recovery actions shown by the application', () => {
+  render(<DocsPage view="recover-and-continue" onNavigate={vi.fn()} />);
+  const guidance = screen.getByText(/For a task, return to the original task/);
+  expect(guidance).toHaveTextContent('Recover original task');
+  expect(guidance).toHaveTextContent('Retry creation in the open creation dialog');
+  expect(guidance).toHaveTextContent('Resume creation in Artifacts to reopen the saved request');
+});

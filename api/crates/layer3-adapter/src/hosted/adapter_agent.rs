@@ -2,14 +2,18 @@ use std::path::Path;
 
 use tokio::sync::mpsc;
 
-use super::super::reply::{valid_git_commit, valid_sha256};
+use super::super::reply::valid_git_commit;
 use super::HostedAdapter;
+
+#[path = "adapter_agent_identity.rs"]
+mod identity;
 use crate::wire::{FencedRequest, RequestFrame, ResponseFrame};
 use crate::{
     AdapterError, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest, AgentOpenRequest,
-    ConversationChannel, ConversationUpdate, RuntimeHandle, WorktreeReceipt, WorktreeRef,
-    WorktreeRequest,
+    AgentProcessAction, ConversationChannel, ConversationUpdate, RuntimeHandle, WorktreeReceipt,
+    WorktreeRef, WorktreeRequest,
 };
+use identity::{validate_fence, validate_process_request, validate_request};
 
 pub(super) async fn add_worktree(
     adapter: &HostedAdapter,
@@ -230,7 +234,7 @@ pub(super) async fn reconnect_agent(
     .await;
     match result {
         Err(AdapterError::OperationIdentityConflict(_))
-            if request.resume_conversation.is_none() =>
+            if request.resume_conversation.is_none() && request.restart_runtime.is_none() =>
         {
             // Older restores included resume identity in the durable launch digest.
             // Only an exact pre-effect refusal permits this one canonical replay.
@@ -272,7 +276,8 @@ pub(super) async fn open_agent(
             "invalid context recovery authority".into(),
         ));
     }
-    if held_conversation.is_some_and(|id| {
+    let retained_conversation = held_conversation.or(request.resume_conversation.as_deref());
+    if retained_conversation.is_some_and(|id| {
         id.is_empty()
             || id.len() > 512
             || id.trim() != id
@@ -287,10 +292,24 @@ pub(super) async fn open_agent(
         ));
     }
     adapter.validate_options(handle, &request.options).await?;
-    validate_request(
+    validate_process_request(
         request,
-        format!("agent:{}:open:v1", request.options.slot.as_str()),
+        AgentProcessAction::Open,
+        request.options.slot.as_str(),
     )?;
+    let restart = AgentProcessAction::Open
+        .incarnation(request.options.slot.as_str(), &request.operation_id)
+        .is_some_and(|incarnation| incarnation > 1);
+    if restart != request.restart_runtime.is_some() {
+        return Err(AdapterError::Rejected(
+            "invalid Agent restart runtime authority".into(),
+        ));
+    }
+    if restart && retained_conversation.is_none() {
+        return Err(AdapterError::Rejected(
+            "Agent restart requires a retained conversation".into(),
+        ));
+    }
     validate_fence(authority_fence)?;
     let launch = adapter.runtime.launch(request)?;
     let mut settings = adapter.runtime.open_settings(request)?;
@@ -366,14 +385,14 @@ pub(super) async fn open_agent(
     settings.context_refresh = adapter
         .bind_context_refresh(handle, request, &settings)
         .await?;
+    let mut fenced = FencedRequest::new(authority_fence, launch);
+    fenced.restart_runtime.clone_from(&request.restart_runtime);
     let (channel, receipt) = adapter
         .backend
         .open_agent(
             handle,
-            FencedRequest::new(authority_fence, launch),
-            held_conversation
-                .map(str::to_owned)
-                .or_else(|| request.resume_conversation.clone()),
+            fenced,
+            retained_conversation.map(str::to_owned),
             settings,
             updates,
         )
@@ -385,7 +404,7 @@ pub(super) async fn open_agent(
         || receipt.receipt.cwd != request.options.working_directory
         || receipt.receipt.home != request.options.home_directory
         || receipt.receipt.conversation_id != channel.conversation_id
-        || held_conversation.is_some_and(|id| channel.conversation_id.as_deref() != Some(id))
+        || retained_conversation.is_some_and(|id| channel.conversation_id.as_deref() != Some(id))
     {
         return Err(AdapterError::Rejected(
             "runtime returned a receipt for another agent open operation".into(),
@@ -423,9 +442,10 @@ pub(super) async fn close_agent(
 ) -> crate::Result<()> {
     validate_fence(authority_fence)?;
     adapter.known_state(handle).await?;
-    validate_request(
+    validate_process_request(
         request,
-        format!("agent:{}:close:v1", request.agent_id.as_str()),
+        AgentProcessAction::Close,
+        request.agent_id.as_str(),
     )?;
     match adapter
         .exchange(
@@ -446,53 +466,5 @@ pub(super) async fn close_agent(
             "runtime returned a receipt for another agent close operation".into(),
         )),
         _ => unreachable!("exchange verifies response operation"),
-    }
-}
-
-trait ReplayRequest {
-    fn operation_id(&self) -> &str;
-    fn request_sha256(&self) -> &str;
-    fn digest_matches(&self) -> bool;
-}
-
-macro_rules! replay_request {
-    ($($type:ty),+ $(,)?) => {
-        $(impl ReplayRequest for $type {
-            fn operation_id(&self) -> &str { &self.operation_id }
-            fn request_sha256(&self) -> &str { &self.request_sha256 }
-            fn digest_matches(&self) -> bool { self.has_valid_sha256() }
-        })+
-    };
-}
-
-replay_request!(
-    WorktreeRequest,
-    WorktreeRef,
-    AgentHomeRequest,
-    AgentHomeRemoveRequest,
-    AgentOpenRequest,
-    AgentCloseRequest,
-);
-
-fn validate_request(request: &impl ReplayRequest, expected: String) -> crate::Result<()> {
-    if request.operation_id() != expected
-        || request.operation_id().len() > 256
-        || !valid_sha256(request.request_sha256())
-        || !request.digest_matches()
-    {
-        return Err(AdapterError::Rejected(
-            "operation id or request digest is invalid".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_fence(authority_fence: u64) -> crate::Result<()> {
-    if authority_fence == 0 {
-        Err(AdapterError::Rejected(
-            "agent mutation authority fence must be nonzero".into(),
-        ))
-    } else {
-        Ok(())
     }
 }

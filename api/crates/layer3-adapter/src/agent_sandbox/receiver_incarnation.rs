@@ -11,6 +11,20 @@ pub(crate) struct ReceiverIncarnation {
     sandbox_generation: Option<i64>,
 }
 
+impl ReceiverIncarnation {
+    pub(crate) fn matches_retained_startup_policy(
+        &self,
+        readback: &crate::RetainedStartupPolicyReadback<'_>,
+    ) -> bool {
+        self.runtime_generation == Some(readback.runtime.generation)
+            && crate::runtime_startup_policy::running_image_matches(
+                &self.image_id,
+                readback.image,
+                readback.config_digest,
+            )
+    }
+}
+
 impl AgentSandboxClient {
     pub(crate) async fn receiver_incarnation(
         &self,

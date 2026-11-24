@@ -1,5 +1,6 @@
 //! Explicit complete audit; all fallbacks keep caller accounting.
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     cooperative_budget::Policy,
     execution_sections::{Clock, MonotonicClock},
@@ -167,7 +168,7 @@ where
                     TransactionLogError::Domain(SandboxStoreError::Corrupt(_))
                 )
             {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 proof::quarantine_row(store, row).await?;
             }
             return Err(error);
@@ -216,7 +217,7 @@ where
             ))
         )
     {
-        let _ = session.abort_transaction().await;
+        let _ = session.abort_guarded().await;
         if let Some(row) = row.as_ref() {
             proof::quarantine_row(store, row).await?;
         }

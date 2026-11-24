@@ -3,7 +3,10 @@ use layer2_core::sandbox::agent_io::{
     QueuedCancellationReservation,
 };
 use layer2_core::sandbox::{Agent, Sandbox};
-use mongodb::{bson::doc, ClientSession};
+use mongodb::{
+    bson::{doc, Bson},
+    ClientSession,
+};
 
 use super::super::ApplyError;
 use crate::store::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
@@ -14,6 +17,16 @@ pub(in crate::store::agent_commands) async fn current(
     request: &QueuedCancellationReservation,
     session: &mut ClientSession,
 ) -> Result<(Agent, Sandbox), ApplyError> {
+    current_with_observation(store, request, session)
+        .await?
+        .ok_or_else(|| CommandLedgerError::Conflict.into())
+}
+
+pub(in crate::store::agent_commands) async fn current_with_observation(
+    store: &MongoSandboxStore,
+    request: &QueuedCancellationReservation,
+    session: &mut ClientSession,
+) -> Result<Option<(Agent, Sandbox)>, ApplyError> {
     store
         .bindings
         .conversation_authority(request.command.binding.as_ref(), session)
@@ -38,7 +51,10 @@ pub(in crate::store::agent_commands) async fn current(
         .transpose()
         .map_err(|_| CommandLedgerError::Corrupt)?
         .ok_or(CommandLedgerError::NotFound)?;
-    request.validate_current(&agent, &parent)?;
+    request.validate_current_identity(&agent, &parent)?;
+    if !request.current_observation_matches(&agent, &parent) {
+        return Ok(None);
+    }
     let policy = store
         .resource_policies
         .find_one(doc! {"_id": parent.id.as_str()})
@@ -49,7 +65,7 @@ pub(in crate::store::agent_commands) async fn current(
         .transpose()
         .map_err(|_| CommandLedgerError::Corrupt)?;
     validate_command_reservation_policy(&request.command, &parent, policy.as_ref())?;
-    Ok((agent, parent))
+    Ok(Some((agent, parent)))
 }
 
 pub(in crate::store::agent_commands) async fn resources(
@@ -60,25 +76,40 @@ pub(in crate::store::agent_commands) async fn resources(
 ) -> Result<(), ApplyError> {
     // Both supported Agent envelopes were decoded in this same transaction.
     // The Sandbox retains its own format; adoption must not disable cancellation.
-    for (collection, id, revision, created_at, versions) in [
+    for (collection, id, revision, created_at, version_filter) in [
         (
             &store.agents,
             agent.id.as_str(),
             agent.revision,
             &agent.created_at,
-            vec![1_i64, 2_i64],
+            Bson::Document(doc! { "$in": [1_i64, 2_i64] }),
         ),
         (
             &store.sandboxes,
             parent.id.as_str(),
             parent.revision,
             &parent.created_at,
-            vec![DOCUMENT_SCHEMA_VERSION],
+            Bson::Int64(DOCUMENT_SCHEMA_VERSION),
         ),
     ] {
         let revision =
             signed(revision, "resource revision").map_err(|_| CommandLedgerError::Corrupt)?;
-        let changed = collection.update_one(doc! {"_id": id, "document_schema_version": {"$in":versions}, "revision": revision, "record.created_at": created_at}, doc! {"$inc": {"agent_command_admission_fence": 1_i64}}).session(&mut *session).await?;
+        let filter = crate::store::work_schema::for_collection(
+            collection,
+            doc! {
+                "_id": id,
+                "document_schema_version": version_filter,
+                "revision": revision,
+                "record.created_at": created_at,
+            },
+        );
+        let changed = collection
+            .update_one(
+                filter,
+                doc! { "$inc": { "agent_command_admission_fence": 1_i64 } },
+            )
+            .session(&mut *session)
+            .await?;
         if changed.matched_count != 1 {
             return Err(CommandLedgerError::Conflict.into());
         }

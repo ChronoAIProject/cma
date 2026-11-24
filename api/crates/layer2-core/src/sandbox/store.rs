@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
+mod sandbox_events;
+pub use sandbox_events::SandboxEventStore;
+
 use async_trait::async_trait;
 
 use super::{
@@ -74,13 +77,15 @@ pub use agent_admission::{
 mod agent_conversation;
 mod agent_conversation_capacity;
 pub use agent_conversation_capacity::AgentConversationCapacitySettlement;
+mod stale_turn_settlement;
+pub use stale_turn_settlement::StaleTurnSettlement;
 mod agent_message_checkpoint;
 mod agent_reopen;
 pub use agent_conversation::{
     validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
 };
 pub use agent_message_checkpoint::{AgentMessageCheckpoint, AgentMessageSnapshot};
-pub use agent_reopen::AgentReopenGuard;
+pub use agent_reopen::{AgentReopenGuard, ReopenRefusalFence};
 mod agent_lifecycle;
 mod agent_skill_result;
 pub use agent_skill_result::{requires_agent_skill_result_guard, AgentSkillResultGuard};
@@ -103,11 +108,14 @@ mod agent_sign_in;
 pub use agent_lifecycle::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome,
-    AgentConnectionRecoveryRequest, AgentCreateAdmission, AgentRetryObservation, AgentWorkMutation,
-    AgentWorkPublication, AgentWorkPublicationLineage, AgentWorkPublicationParents,
-    AgentWorkerStore, StartupWorkFilter, VersionedWorktree,
+    AgentConnectionRecoveryRequest, AgentCreateAdmission, AgentRetryObservation,
+    AgentWorkDiscovery, AgentWorkMutation, AgentWorkPublication, AgentWorkPublicationLineage,
+    AgentWorkPublicationParents, AgentWorkerStore, PendingAgentWork, StartupWorkFilter,
+    VersionedWorktree,
 };
 pub use agent_sign_in::apply_agent_sign_in;
+mod agent_work_claim;
+pub use agent_work_claim::{AgentWorkClaimDetail, AgentWorkClaimError};
 mod agent_work_evidence_validation;
 mod agent_work_prepared_open_ready;
 mod agent_work_prepared_pair;
@@ -127,8 +135,9 @@ pub use agent_work_validation::{
 };
 mod sandbox_admission;
 pub use sandbox_admission::{
-    allocated_sandbox_name, valid_admission_fingerprint, SandboxAdmission, SandboxAdmissionName,
-    SandboxAdmissionReplay, SandboxAdmissionResult, SandboxAdmissionStore, SandboxLimitClass,
+    allocated_sandbox_name, valid_admission_fingerprint, CreationFence, SandboxAdmission,
+    SandboxAdmissionName, SandboxAdmissionReplay, SandboxAdmissionResult, SandboxAdmissionStore,
+    SandboxLimitClass,
 };
 mod lifecycle_command;
 pub use lifecycle_command::*;
@@ -338,22 +347,6 @@ pub trait WorktreeStore: Send + Sync {
     ) -> Result<Page<Worktree>, SandboxStoreError>;
 }
 
-#[async_trait]
-pub trait SandboxEventStore: Send + Sync {
-    async fn append_sandbox_event(
-        &self,
-        sandbox_id: &SandboxId,
-        appended_at: String,
-        kind: SandboxEventKind,
-    ) -> Result<SandboxEvent, SandboxStoreError>;
-    async fn sandbox_events(
-        &self,
-        sandbox_id: &SandboxId,
-        after: u64,
-        limit: u16,
-    ) -> Result<Vec<SandboxEvent>, SandboxStoreError>;
-}
-
 #[derive(Debug, Clone)]
 pub struct RepositoryPreparationRuntime {
     pub binding: super::RuntimeBinding,
@@ -373,6 +366,7 @@ pub enum SandboxTransaction {
         /// Internal authority for deferred command revival; absent on legacy
         /// owner/system lifecycle transactions. Never serialized into aggregates.
         command_revival: Option<Arc<super::agent_io::CommandRevivalAuthorization>>,
+        released_runtime: Option<layer3_adapter::ReleasedRuntime>,
         expected_revision: u64,
         sandbox: Box<Sandbox>,
         event_at: String,
@@ -409,7 +403,7 @@ struct State {
     admission_control: crate::admission::AdmissionControl,
     admission_audit: Vec<crate::ActivityRecord>,
     admission_history: Vec<crate::admission::AdmissionChange>,
-    retained_reopen_receipts: HashMap<SandboxId, super::RetainedReopenReceipt>,
+    retained_reopen_receipts: HashMap<SandboxId, Vec<super::RetainedReopenReceipt>>,
     suggestions: HashMap<String, super::suggestions::SuggestionWork>,
     binding_association_index: std::collections::BTreeMap<(SubjectId, AgentId, String), ()>,
     binding_resets: HashMap<String, super::binding::ConversationResetState>,

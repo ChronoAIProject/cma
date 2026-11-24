@@ -390,6 +390,7 @@ async fn lost_commit_acknowledgment_recovers_the_original_share_and_audit_exactl
         .await
         .unwrap();
     assert_eq!(result, Err(ResourceAccessStoreError::Unavailable));
+    crate::store::test_visibility::majority_barrier(&admin, &name).await;
     let recovered = store.mutate_share(request.clone()).await.unwrap();
     assert_eq!(store.mutate_share(request).await.unwrap(), recovered);
     assert_eq!(

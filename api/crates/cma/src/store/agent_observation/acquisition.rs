@@ -4,6 +4,7 @@ use crate::store::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
     TRANSACTION_ATTEMPTS,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::ClientSession;
 
 enum Error {
@@ -56,7 +57,7 @@ impl MongoAgentObservation {
             {
                 Ok(row) => row,
                 Err(error) => {
-                    if session.abort_transaction().await.is_err() {
+                    if session.abort_guarded().await.is_err() {
                         tracing::warn!("observation acquisition abort was not acknowledged");
                     }
                     match error {

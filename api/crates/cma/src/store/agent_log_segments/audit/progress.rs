@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::options::ReadConcern;
 
 pub(super) async fn current(
@@ -64,7 +65,7 @@ pub(super) async fn claim(
             Ok(progress)
         }
         Err(error) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             Err(error)
         }
     }

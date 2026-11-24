@@ -111,6 +111,31 @@ it('does not offer an apply operation while a turn is active', async () => {
   expect(update).not.toHaveBeenCalled();
 });
 
+it('closes the checked model choice without editing the confirmed settings', async () => {
+  const user = userEvent.setup();
+  const update = vi.fn().mockResolvedValue(defaults);
+  render(
+    draw(
+      agentClient({
+        readAgentModels: catalog,
+        readAgentSettings: async () => ({ ...defaults, reasoning_effort: 'medium' }),
+        updateAgentSettings: update,
+      }),
+    ),
+  );
+  await expandSettings();
+  await chooseEffort(user, 'High');
+  await user.click(screen.getByRole('button', { name: 'Apply settings' }));
+  await screen.findByText('Settings applied to this Agent.');
+  await openCard(user);
+  await chooseOptionValue(user, model(), defaults.model);
+  expect(model()).toHaveAttribute('aria-expanded', 'false');
+  expect(slider()).toHaveAttribute('aria-valuetext', 'High');
+  expect(screen.getByRole('status').textContent).toBe('Settings applied to this Agent.');
+  expect(screen.queryByRole('button', { name: 'Apply settings' })).not.toBeInTheDocument();
+  expect(update).toHaveBeenCalledTimes(1);
+});
+
 it('allows correction after a definitive rejection without replaying its command key', async () => {
   const user = userEvent.setup();
   const update = vi
@@ -201,6 +226,47 @@ it('loads the scoped model catalog, preserves an unavailable current model, and 
   await user.click(screen.getByRole('menuitemradio', { name: 'Available model' }));
   expect(model()).toHaveTextContent('Available model');
   expect(chip()).toHaveTextContent('Available model High');
+});
+
+it('distinguishes look-alike model labels and applies the selected catalog ID', async () => {
+  const user = userEvent.setup();
+  const saved = { ...defaults, model: 'gpt-6-astra' };
+  const selected = { ...defaults, model: 'gpt-5.6-sol-preview' };
+  const update = vi.fn().mockResolvedValue(selected);
+  render(
+    draw(
+      agentClient({
+        readAgentModels: async () => [
+          { id: 'gpt-5.6-sol-preview', label: 'GPT-5.6 (Sol)', available: true },
+          { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', available: true },
+          { id: 'gpt-6-astra', label: 'GPT-6 (Astra)', available: true },
+          { id: 'gpt-6-astra-preview', label: 'GPT-6 Astra', available: true },
+          { id: 'gpt-6', label: 'GPT-6', available: true },
+        ],
+        readAgentSettings: async () => saved,
+        updateAgentSettings: update,
+      }),
+    ),
+  );
+  await expandSettings();
+  await openCard(user);
+  expect(chip()).toHaveTextContent('GPT-6 (Astra) · gpt-6-astra High');
+  await user.click(model());
+  expect(
+    screen.getByRole('menuitemradio', { name: 'GPT-6 (Astra) · gpt-6-astra' }),
+  ).toHaveAttribute('aria-checked', 'true');
+  expect(
+    screen.getByRole('menuitemradio', { name: 'GPT-6 Astra · gpt-6-astra-preview' }),
+  ).toBeVisible();
+  expect(screen.getByRole('menuitemradio', { name: 'GPT-5.6 Sol · gpt-5.6-sol' })).toBeVisible();
+  expect(screen.getByRole('menuitemradio', { name: 'GPT-6' })).toBeVisible();
+  await user.click(
+    screen.getByRole('menuitemradio', { name: 'GPT-5.6 (Sol) · gpt-5.6-sol-preview' }),
+  );
+  expect(chip()).toHaveTextContent('GPT-5.6 (Sol) · gpt-5.6-sol-preview High');
+  await user.click(screen.getByRole('button', { name: 'Apply settings' }));
+  await screen.findByText('Settings applied to this Agent.');
+  expect(update.mock.calls[0]?.[1]).toEqual(selected);
 });
 
 it('keeps retained runtime models disabled while applying reasoning changes to the saved model', async () => {

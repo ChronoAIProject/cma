@@ -1,5 +1,5 @@
 //! Typed ownership closure, never a generic identity/prefix scan.
-use super::census_catalog::{Policy, AUDIT};
+use super::census_catalog::{Policy, AUDIT, DEPLOYMENT_ONLY, OUTSIDE_MANIFEST};
 use super::*;
 use std::collections::BTreeSet;
 #[path = "census_activity.rs"]
@@ -17,12 +17,23 @@ pub(super) struct Closure {
     commands: Vec<String>,
 }
 pub(super) fn validate_catalog() -> Result<()> {
-    let names: BTreeSet<_> = AUDIT.iter().map(|(name, _)| *name).collect();
+    let names: BTreeSet<_> = AUDIT
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(OUTSIDE_MANIFEST.iter().copied())
+        .collect();
     let declared: BTreeSet<_> = super::super::isolation::COLLECTIONS
         .iter()
         .copied()
         .collect();
-    if names.len() != AUDIT.len() || names != declared {
+    if names.len() != AUDIT.len() + OUTSIDE_MANIFEST.len()
+        || names != declared
+        || !DEPLOYMENT_ONLY.iter().all(|name| {
+            AUDIT
+                .iter()
+                .any(|(audited, policy)| audited == name && matches!(policy, Policy::Independent))
+        })
+    {
         return Err(REFUSED);
     }
     Ok(())

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { AgentLifecycleCreateInput } from '../api/client';
 import {
   compileTaskTemplate,
@@ -21,30 +21,54 @@ export { taskDraftStorageKey, legacyTaskDraftStorageKey } from './taskDraftStora
 const saveError =
   'Your task could not be saved. Copy your text and restore browser session storage before starting a task.';
 const discarded = new Set<
-  (key: string, body: AgentLifecycleCreateInput, revision: string) => void
+  (key: string, body: AgentLifecycleCreateInput, revision: string | undefined) => void
 >();
+const mountedDrafts = new Map<string, number>();
+export function taskDraftIsMounted(key: string) {
+  return (mountedDrafts.get(key) ?? 0) > 0;
+}
 
-/** Called only when a confirmed successful creation clears its retained intent. */
 export function discardSubmittedTaskDraft(
   owner: string,
   body: AgentLifecycleCreateInput,
   revision?: string,
+  reason: 'completed' | 'discarded' = 'completed',
 ) {
-  if (body.initial_message === undefined || revision === undefined) return;
+  if (body.initial_message === undefined || (reason === 'completed' && revision === undefined))
+    return;
   try {
     const store = openTaskDraftStore(owner, body.workspace_id, body.sandbox_id);
     const saved = store.read();
-    if (saved.error || saved.draft.revision !== revision || !matchesTaskDraft(saved.draft, body))
-      return;
-    store.save(remainingTaskDraft(saved.draft));
-    for (const notify of discarded) notify(store.key, body, revision);
-  } catch {
+    if (saved.error) throw new Error(saved.error);
+    if (saved.draft.revision !== revision || !matchesTaskDraft(saved.draft, body)) return;
+    const remaining = remainingTaskDraft(saved.draft);
+    store.save(
+      reason === 'discarded'
+        ? { ...remaining, repositoryUrl: '', repositoryRef: '', machineIncluded: false }
+        : remaining,
+    );
+    for (const notify of discarded) notify(store.key, body, saved.draft.revision);
+  } catch (error) {
+    if (reason === 'discarded') throw error;
     // Draft cleanup must never block access to the successfully created Agent.
   }
 }
 
-export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: string) {
+export function useTaskDraft(
+  owner?: string,
+  workspaceId?: string,
+  sandboxId?: string,
+  allowV2 = false,
+) {
   const key = taskDraftStorageKey(owner, workspaceId, sandboxId);
+  useLayoutEffect(() => {
+    mountedDrafts.set(key, (mountedDrafts.get(key) ?? 0) + 1);
+    return () => {
+      const count = (mountedDrafts.get(key) ?? 1) - 1;
+      if (count) mountedDrafts.set(key, count);
+      else mountedDrafts.delete(key);
+    };
+  }, [key]);
   const [initial] = useState(() => {
     const store = openTaskDraftStore(owner, workspaceId, sandboxId);
     try {
@@ -67,7 +91,11 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
     }
   }, [initial]);
   useEffect(() => {
-    const notify = (discardedKey: string, body: AgentLifecycleCreateInput, revision: string) => {
+    const notify = (
+      discardedKey: string,
+      body: AgentLifecycleCreateInput,
+      revision: string | undefined,
+    ) => {
       if (
         discardedKey !== key ||
         current.current.revision !== revision ||
@@ -141,7 +169,8 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
       return switchDraft(
         keepTaskTemplate(
           retained,
-          retained.templates?.find((template) => template.id === id) ?? emptyTemplate(id),
+          retained.templates?.find((template) => template.id === id) ??
+            emptyTemplate(id, allowV2 ? 2 : 1),
         ),
       );
     },
@@ -162,7 +191,11 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
       change({ ...current.current, repositoryUrl: url, repositoryRef: reference });
     },
     error,
-    persist: () => persist({ ...current.current, revision: crypto.randomUUID() }),
+    persist: (template = current.current.template) => {
+      const currentDraft = current.current;
+      const submittedDraft = template ? keepTaskTemplate(currentDraft, template) : currentDraft;
+      return persist({ ...submittedDraft, revision: crypto.randomUUID() });
+    },
     change: (text: string) => {
       change({ ...current.current, text });
     },

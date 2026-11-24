@@ -83,7 +83,15 @@ async fn prepare_step_inner(
             None => {
                 let home = SandboxHome::reserve(&record.id, home_policy.clone())
                     .map_err(|e| rejected(&e.to_string()))?;
-                let request = RuntimeProvisionRequest::new(1, spec);
+                // Prepared work was admitted against its durable plan's release.
+                let request = RuntimeProvisionRequest::new(1, spec).with_released(
+                    layer3_adapter::ReleasedRuntime {
+                        revision: 0,
+                        agent: record.plan.runtime_version.clone(),
+                        machine: None,
+                        lane_revisions: None,
+                    },
+                );
                 let home = super::home_native::reserve(adapter, &request, home).await?;
                 if home.native_pool.is_none() {
                     return Err(rejected(

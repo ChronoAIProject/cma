@@ -97,6 +97,19 @@ impl HostedBackend for AgentSandboxBackend {
             .select_runtime(request, image, home)
             .await
     }
+    async fn select_native_canary_pool(
+        &self,
+        request: &ProviderSandboxRequest,
+        image: &crate::RuntimeImage,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<crate::agent_sandbox::NativePoolBinding> {
+        self.client
+            .warm_pools()
+            .select_runtime_with_cold_policy(request, image, home, true)
+            .await?
+            .ok_or_else(|| crate::AdapterError::Rejected("native canary pool unavailable".into()))
+    }
+
     async fn validate_funding(
         &self,
         request: &ProviderSandboxRequest,
@@ -212,6 +225,9 @@ impl HostedBackend for AgentSandboxBackend {
         request: &ProviderSandboxRequest,
     ) -> Result<()> {
         self.client.verify_suspended(handle, request).await
+    }
+    fn retained_startup_policy(&self) -> Option<&dyn super::HostedRetainedStartupPolicy> {
+        Some(self)
     }
     async fn resume(
         &self,
@@ -461,21 +477,8 @@ impl HostedBackend for AgentSandboxBackend {
     }
 }
 
-#[async_trait::async_trait]
-impl super::CapacityRecoveryNativeTransport for AgentSandboxBackend {
-    async fn reattach_existing(
-        &self,
-        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
-        updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::agent_capacity_recovery::CapacityRecoveryResult<(
-        ConversationChannel,
-        crate::agent_capacity_recovery::CapacityRecoveryConfirmation,
-    )> {
-        self.transport
-            .reattach_existing_capacity_recovery(request, updates)
-            .await
-    }
-}
+#[path = "agent_sandbox_backend_capacity_recovery.rs"]
+mod capacity_recovery;
 
 #[path = "runtime_routing_backend.rs"]
 mod routing;
@@ -492,3 +495,6 @@ mod routing_tests;
 #[cfg(test)]
 #[path = "agent_sandbox_backend_ingress_tests.rs"]
 mod ingress_tests;
+
+#[path = "retained_startup_policy_native.rs"]
+mod retained_policy;

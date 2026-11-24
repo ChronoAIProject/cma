@@ -15,6 +15,9 @@ use crate::sandbox::SandboxCredentialController;
 
 mod cache;
 pub(crate) use cache::CachedModelSupport;
+#[cfg(test)]
+#[path = "agent_models/cache/test_runtime.rs"]
+pub(crate) mod test_runtime;
 
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_MODELS: usize = 1000;

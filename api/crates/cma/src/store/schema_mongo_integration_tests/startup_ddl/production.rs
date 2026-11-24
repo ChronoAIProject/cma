@@ -2,43 +2,56 @@ use super::*;
 use crate::store::{mongo::MongoConnectionPolicy, MongoStores};
 use cma_service_auth::mongodb_authority::MongoAuthorityMode;
 
+mod partial_binding;
+
+const RUNTIME_USER: &str = "schema-runtime";
+
+async fn runtime_uri(db: &Database) -> url::Url {
+    let password = uuid::Uuid::new_v4().simple().to_string();
+    let name = db.name();
+    db.run_command(doc! {"createUser":RUNTIME_USER,"pwd":&password,
+    "roles":[{"role":"readWrite","db":name},{"role":"dbAdmin","db":name}]})
+        .await
+        .unwrap();
+    let mut uri = url::Url::parse(&std::env::var("CHRONO_TEST_MONGODB_URI").unwrap()).unwrap();
+    uri.set_username(RUNTIME_USER).unwrap();
+    uri.set_password(Some(&password)).unwrap();
+    uri.query_pairs_mut().append_pair("authSource", name);
+    uri
+}
+
+async fn connect(
+    uri: &url::Url,
+    name: &str,
+    mode: StartupSchemaMode,
+) -> Result<MongoStores, StoreError> {
+    MongoStores::connect_with_policy(
+        uri.as_str(),
+        name,
+        "schema-fixture",
+        &auth_key(),
+        RETENTION,
+        ("runtime-schema-fixture", None),
+        MongoConnectionPolicy {
+            shared_observation: false,
+            authority: MongoAuthorityMode::SharedSchema,
+            agent_manager_replicas: false,
+            startup_schema: mode,
+            initial_settings: Default::default(),
+            released: None,
+            runtime_pointer_required: false,
+        },
+    )
+    .await
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn production_connection_enforces_both_converted_contracts_before_returning_stores() {
     let (admin, name) = database().await;
     let db = admin.database(&name);
-    let password = uuid::Uuid::new_v4().simple().to_string();
-    db.run_command(doc! {"createUser":"schema-runtime","pwd":&password,
-    "roles":[{"role":"readWrite","db":&name},{"role":"dbAdmin","db":&name}]})
-        .await
-        .unwrap();
-    let mut uri = url::Url::parse(&std::env::var("CHRONO_TEST_MONGODB_URI").unwrap()).unwrap();
-    uri.set_username("schema-runtime").unwrap();
-    uri.set_password(Some(&password)).unwrap();
-    uri.query_pairs_mut().append_pair("authSource", &name);
-    let connect = |mode| {
-        let key = auth_key();
-        let uri = uri.to_string();
-        let name = name.clone();
-        async move {
-            MongoStores::connect_with_policy(
-                &uri,
-                &name,
-                "schema-fixture",
-                &key,
-                RETENTION,
-                ("runtime-schema-fixture", None),
-                MongoConnectionPolicy {
-                    shared_observation: false,
-                    authority: MongoAuthorityMode::SharedSchema,
-                    agent_manager_replicas: false,
-                    startup_schema: mode,
-                    initial_settings: Default::default(),
-                },
-            )
-            .await
-        }
-    };
+    let uri = runtime_uri(&db).await;
+    let connect = |mode| connect(&uri, &name, mode);
     let empty_strict = connect(StartupSchemaMode::Enforce).await.err();
     let empty_observe = connect(StartupSchemaMode::Observe).await;
     let observation_succeeded = empty_observe.is_ok();
@@ -59,7 +72,7 @@ async fn production_connection_enforces_both_converted_contracts_before_returnin
         stores.ping().await.unwrap();
     }
     drop(prepared);
-    db.run_command(doc! {"dropUser":"schema-runtime"})
+    db.run_command(doc! {"dropUser":RUNTIME_USER})
         .await
         .unwrap();
     db.drop().await.unwrap();

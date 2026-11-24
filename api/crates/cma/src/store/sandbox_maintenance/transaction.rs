@@ -1,32 +1,43 @@
 use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::{
-    apply_image_rotation, apply_proved_inactivity_pause, SandboxImageRotationRequest,
-    SandboxInactivityPauseRequest, SandboxMaintenanceApplication, SandboxMaintenanceOutcome,
-    SandboxStoreError,
+    apply_image_rotation, apply_proved_inactivity_pause, apply_retained_runtime_abort,
+    apply_retained_runtime_transition, SandboxImageRotationRequest, SandboxInactivityPauseRequest,
+    SandboxMaintenanceApplication, SandboxMaintenanceOutcome, SandboxStoreError,
 };
-use layer2_core::sandbox::{Sandbox, SandboxEvent};
+use layer2_core::sandbox::{
+    RetainedRuntimeTransition, RetainedRuntimeTransitionRequest, Sandbox, SandboxEvent,
+};
 use mongodb::bson::{doc, Bson};
-use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 
 use super::super::agent_log_integrity::{IntegrityFailurePolicy, TransactionLogError};
 use super::super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
 use super::super::sandbox_events::{
-    append_in_transaction, reconcile_event_with_snapshot_session, validate_in_transaction,
-    TransactionEventError,
+    append_in_transaction, validate_in_transaction, TransactionEventError,
 };
 use super::super::sandbox_mongo::{signed, unsigned, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::evidence::{
     fence_live_agents, live_activities_with_sources, open_session, scoped::CapturedActivities,
+    LogValidation,
 };
 
+mod reconciliation;
 mod scoped;
+pub(super) use reconciliation::reconcile;
 pub(super) use scoped::attempt;
 
 pub(super) enum MaintenanceRequest {
     Inactivity(SandboxInactivityPauseRequest),
     Rotation(SandboxImageRotationRequest),
+    RetainedTransition {
+        request: Box<RetainedRuntimeTransitionRequest>,
+        requested_at: String,
+    },
+    RetainedTransitionAbort {
+        receipt: Box<RetainedRuntimeTransition>,
+        requested_at: String,
+    },
 }
 
 impl MaintenanceRequest {
@@ -34,6 +45,8 @@ impl MaintenanceRequest {
         match self {
             Self::Inactivity(request) => &request.sandbox_id,
             Self::Rotation(request) => &request.sandbox_id,
+            Self::RetainedTransition { request, .. } => &request.sandbox_id,
+            Self::RetainedTransitionAbort { receipt, .. } => &receipt.request.sandbox_id,
         }
     }
 
@@ -41,6 +54,8 @@ impl MaintenanceRequest {
         match self {
             Self::Inactivity(request) => &request.requested_at,
             Self::Rotation(request) => &request.requested_at,
+            Self::RetainedTransition { requested_at, .. }
+            | Self::RetainedTransitionAbort { requested_at, .. } => requested_at,
         }
     }
 }
@@ -100,7 +115,7 @@ pub(super) async fn apply(
     .await
 }
 
-async fn apply_with_sources(
+pub(super) async fn apply_with_sources(
     store: &MongoSandboxStore,
     request: &MaintenanceRequest,
     session: &mut ClientSession,
@@ -159,7 +174,33 @@ async fn apply_with_sources(
     let agents = load_sandbox_agents(store, &current.id, session).await?;
     let application = match request {
         MaintenanceRequest::Inactivity(request) => {
-            if super::evidence::queued_control(store, &current.id, session).await? {
+            let bounded_legacy_log =
+                store.bounded_inactivity_legacy_log && request.auto_pause_enabled && !platform_stop;
+            if super::evidence::queued_control(store, &current.id, session).await?
+                || (bounded_legacy_log
+                    && !super::evidence::legacy_log_budget::within(
+                        store, &agents, sources, session,
+                    )
+                    .await?)
+            {
+                return Ok(MaintenanceReceipt {
+                    sandbox: current,
+                    event: None,
+                    outcome: SandboxMaintenanceOutcome::NotEligible,
+                });
+            }
+            let strict_sessions = store.strict_inactivity_session_evidence
+                && request.auto_pause_enabled
+                && !platform_stop;
+            if strict_sessions
+                && !super::evidence::sessions::clear(
+                    store,
+                    &current.id,
+                    &request.requested_at,
+                    session,
+                )
+                .await?
+            {
                 return Ok(MaintenanceReceipt {
                     sandbox: current,
                     event: None,
@@ -172,10 +213,15 @@ async fn apply_with_sources(
                 session,
                 request.requested_at.as_str(),
                 sources,
-                failure_policy,
+                LogValidation {
+                    failure_policy,
+                    legacy_formats_checked: bounded_legacy_log,
+                },
+                strict_sessions,
             )
             .await?;
-            if activities.is_empty()
+            if !strict_sessions
+                && activities.is_empty()
                 && open_session(store, &current, &request.requested_at, session).await?
             {
                 return Ok(MaintenanceReceipt {
@@ -205,6 +251,26 @@ async fn apply_with_sources(
             apply_proved_inactivity_pause(&current, &activities, request, agentless_idle)
         }
         MaintenanceRequest::Rotation(request) => apply_image_rotation(&current, &agents, request),
+        MaintenanceRequest::RetainedTransition {
+            request,
+            requested_at,
+        } => {
+            if super::evidence::queued_control(store, &current.id, session).await?
+                || !super::evidence::agentless_commands_clear(store, &agents, session).await?
+                || open_session(store, &current, requested_at, session).await?
+            {
+                return Ok(MaintenanceReceipt {
+                    sandbox: current,
+                    event: None,
+                    outcome: SandboxMaintenanceOutcome::NotEligible,
+                });
+            }
+            apply_retained_runtime_transition(&current, &agents, request, requested_at)
+        }
+        MaintenanceRequest::RetainedTransitionAbort {
+            receipt,
+            requested_at,
+        } => apply_retained_runtime_abort(&current, receipt, requested_at),
     }
     .map_err(ApplyError::Domain)?;
     let (expected_revision, sandbox, event) = match application {
@@ -270,7 +336,10 @@ async fn apply_with_sources(
     validate_in_transaction(store, &current.id, last_seq, session).await?;
     // Snapshot isolation needs actual writes to prevent a concurrent Agent turn
     // from committing after the evidence read without conflicting with admission.
-    if matches!(request, MaintenanceRequest::Rotation(_)) {
+    if matches!(
+        request,
+        MaintenanceRequest::Rotation(_) | MaintenanceRequest::RetainedTransition { .. }
+    ) {
         if !super::evidence::fence_idle_workspaces(store, &current, session).await? {
             return Ok(MaintenanceReceipt {
                 sandbox: current,
@@ -297,6 +366,14 @@ async fn apply_with_sources(
         "last_seq": signed(last_seq, "sandbox maintenance event sequence")
             .map_err(|_| ApplyError::Domain(SandboxStoreError::SequenceConflict))?,
     };
+    if matches!(
+        request,
+        MaintenanceRequest::RetainedTransition { .. }
+            | MaintenanceRequest::RetainedTransitionAbort { .. }
+    ) {
+        revision_filter =
+            crate::store::work_claim_authority::without_ledger_maintenance(revision_filter);
+    }
     if desktop_activity_fence == 0 {
         revision_filter.insert(
             "$or",
@@ -404,39 +481,4 @@ async fn fence_policy(
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
     Ok(false)
-}
-
-pub(super) async fn reconcile(
-    store: &MongoSandboxStore,
-    receipt: &MaintenanceReceipt,
-    snapshot_time: mongodb::bson::Timestamp,
-) -> Result<bool, SandboxStoreError> {
-    let mut session = store
-        .client
-        .start_session()
-        .snapshot(true)
-        .snapshot_time(snapshot_time)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let actual = store
-        .sandboxes
-        .find_one(doc! { "_id": receipt.sandbox.id.as_str() })
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(read_sandbox)
-        .transpose()?;
-    if actual.as_ref() != Some(&receipt.sandbox) {
-        return Ok(false);
-    }
-    match &receipt.event {
-        Some(event) => Ok(
-            reconcile_event_with_snapshot_session(store, event, &mut session)
-                .await?
-                .is_some(),
-        ),
-        None => Ok(false),
-    }
 }

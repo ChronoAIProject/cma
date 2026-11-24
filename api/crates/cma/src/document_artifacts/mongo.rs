@@ -6,8 +6,10 @@ use mongodb::{
 };
 
 pub(crate) const COLLECTION: &str = "cma_document_artifacts";
+#[derive(Clone)]
 pub struct MongoDocumentStore {
-    rows: Collection<Document>,
+    pub(super) rows: Collection<Document>,
+    source_commits: bool,
 }
 impl MongoDocumentStore {
     pub(crate) fn quota(&self, enabled: bool) -> super::MongoDocumentQuotaStore {
@@ -18,9 +20,17 @@ impl MongoDocumentStore {
                 .database(self.rows.namespace().db.as_str()),
             enabled,
         )
+        .with_required_baseline(self.source_commits)
+    }
+    pub(crate) fn with_source_commits(&self, enabled: bool) -> Self {
+        Self {
+            source_commits: enabled,
+            ..self.clone()
+        }
     }
     pub fn new(database: Database) -> Self {
         Self {
+            source_commits: false,
             rows: database.collection_with_options(
                 COLLECTION,
                 mongodb::options::CollectionOptions::builder()
@@ -66,6 +76,16 @@ impl DocumentStore for MongoDocumentStore {
             }
         }
     }
+    async fn insert_source(
+        &self,
+        record: &StoredDocument,
+        source: &DocumentSourceReservation,
+    ) -> Result<bool, DocumentError> {
+        if !self.source_commits {
+            return self.insert(record).await;
+        }
+        super::source_commit::publish(self, record, source, None).await
+    }
     async fn compare_exchange(
         &self,
         expected: u64,
@@ -97,6 +117,18 @@ impl DocumentStore for MongoDocumentStore {
             &layer2_core::SubjectId::new(recipient),
         )
         .await
+    }
+    async fn compare_exchange_source(
+        &self,
+        expected: u64,
+        record: &StoredDocument,
+        source: &DocumentSourceReservation,
+        receipt_key: &str,
+    ) -> Result<bool, DocumentError> {
+        if !self.source_commits {
+            return self.compare_exchange(expected, record).await;
+        }
+        super::source_commit::publish(self, record, source, Some((expected, receipt_key))).await
     }
     async fn list(
         &self,
@@ -145,7 +177,7 @@ impl DocumentStore for MongoDocumentStore {
             .collect()
     }
 }
-fn encode(record: &StoredDocument) -> Result<Document, DocumentError> {
+pub(super) fn encode(record: &StoredDocument) -> Result<Document, DocumentError> {
     record.validate()?;
     let data = mongodb::bson::serialize_to_bson(record).map_err(|_| DocumentError::Corrupt)?;
     Ok(
