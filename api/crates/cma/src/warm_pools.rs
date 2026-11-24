@@ -76,12 +76,12 @@ impl PoolTarget {
             "unavailable"
         } else if self.applied_revision != self.revision || !observed {
             "pending"
-        } else if self.target_replicas == 0 && ready == Some(0) {
-            "disabled"
-        } else if ready.is_some_and(|count| count >= self.target_replicas) {
-            "ready"
         } else {
-            "pending"
+            match (self.target_replicas, ready) {
+                (0, Some(0)) => "disabled",
+                (target, Some(count)) if target > 0 && count >= target => "ready",
+                _ => "pending",
+            }
         };
         WarmPoolView {
             id: self.id.clone(),

@@ -81,6 +81,18 @@ impl<'session> TransactionScope<'session> {
         .await
     }
 
+    pub(in crate::store) async fn retained_reopen_history(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        row: &Document,
+        key: &str,
+    ) -> Result<
+        layer2_core::sandbox::RetainedReopenHistory,
+        crate::store::sandbox_unpublished_recovery::transaction::ApplyError,
+    > {
+        crate::store::retained_reopen::read_history(store, row, Some(key), self.session, None).await
+    }
+
     pub(in crate::store) async fn settle_runtime_loss_budget(
         &mut self,
         store: &crate::store::MongoSandboxStore,

@@ -59,7 +59,8 @@ impl RuntimeServices {
                     inspector.clone(),
                     config.features.retained_reopen_enabled,
                 )
-                .with_suspended_admission(config.features.retained_suspended_reopen_enabled),
+                .with_suspended_admission(config.features.retained_suspended_reopen_enabled)
+                .with_repeat_admission(config.features.retained_repeat_reopen_enabled),
             ),
             recovery: Arc::new(layer2_core::sandbox::RetainedRecoveryService::new(
                 stores.sandbox_model.clone(),
@@ -121,6 +122,7 @@ pub(super) fn lifecycle_config(
         access_transport_migration: config.agent_access_transport_migration.clone(),
         managed_documents_enabled: config.document_storage.is_some(),
         event_driven_reconciliation: config.features.event_driven_reconciliation,
+        resume_agent_reconciliation: config.features.resume_agent_reconciliation,
         stale_turn_reconciliation: config.features.stale_turn_reconciliation,
         stale_turn_terminal: config.features.stale_turn_terminal,
         skip_ineligible_reconciliation: config

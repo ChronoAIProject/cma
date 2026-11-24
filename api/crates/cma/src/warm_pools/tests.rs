@@ -438,40 +438,8 @@ fn inventory_identifies_original_and_current_default_policy_even_with_identical_
     );
 }
 
-#[test]
-fn readiness_requires_original_binding_and_observed_current_target() {
-    let mut original = target();
-    let provider = Provider {
-        calls: Arc::default(),
-        original: original.plan.clone(),
-        refuse_replaced_uid: AtomicBool::new(false),
-        retired: AtomicBool::new(false),
-    };
-    let mut live = NativePoolStatus {
-        binding: provider.binding(),
-        desired_replicas: 3,
-        ready_replicas: 3,
-        observed: true,
-    };
-    original.binding = Some(live.binding.clone());
-    original.applied_revision = original.revision;
-    assert_eq!(original.view(Some(&live), true).status, "ready");
-    live.binding.uid = "replacement".into();
-    assert_eq!(original.view(Some(&live), true).ready_replicas, None);
-    live.binding = original.binding.clone().unwrap();
-    live.observed = false;
-    assert_eq!(original.view(Some(&live), true).status, "pending");
-    live.observed = true;
-    live.desired_replicas = 2;
-    assert!(!original.view(Some(&live), true).observed);
-    let missing = original.view(None, false);
-    assert_eq!(missing.status, "unavailable");
-    assert_eq!(missing.ready_replicas, None);
-    live.desired_replicas = 0;
-    live.ready_replicas = 0;
-    original.target_replicas = 0;
-    assert_eq!(original.view(Some(&live), true).status, "disabled");
-}
+#[path = "view_tests.rs"]
+mod view;
 
 #[test]
 fn ordinary_and_inventory_only_users_cannot_manage_pools() {

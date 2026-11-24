@@ -67,6 +67,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .with_public_owner_sandbox_limit(config.public_owner_sandbox_limit)
             .with_platform_counter_shards(config.features.platform_counter_shards)
             .with_agent_control_write_coordination(config.features.agent_control_write_coordination)
+            .with_bounded_inactivity_legacy_log(config.features.bounded_inactivity_legacy_log)
             .with_strict_inactivity_session_evidence(
                 config.features.strict_inactivity_session_evidence,
             )

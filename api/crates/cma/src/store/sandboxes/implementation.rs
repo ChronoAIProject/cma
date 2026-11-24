@@ -72,6 +72,14 @@ impl SandboxStore for MongoSandboxStore {
         super::super::retained_reopen::replay(self, id).await
     }
 
+    async fn retained_reopen_history(
+        &self,
+        id: &SandboxId,
+        key_sha256: Option<&str>,
+    ) -> Result<layer2_core::sandbox::RetainedReopenHistory, SandboxStoreError> {
+        super::super::retained_reopen::read_for_service(self, id, key_sha256).await
+    }
+
     async fn retained_suspended_reopen_snapshot(
         &self,
         id: &SandboxId,

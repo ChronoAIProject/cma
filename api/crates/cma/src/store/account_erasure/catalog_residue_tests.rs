@@ -89,6 +89,96 @@ async fn proven_absent_known_lineage_blocks_without_subject_projection() {
     }
 }
 
+// #3296: resource execution keeps identities in its serialized `record`.
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn serialized_resource_execution_residue_blocks_erasure() {
+    let record = |value: &str| doc! {"_id": "execution", "protocol": 1_i32, "record": value};
+    // Another owner's evidence where the erased user acted names them only by digest.
+    let actor = layer2_core::resource_access::execution::subject_execution_digests(
+        &SubjectId::new("acct:a"),
+        &[],
+    )
+    .unwrap()
+    .remove(0);
+    let foreign_basis = format!(r#"{{"basis":{{"owner":"other","actor":"{actor}"}}}}"#);
+    for (collection, row) in [
+        (
+            "resource_revocation_operations_v1",
+            record(r#"{"intent":{"actor":"acct:a"}}"#),
+        ),
+        (
+            "resource_execution_records_v1",
+            record(r#"{"member":{"sandbox_id":"sbx_a"}}"#),
+        ),
+        ("resource_execution_grants_v1", record("{unreadable")),
+        (
+            "resource_execution_effects_v1",
+            record(r#"{"effect":["sbx_a"]}"#),
+        ),
+        ("resource_execution_records_v1", record(&foreign_basis)),
+        // Grants name the erased Sandbox's share only by its ID.
+        (
+            "resource_execution_grants_v1",
+            record(r#"{"key":{"origin":"d","share_id":"shr_a"}}"#),
+        ),
+        (
+            "resource_execution_grants_v1",
+            doc! {"_id": "execution", "protocol": 1_i32, "origin": "d", "share_id": "shr_a", "epoch": 1_i64},
+        ),
+    ] {
+        let db = database().await;
+        sandbox(&db, "acct:a", "sbx_a").await;
+        put(
+            &db,
+            "resource_shares",
+            doc! {"_id": "shr_a", "sandbox_id": "sbx_a"},
+        )
+        .await;
+        put(&db, collection, row.clone()).await;
+        let subject = SubjectId::new("acct:a");
+        let mut inventory = ErasureInventory::default();
+        let mut cursor = Cursor::default();
+        let mut blocked = false;
+        for _ in 0..1000 {
+            match erase_records(
+                &db,
+                &[Target {
+                    subject: &subject,
+                    inventory: &inventory,
+                }],
+                &mut cursor,
+                NOW,
+            )
+            .await
+            {
+                Err(Error::Blocked(AttributedBlock {
+                    reason: ErasureBlock::UnsupportedResidue { collection: actual },
+                    ..
+                })) => {
+                    assert_eq!(actual, collection);
+                    blocked = true;
+                    break;
+                }
+                Ok(batch) => {
+                    super::progress::acknowledge(&mut inventory, &batch, "acct:a");
+                    assert!(batch.has_more, "missed execution residue in {collection}");
+                }
+                other => panic!("unexpected result for {collection}: {other:?}"),
+            }
+        }
+        assert!(blocked, "execution scan did not finish for {collection}");
+        assert_eq!(
+            db.collection::<Document>(collection)
+                .find_one(doc! {"_id":"execution"})
+                .await
+                .unwrap(),
+            Some(row)
+        );
+        db.drop().await.unwrap();
+    }
+}
+
 const LEGACY_NAMESPACES: &[&str] = &[
     "bridge_allocation_heads",
     "bridge_allocations",

@@ -132,7 +132,11 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "provider_binding_preparations",
     "provider_tool_opens",
     "provider_tool_relays",
+    "resource_execution_effects_v1",
+    "resource_execution_grants_v1",
+    "resource_execution_records_v1",
     "resource_policies",
+    "resource_revocation_operations_v1",
     "resource_share_commands",
     "resource_shares",
     "sandbox_admissions",
@@ -187,6 +191,12 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     super::agent_observation::COLLECTION,
     super::released_runtimes::COLLECTION,
     super::released_runtimes::TRANSITIONS_COLLECTION,
+    // Resource execution reads its activation record on ordinary share and
+    // revocation paths; credentials issued before it still start.
+    "resource_execution_effects_v1",
+    "resource_execution_grants_v1",
+    "resource_execution_records_v1",
+    "resource_revocation_operations_v1",
 ];
 const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
 const MIGRATION_ACTIONS: &[&str] = &["find", "insert", "update", "createCollection"];

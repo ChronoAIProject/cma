@@ -9,6 +9,7 @@ use layer2_core::{budget::RequestBudget, sandbox::store::AgentStore};
 mod budget;
 #[path = "census_test_support.rs"]
 mod support;
+pub(in crate::store) use support::prepare_source;
 
 #[path = "census_counter_tests.rs"]
 mod counters;
