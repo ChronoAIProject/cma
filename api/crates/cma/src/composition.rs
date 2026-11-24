@@ -137,8 +137,8 @@ impl ControlPlaneComposition {
             observation::prepare(config, &stores, &agent_manager, projections).await?;
         let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
             config.image_manager_base_url.clone(),
-        )
-        .map_err(|error| format!("Image Manager resolver is not usable: {error}"))?;
+            config.features.image_manager_retirement,
+        )?;
         let inline_lifecycle = crate::agent_lifecycle::InlineAgentLifecycle::new(
             Arc::clone(&sandbox_service),
             Arc::clone(&workspace_service),

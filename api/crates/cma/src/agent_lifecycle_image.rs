@@ -10,6 +10,15 @@ pub(crate) trait ImageResolver: Send + Sync {
         delegated_credential: Option<&str>,
         image: &AgentLifecycleImageReference,
     ) -> Result<String, AgentLifecycleProvisioningError>;
+
+    async fn resolve_retained(
+        &self,
+        delegated_credential: Option<&str>,
+        image: &AgentLifecycleImageReference,
+        _pinned_reference: &str,
+    ) -> Result<String, AgentLifecycleProvisioningError> {
+        self.resolve(delegated_credential, image).await
+    }
 }
 
 /// Thin, bounded client for the independently deployed Image Manager. The
@@ -18,10 +27,11 @@ pub(crate) trait ImageResolver: Send + Sync {
 pub(crate) struct ImageManagerResolver {
     base_url: String,
     http: reqwest::Client,
+    retirement_enabled: bool,
 }
 
 impl ImageManagerResolver {
-    pub(crate) fn new(base_url: String) -> Result<Arc<Self>, String> {
+    pub(crate) fn new(base_url: String, retirement_enabled: bool) -> Result<Arc<Self>, String> {
         let parsed = reqwest::Url::parse(&base_url)
             .map_err(|_| "Image Manager base URL is not a valid URL".to_owned())?;
         if parsed.host_str().is_none()
@@ -40,7 +50,11 @@ impl ImageManagerResolver {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| "Image Manager HTTP client could not be initialized".to_owned())?;
-        Ok(Arc::new(Self { base_url, http }))
+        Ok(Arc::new(Self {
+            base_url,
+            http,
+            retirement_enabled,
+        }))
     }
 }
 
@@ -54,11 +68,26 @@ struct ResolvedImage {
 
 #[async_trait]
 impl ImageResolver for ImageManagerResolver {
+    async fn resolve_retained(
+        &self,
+        delegated_credential: Option<&str>,
+        image: &AgentLifecycleImageReference,
+        pinned_reference: &str,
+    ) -> Result<String, AgentLifecycleProvisioningError> {
+        if self.retirement_enabled {
+            return Ok(pinned_reference.to_owned());
+        }
+        self.resolve(delegated_credential, image).await
+    }
+
     async fn resolve(
         &self,
         delegated_credential: Option<&str>,
         image: &AgentLifecycleImageReference,
     ) -> Result<String, AgentLifecycleProvisioningError> {
+        if self.retirement_enabled {
+            return Err(AgentLifecycleProvisioningError::ImageSelectionUnsupported);
+        }
         let credential =
             delegated_credential.ok_or(AgentLifecycleProvisioningError::SignInRequired)?;
         let mut url = reqwest::Url::parse(&self.base_url)

@@ -55,23 +55,63 @@ impl TriggerInlineTargetMaterializer for InlineTriggerProfileMaterializer {
         target: &TriggerTarget,
         delegated_credential: Option<&str>,
     ) -> Result<TriggerTarget, TriggerReferenceError> {
+        self.materialize_target(owner, target, None, delegated_credential)
+            .await
+    }
+
+    async fn materialize_draft_update(
+        &self,
+        owner: &SubjectId,
+        target: &TriggerTarget,
+        existing: &TriggerTarget,
+        delegated_credential: Option<&str>,
+    ) -> Result<TriggerTarget, TriggerReferenceError> {
+        self.materialize_target(
+            owner,
+            target,
+            existing.inline.as_ref(),
+            delegated_credential,
+        )
+        .await
+    }
+}
+
+impl InlineTriggerProfileMaterializer {
+    async fn materialize_target(
+        &self,
+        owner: &SubjectId,
+        target: &TriggerTarget,
+        existing: Option<&layer2_core::trigger_domain::TriggerInlineTarget>,
+        delegated_credential: Option<&str>,
+    ) -> Result<TriggerTarget, TriggerReferenceError> {
         let Some(inline) = &target.inline else {
             return Ok(target.clone());
         };
         let mut inline = inline.clone();
         if let Some(image) = inline.image.as_mut() {
-            image.reference = Some(
-                self.image_resolver
-                    .resolve(
-                        delegated_credential,
-                        &AgentLifecycleImageReference {
-                            id: image.id.clone(),
-                            version: image.version.clone(),
-                        },
-                    )
-                    .await
-                    .map_err(image_reference_error)?,
-            );
+            let selection = AgentLifecycleImageReference {
+                id: image.id.clone(),
+                version: image.version.clone(),
+            };
+            // Only a stored, owner-authorized draft can supply the retained
+            // digest. The request itself has no authority to attach a digest.
+            let pinned = existing
+                .and_then(|target| target.image.as_ref())
+                .filter(|saved| image.id == saved.id && image.version == saved.version)
+                .and_then(|saved| saved.reference.as_deref());
+            let reference = match pinned {
+                Some(reference) => {
+                    self.image_resolver
+                        .resolve_retained(delegated_credential, &selection, reference)
+                        .await
+                }
+                None => {
+                    self.image_resolver
+                        .resolve(delegated_credential, &selection)
+                        .await
+                }
+            };
+            image.reference = Some(reference.map_err(image_reference_error)?);
         }
 
         inline
@@ -179,6 +219,9 @@ fn image_reference_error(
         }
         layer1_public::rest::AgentLifecycleProvisioningError::SignInRequired => {
             TriggerReferenceError::ImageSignInRequired { field: FIELD }
+        }
+        layer1_public::rest::AgentLifecycleProvisioningError::ImageSelectionUnsupported => {
+            TriggerReferenceError::ImageSelectionUnsupported { field: FIELD }
         }
         _ => unavailable(FIELD),
     }

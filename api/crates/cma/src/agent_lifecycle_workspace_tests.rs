@@ -4,6 +4,8 @@ use serde_json::json;
 #[path = "agent_lifecycle_workspace_fixture.rs"]
 pub(in crate::agent_lifecycle) mod fixture;
 
+#[path = "agent_lifecycle_image_retirement_tests.rs"]
+mod image_retirement;
 #[path = "agent_lifecycle_workspace_mongo_tests.rs"]
 mod mongo;
 #[path = "agent_lifecycle_quota_tests.rs"]

@@ -61,6 +61,24 @@ pub(super) fn facade_with_limit(
     limit: u16,
     credentials: impl layer2_core::sandbox::SandboxCredentialPrerequisite + 'static,
 ) -> Arc<InlineAgentLifecycle> {
+    facade_with_resolver(
+        store,
+        profiles,
+        operations,
+        limit,
+        credentials,
+        ImageManagerResolver::new("http://127.0.0.1:1".into(), false).unwrap(),
+    )
+}
+
+pub(super) fn facade_with_resolver(
+    store: Arc<InMemorySandboxStore>,
+    profiles: Arc<crate::store::MongoProfileStore>,
+    operations: Arc<MongoAgentLifecycleStore>,
+    limit: u16,
+    credentials: impl layer2_core::sandbox::SandboxCredentialPrerequisite + 'static,
+    resolver: Arc<dyn ImageResolver>,
+) -> Arc<InlineAgentLifecycle> {
     InlineAgentLifecycle::new(
         SandboxService::new(
             store.clone(),
@@ -81,7 +99,7 @@ pub(super) fn facade_with_limit(
         store,
         layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         profiles,
-        ImageManagerResolver::new("http://127.0.0.1:1".into()).unwrap(),
+        resolver,
         ProfileCapacityBounds {
             min_cpu_millis: 100,
             max_cpu_millis: 8000,

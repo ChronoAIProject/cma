@@ -248,6 +248,8 @@ pub enum AgentLifecycleProvisioningError {
     SignInRequired,
     #[error("the selected Image Manager image is not accessible to this account")]
     ImageAccessDenied,
+    #[error("new custom image selections are unavailable")]
+    ImageSelectionUnsupported,
     #[error("invalid Agent lifecycle request: {0}")]
     Invalid(String),
     #[error("the selected services need to be connected before provisioning")]
@@ -309,6 +311,12 @@ impl IntoResponse for AgentLifecycleProvisioningError {
                 StatusCode::FORBIDDEN,
                 "agent-manager-image-access-denied",
                 "permission_denied",
+                self.to_string(),
+            ),
+            Self::ImageSelectionUnsupported => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "agent-manager-image-selection-unsupported",
+                "image_selection_unsupported",
                 self.to_string(),
             ),
             Self::Invalid(_) => (

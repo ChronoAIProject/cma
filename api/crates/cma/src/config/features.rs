@@ -23,6 +23,7 @@ mod stale_turn_tests;
 mod strict_inactivity_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub image_manager_retirement: bool,
     pub am_startup_health_serving: bool,
     pub visitor_launch_admission: bool,
     pub usage_signed_cursors_enabled: bool,
@@ -150,6 +151,7 @@ impl FeatureFlags {
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
         let flags = Self {
+            image_manager_retirement: flag(lookup, "CHRONO_IMAGE_MANAGER_RETIREMENT_ENABLED")?,
             am_startup_health_serving: flag(lookup, "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED")?,
             pending_home_reconciliation: flag(
                 lookup,
