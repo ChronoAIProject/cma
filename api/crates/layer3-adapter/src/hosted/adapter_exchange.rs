@@ -18,6 +18,23 @@ impl HostedAdapter {
         }
     }
 
+    pub(crate) async fn fence_agent_restart(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::wire::AgentRestartFence,
+    ) -> crate::Result<()> {
+        self.known_state(handle).await?;
+        match self
+            .exchange(handle, RequestFrame::FenceAgentRestart(request.clone()))
+            .await?
+        {
+            ResponseFrame::FenceAgentRestart(receipt) if &receipt == request => Ok(()),
+            _ => Err(AdapterError::Rejected(
+                "runtime returned a mismatched Agent restart fence".into(),
+            )),
+        }
+    }
+
     pub(super) async fn exchange(
         &self,
         handle: &RuntimeHandle,

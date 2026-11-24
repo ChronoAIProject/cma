@@ -66,6 +66,7 @@ pub fn agent_target(request: &RequestFrame) -> Option<&str> {
         RequestFrame::CloseAgent(request) => request.request.agent_id.as_str(),
         RequestFrame::CaptureAgent(request) => request.agent_id.as_str(),
         RequestFrame::ProveAgentProcessClosed(request) => request.close.agent_id.as_str(),
+        RequestFrame::FenceAgentRestart(request) => request.predecessor.close.agent_id.as_str(),
         RequestFrame::UploadAgentAttachment(request) => request.request.agent_id.as_str(),
         RequestFrame::Browser(request) => request.agent_id.as_str(),
         RequestFrame::BrowserControl(request) => request.agent_id.as_str(),
