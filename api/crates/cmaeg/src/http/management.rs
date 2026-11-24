@@ -4,8 +4,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post, put},
-    Json, Router,
+    Json,
 };
 use cmaeg_core::{channel::ConformanceLevel, problem::ProblemCode};
 use serde::{Deserialize, Serialize};
@@ -20,79 +19,11 @@ use crate::{
 };
 
 use super::management_responses::*;
-use super::problems::{no_store, problem, protocol_headers};
+use super::problems::{no_store, problem};
 
-pub fn management_router(state: ManagementState) -> Router {
-    Router::new()
-        .merge(crate::github::http::routes())
-        .route(
-            "/v1/channels/{channel_id}/partition",
-            get(super::partitions::inspect),
-        )
-        .route(
-            "/v1/channels/{channel_id}/partition/resets",
-            post(super::partition_resets::reset),
-        )
-        .route(
-            "/v1/channels/{channel_id}/activity",
-            get(super::activity::latest),
-        )
-        .route(
-            "/v1/channels/{channel_id}/activity/stream",
-            get(super::activity::stream),
-        )
-        .route(
-            "/v1/channels/{channel_id}/activity/history",
-            get(super::activity_history::history),
-        )
-        .route(
-            "/v1/channels/{channel_id}/activity/history/events/{event_id}/details",
-            get(super::activity_history::details),
-        )
-        .merge(super::outbound::routes())
-        .route(
-            "/v1/channels/{channel_id}/events/{event_id}/media-responses",
-            get(super::media_responses::list),
-        )
-        .route("/v1/permissions", get(permission_catalog))
-        .route("/v1/channels", get(list_channels).post(create_channel))
-        .route(
-            "/v1/channel-records/{record_id}",
-            get(super::creation::recover_channel),
-        )
-        .route(
-            "/v1/channel-records/{record_id}/cancel-create",
-            post(super::creation::cancel_create),
-        )
-        .route(
-            "/v1/channel-records/cancel-create-capability",
-            get(super::creation::cancel_create_capability),
-        )
-        .route(
-            "/v1/channel-records/{record_id}/management",
-            get(super::record_management::read),
-        )
-        .route(
-            "/v1/channels/{channel_id}",
-            get(get_channel).put(update_channel).delete(delete_channel),
-        )
-        .route("/v1/channels/{channel_id}/test", post(test_channel))
-        .route(
-            "/v1/channels/{channel_id}/sources/{source_index}/test",
-            post(super::channel_nodes::test_source),
-        )
-        .route(
-            "/v1/channels/{channel_id}/consumers/{consumer_id}/test",
-            post(super::channel_nodes::test_consumer),
-        )
-        .route(
-            "/v1/channels/{channel_id}/routing",
-            put(super::channel_nodes::update_routing),
-        )
-        .route("/v1/channels/{channel_id}/rekey", post(rekey_channel))
-        .with_state(state)
-        .layer(axum::middleware::from_fn(protocol_headers))
-}
+#[path = "management_router.rs"]
+mod router;
+pub use router::management_router;
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ChannelResponse {
