@@ -94,7 +94,8 @@ mod tests {
         let marker = super::document();
         assert!(crate::store::work_schema::require(&marker).is_err());
         assert!(
-            super::VERSION > crate::store::work_schema::PREPARED_VERSION,
+            marker.get_i64("document_schema_version").unwrap()
+                > crate::store::work_schema::PREPARED_VERSION,
             "a rollback reader must reject the retained turn policy marker"
         );
     }
