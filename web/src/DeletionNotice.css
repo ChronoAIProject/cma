@@ -17,8 +17,11 @@
   overflow-wrap: anywhere;
 }
 
-.deletion-summary > button {
+.deletion-summary__actions {
+  display: flex;
   flex: none;
+  align-items: center;
+  gap: 8px;
 }
 
 .deletion-summary__requests {

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { deletionTarget, type DeletionRequest } from './deletion';
 import { Button } from './ui/Button';
 import { Modal } from './ui/Modal';
+import { IconCloseOutline16 } from './ui/icons';
 import './DeletionNotice.css';
 
 export function DeletionNotice({
@@ -14,6 +15,7 @@ export function DeletionNotice({
   readonly onViewStatus: (request: DeletionRequest) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(() => new Set());
   const unconfirmed = requests.filter((request) => !request.accepted).length;
   const kind = requests[0]?.action.kind;
   const resource = requests.every((request) => request.action.kind === kind)
@@ -24,7 +26,7 @@ export function DeletionNotice({
         : 'Workspace'
     : 'resource';
   const count = requests.length;
-  if (count === 0) return null;
+  if (requests.every((request) => dismissedKeys.has(request.key))) return null;
   return (
     <section className="deletion-summary" aria-label="Deletion request">
       <p role="status">
@@ -32,9 +34,17 @@ export function DeletionNotice({
           ? `Deleting ${count} ${resource}${count === 1 ? '' : 's'}`
           : `${count} deletion request${count === 1 ? '' : 's'} · ${unconfirmed} unconfirmed`}
       </p>
-      <Button size="sm" disabled={disabled} onClick={() => setOpen(true)}>
-        View status
-      </Button>
+      <div className="deletion-summary__actions">
+        <Button size="sm" disabled={disabled} onClick={() => setOpen(true)}>
+          View status
+        </Button>
+        <Button
+          size="sm"
+          aria-label="Dismiss deletion notice"
+          icon={<IconCloseOutline16 size={14} />}
+          onClick={() => setDismissedKeys(new Set(requests.map((request) => request.key)))}
+        />
+      </div>
       {open && !disabled ? (
         <Modal open title="Deletion progress" onClose={() => setOpen(false)}>
           <ul className="deletion-summary__requests">
