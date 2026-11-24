@@ -178,7 +178,11 @@ export function SandboxPage({
             previous.state.status === 'ready' &&
             previous.state.sandbox.owner === sandbox.owner &&
             previous.state.sandbox.revision > sandbox.revision
-              ? { ...previous, request, pollError: false }
+              ? {
+                  ...previous,
+                  request,
+                  pollError: previous.pollError || previous.request !== request,
+                }
               : { request, state: { status: 'ready', ...value }, pollError: false },
           );
           timer = setTimeout(

@@ -21,6 +21,7 @@ function fixture(status: 429 | 503, initialFailure = true) {
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'performance'] });
   const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
   let fail = initialFailure;
+  let sandbox = { name: 'Atlas', revision: 8, pauseAllowed: true };
   const fetch = vi.fn<typeof globalThis.fetch>(async (input) => {
     const path = new URL(String(input)).pathname;
     expect(path).toMatch(/^\/api\/v1\/sandboxes\/[^/]+$/);
@@ -34,8 +35,9 @@ function fixture(status: 429 | 503, initialFailure = true) {
     return Response.json({
       ...WIRE_SANDBOX_DETAIL,
       id,
-      name: id === sandboxId ? 'Atlas' : 'Second Sandbox',
-      lifecycle: { pause: { allowed: true }, revive: { allowed: false } },
+      name: id === sandboxId ? sandbox.name : 'Second Sandbox',
+      revision: sandbox.revision,
+      lifecycle: { pause: { allowed: sandbox.pauseAllowed }, revive: { allowed: false } },
     });
   });
   const wire = createRestWebClient(createClient({ baseUrl: 'https://fixture.invalid', fetch }));
@@ -72,6 +74,9 @@ function fixture(status: 429 | 503, initialFailure = true) {
     fetch,
     hidden,
     onAction,
+    observe(next: typeof sandbox) {
+      sandbox = next;
+    },
     fail(value: boolean) {
       fail = value;
     },
@@ -106,7 +111,7 @@ it.each([429, 503] as const)(
   },
 );
 
-it('keeps the last view stale across revision changes until the delayed read succeeds', async () => {
+it('keeps revision 8 stale after the delayed read returns revision 7, then recovers at 9', async () => {
   const f = fixture(503, false);
   const view = render(f.draw());
   await tick();
@@ -121,8 +126,19 @@ it('keeps the last view stale across revision changes until the delayed read suc
   expect(screen.getByRole('heading', { name: 'Atlas' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled();
   f.fail(false);
+  f.observe({ name: 'Outdated Sandbox', revision: 7, pauseAllowed: false });
   await tick(1);
   expect(f.fetch).toHaveBeenCalledTimes(3);
+  expect(screen.getByRole('heading', { name: 'Atlas' })).toBeVisible();
+  const pause = screen.getByRole('button', { name: 'Pause' });
+  expect(pause).toBeDisabled();
+  fireEvent.click(pause);
+  expect(f.onAction).not.toHaveBeenCalled();
+
+  f.observe({ name: 'Confirmed Sandbox', revision: 9, pauseAllowed: true });
+  await tick(5000);
+  expect(f.fetch).toHaveBeenCalledTimes(4);
+  expect(screen.getByRole('heading', { name: 'Confirmed Sandbox' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();
   expect(f.onAction).not.toHaveBeenCalled();
 });
