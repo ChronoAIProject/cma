@@ -44,9 +44,11 @@ mod tests {
 
     #[test]
     fn containment_precedes_batch_renewal() {
-        let mut features = FeatureFlags::default();
-        features.batch_ownership_renewal = true;
-        features.am_failure_containment_enabled = true;
+        let features = FeatureFlags {
+            batch_ownership_renewal: true,
+            am_failure_containment_enabled: true,
+            ..FeatureFlags::default()
+        };
         assert!(!batch_renewal_enabled(&features));
     }
 }
