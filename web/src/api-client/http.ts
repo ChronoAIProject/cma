@@ -372,6 +372,7 @@ export function errorFromBody(
     retryAfterMilliseconds(response),
     extensions,
     statusLink !== null && statusLink.length <= MAX_REVOCATION_LINK_LENGTH ? statusLink : undefined,
+    nonEmptyText(body.type),
   );
 }
 
