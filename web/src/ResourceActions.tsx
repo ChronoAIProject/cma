@@ -333,6 +333,7 @@ export function useResourceActions(
               viewerId={viewerId}
               agentPermissions={agentPermissions}
               enabled={enabled}
+              settlements={settlements}
               initial={deletion.request}
               restored={deletion.restored}
               backgroundOnAcceptance

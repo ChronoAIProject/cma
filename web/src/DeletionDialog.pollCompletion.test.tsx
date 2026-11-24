@@ -112,9 +112,7 @@ it.each(['successful detail', 'parent refusal', 'history refusal'] as const)(
       readAgentEvents.mock.calls.length,
     ]).toEqual(readCounts);
     expect(writes).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByText(outcome === 'successful detail' ? 'Done' : 'Close', { selector: 'button' }),
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     await act(() => vi.advanceTimersByTimeAsync(1000));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reopen request' })).toBeDisabled();
