@@ -66,10 +66,13 @@ it.each(['lost response', 'created but detail read failed'])(
   },
 );
 
-it('unlocks an initially refused Workspace so corrected inputs use a new request', async () => {
+it('explains a duplicate Workspace name and submits a corrected name as a new request', async () => {
   const user = userEvent.setup();
   const transport = restTransport();
-  transport.reply({ status: 422, code: 'invalid_request', detail: 'Invalid name' }, 422);
+  transport.reply(
+    { status: 409, code: 'workspace_name_conflict', detail: 'Name already in use' },
+    409,
+  );
   const onCreated = vi.fn();
   render(
     <InlineWorkspaceCard
@@ -80,7 +83,9 @@ it('unlocks an initially refused Workspace so corrected inputs use a new request
     />,
   );
   await user.click(screen.getByRole('button', { name: 'Create workspace' }));
-  await screen.findByRole('alert');
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'This workspace name is already in use. Choose another workspace name.',
+  );
   expect(screen.getByLabelText('Workspace name')).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
   fireEvent.change(screen.getByLabelText('Workspace name'), {
