@@ -36,8 +36,6 @@ fn frozen_account_pre_backup_census_matches_the_exact_develop_descriptor() {
             crate::store::sandbox_usage_export::INVENTORY,
             crate::store::home_backups::SCHEDULES_COLLECTION,
             crate::store::home_backups::BACKUPS_COLLECTION,
-            crate::store::released_runtimes::COLLECTION,
-            crate::store::released_runtimes::TRANSITIONS_COLLECTION,
         ]
     );
 }
