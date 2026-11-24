@@ -211,20 +211,23 @@ export function Choice({
   );
 }
 export function Toggle({
+  path,
   label,
   value,
   onChange,
   disabled,
   hint,
 }: {
+  path?: string;
   label: string;
   value: unknown;
   onChange: (v: boolean) => void;
   disabled?: boolean;
   hint?: string;
 }) {
+  const validationPath = useValidationPath(path);
   return (
-    <label className="channel-toggle-field">
+    <label className="channel-toggle-field" data-validation-path={validationPath}>
       <input
         type="checkbox"
         checked={value === true}

@@ -70,6 +70,7 @@ export function Activity({ client }: { readonly client: OperatorClient }) {
   return (
     <section aria-label="Operator activity">
       <h2>Activity</h2>
+      <p>Newest recorded first.</p>
       <form
         className="operator-filters"
         onSubmit={(event) => {
@@ -148,6 +149,7 @@ function ActivitySummarys({
         loadingLabel={records.page === undefined ? 'Loading records' : 'Refreshing records'}
         empty={records.page === undefined ? undefined : 'No records match these filters.'}
       >
+        {/* The API cursor orders each page by recorded time, then record ID. */}
         {records.page?.items.map((row) => (
           <tr key={row.id}>
             <TableCell>

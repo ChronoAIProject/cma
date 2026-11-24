@@ -13,8 +13,28 @@ afterEach(() => {
 
 it('keeps a managed repository wait on the same request until an explicit recheck', async () => {
   const writes: { key: string | null; body: unknown }[] = [];
+  const manageUrl = 'https://nyx.example/keys';
+  const weakConnection = {
+    id: 'profile-only',
+    label: 'GitHub profile access',
+    granted_scopes: ['read:user'],
+    manage_url: `${manageUrl}/profile-only`,
+  };
+  const repositoryConnection = {
+    id: 'repo-access',
+    label: 'GitHub repository access',
+    granted_scopes: ['repo'],
+    manage_url: `${manageUrl}/repo-access`,
+  };
   const readInventory = vi.fn(async () =>
-    Response.json({ owner: 'owner', github: { manage_url: 'https://nyx.example/keys' } }),
+    Response.json({
+      owner: 'owner',
+      github: {
+        manage_url: manageUrl,
+        connections:
+          writes.length === 1 ? [weakConnection, repositoryConnection] : [repositoryConnection],
+      },
+    }),
   );
   const transport: typeof fetch = async (input, options) => {
     if (String(input) === '/auth/connections/repository-access') {
@@ -60,13 +80,23 @@ it('keeps a managed repository wait on the same request until an explicit rechec
   });
   fireEvent.click(screen.getByRole('button', { name: 'Add repo' }));
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByRole('link', { name: 'Manage permissions in NyxID' });
+  const weakLink = await screen.findByRole('link', {
+    name: 'GitHub profile access (profile-only)',
+  });
+  expect(
+    screen.getByRole('link', { name: 'GitHub repository access (repo-access)' }),
+  ).toBeVisible();
   expect(writes).toHaveLength(1);
   expect(readInventory).toHaveBeenCalledOnce();
   expect(screen.queryByRole('button', { name: 'Continue original task' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Recheck repository access' }));
   await waitFor(() => expect(writes).toHaveLength(2));
   expect(writes[1]).toEqual(writes[0]);
+  await waitFor(() => expect(weakLink).not.toBeInTheDocument());
+  expect(
+    screen.getByRole('link', { name: 'GitHub repository access (repo-access)' }),
+  ).toBeVisible();
+  expect(readInventory).toHaveBeenCalledTimes(2);
 });
 
 it('clears drafts and retained requests on sign-out and account change before reauthentication restores Home', async () => {

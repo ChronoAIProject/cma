@@ -94,7 +94,7 @@ it('keeps unknown-write errors and the original request through edits and retry,
   expect(fetcher.mock.calls[1]![0]).toBe(fetcher.mock.calls[0]![0]);
   for (const key of ['method', 'body', 'headers'])
     expect(fetcher.mock.calls[1]![1][key]).toEqual(fetcher.mock.calls[0]![1][key]);
-  expect(unload()).toBe(false);
+  await waitFor(() => expect(unload()).toBe(false));
 });
 
 it('clears the rejected field validity and description after correction', async () => {

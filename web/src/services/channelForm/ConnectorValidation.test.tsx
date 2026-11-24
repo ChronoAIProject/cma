@@ -9,6 +9,7 @@ import {
   enterBundle,
   identity,
   response,
+  source,
 } from './NativeLarkSourceFields.fixtures';
 import { SourceFields } from './SourceFields';
 import { defaultSource } from './model';
@@ -62,6 +63,40 @@ it.each([
   expect(target).toHaveFocus();
   expect(screen.getByRole('alert').textContent).not.toContain('/sources/');
 });
+
+it('returns focus to the Direct Lark webhook confirmation before sending a request', () => {
+  const fetcher = vi.fn();
+  vi.stubGlobal('fetch', fetcher);
+  const saved = {
+    ...channel,
+    definition: {
+      ...channel.definition,
+      sources: [{ ...defaultSource('telegram'), bot_id: '123' }, source],
+    },
+  };
+  render(
+    <RelayCapabilitiesContext value={available}>
+      <ChannelEditor
+        channel={saved}
+        section={{ kind: 'producer', index: 1 }}
+        onDone={vi.fn()}
+        denied={vi.fn()}
+      />
+    </RelayCapabilitiesContext>,
+  );
+  const confirmation = screen.getByRole('checkbox', { name: /This is a separate app/ });
+  fireEvent.click(confirmation);
+  expect(confirmation).not.toBeChecked();
+  fireEvent.submit(screen.getByRole('button', { name: 'Save producer' }).closest('form')!);
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(screen.getByRole('alert')).toHaveTextContent('Confirm that this is a separate app');
+  const review = screen.getByRole('button', { name: 'Review channel fields' });
+  review.focus();
+  fireEvent.click(review);
+  expect(confirmation).toHaveFocus();
+  expect(confirmation).toHaveAccessibleDescription(/Confirm that this is a separate app/);
+});
+
 it.each([
   ['telegram', 'Bot ID', { bot_id: '9223372036854775807' }],
   ['telegram', 'Bot username', { bot_username: 'valid_bot' }],
