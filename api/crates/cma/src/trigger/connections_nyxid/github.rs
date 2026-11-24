@@ -259,7 +259,7 @@ impl NyxidServiceConnectionBroker {
             active_oauth: detail.is_active == Some(true)
                 && detail.credential_type.as_deref() == Some("oauth2")
                 && detail.status.as_deref() == Some("active")
-                && detail.connection_status.as_deref() == Some("connected"),
+                && detail.connection_status.as_deref() == Some("active"),
         })
     }
 }

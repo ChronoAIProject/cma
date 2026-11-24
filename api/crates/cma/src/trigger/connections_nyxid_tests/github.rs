@@ -16,7 +16,7 @@ async fn declared_write_checks_only_the_unique_active_default_oauth_key() {
         Reply::json(json!({
             "id":id, "slug":slug, "catalog_service_id":"github-catalog", "label":id,
             "credential_type":"oauth2", "is_active":true, "granted_scopes": scopes,
-            "status":"active", "connection_status":"connected"
+            "status":"active", "connection_status":"active"
         }))
     };
     let weak = row("weak", "api-github", true);
@@ -140,7 +140,7 @@ async fn scope_check_distinguishes_missing_and_empty_evidence_and_the_two_operat
             "selected".into(), Reply::json(json!({
                 "id":"selected", "slug":"api-github", "catalog_service_id":"github-catalog",
                 "label":"GitHub", "is_active":true, "credential_type":credential_type, "granted_scopes":scopes,
-                "status":"active", "connection_status":"connected"
+                "status":"active", "connection_status":"active"
             })),
         );
         let report = broker.github_connections(&owner).await;
@@ -161,20 +161,12 @@ async fn scope_check_distinguishes_missing_and_empty_evidence_and_the_two_operat
     }
 
     for (status, connection_status, expected) in [
-        (
-            Some("expired"),
-            Some("connected"),
-            "verification_unavailable",
-        ),
-        (
-            Some("revoked"),
-            Some("connected"),
-            "verification_unavailable",
-        ),
+        (Some("expired"), Some("active"), "verification_unavailable"),
+        (Some("revoked"), Some("active"), "verification_unavailable"),
         (Some("active"), Some("expired"), "verification_unavailable"),
         (Some("active"), None, "verification_unavailable"),
-        (None, Some("connected"), "verification_unavailable"),
-        (Some("active"), Some("connected"), "scope_satisfied"),
+        (None, Some("active"), "verification_unavailable"),
+        (Some("active"), Some("active"), "scope_satisfied"),
     ] {
         let mut detail = json!({
             "id":"selected", "slug":"api-github", "catalog_service_id":"github-catalog",
