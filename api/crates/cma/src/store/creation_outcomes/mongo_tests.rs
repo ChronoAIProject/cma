@@ -337,8 +337,13 @@ async fn closure_waits_for_an_admitted_writer_and_a_closed_key_cannot_start() {
 #[tokio::test]
 #[ignore = "requires disposable CHRONO_TEST_MONGODB_URI"]
 async fn lifecycle_links_original_wire_and_fences_a_stale_worker() {
-    use crate::store::{CreateResult, LifecycleInput, MongoAgentLifecycleStore};
+    use crate::store::released_runtimes::MongoReleasedRuntimes;
+    use crate::store::{
+        CreateResult, LifecycleCreateError, LifecycleInput, MongoAgentLifecycleStore,
+    };
     use contract::Submission;
+    use layer2_core::released_runtime::{ReleasedLane, ReleasedLaneRecord};
+    use layer3_adapter::{ReleasedLaneRevisions, ReleasedRuntime};
 
     let (left, right, today) = fixture().await;
     let owner = SubjectId::new("owner");
@@ -346,6 +351,30 @@ async fn lifecycle_links_original_wire_and_fences_a_stale_worker() {
         .await
         .unwrap();
     operations.creation_writer_epoch = Some(left.config.epoch.clone());
+    let lanes = MongoReleasedRuntimes::open(&left.database, "creation-release-test");
+    let lane = ReleasedLane::Agent;
+    let image = |digit: char| {
+        format!(
+            "registry.example/runtime@sha256:{}",
+            digit.to_string().repeat(64)
+        )
+    };
+    let active = lanes
+        .bootstrap(
+            ReleasedLaneRecord::bootstrap(lane, image('b'), &layer2_core::now_rfc3339()).unwrap(),
+        )
+        .await
+        .unwrap();
+    let release = ReleasedRuntime {
+        revision: active.revision,
+        agent: active.active.image,
+        machine: None,
+        lane_revisions: Some(ReleasedLaneRevisions {
+            agent: active.active.revision,
+            machine: None,
+        }),
+    };
+    operations.released_lanes = Some(lanes.clone());
     let mut sandbox_store =
         crate::store::MongoSandboxStore::open(left.database.client(), left.database.name())
             .await
@@ -366,24 +395,72 @@ async fn lifecycle_links_original_wire_and_fences_a_stale_worker() {
         behavior: Default::default(),
         managed_agent_instructions: None,
         setup_message: None,
-        request: serde_json::from_value(serde_json::json!({"name":"Fixture lifecycle"})).unwrap(),
-        resolved_image: None,
+        request: serde_json::from_value(
+            serde_json::json!({"name":"Fixture lifecycle", "desktop": true}),
+        )
+        .unwrap(),
+        resolved_image: Some(release.agent.clone()),
         capacity: None,
         sandbox_availability: Default::default(),
         capabilities: vec![layer2_core::Capability::UseOwnSandboxes],
         actor: None,
     };
+    let mut submission = Submission {
+        deployment: original.deployment.to_owned(),
+        wire_digest: original.wire_digest.to_owned(),
+        fence: Some(fence.clone()),
+        replay_operation_id: None,
+    };
+    let stale_release = ReleasedRuntime {
+        agent: image('a'),
+        ..release.clone()
+    };
+    let stale_input = LifecycleInput {
+        resolved_image: Some(stale_release.agent.clone()),
+        ..input.clone()
+    };
+    assert!(matches!(
+        operations
+            .create_with_submission(
+                &owner,
+                original.key,
+                stale_input,
+                Some(submission.clone()),
+                Some((&stale_release, lane))
+            )
+            .await,
+        Err(LifecycleCreateError::StaleReleasedRuntime)
+    ));
+    submission.fence.as_mut().unwrap().generation = "0".repeat(32);
+    assert!(operations
+        .create_with_submission(
+            &owner,
+            original.key,
+            input.clone(),
+            Some(submission.clone()),
+            Some((&release, lane))
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        right.lookup(&original, &query).await.unwrap(),
+        Outcome::InProgress { operation_id: None }
+    );
+    assert_eq!(lanes.load(lane).await.unwrap().unwrap().admissions, 0);
+    assert!(operations
+        .replay(&owner, original.key, &input.request)
+        .await
+        .unwrap()
+        .is_none());
+
+    submission.fence = Some(fence.clone());
     let CreateResult::Created(id) = operations
         .create_with_submission(
             &owner,
             original.key,
             input,
-            Some(Submission {
-                deployment: original.deployment.to_owned(),
-                wire_digest: original.wire_digest.to_owned(),
-                fence: Some(fence.clone()),
-                replay_operation_id: None,
-            }),
+            Some(submission),
+            Some((&release, lane)),
         )
         .await
         .unwrap()
@@ -396,13 +473,10 @@ async fn lifecycle_links_original_wire_and_fences_a_stale_worker() {
             operation_id: Some(id.clone())
         }
     );
-    let lease = operations
-        .claim(&id)
-        .await
-        .unwrap()
-        .unwrap()
-        .lease()
-        .unwrap();
+    assert_eq!(lanes.load(lane).await.unwrap().unwrap().admissions, 1);
+    let lease = operations.claim(&id).await.unwrap().unwrap();
+    assert_eq!(lease.released_lane, Some(lane));
+    let lease = lease.lease().unwrap();
     fence.lifecycle_lease = Some((id.clone(), "stale-token-fixture".into()));
     let mut candidate = super::super::sandbox_admission_mongo_integration_tests::sandbox(
         "sbx_lifecycle_proof",

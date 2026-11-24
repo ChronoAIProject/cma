@@ -80,6 +80,7 @@ pub(in crate::store) async fn fixture(
         snapshot,
         proof,
         target_runtime_version: "image-latest".into(),
+        released_runtime: None,
         automatic: false,
         requested_at: NOW.into(),
     }
@@ -391,6 +392,7 @@ async fn mongo_no_agent_stalled_revival_keeps_retained_source_and_reserved_gener
             snapshot,
             proof,
             target_runtime_version: "released-image".into(),
+            released_runtime: None,
             automatic: false,
             requested_at: NOW.into(),
         })

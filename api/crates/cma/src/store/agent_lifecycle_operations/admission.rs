@@ -11,6 +11,8 @@ pub(crate) enum LifecycleCreateError {
     Store(#[from] StoreError),
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
+    #[error("released runtime changed before lifecycle admission")]
+    StaleReleasedRuntime,
 }
 
 impl LifecycleRecord {
@@ -43,7 +45,8 @@ impl MongoAgentLifecycleStore {
         key: &str,
         input: LifecycleInput,
     ) -> Result<CreateResult, LifecycleCreateError> {
-        self.create_with_submission(owner, key, input, None).await
+        self.create_with_submission(owner, key, input, None, None)
+            .await
     }
 
     pub(crate) fn supports_creation(
@@ -53,9 +56,99 @@ impl MongoAgentLifecycleStore {
         self.creation_writer_epoch.as_deref() == Some(fence.epoch.as_str())
     }
 
+    pub(crate) async fn create_with_submission(
+        &self,
+        owner: &SubjectId,
+        key: &str,
+        input: LifecycleInput,
+        submission: Option<layer1_public::rest::creation_outcomes::Submission>,
+        release: Option<(
+            &layer3_adapter::ReleasedRuntime,
+            layer2_core::released_runtime::ReleasedLane,
+        )>,
+    ) -> Result<CreateResult, LifecycleCreateError> {
+        use layer1_public::rest::creation_outcomes::is_covered_key;
+
+        if canary_key::is_reserved(key) {
+            return Err(StoreError::Malformed("reserved lifecycle key".into()).into());
+        }
+        let (creation_wire, creation_fence) = match submission {
+            Some(submission) => (
+                Some(CreationWire {
+                    deployment: submission.deployment,
+                    digest: submission.wire_digest,
+                }),
+                submission.fence,
+            ),
+            None => (None, None),
+        };
+        if is_covered_key(key) != creation_fence.is_some() {
+            return Err(StoreError::Malformed(
+                "creation submission fence missing or unsupported".into(),
+            )
+            .into());
+        }
+        let bytes = serde_json::to_vec(&input.request)
+            .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
+        let fingerprint = Binary {
+            subtype: BinarySubtype::Generic,
+            bytes: Sha256::digest(&bytes).to_vec(),
+        };
+        if let Some(existing) = self
+            .operations
+            .find_one(doc! { "owner": owner.as_str(), "key": key })
+            .await
+            .map_err(driver)?
+        {
+            schema::require_current(existing.document_schema_version)?;
+            if !same_request(&existing.input.request, &input.request)? {
+                return Err(StoreError::RevisionConflict {
+                    expected: 0,
+                    actual: 1,
+                }
+                .into());
+            }
+            return Ok(CreateResult::Existing(Box::new(existing)));
+        }
+        let now = DateTime::now();
+        let record = LifecycleRecord {
+            id: uuid::Uuid::new_v4().simple().to_string(),
+            owner: owner.to_string(),
+            key: key.to_owned(),
+            fingerprint,
+            creation_wire,
+            creation_fence,
+            input,
+            released_lane: None,
+            canary_admission: None,
+            canary_manifest_digest: None,
+            status: "queued".into(),
+            phase: "queued".into(),
+            events: Vec::new(),
+            sandbox_id: None,
+            agent_id: None,
+            repository_commit: None,
+            error: None,
+            failure: None,
+            connection: None,
+            lease_expires_at: None,
+            lease_token: None,
+            attempts: 0,
+            retry_at: None,
+            created_at: now,
+            updated_at: now,
+            document_schema_version: DOCUMENT_SCHEMA_VERSION,
+        };
+        self.finish_create(record, release).await
+    }
+
     pub(super) async fn finish_create(
         &self,
-        record: LifecycleRecord,
+        mut record: LifecycleRecord,
+        release: Option<(
+            &layer3_adapter::ReleasedRuntime,
+            layer2_core::released_runtime::ReleasedLane,
+        )>,
     ) -> Result<CreateResult, LifecycleCreateError> {
         match super::super::admission_checks::require_fresh_read(&self.admission_settings).await {
             Ok(()) => {}
@@ -74,54 +167,95 @@ impl MongoAgentLifecycleStore {
             }
             Err(error) => return Err(StoreError::Unavailable(error.to_string()).into()),
         }
-        if let Some(fence) = &record.creation_fence {
-            if !self.supports_creation(fence) {
-                return Err(StoreError::Unavailable(
-                    "creation submission epoch is unsupported".into(),
+        if record
+            .creation_fence
+            .as_ref()
+            .is_some_and(|fence| !self.supports_creation(fence))
+        {
+            return Err(
+                StoreError::Unavailable("creation submission epoch is unsupported".into()).into(),
+            );
+        }
+        let release = self.released_lanes.as_ref().zip(release);
+        if let Some((_, (snapshot, lane))) = release {
+            let image = match lane {
+                layer2_core::released_runtime::ReleasedLane::Agent => Some(snapshot.agent.as_str()),
+                layer2_core::released_runtime::ReleasedLane::Machine => snapshot.machine.as_deref(),
+            };
+            if released::managed_lifecycle_release_lane(&record.input.request) != Some(lane)
+                || image.is_none()
+                || record.input.resolved_image.as_deref() != image
+            {
+                return Err(StoreError::Malformed(
+                    "lifecycle image differs from its released runtime admission".into(),
                 )
                 .into());
             }
+            record.released_lane = Some(lane);
+        }
+
+        let inserted = if release.is_some() || record.creation_fence.is_some() {
+            use crate::store::sandbox_mongo as transaction;
+
             let database = self
                 .operations
                 .client()
                 .database(&self.operations.namespace().db);
             let mut session = database.client().start_session().await.map_err(driver)?;
-            use crate::store::sandbox_mongo as transaction;
             transaction::start_transaction(&mut session)
                 .await
                 .map_err(driver)?;
-            let linked = super::super::creation_outcomes::link_operation(
-                &database,
-                &record.owner,
-                fence,
-                &record.id,
-                &mut session,
-            )
-            .await
-            .map_err(driver)?;
-            if !linked {
-                session.abort_guarded().await.map_err(driver)?;
-                return Err(StoreError::Unavailable(
-                    "creation submission fence is no longer held".into(),
-                )
-                .into());
+            if let Some((store, (snapshot, lane))) = release {
+                match store.fence_snapshot(snapshot, lane, &mut session).await {
+                    Ok(()) => {}
+                    Err(SandboxStoreError::Conflict) => {
+                        return Err(LifecycleCreateError::StaleReleasedRuntime);
+                    }
+                    Err(error) => return Err(StoreError::Unavailable(error.to_string()).into()),
+                }
             }
-            self.operations
+            if let Some(fence) = &record.creation_fence {
+                let linked = super::super::creation_outcomes::link_operation(
+                    &database,
+                    &record.owner,
+                    fence,
+                    &record.id,
+                    &mut session,
+                )
+                .await
+                .map_err(driver)?;
+                if !linked {
+                    session.abort_guarded().await.map_err(driver)?;
+                    return Err(StoreError::Unavailable(
+                        "creation submission fence is no longer held".into(),
+                    )
+                    .into());
+                }
+            }
+            match self
+                .operations
                 .insert_one(&record)
                 .session(&mut session)
                 .await
-                .map_err(driver)?;
-            return match transaction::commit_transaction(&mut session).await {
-                transaction::CommitOutcome::Committed => Ok(CreateResult::Created(record.id)),
-                transaction::CommitOutcome::Retry(error)
-                | transaction::CommitOutcome::Unknown(error)
-                | transaction::CommitOutcome::Failed(error) => Err(driver(error).into()),
-            };
-        }
-        match self.operations.insert_one(&record).await {
+            {
+                Ok(_) => match transaction::commit_transaction(&mut session).await {
+                    transaction::CommitOutcome::Committed => Ok(()),
+                    transaction::CommitOutcome::Retry(error)
+                    | transaction::CommitOutcome::Unknown(error)
+                    | transaction::CommitOutcome::Failed(error) => Err(error),
+                },
+                Err(error) => Err(error),
+            }
+        } else {
+            self.operations.insert_one(&record).await.map(|_| ())
+        };
+        match inserted {
             Ok(_) => Ok(CreateResult::Created(record.id)),
-            Err(error) if is_duplicate_key(&error) => self
-                .replay(
+            Err(error)
+                if is_duplicate_key(&error)
+                    || error.contains_label("UnknownTransactionCommitResult") =>
+            {
+                self.replay(
                     &SubjectId::new(&record.owner),
                     &record.key,
                     &record.input.request,
@@ -130,7 +264,13 @@ impl MongoAgentLifecycleStore {
                 .map(|existing| CreateResult::Existing(Box::new(existing)))
                 .ok_or_else(|| {
                     StoreError::Unavailable("lifecycle operation raced out of view".into()).into()
-                }),
+                })
+            }
+            Err(error)
+                if release.is_some() && error.contains_label("TransientTransactionError") =>
+            {
+                Err(LifecycleCreateError::StaleReleasedRuntime)
+            }
             Err(error) => Err(driver(error).into()),
         }
     }

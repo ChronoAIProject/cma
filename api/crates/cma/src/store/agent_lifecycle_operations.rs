@@ -30,6 +30,7 @@ pub(crate) mod canary_key;
 pub(crate) use canary_admission::CanaryProfiles;
 #[cfg(test)]
 mod operator_stop_tests;
+pub(super) mod released;
 pub(crate) use admission::LifecycleCreateError;
 
 pub(crate) const COLLECTION: &str = "agent_lifecycle_operations";
@@ -119,6 +120,9 @@ pub(crate) struct LifecycleRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creation_fence: Option<layer2_core::sandbox::store::CreationFence>,
     pub input: LifecycleInput,
+    /// Present when the operation's resolved image passed the durable lane fence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub released_lane: Option<layer2_core::released_runtime::ReleasedLane>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     canary_admission: Option<canary_admission::CanaryAdmission>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -172,6 +176,7 @@ pub(crate) struct MongoAgentLifecycleStore {
     pub(super) creation_writer_epoch: Option<String>,
     operations: Collection<LifecycleRecord>,
     admission_settings: Collection<mongodb::bson::Document>,
+    pub(super) released_lanes: Option<super::released_runtimes::MongoReleasedRuntimes>,
 }
 
 impl MongoAgentLifecycleStore {
@@ -215,88 +220,8 @@ impl MongoAgentLifecycleStore {
             creation_writer_epoch: None,
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
+            released_lanes: None,
         })
-    }
-
-    pub(crate) async fn create_with_submission(
-        &self,
-        owner: &SubjectId,
-        key: &str,
-        input: LifecycleInput,
-        submission: Option<layer1_public::rest::creation_outcomes::Submission>,
-    ) -> Result<CreateResult, LifecycleCreateError> {
-        use layer1_public::rest::creation_outcomes::is_covered_key;
-
-        if canary_key::is_reserved(key) {
-            return Err(StoreError::Malformed("reserved lifecycle key".into()).into());
-        }
-        let (creation_wire, creation_fence) = match submission {
-            Some(submission) => (
-                Some(CreationWire {
-                    deployment: submission.deployment,
-                    digest: submission.wire_digest,
-                }),
-                submission.fence,
-            ),
-            None => (None, None),
-        };
-        if is_covered_key(key) != creation_fence.is_some() {
-            return Err(StoreError::Malformed(
-                "creation submission fence missing or unsupported".into(),
-            )
-            .into());
-        }
-        let bytes = serde_json::to_vec(&input.request)
-            .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
-        let fingerprint = Binary {
-            subtype: BinarySubtype::Generic,
-            bytes: Sha256::digest(&bytes).to_vec(),
-        };
-        if let Some(existing) = self
-            .operations
-            .find_one(doc! { "owner": owner.as_str(), "key": key })
-            .await
-            .map_err(driver)?
-        {
-            schema::require_current(existing.document_schema_version)?;
-            if !same_request(&existing.input.request, &input.request)? {
-                return Err(StoreError::RevisionConflict {
-                    expected: 0,
-                    actual: 1,
-                }
-                .into());
-            }
-            return Ok(CreateResult::Existing(Box::new(existing)));
-        }
-        let now = DateTime::now();
-        let record = LifecycleRecord {
-            id: uuid::Uuid::new_v4().simple().to_string(),
-            owner: owner.to_string(),
-            key: key.to_owned(),
-            fingerprint,
-            creation_wire,
-            creation_fence,
-            input,
-            canary_admission: None,
-            canary_manifest_digest: None,
-            status: "queued".into(),
-            phase: "queued".into(),
-            events: Vec::new(),
-            sandbox_id: None,
-            agent_id: None,
-            repository_commit: None,
-            error: None,
-            failure: None,
-            connection: None,
-            lease_expires_at: None,
-            lease_token: None,
-            attempts: 0,
-            retry_at: None,
-            created_at: now,
-            updated_at: now,
-            document_schema_version: DOCUMENT_SCHEMA_VERSION,
-        };
-        self.finish_create(record).await
     }
 
     /// Claim queued work or an expired worker, including legacy records whose
