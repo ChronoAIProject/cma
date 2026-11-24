@@ -2,6 +2,8 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { agentClient } from '../test/agent';
 import { lifecycleStorageKey, useLifecycleIntent } from './lifecycleIntent';
+import type { AgentLifecycleOperationView } from '../api/client';
+import { openTaskDraftStore } from './taskDraftStorage';
 
 beforeEach(() => sessionStorage.clear());
 afterEach(() => {
@@ -11,6 +13,109 @@ afterEach(() => {
 
 const retained = (key: string, body: object) =>
   JSON.stringify({ version: 1, intent: { key, body } });
+
+const connectionWait: AgentLifecycleOperationView = {
+  id: 'original-operation',
+  status: 'waiting_for_connection',
+  phase: 'sandbox_ready',
+  connection: {
+    services: ['api-github'],
+    target: { type: 'sandbox_profile', profile: { id: 'profile-owned', revision: 1 } },
+  },
+  events: [],
+};
+
+it('preserves a newer task draft and fences a delayed continuation after discard', async () => {
+  const slot = lifecycleStorageKey('owner');
+  sessionStorage.setItem(
+    slot,
+    JSON.stringify({
+      version: 1,
+      intent: {
+        key: 'original-key',
+        body: { name: 'Original', initial_message: 'Old task' },
+        draftRevision: 'old-draft',
+        receipt: { id: connectionWait.id },
+      },
+    }),
+  );
+  const store = openTaskDraftStore('owner');
+  const newer = { ...store.read().draft, revision: 'new-draft', text: 'Independent draft' };
+  store.save(newer);
+  const create = vi.fn(async () => ({ id: 'independent-operation' }));
+  const client = agentClient({
+    createAgentLifecycle: create,
+    readAgentLifecycle: vi
+      .fn()
+      .mockResolvedValueOnce(connectionWait)
+      .mockImplementation(() => new Promise(() => undefined)),
+  });
+  const { result } = renderHook(() => useLifecycleIntent(client, 'owner'));
+  await waitFor(() => expect(result.current.canDiscardWaiting).toBe(true));
+  const continueOriginal = result.current.submit;
+  act(() => expect(result.current.discardWaiting()).toBe(true));
+  expect(sessionStorage.getItem(slot)).toBeNull();
+  expect(store.read().draft).toEqual(newer);
+  await act(() => result.current.submit({ name: 'Next task' }));
+  await act(() => continueOriginal());
+  expect(create).toHaveBeenCalledOnce();
+});
+
+it.each(['queued', 'running', 'unconfirmed', 'admitted'] as const)(
+  'preserves %s creation recovery on discard',
+  async (state) => {
+    const slot = lifecycleStorageKey('owner');
+    const saved = JSON.stringify({
+      version: 1,
+      intent: {
+        key: 'original-key',
+        body: { name: 'Original' },
+        ...(state === 'unconfirmed' ? {} : { receipt: { id: connectionWait.id } }),
+      },
+    });
+    sessionStorage.setItem(slot, saved);
+    const client = agentClient({
+      readAgentLifecycle: async () =>
+        state === 'admitted'
+          ? { ...connectionWait, agent_id: 'agt_1' }
+          : { ...connectionWait, status: state },
+    });
+    const { result } = renderHook(() => useLifecycleIntent(client, 'owner'));
+    if (state !== 'unconfirmed')
+      await waitFor(() => expect(result.current.operation).toBeDefined());
+    expect(result.current.canDiscardWaiting).toBe(false);
+    act(() => expect(result.current.discardWaiting()).toBe(false));
+    expect(sessionStorage.getItem(slot)).toBe(saved);
+  },
+);
+
+it('preserves a waiting receipt when discard races an uncertain replay', async () => {
+  const slot = lifecycleStorageKey('owner');
+  const saved = JSON.stringify({
+    version: 1,
+    intent: {
+      key: 'original-key',
+      body: { name: 'Original' },
+      receipt: { id: connectionWait.id },
+    },
+  });
+  sessionStorage.setItem(slot, saved);
+  const client = agentClient({
+    createAgentLifecycle: vi.fn().mockRejectedValue(new TypeError('Response lost')),
+    readAgentLifecycle: async () => connectionWait,
+  });
+  const { result } = renderHook(() => useLifecycleIntent(client, 'owner'));
+  await waitFor(() => expect(result.current.canDiscardWaiting).toBe(true));
+  const discard = result.current.discardWaiting;
+  await act(async () => {
+    const retry = result.current.submit();
+    expect(discard()).toBe(false);
+    await retry;
+    expect(discard()).toBe(false);
+  });
+  expect(sessionStorage.getItem(slot)).toBe(saved);
+  expect(result.current.canDiscardWaiting).toBe(false);
+});
 
 it('reads the retained request of whichever location is chosen and keeps each separate', () => {
   sessionStorage.setItem(
