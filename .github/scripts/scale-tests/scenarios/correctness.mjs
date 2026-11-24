@@ -1,4 +1,4 @@
-import { check, clock, GateError, hash, isHash, reconcile, waitFor } from '../lib/checks.mjs';
+import { check, clock, hash, isHash, reconcile, waitFor, withinDeadline } from '../lib/checks.mjs';
 
 export const paths = ['create', 'open', 'send', 'interrupt', 'stream', 'desktop'];
 
@@ -111,27 +111,18 @@ export async function suddenLoss(driver, mode, config, time = clock) {
 
 async function observeLoss(driver, work, recoveryMs, time) {
   const lossStarted = time.now();
-  const abort = new AbortController();
-  let timer;
-  const deadline = new Promise((_, reject) => {
-    timer = setTimeout(() => {
-      const error = new GateError('recovery_deadline_exceeded');
-      reject(error);
-      abort.abort(error);
-    }, recoveryMs);
-  });
-  const recover = async () => {
-    const loss = await driver.killOwner(work, { timeoutMs: recoveryMs, signal: abort.signal });
-    abort.signal.throwIfAborted();
+  return withinDeadline(async (signal) => {
+    const loss = await driver.killOwner(work, { timeoutMs: recoveryMs, signal });
+    signal.throwIfAborted();
     check(loss?.ownerHash === work.ownerHash && loss.abrupt === true
       && loss.processDeathObserved === true && isHash(loss.evidenceHash), 'abrupt_process_death_unproven', true);
     const remaining = recoveryMs - (time.now() - lossStarted);
     check(remaining > 0, 'recovery_deadline_exceeded');
     const observations = [];
     await waitFor(async (timeoutMs) => {
-      abort.signal.throwIfAborted();
-      const result = await driver.observeRecovery(work, { timeoutMs, signal: abort.signal });
-      abort.signal.throwIfAborted();
+      signal.throwIfAborted();
+      const result = await driver.observeRecovery(work, { timeoutMs, signal });
+      signal.throwIfAborted();
       observations.push(result);
       return result;
     }, (row) => row?.clientRecovered === true && row.sustainedSuccess === true, { timeoutMs: remaining, time });
@@ -139,10 +130,5 @@ async function observeLoss(driver, work, recoveryMs, time) {
     check(recoveredMs <= recoveryMs, 'recovery_deadline_exceeded');
     check(observations.every((row) => row?.accounted === true), 'fault_window_unaccounted', true);
     return { recoveredMs, observations: observations.length };
-  };
-  try {
-    return await Promise.race([recover(), deadline]);
-  } finally {
-    clearTimeout(timer);
-  }
+  }, recoveryMs, 'recovery_deadline_exceeded');
 }

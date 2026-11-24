@@ -191,6 +191,14 @@ pub(in crate::store) async fn verify(db: &Database) {
         .await
         .is_err());
     assert!(store.mark_sandbox(&first, "wrong-sandbox").await.is_err());
+    restarted
+        .mark_sandbox(&second, "original-sandbox")
+        .await
+        .unwrap();
+    assert!(matches!(
+        restarted.mark_sandbox(&second, "wrong-sandbox").await,
+        Err(layer2_core::StoreError::RevisionConflict { .. })
+    ));
     assert!(store.mark_agent(&first, "wrong-agent").await.is_err());
     assert!(store.fail(&first, "stale failure").await.is_err());
     assert!(store.succeed(&first, "wrong-agent").await.is_err());
@@ -204,6 +212,7 @@ pub(in crate::store) async fn verify(db: &Database) {
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(replayed.sandbox_id.as_deref(), Some("original-sandbox"));
     assert_eq!(
         replayed.events.len(),
         2,

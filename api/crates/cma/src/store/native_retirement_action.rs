@@ -1,4 +1,5 @@
 //! Durable custody for one exact whole-runtime retirement.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::{retirement_debt_is_local, SandboxStoreError, WorkAuthority};
 use layer2_core::sandbox::{Agent, AgentCleanupDebt, RuntimeBinding, Sandbox, SandboxHome};
 use layer2_core::{AgentId, SandboxId, SubjectId};
@@ -361,11 +362,11 @@ async fn transact(
         match result {
             Ok(()) => {}
             Err(LifecycleLoadError::Driver(error)) if retryable_body_error(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 continue;
             }
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(match error {
                     LifecycleLoadError::Driver(error) => unavailable(error),
                     LifecycleLoadError::Domain(error) => error,

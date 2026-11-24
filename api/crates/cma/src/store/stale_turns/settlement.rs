@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::{collections::BTreeSet, time::Duration};
 
 use layer2_core::{
@@ -80,7 +81,7 @@ impl StaleTurnStore {
         let applied = Box::pin(self.apply(proof, &mut scope, budget)).await;
         let session = scope.release();
         if let Err(error) = applied {
-            if let Err(error) = session.abort_transaction().await {
+            if let Err(error) = session.abort_guarded().await {
                 tracing::warn!(%error, "stale-turn transaction abort unconfirmed");
             }
             return Err(if budget.remaining() == 0 {

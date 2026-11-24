@@ -136,6 +136,9 @@ impl From<AgentReadError> for InstanceProblem {
                 Self::CapabilityUnsupported { capability }
             }
             AgentReadError::ResourcesUnsupported(_) => Self::ResourcesUnsupported,
+            AgentReadError::HistoryRuntimeUnavailable => {
+                Self::HistoryExport(super::AgentHistoryExportError::Unavailable)
+            }
             AgentReadError::RuntimeCapacity(capacity) => Self::RuntimeCapacity(capacity),
             AgentReadError::Corrupt(_) | AgentReadError::Unavailable(_) => Self::Unavailable,
         }

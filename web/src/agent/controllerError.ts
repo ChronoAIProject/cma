@@ -16,6 +16,15 @@ export function errorMessage(error: unknown): string {
   return readableError(error, 'The Agent operation did not complete.');
 }
 
+export function isLegacySuggestionRefusal(error: unknown): error is ApiError {
+  return (
+    error instanceof ApiError &&
+    ((error.status === 422 &&
+      ['invalid_run_request', 'invalid_answer_context'].includes(error.code ?? '')) ||
+      (error.status === 409 && error.code === 'agent_not_ready'))
+  );
+}
+
 export function stoppedInputMessage(
   error: unknown,
   current: AgentResourceState,

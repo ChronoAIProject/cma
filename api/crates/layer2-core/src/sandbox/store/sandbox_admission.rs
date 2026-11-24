@@ -51,6 +51,7 @@ impl SandboxLimitClass {
 
 #[derive(Debug, Clone)]
 pub struct SandboxAdmission {
+    pub creation_fence: Option<CreationFence>,
     pub binding: Option<crate::sandbox::binding::BindingAdmissionFence>,
     lifecycle_lease: Option<LifecycleAdmissionLease>,
     pub sandbox: Sandbox,
@@ -59,6 +60,16 @@ pub struct SandboxAdmission {
     pub live_limit: u16,
     pub limit_class: SandboxLimitClass,
     pub event_at: String,
+}
+
+/// One accepted creation and, for lifecycle work, its current execution lease.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreationFence {
+    pub record_id: String,
+    pub generation: String,
+    pub epoch: String,
+    pub lifecycle_lease: Option<(String, String)>,
 }
 
 #[derive(Clone)]
@@ -91,6 +102,7 @@ impl SandboxAdmission {
     ) -> Result<Self, SandboxStoreError> {
         let admission_fingerprint = fingerprint(&sandbox, &name)?;
         let admission = Self {
+            creation_fence: None,
             binding: None,
             lifecycle_lease: None,
             sandbox,

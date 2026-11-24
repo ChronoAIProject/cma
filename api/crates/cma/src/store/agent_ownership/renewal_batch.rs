@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::agent_ownership::{RenewalBatch, MAX_RENEWAL_BATCH, STORE_DEADLINE_MS};
 use mongodb::bson::Bson;
 use std::collections::{BTreeMap, BTreeSet};
@@ -191,7 +192,7 @@ async fn confirm_partial_abort(session: &mut ClientSession) -> Result<(), Owners
 }
 
 async fn close_transaction(session: &mut ClientSession) {
-    if let Err(error) = session.abort_transaction().await {
+    if let Err(error) = session.abort_guarded().await {
         tracing::debug!(%error, "Agent ownership batch abort could not close the session");
     }
 }

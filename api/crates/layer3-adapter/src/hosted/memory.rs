@@ -11,7 +11,6 @@ use crate::wire::{
     AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame, WireFailure,
     WireOperation,
 };
-use crate::AgentProcessAction::Open;
 use crate::{
     AdapterError, AgentHomePlan, AgentLaunch, AgentSlot, CheckpointHoldReceipt,
     CheckpointHoldRequest, ConversationChannel, ConversationSnapshot, ConversationUpdate,
@@ -23,7 +22,7 @@ use crate::{
 mod state;
 use state::{
     channel, digest, fingerprint, memory_observation, refused, remember_operation,
-    replay_operation, require_credential, valid_sha256,
+    replay_operation, require_credential,
 };
 #[path = "memory_authority.rs"]
 mod authority;
@@ -37,6 +36,8 @@ mod home;
 mod mutations;
 #[path = "memory_probes.rs"]
 mod probes;
+#[path = "memory_process.rs"]
+mod process;
 #[path = "memory_status.rs"]
 mod status;
 #[path = "memory_workspace.rs"]
@@ -203,6 +204,9 @@ impl HostedBackend for InMemoryHostedBackend {
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame> {
         let operation = request.operation();
+        if request.has_unexpected_restart_runtime() {
+            return refused(operation, "agent_process_restart_runtime_unexpected");
+        }
         self.requests
             .lock()
             .await
@@ -254,6 +258,9 @@ impl HostedBackend for InMemoryHostedBackend {
                 bootstrap::restore(runtime, request, operation)
             }
             RequestFrame::Credential(frame) => bootstrap::credential(runtime, frame, operation),
+            RequestFrame::CredentialForReceiver { .. } => {
+                refused(operation, "credential_github_route_unavailable")
+            }
             RequestFrame::PrepareWorkspace(request) => {
                 require_credential(runtime, operation)?;
                 workspace::prepare(runtime, request)
@@ -292,7 +299,10 @@ impl HostedBackend for InMemoryHostedBackend {
             }
             RequestFrame::CloseAgent(request) => {
                 require_credential(runtime, operation)?;
-                mutations::close_agent(runtime, request)
+                process::close_agent(runtime, request)
+            }
+            RequestFrame::ProveAgentProcessClosed(_) => {
+                return refused(operation, "agent_process_close_proof_unsupported");
             }
             RequestFrame::CaptureAgent(reference) => {
                 require_credential(runtime, operation)?;
@@ -374,16 +384,9 @@ impl HostedBackend for InMemoryHostedBackend {
             return refused(WireOperation::OpenAgent, "checkpoint_writers_held");
         }
         require_credential(runtime, WireOperation::OpenAgent)?;
+        let incarnation = process::authorize_open(runtime, &launch)?;
         let authority_fence = launch.authority_fence;
         let launch = launch.request;
-        let agent = launch.agent_id.as_str();
-        let Some(incarnation) = Open.incarnation(agent, &launch.operation_id) else {
-            return refused(WireOperation::OpenAgent, "operation_request_invalid");
-        };
-        if !valid_sha256(&launch.request_sha256) || authority_fence == 0 {
-            return refused(WireOperation::OpenAgent, "operation_request_invalid");
-        }
-        mutations::authorize_process_open(runtime, &launch, incarnation, authority_fence)?;
         let payload = fingerprint(&launch)?;
         authority::admit(
             runtime,

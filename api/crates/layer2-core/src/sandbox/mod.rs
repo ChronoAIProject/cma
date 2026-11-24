@@ -47,7 +47,9 @@ mod agent_operation_queue;
 mod agent_operation_service;
 mod agent_operation_settlement;
 mod agent_read_types;
+mod agent_reply_preview;
 pub use agent_failure_projection::{public_agent_turn_failure, sanitize_agent_transcript};
+pub use agent_reply_preview::{normalize_reply_preview, AgentReplyPreview, AssistantReplyPreview};
 mod agent_reads;
 pub use admission_checkpoint::AgentLogCheckpoint;
 mod agent_log_projection;
@@ -280,11 +282,11 @@ pub use agent_reads::privacy_export;
 pub use agent_reads::{
     AgentBufferedEventRequest, AgentConfigurationRead, AgentDetailReading,
     AgentEventStreamAuthorization, AgentEventStreamHeader, AgentEventStreamSnapshot,
-    AgentHistoryCursor, AgentHistoryReading, AgentOutputObservation, AgentReadService,
-    AgentReplayEntry, AgentReplayWindow, AgentResponseBinding, AgentRetainedOutput,
-    AgentRetainedOutputAvailability, AgentRetainedOutputPage, AgentSourceReadError,
-    AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
-    RETAINED_OUTPUT_CHUNK_BYTES,
+    AgentHistoryCursor, AgentHistoryReading, AgentOriginalRequest, AgentOutputObservation,
+    AgentReadService, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
+    AgentRetainedOutput, AgentRetainedOutputAvailability, AgentRetainedOutputPage,
+    AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail,
+    SharedAgentOrigin, RETAINED_OUTPUT_CHUNK_BYTES,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,

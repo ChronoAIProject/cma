@@ -101,6 +101,7 @@ fn credential() -> RequestFrame {
         operation_id: "credential-1".into(),
         value: RuntimeCredential::new("secret"),
         custody_generation: Some(1),
+        github_route: None,
     })
 }
 

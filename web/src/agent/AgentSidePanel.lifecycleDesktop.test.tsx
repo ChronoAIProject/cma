@@ -1,8 +1,10 @@
 import { ApiError, createClient } from '@cma/client';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { AGENT_DETAIL } from '../test/agent';
+import { taskExperience } from '../test/taskExperience';
 import { computerFixture, live, paused } from './computerLifecycle.fixture';
+import { environmentFixture } from './environmentReview.fixture';
 
 const { connect } = vi.hoisted(() => ({ connect: vi.fn() }));
 vi.mock('@novnc/novnc', () => ({ default: connect }));
@@ -10,6 +12,28 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+it('omits browser enablement when Screen already provides a full desktop', async () => {
+  const sdk = createClient({ baseUrl: 'https://fixture.invalid' });
+  vi.spyOn(sdk.agents, 'desktop').mockImplementation(() => new Promise(() => {}));
+  const f = computerFixture({ resourceViews: sdk, taskExperience: taskExperience('owner') });
+  f.files.environment.mockResolvedValue({
+    ...environmentFixture,
+    browser: { ...environmentFixture.browser, state: 'not_enabled' },
+  });
+  render(
+    f.draw({
+      panel: 'browser',
+      detail: { ...AGENT_DETAIL, desktop: true },
+      resourceAvailability: live,
+    }),
+  );
+  await waitFor(() => expect(f.files.environment).toHaveBeenCalledOnce());
+  await act(async () => {});
+  expect(screen.getByRole('region', { name: 'Machine desktop' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Enable browser' })).toBeNull();
+  expect(f.browser.configure).not.toHaveBeenCalled();
 });
 
 it.each(['pause', 'closed', 'viewer', 'agent', 'runtime'] as const)(

@@ -26,6 +26,7 @@ export function useLifecycleIntent(
   workspaceId?: string,
   sandboxId?: string,
   binding?: AgentBinding,
+  enabled = true,
 ) {
   const storageScope = { owner, workspaceId, sandboxId };
   const scope = JSON.stringify([owner ?? null, workspaceId ?? null, sandboxId ?? null, binding]);
@@ -56,10 +57,10 @@ export function useLifecycleIntent(
   }, [saved.intent]);
   // An unsettled request belongs to the scope that sent it. Leaving that scope
   // abandons only its response; its key stays retained there for recovery.
-  const generation = useMemo(() => ({ scope, client }), [scope, client]);
+  const generation = useMemo(() => ({ scope, client, enabled }), [scope, client, enabled]);
   const live = useRef<typeof generation | undefined>(undefined);
   useLayoutEffect(() => {
-    live.current = generation;
+    live.current = generation.enabled ? generation : undefined;
     return () => {
       if (live.current === generation) live.current = undefined;
       active.current?.abort();
@@ -85,7 +86,7 @@ export function useLifecycleIntent(
   };
   const receipt = saved.intent?.receipt;
   useEffect(() => {
-    if (!receipt || !client.readAgentLifecycle) return;
+    if (!enabled || !receipt || !client.readAgentLifecycle) return;
     const abort = new AbortController();
     const requestKey = current.current?.key;
     const currentRequest = () =>
@@ -156,7 +157,7 @@ export function useLifecycleIntent(
       abort.abort();
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [client, receipt, pollVersion, owner, scope]);
+  }, [client, receipt, pollVersion, owner, scope, enabled]);
   const submit = async (body?: AgentLifecycleCreateInput, draftRevision?: string) => {
     if (
       live.current !== generation ||

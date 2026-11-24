@@ -16,6 +16,7 @@ use super::sandbox_mongo::{
 };
 
 mod acquisition;
+mod binding_diagnostics;
 mod effects;
 mod failure;
 mod membership;
@@ -334,6 +335,8 @@ fn invalid(error: impl std::fmt::Display) -> OwnershipError {
     OwnershipError::Invalid(error.to_string())
 }
 
+#[cfg(test)]
+mod mongo_failure_containment_tests;
 #[cfg(test)]
 pub(crate) mod mongo_renewal_faults;
 #[cfg(test)]
