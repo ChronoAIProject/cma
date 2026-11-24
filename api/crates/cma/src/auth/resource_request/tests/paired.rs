@@ -5,6 +5,11 @@ use super::*;
 use serde::Deserialize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod listener;
+mod receipt;
+use listener::Listener;
+use receipt::{Phase, Receipt};
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
@@ -49,17 +54,10 @@ struct Pair {
     target: String,
     observed: Arc<RwLock<Option<String>>>,
     requests: Arc<AtomicUsize>,
-    server: tokio::task::JoinHandle<()>,
-}
-
-impl Drop for Pair {
-    fn drop(&mut self) {
-        self.server.abort();
-    }
 }
 
 impl Pair {
-    async fn start(manifest: Manifest) -> Self {
+    async fn start(manifest: Manifest) -> (Self, Listener) {
         let store = Arc::new(MemoryAuthStore::default());
         // Independent credentials cannot borrow browser identity or custody.
         store.set_unavailable(true);
@@ -96,20 +94,20 @@ impl Pair {
             ));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let target = format!("http://{}", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        Self {
+        let listener = Listener::start(listener, app);
+        let pair = Self {
             manifest,
             target,
             observed,
             requests,
-            server,
             client: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(10))
                 .no_proxy()
                 .build()
                 .unwrap(),
-        }
+        };
+        (pair, listener)
     }
 
     async fn control(&self, value: Value) -> Value {
@@ -128,7 +126,7 @@ impl Pair {
             .expect("fixture control returned invalid JSON")
     }
 
-    async fn ordinary(&self, expected: StatusCode) -> Value {
+    async fn ordinary(&self, receipt: &mut Receipt, expected: StatusCode) -> Value {
         let response = self
             .client
             .get(format!("{}/api/v1/agents", self.target))
@@ -136,6 +134,7 @@ impl Pair {
             .send()
             .await
             .unwrap();
+        receipt.status(response.status().as_u16());
         assert_eq!(response.status().as_u16(), expected.as_u16());
         response.json().await.unwrap()
     }
@@ -145,7 +144,14 @@ impl Pair {
         assert_eq!(response.get("ok").and_then(Value::as_bool), Some(true));
     }
 
-    async fn replay(&self, proof: &str, method: Method, path: &str, expected: StatusCode) {
+    async fn replay(
+        &self,
+        receipt: &mut Receipt,
+        proof: &str,
+        method: Method,
+        path: &str,
+        expected: StatusCode,
+    ) {
         let response = self
             .client
             .request(method, format!("{}{path}", self.target))
@@ -153,16 +159,29 @@ impl Pair {
             .send()
             .await
             .unwrap();
+        receipt.status(response.status().as_u16());
         assert_eq!(response.status().as_u16(), expected.as_u16());
     }
 
-    async fn forward(&self, transport: &str, path: &str, expected: StatusCode) -> Value {
+    async fn forward(
+        &self,
+        receipt: &mut Receipt,
+        transport: &str,
+        path: &str,
+        expected: StatusCode,
+    ) -> Value {
         let response = self
             .control(json!({
                 "action": "forward", "target": self.target,
                 "path": path, "transport": transport,
             }))
             .await;
+        receipt.status(
+            response["status"]
+                .as_u64()
+                .and_then(|code| u16::try_from(code).ok())
+                .expect("forward status code"),
+        );
         assert_eq!(
             response["status"].as_u64(),
             Some(u64::from(expected.as_u16()))
@@ -174,9 +193,14 @@ impl Pair {
 #[tokio::test]
 #[ignore = "requires the real NyxID loopback acceptance fixture and dedicated MongoDB"]
 async fn real_nyxid_keys_and_egress_authorize_only_current_owner_reads() {
-    let pair = Pair::start(manifest()).await;
+    let (pair, mut listener) = Pair::start(manifest()).await;
+    listener.run(exercise(&pair)).await;
+}
+
+async fn exercise(pair: &Pair) {
+    let mut receipt = Receipt::start(Phase::Ordinary);
     let own_id = format!("agt_{}", pair.manifest.owner);
-    let list = pair.ordinary(StatusCode::OK).await;
+    let list = pair.ordinary(&mut receipt, StatusCode::OK).await;
     assert_eq!(list["items"].as_array().unwrap().len(), 1);
     assert_eq!(list["items"][0]["id"], own_id);
     let foreign = pair
@@ -186,15 +210,25 @@ async fn real_nyxid_keys_and_egress_authorize_only_current_owner_reads() {
         .send()
         .await
         .unwrap();
+    receipt.status(foreign.status().as_u16());
     assert_eq!(foreign.status().as_u16(), 404);
+    receipt.pass();
+
+    let mut receipt = Receipt::start(Phase::Mcp);
 
     let path = "/api/v1/agents?limit=1";
-    let list = pair.forward("mcp", path, StatusCode::OK).await;
+    let list = pair
+        .forward(&mut receipt, "mcp", path, StatusCode::OK)
+        .await;
     assert_eq!(list["items"].as_array().unwrap().len(), 1);
     assert_eq!(list["items"][0]["id"], own_id);
+    receipt.pass();
+    let mut receipt = Receipt::start(Phase::RequestBinding);
     let proof = zeroize::Zeroizing::new(pair.observed.read().await.clone().unwrap());
-    pair.replay(&proof, Method::GET, path, StatusCode::OK).await;
+    pair.replay(&mut receipt, &proof, Method::GET, path, StatusCode::OK)
+        .await;
     pair.replay(
+        &mut receipt,
         &proof,
         Method::GET,
         "/api/v1/agents?limit=2",
@@ -202,6 +236,7 @@ async fn real_nyxid_keys_and_egress_authorize_only_current_owner_reads() {
     )
     .await;
     pair.replay(
+        &mut receipt,
         &proof,
         Method::POST,
         "/api/v1/agents",
@@ -209,8 +244,11 @@ async fn real_nyxid_keys_and_egress_authorize_only_current_owner_reads() {
     )
     .await;
 
+    receipt.pass();
+    let mut receipt = Receipt::start(Phase::Rest);
     let transcript = pair
         .forward(
+            &mut receipt,
             "rest",
             &format!("/api/v1/agents/{own_id}/transcript"),
             StatusCode::OK,
@@ -222,45 +260,90 @@ async fn real_nyxid_keys_and_egress_authorize_only_current_owner_reads() {
         .contains(&format!("Latest question from {}", pair.manifest.owner)));
     assert!(!transcript.to_string().contains("another-owner"));
     pair.forward(
+        &mut receipt,
         "rest",
         "/api/v1/agents/agt_another-owner",
         StatusCode::NOT_FOUND,
     )
     .await;
 
+    receipt.pass();
+    let mut receipt = Receipt::start(Phase::PermissionsRevoked);
     pair.change(json!({"action":"permissions", "enabled":false}))
         .await;
-    pair.ordinary(StatusCode::FORBIDDEN).await;
-    pair.replay(&proof, Method::GET, path, StatusCode::FORBIDDEN)
-        .await;
+    pair.ordinary(&mut receipt, StatusCode::FORBIDDEN).await;
+    pair.replay(
+        &mut receipt,
+        &proof,
+        Method::GET,
+        path,
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+    receipt.pass();
+    let mut receipt = Receipt::start(Phase::PermissionsRestored);
     pair.change(json!({"action":"permissions", "enabled":true}))
         .await;
-    pair.ordinary(StatusCode::OK).await;
-    pair.replay(&proof, Method::GET, path, StatusCode::OK).await;
+    pair.ordinary(&mut receipt, StatusCode::OK).await;
+    pair.replay(&mut receipt, &proof, Method::GET, path, StatusCode::OK)
+        .await;
 
+    receipt.pass();
+    let mut receipt = Receipt::start(Phase::ServiceRevoked);
     pair.change(json!({"action":"service_grant", "enabled":false}))
         .await;
-    pair.ordinary(StatusCode::UNAUTHORIZED).await;
-    pair.replay(&proof, Method::GET, path, StatusCode::UNAUTHORIZED)
-        .await;
+    pair.ordinary(&mut receipt, StatusCode::UNAUTHORIZED).await;
+    pair.replay(
+        &mut receipt,
+        &proof,
+        Method::GET,
+        path,
+        StatusCode::UNAUTHORIZED,
+    )
+    .await;
+    receipt.pass();
+    let mut receipt = Receipt::start(Phase::ServiceRestored);
     pair.change(json!({"action":"service_grant", "enabled":true}))
         .await;
-    pair.ordinary(StatusCode::OK).await;
-    pair.replay(&proof, Method::GET, path, StatusCode::OK).await;
+    pair.ordinary(&mut receipt, StatusCode::OK).await;
+    pair.replay(&mut receipt, &proof, Method::GET, path, StatusCode::OK)
+        .await;
 
+    receipt.pass();
+    let mut receipt = Receipt::start(Phase::OrdinaryRevoked);
     pair.change(json!({"action":"revoke_ordinary"})).await;
-    pair.ordinary(StatusCode::UNAUTHORIZED).await;
-    pair.replay(&proof, Method::GET, path, StatusCode::OK).await;
+    pair.ordinary(&mut receipt, StatusCode::UNAUTHORIZED).await;
+    pair.replay(&mut receipt, &proof, Method::GET, path, StatusCode::OK)
+        .await;
+    receipt.pass();
+    let mut receipt = Receipt::start(Phase::ProofRevoked);
     pair.change(json!({"action":"proof_key_active", "enabled":false}))
         .await;
-    pair.replay(&proof, Method::GET, path, StatusCode::UNAUTHORIZED)
-        .await;
+    pair.replay(
+        &mut receipt,
+        &proof,
+        Method::GET,
+        path,
+        StatusCode::UNAUTHORIZED,
+    )
+    .await;
+    receipt.pass();
+    let mut receipt = Receipt::start(Phase::ProofRestored);
     pair.change(json!({"action":"proof_key_active", "enabled":true}))
         .await;
-    pair.replay(&proof, Method::GET, path, StatusCode::OK).await;
-    pair.change(json!({"action":"stop_turn"})).await;
-    pair.replay(&proof, Method::GET, path, StatusCode::UNAUTHORIZED)
+    pair.replay(&mut receipt, &proof, Method::GET, path, StatusCode::OK)
         .await;
+    receipt.pass();
+    let mut receipt = Receipt::start(Phase::Stop);
+    pair.change(json!({"action":"stop_turn"})).await;
+    pair.replay(
+        &mut receipt,
+        &proof,
+        Method::GET,
+        path,
+        StatusCode::UNAUTHORIZED,
+    )
+    .await;
     *pair.observed.write().await = None;
     let received_before_stop_retry = pair.requests.load(Ordering::SeqCst);
     let stopped = pair
@@ -268,11 +351,20 @@ async fn real_nyxid_keys_and_egress_authorize_only_current_owner_reads() {
             "action":"forward", "target":pair.target, "path":path, "transport":"rest",
         }))
         .await;
+    receipt.status(
+        stopped["status"]
+            .as_u64()
+            .and_then(|code| u16::try_from(code).ok())
+            .expect("stopped forward status"),
+    );
     assert!(matches!(stopped["status"].as_u64(), Some(400..=499)));
     assert!(pair.observed.read().await.is_none());
     assert_eq!(
         pair.requests.load(Ordering::SeqCst),
         received_before_stop_retry
     );
+    receipt.pass();
+    let receipt = Receipt::start(Phase::ShutdownAcknowledged);
     pair.change(json!({"action":"shutdown"})).await;
+    receipt.pass();
 }
