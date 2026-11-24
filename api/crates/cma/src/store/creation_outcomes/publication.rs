@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::{store::SandboxAdmission, SandboxOrigin};
 use mongodb::bson::Bson;
 
@@ -141,15 +142,15 @@ pub(in crate::store) async fn refuse_with_operation(
         match attempt {
             Ok(true) => {}
             Ok(false) => {
-                session.abort_transaction().await.map_err(driver)?;
+                session.abort_guarded().await.map_err(driver)?;
                 return Ok(false);
             }
             Err(error) if transaction::is_transient(&error) => {
-                session.abort_transaction().await.map_err(driver)?;
+                session.abort_guarded().await.map_err(driver)?;
                 continue;
             }
             Err(error) => {
-                session.abort_transaction().await.map_err(driver)?;
+                session.abort_guarded().await.map_err(driver)?;
                 return Err(driver(error));
             }
         }

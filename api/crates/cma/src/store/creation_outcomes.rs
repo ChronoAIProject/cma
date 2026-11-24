@@ -14,7 +14,10 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{durability::majority_collection, sandbox_mongo as transaction, schema};
+use super::{
+    durability::majority_collection, sandbox_mongo as transaction, schema,
+    transaction_terminal::GuardedTerminal as _,
+};
 use crate::config::CreationOutcomesConfig;
 
 mod coverage;
@@ -226,11 +229,11 @@ impl Backend for CreationOutcomes {
             let result = match self.begin_transaction(identity, &mut session).await {
                 Ok(result) => result,
                 Err(StartError::Driver(error)) if transaction::is_transient(&error) => {
-                    session.abort_transaction().await.map_err(unavailable)?;
+                    session.abort_guarded().await.map_err(unavailable)?;
                     continue;
                 }
                 Err(error) => {
-                    session.abort_transaction().await.map_err(unavailable)?;
+                    session.abort_guarded().await.map_err(unavailable)?;
                     return Err(error.status());
                 }
             };
