@@ -28,6 +28,8 @@ mod concurrency_tests;
 mod connection_route_tests;
 #[path = "cookie_authorization_tests/deferred_command_tests.rs"]
 mod deferred_command_tests;
+#[path = "cookie_authorization_tests/gateway_session_tests.rs"]
+mod gateway_session_tests;
 #[path = "cookie_authorization_tests/personal_owner_tests.rs"]
 mod personal_owner_tests;
 #[path = "cookie_authorization_tests/protected_outage_tests.rs"]
@@ -192,6 +194,7 @@ impl Fixture {
             .route("/.well-known/openid-configuration", get(discovery))
             .route("/userinfo", get(userinfo))
             .route("/introspect", post(introspection))
+            .route("/oauth/introspect", post(introspection))
             .route("/token", post(exchange))
             .route(
                 "/api/v1/user-services",

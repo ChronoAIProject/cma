@@ -4,6 +4,8 @@ use axum::http::HeaderValue;
 
 use super::{parse_canonical_https_origin, required};
 
+mod canary;
+
 const MAX_URL_LENGTH: usize = 2_048;
 const MAX_IMAGE_REFERENCE_LENGTH: usize = 2_048;
 const SHA256_SEPARATOR: &str = "@sha256:";
@@ -60,6 +62,7 @@ pub(crate) struct RuntimeConfig {
     /// desktop machine. Keeping this separate from the default image prevents
     /// ordinary Agent creation from silently changing its runtime.
     pub machine_sandbox_image: Option<String>,
+    runtime_canary_releases: canary::Catalog,
     pub sandbox_namespace: String,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub agent_sandbox_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
@@ -77,6 +80,10 @@ impl fmt::Debug for RuntimeConfig {
             .field("sandbox_api_key", &"<redacted>")
             .field("sandbox_image", &self.sandbox_image)
             .field("machine_sandbox_image", &self.machine_sandbox_image)
+            .field(
+                "runtime_canary_release_count",
+                &self.runtime_canary_releases.len(),
+            )
             .field("sandbox_namespace", &self.sandbox_namespace)
             .field("home_policy", &self.home_policy)
             .field("native_prepared_target", &self.native_prepared_target)
@@ -151,6 +158,10 @@ impl RuntimeConfig {
         let home_policy = super::home::from_lookup(lookup)?;
         let agent_sandbox_home_policy =
             super::home::native_from_lookup(lookup, home_policy.as_ref())?;
+        let canary_home = agent_sandbox_home_policy
+            .as_ref()
+            .filter(|_| allocate_agent_sandbox && agent_sandbox.is_some());
+        let runtime_canary_releases = canary::Catalog::from_lookup(lookup, canary_home)?;
         let native_prepared_target = match lookup("CHRONO_NATIVE_PREPARED_TARGET")?.as_deref() {
             None | Some("0") => 0,
             Some("1") => 1,
@@ -287,6 +298,7 @@ impl RuntimeConfig {
             sandbox_api_key,
             sandbox_image,
             machine_sandbox_image,
+            runtime_canary_releases,
             sandbox_namespace,
             home_policy,
             agent_sandbox_home_policy,

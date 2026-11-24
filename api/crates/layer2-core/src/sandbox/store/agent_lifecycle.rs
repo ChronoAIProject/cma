@@ -5,7 +5,7 @@ use crate::ids::{AgentId, SandboxId};
 use crate::sandbox::{Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, Worktree};
 use crate::seconds_from_rfc3339;
 
-use super::{Page, PageRequest, SandboxStoreError};
+use super::{AgentWorkClaimError, Page, PageRequest, SandboxStoreError};
 
 /// Advisory discovery for runtime-dependent background steps. A directed
 /// probe remains discoverable even when its Sandbox is hidden in ordinary work.
@@ -460,6 +460,18 @@ pub trait AgentWorkerStore: Send + Sync {
         now: String,
         lease_expires_at: String,
     ) -> Result<Option<Agent>, SandboxStoreError>;
+
+    async fn claim_agent_work_observed(
+        &self,
+        id: &AgentId,
+        holder: &str,
+        now: String,
+        lease_expires_at: String,
+    ) -> Result<Option<Agent>, AgentWorkClaimError> {
+        self.claim_agent_work(id, holder, now, lease_expires_at)
+            .await
+            .map_err(Into::into)
+    }
 
     /// Publish a skill result under the captured parent environment. Unsupported
     /// stores must refuse rather than discard the parent authority.

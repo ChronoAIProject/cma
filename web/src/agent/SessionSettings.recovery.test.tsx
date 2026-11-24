@@ -210,13 +210,17 @@ it('preserves a new edit during a refresh even when it returns to the previous b
   expect(updates).toHaveBeenCalledOnce();
 });
 
-it.each([429, 503])(
-  'retains settings intent and deadline after %i, including double clicks',
-  async (status) => {
+it.each([
+  [429, undefined, /Too many requests/],
+  [503, undefined, /The update outcome is unconfirmed/],
+  [503, 'agent_owner_unavailable', /could not confirm the update with the server responsible/],
+] as const)(
+  'retains settings intent and deadline after %i (%s), including double clicks',
+  async (status, code, message) => {
     vi.useFakeTimers();
     const updates = vi
       .fn()
-      .mockRejectedValueOnce(new AgentSettingsError('private', status, 2500))
+      .mockRejectedValueOnce(new AgentSettingsError('private', status, 2500, code))
       .mockResolvedValue({ ...defaults, permission_mode: 'guarded' });
     render(draw(clientFor(vi.fn().mockResolvedValue(defaults), updates)));
     await act(() => vi.advanceTimersByTimeAsync(0));
@@ -226,6 +230,7 @@ it.each([429, 503])(
     fireEvent.click(screen.getByRole('button', { name: 'Applying settings…' }));
     await act(() => vi.advanceTimersByTimeAsync(0));
     expect(updates).toHaveBeenCalledOnce();
+    expect(screen.getByRole('alert')).toHaveTextContent(message);
     expect(screen.getByRole('button', { name: 'Retry settings update' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Refresh current settings' })).toBeDisabled();
     await act(() => vi.advanceTimersByTimeAsync(2499));

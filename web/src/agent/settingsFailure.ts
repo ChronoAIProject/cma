@@ -88,6 +88,18 @@ export function settingsFailure(error: unknown, reading = false): SettingsFailur
       message:
         'Too many requests. Your changes are kept. Retry the same request when the wait ends.',
     };
+  if (
+    !reading &&
+    status === 503 &&
+    error instanceof ApiError &&
+    error.code === 'agent_owner_unavailable'
+  )
+    return {
+      kind: 'retry',
+      retryAfterMs,
+      message:
+        'Agent Manager could not confirm the update with the server responsible for this Agent. Your changes are kept. Retry the same request when the connection recovers.',
+    };
   return {
     kind: 'retry',
     retryAfterMs,
