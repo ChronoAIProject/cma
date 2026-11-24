@@ -266,7 +266,6 @@ it('shows an accepted request and stale preparation as separate facts with only 
     <TaskCreationStatus
       intent={intent}
       pending={false}
-      preparing={false}
       failure="Status unavailable"
       operation={{
         id: 'operation',
@@ -291,14 +290,7 @@ it('shows an accepted request and stale preparation as separate facts with only 
   expect(screen.getAllByText('Setup updates interrupted')).toHaveLength(2);
   expect(screen.getByRole('alert')).toHaveTextContent('Status unavailable');
   expect(document.querySelector('time')).toHaveAttribute('datetime', '2026-11-22T06:00:00Z');
-  rerender(
-    <TaskCreationStatus
-      intent={intent}
-      pending={false}
-      preparing={false}
-      failure="Status unavailable"
-    />,
-  );
+  rerender(<TaskCreationStatus intent={intent} pending={false} failure="Status unavailable" />);
   expect(screen.getByText('Request accepted')).toBeVisible();
   expect(screen.getByText('Acceptance time unavailable')).toBeVisible();
   expect(document.querySelector('time')).toBeNull();

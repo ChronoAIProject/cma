@@ -47,3 +47,29 @@ it('marks stale failures and removes rows when authority is unknown', () => {
   );
   expect(view.container).toBeEmptyDOMElement();
 });
+
+it.each([
+  [{ selectedAgentId: 'agt_one' }, { selectedAgentId: 'agt_two' }],
+  [{ selectedSandboxId: 'sbx_first' }, { selectedSandboxId: 'sbx_second' }],
+])('reopens a collapsed disclosure when selection changes from %j to %j', async (first, next) => {
+  const user = userEvent.setup();
+  const onSelect = vi.fn();
+  const attention = { freshness: 'fresh' as const, failedSandboxes };
+  const view = render(
+    <RuntimeAttentionDisclosure attention={attention} onSelect={onSelect} {...first} />,
+  );
+  const summary = screen.getByText('2 updates failed · Fix');
+  const details = summary.closest('details')!;
+  expect(details.open).toBe(true);
+
+  await user.click(summary);
+  expect(details.open).toBe(false);
+  view.rerender(
+    <RuntimeAttentionDisclosure attention={{ ...attention }} onSelect={onSelect} {...first} />,
+  );
+  expect(details.open).toBe(false);
+
+  view.rerender(<RuntimeAttentionDisclosure attention={attention} onSelect={onSelect} {...next} />);
+  expect(details.open).toBe(true);
+  expect(onSelect).not.toHaveBeenCalled();
+});
