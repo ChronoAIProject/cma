@@ -256,12 +256,32 @@ pub trait DocumentStore: Send + Sync {
     async fn get(&self, id: &str) -> Result<Option<StoredDocument>, DocumentError>;
     /// Insert exactly once; false means the deterministic identity already exists.
     async fn insert(&self, record: &StoredDocument) -> Result<bool, DocumentError>;
+    /// Publish a new Document with its reserved source on stores that track publication.
+    /// False asks the caller to resolve the response from the persisted creation.
+    async fn insert_source(
+        &self,
+        record: &StoredDocument,
+        _source: &super::DocumentSourceReservation,
+    ) -> Result<bool, DocumentError> {
+        self.insert(record).await
+    }
     /// Replace only the same owner/id at the exact revision; never upsert.
     async fn compare_exchange(
         &self,
         expected_revision: u64,
         record: &StoredDocument,
     ) -> Result<bool, DocumentError>;
+    /// Publish a Markdown edit with its reserved source and exact operation receipt.
+    /// False asks the caller to reload the aggregate and check its durable receipt.
+    async fn compare_exchange_source(
+        &self,
+        expected_revision: u64,
+        record: &StoredDocument,
+        _source: &super::DocumentSourceReservation,
+        _receipt_key: &str,
+    ) -> Result<bool, DocumentError> {
+        self.compare_exchange(expected_revision, record).await
+    }
     /// Persist a grant while checking the recipient at the same atomic boundary.
     async fn compare_exchange_grant(
         &self,
