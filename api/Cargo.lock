@@ -428,6 +428,7 @@ dependencies = [
  "cma-allocator-qualification",
  "cma-am-auth",
  "cma-am-mongo-primitives",
+ "cma-qualification",
  "cma-service-auth",
  "cmaeg",
  "cmaeg-core",
@@ -454,6 +455,7 @@ dependencies = [
  "opentelemetry",
  "reqwest",
  "ring",
+ "semver",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
@@ -542,6 +544,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cma-qualification"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "layer2-core",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "cma-service-auth"
 version = "0.1.0"
 dependencies = [
@@ -571,6 +588,9 @@ dependencies = [
  "cma-allocator-qualification",
  "cma-service-auth",
  "cmaeg-core",
+ "cmaeg-engine",
+ "cmaeg-execution",
+ "cmaeg-http",
  "dashmap",
  "futures-util",
  "governor",
@@ -589,7 +609,6 @@ dependencies = [
  "metrics-exporter-prometheus",
  "moka",
  "mongodb",
- "pulldown-cmark",
  "quick-xml",
  "reqwest",
  "ring",
@@ -629,6 +648,44 @@ dependencies = [
  "time",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "cmaeg-engine"
+version = "0.1.0"
+dependencies = [
+ "cmaeg-core",
+ "meteroid-utoipa",
+ "serde",
+]
+
+[[package]]
+name = "cmaeg-execution"
+version = "0.1.0"
+dependencies = [
+ "cmaeg-core",
+ "cmaeg-engine",
+ "dashmap",
+ "futures-util",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "cmaeg-http"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "cmaeg-core",
+ "cmaeg-engine",
+ "pulldown-cmark",
+ "reqwest",
+ "ring",
+ "serde_json",
 ]
 
 [[package]]

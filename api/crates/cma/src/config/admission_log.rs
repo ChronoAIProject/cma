@@ -72,7 +72,7 @@ mod fleet_tests {
     use super::*;
 
     #[test]
-    fn release_stage_patches_use_valid_independent_default_closed_controls() {
+    fn release_stage_patches_preserve_independent_writer_and_recovery_controls() {
         const STAGES: [(&str, u8); 4] = [
             (
                 include_str!("../../../../../.github/agent-log-stages/off.json"),
@@ -95,30 +95,43 @@ mod fleet_tests {
             let patch: serde_json::Value = serde_json::from_str(source).unwrap();
             assert_eq!(patch.as_object().unwrap().len(), 1);
             let data = patch["data"].as_object().unwrap();
-            assert_eq!(data.len(), 4, "stages must not alter unrelated settings");
-            // Apply over an old explicit cohort and enabled independent gates,
-            // proving the patch clears stale selection and closes new writers.
-            let mut settings = std::collections::BTreeMap::from([
-                ("CHRONO_AGENT_LOG_ADMISSION_AGENTS", "agt_old".to_owned()),
-                (
-                    "CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED",
-                    "true".to_owned(),
-                ),
-                ("CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED", "true".to_owned()),
-            ]);
-            for (key, value) in data {
-                settings.insert(key.as_str(), value.as_str().unwrap().to_owned());
+            assert_eq!(data.len(), 2, "stages must change only legacy selectors");
+            for (adoption, recovery) in [(false, false), (true, false), (false, true), (true, true)]
+            {
+                // A fleet rollback cannot close independent process dispatch
+                // before its separately approved gate closure/uncertainty drain.
+                let mut settings = std::collections::BTreeMap::from([
+                    ("CHRONO_AGENT_LOG_ADMISSION_AGENTS", "agt_old".to_owned()),
+                    ("CHRONO_AGENT_LOG_FLEET_PERCENT", "50".to_owned()),
+                    ("UNRELATED_SETTING", "unchanged".to_owned()),
+                    (
+                        "CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED",
+                        adoption.to_string(),
+                    ),
+                    (
+                        "CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED",
+                        recovery.to_string(),
+                    ),
+                ]);
+                for (key, value) in data {
+                    assert!(matches!(
+                        key.as_str(),
+                        "CHRONO_AGENT_LOG_ADMISSION_AGENTS" | "CHRONO_AGENT_LOG_FLEET_PERCENT"
+                    ));
+                    settings.insert(key.as_str(), value.as_str().unwrap().to_owned());
+                }
+                let mut lookup = |key: &str| Ok(settings.get(key).cloned());
+                let explicit = from_lookup(&mut lookup).unwrap();
+                assert!(explicit.is_empty());
+                assert_eq!(settings["UNRELATED_SETTING"], "unchanged");
+                assert_eq!(fleet_percent(&mut lookup, &explicit).unwrap(), expected);
+                let flags = super::super::features::FeatureFlags::from_lookup(&mut lookup).unwrap();
+                assert_eq!(flags.segment_adoption_enabled, adoption);
+                assert_eq!(flags.capacity_recovery_enabled, recovery);
+                assert!(!flags.bounded_response_reads);
+                assert!(!flags.bounded_transcript_reads);
+                assert!(!flags.bounded_usage_reads);
             }
-            let mut lookup = |key: &str| Ok(settings.get(key).cloned());
-            let explicit = from_lookup(&mut lookup).unwrap();
-            assert!(explicit.is_empty());
-            assert_eq!(fleet_percent(&mut lookup, &explicit).unwrap(), expected);
-            let flags = super::super::features::FeatureFlags::from_lookup(&mut lookup).unwrap();
-            assert!(!flags.segment_adoption_enabled);
-            assert!(!flags.capacity_recovery_enabled);
-            assert!(!flags.bounded_response_reads);
-            assert!(!flags.bounded_transcript_reads);
-            assert!(!flags.bounded_usage_reads);
         }
     }
 

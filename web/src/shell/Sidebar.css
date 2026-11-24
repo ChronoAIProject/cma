@@ -394,3 +394,41 @@
   border-top: 1px solid var(--dsw-alias-border-l1);
   flex-direction: column;
 }
+
+.runtime-attention {
+  min-width: 0;
+  padding: 8px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+}
+
+.runtime-attention > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.runtime-attention > summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.runtime-attention ul {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.runtime-attention li {
+  display: grid;
+  min-width: 0;
+}
+
+.runtime-attention code {
+  overflow-wrap: anywhere;
+  font: 12px/20px var(--ds-font-family-code);
+  user-select: text;
+}

@@ -227,6 +227,27 @@ impl Supervisor {
         {
             return writers_held_error().response(operation);
         }
+        if let RequestFrame::ProveAgentProcessClosed(proof) = request {
+            return match self.prove_agent_process_closed(proof).await {
+                Ok(proof) => ResponseFrame::ProveAgentProcessClosed(proof),
+                Err(error) => error.response(operation),
+            };
+        }
+        if let RequestFrame::FenceAgentRestart(request) = request {
+            return match self.fence_agent_restart(request).await {
+                Ok(receipt) => ResponseFrame::FenceAgentRestart(receipt),
+                Err(error) => error.response(operation),
+            };
+        }
+        let _restart_writer = match &request {
+            RequestFrame::OpenAgent(open) if open.restart_runtime.is_some() => {
+                match self.removal_writer_guard() {
+                    Ok(writer) => writer,
+                    Err(error) => return error.response(operation),
+                }
+            }
+            _ => None,
+        };
         if let Err(error) = self.authorize_mutation(&request).await {
             return error.response(operation);
         }
@@ -284,6 +305,12 @@ impl Supervisor {
             return Err(RuntimeError::rejected(
                 "credential_operation_invalid",
                 "credential operation id is empty or too large",
+            ));
+        }
+        if frame.github_route.is_some() && !self.supports_exact_github_credential_route() {
+            return Err(RuntimeError::rejected(
+                "credential_github_route_unavailable",
+                "runtime does not have a GitHub credential proxy",
             ));
         }
         let phase = *self.phase.read().await;

@@ -1,5 +1,6 @@
 //! Close an expired publication by proving its preimage and fencing its commit.
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 pub(in crate::store) async fn retire_expired(
     store: &MongoSandboxStore,
@@ -29,7 +30,7 @@ pub(in crate::store) async fn retire_expired(
     if !matches!(result, Ok(true)) {
         scope
             .release()
-            .abort_transaction()
+            .abort_guarded()
             .await
             .map_err(|_| witness::unavailable())?;
         return result.map_err(|_| witness::unavailable());

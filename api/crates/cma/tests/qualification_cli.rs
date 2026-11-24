@@ -1,4 +1,6 @@
 //! Exercise the default executable before any service composition.
+#![cfg(not(feature = "qualification-hooks"))]
+
 use std::{ffi::OsStr, io::ErrorKind, time::Duration};
 use tokio::{process::Command, time::timeout};
 

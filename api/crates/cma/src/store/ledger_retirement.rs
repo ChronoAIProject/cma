@@ -1,5 +1,6 @@
 //! Read-only service snapshot for runtime retirement preview. Never opens stores
 //! through startup initialization or writes Mongo lifecycle state.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::{io::Write, os::unix::fs::OpenOptionsExt, path::Path, time::Duration};
 
 use layer2_core::sandbox::{store::SandboxStoreError, Agent, SandboxHierarchyRecord};
@@ -81,7 +82,7 @@ pub(super) async fn observe(
         .map_err(|_| INVALID)?;
     let result = read(database, sandbox, &mut session).await;
     // A read-only transaction is always aborted, including successful output.
-    let aborted = session.abort_transaction().await.map_err(|_| INVALID);
+    let aborted = session.abort_guarded().await.map_err(|_| INVALID);
     aborted?;
     result
 }

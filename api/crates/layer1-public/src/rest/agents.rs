@@ -3,7 +3,7 @@
 use std::{future::Future, sync::Arc};
 
 use axum::{
-    extract::{Extension, Path, Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -16,9 +16,8 @@ use layer2_core::{AgentId, AgentProfileId, Caller, Capability, WorkspaceId};
 #[path = "agent_state.rs"]
 mod agent_state;
 mod inventory;
-use super::agent_lifecycle::{
-    AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleProvisioningError,
-};
+pub(super) mod lifecycle_creation;
+use super::agent_lifecycle::AgentLifecycleProvisioningError;
 use super::agent_openapi_shapes::{AgentView, CreateAgentRequest};
 use super::agent_shared_shapes::{
     AccessibleAgentListItemView, AccessibleAgentPageView, AccessibleAgentView,
@@ -38,7 +37,10 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
     let list = get(list).layer(axum::middleware::from_fn(agent_state::list_private_headers));
     Router::new()
         .route("/api/v1/workspaces/{id}/agents", post(create))
-        .route("/api/v1/agents", list.post(create_lifecycle))
+        .route(
+            "/api/v1/agents",
+            list.post(lifecycle_creation::create_lifecycle),
+        )
         .route(
             "/api/v1/desktop-capability",
             get(super::desktop_creation::read),
@@ -109,74 +111,13 @@ pub(crate) async fn read_lifecycle_operation(
         .unwrap_or_else(IntoResponse::into_response)
 }
 
-/// Create an Agent from one inline lifecycle request.  The provisioning port
-/// owns the sandbox/workspace/agent orchestration; this boundary never accepts
-/// profile, worktree, pod, or runtime identifiers. An optional owned workspace
-/// selects an existing context; the service verifies its creation authority.
-#[utoipa::path(
-    post,
-    path = "/api/v1/agents",
-    tag = "agents",
-    params(("Idempotency-Key" = String, Header)),
-    request_body = AgentLifecycleCreateRequest,
-    responses(
-        (status = 202, body = AgentLifecycleCreateReceipt),
-        (status = 422, description = "Invalid template inputs: task_template_field_required, task_template_field_placeholder, task_template_field_unknown, task_template_id_unknown, task_template_version_unsupported, task_template_message_mismatch or task_template_message_too_large; other invalid lifecycle requests use their existing problem codes.", body = crate::rest::ProblemDocument),
-        (status = 429, description = "sandbox_limit_reached", body = crate::rest::ProblemDocument),
-        (status = 503, body = crate::rest::ProblemDocument)
-    )
-)]
-pub(crate) async fn create_lifecycle(
-    State(state): State<AgentRoutesState>,
-    AuthenticatedCaller(caller): AuthenticatedCaller,
-    context: Option<Extension<layer2_core::resource_access::CallerContext>>,
-    credential: Option<Extension<DelegatedCredential>>,
-    key: IdempotencyKey,
-    body: Result<RequestBody<AgentLifecycleCreateRequest>, BodyProblem>,
-) -> Response {
-    if let Err(problem) = require_use(&caller) {
-        return problem.into_response();
-    }
-    let Some(provisioner) = state.lifecycle.clone() else {
-        return AgentLifecycleProvisioningError::Unavailable.into_response();
-    };
-    // The lifecycle's permanent owner/key ledger owns admission and resumption.
-    // An outer cached 202 would suppress requeue after connecting services.
-    let key = match key.into_required_value() {
-        Ok(key) => key,
-        Err(error) => return error.into_response(),
-    };
-    let request = match body.and_then(|body| body.into_parts().0) {
-        Ok(body) => body,
-        Err(error) => return error.into_response(),
-    };
-    if let Err(error) = request.validate_template() {
-        return error.into_response();
-    }
-    if request.desktop && request.initial_message.is_none() {
-        return AgentLifecycleProvisioningError::Invalid(
-            "desktop creation requires initial_message".into(),
-        )
-        .into_response();
-    }
-    provisioner
-        .create(
-            &caller,
-            context.as_ref().map(|Extension(value)| value),
-            credential.as_ref().map(|Extension(value)| value.value()),
-            request,
-            &key,
-        )
-        .await
-        .map(|receipt| (StatusCode::ACCEPTED, Json(receipt)).into_response())
-        .unwrap_or_else(IntoResponse::into_response)
-}
-
 /// Compose all owner-facing Agent routes against one shared service set.
 pub fn agent_router(state: AgentRoutesState) -> Router {
     routes()
         .merge(super::agent_operate::routes())
         .merge(super::agent_reads::routes())
+        .merge(super::agent_original_request::routes())
+        .merge(super::agent_reply_preview::routes())
         .merge(super::agent_retained_output::routes())
         .with_state(state)
 }

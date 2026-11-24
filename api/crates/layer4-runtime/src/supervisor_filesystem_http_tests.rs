@@ -57,6 +57,7 @@ async fn browser_observation_is_disabled_by_default_and_fences_the_runtime_boot(
             operation_id: "browser-scope-credential".into(),
             value: RuntimeCredential::new("browser-scope-credential"),
             custody_generation: Some(1),
+            github_route: None,
         }))
         .unwrap(),
     )
@@ -105,6 +106,7 @@ async fn filesystem_http_hides_configured_private_state_and_refuses_aliases_with
             operation_id: "file-scope-credential".into(),
             value: RuntimeCredential::new("file-scope-credential"),
             custody_generation: Some(1),
+            github_route: None,
         }))
         .unwrap(),
     )

@@ -2,6 +2,7 @@ import type { ResolvedConfig } from '../config.js';
 import { ValidationError } from '../errors.js';
 import { requestVoid, type OperationOptions } from '../http.js';
 import { input, query, read, segment } from '../resources.js';
+import { ownerHeaders } from './owner.js';
 import {
   CapabilityViewSchema,
   ConnectionPageSchema,
@@ -24,13 +25,6 @@ export interface ListConnectionsOptions extends ConnectionOptions {
 export interface CreateConnectionOptions extends ConnectionOptions {
   /** Channel agent credential authorizing the request's originating event. */
   readonly agentKey: string;
-}
-
-function ownerHeaders(owner: string | undefined): Record<string, string> {
-  if (owner === undefined) return {};
-  if (!/^[\x21-\x7e]{1,512}$/.test(owner))
-    throw new ValidationError('owner must contain 1–512 visible ASCII bytes');
-  return { 'X-CMAEG-Owner': owner };
 }
 
 export class CmaegConnections {

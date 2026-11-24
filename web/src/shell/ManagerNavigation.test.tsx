@@ -1,9 +1,9 @@
 import { NavigationSettingsContext } from './sidebarContext';
-import type { ReactElement } from 'react';
+import { createRef, type ReactElement } from 'react';
 import { act, fireEvent, render as renderView, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
-import { ManagerNavigation } from './ManagerNavigation';
+import { ManagerNavigation, type EnvironmentNavigationHandle } from './ManagerNavigation';
 import type { TreePermissions, TreeProps } from './Tree';
 import type { AgentStatus } from '../api/types';
 import { navigationFixture } from '../test/hierarchy';
@@ -93,7 +93,7 @@ it('shows visible task states alongside characters and respects parent lifecycle
   const view = render(draw('active', 'ready'));
   const cases = [
     ['active', 'ready', 'idle', 'still', 'brand', 'Ready', 'Status unavailable', 'neutral'],
-    ['active', 'starting', 'preparing', 'live', 'brand', 'Starting', 'Preparing', 'ongoing'],
+    ['active', 'starting', 'preparing', 'still', 'brand', 'Starting', 'Preparing', 'ongoing'],
     ['active', 'working', 'thinking', 'live', 'brand', 'Working', 'Working', 'ongoing'],
     [
       'active',
@@ -122,7 +122,9 @@ it('shows visible task states alongside characters and respects parent lifecycle
     expect(character).toHaveAttribute('aria-hidden', 'true');
     expect(row.getAttribute('aria-label')).not.toMatch(/\d{4}-\d\d-\d\dT/);
     expect(row.querySelector('.task-running__dot') !== null).toBe(taskWord === 'Working');
-    if (taskWord !== 'Working') expect(row.querySelector('time')).toHaveAttribute('dateTime');
+    if (taskWord === 'Preparing')
+      expect(row.querySelector('.task-ready')).toHaveTextContent('Preparing');
+    else if (taskWord !== 'Working') expect(row.querySelector('time')).toHaveAttribute('dateTime');
   }
   const user = userEvent.setup();
   await expandNavigationFilters(user);
@@ -360,10 +362,12 @@ it('uses one accessible view control and closes task filters on entry to Environ
   expect(screen.getByRole('button', { name: 'Environments' })).toBeVisible();
 });
 
-it('opens environments from the bottom Settings shortcut and restores the focused task', async () => {
+it('opens the sole Environments destination from Home and restores the focused task', async () => {
+  const navigationRef = createRef<EnvironmentNavigationHandle>();
   render(
     <ManagerNavigation
       {...props}
+      ref={navigationRef}
       route={{ kind: 'agent', agentId: 'agt_1' }}
       navigation={{ status: 'ready', items: navigationFixture(), refresh: vi.fn() }}
     />,
@@ -371,14 +375,15 @@ it('opens environments from the bottom Settings shortcut and restores the focuse
   const user = userEvent.setup();
   const task = screen.getByRole('treeitem', { name: /Agent one/ });
   task.focus();
-  await user.click(screen.getByRole('button', { name: 'Settings' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
+  act(() => navigationRef.current!.openEnvironments({ scope: 'personal' }));
+  expect(screen.getAllByRole('button', { name: 'Environments' })).toHaveLength(1);
   expect(screen.getByRole('button', { name: 'Environments', pressed: true })).toHaveFocus();
   expect(screen.queryByRole('menu', { name: 'Navigation settings' })).not.toBeInTheDocument();
   await user.tab({ shift: true });
   await user.keyboard('{Enter}');
   expect(screen.getByRole('treeitem', { name: /Agent one/ })).toHaveFocus();
-  expect(screen.getByRole('button', { name: 'Settings' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Manage environments' })).not.toBeInTheDocument();
 });
 
 function render(view: ReactElement) {
@@ -450,8 +455,7 @@ it('keeps only the visible personal tree polling after visiting environments', a
     await act(async () => {});
     expect(channel).toHaveBeenCalledOnce();
     expect(provenance).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Environments' }));
     await act(async () => {});
     expect(channel).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));

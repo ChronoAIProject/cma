@@ -46,7 +46,26 @@ export const operatorDispatch: Record<string, Dispatch> = {
   'GET /api/v1/admin/profiles': ({ client, options }) => client.admin.listProfiles(options),
   'POST /api/v1/admin/profiles/{kind}/{id}/retire': ({ client, param }) =>
     client.admin.retireProfile(param('kind') as ProfileKind, param('id')),
+  'GET /api/v1/admin/runtime-binding-holds': ({ client }) => client.admin.bindingHolds(),
   'GET /api/v1/admin/runtime-inventory': ({ client }) => client.admin.readRuntimeInventory(),
+  'PUT /api/v1/admin/runtime-canary-policy': ({ client, body }) =>
+    client.runtimeCanaries.setPolicy(body),
+  'POST /api/v1/admin/runtime-canary-grants': ({ client, body }) =>
+    client.runtimeCanaries.grant(body),
+  'POST /api/v1/admin/runtime-canary-grants/revoke': ({ client, body }) =>
+    client.runtimeCanaries.revoke(body),
+  'POST /api/v1/runtime-canary-redemptions': ({ client, body, command }) =>
+    client.runtimeCanaries.redeem(body, command),
+  'PUT /api/v1/admin/retained-runtime-policy': ({ client, body }) =>
+    client.retainedRuntime.setPolicy(body),
+  'POST /api/v1/admin/retained-runtime-preview': ({ client, body }) =>
+    client.retainedRuntime.preview(body),
+  'POST /api/v1/admin/retained-runtime-grants': ({ client, body }) =>
+    client.retainedRuntime.grant(body),
+  'POST /api/v1/admin/retained-runtime-grants/abort': ({ client, body }) =>
+    client.retainedRuntime.abort(body),
+  'POST /api/v1/retained-runtime-redemptions': ({ client, body }) =>
+    client.retainedRuntime.redeem(body),
   'GET /api/v1/admin/warm-pools': ({ client }) => client.admin.listWarmPools(),
   'POST /api/v1/admin/warm-pools': ({ client, body, command }) =>
     client.admin.configureWarmPool(body, command),

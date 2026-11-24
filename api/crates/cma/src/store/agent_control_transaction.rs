@@ -1,5 +1,6 @@
 //! Majority-durable Mongo execution for agent control plans.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::{
     AgentControlResult, AgentControlStoreError, AgentDeleteRequest, AgentStopRequest,
     SandboxStoreError,
@@ -120,13 +121,13 @@ async fn schedule_control(
                 },
                 Err(ApplyError::Domain(error)) => ControlAttempt::ReadOnly(Box::new(Err(error))),
                 Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_was_conflict = false;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(ApplyError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(unavailable(error));
                 }
             };
@@ -143,22 +144,22 @@ async fn schedule_control(
                 match replace_agent(store, &current, &next, &operation, &mut session).await {
                     Ok(true) => {}
                     Ok(false) => {
-                        let _ = session.abort_transaction().await;
+                        let _ = session.abort_guarded().await;
                         last_was_conflict = true;
                         continue;
                     }
                     Err(ApplyError::Domain(error)) => {
-                        let _ = session.abort_transaction().await;
+                        let _ = session.abort_guarded().await;
                         return Err(error);
                     }
                     Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                        let _ = session.abort_transaction().await;
+                        let _ = session.abort_guarded().await;
                         last_was_conflict = false;
                         last_transient = Some(error.to_string());
                         continue;
                     }
                     Err(ApplyError::Driver(error)) => {
-                        let _ = session.abort_transaction().await;
+                        let _ = session.abort_guarded().await;
                         return Err(unavailable(error));
                     }
                 }

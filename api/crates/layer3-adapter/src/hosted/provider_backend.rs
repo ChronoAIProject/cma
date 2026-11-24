@@ -63,6 +63,16 @@ pub trait HostedControlTransport: Send + Sync {
         Ok(None)
     }
 
+    async fn verify_retained_startup_policy(
+        &self,
+        _handle: &RuntimeHandle,
+        _readback: &crate::RetainedStartupPolicyReadback<'_>,
+    ) -> crate::Result<crate::RuntimeStartupPolicyObservation> {
+        Err(crate::AdapterError::Unsupported(
+            "retained startup policy readback is unavailable".into(),
+        ))
+    }
+
     async fn bind_runtime(&self, _handle: &RuntimeHandle, _sandbox_id: &str) -> crate::Result<()> {
         Ok(())
     }

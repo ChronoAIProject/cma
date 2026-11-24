@@ -192,7 +192,9 @@ def sweep(api, policy, apply=False, revision=None, *, recovery_only=False):
             holds["reader-or-open-pr"] += item.size
             continue
         if apply or recovery_only:
-            if (successor and not api.visible(successor)) or api.visible(item) != item:
+            if ((successor and not api.visible(successor))
+                    or (action.spare and not api.visible(action.spare))
+                    or api.visible(item) != item):
                 holds["candidate-or-successor-changed"] += item.size
                 continue
             if recovery_only and kind == "prior-day-v4-seed":

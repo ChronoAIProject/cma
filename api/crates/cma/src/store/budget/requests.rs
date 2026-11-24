@@ -1,5 +1,6 @@
 //! A confirmed transaction permits one upstream send; uncertain commits never do.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::budget::{
     BudgetError, BudgetPolicy, ModelRequest, OwnerBudget, RequestBudget, RequestHold, RequestScope,
     RequestUsage,
@@ -97,17 +98,17 @@ impl MongoSandboxStore {
             let permit = match result {
                 Ok(permit) => permit,
                 Err(ApplyError::Domain(SandboxStoreError::Budget(reason))) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(reason);
                 }
                 Err(ApplyError::Driver(error))
                     if is_transient(&error) || is_duplicate_key(&error) =>
                 {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     continue;
                 }
                 Err(_) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(BudgetError::Unavailable);
                 }
             };

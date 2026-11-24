@@ -11,12 +11,12 @@ import { useAgentTitle } from './useAgentTitle';
 import { usePreparationProgress } from './preparationProgress';
 import { queueObservationRevision } from './queueObservationRevision';
 import { ReadinessWake } from './readinessWait';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useControllerMode } from './controllerMode';
 import { agentReadRetryAt, errorMessage, retainHistoryOnFailure } from './controllerError';
 import { loadAgent, transientReadFailure, type AgentLoadLineage } from './loadAgent';
 export { loadAgent, type ReadyAgent } from './loadAgent';
-import type { CmaWebClient } from '../api/client';
-import { CommandKeys } from '../api/client';
+import { CommandKeys, type CmaWebClient } from '../api/client';
 import type { AgentLiveEvent } from '../api/types';
 import { accessCheckedInputAvailability, useSandboxInput } from './sandboxInput';
 import { ConversationHydration } from './transport/hydration';
@@ -42,24 +42,7 @@ export function useAgentController(
   agentId: string | undefined,
   options: AgentControllerOptions = {},
 ): AgentController {
-  const suspended = options.suspended === true;
-  const {
-    agentId: lineageAgentId,
-    workspaceId: lineageWorkspaceId,
-    sandboxId: lineageSandboxId,
-  } = options.authorizedLineage ?? {};
-  const lineage = useMemo(
-    () =>
-      !suspended &&
-      options.viewerId !== undefined &&
-      lineageAgentId === agentId &&
-      lineageAgentId !== undefined &&
-      lineageWorkspaceId !== undefined &&
-      lineageSandboxId !== undefined
-        ? { agentId: lineageAgentId, workspaceId: lineageWorkspaceId, sandboxId: lineageSandboxId }
-        : undefined,
-    [agentId, suspended, options.viewerId, lineageAgentId, lineageWorkspaceId, lineageSandboxId],
-  );
+  const { suspended, lineage, retained } = useControllerMode(client, agentId, options);
   const [revision, setRevision] = useState(0);
   const [replayRevision, setReplayRevision] = useState(0);
   const [requestRevision, setRequestRevision] = useState(0);
@@ -133,7 +116,6 @@ export function useAgentController(
     },
     [agentId, setState],
   );
-
   const reload = useAgentReload(
     agentId,
     stateRef,
@@ -440,6 +422,9 @@ export function useAgentController(
     state.status === 'ready' ? queueObservationRevision(state.conversation) : '',
     onIdentityChange,
     requestRevision,
+    state.status === 'ready' && state.detail.id === agentId
+      ? state.conversation.messages
+      : undefined,
   );
   const interruptTurn = (strict: boolean) =>
     command(
@@ -448,6 +433,7 @@ export function useAgentController(
       strict,
     );
   return {
+    retained,
     ...retainedInputs,
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
     controlNotice,

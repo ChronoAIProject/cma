@@ -8,6 +8,14 @@ pub(crate) const UPGRADE_ANNOTATION: &str = "cma/native-runtime-upgrade";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct RetainedStartupPolicyProof {
+    pub operation_id: String,
+    pub predecessor_resource_version: String,
+    pub journal_recovery: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct RuntimeUpgradeProof {
     version: u8,
     origin_sha256: String,
@@ -18,6 +26,8 @@ pub(crate) struct RuntimeUpgradeProof {
     generation: u64,
     request_sha256: String,
     previous_proof_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retained_policy: Option<RetainedStartupPolicyProof>,
 }
 
 impl RuntimeUpgradeProof {
@@ -26,9 +36,10 @@ impl RuntimeUpgradeProof {
         previous: &ProviderSandboxRequest,
         next: &ProviderSandboxRequest,
         prior: Option<&Self>,
+        retained_policy: Option<RetainedStartupPolicyProof>,
     ) -> Result<Self> {
         let proof = Self {
-            version: 1,
+            version: if retained_policy.is_some() { 2 } else { 1 },
             origin_sha256: provider_request_digest(origin)?,
             previous_image: previous.image.uri.clone(),
             previous_generation: crate::hosted::provider_request_identity(previous)?.generation,
@@ -37,8 +48,10 @@ impl RuntimeUpgradeProof {
             generation: crate::hosted::provider_request_identity(next)?.generation,
             request_sha256: provider_request_digest(next)?,
             previous_proof_sha256: prior.map(provider_request_digest).transpose()?,
+            retained_policy,
         };
         proof.validate(origin)?;
+        proof.validate_request(next)?;
         Ok(proof)
     }
 
@@ -83,8 +96,16 @@ impl RuntimeUpgradeProof {
         };
         crate::hosted::validate_runtime_image(&self.image)?;
         crate::hosted::validate_runtime_image(&self.previous_image)?;
-        if self.version != 1
-            || !origin.claim.request.home.policy.is_native_vct()
+        if !matches!(
+            (self.version, &self.retained_policy),
+            (1, None) | (2, Some(_))
+        ) || self.retained_policy.as_ref().is_some_and(|policy| {
+            policy.operation_id.is_empty()
+                || policy.operation_id.len() > 128
+                || policy.operation_id.trim() != policy.operation_id
+                || policy.operation_id.chars().any(char::is_control)
+                || policy.predecessor_resource_version.is_empty()
+        }) || !origin.claim.request.home.policy.is_native_vct()
             || self.origin_sha256 != provider_request_digest(origin)?
             || self.previous_generation < origin.claim.request.runtime_generation
             || self.generation <= self.previous_generation
@@ -108,6 +129,17 @@ impl RuntimeUpgradeProof {
         let generation = crate::hosted::provider_request_identity(request)?.generation;
         if request.image.uri != self.image
             || generation < self.generation
+            || self.retained_policy.as_ref().is_some_and(|policy| {
+                request
+                    .env
+                    .get(crate::hosted::JOURNAL_RECOVERY)
+                    .map(String::as_str)
+                    != Some(if policy.journal_recovery {
+                        "true"
+                    } else {
+                        "false"
+                    })
+            })
             || generation == self.generation
                 && provider_request_digest(request)? != self.request_sha256
         {
@@ -116,6 +148,10 @@ impl RuntimeUpgradeProof {
             ));
         }
         Ok(())
+    }
+
+    pub(crate) fn retained_policy(&self) -> Option<&RetainedStartupPolicyProof> {
+        self.retained_policy.as_ref()
     }
 
     pub(crate) fn is_transition(

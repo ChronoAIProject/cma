@@ -18,6 +18,7 @@ use crate::store::lifecycle_execution::load_sandbox_agents;
 use crate::store::sandbox_mongo::{commit_transaction, signed, CommitOutcome, MongoSandboxStore};
 use crate::store::sandbox_transactions::save_reviewed_retirement;
 use crate::store::sandboxes::read_sandbox;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 const RECEIPT_FIELD: &str = "reviewed_retirement_v1";
 
@@ -271,11 +272,11 @@ impl ReviewedRetirementStore for MongoSandboxStore {
                 | CommitOutcome::Failed(error) => Err(unavailable(error)),
             },
             Ok((outcome, false)) => {
-                session.abort_transaction().await.map_err(unavailable)?;
+                session.abort_guarded().await.map_err(unavailable)?;
                 Ok(outcome)
             }
             Err(error) => {
-                session.abort_transaction().await.map_err(unavailable)?;
+                session.abort_guarded().await.map_err(unavailable)?;
                 Err(match error {
                     ApplyError::Domain(error) => error,
                     ApplyError::Driver(error) => unavailable(error),

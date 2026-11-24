@@ -36,6 +36,7 @@ pub struct FakeProviderConfig {
     pub inspection_agent: Option<(String, String)>,
     pub response_delay: Duration,
     pub terminal_delay: Duration,
+    pub terminal_gate: Option<Arc<Semaphore>>,
     pub header_delay: Duration,
     /// A header delay for turns whose input carries an attachment block only,
     /// so a test can hold media turns while text turns answer at once.
@@ -85,6 +86,7 @@ impl Default for FakeProviderConfig {
             inspection_agent: None,
             response_delay: Duration::ZERO,
             terminal_delay: Duration::ZERO,
+            terminal_gate: None,
             header_delay: Duration::ZERO,
             attachment_delay: Duration::ZERO,
             attachment_gate: None,
@@ -439,17 +441,25 @@ async fn responses(
     }
     let delay = state.config.response_delay;
     let terminal_delay = state.config.terminal_delay;
+    let terminal_gate = state.config.terminal_gate.clone();
     let last = frames.len().saturating_sub(1);
-    let stream =
-        stream::iter(frames.into_iter().enumerate()).then(move |(index, frame)| async move {
+    let stream = stream::iter(frames.into_iter().enumerate()).then(move |(index, frame)| {
+        let terminal_gate = terminal_gate.clone();
+        async move {
             if index == 0 && !delay.is_zero() {
                 sleep(delay).await;
             }
-            if index == last && !terminal_delay.is_zero() {
-                sleep(terminal_delay).await;
+            if index == last {
+                if !terminal_delay.is_zero() {
+                    sleep(terminal_delay).await;
+                }
+                if let Some(gate) = terminal_gate {
+                    gate.acquire().await.unwrap().forget();
+                }
             }
             Ok::<Bytes, Infallible>(Bytes::from(frame))
-        });
+        }
+    });
     Response::builder()
         .status(StatusCode::OK)
         .header("content-type", "text/event-stream")

@@ -1,6 +1,7 @@
 //! One accepted-work attempt per exclusive transaction. An uncertain commit
 //! never repeats the mutation or authorizes a runtime attachment/acknowledgement.
 use super::authority::RecoveryAuthority;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::{
     agent_capacity_recovery::{
         ports::{ClaimOutcome, CommitOutcome, RecoveryError, RecoveryLookup},
@@ -69,7 +70,7 @@ pub(in crate::store) async fn lookup_accepted(
     .await;
     // There have been no writes or commit attempts. A read-abort error does not
     // turn absence into a known-aborted *publication*.
-    let _ = scope.release().abort_transaction().await;
+    let _ = scope.release().abort_guarded().await;
     Ok(match result.map_err(error)? {
         Some(stored) => RecoveryLookup::Recorded(Box::new(stored.work)),
         None => RecoveryLookup::Unknown,
@@ -170,7 +171,7 @@ pub(super) async fn finish<T>(
     let value = match result {
         Ok(value) => value,
         Err(failure) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(error(failure));
         }
     };
