@@ -3,6 +3,7 @@ use super::*;
 use layer2_core::{
     ActivityAction, ActivityQuery, ActivityRecord, ActivityTarget, DEFAULT_ACTIVITY_LIMIT,
 };
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,6 +27,8 @@ pub(crate) struct ActivityView {
     at: String,
     actor: Option<String>,
     actor_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_reference: Option<String>,
     target_name: Option<String>,
     #[schema(value_type = String)]
     action: ActivityAction,
@@ -45,6 +48,7 @@ impl From<ActivityRecord> for ActivityView {
             at: record.at,
             actor: record.actor.map(|actor| actor.0),
             actor_name: None,
+            actor_reference: None,
             target_name: None,
             action: record.action,
             target: record.target,
@@ -61,6 +65,7 @@ impl From<layer2_core::ActivitySummary> for ActivityView {
             at: record.at,
             actor: record.actor.map(|actor| actor.0),
             actor_name: None,
+            actor_reference: None,
             target_name: None,
             action: record.action,
             target: record.target,
@@ -68,6 +73,14 @@ impl From<layer2_core::ActivitySummary> for ActivityView {
             detail: None,
         }
     }
+}
+
+fn actor_reference(actor: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"cma:operator-activity:actor:v1\0");
+    digest.update(actor.as_bytes());
+    let digest = format!("{:x}", digest.finalize());
+    format!("actor-{}", &digest[..16])
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -146,6 +159,7 @@ pub(crate) async fn activity(
             .items
             .into_iter()
             .map(|mut view| {
+                view.actor_reference = view.actor.as_deref().map(actor_reference);
                 view.actor_name = view
                     .actor
                     .as_ref()
