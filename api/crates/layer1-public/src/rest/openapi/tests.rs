@@ -293,7 +293,7 @@ fn every_admin_route_is_documented_and_authenticated() {
         .iter()
         .filter(|(path, _)| path.starts_with("/api/v1/admin/"))
         .collect();
-    assert_eq!(admin.len(), 36);
+    assert_eq!(admin.len(), 37);
     for (_, item) in admin {
         for operation in [
             item.get.as_ref(),
