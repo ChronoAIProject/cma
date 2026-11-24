@@ -190,21 +190,22 @@ pub(super) fn initialize(
     definition: &mut ChannelDefinition,
 ) -> Result<(), ManagementError> {
     let opted = |value: &ChannelDefinition| {
-        value.sources.iter().any(|source| {
-            matches!(
-                source,
-                Source::Telegram {
-                    message_events: true,
-                    ..
-                } | Source::Telegram {
-                    topic_lifecycle: true,
-                    ..
-                } | Source::Telegram {
-                    topic_creation: true,
-                    ..
-                }
-            )
-        })
+        super::relay_telegram::opted_in(value)
+            || value.sources.iter().any(|source| {
+                matches!(
+                    source,
+                    Source::Telegram {
+                        message_events: true,
+                        ..
+                    } | Source::Telegram {
+                        topic_lifecycle: true,
+                        ..
+                    } | Source::Telegram {
+                        topic_creation: true,
+                        ..
+                    }
+                )
+            })
     };
     if !opted(definition) || current.is_some_and(|old| opted(old) && old.routing.is_some()) {
         return Ok(());
@@ -236,6 +237,13 @@ pub(super) fn initialize(
             }
         )
     });
+    if super::relay_telegram::opted_in(definition) && !state.relay_telegram_member_join_authoring()
+    {
+        return Err(ManagementError::Invalid(ValidationError::new(
+            "/sources",
+            "Telegram relay member joins require enabled authoring and durable admission",
+        )));
+    }
     if (creation && !state.native_telegram_topic_creation_enabled)
         || (events && !state.native_telegram_message_events_writes_enabled)
         || (topics && !state.native_telegram_topic_lifecycle_enabled)

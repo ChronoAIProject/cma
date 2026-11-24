@@ -71,7 +71,7 @@ use validation::{
     workspace_error,
 };
 
-pub(crate) use profiles::prepared_default_agent_profile;
+pub(crate) use profiles::{canary_sandbox_content, prepared_default_agent_profile};
 
 pub(crate) struct InlineAgentLifecycle {
     sandbox: Arc<SandboxService>,
@@ -242,7 +242,7 @@ impl InlineAgentLifecycle {
                 caller,
                 sandbox_profile.clone(),
                 &request.name,
-                &lease.id,
+                &lease,
             )
             .await;
             tracing::info!(
