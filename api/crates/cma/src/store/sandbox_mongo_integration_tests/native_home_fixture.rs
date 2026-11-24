@@ -1,6 +1,6 @@
-use super::*;
+use layer2_core::sandbox::{SandboxHome, SandboxNativePool};
 
-pub(super) fn native_home(id: &layer2_core::SandboxId) -> SandboxHome {
+pub(in crate::store) fn native_home(id: &layer2_core::SandboxId) -> SandboxHome {
     use layer3_adapter::agent_sandbox::*;
     use layer3_adapter::{
         HomeVolumeMode, HomeVolumePolicy, HomeVolumeReceipt, HomeVolumeScope, RuntimeImage,

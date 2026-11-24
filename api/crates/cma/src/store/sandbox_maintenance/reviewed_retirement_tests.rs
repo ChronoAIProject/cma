@@ -1,17 +1,15 @@
 use super::*;
+use crate::store::sandbox_mongo_integration_tests::native_home_fixture::native_home;
 use crate::store::sandbox_operator_mongo_integration_tests::{agent, database, sandbox};
 use layer2_core::sandbox::store::{AgentLogStore, AgentStore, SandboxStore};
-use layer2_core::sandbox::{AgentLogKind, AgentStatus, SandboxHome, SandboxNativePool};
-
-#[path = "../sandbox_mongo_integration_tests/command_ledger_tests/capacity_public_tests/retained_output/home.rs"]
-mod home;
+use layer2_core::sandbox::{AgentLogKind, AgentStatus};
 
 const NOW: &str = "2026-09-19T00:00:00Z";
 const CUTOFF: &str = "2026-09-17T00:00:00Z";
 
 fn fixture(id: &str) -> (Sandbox, ReviewedRetirementMember) {
     let mut sandbox = sandbox(id, "test-owner", "reviewed", SandboxStatus::Active, "old");
-    let home = home::native_home(&sandbox.id);
+    let home = native_home(&sandbox.id);
     let runtime = sandbox.runtime.as_mut().unwrap();
     runtime.runtime_id = "agent-sandbox:member:sandbox-uid".into();
     runtime.runtime_version = home

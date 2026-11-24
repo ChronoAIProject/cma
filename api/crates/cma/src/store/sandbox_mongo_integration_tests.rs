@@ -86,6 +86,7 @@ mod conversation_fixtures;
 mod ledger_census_tests;
 pub(in crate::store) mod ledger_retirement_tests;
 mod live_sandbox_pages;
+pub(super) mod native_home_fixture;
 mod read_telemetry_tests;
 pub(in crate::store) mod resource_access_tests;
 mod visible_inventory;
