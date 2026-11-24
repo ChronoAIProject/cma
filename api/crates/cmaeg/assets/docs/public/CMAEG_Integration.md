@@ -481,7 +481,8 @@ NyxID REST base does not include a `/mcp` endpoint.
 
 Ordinary relay replies can use complete-reply mode after operators coordinate
 an upgraded NyxID deployment and enable `CMAEG_NYXID_COMPLETE_REPLIES`. In that
-mode CMAEG sends the complete escaped logical text once; NyxID performs final
+mode CMAEG sends the complete logical text once (escaped, except that Lark,
+Feishu and Discord text keeps Markdown punctuation literal); NyxID performs final
 ordinary/thread platform splitting. Acks, progress and intentional separate
 replies keep separate requests. Native Telegram and interactive/edit constraints
 retain their existing behavior. The default remains legacy chunking until the
@@ -493,10 +494,14 @@ CommonMark reply/thread/update routes. CMAEG then preserves original source,
 including literal backslashes, and sends ordinary replies, keyboards and media
 captions through those routes without local splitting. Rust embedders select
 `RelayClient::with_commonmark_relay(true)` and match
-`ToolsState.commonmark_relay_enabled` so ordinary Telegram reply tools allow the
+`ToolsState.commonmark_relay.telegram` so ordinary Telegram reply tools allow the
 18 s outer wait. Native and other-platform rendering stay unchanged. The switch
 defaults off and never enables endpoint fallback after uncertain submission;
 see CommonMark rollout (maintainer guidance).
+
+Lark, Feishu and Discord relay text uses the separate, default-off
+`CMAEG_NYXID_COMMONMARK_LARK_FEISHU_DISCORD_ENABLED` switch. Enable it only
+after every serving NyxID replica supports the required routes.
 
 Rust embedders select this mode with `RelayClient::with_complete_replies(true)`
 when composing the delivery engine. Existing `Config` and `DeliveryConfig`
