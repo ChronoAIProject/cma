@@ -278,6 +278,6 @@ pub(super) fn replacement_runtime_version(sandbox: &Sandbox, deployed: &str) -> 
                 .as_ref()
                 .map(|binding| binding.runtime_version.clone())
         })
-        .or_else(|| sandbox.profile.content.runtime_image.clone())
+        .or_else(|| sandbox.effective_custom_runtime_image().map(str::to_owned))
         .unwrap_or_else(|| deployed.to_owned())
 }
