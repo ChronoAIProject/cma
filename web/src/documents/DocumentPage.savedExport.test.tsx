@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createHash, webcrypto } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import { DocumentError, type DocumentSource } from '../api/documents';
+import { documentsClient } from '../api/rest/documents';
 import { DocumentPage } from './DocumentPage';
 import { client, id, page, view } from './DocumentPage.testFixture';
 import { documentDraft } from './drafts';
@@ -15,6 +16,16 @@ function exportBrowser() {
   vi.spyOn(console, 'info').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   return createObjectURL;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (cause: Error) => void;
+  const promise = new Promise<T>((success, failure) => {
+    resolve = success;
+    reject = failure;
+  });
+  return { promise, resolve, reject };
 }
 
 it('leaves the export action absent by default and makes no extra reads', async () => {
@@ -223,3 +234,93 @@ it.each([401, 403, 404])(
     expect(api.read).toHaveBeenCalledTimes(status === 404 ? 4 : 3);
   },
 );
+
+it.each(['metadata', 'source'] as const)(
+  'ignores a reload waiting on %s when export confirms access loss',
+  async (pending) => {
+    const createObjectURL = exportBrowser();
+    const api = client({
+      update: vi.fn().mockRejectedValue(new DocumentError('Revision conflict', 409)),
+    });
+    page(api);
+    const editor = await screen.findByRole('textbox', { name: 'Document content' });
+    fireEvent.change(editor, { target: { value: '# Private draft' } });
+
+    const exportSource = deferred<DocumentSource>();
+    vi.mocked(api.source).mockReturnValueOnce(exportSource.promise);
+    fireEvent.click(screen.getByRole('button', { name: 'Export saved JSON' }));
+    await waitFor(() => expect(api.source).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Revision conflict');
+    fireEvent.click(screen.getByRole('button', { name: 'Reload latest' }));
+    const metadata = deferred<typeof view>();
+    const source = deferred<DocumentSource>();
+    if (pending === 'metadata') vi.mocked(api.read).mockReturnValueOnce(metadata.promise);
+    else vi.mocked(api.source).mockReturnValueOnce(source.promise);
+    fireEvent.click(screen.getByRole('button', { name: 'Discard draft and reload' }));
+    await waitFor(() => expect(api.read).toHaveBeenCalledTimes(3));
+    if (pending === 'source') await waitFor(() => expect(api.source).toHaveBeenCalledTimes(3));
+    const reloadSignal = vi.mocked(api.read).mock.calls[2]?.[1]?.signal;
+
+    await act(async () => exportSource.reject(new DocumentError('Access denied', 403)));
+    const stale = { id, revision: 1, markdown: '# Earlier response' };
+    await act(async () => {
+      if (pending === 'metadata') metadata.resolve({ ...view, title: 'Earlier response' });
+      else source.resolve(stale);
+    });
+
+    expect(screen.queryByRole('textbox', { name: 'Document content' })).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('This document is no longer available');
+    expect(reloadSignal?.aborted).toBe(true);
+    expect(api.source).toHaveBeenCalledTimes(pending === 'metadata' ? 2 : 3);
+    expect(documentDraft('owner', id)).toBeUndefined();
+    expect(createObjectURL).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload latest' }));
+    expect(await screen.findByRole('textbox', { name: 'Document content' })).toHaveValue(
+      '# Original',
+    );
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  },
+);
+
+it.each([
+  {
+    name: 'array-valued access on the export metadata read',
+    authority: { access: ['owner'] },
+    recheck: false,
+  },
+  {
+    name: 'empty owner identity on the metadata recheck',
+    authority: { owner_subject: '' },
+    recheck: true,
+  },
+])('keeps draft recovery after $name through the REST decoder', async ({ authority, recheck }) => {
+  const createObjectURL = exportBrowser();
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(Response.json(view))
+    .mockResolvedValueOnce(Response.json({ id, revision: 1, markdown: '# Original' }));
+  if (recheck) {
+    fetcher
+      .mockResolvedValueOnce(Response.json(view))
+      .mockResolvedValueOnce(Response.json({ code: 'document_not_found' }, { status: 404 }));
+  }
+  fetcher.mockResolvedValueOnce(Response.json({ ...view, ...authority }));
+  vi.stubGlobal('fetch', fetcher);
+  page(documentsClient({ shareRecipients: vi.fn() }));
+
+  const editor = await screen.findByRole('textbox', { name: 'Document content' });
+  fireEvent.change(editor, { target: { value: '# Recoverable draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Export saved JSON' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'The saved document could not be exported',
+  );
+  expect(editor).toHaveValue('# Recoverable draft');
+  expect(screen.getByRole('button', { name: 'Download draft' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Export saved JSON' })).toBeEnabled();
+  expect(documentDraft('owner', id)?.markdown).toBe('# Recoverable draft');
+  expect(createObjectURL).not.toHaveBeenCalled();
+  expect(fetcher).toHaveBeenCalledTimes(recheck ? 5 : 3);
+});
