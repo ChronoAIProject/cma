@@ -123,6 +123,23 @@ impl Store {
             None => v1::find_operation(&self.config, &operation_id, &operation.subject),
         }
     }
+    pub(crate) async fn find_process_proof_record(
+        &self,
+        operation_id: String,
+        scope: &Operation,
+    ) -> Result<Option<Record>> {
+        self.authorize_retirement(std::slice::from_ref(scope))
+            .await?;
+        match &self.ledger {
+            Some(ledger) => {
+                ledger
+                    .find_operation(operation_id, scope.subject.clone())
+                    .await
+            }
+            None => v1::find_proof_record(&self.config, &operation_id, &scope.subject),
+        }
+    }
+
     pub(crate) async fn has_process_writer(
         &self,
         agent_id: &str,

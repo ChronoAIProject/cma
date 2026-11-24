@@ -91,7 +91,7 @@ impl AgentWorker {
         }
         let expected = agent.revision;
         let fence = claimed_fence(&agent, &self.config.holder)?;
-        let stamp = rfc3339_at(now);
+        let started = tokio::time::Instant::now();
         let previous = agent.status;
         let mut worktree = self
             .dependencies
@@ -107,6 +107,11 @@ impl AgentWorker {
             })
         } else {
             None
+        };
+        let stamp = if settlement.is_some() {
+            rfc3339_at(now + started.elapsed())
+        } else {
+            rfc3339_at(now)
         };
         let versioned = match worktree.status {
             WorktreeStatus::Creating => {

@@ -30,7 +30,10 @@ impl Supervisor {
         let closed = Operation::close_agent(&proof.close);
         let agent = proof.close.agent_id.as_str();
         let open_id = AgentProcessAction::Open.operation_id(agent, incarnation);
-        let opened = self.mutations.find_operation(open_id, &closed).await?;
+        let opened = self
+            .mutations
+            .find_process_proof_record(open_id, &closed)
+            .await?;
         let exact_open = opened.is_some_and(|record| {
             record.status() == Status::Completed
                 && record.operation().request_sha256 == proof.open_request_sha256
@@ -43,14 +46,24 @@ impl Supervisor {
                 self.mutations.has_process_writer(agent, next).await?
                     || self
                         .mutations
-                        .find_operation(AgentProcessAction::Open.operation_id(agent, next), &closed)
+                        .find_process_proof_record(
+                            AgentProcessAction::Open.operation_id(agent, next),
+                            &closed,
+                        )
                         .await?
                         .is_some()
             }
             None => false,
         };
+        let exact_close = self
+            .mutations
+            .find_process_proof_record(closed.operation_id.clone(), &closed)
+            .await?
+            .is_some_and(|record| {
+                record.status() == Status::Completed && record.operation() == closed
+            });
         if !exact_open
-            || !self.mutations.completed(&closed).await?
+            || !exact_close
             || successor_open
             || self.agents.read().await.contains_key(&proof.close.agent_id)
         {
