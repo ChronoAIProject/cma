@@ -389,4 +389,3 @@ def check_omarchy_archive(steps)
   require_check(save && writers == [save] && save['uses'].start_with?('actions/cache/save@') && save['with'] == storage &&
     save['if'] == "success() && #{writer}" && steps.last == save, 'only a qualified develop push may save the Omarchy archive')
 end
-
