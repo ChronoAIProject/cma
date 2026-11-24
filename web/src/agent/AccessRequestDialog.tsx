@@ -226,6 +226,9 @@ function AccessRequestDialog({
         Approving updates service access without restarting this Sandbox or interrupting its Agents.
         If the Sandbox is already paused, the request waits until you resume it.
       </p>
+      {request.services.includes('api-github') ? (
+        <p>GitHub connection selection is separate from service approval.</p>
+      ) : null}
       {request.status === 'pending' ? (
         <ScopePicker
           value={services}
