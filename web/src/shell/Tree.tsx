@@ -294,6 +294,7 @@ export function Tree({
                                 .map((workspace) => {
                                   const workspaceNode = `workspace:${workspace.id}`;
                                   const workspaceReady = workspace.status === 'ready';
+                                  const workspaceFailed = workspace.status === 'failed';
                                   const selectedAgent =
                                     route.kind === 'agent'
                                       ? workspace.agents.find((agent) => agent.id === route.agentId)
@@ -306,6 +307,16 @@ export function Tree({
                                         nodeId={workspaceNode}
                                         parentId={sandboxNode}
                                         level={2}
+                                        route={
+                                          workspaceFailed
+                                            ? { kind: 'workspace', workspaceId: workspace.id }
+                                            : undefined
+                                        }
+                                        selected={
+                                          workspaceFailed &&
+                                          route.kind === 'workspace' &&
+                                          route.workspaceId === workspace.id
+                                        }
                                         label={
                                           selectedAgent?.runtimeMetadata?.workingDirectory?.trim() ||
                                           workspace.path ||
