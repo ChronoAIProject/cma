@@ -96,6 +96,40 @@ fn event_driven_reconciliation_requires_an_explicit_boolean_opt_in() {
 }
 
 #[test]
+fn agent_reconciliation_continuation_is_independent_and_default_off() {
+    const KEY: &str = "CHRONO_AGENT_RECONCILIATION_RESUME_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok(if key == KEY {
+                value.map(str::to_owned)
+            } else {
+                None
+            })
+        })
+        .unwrap();
+        assert_eq!(flags.resume_agent_reconciliation, expected);
+        assert!(!flags.event_driven_reconciliation);
+    }
+    assert!(
+        FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "1".to_owned()))).is_err()
+    );
+}
+
+#[test]
+fn command_cancel_wake_is_strict_and_default_off() {
+    const KEY: &str = "CHRONO_COMMAND_CANCEL_WAKE_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.command_cancel_wake, expected);
+        assert!(flags.command_reconcile_pacing);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "1".into()))).is_err());
+}
+
+#[test]
 fn command_reconciliation_pacing_is_independent_strict_and_default_on() {
     const KEY: &str = "CHRONO_COMMAND_RECONCILE_PACING_ENABLED";
     for (value, expected) in [(None, true), (Some("false"), false), (Some("true"), true)] {

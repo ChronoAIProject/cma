@@ -46,10 +46,21 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** A discovery that never answers until its attempt is aborted. */
+const inFlight = Symbol('in flight');
 function mount(failure?: unknown, defaults: Partial<ComponentProps<typeof DesktopPanel>> = {}) {
   const sdk = createClient({ baseUrl: 'https://fixture.invalid' });
   const discover = vi.spyOn(sdk.agents, 'desktop');
-  if (failure) discover.mockRejectedValue(failure);
+  if (failure === inFlight)
+    discover.mockImplementation(
+      (_agent, options) =>
+        new Promise((_resolve, reject) =>
+          options?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Superseded', 'AbortError')),
+          ),
+        ),
+    );
+  else if (failure) discover.mockRejectedValue(failure);
   else discover.mockResolvedValue({ websocket_url: '/api/v1/agents/agt_retry/desktop/ws' });
   const client = agentClient({ resourceViews: sdk });
   const preparation = { context: {}, owner: 'owner' };
@@ -130,6 +141,23 @@ it('keeps the reconnect status while a refresh briefly withholds the runtime ver
   await advance(1000);
   expect(discover).toHaveBeenCalledTimes(2);
   expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+});
+
+it('does not spend the automatic budget when a refresh supersedes an attempt in flight', async () => {
+  const { discover, redraw } = mount(inFlight, { runtimeVersion: 'runtime-one' });
+  await advance(0);
+  expect(discover).toHaveBeenCalledTimes(1);
+  // Availability refreshes withhold and restore the same runtime while the
+  // discovery is still unanswered. Each rebuild restarts that same attempt;
+  // nothing failed, so none of them is an automatic retry (#3295).
+  for (let refresh = 0; refresh < 8; refresh++) {
+    redraw({ runtimeVersion: undefined });
+    await advance(0);
+    redraw({ runtimeVersion: 'runtime-one' });
+    await advance(0);
+  }
+  expect(screen.getByRole('status')).toHaveTextContent('Connecting to your machine…');
+  expect(screen.getByRole('status')).not.toHaveTextContent(exhausted);
 });
 
 it('stops only when the five-minute retry budget expires with no loading timers', async () => {

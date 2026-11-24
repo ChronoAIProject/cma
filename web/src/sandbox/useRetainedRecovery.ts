@@ -3,6 +3,7 @@ import { ApiError } from '@cma/client';
 import { CommandKeys, type CmaWebClient } from '../api/client';
 import {
   loadRecoveryIntent,
+  retireRecoveryReceipt,
   saveRecoveryIntent,
   type RecoveryIntent as Intent,
 } from './retainedRecoveryStorage';
@@ -12,6 +13,7 @@ export function useRetainedRecovery(
   sandboxId: string,
   ownerId: string,
   permitted: boolean,
+  failureRevision: number | undefined,
   onAccepted: () => void,
 ) {
   const scope = useMemo(() => ({ client, sandboxId, ownerId }), [client, ownerId, sandboxId]);
@@ -32,6 +34,25 @@ export function useRetainedRecovery(
     [scope, permitted],
   );
 
+  useEffect(() => {
+    if (
+      storageError ||
+      !intent?.receipt ||
+      failureRevision === undefined ||
+      failureRevision <= intent.receipt.revision
+    )
+      return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      const next = retireRecoveryReceipt(ownerId, sandboxId, intent);
+      setStored((current) => (current.scope === scope ? { scope, ...next } : current));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [failureRevision, intent, ownerId, sandboxId, scope, storageError]);
+
   const publish = (next: Intent) => {
     let error: string | undefined;
     try {
@@ -43,7 +64,7 @@ export function useRetainedRecovery(
     setStored((current) => (current.scope === scope ? { scope, intent: next, error } : current));
     return error === undefined;
   };
-  const submit = async (next: Intent) => {
+  const submit = async (next: Intent, retrying = false) => {
     if (!permitted || storageError || !client.recoverSandboxRetained || work.current) return;
     if (
       !publish({
@@ -68,7 +89,15 @@ export function useRetainedRecovery(
     } catch (error) {
       if (!request.signal.aborted) {
         const refused =
-          error instanceof ApiError && error.status < 500 && ![408, 429].includes(error.status);
+          error instanceof ApiError &&
+          error.status < 500 &&
+          ![408, 429].includes(error.status) &&
+          // During rollback a predecessor may refuse a newer key it cannot replay.
+          !(
+            retrying &&
+            error.status === 409 &&
+            error.code === 'retained_recovery_authority_changed'
+          );
         publish({
           ...next,
           refused,
@@ -92,7 +121,7 @@ export function useRetainedRecovery(
       void submit({ revision, key: new CommandKeys().for('retained-recovery') });
     },
     retry: () => {
-      if (intent && !intent.receipt && !intent.refused) void submit(intent);
+      if (intent && !intent.receipt && !intent.refused) void submit(intent, true);
     },
   };
 }
