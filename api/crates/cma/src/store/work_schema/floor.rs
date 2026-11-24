@@ -124,9 +124,11 @@ pub(in crate::store) async fn retain_rows(
 }
 
 fn runtime_migration_floor_document() -> Document {
-    // The previous binary rejects this additional v3 credential sentinel at
-    // startup, even after all protected Sandbox records have been retired.
-    doc! {"_id":RUNTIME_MIGRATION_FLOOR,"document_schema_version":3_i64,"protocol":"custom-runtime-authority-v1"}
+    // A separate index key lets this floor coexist with the ordinary-work
+    // marker (no generation) and the turn-timeout marker (generation -1).
+    // The v3 marker still fences rollback after the last migrated Sandbox retires.
+    doc! {"_id":RUNTIME_MIGRATION_FLOOR,"document_schema_version":3_i64,"protocol":"custom-runtime-authority-v1",
+    "generation":-2_i64}
 }
 
 pub(in crate::store) async fn retain_runtime_migration(

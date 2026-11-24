@@ -120,6 +120,20 @@ fn admission(value: &Sandbox) -> SandboxCustomRuntimeMigrationAdmission {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn custom_migration_mongo_is_atomic_and_retains_writer_floor_and_exact_replay() {
     let (client, name, mut store) = database().await;
+    let key = crate::store::sandbox_mongo_integration_tests::encryption_key();
+    crate::store::MongoSandboxCredentialStore::open(&client, &name, "migration-fixture", &key)
+        .await
+        .unwrap();
+    let mut session = client.start_session().await.unwrap();
+    start_transaction(&mut session).await.unwrap();
+    crate::store::work_schema::floor::retain(&store, &mut session)
+        .await
+        .unwrap();
+    crate::store::turn_timeouts::floor::retain(&store, &mut session)
+        .await
+        .unwrap();
+    session.commit_transaction().await.unwrap();
+
     store.runtime_migration_enabled = true;
     let original = paused("sbx_custom_atomic");
     store.create_sandbox(original.clone()).await.unwrap();
@@ -213,6 +227,10 @@ async fn custom_migration_mongo_is_atomic_and_retains_writer_floor_and_exact_rep
         1
     );
     MongoSandboxStore::open(&client, &name).await.unwrap();
+    crate::store::MongoSandboxCredentialStore::open(&client, &name, "migration-fixture", &key)
+        .await
+        .unwrap();
+    assert_eq!(floors.count_documents(doc! {}).await.unwrap(), 3);
     store
         .sandboxes
         .delete_one(doc! {"_id":original.id.as_str()})
