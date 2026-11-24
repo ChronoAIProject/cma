@@ -1,6 +1,5 @@
 //! Durable creation evidence and the write fence shared with Sandbox admission.
 
-use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::time::Duration;
 
 use axum::http::StatusCode;
