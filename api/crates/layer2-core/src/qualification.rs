@@ -93,3 +93,16 @@ pub(crate) fn agent_digest(agent: &AgentId) -> [u8; 32] {
     encoder.update(agent.as_str().as_bytes());
     encoder.finalize().into()
 }
+
+impl From<&crate::sandbox::store::AgentControlResult> for ControlSchedule {
+    fn from(result: &crate::sandbox::store::AgentControlResult) -> Self {
+        use crate::sandbox::store::AgentControlResult;
+        Self {
+            agent_revision: result.agent().revision,
+            effect: match result {
+                AgentControlResult::Scheduled(_) => ScheduleEffect::Scheduled,
+                AgentControlResult::Existing(_) => ScheduleEffect::Existing,
+            },
+        }
+    }
+}
