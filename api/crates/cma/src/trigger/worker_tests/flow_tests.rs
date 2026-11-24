@@ -192,7 +192,7 @@ async fn retained_launch_provisions_its_pinned_runtime_after_republish() {
     driver.install_context(frozen_inputs(id, "default", 2, "Start", false));
     let worker = test_worker(store.clone(), driver.clone(), "new-replica");
 
-    assert!(worker.run_one(&launch_id, time(1)).await.unwrap());
+    assert_eq!(worker.run_due(time(1)).await.unwrap(), 1);
     let stored = store.stored(&launch_id);
     let sandbox = driver.sandbox_value(stored.resolution.sandbox.id().unwrap());
     assert_eq!(sandbox.profile.content.runtime_image, Some(pinned));
