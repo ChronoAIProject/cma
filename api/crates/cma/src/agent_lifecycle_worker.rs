@@ -94,15 +94,14 @@ impl InlineAgentLifecycle {
         };
         let lease = record.lease()?;
         let attempts = record.attempts;
-        let canary_profiles = match self.operations.verify_canary_worker(&record).await {
+        let canary_profiles = match record.verify_canary_worker() {
             Ok(profiles) => profiles,
-            Err(error @ layer2_core::StoreError::Malformed(_)) => {
+            Err(error) => {
                 return self
                     .operations
                     .fail_with_metadata(&lease, &error.to_string(), None)
                     .await;
             }
-            Err(_) => return self.operations.retry(&lease, attempts).await,
         };
         let capacity = record.input.captured_capacity(self.bounds);
         let limits = record.input.captured_limits();

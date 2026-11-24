@@ -147,10 +147,10 @@ async fn reserved_canary_operation_publishes_three_private_profiles_and_replays_
 
     // A changed release descriptor alone invalidates authority on restart.
     database
-        .collection::<Document>("runtime_canary_grants")
+        .collection::<Document>("agent_lifecycle_operations")
         .update_one(
-            doc! {"state.operation_id": &operation.id},
-            doc! {"$set": {"release.config_digest": format!("sha256:{}", "2".repeat(64))}},
+            doc! {"_id": &operation.id},
+            doc! {"$set": {"canary_admission.release.config_digest": format!("sha256:{}", "2".repeat(64))}},
         )
         .await
         .unwrap();

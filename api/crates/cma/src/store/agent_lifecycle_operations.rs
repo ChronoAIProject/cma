@@ -25,9 +25,9 @@ use sha2::{Digest, Sha256};
 use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VERSION};
 
 mod admission;
-pub(super) mod canary_grants;
+mod canary_admission;
 pub(crate) mod canary_key;
-pub(crate) use canary_grants::CanaryProfiles;
+pub(crate) use canary_admission::CanaryProfiles;
 #[cfg(test)]
 mod operator_stop_tests;
 pub(crate) use admission::LifecycleCreateError;
@@ -115,6 +115,8 @@ pub(crate) struct LifecycleRecord {
     pub key: String,
     pub fingerprint: Binary,
     pub input: LifecycleInput,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canary_admission: Option<canary_admission::CanaryAdmission>,
     pub status: String,
     pub phase: String,
     pub events: Vec<LifecycleEvent>,
@@ -156,12 +158,11 @@ pub(crate) struct LifecycleLease {
 pub(crate) struct MongoAgentLifecycleStore {
     operations: Collection<LifecycleRecord>,
     admission_settings: Collection<mongodb::bson::Document>,
-    canary_grants: Collection<canary_grants::CanaryGrant>,
 }
 
 impl MongoAgentLifecycleStore {
     pub(crate) async fn open(database: &Database) -> Result<Self, StoreError> {
-        schema::initialize_collections(database, &[COLLECTION, canary_grants::COLLECTION]).await?;
+        schema::initialize_collections(database, &[COLLECTION]).await?;
         let operations = majority_collection(database, COLLECTION);
         operations
             .create_index(
@@ -198,7 +199,6 @@ impl MongoAgentLifecycleStore {
         Ok(Self {
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
-            canary_grants: canary_grants::open(database).await?,
         })
     }
 
@@ -240,6 +240,7 @@ impl MongoAgentLifecycleStore {
             key: key.to_owned(),
             fingerprint,
             input,
+            canary_admission: None,
             status: "queued".into(),
             phase: "queued".into(),
             events: Vec::new(),

@@ -47,7 +47,6 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     super::agent_capacity_recovery::records::COLLECTION,
     super::message_feedback::COLLECTION,
     "agent_lifecycle_operations",
-    super::agent_lifecycle_operations::canary_grants::COLLECTION,
     "agent_profile_revisions",
     "agent_profiles",
     "agent_reuse_bindings",

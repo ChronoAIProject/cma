@@ -10,6 +10,8 @@ use layer3_adapter::{permanent_custody::PermanentCustody, HomeVolumePolicy, Home
 
 #[path = "backup_compatibility_tests.rs"]
 mod backup_compatibility_tests;
+#[path = "canary_compatibility_tests.rs"]
+mod canary_compatibility_tests;
 #[path = "census_tests.rs"]
 mod census_tests;
 pub(in crate::store) use census_tests::prepare_source;
