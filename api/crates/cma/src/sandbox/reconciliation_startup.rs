@@ -17,19 +17,33 @@ impl SandboxReconciler {
     /// General/reused callers without exclusive ownership keep the old serial path.
     #[cfg(test)]
     pub(crate) async fn initialize(&self, now: SystemTime) -> Result<(), SandboxStoreError> {
-        self.initialize_with_exclusion(now, false).await
+        self.initialize_with_exclusion(now, false, &|| false).await
     }
 
-    /// Composition excludes other assignment-cache writers until this returns:
-    /// runtime/preparation workers and HTTP serving start after this barrier.
-    /// Inline lifecycle admission and manager renewal already run, but do not
-    /// adopt runtimes. Durable authority can still change; its CAS/fresh reads
-    /// remain mandatory. The headroom snapshot is not a reservation.
+    /// Whether a binding hold currently protects this Sandbox.
+    #[cfg(test)]
+    pub(crate) fn binding_held(&self, id: &str) -> bool {
+        self.binding_holds.contains(id)
+    }
+
+    #[cfg(test)]
     pub(crate) async fn initialize_before_workers(
         &self,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        self.initialize_with_exclusion(now, true).await
+        self.initialize_before_workers_until(now, || false).await
+    }
+
+    /// Composition excludes other assignment-cache writers until this returns:
+    /// runtime/preparation workers and HTTP execution admission follow this barrier.
+    /// Durable authority can still change; its CAS/fresh reads remain mandatory.
+    /// The headroom snapshot is not a reservation.
+    pub(crate) async fn initialize_before_workers_until(
+        &self,
+        now: SystemTime,
+        stopping: impl Fn() -> bool,
+    ) -> Result<(), SandboxStoreError> {
+        self.initialize_with_exclusion(now, true, &stopping).await
     }
 
     pub(crate) fn startup_binding_schedule(
@@ -59,7 +73,11 @@ impl SandboxReconciler {
         &self,
         now: SystemTime,
         exclusive: bool,
+        stopping: &impl Fn() -> bool,
     ) -> Result<(), SandboxStoreError> {
+        if stopping() {
+            return Ok(());
+        }
         let inventory = observe(
             "runtime_inventory",
             self.adapter.runtime_inventory(),
@@ -67,13 +85,16 @@ impl SandboxReconciler {
         )
         .await
         .map_err(provider_error)?;
+        if stopping() {
+            return Ok(());
+        }
         let authority = observe("durable_authority", self.authority(), |rows| {
             Some(rows.len())
         })
         .await?;
         let (limit, fallback) = self.startup_binding_schedule(&authority, &inventory, exclusive);
         let phase = Phase::new("binding_reconciliation");
-        let report = batch::run(authority.values(), limit, |sandbox| {
+        let report = batch::run(authority.values(), limit, stopping, |sandbox| {
             self.reconcile_startup_binding(sandbox, &inventory, now)
         })
         .await;
@@ -101,6 +122,9 @@ impl SandboxReconciler {
         if let Some(error) = report.error {
             return Err(error);
         }
+        if stopping() {
+            return Ok(());
+        }
         if report.deferred > 0 {
             // Startup cleanup does not consult binding holds. Leave every
             // cleanup phase to the fresh, hold-aware background sweep when
@@ -115,6 +139,9 @@ impl SandboxReconciler {
             "orphan_reconciliation",
             async {
                 for observation in &inventory {
+                    if stopping() {
+                        break;
+                    }
                     self.reconcile_runtime(observation).await?;
                 }
                 Ok::<_, SandboxStoreError>(())
@@ -122,9 +149,14 @@ impl SandboxReconciler {
             |_| Some(inventory.len()),
         )
         .await?;
-        observe("home_reconciliation", self.reconcile_homes(), |counts| {
-            Some(counts.0 + counts.1)
-        })
+        if stopping() {
+            return Ok(());
+        }
+        observe(
+            "home_reconciliation",
+            self.reconcile_homes(stopping),
+            |counts| Some(counts.0 + counts.1),
+        )
         .await
         .map(|_| ())
     }

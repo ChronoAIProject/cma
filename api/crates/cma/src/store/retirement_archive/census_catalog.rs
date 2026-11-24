@@ -148,7 +148,12 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("provider_binding_preparations", Empty),
     ("provider_tool_opens", Empty),
     ("provider_tool_relays", Empty),
+    // Serialized execution records lack a qualified per-Sandbox archive closure.
+    ("resource_execution_effects_v1", Empty),
+    ("resource_execution_grants_v1", Empty),
+    ("resource_execution_records_v1", Empty),
     ("resource_policies", Sandbox(&["_id"])),
+    ("resource_revocation_operations_v1", Empty),
     ("resource_share_commands", Sandbox(&["sandbox_id"])),
     ("resource_shares", Sandbox(&["sandbox_id"])),
     ("sandbox_admissions", Independent),

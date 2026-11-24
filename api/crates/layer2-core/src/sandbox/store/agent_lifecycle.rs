@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ids::{AgentId, SandboxId};
 use crate::sandbox::{Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, Worktree};
@@ -42,6 +42,50 @@ impl StartupWorkFilter<'_> {
                 !sandboxes.contains(&agent.sandbox_id) || !Self::can_hold(agent)
             }
             Self::Probe(sandbox_id) => &agent.sandbox_id == sandbox_id && Self::can_hold(agent),
+        }
+    }
+}
+
+/// Identifies the pending task associated with a local acquisition refusal.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PendingAgentWork {
+    pub step: AgentWorkStep,
+    pub status: AgentStatus,
+    pub ready_at: String,
+    pub attempts: u32,
+    pub next_fence: u64,
+    pub control_revision: Option<u64>,
+}
+
+impl PendingAgentWork {
+    pub fn from_agent(agent: &Agent) -> Option<Self> {
+        let work = &agent.work;
+        work.step.is_pending().then(|| Self {
+            step: work.step,
+            status: agent.status,
+            ready_at: work.ready_at.clone(),
+            attempts: work.attempts,
+            next_fence: work.next_fence,
+            control_revision: (!AgentWorkStep::RECEIVER_PACED.contains(&work.step))
+                .then_some(agent.revision),
+        })
+    }
+}
+
+/// Advisory filters applied to current work before the discovery result limit.
+#[derive(Clone, Copy)]
+pub struct AgentWorkDiscovery<'a> {
+    pub receiver_holds: &'a BTreeSet<AgentId>,
+    pub startup: StartupWorkFilter<'a>,
+    pub acquisition_cooldowns: Option<&'a BTreeMap<AgentId, PendingAgentWork>>,
+}
+
+impl<'a> AgentWorkDiscovery<'a> {
+    pub fn new(receiver_holds: &'a BTreeSet<AgentId>, startup: StartupWorkFilter<'a>) -> Self {
+        Self {
+            receiver_holds,
+            startup,
+            acquisition_cooldowns: None,
         }
     }
 }
@@ -394,16 +438,19 @@ pub trait AgentWorkerStore: Send + Sync {
         limit: u16,
         holds: &BTreeSet<AgentId>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
-        self.due_agent_work_filtered(now, limit, holds, StartupWorkFilter::All)
-            .await
+        self.due_agent_work_filtered(
+            now,
+            limit,
+            AgentWorkDiscovery::new(holds, StartupWorkFilter::All),
+        )
+        .await
     }
 
     async fn due_agent_work_filtered(
         &self,
         now: &str,
         limit: u16,
-        holds: &BTreeSet<AgentId>,
-        startup: StartupWorkFilter<'_>,
+        filter: AgentWorkDiscovery<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError>;
 
     async fn claim_agent_work(
@@ -428,4 +475,14 @@ pub trait AgentWorkerStore: Send + Sync {
 
     async fn commit_agent_work(&self, mutation: AgentWorkMutation)
         -> Result<(), SandboxStoreError>;
+
+    /// Publish an original startup or connection result with the parent
+    /// revisions observed while proving its native attachment.
+    async fn commit_agent_connection_work(
+        &self,
+        mutation: AgentWorkMutation,
+        _parents: AgentWorkPublicationParents,
+    ) -> Result<(), SandboxStoreError> {
+        self.commit_agent_work(mutation).await
+    }
 }

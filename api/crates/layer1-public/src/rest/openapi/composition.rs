@@ -16,6 +16,10 @@ pub fn document() -> utoipa::openapi::OpenApi {
     document
         .extensions
         .get_or_insert_with(Default::default)
+        .insert("x-cma-task-templates-v2".into(), serde_json::json!(true));
+    document
+        .extensions
+        .get_or_insert_with(Default::default)
         .insert("x-cma-agent-title-mode".into(), serde_json::json!(true));
     document.merge(super::super::agent_capacity_recovery::document());
     document.merge(super::super::agent_retained_output::document());
@@ -23,6 +27,8 @@ pub fn document() -> utoipa::openapi::OpenApi {
     document.merge(super::super::admin::admission::document());
     document.merge(super::super::admin::spend::document());
     document.merge(super::super::account_deletion::document());
+    document.merge(super::super::legal_consent::document());
+    document.merge(super::super::privacy_export::document());
     document.merge(super::super::browser_telemetry::document());
     document.merge(super::super::documents::document());
     document.merge(super::super::desktop_creation::document());

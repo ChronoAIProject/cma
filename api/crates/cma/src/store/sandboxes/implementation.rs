@@ -72,6 +72,14 @@ impl SandboxStore for MongoSandboxStore {
         super::super::retained_reopen::replay(self, id).await
     }
 
+    async fn retained_reopen_history(
+        &self,
+        id: &SandboxId,
+        key_sha256: Option<&str>,
+    ) -> Result<layer2_core::sandbox::RetainedReopenHistory, SandboxStoreError> {
+        super::super::retained_reopen::read_for_service(self, id, key_sha256).await
+    }
+
     async fn retained_suspended_reopen_snapshot(
         &self,
         id: &SandboxId,
@@ -106,8 +114,8 @@ impl SandboxStore for MongoSandboxStore {
         super::super::sandbox_unpublished_recovery::retained_snapshot(self, id).await
     }
 
-    fn managed_runtime_version(&self) -> Option<&str> {
-        self.managed_runtime_version.as_deref()
+    fn managed_runtime_version(&self) -> Option<String> {
+        self.managed_agent_release()
     }
 
     async fn unpublished_runtime_recovery_snapshot(

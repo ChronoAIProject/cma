@@ -184,7 +184,7 @@ async fn monitor(
     }
 }
 
-async fn liveness() -> &'static str {
+pub(crate) async fn liveness() -> &'static str {
     "ok"
 }
 

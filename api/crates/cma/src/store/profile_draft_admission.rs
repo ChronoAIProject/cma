@@ -130,10 +130,20 @@ pub(super) async fn transact(
     mutation: &Mutation,
 ) -> Result<Option<Document>, Error> {
     let mut session = client.start_session().await.map_err(Error::Driver)?;
-    start_transaction(&mut session)
-        .await
-        .map_err(Error::Driver)?;
-    match pins.admit(db, &mut session).await {
+    transact_in(&mut session, db, pins, mutation).await
+}
+
+/// Runs one admission attempt in a caller-owned session, so a caller can
+/// reconcile an unknown commit with a causal read in that same session.
+pub(super) async fn transact_in(
+    session: &mut mongodb::ClientSession,
+    db: &Database,
+    pins: &mut Pins,
+    mutation: &Mutation,
+) -> Result<Option<Document>, Error> {
+    let session = &mut *session;
+    start_transaction(session).await.map_err(Error::Driver)?;
+    match pins.admit(db, session).await {
         Ok(true) => {}
         Ok(false) => {
             let _ = session.abort_transaction().await;
@@ -144,7 +154,7 @@ pub(super) async fn transact(
             return Err(Error::Driver(error));
         }
     }
-    let result = match mutation.apply(&mut session).await {
+    let result = match mutation.apply(session).await {
         Ok(Some(value)) => value,
         Ok(None) => {
             let _ = session.abort_transaction().await;
@@ -155,12 +165,12 @@ pub(super) async fn transact(
             return Err(Error::Driver(error));
         }
     };
-    match commit_transaction(&mut session).await {
+    match commit_transaction(session).await {
         CommitOutcome::Committed => Ok(Some(result)),
         CommitOutcome::Retry(error)
         | CommitOutcome::Unknown(error)
         | CommitOutcome::Failed(error) => {
-            mutation.retire_failed_commit(&mut session).await;
+            mutation.retire_failed_commit(session).await;
             Err(Error::Driver(error))
         }
     }

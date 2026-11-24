@@ -112,7 +112,7 @@ async fn writer_caller_closed_absent_and_other_cohort_match_legacy_bson_exactly(
         let mut session = client.start_session().await.unwrap();
         let mut scope = TransactionScope::start(&mut session).await.unwrap();
         let expected = scoped::apply(
-            crate::store::agent_log_telemetry::ScanCaller::ConversationPublication,
+            scoped::PublicationSource::Conversation,
             &store,
             &mutation,
             None,
@@ -281,7 +281,7 @@ async fn writer_caller_abort_preserves_source_and_exact_accepted_work_survives_c
     let mut session = client.start_session().await.unwrap();
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
     let receipt = scoped::apply(
-        crate::store::agent_log_telemetry::ScanCaller::ConversationPublication,
+        scoped::PublicationSource::Conversation,
         &store,
         &mutation,
         None,
@@ -331,7 +331,7 @@ async fn writer_caller_staged_source_conflict_cannot_adopt_or_replan() {
     let mut session = client.start_session().await.unwrap();
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
     scoped::apply(
-        crate::store::agent_log_telemetry::ScanCaller::ConversationPublication,
+        scoped::PublicationSource::Conversation,
         &store,
         &competing,
         None,
@@ -345,7 +345,7 @@ async fn writer_caller_staged_source_conflict_cannot_adopt_or_replan() {
     let before = snapshot_raw(&store).await;
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
     assert!(scoped::apply(
-        crate::store::agent_log_telemetry::ScanCaller::ConversationPublication,
+        scoped::PublicationSource::Conversation,
         &store,
         &mutation,
         None,

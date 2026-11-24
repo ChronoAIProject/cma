@@ -3,6 +3,7 @@ import { ApiError, ProtocolError } from './errors.js';
 import type { OperationOptions } from './http.js';
 import { command, input, query, read, segment, type CommandOptions } from './resources.js';
 import { resourceSelector, shareMode, shareReceipt } from './resource-access.js';
+import { revocationStatusTarget } from './resource-revocation-links.js';
 import {
   boolean,
   enumeration,
@@ -84,10 +85,9 @@ export function pendingRevocation(
     error.code !== 'resource_revocation_pending'
   )
     return undefined;
-  const match =
-    /^<\/api\/v1\/resource-revocations\/([a-f0-9]{64})(\?[^<>\s]*)>;\s*rel="status"$/.exec(
-      error.statusLink ?? '',
-    );
+  const match = /^\/api\/v1\/resource-revocations\/([a-f0-9]{64})(\?[^<>\s#]*)$/.exec(
+    revocationStatusTarget(error.statusLink) ?? '',
+  );
   if (!match) return undefined;
   const params = new URLSearchParams(match[2]);
   if (params.size !== 2 || params.get('kind') !== kind || params.get('id') !== id) return undefined;

@@ -46,7 +46,7 @@ impl DesktopCapability {
 
 pub struct DesktopCreationService {
     adapter: Arc<dyn SandboxAdapter>,
-    default_image: String,
+    released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
     verified_image: Option<String>,
 }
 
@@ -54,6 +54,22 @@ impl DesktopCreationService {
     pub fn new(
         adapter: Arc<dyn SandboxAdapter>,
         default_image: String,
+        verified_image: Option<String>,
+    ) -> Result<Arc<Self>, &'static str> {
+        Self::with_released(
+            adapter,
+            Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+                default_image,
+                None,
+            )),
+            verified_image,
+        )
+    }
+
+    /// The default image is the source's agent-lane release at each check.
+    pub fn with_released(
+        adapter: Arc<dyn SandboxAdapter>,
+        released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
         verified_image: Option<String>,
     ) -> Result<Arc<Self>, &'static str> {
         if verified_image.as_ref().is_some_and(|image| {
@@ -69,7 +85,7 @@ impl DesktopCreationService {
         }
         Ok(Arc::new(Self {
             adapter,
-            default_image,
+            released,
             verified_image,
         }))
     }
@@ -94,6 +110,7 @@ impl DesktopCreationService {
                 "This deployment cannot retain the desktop runtime's home identity.".into();
             return result;
         }
+        let default_image = self.released.snapshot().agent;
         let image = parent
             .and_then(|sandbox| {
                 sandbox
@@ -102,7 +119,7 @@ impl DesktopCreationService {
                     .map(|runtime| runtime.runtime_version.as_str())
             })
             .or(selected_image)
-            .unwrap_or(&self.default_image);
+            .unwrap_or(&default_image);
         if image != verified {
             result.reason = "This image is not verified for desktop creation. Existing Sandboxes require an explicit upgrade; they will not restart automatically.".into();
             return result;

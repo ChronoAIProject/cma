@@ -287,7 +287,7 @@ fn problem(error: DesktopError) -> Response {
         }
         DesktopError::Unavailable => (StatusCode::NOT_FOUND, "desktop_unavailable"),
         DesktopError::Busy => (StatusCode::CONFLICT, "desktop_busy"),
-        DesktopError::RuntimeUnavailable => (
+        DesktopError::RuntimeUnavailable | DesktopError::RuntimeFailed => (
             StatusCode::SERVICE_UNAVAILABLE,
             "desktop_runtime_unavailable",
         ),
@@ -315,6 +315,32 @@ fn problem(error: DesktopError) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn terminal_desktop_failure_preserves_the_public_problem_and_removes_retry_after() {
+        for (error, retryable) in [
+            (DesktopError::RuntimeUnavailable, true),
+            (DesktopError::RuntimeFailed, false),
+        ] {
+            let detail = error.to_string();
+            let response = problem(error);
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(
+                response
+                    .headers()
+                    .get(header::RETRY_AFTER)
+                    .map(|value| value.to_str().unwrap()),
+                retryable.then_some("1")
+            );
+            let body = axum::body::to_bytes(response.into_body(), 2048)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(body["code"], "desktop_runtime_unavailable");
+            assert_eq!(body["detail"], detail);
+        }
+    }
+
     #[test]
     fn busy_discovery_exposes_a_private_retry_deadline() {
         let response = problem(DesktopError::Busy);

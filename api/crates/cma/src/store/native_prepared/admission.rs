@@ -51,15 +51,21 @@ pub(in crate::store) async fn claim_ready(
     // startup. Never let that prior target override this process's released
     // runtime while new owned admissions are already being accepted.
     let released = if machine {
-        store.managed_machine_runtime_version.as_ref()
+        store.managed_machine_release()
     } else {
-        store.managed_runtime_version.as_ref()
+        store.managed_agent_release()
     };
     if desired.machine() != machine
         || (machine && released.is_none())
-        || released.is_some_and(|version| version != &desired.warm.runtime_version)
+        || released.is_some_and(|version| version != desired.warm.runtime_version)
     {
         return Ok(ClaimOutcome::Miss("miss_released_runtime_mismatch"));
+    }
+    // A target written by a process with an earlier home renderer names homes
+    // whose replay the runtime would refuse. Provision normally until this
+    // process's preparation worker replaces that target.
+    if !desired.renders_current_home() {
+        return Ok(ClaimOutcome::Miss("miss_prepared_home_rendering"));
     }
     let database = store.client.database(&store.sandboxes.namespace().db);
     let Some(operation)=database.collection::<crate::store::agent_lifecycle_operations::LifecycleRecord>(crate::store::agent_lifecycle_operations::COLLECTION)
