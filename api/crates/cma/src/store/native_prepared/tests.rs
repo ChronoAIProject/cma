@@ -90,6 +90,7 @@ fn ready(mut record: Record) -> Record {
     let request = NativePoolClaimRequest {
         pool: NativePoolBinding {
             spec: NativePoolSpec {
+                cold_canary: false,
                 image: RuntimeImage {
                     uri: record.plan.warm.runtime_version.clone(),
                     labels: std::collections::BTreeMap::from([

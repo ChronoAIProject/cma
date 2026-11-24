@@ -146,6 +146,17 @@ pub trait HostedBackend: Send + Sync {
     ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
         Ok(None)
     }
+    async fn select_native_canary_pool(
+        &self,
+        _request: &ProviderSandboxRequest,
+        _image: &crate::RuntimeImage,
+        _home: &crate::HomeVolumeRequest,
+    ) -> Result<crate::agent_sandbox::NativePoolBinding> {
+        Err(crate::AdapterError::Unsupported(
+            "native canary allocation requires a native backend".into(),
+        ))
+    }
+
     async fn validate_funding(
         &self,
         request: &ProviderSandboxRequest,

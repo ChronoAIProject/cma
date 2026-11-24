@@ -26,6 +26,14 @@ pub trait SandboxWorkerStore: Send + Sync {
         Ok(None)
     }
 
+    /// Return the exact verified native image for a Sandbox bound by canary admission.
+    async fn canary_runtime_image(
+        &self,
+        _sandbox: &Sandbox,
+    ) -> Result<Option<layer3_adapter::RuntimeImage>, SandboxStoreError> {
+        Ok(None)
+    }
+
     async fn due_sandbox_work(
         &self,
         now: &str,

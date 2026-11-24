@@ -14,18 +14,17 @@ use layer1_public::rest::{
 };
 use layer2_core::{now_rfc3339, Capability, StoreError, SubjectId};
 use mongodb::{
-    bson::{doc, spec::BinarySubtype, Binary, Bson, DateTime},
+    bson::{doc, Binary, Bson, DateTime},
     error::{Error, ErrorKind, WriteFailure},
     options::{IndexOptions, ReturnDocument},
     Collection, Database, IndexModel,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VERSION};
 
 mod admission;
-pub(super) mod canary_admission;
+pub(crate) mod canary_admission;
 pub(crate) mod canary_key;
 pub(crate) use canary_admission::CanaryProfiles;
 #[cfg(test)]
@@ -123,6 +122,8 @@ pub(crate) struct LifecycleRecord {
     canary_admission: Option<canary_admission::CanaryAdmission>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     canary_manifest_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canary_redemption_key: Option<canary_admission::CanaryRedemptionKey>,
     pub status: String,
     pub phase: String,
     pub events: Vec<LifecycleEvent>,
@@ -218,6 +219,12 @@ impl MongoAgentLifecycleStore {
         })
     }
 
+    pub(crate) fn canary_database(&self) -> Database {
+        self.operations
+            .client()
+            .database(&self.operations.namespace().db)
+    }
+
     pub(crate) async fn create_with_submission(
         &self,
         owner: &SubjectId,
@@ -246,12 +253,6 @@ impl MongoAgentLifecycleStore {
             )
             .into());
         }
-        let bytes = serde_json::to_vec(&input.request)
-            .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
-        let fingerprint = Binary {
-            subtype: BinarySubtype::Generic,
-            bytes: Sha256::digest(&bytes).to_vec(),
-        };
         if let Some(existing) = self
             .operations
             .find_one(doc! { "owner": owner.as_str(), "key": key })
@@ -268,34 +269,10 @@ impl MongoAgentLifecycleStore {
             }
             return Ok(CreateResult::Existing(Box::new(existing)));
         }
-        let now = DateTime::now();
-        let record = LifecycleRecord {
-            id: uuid::Uuid::new_v4().simple().to_string(),
-            owner: owner.to_string(),
-            key: key.to_owned(),
-            fingerprint,
-            creation_wire,
-            creation_fence,
-            input,
-            canary_admission: None,
-            canary_manifest_digest: None,
-            status: "queued".into(),
-            phase: "queued".into(),
-            events: Vec::new(),
-            sandbox_id: None,
-            agent_id: None,
-            repository_commit: None,
-            error: None,
-            failure: None,
-            connection: None,
-            lease_expires_at: None,
-            lease_token: None,
-            attempts: 0,
-            retry_at: None,
-            created_at: now,
-            updated_at: now,
-            document_schema_version: DOCUMENT_SCHEMA_VERSION,
-        };
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let mut record = LifecycleRecord::for_admission(id, owner, key, input)?;
+        record.creation_wire = creation_wire;
+        record.creation_fence = creation_fence;
         self.finish_create(record).await
     }
 

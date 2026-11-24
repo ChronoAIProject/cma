@@ -145,6 +145,7 @@ fn home(id: &layer2_core::SandboxId) -> SandboxHome {
     let request = NativePoolClaimRequest {
         pool: NativePoolBinding {
             spec: NativePoolSpec {
+                cold_canary: false,
                 image: RuntimeImage {
                     uri: format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
                     labels: std::collections::BTreeMap::from([
