@@ -9,6 +9,7 @@ use layer2_core::{
         store::{SandboxTransaction, SandboxTransactionStore},
         SandboxCheckpointRef,
     },
+    sandbox_usage::UsageTotals,
     sandbox_usage_cursor::{UsageCursorPolicy, UsageCursors},
     sandbox_usage_service::SandboxUsageService,
     Authorization, Capability, SubjectId,
@@ -82,6 +83,7 @@ async fn owner_events_and_retried_allocated_evidence_agree_across_pause() {
     assert!(owner["next"].is_null());
     let rows = owner["items"].as_array().unwrap();
     assert_owner_quantities(rows, &active.id, start, pause_at, end);
+    let expected_evidence = durable_evidence(&active, window, rows);
     let (status, foreign) = owner_events(
         store,
         &active.id,
@@ -112,11 +114,8 @@ async fn owner_events_and_retried_allocated_evidence_agree_across_pause() {
         assert_eq!(state.evidence_cursor, 0);
         assert_eq!(state.current.as_ref(), Some(window));
         assert_eq!(state.windows.len(), 1);
-        let evidence = state.windows[0].evidence.as_ref().unwrap();
-        assert_eq!(evidence.intervals.len(), rows.len());
-        for (interval, row) in evidence.intervals.iter().zip(rows) {
-            assert_eq!(interval.revision, row["revision"].as_u64().unwrap());
-        }
+        assert_eq!(&state.windows[0].window, window);
+        assert_eq!(state.windows[0].evidence.as_ref(), Some(&expected_evidence));
         respond.send(()).unwrap();
         state
     },);
@@ -305,6 +304,31 @@ fn assert_owner_quantities(rows: &[Value], id: &SandboxId, start: u64, pause_at:
     }
     assert_eq!(rows[0]["next_allocation"], compute);
     assert_eq!(rows[1]["next_allocation"], disk);
+}
+
+fn durable_evidence(sandbox: &Sandbox, window: &FundingWindow, rows: &[Value]) -> EvidenceRequest {
+    let intervals = rows
+        .iter()
+        .map(|row| EvidenceInterval {
+            revision: row["revision"].as_u64().unwrap(),
+            started_at: row["started_at"].as_u64().unwrap(),
+            ended_at: row["ended_at"].as_u64().unwrap(),
+            allocation: serde_json::from_value(row["allocation"].clone()).unwrap(),
+            quantity: UsageTotals {
+                uptime_seconds: row["quantity"]["uptime_seconds"].as_u64().unwrap(),
+                cpu_millis_seconds: row["quantity"]["cpu_millis_seconds"].as_u64().unwrap(),
+                memory_mib_seconds: row["quantity"]["memory_mib_seconds"].as_u64().unwrap(),
+                disk_gib_seconds: row["quantity"]["disk_gib_seconds"].as_u64().unwrap(),
+            },
+        })
+        .collect();
+    EvidenceRequest {
+        window_id: window.window_id.clone(),
+        owner_id: sandbox.owner.to_string(),
+        sandbox_id: sandbox.id.to_string(),
+        runtime_generation: window.runtime_generation,
+        intervals,
+    }
 }
 
 fn expected_post(sandbox: &Sandbox, rows: &[Value], generation: u64) -> Value {
