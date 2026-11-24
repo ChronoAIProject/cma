@@ -10,6 +10,7 @@ use super::super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VER
 use super::transaction::ApplyError;
 
 pub(super) mod scoped;
+pub(super) mod sessions;
 
 // Historical legacy-only fixture entry; production requires captured sources.
 #[cfg(test)]
@@ -26,6 +27,7 @@ pub(super) async fn live_activities(
         observed_at,
         None,
         IntegrityFailurePolicy::Quarantine,
+        false,
     )
     .await
 }
@@ -37,8 +39,9 @@ pub(super) async fn live_activities_with_sources(
     observed_at: &str,
     sources: Option<&scoped::CapturedActivities>,
     failure_policy: IntegrityFailurePolicy,
+    sessions_already_clear: bool,
 ) -> Result<Vec<SandboxAgentActivity>, ApplyError> {
-    let open_session = store
+    let open_session = !sessions_already_clear && store
         .sandbox_sessions
         .find_one(doc! {
             "sandbox_id": agents.first().map(|agent| agent.sandbox_id.as_str()).unwrap_or_default(),
@@ -91,8 +94,8 @@ pub(super) async fn live_activities_with_sources(
             .await
             .map_err(ApplyError::Driver)?
             .is_some();
-        activity.open_terminal_or_desktop_session =
-            open_session || layer2_core::sandbox::has_open_desktop_session(&agent.sandbox_id);
+        activity.open_terminal_or_desktop_session = !sessions_already_clear
+            && (open_session || layer2_core::sandbox::has_open_desktop_session(&agent.sandbox_id));
         activities.push(activity);
     }
     Ok(activities)

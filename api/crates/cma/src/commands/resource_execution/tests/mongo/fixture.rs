@@ -258,6 +258,9 @@ impl Fixture {
             .run_command(command)
             .await
             .unwrap();
+        if !enabled {
+            crate::store::test_visibility::majority_barrier(&self.client, &self.name).await;
+        }
     }
 
     pub async fn cleanup(self) {

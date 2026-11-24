@@ -119,20 +119,19 @@ pub(in crate::store) async fn read(
     session: &mut ClientSession,
 ) -> Result<AgentLogProjectionState, TransactionLogError> {
     let projections = collection(store, PROJECTIONS);
-    let find = projections.find_one(doc! {"_id":&head.agent_id});
     // The head has already established this session's snapshot. Override the
     // collection's majority default, which cannot carry atClusterTime. A
     // transaction session has no snapshot_time and keeps its transaction concern.
-    let find = if session.snapshot_time().is_some() {
-        find.read_concern(ReadConcern::snapshot())
-    } else {
-        find
-    };
-    let row = find
-        .session(session)
-        .await
-        .map_err(TransactionLogError::Driver)?
-        .ok_or_else(corrupt)?;
+    let snapshot = session.snapshot_time().is_some();
+    let row = crate::store::stale_turns::find_with_proof_budget(
+        &projections,
+        doc! {"_id":&head.agent_id},
+        session,
+        snapshot,
+    )
+    .await
+    .map_err(TransactionLogError::Driver)?
+    .ok_or_else(corrupt)?;
     let projection: Projection = bson::deserialize_from_document(row).map_err(|_| corrupt())?;
     validate_projection(&projection, agent, head)?;
     Ok(projection.record)
@@ -297,16 +296,16 @@ pub(in crate::store) async fn evidence(
     session: &mut ClientSession,
 ) -> Result<Option<EvidenceRecord>, TransactionLogError> {
     let evidence = collection(store, EVIDENCE);
-    let find = evidence.find_one(doc! {"agent_id":&head.agent_id,"incarnation":&head.incarnation,"evidence_generation":&head.evidence_generation,"kind":kind,"entity_key":key});
-    let find = if session.snapshot_time().is_some() {
-        find.read_concern(ReadConcern::snapshot())
-    } else {
-        find
-    };
-    let Some(row) = find
-        .session(session)
-        .await
-        .map_err(TransactionLogError::Driver)?
+    let snapshot = session.snapshot_time().is_some();
+    let Some(row) = crate::store::stale_turns::find_with_proof_budget(
+        &evidence,
+        doc! {"agent_id":&head.agent_id,"incarnation":&head.incarnation,
+        "evidence_generation":&head.evidence_generation,"kind":kind,"entity_key":key},
+        session,
+        snapshot,
+    )
+    .await
+    .map_err(TransactionLogError::Driver)?
     else {
         return Ok(None);
     };

@@ -94,6 +94,7 @@ async fn outer_shared_reopen_delivery_acknowledges_only_after_fenced_retry_succe
                 &recorder,
                 &AgentId("agt_shared_reopen".into()),
                 &guard,
+                false,
             ),
         )
         .await
@@ -261,6 +262,7 @@ async fn reopen_result_stays_charged_through_blocked_ack_and_cancellation() {
             &recorder,
             &id,
             &guard,
+            false,
         ));
         assert!(futures_util::poll!(&mut draining).is_pending());
         assert_eq!(
@@ -336,6 +338,7 @@ async fn enabled_reopen_uses_admitted_ack_and_refuses_legacy_or_full_queues() {
             &recorder,
             &id,
             &guard,
+            false,
         ));
         let polled = futures_util::poll!(&mut draining);
         if mode == "success" {
@@ -357,5 +360,98 @@ async fn enabled_reopen_uses_admitted_ack_and_refuses_legacy_or_full_queues() {
             root.available_bytes(),
             root.capacity_bytes() - root.metadata_bytes()
         );
+    }
+}
+
+struct DiscontinuityRecorder {
+    entered: tokio::sync::Notify,
+    attempts: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl AgentUpdateRecorder for DiscontinuityRecorder {
+    async fn record_update(
+        &self,
+        _: &AgentId,
+        _: u64,
+        _: &mut AgentMessageAssembly,
+        _: ConversationUpdate,
+        _: String,
+    ) -> Result<AgentUpdateOutcome, AgentConversationError> {
+        panic!("reopen must use the fenced session path")
+    }
+
+    async fn record_reopen_update(
+        &self,
+        _: &AgentId,
+        _: &AgentReopenGuard,
+        _: &mut AgentMessageAssembly,
+        _: ConversationUpdate,
+        _: String,
+    ) -> Result<AgentUpdateOutcome, AgentConversationError> {
+        self.attempts.fetch_add(1, Ordering::SeqCst);
+        self.entered.notify_one();
+        tokio::task::yield_now().await;
+        Err(AgentConversationError::ReopenOutputDiscontinuity)
+    }
+}
+
+#[tokio::test]
+async fn session_reopen_preserves_terminal_discontinuity_without_ack_or_retry() {
+    for terminal in [false, true] {
+        for opening_fails in [false, true] {
+            let recorder = DiscontinuityRecorder {
+                entered: tokio::sync::Notify::new(),
+                attempts: AtomicUsize::new(0),
+            };
+            let (ack, mut acknowledged) = mpsc::channel(1);
+            let (sender, mut receiver) = mpsc::channel(1);
+            sender
+                .send(ConversationUpdate::RuntimeOutput {
+                    receipt: RuntimeOutputReceipt::new(
+                        RuntimeOutputSource {
+                            stream_id: "00000000-0000-4000-8000-000000000003".into(),
+                            cursor: 2,
+                            native_conversation_id: "synthetic-conversation".into(),
+                            payload_sha256: "d".repeat(64),
+                        },
+                        ack,
+                    ),
+                    update: None,
+                })
+                .await
+                .unwrap();
+            let opening_error = AdapterError::Unsupported("original opener refusal".into());
+            let operation = async {
+                recorder.entered.notified().await;
+                if opening_fails {
+                    Err::<(), _>(opening_error.clone())
+                } else {
+                    std::future::pending().await
+                }
+            };
+            let result = tokio::time::timeout(
+                Duration::from_secs(1),
+                drain(
+                    operation,
+                    &mut receiver,
+                    &recorder,
+                    &AgentId("agt_reopen_discontinuity".into()),
+                    &guard(),
+                    terminal,
+                ),
+            )
+            .await
+            .expect("discontinuity must refuse without retrying or waiting for the opener");
+            if terminal {
+                assert_eq!(result, Err(AdapterError::Rejected(OUTPUT_REFUSED.into())));
+            } else if opening_fails {
+                assert_eq!(result, Err(opening_error));
+            } else {
+                assert!(matches!(result, Err(AdapterError::Unavailable(_))));
+            }
+            assert_eq!(recorder.attempts.load(Ordering::SeqCst), 1);
+            assert_eq!(acknowledged.recv().await, None);
+        }
     }
 }

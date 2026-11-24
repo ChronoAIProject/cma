@@ -1,7 +1,7 @@
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::{store::SandboxStoreError, AgentLogEntry, AgentLogKind};
 use mongodb::{
-    bson::{doc, Document, RawDocumentBuf},
+    bson::{self, doc, Document, RawDocumentBuf},
     options::ReadConcern,
     ClientSession, Database,
 };
@@ -88,17 +88,16 @@ async fn read_head_from(
     }
 
     let heads = majority_collection(db, HEADS);
-    let find = heads.find_one(doc! {"_id":agent.id.as_str()});
-    let find = if snapshot {
-        find.read_concern(ReadConcern::snapshot())
-    } else {
-        find
-    };
     let head = Head::read(
-        find.session(&mut *session)
-            .await
-            .map_err(TransactionLogError::Driver)?
-            .ok_or_else(corrupt)?,
+        crate::store::stale_turns::find_with_proof_budget(
+            &heads,
+            doc! {"_id":agent.id.as_str()},
+            &mut *session,
+            snapshot,
+        )
+        .await
+        .map_err(TransactionLogError::Driver)?
+        .ok_or_else(corrupt)?,
     )?;
     if head.agent_id != agent.id.as_str()
         || head.incarnation != incarnation
@@ -144,21 +143,19 @@ async fn validate_unsealed_creation(
     session: &mut ClientSession,
     snapshot: bool,
 ) -> Result<()> {
-    let source = majority_collection::<RawDocumentBuf>(db, AGENT_LOG);
+    let source = majority_collection::<Document>(db, AGENT_LOG);
     let mut read = crate::store::mongo_read_telemetry::Read::find(source.name());
-    let query = source.find_one(doc! {"agent_id":agent.id.as_str(),"seq":1_i64});
-    let query = if snapshot {
-        query.read_concern(ReadConcern::snapshot())
-    } else {
-        query
-    };
-    let raw = query
-        .session(session)
-        .await
-        .map_err(TransactionLogError::Driver)?
-        .ok_or_else(corrupt)?;
-    read.document(raw.as_bytes().len());
-    let entry = read_entry(&Document::try_from(&raw).map_err(|_| corrupt())?)?;
+    let row = crate::store::stale_turns::find_with_proof_budget(
+        &source,
+        doc! {"agent_id":agent.id.as_str(),"seq":1_i64},
+        session,
+        snapshot,
+    )
+    .await
+    .map_err(TransactionLogError::Driver)?
+    .ok_or_else(corrupt)?;
+    read.document(bson::serialize_to_vec(&row).map_err(|_| corrupt())?.len());
+    let entry = read_entry(&row)?;
     if entry.agent_id != agent.id
         || entry.seq != 1
         || !matches!(&entry.kind,
@@ -189,19 +186,16 @@ async fn seal_at_from(
     snapshot: bool,
 ) -> Result<Seal> {
     let seals = majority_collection(db, SEGMENTS);
-    let find = seals.find_one(doc! {
-        "agent_id": &head.agent_id, "incarnation": &head.incarnation, "ordinal":ordinal,
-    });
-    let find = if snapshot {
-        find.read_concern(ReadConcern::snapshot())
-    } else {
-        find
-    };
     let seal = Seal::read(
-        find.session(session)
-            .await
-            .map_err(TransactionLogError::Driver)?
-            .ok_or_else(corrupt)?,
+        crate::store::stale_turns::find_with_proof_budget(
+            &seals,
+            doc! {"agent_id": &head.agent_id, "incarnation": &head.incarnation, "ordinal":ordinal},
+            session,
+            snapshot,
+        )
+        .await
+        .map_err(TransactionLogError::Driver)?
+        .ok_or_else(corrupt)?,
     )?;
     if seal.agent_id != head.agent_id
         || seal.incarnation != head.incarnation
