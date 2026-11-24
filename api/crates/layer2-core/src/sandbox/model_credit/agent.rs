@@ -174,16 +174,25 @@ impl AgentTurnFunding {
         agent: &Agent,
         sandbox: &Sandbox,
     ) -> Result<(), FundingError> {
-        let selected = self.selected(agent, sandbox).await?;
-        self.credit()
-            .check_dispatch(
-                &message.phase,
-                Some(&message.identity),
-                &selected,
-                &message.request(None),
-            )
+        self.check_message_dispatch(message, agent, sandbox, &message.request(None))
             .await?;
         Ok(())
+    }
+
+    async fn check_message_dispatch(
+        &self,
+        message: &FundedAgentMessage,
+        agent: &Agent,
+        sandbox: &Sandbox,
+        request: &ModelPhaseRequest,
+    ) -> Result<Checkpoint, FundingError> {
+        let credit = self.credit();
+        let held = credit
+            .read_dispatch(&message.phase, Some(&message.identity), request)
+            .await?;
+        let selected = self.selected(agent, sandbox).await?;
+        credit.check_binding(&held, &selected).await?;
+        Ok(held)
     }
 
     pub(in crate::sandbox) async fn dispatch_message(
@@ -193,16 +202,42 @@ impl AgentTurnFunding {
         sandbox: &Sandbox,
         target: AgentRuntimeTarget,
     ) -> Result<Effect, FundingError> {
-        let selected = self.selected(agent, sandbox).await?;
-        let credit = self.credit();
         let request = message.request(Some(target));
-        let held = credit
-            .check_dispatch(&message.phase, Some(&message.identity), &selected, &request)
+        let held = self
+            .check_message_dispatch(message, agent, sandbox, &request)
             .await?;
-        let checkpoint = credit.dispatch_held(held, request).await?;
+        let checkpoint = self.credit().dispatch_held(held, request).await?;
         match checkpoint.state {
             PhaseState::Settled(effect) => Ok(effect),
             _ => Err(FundingError::ReconciliationRequired),
+        }
+    }
+
+    /// A local dispatch error does not prove that another dispatcher never began.
+    /// Retire Reserved with the same CAS as begin, or return an already final result.
+    pub(in crate::sandbox) async fn resolve_failed_dispatch(
+        &self,
+        message: &FundedAgentMessage,
+    ) -> Result<Effect, FundingError> {
+        let held = self.authority.read(&message.phase).await?;
+        if held.reservation.id != message.phase
+            || held.reservation.command.as_ref() != Some(&message.identity)
+            || held.reservation.request_digest != self.gateway.digest(&message.request(None))
+        {
+            return Err(FundingError::CheckpointChanged);
+        }
+        match held.state {
+            PhaseState::Reserved => {
+                self.credit().settle(&held, Effect::NotStarted).await?;
+                Ok(Effect::NotStarted)
+            }
+            PhaseState::Settled(effect) => match effect {
+                Effect::Finished { spent } if spent > held.reservation.limit.get() => {
+                    Err(FundingError::ReconciliationRequired)
+                }
+                _ => Ok(effect),
+            },
+            PhaseState::InFlight => Err(FundingError::ReconciliationRequired),
         }
     }
 
