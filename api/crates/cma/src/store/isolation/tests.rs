@@ -487,7 +487,7 @@ mod observation_grants_tests {
                 .unwrap()
                 .get_str("collection")
                 .unwrap()
-                != super::super::agent_observation::COLLECTION
+                != crate::store::agent_observation::COLLECTION
         });
         validate(&status(grants.clone()), "cma").unwrap();
         assert!(validate_observation_grants(&status(grants), "cma").is_err());
