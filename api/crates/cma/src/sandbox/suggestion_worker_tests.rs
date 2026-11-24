@@ -149,11 +149,11 @@ impl Fixture {
         store.create_agent(agent.clone()).await.unwrap();
         let credentials = Arc::new(Credentials(Mutex::new(Some(CredentialMaterial {
             source: Default::default(),
-            github_route: None,
             sandbox_id: sandbox.id.clone(),
             owner: sandbox.owner.clone(),
             authority: sandbox.credential.current.clone().unwrap(),
             value: SecretValue::new(KEY.into()),
+            github_route: None,
         }))));
         let reading = Arc::new(Reading(Mutex::new(SuggestionStatus::Running)));
         let budget = Arc::new(Budget {
