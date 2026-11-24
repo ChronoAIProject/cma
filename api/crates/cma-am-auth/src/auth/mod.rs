@@ -79,8 +79,6 @@ pub use middleware::attach_subject;
 pub use records::SignInRecords;
 pub use tokens::ProviderMetadata;
 
-#[cfg(any(test, feature = "test-support"))]
-use persistence::MemoryAuthStore;
 use persistence::{AuthStore, DurableSubjectTokens, SecretDigest, SubjectAuthState};
 use profile::Profile;
 
@@ -179,102 +177,6 @@ pub struct RequestAuth {
 }
 
 impl AuthState {
-    #[cfg(feature = "test-support")]
-    pub fn fixture_active_receipts(&self) -> usize {
-        self.identity_store.active_receipts()
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn clear_fixture_identity_store(&self) {
-        self.identity_store.clear();
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn fixture_verification_slots(&self) -> &tokio::sync::Semaphore {
-        &self.verification_slots
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn with_fixture_grant_authority(
-        mut self: Arc<Self>,
-        authority: Arc<dyn service_authorization::GrantAuthority>,
-    ) -> Arc<Self> {
-        Arc::get_mut(&mut self)
-            .expect("test authority is configured before sharing")
-            .service_authorization = Some(authority);
-        self
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn fixture_grant_authority(&self) -> Option<&dyn service_authorization::GrantAuthority> {
-        self.service_authorization.as_deref()
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn set_fixture_standing(
-        &mut self,
-        standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
-    ) {
-        self.standing = standing;
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn enable_fixture_account_deletion(&mut self) {
-        self.account_deletion_enabled = true;
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn fixture_cookie_verifications(&self) -> &cookie_authorization::VerificationFlights {
-        &self.cookie_verifications
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn enable_fixture_browser_session_join(&mut self) {
-        self.browser_session_join_enabled = true;
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn set_fixture_http(&mut self, http: reqwest::Client) {
-        self.http = http;
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn fixture_mode(&self) -> &AuthMode {
-        &self.mode
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn fixture_http(&self) -> &reqwest::Client {
-        &self.http
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn fixture_metadata(&self) -> &RwLock<Option<ProviderMetadata>> {
-        &self.metadata
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn set_fixture_store(&mut self, store: Arc<dyn AuthStore>) {
-        self.store = store;
-    }
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn in_memory(mode: AuthMode, records: Option<SignInRecords>) -> Arc<Self> {
-        Self::with_store(mode, records, Arc::new(MemoryAuthStore::default()))
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn with_store(
-        mode: AuthMode,
-        records: Option<SignInRecords>,
-        store: Arc<dyn AuthStore>,
-    ) -> Arc<Self> {
-        let nyxid_public_url = match &mode {
-            AuthMode::Provider { base_url, .. } => Some(base_url.clone()),
-            AuthMode::Trusted { .. } => None,
-        };
-        Self::with_store_and_nyxid_public_url(mode, records, store, nyxid_public_url)
-    }
-
     /// Build auth state with separate NyxID back-channel and browser origins.
     pub fn with_store_and_nyxid_public_url(
         mode: AuthMode,
