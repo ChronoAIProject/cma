@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - "develop"
+      - "tl/release/**"
   # Required checks must also report on the develop merge queue's group refs.
   # Each entry's ref is unique, so a PR or push run never cancels it.
   merge_group:
@@ -37,7 +38,7 @@ jobs:
       deployables: "${{ steps.select.outputs.deployables }}"
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
         with:
           fetch-depth: 0
       -
@@ -46,12 +47,12 @@ jobs:
         working-directory: "."
         run: "python3 -c 'import os,tomllib; v=tomllib.load(open(\"api/rust-toolchain.toml\",\"rb\"))[\"toolchain\"][\"channel\"]; open(os.environ[\"GITHUB_OUTPUT\"],\"a\").write(\"channel=\"+v+\"\\n\")'"
       -
-        uses: "dtolnay/rust-toolchain@stable"
+        uses: "dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca"
         with:
           toolchain: "${{ steps.toolchain.outputs.channel }}"
           components: "rustfmt, clippy"
       -
-        uses: "actions/setup-python@v6"
+        uses: "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1"
         with:
           python-version: "3.12"
       -
@@ -73,7 +74,7 @@ jobs:
     timeout-minutes: 5
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
         env:
           DEPLOYABLES: "${{ needs.changes.outputs.deployables }}"
@@ -174,7 +175,7 @@ jobs:
     timeout-minutes: 5
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
         name: "Validate track result"
         env:
@@ -194,7 +195,7 @@ jobs:
     timeout-minutes: 5
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
         name: "Validate track result"
         env:
@@ -214,7 +215,7 @@ jobs:
     timeout-minutes: 5
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
         name: "Validate track result"
         env:
@@ -231,7 +232,7 @@ jobs:
     timeout-minutes: 5
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
         name: "Validate track result"
         env:

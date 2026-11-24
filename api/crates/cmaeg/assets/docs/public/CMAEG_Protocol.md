@@ -841,6 +841,41 @@ record for the caller. An unavailable capability or an ambiguous response
 provides no receipt.
 
 
+`GET /v1/channel-records/{record_id}/management` inspects a retained record,
+including a legacy record without creation metadata. It requires the creator
+bearer permission `cma-eg:channels:read` and applies the existing `X-CMAEG-Owner`
+organization authorization. After authorization, `record_id` must be a canonical
+lowercase UUID v4. GET and HEAD return `Cache-Control: no-store` and the protocol
+version header, including errors.
+
+The response contains `record_id`, the current storage `version`, and a tagged
+`record`. A valid definition exposes its name, owner, provider slug and conformance
+level, and these independent states:
+
+- `creation`: `legacy` when creation metadata is absent, otherwise `incomplete`
+  or `complete` according to the retained flag.
+- `address`: `not_recorded` without creation metadata, `unverifiable` when the
+  saved channel ID cannot be verified, or `available` with the original
+  `channel_id` and ordinary `endpoints`. Verification checks the retained key,
+  record identity and configured current or retained record origin. No new ID is
+  issued, and an unverifiable ID is withheld.
+- Optional `pending_operation`: one of `create`, `update`, `delete`,
+  `audit_routing`, or `audit_attachments`. Other operation details are withheld.
+
+An owned, decoded definition that fails validation returns only
+`{"record_id":"<record>","version":1,"record":{"state":"invalid"}}`.
+Missing records and decoded owner or embedded record-ID mismatches return opaque
+404 responses. An unopenable blob or undecodable definition, including a saved
+channel ID rejected during type decoding, returns a sanitized 500. Store failure
+returns 503; malformed path IDs return 400 before a record lookup.
+
+This read does not write channel records, publish index entries, repair bindings,
+contact channel providers or perform cleanup. Existing identity and service-token
+authentication still applies. An available address or complete creation flag does
+not establish current provider readiness or permission to retry or retire a
+channel. The storage version is an observation, not mutation authorization.
+The existing recovery response remains unchanged.
+
 A channel response has this shape (ellipsis denotes the previously supplied
 profile/policy objects, not a literal JSON value):
 
@@ -862,6 +897,7 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channel-records/{record_id}` | No body | 200 recovered channel response | 404 absent, unreserved, or other owner |
 | `GET /v1/channel-records/cancel-create-capability` | No body | 200 cancellation contract version | 503 when cancellation is unavailable |
 | `POST /v1/channel-records/{record_id}/cancel-create` | No body | 200 creator-scoped cancellation receipt | 409 when the creator still owns a record |
+| `GET /v1/channel-records/{record_id}/management` | No body | 200 tagged retained-record summary | 400 malformed UUID; 404 absent or other owner; 500 unreadable record; 503 store unavailable |
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
 | `GET /v1/channels/{channel_id}/activity` | No body | 200 bounded recent activity snapshot with cursor, retention and truncation | 404 absent or other owner; 503 store unavailable |
 | `GET /v1/channels/{channel_id}/activity/stream` | Optional `Last-Event-ID` or `cursor` | SSE `activity`/`reset` full snapshots; initial snapshot on every connection | 400 invalid cursor; 404 absent or other owner |
@@ -2125,6 +2161,15 @@ nullable display name. Bot-only joins are refused. The actor is
 group and topic, if present. The existing non-human routing policy controls
 which consumers receive the event. Retries reuse the original Telegram update
 identity and the admitted turn.
+
+A verified NyxID Telegram relay source may use the same group list when
+`relay_telegram_member_joins_enabled` is available. Configure an explicit
+receiving bot ID, the bound relay routes and each permitted group ID. The
+signed callback's normalized group and sender must agree with the original
+Telegram update. The CloudEvent source is `nyxid:route:<route_id>`, and
+deduplication uses that route and the original Telegram update ID. The reply
+uses the authenticated relay token for the original group. Each Telegram
+transport has its own authoring and intake switch.
 
 Activity kind is one of:
 
@@ -3822,6 +3867,7 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/channel-records/{record_id}` | `recoverChannel` |
 | `GET /v1/channel-records/cancel-create-capability` | `cancelCreateCapability` |
 | `POST /v1/channel-records/{record_id}/cancel-create` | `cancelChannelCreate` |
+| `GET /v1/channel-records/{record_id}/management` | `getChannelRecordManagement` |
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `GET /v1/channels/{channel_id}/partition` | `inspectChannelPartition` |

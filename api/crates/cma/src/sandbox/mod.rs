@@ -37,6 +37,7 @@ mod title_budget;
 mod title_scheduler;
 mod title_worker;
 pub(crate) mod titles;
+pub(crate) mod turn_timeout_worker;
 mod unavailable_credentials;
 pub(crate) mod unpublished_recovery;
 mod warmup;
@@ -77,6 +78,11 @@ mod worker_tests;
 pub(crate) use worker_tests::exercise_native_retirement_finality;
 #[cfg(test)]
 pub(crate) use worker_tests::exercise_runtime_update_reopen_http;
+#[cfg(test)]
+pub(crate) use worker_tests::{
+    seed_sandbox_profile_with_capacity, ActionLog, AgentStopRecorder, MemoryCredentials,
+    WorkspaceRecorder,
+};
 
 pub(crate) mod legacy_credentials;
 

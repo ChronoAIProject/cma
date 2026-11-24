@@ -45,7 +45,10 @@ export function UsageInventoryRow({
             className="usage-inventory-meta"
             onToggle={(event) => setMetadataOpen(event.currentTarget.open)}
           >
-            <summary>Details · {displayQuantity(row.agent_count)} Agents</summary>
+            <summary>
+              Details · {displayQuantity(row.agent_count)}{' '}
+              {row.agent_count === 1 ? 'Agent' : 'Agents'}
+            </summary>
             {metadataOpen && (
               <>
                 <UsageIdentity label="Sandbox ID" value={row.sandbox_id} />

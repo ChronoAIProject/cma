@@ -1,4 +1,5 @@
 use super::*;
+use crate::transaction_terminal::GuardedTerminal as _;
 
 impl Store {
     pub async fn update_binding(
@@ -52,10 +53,7 @@ impl Store {
             .map_err(transaction_error)?;
         self.guard_integration(owner, integration, &mut session)
             .await?;
-        session
-            .commit_transaction()
-            .await
-            .map_err(transaction_error)?;
+        session.commit_guarded().await.map_err(transaction_error)?;
         Ok(())
     }
 

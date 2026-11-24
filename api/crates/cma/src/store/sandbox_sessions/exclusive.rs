@@ -1,4 +1,5 @@
 //! Replica-mode desktop claims share the Sandbox's maintenance write fence.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::{DesktopSessionRequest, SandboxStoreError};
 use layer3_adapter::DesktopOwnership;
 use mongodb::{
@@ -82,7 +83,7 @@ async fn transaction(
                 }
             },
             Err(error) => {
-                if session.abort_transaction().await.is_err() {
+                if session.abort_guarded().await.is_err() {
                     tracing::warn!("desktop claim transaction abort unavailable");
                 }
                 match error {

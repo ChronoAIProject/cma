@@ -57,6 +57,7 @@ use utoipa::OpenApi;
         http::creation::recover_channel,
         http::creation::cancel_create_capability,
         http::creation::cancel_create,
+        http::record_management::read,
         http::management::get_channel,
         http::partitions::inspect,
         http::partition_resets::reset,

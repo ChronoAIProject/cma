@@ -3,6 +3,7 @@ use layer3_adapter::agent_sandbox::{
     NativePoolClaim, NativePoolClaimRequest, NativePoolCleanup, NativePoolControl,
     NativePoolPodPolicy,
 };
+use std::collections::BTreeMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex,
@@ -492,3 +493,6 @@ mod retirement_tests;
 
 #[path = "startup_tests.rs"]
 mod startup_tests;
+
+#[path = "runtime_pointer_tests.rs"]
+pub(crate) mod runtime_pointer;

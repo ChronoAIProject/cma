@@ -6,9 +6,13 @@ import { agentClient } from '../test/agent';
 import { DesktopPanel } from './DesktopPanel';
 import type { ComponentProps } from 'react';
 
+// Clock timers are covered separately; these assertions isolate connection retries.
+vi.mock('./DesktopLocalTime', () => ({ DesktopLocalTime: () => null }));
+
 type Connection = EventTarget & {
   viewOnly: boolean;
   canvas: HTMLCanvasElement;
+  painted: boolean;
   disconnect: ReturnType<typeof vi.fn>;
 };
 const { connections } = vi.hoisted(() => ({ connections: [] as Connection[] }));
@@ -16,6 +20,7 @@ vi.mock('@novnc/novnc', () => ({
   default: class extends EventTarget {
     viewOnly = true;
     canvas = document.createElement('canvas');
+    painted = true;
     disconnect = vi.fn(() => this.canvas.remove());
     focus = vi.fn();
     blur = vi.fn();
@@ -23,7 +28,7 @@ vi.mock('@novnc/novnc', () => ({
     constructor(target: HTMLElement) {
       super();
       Object.defineProperty(this.canvas, 'getContext', {
-        value: () => ({ getImageData: () => ({ data: [0, 0, 0, 255] }) }),
+        value: () => ({ getImageData: () => ({ data: [0, 0, 0, this.painted ? 255 : 0] }) }),
       });
       target.append(this.canvas);
       connections.push(this);
@@ -90,6 +95,34 @@ function visible(value: boolean) {
 const exhausted = 'Could not reconnect automatically. Choose Reconnect to try again.';
 const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
+it('recovers from repeated 30-second stream drops followed by runtime unavailability', async () => {
+  const { discover } = mount();
+  await advance(0);
+  for (let index = 0; index < 6; index++) {
+    act(() => connections[index]!.dispatchEvent(new Event('connect')));
+    await advance(30_000);
+    if (index === 5)
+      discover.mockRejectedValueOnce(
+        new ApiError(503, 'Synthetic failure', 'desktop_runtime_unavailable'),
+      );
+    act(() => connections[index]!.dispatchEvent(new Event('disconnect')));
+    await advance(Math.min(30_000, 1_000 * 2 ** index));
+  }
+  expect(discover).toHaveBeenCalledTimes(7);
+  expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+  expect(screen.queryByText('Automatic reconnect attempts have stopped')).not.toBeInTheDocument();
+  await advance(30_000);
+  expect(discover).toHaveBeenCalledTimes(8);
+  connections[6]!.painted = false;
+  act(() => connections[6]!.dispatchEvent(new Event('connect')));
+  expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+  expect(screen.getByRole('button', { name: 'Control desktop' })).toBeDisabled();
+  connections[6]!.painted = true;
+  await advance(50);
+  expect(screen.getByRole('status')).toHaveTextContent('Connected');
+  expect(connections[6]!.viewOnly).toBe(true);
+});
+
 it('keeps the reconnect status while a refresh briefly withholds the runtime version', async () => {
   const { discover, redraw } = mount(new ApiError(503, 'Synthetic failure'), {
     runtimeVersion: 'runtime-one',
@@ -102,6 +135,10 @@ it('keeps the reconnect status while a refresh briefly withholds the runtime ver
   redraw({ runtimeVersion: undefined });
   expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
   redraw({ runtimeVersion: 'runtime-one' });
+  expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+  redraw({ runtimeReady: false, runtimeVersion: undefined });
+  expect(screen.getByRole('status')).toHaveTextContent('Waiting');
+  redraw({ runtimeReady: true, runtimeVersion: 'runtime-one' });
   expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
   expect(discover).toHaveBeenCalledTimes(1);
   await advance(1000);
@@ -126,35 +163,38 @@ it('does not spend the automatic budget when a refresh supersedes an attempt in 
   expect(screen.getByRole('status')).not.toHaveTextContent(exhausted);
 });
 
-it('stops after one initial and six automatic discoveries with no loading timers', async () => {
+it('stops only when the five-minute retry budget expires with no loading timers', async () => {
   const { discover } = mount(new ApiError(503, 'Synthetic failure'));
-  await advance(61_000);
-  expect(discover).toHaveBeenCalledTimes(7);
+  await advance(299_999);
+  expect(discover).toHaveBeenCalledTimes(14);
+  expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+  await advance(1);
   expect(screen.getByRole('status')).toHaveTextContent(
     'Could not reconnect automatically. Choose Reconnect to try again.',
   );
   expect(screen.getByRole('button', { name: 'Control desktop' })).toBeDisabled();
   expect(vi.getTimerCount()).toBe(0);
   await advance(600_000);
-  expect(discover).toHaveBeenCalledTimes(7);
+  expect(discover).toHaveBeenCalledTimes(14);
 });
 
-it('stops on exact typed desktop unavailability and allows explicit retry', async () => {
-  const { discover } = mount(
-    new ApiError(404, '<html>private detail</html>', 'desktop_unavailable'),
-  );
-  await advance(0);
-  expect(screen.getByRole('status')).toHaveTextContent(
-    'Desktop is currently unavailable. Reconnect when it becomes available.',
-  );
-  expect(document.body).not.toHaveTextContent('private detail');
-  expect(vi.getTimerCount()).toBe(0);
-  await advance(600_000);
-  expect(discover).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
-  await advance(0);
-  expect(discover).toHaveBeenCalledTimes(2);
-});
+it.each([undefined, 'desktop_unavailable', 'not_found'])(
+  'stops on every HTTP 404 (%s) and allows explicit retry',
+  async (code) => {
+    const { discover } = mount(new ApiError(404, '<html>private detail</html>', code));
+    await advance(0);
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Desktop is currently unavailable. Reconnect when it becomes available.',
+    );
+    expect(document.body).not.toHaveTextContent('private detail');
+    expect(vi.getTimerCount()).toBe(0);
+    await advance(600_000);
+    expect(discover).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
+    await advance(0);
+    expect(discover).toHaveBeenCalledTimes(2);
+  },
+);
 
 it.each([401, 403])('stops on %s without claiming to reconnect', async (status) => {
   const { discover } = mount(new ApiError(status, 'private service error'));
@@ -171,18 +211,17 @@ it.each([401, 403])('stops on %s without claiming to reconnect', async (status) 
 });
 
 it.each([
-  new ApiError(404, 'desktop_unavailable'),
-  new ApiError(404, 'Synthetic failure', 'not_found'),
+  new ApiError(503, 'Synthetic failure', 'desktop_runtime_unavailable'),
   new ApiError(503, 'Synthetic failure', 'desktop_unavailable'),
   new Error('desktop_unavailable'),
   { status: 404, code: 'desktop_unavailable' },
-])('does not infer a terminal refusal from an untrusted error: %s', async (failure) => {
+])('retries transient and untyped errors without inferring a refusal: %s', async (failure) => {
   const { discover } = mount(failure);
   await advance(1_000);
   expect(discover).toHaveBeenCalledTimes(2);
   expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
-  await advance(60_000);
-  expect(discover).toHaveBeenCalledTimes(7);
+  await advance(299_000);
+  expect(discover).toHaveBeenCalledTimes(14);
   expect(screen.getByRole('status')).toHaveTextContent(exhausted);
 });
 
@@ -191,7 +230,7 @@ it.each([
   new ApiError(503, 'Synthetic failure'),
 ])('retains a terminal budget across visibility and same-scope effects: %s', async (failure) => {
   const { discover, redraw } = mount(failure);
-  await advance(61_000);
+  await advance(300_000);
   const calls = discover.mock.calls.length;
   const message = screen.getByRole('status').textContent;
   visible(false);
@@ -208,11 +247,11 @@ it.each([
   expect(document.querySelector('.agent-desktop__placeholder')).toBeNull();
 });
 
-it('does not spend attempts while hidden or rescheduling an existing cooldown', async () => {
+it('makes no requests while hidden and preserves backoff across same-scope effects', async () => {
   const { discover, redraw } = mount(new ApiError(503, 'Synthetic failure'));
   await advance(0);
   visible(false);
-  await advance(600_000);
+  await advance(10_000);
   expect(discover).toHaveBeenCalledTimes(1);
   visible(true);
   visible(true);
@@ -227,30 +266,71 @@ it('does not spend attempts while hidden or rescheduling an existing cooldown', 
   await advance(1);
   expect(discover).toHaveBeenCalledTimes(3);
   await advance(600_000);
-  expect(discover).toHaveBeenCalledTimes(7);
   expect(screen.getByRole('status')).toHaveTextContent(exhausted);
+});
+
+it('does not renew an expired budget when the hidden panel becomes visible', async () => {
+  const { discover } = mount(new ApiError(503, 'Synthetic failure'));
+  await advance(0);
+  visible(false);
+  await advance(300_000);
+  visible(true);
+  await advance(0);
+  expect(discover).toHaveBeenCalledOnce();
+  expect(screen.getByRole('status')).toHaveTextContent(exhausted);
+});
+
+it('ends recovery at the budget deadline even when Retry-After exceeds it', async () => {
+  const { discover } = mount(new ApiError(503, 'Busy', undefined, undefined, 600_000));
+  await advance(299_999);
+  expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+  await advance(1);
+  expect(discover).toHaveBeenCalledOnce();
+  expect(screen.getByRole('status')).toHaveTextContent(exhausted);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('aborts discovery at budget expiry and ignores its late success', async () => {
+  const { discover } = mount(new ApiError(503, 'Synthetic failure'));
+  await advance(241_000);
+  let finish!: (value: { websocket_url: string }) => void;
+  discover.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await advance(30_000);
+  const signal = discover.mock.calls.at(-1)![1]!.signal!;
+  expect(signal.aborted).toBe(false);
+  await advance(29_000);
+  expect(signal.aborted).toBe(true);
+  await act(async () => finish({ websocket_url: '/api/v1/agents/agt_retry/desktop/ws' }));
+  expect(connections).toHaveLength(0);
+  expect(screen.getByRole('status')).toHaveTextContent(exhausted);
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 it.each([409, 429])(
   'resets an exhausted budget manually without shortening the final %s cooldown',
   async (status) => {
     const { discover } = mount(new ApiError(503, 'Synthetic failure'));
-    await advance(31_000);
-    expect(discover).toHaveBeenCalledTimes(6);
+    await advance(241_000);
+    expect(discover).toHaveBeenCalledTimes(13);
     discover.mockRejectedValueOnce(new ApiError(status, 'Busy', 'desktop_busy', undefined, 90_000));
-    await advance(30_000);
-    expect(discover).toHaveBeenCalledTimes(7);
+    await advance(59_000);
+    expect(discover).toHaveBeenCalledTimes(14);
     expect(screen.getByRole('status')).toHaveTextContent(exhausted);
     fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
     visible(false);
-    await advance(89_999);
+    await advance(60_999);
     visible(true);
     visible(true);
-    expect(discover).toHaveBeenCalledTimes(7);
-    await advance(1);
-    expect(discover).toHaveBeenCalledTimes(8);
-    await advance(61_000);
     expect(discover).toHaveBeenCalledTimes(14);
+    await advance(1);
+    expect(discover).toHaveBeenCalledTimes(15);
+    await advance(300_000);
+    expect(discover).toHaveBeenCalledTimes(28);
     expect(screen.getByRole('status')).toHaveTextContent(exhausted);
   },
 );
@@ -263,13 +343,13 @@ it('recovers manually after exhaustion with a fresh view-only stream', async () 
   expect(connections[0]!.viewOnly).toBe(false);
   discover.mockRejectedValue(new ApiError(503, 'Synthetic failure'));
   act(() => connections[0]!.dispatchEvent(new Event('disconnect')));
-  await advance(61_000);
-  expect(discover).toHaveBeenCalledTimes(7);
+  await advance(300_000);
+  expect(discover).toHaveBeenCalledTimes(14);
   expect(screen.getByRole('status')).toHaveTextContent(exhausted);
   discover.mockResolvedValue({ websocket_url: '/api/v1/agents/agt_retry/desktop/ws' });
   fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
-  await advance(30_000);
-  expect(discover).toHaveBeenCalledTimes(8);
+  await advance(1_000);
+  expect(discover).toHaveBeenCalledTimes(15);
   act(() => connections[1]!.dispatchEvent(new Event('connect')));
   expect(screen.getByRole('status')).toHaveTextContent('Connected');
   expect(connections[1]!.viewOnly).toBe(true);
@@ -279,23 +359,24 @@ it('recovers manually after exhaustion with a fresh view-only stream', async () 
 it.each([59_999, 60_000])(
   'only resets after 60 seconds continuously ready: %s ms',
   async (readyMs) => {
-    const { discover } = mount();
-    await advance(0);
-    for (let i = 0; i < 7; i++) {
-      act(() => connections[i]!.dispatchEvent(new Event('connect')));
-      await advance(i === 6 ? readyMs : 1);
-      act(() => connections[i]!.dispatchEvent(new Event('disconnect')));
-      if (i < 6) await advance(Math.min(30_000, 1_000 * 2 ** i));
-    }
+    const { discover } = mount(new ApiError(503, 'Synthetic failure'));
+    await advance(241_000);
+    discover.mockResolvedValueOnce({ websocket_url: '/api/v1/agents/agt_retry/desktop/ws' });
+    await advance(30_000);
+    act(() => connections[0]!.dispatchEvent(new Event('connect')));
+    await advance(readyMs);
+    // The budget deadline must not tear down a painted stream before it can stabilize.
+    expect(connections[0]!.disconnect).not.toHaveBeenCalled();
+    act(() => connections[0]!.dispatchEvent(new Event('disconnect')));
     if (readyMs === 59_999) {
       expect(screen.getByRole('status')).toHaveTextContent(exhausted);
       await advance(600_000);
-      expect(discover).toHaveBeenCalledTimes(7);
+      expect(discover).toHaveBeenCalledTimes(14);
       expect(vi.getTimerCount()).toBe(0);
     } else {
-      discover.mockRejectedValue(new ApiError(503, 'Synthetic failure'));
-      await advance(61_000);
-      expect(discover).toHaveBeenCalledTimes(13);
+      expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+      await advance(300_000);
+      expect(discover).toHaveBeenCalledTimes(27);
       expect(screen.getByRole('status')).toHaveTextContent(exhausted);
     }
   },
@@ -328,9 +409,9 @@ it.each(['owner', 'agent', 'runtime', 'pause'] as const)(
 
 it('limits missing-first-frame recovery with no surviving stream or timer', async () => {
   const { discover } = mount();
-  await advance(271_000);
-  expect(discover).toHaveBeenCalledTimes(7);
-  expect(connections).toHaveLength(7);
+  await advance(330_000);
+  expect(discover).toHaveBeenCalledTimes(8);
+  expect(connections).toHaveLength(8);
   expect(screen.getByRole('status')).toHaveTextContent(exhausted);
   expect(vi.getTimerCount()).toBe(0);
   for (const connection of connections) expect(connection.disconnect).toHaveBeenCalledOnce();
@@ -339,16 +420,18 @@ it('limits missing-first-frame recovery with no surviving stream or timer', asyn
 it('counts lost canvases against the same budget and revokes input on every recovery', async () => {
   const { discover } = mount();
   await advance(0);
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 14; i++) {
     expect(connections[i]!.viewOnly).toBe(true);
     act(() => connections[i]!.dispatchEvent(new Event('connect')));
     fireEvent.click(screen.getByRole('button', { name: 'Control desktop' }));
     expect(connections[i]!.viewOnly).toBe(false);
     act(() => connections[i]!.canvas.dispatchEvent(new Event('contextlost', { bubbles: true })));
     expect(connections[i]!.viewOnly).toBe(true);
-    if (i < 6) await advance(Math.min(30_000, 1_000 * 2 ** i));
+    if (i < 13) await advance(Math.min(30_000, 1_000 * 2 ** i));
   }
-  expect(discover).toHaveBeenCalledTimes(7);
+  expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+  await advance(29_000);
+  expect(discover).toHaveBeenCalledTimes(14);
   expect(screen.getByRole('status')).toHaveTextContent(exhausted);
   // The prior control notice may finish its 200 ms exit animation.
   await advance(200);
@@ -372,16 +455,16 @@ it('preserves a terminal budget while authority temporarily withholds the same r
   const { discover, redraw } = mount(new ApiError(503, 'Synthetic failure'), {
     runtimeVersion: 'runtime-one',
   });
-  await advance(61_000);
-  expect(discover).toHaveBeenCalledTimes(7);
+  await advance(300_000);
+  expect(discover).toHaveBeenCalledTimes(14);
   redraw({ runtimeReady: false, runtimeVersion: undefined });
   await advance(600_000);
   redraw({ runtimeReady: true, runtimeVersion: 'runtime-one' });
   await advance(600_000);
-  expect(discover).toHaveBeenCalledTimes(7);
+  expect(discover).toHaveBeenCalledTimes(14);
   expect(screen.getByRole('status')).toHaveTextContent(exhausted);
   expect(vi.getTimerCount()).toBe(0);
   redraw({ runtimeReady: true, runtimeVersion: 'runtime-two' });
   await advance(0);
-  expect(discover).toHaveBeenCalledTimes(8);
+  expect(discover).toHaveBeenCalledTimes(15);
 });

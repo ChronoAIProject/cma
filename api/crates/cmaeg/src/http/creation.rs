@@ -1,4 +1,5 @@
 //! Owner-scoped recovery of a reserved channel after a lost create response.
+use super::record_ids::canonical_record_id;
 use super::{
     management::ChannelResponse,
     management_responses::{channel_response, management_error, provider_response},
@@ -18,21 +19,9 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use cmaeg_core::{ids::RecordId, problem::ProblemCode, ValidationError};
+use cmaeg_core::problem::ProblemCode;
 use serde::Serialize;
 use utoipa::ToSchema;
-
-fn recovery_record_id(id: String) -> Result<RecordId, ValidationError> {
-    if !uuid::Uuid::parse_str(&id)
-        .is_ok_and(|parsed| parsed.get_version_num() == 4 && parsed.to_string() == id)
-    {
-        return Err(ValidationError::new(
-            "/record_id",
-            "must be a canonical UUID v4",
-        ));
-    }
-    RecordId::new(id)
-}
 
 #[utoipa::path(get, path="/v1/channel-records/{record_id}", operation_id="recoverChannel", tag="channels",
     security(("creatorBearer"=[])), params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("record_id"=String, Path)),
@@ -42,7 +31,7 @@ pub async fn recover_channel(
     creator: Creator,
     Path(id): Path<String>,
 ) -> Response {
-    let id = match recovery_record_id(id) {
+    let id = match canonical_record_id(id) {
         Ok(id) => id,
         Err(error) => return management_error(ManagementError::Invalid(error)),
     };
@@ -143,7 +132,7 @@ pub(crate) async fn cancel_create(
         Ok(owner) => owner,
         Err(error) => return no_store(error.into_response()),
     };
-    let record_id = match recovery_record_id(id) {
+    let record_id = match canonical_record_id(id) {
         Ok(record_id) => record_id,
         Err(error) => return management_error(ManagementError::Invalid(error)),
     };

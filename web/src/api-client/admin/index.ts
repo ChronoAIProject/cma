@@ -13,6 +13,8 @@ import {
 } from './warm-pools.js';
 export type * from './warm-pools.js';
 import type { ResolvedConfig } from '../config.js';
+import { bindingHoldOverview } from './binding-holds.js';
+export type * from './binding-holds.js';
 import { platformSpend, spendObservationRequest, type SpendObservationRequest } from './spend.js';
 import {
   admissionCeilingsState,
@@ -23,7 +25,7 @@ import {
   changeAdmissionRequest,
   type ChangeAdmissionRequest,
 } from './admission.js';
-import { ProtocolError, ValidationError } from '../errors.js';
+import { ApiError, ProtocolError, ValidationError } from '../errors.js';
 import type { OperationOptions } from '../http.js';
 import { sandboxEvent } from '../instances/events.js';
 import { sandbox, type SandboxStatus } from '../instances/types.js';
@@ -93,6 +95,7 @@ export interface AdminProfileListOptions extends PageOptions {
 export interface ActivityListOptions extends PageOptions {
   readonly actor?: string;
   readonly action?: ActivityAction;
+  readonly excludeSuccessfulReads?: boolean;
 }
 
 const autoPauseBatch = {
@@ -143,6 +146,13 @@ function bound(options: { readonly limit?: number; readonly cursor?: string }) {
 /** Public operator endpoints. Settings writes use revision CAS; no command is automatically retried. */
 export class Administration {
   constructor(readonly config: ResolvedConfig) {}
+
+  bindingHolds(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/runtime-binding-holds', bindingHoldOverview, {
+      ...options,
+      cache: 'no-store',
+    });
+  }
 
   listWarmPools(options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/warm-pools', warmPoolList, options);
@@ -421,18 +431,33 @@ export class Administration {
   listActivitySummary(options: ActivityListOptions = {}) {
     bound(options);
     if (options.action !== undefined) input(activityAction, options.action);
-    return read(
-      this.config,
-      query('/api/v1/admin/activity', {
-        view: 'summary',
-        actor: options.actor,
-        action: options.action,
-        cursor: options.cursor,
-        limit: options.limit,
-      }),
-      adminPage(activitySummary),
-      options,
-    );
+    const request = (excludeSuccessfulReads: boolean) =>
+      read(
+        this.config,
+        query('/api/v1/admin/activity', {
+          view: 'summary',
+          actor: options.actor,
+          action: options.action,
+          exclude_successful_reads: excludeSuccessfulReads ? 'true' : undefined,
+          cursor: options.cursor,
+          limit: options.limit,
+        }),
+        adminPage(activitySummary),
+        options,
+      );
+    if (options.excludeSuccessfulReads !== true) return request(false);
+    return request(true).catch((error: unknown) => {
+      // Older Agent Managers reject unknown query options during a mixed rollout.
+      if (
+        error instanceof ApiError &&
+        error.status === 400 &&
+        error.code === 'invalid_admin_request' &&
+        !options.signal?.aborted
+      ) {
+        return request(false);
+      }
+      throw error;
+    });
   }
   listActivity(options: ActivityListOptions = {}) {
     bound(options);
@@ -442,6 +467,7 @@ export class Administration {
       query('/api/v1/admin/activity', {
         actor: options.actor,
         action: options.action,
+        exclude_successful_reads: options.excludeSuccessfulReads === true ? 'true' : undefined,
         cursor: options.cursor,
         limit: options.limit,
       }),

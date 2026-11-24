@@ -175,6 +175,28 @@ pub(super) fn read_control_receipts(
     Ok(StoredControlReceipts { stop, delete })
 }
 
+pub(super) fn has_owner_stop_receipt(row: &Document, agent: &Agent) -> bool {
+    let Ok(StoredControlReceipts {
+        stop: Some(receipt),
+        ..
+    }) = read_control_receipts(row, agent)
+    else {
+        return false;
+    };
+    let ControlRequest::Stop(request) = receipt.request else {
+        return false;
+    };
+    let Some(requested) = layer2_core::seconds_from_rfc3339(&request.requested_at) else {
+        return false;
+    };
+    request.reason == layer2_core::sandbox::AgentStopReason::Owner
+        && agent.work.receipts.iter().any(|close| {
+            close.step == layer2_core::sandbox::AgentWorkStep::CloseProcess
+                && layer2_core::seconds_from_rfc3339(&close.completed_at)
+                    .is_some_and(|completed| completed >= requested)
+        })
+}
+
 fn receipt_belongs_to_agent(receipt: &ControlReceipt, agent: &Agent) -> bool {
     let target = receipt.request.target();
     target.agent_id == agent.id

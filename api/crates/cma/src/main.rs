@@ -1,4 +1,7 @@
 //! CMA control plane composition while replacement resource routes are rebuilt.
+// Tests drive raw driver sessions to construct the faults the guarded
+// terminal commands defend against (#3288).
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 // Avoid libc allocator retention and contention across async worker threads.
 #[global_allocator]
@@ -16,6 +19,7 @@ mod agent_manager;
 mod agent_models;
 mod auth;
 mod background;
+mod binding_diagnostics;
 mod bot_setups;
 mod commands;
 mod composition;
@@ -36,7 +40,7 @@ mod home_backup_expiry;
 mod http_serving;
 mod image_manager_retirement;
 mod media_continuations;
-mod permissions;
+use cma_am_auth::permissions;
 mod producer_token;
 mod profile_authoring;
 mod profile_policy;
@@ -47,6 +51,7 @@ mod rate_limit;
 mod read_telemetry;
 mod readiness_diagnostics;
 mod retirement_archive;
+mod runtime_pointer;
 mod sandbox;
 mod sandbox_metrics;
 mod sandbox_usage_export;
@@ -221,6 +226,16 @@ async fn run() {
                 eprintln!("{message}");
                 std::process::exit(2);
             }
+        }
+        return;
+    }
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--runtime-pointer")
+    {
+        if let Err(error) = runtime_pointer::operator::command(&arguments).await {
+            eprintln!("{error}");
+            std::process::exit(2);
         }
         return;
     }

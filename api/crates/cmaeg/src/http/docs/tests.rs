@@ -1,4 +1,11 @@
-use super::*;
+use axum::http::header;
+
+#[path = "../../../../cmaeg-http/src/http/docs/diagrams.rs"]
+mod diagrams;
+
+const GUIDE: &str = include_str!("../../../assets/docs/public/CMAEG_Integration.md");
+const ARCHITECTURE: &str = include_str!("../../../assets/docs/public/CMAEG_Architecture.md");
+const PROTOCOL: &str = include_str!("../../../assets/docs/public/CMAEG_Protocol.md");
 
 #[tokio::test]
 async fn public_docs_are_real_html_and_exact_markdown_without_authentication() {
@@ -111,17 +118,6 @@ async fn public_docs_are_real_html_and_exact_markdown_without_authentication() {
 }
 
 #[test]
-fn document_links_headings_and_unsafe_markup_are_handled() {
-    let (output, _) = render::render("# Heading\n\n## 8. Tools API and MCP\n\n## 8. Tools API and MCP\n\n[protocol](CMAEG_Protocol.md#8-tools-api-and-mcp)\n\n[internal](CMAEG_Operations.md)\n\n[bad](javascript:alert%281%29)\n\n<img src=x onerror=alert(1)>\n", "protocol");
-    assert!(output.contains("id=\"protocol-8-tools-api-and-mcp\""));
-    assert!(output.contains("id=\"protocol-8-tools-api-and-mcp-1\""));
-    assert!(output.contains("href=\"#protocol-8-tools-api-and-mcp\""));
-    assert!(!output.contains("CMAEG_Operations"));
-    assert!(!output.contains("javascript:"));
-    assert!(!output.contains("<img"));
-}
-
-#[test]
 fn integration_channel_example_passes_the_production_validator() {
     use crate::channels::definition::{validate_create_request, ChannelCreateRequest};
     use base64::Engine as _;
@@ -149,17 +145,4 @@ fn integration_channel_example_passes_the_production_validator() {
         );
     let request: ChannelCreateRequest = serde_json::from_str(&raw).unwrap();
     validate_create_request(&request).unwrap();
-}
-
-#[test]
-fn sanitized_guide_links_use_the_configured_gateway_origin() {
-    let source = "https://gateway.example.com/event-gateway/legacy-console https://gateway.example.com/event-gateway/v1";
-    assert_eq!(
-        advertised_document(source, "https://gateway.example", false),
-        "https://gateway.example/console https://gateway.example/v1"
-    );
-    assert_eq!(
-        advertised_document(source, "https://public.example/event-gateway", true),
-        "https://public.example/event-gateway/legacy-console https://public.example/event-gateway/v1"
-    );
 }

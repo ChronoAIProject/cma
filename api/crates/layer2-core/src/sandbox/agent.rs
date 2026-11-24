@@ -32,9 +32,22 @@ pub struct ConversationState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_turn: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_timeout: Option<super::turn_timeout::TurnTimeout>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<AgentOperationRecord>,
     #[serde(default)]
     pub queued_messages: Vec<QueuedAgentMessage>,
+}
+
+impl ConversationState {
+    pub(super) fn interrupt_active_turn(&mut self) -> Option<super::AgentLogKind> {
+        let turn_sequence = self.active_turn.take()?;
+        let terminal = super::AgentLogKind::TurnInterrupted { turn_sequence };
+        if let Some(task) = self.observations.task_acceptance.as_mut() {
+            task.observe_execution(Some(turn_sequence), std::slice::from_ref(&terminal));
+        }
+        Some(terminal)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,6 +134,22 @@ pub struct Agent {
 }
 
 impl Agent {
+    /// Derive the terminal event once the caller has proved the current native Close.
+    /// The command record still carries the exact delivery outcome before the Stop.
+    pub fn settle_owner_stop_turn(&mut self) -> Option<super::AgentLogKind> {
+        if self.work.step != AgentWorkStep::PublishStopped
+            || self.requested_stop_reason != Some(AgentStopReason::Owner)
+            || !self
+                .work
+                .receipts
+                .iter()
+                .any(|receipt| receipt.step == AgentWorkStep::CloseProcess)
+        {
+            return None;
+        }
+        self.conversation.interrupt_active_turn()
+    }
+
     pub fn validate_for_admission(&self, worktree: &Worktree) -> Result<(), SandboxModelError> {
         self.validate_lineage(worktree)?;
         if self.work.step == AgentWorkStep::WaitForWorkspace
@@ -145,6 +174,7 @@ impl Agent {
             || self.conversation.runtime_generation.is_some()
             || self.conversation.last_seq != 1
             || self.conversation.active_turn.is_some()
+            || self.conversation.turn_timeout.is_some()
             || self.conversation.settings.is_some()
             || !self.conversation.preferences.is_empty()
             || self.conversation.managed_guidance_revision != 0
@@ -186,6 +216,16 @@ impl Agent {
 
     pub fn validate_conversation(&self) -> Result<(), SandboxModelError> {
         self.validate_worktree_recoveries()?;
+        if self
+            .conversation
+            .turn_timeout
+            .as_ref()
+            .is_some_and(|timeout| {
+                timeout.validate().is_err() || !timeout.binding().matches_incarnation(self)
+            })
+        {
+            return Err(SandboxModelError::invalid_value("agent.turn_timeout"));
+        }
         let identity_shape = match (
             self.conversation.conversation_id.as_deref(),
             self.conversation.runtime_generation,

@@ -9,6 +9,7 @@ real-model-suggestion-samples = []
 
 [dependencies]
 cma-allocator-qualification = { path = "../cma-allocator-qualification" }
+cma-am-auth = { path = "../cma-am-auth" }
 cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }
 async-trait = { workspace = true }
 axum = { workspace = true }
@@ -30,10 +31,12 @@ sha1 = { workspace = true }
 layer1-public = { workspace = true }
 layer2-core = { workspace = true }
 layer3-adapter = { workspace = true }
+libc = { workspace = true }
 mongodb = { workspace = true, features = ["opentelemetry"] }
 opentelemetry = { workspace = true }
 reqwest = { workspace = true }
 ring = { workspace = true }
+semver = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 similar = { workspace = true }

@@ -13,16 +13,16 @@ use crate::wire::{
 };
 use crate::{
     AdapterError, AgentHomePlan, AgentLaunch, AgentSlot, CheckpointHoldReceipt,
-    CheckpointHoldRequest, ConversationChannel, ConversationInputSender, ConversationSnapshot,
-    ConversationUpdate, InstallReceipt, RestoreBootstrapReceipt, RuntimeHandle, RuntimeObservation,
-    WorkspaceReceipt, WorktreeReceipt,
+    CheckpointHoldRequest, ConversationChannel, ConversationSnapshot, ConversationUpdate,
+    InstallReceipt, RestoreBootstrapReceipt, RuntimeHandle, RuntimeObservation, WorkspaceReceipt,
+    WorktreeReceipt,
 };
 
 #[path = "memory_state.rs"]
 mod state;
 use state::{
-    digest, fingerprint, memory_observation, refused, remember_operation, replay_operation,
-    require_credential, valid_sha256,
+    channel, digest, fingerprint, memory_observation, refused, remember_operation,
+    replay_operation, require_credential,
 };
 #[path = "memory_authority.rs"]
 mod authority;
@@ -36,6 +36,8 @@ mod home;
 mod mutations;
 #[path = "memory_probes.rs"]
 mod probes;
+#[path = "memory_process.rs"]
+mod process;
 #[path = "memory_status.rs"]
 mod status;
 #[path = "memory_workspace.rs"]
@@ -202,6 +204,9 @@ impl HostedBackend for InMemoryHostedBackend {
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame> {
         let operation = request.operation();
+        if request.has_unexpected_restart_runtime() {
+            return refused(operation, "agent_process_restart_runtime_unexpected");
+        }
         self.requests
             .lock()
             .await
@@ -253,6 +258,9 @@ impl HostedBackend for InMemoryHostedBackend {
                 bootstrap::restore(runtime, request, operation)
             }
             RequestFrame::Credential(frame) => bootstrap::credential(runtime, frame, operation),
+            RequestFrame::CredentialForReceiver { .. } => {
+                refused(operation, "credential_github_route_unavailable")
+            }
             RequestFrame::PrepareWorkspace(request) => {
                 require_credential(runtime, operation)?;
                 workspace::prepare(runtime, request)
@@ -291,7 +299,10 @@ impl HostedBackend for InMemoryHostedBackend {
             }
             RequestFrame::CloseAgent(request) => {
                 require_credential(runtime, operation)?;
-                mutations::close_agent(runtime, request)
+                process::close_agent(runtime, request)
+            }
+            RequestFrame::ProveAgentProcessClosed(_) => {
+                return refused(operation, "agent_process_close_proof_unsupported");
             }
             RequestFrame::CaptureAgent(reference) => {
                 require_credential(runtime, operation)?;
@@ -373,19 +384,13 @@ impl HostedBackend for InMemoryHostedBackend {
             return refused(WireOperation::OpenAgent, "checkpoint_writers_held");
         }
         require_credential(runtime, WireOperation::OpenAgent)?;
+        let incarnation = process::authorize_open(runtime, &launch)?;
         let authority_fence = launch.authority_fence;
         let launch = launch.request;
-        let expected = format!("agent:{}:open:v1", launch.agent_id.as_str());
-        if launch.operation_id != expected
-            || !valid_sha256(&launch.request_sha256)
-            || authority_fence == 0
-        {
-            return refused(WireOperation::OpenAgent, "operation_request_invalid");
-        }
         let payload = fingerprint(&launch)?;
         authority::admit(
             runtime,
-            authority::ResourceKey::AgentProcess(launch.agent_id.clone()),
+            authority::ResourceKey::AgentProcess(launch.agent_id.clone(), incarnation),
             authority::Disposition::Present,
             authority_fence,
             &launch.operation_id,
@@ -489,12 +494,5 @@ impl HostedBackend for InMemoryHostedBackend {
         let mut retained = self.retained_homes.lock().await;
         home::retain(runtime, &mut retained)?;
         Ok(())
-    }
-}
-
-fn channel(conversation_id: Option<String>) -> ConversationChannel {
-    ConversationChannel {
-        input: ConversationInputSender::spawn(1, |_| async { Ok(()) }),
-        conversation_id,
     }
 }

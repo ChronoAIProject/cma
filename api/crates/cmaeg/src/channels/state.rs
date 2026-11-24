@@ -70,6 +70,7 @@ pub struct ManagementState {
     pub native_discord_writes_enabled: bool,
     pub native_telegram_message_events_writes_enabled: bool,
     pub native_telegram_member_joins_enabled: bool,
+    pub relay_telegram_member_joins_enabled: bool,
     pub native_telegram_durable_admission_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
     pub native_telegram_topic_lifecycle_enabled: bool,
@@ -105,6 +106,11 @@ impl ManagementState {
             && self.native_telegram_durable_admission_enabled
             && self.multi_consumer_writes_enabled
     }
+    pub(crate) fn relay_telegram_member_join_authoring(&self) -> bool {
+        self.relay_telegram_member_joins_enabled
+            && self.native_telegram_durable_admission_enabled
+            && self.multi_consumer_writes_enabled
+    }
     pub(crate) fn write_flags(&self) -> super::write_gate::WriteFlags {
         super::write_gate::WriteFlags {
             github: self.github_enabled,
@@ -127,6 +133,7 @@ impl ManagementState {
             native_discord: self.native_discord_writes_enabled,
             telegram_message_events: self.native_telegram_message_events_writes_enabled,
             telegram_member_joins: self.telegram_member_join_authoring(),
+            relay_telegram_member_joins: self.relay_telegram_member_join_authoring(),
             discord_thread_history: self.native_discord_thread_history_enabled,
             telegram_topic_lifecycle: self.native_telegram_topic_lifecycle_enabled,
             telegram_topic_creation: self.native_telegram_topic_creation_enabled,
@@ -232,6 +239,7 @@ impl ManagementState {
             native_discord_writes_enabled: false,
             native_telegram_message_events_writes_enabled: false,
             native_telegram_member_joins_enabled: false,
+            relay_telegram_member_joins_enabled: false,
             native_telegram_durable_admission_enabled: false,
             native_discord_thread_history_enabled: false,
             native_telegram_topic_lifecycle_enabled: false,
