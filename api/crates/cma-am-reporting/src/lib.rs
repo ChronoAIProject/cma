@@ -9,4 +9,5 @@ pub use store::usage_reports::{
     read_series, unavailable, validate_owner_page,
 };
 
+pub mod metric_bindings;
 pub mod metric_rollups;
