@@ -2,6 +2,7 @@ import { Fragment, useRef, useState } from 'react';
 import type { WarmPoolView } from '@cma/client';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
+import { InlineConfirm } from '../ui/InlineConfirm';
 import { ValidatedNumberInput } from './ValidatedNumberInput';
 import { TableActions, TableCell, TableNote } from '../ui/Table';
 import type { StatusTone } from '../vocabulary/status';
@@ -58,6 +59,7 @@ export function WarmPoolRow({
   const [review, setReview] = useState(false);
   const [failure, setFailure] = useState<OperatorFailure>();
   const [saved, setSaved] = useState(false);
+  const [disableRequested, setDisableRequested] = useState(false);
   const submitting = useRef(false);
   const needsReview = review || revision !== pool.revision;
   async function save(replicas: number) {
@@ -109,7 +111,12 @@ export function WarmPoolRow({
   const label = `${String(pool.cpu_millis)} millicores / ${String(pool.memory_mib)} MiB`;
   const status = STATUS[pool.status];
   const note =
-    !pool.observed || pool.error !== null || failure !== undefined || needsReview || saved;
+    !pool.observed ||
+    pool.error !== null ||
+    failure !== undefined ||
+    needsReview ||
+    saved ||
+    disableRequested;
   return (
     <Fragment>
       <tr aria-label={`Warm pool ${label}`}>
@@ -148,7 +155,7 @@ export function WarmPoolRow({
                 max={1000}
                 step={1}
                 value={target}
-                disabled={busy || needsReview}
+                disabled={busy || needsReview || disableRequested}
                 onChange={(event) => {
                   setTarget(event.target.value);
                   setSaved(false);
@@ -160,6 +167,7 @@ export function WarmPoolRow({
                 disabled={
                   busy ||
                   needsReview ||
+                  disableRequested ||
                   !validPoolNumber(target) ||
                   Number(target) === pool.target_replicas
                 }
@@ -172,8 +180,8 @@ export function WarmPoolRow({
         <TableActions>
           <Button
             size="sm"
-            disabled={busy || needsReview || pool.target_replicas === 0}
-            onClick={() => void save(0)}
+            disabled={busy || needsReview || disableRequested || pool.target_replicas === 0}
+            onClick={() => setDisableRequested(true)}
           >
             Disable pool
           </Button>
@@ -182,6 +190,19 @@ export function WarmPoolRow({
       {note ? (
         <TableNote>
           <div className="warm-pool-note">
+            {disableRequested ? (
+              <InlineConfirm
+                question={`Disable pool ${pool.id} (${label}), reducing its target from ${pool.target_replicas} to 0? This removes spare capacity for new work.`}
+                confirmLabel="Confirm disable"
+                busy={busy || needsReview || pool.target_replicas === 0}
+                onCancel={() => setDisableRequested(false)}
+                onConfirm={() => {
+                  if (busy || needsReview || pool.target_replicas === 0) return;
+                  setDisableRequested(false);
+                  void save(0);
+                }}
+              />
+            ) : null}
             {!pool.observed ? <p>Waiting for the controller to confirm current capacity.</p> : null}
             {pool.error ? (
               <p className="operator-failure" role="alert">

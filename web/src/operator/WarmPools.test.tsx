@@ -115,6 +115,8 @@ describe('native warm pool operations', () => {
     const card = within(history).getByRole('row', { name: /Warm pool/ });
     expect(within(card).queryByRole('button', { name: 'Update target' })).not.toBeInTheDocument();
     await user.click(within(card).getByRole('button', { name: 'Disable pool' }));
+    expect(client.admin.resizeWarmPool).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Confirm disable' }));
     expect(client.admin.resizeWarmPool).toHaveBeenCalledWith('previous', {
       expected_revision: 1,
       target_replicas: 0,
@@ -304,6 +306,8 @@ describe('native warm pool operations', () => {
     const user = userEvent.setup();
     render(<WarmPools client={client} />);
     await user.click(await screen.findByRole('button', { name: 'Disable pool' }));
+    expect(client.admin.resizeWarmPool).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Confirm disable' }));
     await waitFor(() =>
       expect(client.admin.resizeWarmPool).toHaveBeenCalledWith('pool-1', {
         expected_revision: 1,
@@ -366,6 +370,8 @@ describe('native warm pool operations', () => {
     client.admin.resizeWarmPool.mockRejectedValue(new TypeError('Disconnected'));
     render(<WarmPools client={client} />);
     await user.click(await screen.findByRole('button', { name: 'Disable pool' }));
+    expect(client.admin.resizeWarmPool).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Confirm disable' }));
     await screen.findByText(/Read the current target before/);
     expect(screen.getByRole('row', { name: /Warm pool/ })).toHaveTextContent('Pending');
     expect(screen.getByRole('button', { name: 'Disable pool' })).toBeDisabled();
@@ -427,6 +433,8 @@ describe('native warm pool operations', () => {
     await screen.findByRole('row', { name: /Warm pool/ });
     await user.click(screen.getByRole('button', { name: 'Refresh pools' }));
     await user.click(screen.getByRole('button', { name: 'Disable pool' }));
+    expect(client.admin.resizeWarmPool).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Confirm disable' }));
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Disable pool' })).toBeDisabled(),
     );
