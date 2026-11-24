@@ -1,7 +1,7 @@
 use super::*;
 use crate::agent_lifecycle::canary_sandbox_content;
 use crate::store::{CreateResult, LifecycleBehavior, LifecycleInput, MongoAgentLifecycleStore};
-use layer2_core::profiles::{profile_id_for_owner, WorkspaceProfileRef};
+use layer2_core::profiles::{private_sandbox_profile_id, WorkspaceProfileRef};
 use layer2_core::sandbox::store::SandboxWorkerStore;
 
 #[tokio::test]
@@ -244,14 +244,9 @@ async fn canary_profile_requires_its_exact_owner_revision_and_lifecycle_origin()
     ordinary.origin = SandboxOrigin::Lifecycle {
         operation_id: ordinary_id,
     };
-    ordinary.profile.id = SandboxProfileId(
-        profile_id_for_owner(
-            &ordinary.owner,
-            "sandbox",
-            "agent-manager:machine-included:sandbox",
-        )
-        .unwrap(),
-    );
+    ordinary.profile.id =
+        private_sandbox_profile_id(&ordinary.owner, "agent-manager:machine-included:sandbox")
+            .unwrap();
     ordinary.profile.content = canary_sandbox_content(
         &ordinary_record.input,
         WorkspaceProfileRef::new(

@@ -5,7 +5,7 @@ use crate::store::agent_lifecycle_operations::{
     canary_admission::{bind_sandbox, image_digest, MANIFEST_DIGEST, SANDBOX_PROFILE_ID},
     LifecycleLease, LifecycleRecord, COLLECTION,
 };
-use layer2_core::profiles::{content_digest, profile_id_for_owner};
+use layer2_core::profiles::{content_digest, private_sandbox_profile_id};
 use mongodb::{ClientSession, Database};
 
 pub(super) async fn verify(
@@ -130,8 +130,8 @@ fn ordinary_lifecycle_pin(sandbox: &Sandbox, record: &LifecycleRecord, image: &s
         return false;
     }
     let key = format!("agent-manager:{}:sandbox", record.key);
-    profile_id_for_owner(&sandbox.owner, "sandbox", &key)
-        .is_ok_and(|id| id == sandbox.profile.id.as_str() && sandbox.profile.revision == 1)
+    private_sandbox_profile_id(&sandbox.owner, &key)
+        .is_ok_and(|id| id == sandbox.profile.id && sandbox.profile.revision == 1)
 }
 
 pub(super) async fn bind(

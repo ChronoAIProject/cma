@@ -11,9 +11,9 @@ pub(crate) use writer::{FreshCanaryRedemption, PreparedCanaryRedemption};
 #[cfg(test)]
 mod writer_tests;
 use layer2_core::profiles::{
-    profile_id_for_owner, AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef,
+    private_agent_profile_id, private_sandbox_profile_id, private_workspace_profile_id,
+    AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef,
 };
-use layer2_core::{AgentProfileId, SandboxProfileId, WorkspaceProfileId};
 use layer3_adapter::{RuntimeImage, SandboxCapacity};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -194,14 +194,17 @@ impl From<&crate::config::runtime_canary::Release> for FrozenRelease {
 
 impl CanaryProfiles {
     fn for_operation(owner: &SubjectId, id: &str) -> Result<Self, StoreError> {
-        let profile_id = |kind| {
-            profile_id_for_owner(owner, kind, &canary_key::profile_key(id, kind))
-                .map_err(|_| invalid_authority())
-        };
+        let key = |kind| canary_key::profile_key(id, kind);
+        let agent =
+            private_agent_profile_id(owner, &key("agent")).map_err(|_| invalid_authority())?;
+        let workspace = private_workspace_profile_id(owner, &key("workspace"))
+            .map_err(|_| invalid_authority())?;
+        let sandbox =
+            private_sandbox_profile_id(owner, &key("sandbox")).map_err(|_| invalid_authority())?;
         Ok(Self {
-            agent: AgentProfileRef::new(AgentProfileId(profile_id("agent")?), 1),
-            workspace: WorkspaceProfileRef::new(WorkspaceProfileId(profile_id("workspace")?), 1),
-            sandbox: SandboxProfileRef::new(SandboxProfileId(profile_id("sandbox")?), 1),
+            agent: AgentProfileRef::new(agent, 1),
+            workspace: WorkspaceProfileRef::new(workspace, 1),
+            sandbox: SandboxProfileRef::new(sandbox, 1),
         })
     }
 }

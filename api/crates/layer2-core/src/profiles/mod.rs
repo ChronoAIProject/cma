@@ -10,8 +10,8 @@ mod digest;
 mod marketplace;
 mod owned_creation;
 pub use owned_creation::{
-    profile_id_for_owner, PrivateProfileCreationService, PrivateSandboxProfileInput,
-    ProfileCreationError,
+    private_agent_profile_id, private_sandbox_profile_id, private_workspace_profile_id,
+    PrivateProfileCreationService, PrivateSandboxProfileInput, ProfileCreationError,
 };
 mod public_values;
 pub mod references;
