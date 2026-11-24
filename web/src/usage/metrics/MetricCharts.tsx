@@ -32,9 +32,14 @@ export function MetricCharts({
       ),
     [api, report.report_id, group, metric],
   );
+  const requestedMetrics: readonly Metric[] = metric ? [metric] : ['cpu', 'memory', 'disk'];
   const initial =
-    group === 'total' && initialCharts
-      ? initialCharts.filter((series) => !metric || series.metric === metric)
+    group === 'total' &&
+    initialCharts &&
+    requestedMetrics.every((requested) =>
+      initialCharts.some((series) => series.metric === requested),
+    )
+      ? initialCharts.filter((series) => requestedMetrics.includes(series.metric))
       : undefined;
   const charts = useUsageRead(load, active && initial === undefined, api);
   useEffect(() => {
