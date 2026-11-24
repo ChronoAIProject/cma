@@ -29,6 +29,7 @@ function client(overrides: Partial<CmaWebClient> = {}) {
     readTaskCreationSupport: async () => true,
     readTaskTitleModeSupport: async () => true,
     readTaskTemplateSupport: async () => true,
+    readTaskTemplateV2Support: async () => true,
     readSandboxCapacity: async () => capacity,
     ...overrides,
   });

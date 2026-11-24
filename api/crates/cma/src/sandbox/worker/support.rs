@@ -284,6 +284,7 @@ pub(super) struct WorkerFailure {
     retry_kind: WorkRetryFailure,
     pub(super) native_claim_pending: bool,
     pub(super) startup_hold: bool,
+    pub(super) reopen_refusal: Option<Box<layer2_core::sandbox::store::ReopenRefusalFence>>,
 }
 
 impl WorkerFailure {
@@ -327,6 +328,7 @@ impl WorkerFailure {
             retryable,
             native_claim_pending: false,
             startup_hold: false,
+            reopen_refusal: None,
             retry_kind: if retryable {
                 WorkRetryFailure::Transient
             } else {

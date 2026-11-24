@@ -90,6 +90,7 @@ async fn interruption_pair_unknown_commit_recovers_both_original_receipts() {
         .await
         .unwrap();
     assert_eq!(result.unwrap_err(), CommandLedgerError::Unavailable);
+    crate::store::test_visibility::majority_barrier(&admin, &name).await;
     let accepted = store
         .reserve_interrupting_message(request.clone())
         .await

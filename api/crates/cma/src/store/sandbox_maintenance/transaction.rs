@@ -19,6 +19,7 @@ use super::super::sandbox_mongo::{signed, unsigned, MongoSandboxStore, DOCUMENT_
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::evidence::{
     fence_live_agents, live_activities_with_sources, open_session, scoped::CapturedActivities,
+    LogValidation,
 };
 
 mod scoped;
@@ -159,7 +160,33 @@ async fn apply_with_sources(
     let agents = load_sandbox_agents(store, &current.id, session).await?;
     let application = match request {
         MaintenanceRequest::Inactivity(request) => {
-            if super::evidence::queued_control(store, &current.id, session).await? {
+            let bounded_legacy_log =
+                store.bounded_inactivity_legacy_log && request.auto_pause_enabled && !platform_stop;
+            if super::evidence::queued_control(store, &current.id, session).await?
+                || (bounded_legacy_log
+                    && !super::evidence::legacy_log_budget::within(
+                        store, &agents, sources, session,
+                    )
+                    .await?)
+            {
+                return Ok(MaintenanceReceipt {
+                    sandbox: current,
+                    event: None,
+                    outcome: SandboxMaintenanceOutcome::NotEligible,
+                });
+            }
+            let strict_sessions = store.strict_inactivity_session_evidence
+                && request.auto_pause_enabled
+                && !platform_stop;
+            if strict_sessions
+                && !super::evidence::sessions::clear(
+                    store,
+                    &current.id,
+                    &request.requested_at,
+                    session,
+                )
+                .await?
+            {
                 return Ok(MaintenanceReceipt {
                     sandbox: current,
                     event: None,
@@ -172,10 +199,15 @@ async fn apply_with_sources(
                 session,
                 request.requested_at.as_str(),
                 sources,
-                failure_policy,
+                LogValidation {
+                    failure_policy,
+                    legacy_formats_checked: bounded_legacy_log,
+                },
+                strict_sessions,
             )
             .await?;
-            if activities.is_empty()
+            if !strict_sessions
+                && activities.is_empty()
                 && open_session(store, &current, &request.requested_at, session).await?
             {
                 return Ok(MaintenanceReceipt {
