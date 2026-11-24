@@ -1,0 +1,262 @@
+//! Exact, bounded observation slots on the parent retirement document.
+use super::{Agent, RuntimeBinding, Sandbox, SandboxStoreError, FIELD};
+use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
+use layer2_core::sandbox::store::MAX_SANDBOX_LIFECYCLE_AGENTS;
+use layer2_core::sandbox::{AgentStopReason, AgentWorkLease, SandboxStatus, SandboxWorkStep};
+use layer2_core::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
+use layer3_adapter::owner_protocol::TransportOwner;
+use layer3_adapter::receiver_failure::{ChallengeRefusal, RetirementReceiver};
+use mongodb::bson::{self, Document};
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use uuid::Uuid;
+
+const CAPTURE: &str = "native_retirement_capture_v1";
+const MAX_BYTES: usize = 256 * 1024;
+const CONFLICT: SandboxStoreError = SandboxStoreError::Conflict;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CaptureRecord {
+    parent: ParentBinding,
+    slots: Vec<Slot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ParentBinding {
+    sandbox: SandboxId,
+    owner: SubjectId,
+    runtime: RuntimeBinding,
+    home_identity: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChildLineage {
+    agent: AgentId,
+    workspace: WorkspaceId,
+    worktree: WorktreeId,
+    runtime_generation: u64,
+    stop_reason: AgentStopReason,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Slot {
+    offer_id: Uuid,
+    child: ChildLineage,
+    state: CaptureState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
+enum CaptureState {
+    Offered,
+    Bound {
+        attempt: BoundAttempt,
+    },
+    Observed {
+        attempt: BoundAttempt,
+        receiver: RetirementReceiver,
+        refusal: ChallengeRefusal,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BoundAttempt {
+    id: Uuid,
+    child_revision: u64,
+    claim: AgentWorkLease,
+    owner: TransportOwner,
+}
+
+impl ParentBinding {
+    fn from_parent(parent: &Sandbox) -> Result<Self, SandboxStoreError> {
+        if parent.status != SandboxStatus::Retiring
+            || parent.work.step != SandboxWorkStep::StopAgents
+        {
+            return Err(CONFLICT);
+        }
+        let runtime = parent
+            .runtime
+            .as_ref()
+            .filter(|runtime| runtime.runtime_id.starts_with("agent-sandbox:"))
+            .ok_or(CONFLICT)?;
+        let home = parent
+            .lifecycle
+            .home
+            .as_ref()
+            .and_then(|home| home.attachment())
+            .ok_or(CONFLICT)?;
+        home.validate_for(parent.id.as_str())
+            .map_err(|_| CONFLICT)?;
+        Ok(Self {
+            sandbox: parent.id.clone(),
+            owner: parent.owner.clone(),
+            runtime: runtime.clone(),
+            home_identity: home.identity().map_err(|_| CONFLICT)?,
+        })
+    }
+}
+
+impl ChildLineage {
+    fn from_child(parent: &Sandbox, child: &Agent) -> Result<Self, SandboxStoreError> {
+        if child.sandbox_id != parent.id || child.owner != parent.owner || !child.status.is_live() {
+            return Err(CONFLICT);
+        }
+        Ok(Self {
+            agent: child.id.clone(),
+            workspace: child.workspace_id.clone(),
+            worktree: child.worktree_id.clone(),
+            runtime_generation: child
+                .conversation
+                .runtime_generation
+                .filter(|generation| *generation > 0)
+                .ok_or(CONFLICT)?,
+            stop_reason: child
+                .requested_stop_reason
+                .clone()
+                .unwrap_or(AgentStopReason::SandboxRetired),
+        })
+    }
+}
+
+// The caller will compare-and-set this value under the current parent claim.
+pub(super) fn prepare_offer(
+    row: &Document,
+    parent: &Sandbox,
+    child: &Agent,
+) -> Result<Document, SandboxStoreError> {
+    if row.contains_key(FIELD) || row.contains_key(LEDGER_MAINTENANCE_FIELD) {
+        return Err(CONFLICT);
+    }
+    let parent_identity = ParentBinding::from_parent(parent)?;
+    let child = ChildLineage::from_child(parent, child)?;
+    let mut record = match row.get(CAPTURE) {
+        None => CaptureRecord {
+            parent: parent_identity,
+            slots: Vec::new(),
+        },
+        Some(bson::Bson::Document(document)) => {
+            let record = CaptureRecord::decode(document)?;
+            if record.parent != parent_identity {
+                return Err(CONFLICT);
+            }
+            record
+        }
+        Some(_) => return Err(invalid_capture()),
+    };
+    if let Some(existing) = record
+        .slots
+        .iter()
+        .find(|slot| slot.child.agent == child.agent)
+    {
+        return if existing.child == child {
+            record.encode()
+        } else {
+            Err(CONFLICT)
+        };
+    }
+    if record.slots.len() == MAX_SANDBOX_LIFECYCLE_AGENTS {
+        return Err(CONFLICT);
+    }
+    record.slots.push(Slot {
+        offer_id: Uuid::new_v4(),
+        child,
+        state: CaptureState::Offered,
+    });
+    record.encode()
+}
+
+impl CaptureRecord {
+    fn encode(&self) -> Result<Document, SandboxStoreError> {
+        self.validate()?;
+        let document = bson::serialize_to_document(self).map_err(|_| invalid_capture())?;
+        if !size_allowed(&document)? {
+            return Err(CONFLICT);
+        }
+        Ok(document)
+    }
+
+    fn decode(document: &Document) -> Result<Self, SandboxStoreError> {
+        if !size_allowed(document)? {
+            return Err(invalid_capture());
+        }
+        let record: Self =
+            bson::deserialize_from_document(document.clone()).map_err(|_| invalid_capture())?;
+        record.validate()?;
+        Ok(record)
+    }
+
+    fn validate(&self) -> Result<(), SandboxStoreError> {
+        let mut children = HashSet::new();
+        let mut offers = HashSet::new();
+        if self.slots.is_empty()
+            || self.slots.len() > MAX_SANDBOX_LIFECYCLE_AGENTS
+            || !self.slots.iter().all(|slot| {
+                children.insert(&slot.child.agent)
+                    && offers.insert(slot.offer_id)
+                    && slot.valid_for(&self.parent)
+            })
+        {
+            return Err(invalid_capture());
+        }
+        Ok(())
+    }
+}
+
+impl Slot {
+    fn valid_for(&self, parent: &ParentBinding) -> bool {
+        if self.offer_id.is_nil()
+            || self.child.runtime_generation == 0
+            || [
+                self.child.agent.as_str(),
+                self.child.workspace.as_str(),
+                self.child.worktree.as_str(),
+            ]
+            .iter()
+            .any(|id| id.trim().is_empty())
+        {
+            return false;
+        }
+        let attempt = match &self.state {
+            CaptureState::Offered => return true,
+            CaptureState::Bound { attempt } => attempt,
+            CaptureState::Observed {
+                attempt, receiver, ..
+            } => {
+                if receiver.runtime.as_str() != parent.runtime.runtime_id
+                    || receiver.owner != attempt.owner
+                    || receiver.pod.uid.is_empty()
+                    || receiver.pod.container_id.is_empty()
+                    || receiver.pod.restart_count < 0
+                {
+                    return false;
+                }
+                attempt
+            }
+        };
+        !attempt.id.is_nil()
+            && attempt.child_revision > 0
+            && attempt.claim.fence > 0
+            && !attempt.claim.holder.trim().is_empty()
+            && layer2_core::seconds_from_rfc3339(&attempt.claim.expires_at).is_some()
+            && attempt.owner.agent_id == self.child.agent.as_str()
+            && attempt.owner.validate().is_ok()
+    }
+}
+
+fn size_allowed(document: &Document) -> Result<bool, SandboxStoreError> {
+    bson::serialize_to_vec(document)
+        .map(|bytes| bytes.len() <= MAX_BYTES)
+        .map_err(|_| invalid_capture())
+}
+
+fn invalid_capture() -> SandboxStoreError {
+    SandboxStoreError::Corrupt("native retirement capture is invalid".into())
+}
+
+#[cfg(test)]
+mod tests;
