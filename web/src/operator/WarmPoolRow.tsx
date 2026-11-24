@@ -2,7 +2,7 @@ import { Fragment, useRef, useState } from 'react';
 import type { WarmPoolView } from '@cma/client';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-import { InlineConfirm } from '../ui/InlineConfirm';
+import { Modal } from '../ui/Modal';
 import { ValidatedNumberInput } from './ValidatedNumberInput';
 import { TableActions, TableCell, TableNote } from '../ui/Table';
 import type { StatusTone } from '../vocabulary/status';
@@ -60,7 +60,12 @@ export function WarmPoolRow({
   const [failure, setFailure] = useState<OperatorFailure>();
   const [saved, setSaved] = useState(false);
   const [disableRequested, setDisableRequested] = useState(false);
+  const disableConfirmation = useRef(false);
   const submitting = useRef(false);
+  const cancelDisable = () => {
+    disableConfirmation.current = false;
+    setDisableRequested(false);
+  };
   const needsReview = review || revision !== pool.revision;
   async function save(replicas: number) {
     if (submitting.current || needsReview || (previousRuntime && replicas !== 0)) return;
@@ -111,12 +116,7 @@ export function WarmPoolRow({
   const label = `${String(pool.cpu_millis)} millicores / ${String(pool.memory_mib)} MiB`;
   const status = STATUS[pool.status];
   const note =
-    !pool.observed ||
-    pool.error !== null ||
-    failure !== undefined ||
-    needsReview ||
-    saved ||
-    disableRequested;
+    !pool.observed || pool.error !== null || failure !== undefined || needsReview || saved;
   return (
     <Fragment>
       <tr aria-label={`Warm pool ${label}`}>
@@ -181,7 +181,10 @@ export function WarmPoolRow({
           <Button
             size="sm"
             disabled={busy || needsReview || disableRequested || pool.target_replicas === 0}
-            onClick={() => setDisableRequested(true)}
+            onClick={() => {
+              disableConfirmation.current = true;
+              setDisableRequested(true);
+            }}
           >
             Disable pool
           </Button>
@@ -190,19 +193,6 @@ export function WarmPoolRow({
       {note ? (
         <TableNote>
           <div className="warm-pool-note">
-            {disableRequested ? (
-              <InlineConfirm
-                question={`Disable pool ${pool.id} (${label}), reducing its target from ${pool.target_replicas} to 0? This removes spare capacity for new work.`}
-                confirmLabel="Confirm disable"
-                busy={busy || needsReview || pool.target_replicas === 0}
-                onCancel={() => setDisableRequested(false)}
-                onConfirm={() => {
-                  if (busy || needsReview || pool.target_replicas === 0) return;
-                  setDisableRequested(false);
-                  void save(0);
-                }}
-              />
-            ) : null}
             {!pool.observed ? <p>Waiting for the controller to confirm current capacity.</p> : null}
             {pool.error ? (
               <p className="operator-failure" role="alert">
@@ -224,6 +214,40 @@ export function WarmPoolRow({
           </div>
         </TableNote>
       ) : null}
+      <Modal
+        open={disableRequested}
+        title="Disable warm pool"
+        onClose={cancelDisable}
+        footer={
+          <div className="operator-actions">
+            <Button onClick={cancelDisable}>Cancel</Button>
+            <Button
+              variant="primary"
+              disabled={busy || needsReview || pool.target_replicas === 0}
+              onClick={() => {
+                // The closing dialog can retain its old handler during its exit animation.
+                if (
+                  !disableConfirmation.current ||
+                  busy ||
+                  needsReview ||
+                  pool.target_replicas === 0
+                )
+                  return;
+                cancelDisable();
+                void save(0);
+              }}
+            >
+              Confirm disable
+            </Button>
+          </div>
+        }
+      >
+        <p>
+          Disable pool {pool.id} ({label}), reducing its target from {pool.target_replicas} to 0?
+          This removes spare capacity for new work. Claimed Sandboxes keep running.
+        </p>
+        {needsReview ? <p>Read the current target before confirming this change.</p> : null}
+      </Modal>
     </Fragment>
   );
 }
