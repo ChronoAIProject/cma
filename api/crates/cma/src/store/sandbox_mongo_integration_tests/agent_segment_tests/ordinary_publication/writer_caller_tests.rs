@@ -208,6 +208,63 @@ async fn writer_caller_natural_conversation_adopts_without_an_extra_event() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn segmented_output_requires_an_existing_unheld_sandbox() {
+    let (client, name, store, current) = legacy("caller_held_output").await;
+    gate(&client, &name, &current, true, true).await;
+    let first = output(&current, "publish segmented output");
+    store
+        .commit_agent_conversation(first.clone())
+        .await
+        .unwrap();
+    let current = first.agent;
+    assert_eq!(version(&store, &current).await, 2);
+
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let other = Client::with_uri_str(&uri).await.unwrap();
+    let sandboxes = other.database(&name).collection::<Document>("sandboxes");
+    let parent_key = doc! {"_id":current.sandbox_id.as_str()};
+    let held = sandboxes
+        .update_one(
+            parent_key.clone(),
+            doc! {
+                "$set": {"ledger_maintenance": mongodb::bson::Bson::Null}
+            },
+        )
+        .write_concern(mongodb::options::WriteConcern::majority())
+        .await
+        .unwrap();
+    assert_eq!(held.modified_count, 1);
+    let mutation = output(&current, "held segmented output");
+    let next = boundary(&mutation);
+    let before = snapshot_raw(&store).await;
+    assert_eq!(
+        store.commit_agent_conversation(mutation.clone()).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(snapshot_raw(&store).await, before);
+
+    assert_eq!(
+        sandboxes
+            .delete_one(parent_key)
+            .write_concern(mongodb::options::WriteConcern::majority())
+            .await
+            .unwrap()
+            .deleted_count,
+        1
+    );
+    let before = snapshot_raw(&store).await;
+    assert_eq!(
+        store
+            .commit_agent_message_update(current, None, next, Some(mutation))
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(snapshot_raw(&store).await, before);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn writer_caller_natural_checkpoint_adopts_and_replays_exactly() {
     let (client, name, store, current) = legacy("caller_checkpoint").await;
     gate(&client, &name, &current, true, true).await;

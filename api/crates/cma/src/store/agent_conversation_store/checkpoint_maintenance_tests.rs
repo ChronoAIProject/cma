@@ -103,21 +103,23 @@ async fn sandbox_hold_refuses_output_log_publication() {
         .unwrap();
     assert_eq!(installed.modified_count, 1);
     let held = sandboxes.find_one(sandbox_key.clone()).await.unwrap();
+    assert_output_refused(&store, &current, &mutation, &output).await;
     assert_eq!(
-        store
-            .commit_agent_message_update(
-                current.clone(),
-                None,
-                output.clone(),
-                Some(mutation.clone()),
-            )
-            .await,
-        Err(SandboxStoreError::Conflict)
+        store.agents.find_one(agent_key.clone()).await.unwrap(),
+        original_agent
     );
     assert_eq!(
-        store.commit_agent_conversation(mutation.clone()).await,
-        Err(SandboxStoreError::Conflict)
+        store.agent_log(&current.id, 0, 100).await.unwrap(),
+        original_logs
     );
+    assert_eq!(sandboxes.find_one(sandbox_key.clone()).await.unwrap(), held);
+    let mut parent = sandboxes
+        .find_one_and_delete(sandbox_key)
+        .write_concern(WriteConcern::majority())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_output_refused(&store, &current, &mutation, &output).await;
     assert_eq!(
         store.agents.find_one(agent_key).await.unwrap(),
         original_agent
@@ -126,9 +128,9 @@ async fn sandbox_hold_refuses_output_log_publication() {
         store.agent_log(&current.id, 0, 100).await.unwrap(),
         original_logs
     );
-    assert_eq!(sandboxes.find_one(sandbox_key.clone()).await.unwrap(), held);
+    parent.remove("ledger_maintenance").unwrap();
     sandboxes
-        .update_one(sandbox_key, doc! {"$unset": {"ledger_maintenance": ""}})
+        .insert_one(parent)
         .write_concern(WriteConcern::majority())
         .await
         .unwrap();
@@ -145,4 +147,27 @@ async fn sandbox_hold_refuses_output_log_publication() {
         output.outcome.appended.as_slice()
     );
     client.database(&name).drop().await.unwrap();
+}
+
+async fn assert_output_refused(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    mutation: &AgentConversationMutation,
+    output: &AgentMessageCheckpoint,
+) {
+    assert_eq!(
+        store
+            .commit_agent_message_update(
+                current.clone(),
+                None,
+                output.clone(),
+                Some(mutation.clone()),
+            )
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        store.commit_agent_conversation(mutation.clone()).await,
+        Err(SandboxStoreError::Conflict)
+    );
 }
