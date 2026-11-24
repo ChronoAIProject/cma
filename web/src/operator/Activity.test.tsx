@@ -163,6 +163,7 @@ describe('Activity summary pages', () => {
         cursor: undefined,
         actor: undefined,
         action: undefined,
+        excludeSuccessfulReads: true,
       }),
     );
     await user.click(screen.getByRole('button', { name: 'Refresh records' }));
@@ -173,6 +174,27 @@ describe('Activity summary pages', () => {
     expect(screen.queryByText('first')).not.toBeInTheDocument();
     expect(screen.getByText('fresh')).toBeInTheDocument();
     expect(client.admin.listActivitySummary).toHaveBeenCalledTimes(2);
+  });
+
+  it('offers successful reads through the explicit Read filter', async () => {
+    const client = operatorClient();
+    client.admin.listActivitySummary
+      .mockResolvedValueOnce({ items: [], next: null })
+      .mockResolvedValueOnce({ items: [row('routine read')], next: null });
+    const user = userEvent.setup();
+    render(<Activity client={client} />);
+    await screen.findByText('No records match these filters.');
+    expect(screen.getByLabelText('Activity action')).toHaveTextContent('Audit events');
+    await chooseOptionValue(user, screen.getByLabelText('Activity action'), 'read');
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+    await screen.findByText('routine read');
+    expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        cursor: undefined,
+        action: 'read',
+        excludeSuccessfulReads: undefined,
+      }),
+    );
   });
 
   it('resets cursor on filters and rejects a late abort-resistant page and unmount result', async () => {
