@@ -7,21 +7,15 @@ pub(super) async fn register(
     live_agents: &Arc<LiveAgentRegistry>,
 ) -> Result<Option<Arc<crate::agent_manager::AgentManager>>, String> {
     match &config.agent_manager_replicas {
-        Some(settings) => {
-            let manager = crate::agent_manager::AgentManager::register(
+        Some(settings) => Ok(Some(
+            crate::agent_manager::AgentManager::register_configured(
                 stores.sandbox_model.clone(),
                 live_agents.clone(),
-                settings.relay_address.clone(),
-                settings.max_owned_agents,
-                config.features.ownership_cleanup_pacing,
-                config.features.batch_ownership_renewal,
+                settings,
+                &config.features,
             )
-            .await?;
-            if config.features.receiver_housekeeping_containment {
-                manager.enable_receiver_containment();
-            }
-            Ok(Some(manager))
-        }
+            .await?,
+        )),
         None => Ok(None),
     }
 }

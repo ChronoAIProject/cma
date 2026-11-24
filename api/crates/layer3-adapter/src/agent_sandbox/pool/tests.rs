@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 pub(super) fn spec() -> NativePoolSpec {
     NativePoolSpec {
+        cold_canary: false,
         image: crate::RuntimeImage {
             uri: format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
             labels: BTreeMap::from([

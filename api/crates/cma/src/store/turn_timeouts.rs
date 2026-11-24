@@ -7,6 +7,7 @@ use super::{
     agent_conversation_store::ApplyError,
     agent_log_segments::{conversation::checkpoint, transaction_scope::TransactionScope},
     sandbox_mongo::{commit_transaction, signed, CommitOutcome, MongoSandboxStore},
+    transaction_terminal::GuardedTerminal as _,
 };
 
 const RECEIPT: &str = "turn_policy_publication";
@@ -29,7 +30,7 @@ pub(crate) async fn settle(
     let applied = Box::pin(apply(store, proof, &mut scope)).await;
     let session = scope.release();
     if let Err(error) = applied {
-        if let Err(abort) = session.abort_transaction().await {
+        if let Err(abort) = session.abort_guarded().await {
             tracing::warn!(%abort, "turn policy transaction abort unconfirmed");
         }
         return Err(match error {

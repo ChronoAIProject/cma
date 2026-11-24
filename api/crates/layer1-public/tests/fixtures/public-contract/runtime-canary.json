@@ -1,0 +1,977 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "runtime-canary-policy-success",
+      "operation": "PUT /api/v1/admin/runtime-canary-policy",
+      "scenario": "runtime_canary_operator:ok",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/runtime-canary-policy",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "open": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 2
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-policy-anonymous",
+      "operation": "PUT /api/v1/admin/runtime-canary-policy",
+      "scenario": "runtime_canary_anonymous:ok",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/runtime-canary-policy",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "open": true
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-policy-forbidden",
+      "operation": "PUT /api/v1/admin/runtime-canary-policy",
+      "scenario": "runtime_canary_guest:ok",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/runtime-canary-policy",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "open": true
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-forbidden",
+          "title": "runtime canary forbidden",
+          "status": 403,
+          "detail": "Runtime canary authority is unavailable to this caller.",
+          "code": "runtime_canary_forbidden"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-policy-invalid",
+      "operation": "PUT /api/v1/admin/runtime-canary-policy",
+      "scenario": "runtime_canary_operator:ok",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/runtime-canary-policy",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "open": true,
+          "runtime_image": "registry.example/undeclared"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-invalid",
+          "title": "runtime canary invalid",
+          "status": 422,
+          "detail": "The runtime canary request is invalid.",
+          "code": "runtime_canary_invalid"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-policy-conflict",
+      "operation": "PUT /api/v1/admin/runtime-canary-policy",
+      "scenario": "runtime_canary_operator:conflict",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/runtime-canary-policy",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "open": true
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-conflict",
+          "title": "runtime canary conflict",
+          "status": 409,
+          "detail": "The request differs from the current runtime canary authority.",
+          "code": "runtime_canary_conflict"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-policy-unavailable",
+      "operation": "PUT /api/v1/admin/runtime-canary-policy",
+      "scenario": "runtime_canary_operator:unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/runtime-canary-policy",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "open": true
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-unavailable",
+          "title": "runtime canary unavailable",
+          "status": 503,
+          "detail": "Runtime canary persistence is unresolved. Retry this request with its original key.",
+          "code": "runtime_canary_unavailable"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-policy-closed",
+      "operation": "PUT /api/v1/admin/runtime-canary-policy",
+      "scenario": "runtime_canary_operator:closed",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/runtime-canary-policy",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 1,
+          "open": true
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-closed",
+          "title": "runtime canary closed",
+          "status": 409,
+          "detail": "Fresh runtime canary admission is closed.",
+          "code": "runtime_canary_closed"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-grant-success",
+      "operation": "POST /api/v1/admin/runtime-canary-grants",
+      "scenario": "runtime_canary_operator:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/runtime-canary-grants",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "fixture-user",
+          "release_key": "agent-candidate",
+          "expected_revision": 0,
+          "policy_revision": 2,
+          "consent_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expires_at": "2030-01-01T00:00:00Z"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "grant_id": "fixture-grant",
+          "revision": 1,
+          "policy_revision": 2
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-grant-anonymous",
+      "operation": "POST /api/v1/admin/runtime-canary-grants",
+      "scenario": "runtime_canary_anonymous:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/runtime-canary-grants",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "fixture-user",
+          "release_key": "agent-candidate",
+          "expected_revision": 0,
+          "policy_revision": 2,
+          "consent_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expires_at": "2030-01-01T00:00:00Z"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-grant-forbidden",
+      "operation": "POST /api/v1/admin/runtime-canary-grants",
+      "scenario": "runtime_canary_guest:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/runtime-canary-grants",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "fixture-user",
+          "release_key": "agent-candidate",
+          "expected_revision": 0,
+          "policy_revision": 2,
+          "consent_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expires_at": "2030-01-01T00:00:00Z"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-forbidden",
+          "title": "runtime canary forbidden",
+          "status": 403,
+          "detail": "Runtime canary authority is unavailable to this caller.",
+          "code": "runtime_canary_forbidden"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-grant-invalid",
+      "operation": "POST /api/v1/admin/runtime-canary-grants",
+      "scenario": "runtime_canary_operator:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/runtime-canary-grants",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "fixture-user",
+          "release_key": "agent-candidate",
+          "expected_revision": 0,
+          "policy_revision": 2,
+          "consent_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expires_at": "2030-01-01T00:00:00Z",
+          "runtime_image": "registry.example/undeclared"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-invalid",
+          "title": "runtime canary invalid",
+          "status": 422,
+          "detail": "The runtime canary request is invalid.",
+          "code": "runtime_canary_invalid"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-grant-conflict",
+      "operation": "POST /api/v1/admin/runtime-canary-grants",
+      "scenario": "runtime_canary_operator:conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/runtime-canary-grants",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "fixture-user",
+          "release_key": "agent-candidate",
+          "expected_revision": 0,
+          "policy_revision": 2,
+          "consent_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expires_at": "2030-01-01T00:00:00Z"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-conflict",
+          "title": "runtime canary conflict",
+          "status": 409,
+          "detail": "The request differs from the current runtime canary authority.",
+          "code": "runtime_canary_conflict"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-grant-unavailable",
+      "operation": "POST /api/v1/admin/runtime-canary-grants",
+      "scenario": "runtime_canary_operator:unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/runtime-canary-grants",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "fixture-user",
+          "release_key": "agent-candidate",
+          "expected_revision": 0,
+          "policy_revision": 2,
+          "consent_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expires_at": "2030-01-01T00:00:00Z"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-unavailable",
+          "title": "runtime canary unavailable",
+          "status": 503,
+          "detail": "Runtime canary persistence is unresolved. Retry this request with its original key.",
+          "code": "runtime_canary_unavailable"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-grant-closed",
+      "operation": "POST /api/v1/admin/runtime-canary-grants",
+      "scenario": "runtime_canary_operator:closed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/runtime-canary-grants",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "fixture-user",
+          "release_key": "agent-candidate",
+          "expected_revision": 0,
+          "policy_revision": 2,
+          "consent_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expires_at": "2030-01-01T00:00:00Z"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-closed",
+          "title": "runtime canary closed",
+          "status": 409,
+          "detail": "Fresh runtime canary admission is closed.",
+          "code": "runtime_canary_closed"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-revoke-success",
+      "operation": "POST /api/v1/admin/runtime-canary-grants/revoke",
+      "scenario": "runtime_canary_operator:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/runtime-canary-grants/revoke",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "fixture-user",
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "grant_id": "fixture-grant",
+          "revision": 2,
+          "policy_revision": 2
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-revoke-anonymous",
+      "operation": "POST /api/v1/admin/runtime-canary-grants/revoke",
+      "scenario": "runtime_canary_anonymous:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/runtime-canary-grants/revoke",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "fixture-user",
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-revoke-forbidden",
+      "operation": "POST /api/v1/admin/runtime-canary-grants/revoke",
+      "scenario": "runtime_canary_guest:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/runtime-canary-grants/revoke",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "fixture-user",
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-forbidden",
+          "title": "runtime canary forbidden",
+          "status": 403,
+          "detail": "Runtime canary authority is unavailable to this caller.",
+          "code": "runtime_canary_forbidden"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-revoke-invalid",
+      "operation": "POST /api/v1/admin/runtime-canary-grants/revoke",
+      "scenario": "runtime_canary_operator:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/runtime-canary-grants/revoke",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "fixture-user",
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "expected_revision": 1,
+          "runtime_image": "registry.example/undeclared"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-invalid",
+          "title": "runtime canary invalid",
+          "status": 422,
+          "detail": "The runtime canary request is invalid.",
+          "code": "runtime_canary_invalid"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-revoke-conflict",
+      "operation": "POST /api/v1/admin/runtime-canary-grants/revoke",
+      "scenario": "runtime_canary_operator:conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/runtime-canary-grants/revoke",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "fixture-user",
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-conflict",
+          "title": "runtime canary conflict",
+          "status": 409,
+          "detail": "The request differs from the current runtime canary authority.",
+          "code": "runtime_canary_conflict"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-revoke-unavailable",
+      "operation": "POST /api/v1/admin/runtime-canary-grants/revoke",
+      "scenario": "runtime_canary_operator:unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/runtime-canary-grants/revoke",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "fixture-user",
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-unavailable",
+          "title": "runtime canary unavailable",
+          "status": 503,
+          "detail": "Runtime canary persistence is unresolved. Retry this request with its original key.",
+          "code": "runtime_canary_unavailable"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-redeem-success",
+      "operation": "POST /api/v1/runtime-canary-redemptions",
+      "scenario": "runtime_canary_owner:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/runtime-canary-redemptions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-redemption"
+        },
+        "body": {
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "policy_revision": 2,
+          "name": "Runtime trial",
+          "initial_message": "Summarize this workspace."
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "fixture-operation",
+          "status": "provisioning"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-redeem-anonymous",
+      "operation": "POST /api/v1/runtime-canary-redemptions",
+      "scenario": "runtime_canary_anonymous:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/runtime-canary-redemptions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-redemption"
+        },
+        "body": {
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "policy_revision": 2,
+          "name": "Runtime trial",
+          "initial_message": "Summarize this workspace."
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-redeem-forbidden",
+      "operation": "POST /api/v1/runtime-canary-redemptions",
+      "scenario": "runtime_canary_guest:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/runtime-canary-redemptions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-redemption"
+        },
+        "body": {
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "policy_revision": 2,
+          "name": "Runtime trial",
+          "initial_message": "Summarize this workspace."
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-forbidden",
+          "title": "runtime canary forbidden",
+          "status": 403,
+          "detail": "Runtime canary authority is unavailable to this caller.",
+          "code": "runtime_canary_forbidden"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-redeem-invalid",
+      "operation": "POST /api/v1/runtime-canary-redemptions",
+      "scenario": "runtime_canary_owner:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/runtime-canary-redemptions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-redemption"
+        },
+        "body": {
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "policy_revision": 2,
+          "name": "Runtime trial",
+          "initial_message": "Summarize this workspace.",
+          "runtime_image": "registry.example/undeclared"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-invalid",
+          "title": "runtime canary invalid",
+          "status": 422,
+          "detail": "The runtime canary request is invalid.",
+          "code": "runtime_canary_invalid"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-redeem-conflict",
+      "operation": "POST /api/v1/runtime-canary-redemptions",
+      "scenario": "runtime_canary_owner:conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/runtime-canary-redemptions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-redemption"
+        },
+        "body": {
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "policy_revision": 2,
+          "name": "Runtime trial",
+          "initial_message": "Summarize this workspace."
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-conflict",
+          "title": "runtime canary conflict",
+          "status": 409,
+          "detail": "The request differs from the current runtime canary authority.",
+          "code": "runtime_canary_conflict"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-redeem-unavailable",
+      "operation": "POST /api/v1/runtime-canary-redemptions",
+      "scenario": "runtime_canary_owner:unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/runtime-canary-redemptions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-redemption"
+        },
+        "body": {
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "policy_revision": 2,
+          "name": "Runtime trial",
+          "initial_message": "Summarize this workspace."
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-unavailable",
+          "title": "runtime canary unavailable",
+          "status": 503,
+          "detail": "Runtime canary persistence is unresolved. Retry this request with its original key.",
+          "code": "runtime_canary_unavailable"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-redeem-closed",
+      "operation": "POST /api/v1/runtime-canary-redemptions",
+      "scenario": "runtime_canary_owner:closed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/runtime-canary-redemptions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-redemption"
+        },
+        "body": {
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "policy_revision": 2,
+          "name": "Runtime trial",
+          "initial_message": "Summarize this workspace."
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-closed",
+          "title": "runtime canary closed",
+          "status": 409,
+          "detail": "Fresh runtime canary admission is closed.",
+          "code": "runtime_canary_closed"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-redeem-delegated",
+      "operation": "POST /api/v1/runtime-canary-redemptions",
+      "scenario": "runtime_canary_delegated:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/runtime-canary-redemptions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "fixture-redemption"
+        },
+        "body": {
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "policy_revision": 2,
+          "name": "Runtime trial",
+          "initial_message": "Summarize this workspace."
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/runtime-canary-forbidden",
+          "title": "runtime canary forbidden",
+          "status": 403,
+          "detail": "Runtime canary authority is unavailable to this caller.",
+          "code": "runtime_canary_forbidden"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-redeem-missing-key",
+      "operation": "POST /api/v1/runtime-canary-redemptions",
+      "scenario": "runtime_canary_owner:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/runtime-canary-redemptions",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "policy_revision": 2,
+          "name": "Runtime trial",
+          "initial_message": "Summarize this workspace."
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "runtime-canary-redeem-invalid-key",
+      "operation": "POST /api/v1/runtime-canary-redemptions",
+      "scenario": "runtime_canary_owner:ok",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/runtime-canary-redemptions",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "invalid key"
+        },
+        "body": {
+          "release_key": "agent-candidate",
+          "grant_id": "fixture-grant",
+          "policy_revision": 2,
+          "name": "Runtime trial",
+          "initial_message": "Summarize this workspace."
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      }
+    }
+  ]
+}

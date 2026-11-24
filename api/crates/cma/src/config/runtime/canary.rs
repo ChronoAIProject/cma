@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use layer3_adapter::agent_sandbox::NativePoolSpec;
 use layer3_adapter::{HomeVolumePolicy, RuntimeImage, SandboxCapacity};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::{parse_pinned_image, parse_sandbox_namespace, SHA256_SEPARATOR};
 
@@ -16,26 +16,26 @@ const DESKTOP_LABEL: &str = "dev.chrono.cma.runtime-desktop";
 const DESKTOP_ENVIRONMENT_LABEL: &str = "dev.chrono.cma.desktop-environment";
 const SOURCE_LABEL: &str = "org.opencontainers.image.revision";
 
-#[derive(Clone, Default, PartialEq, Eq)]
-pub(super) struct Catalog(Vec<Release>);
+#[derive(Clone, Default, PartialEq, Eq, Serialize)]
+pub(crate) struct Catalog(Vec<Release>);
 
-#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Release {
-    release_key: String,
-    lane: Lane,
-    image: RuntimeImage,
-    platform: String,
-    capacity: SandboxCapacity,
-    config_digest: String,
-    source_revision: String,
-    publication_run: u64,
-    publication_evidence_sha256: String,
+pub(crate) struct Release {
+    pub(crate) release_key: String,
+    pub(crate) lane: Lane,
+    pub(crate) image: RuntimeImage,
+    pub(crate) platform: String,
+    pub(crate) capacity: SandboxCapacity,
+    pub(crate) config_digest: String,
+    pub(crate) source_revision: String,
+    pub(crate) publication_run: u64,
+    pub(crate) publication_evidence_sha256: String,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Lane {
+pub(crate) enum Lane {
     Agent,
     DebianDesktop,
 }
@@ -75,6 +75,15 @@ impl Catalog {
         Ok(Self(releases))
     }
 
+    pub(crate) fn release(&self, key: &str) -> Option<&Release> {
+        self.0.iter().find(|release| release.release_key == key)
+    }
+
+    pub(crate) fn fingerprint(&self) -> Result<String, String> {
+        layer2_core::profiles::content_digest(&("runtime-canary-catalog-v1", self))
+            .map_err(|_| invalid("catalog fingerprint is unavailable"))
+    }
+
     pub(super) fn len(&self) -> usize {
         self.0.len()
     }
@@ -107,6 +116,7 @@ impl Release {
             return Err(invalid("image labels do not match the canary lane"));
         }
         NativePoolSpec {
+            cold_canary: true,
             image: self.image.clone(),
             cpu_millis: self.capacity.cpu_millis,
             memory_mib: self.capacity.memory_mib,
@@ -186,4 +196,93 @@ fn lower_hex(value: &str, length: usize) -> bool {
 
 fn invalid(reason: &str) -> String {
     format!("{KEY} {reason}")
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
+pub(crate) struct WriteScope {
+    enabled: bool,
+    owners: BTreeSet<layer2_core::SubjectId>,
+}
+
+impl WriteScope {
+    pub(super) fn from_lookup(
+        lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+        native: bool,
+        catalog: &Catalog,
+    ) -> Result<Self, String> {
+        Self::from_lookup_keys(
+            lookup,
+            native,
+            catalog,
+            "CHRONO_RUNTIME_CANARY_WRITE_ENABLED",
+            "CHRONO_RUNTIME_CANARY_OWNERS",
+        )
+    }
+
+    pub(super) fn retained_from_lookup(
+        lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+        native: bool,
+        catalog: &Catalog,
+    ) -> Result<Self, String> {
+        Self::from_lookup_keys(
+            lookup,
+            native,
+            catalog,
+            "CHRONO_RETAINED_RUNTIME_TRANSITIONS_ENABLED",
+            "CHRONO_RETAINED_RUNTIME_TRANSITION_OWNERS",
+        )
+    }
+
+    fn from_lookup_keys(
+        lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+        native: bool,
+        catalog: &Catalog,
+        enabled_key: &str,
+        owners_key: &str,
+    ) -> Result<Self, String> {
+        let enabled = match lookup(enabled_key)?.as_deref() {
+            None | Some("false") => false,
+            Some("true") => true,
+            _ => return Err(format!("{enabled_key} must be true or false")),
+        };
+        let owners = match lookup(owners_key)? {
+            None => BTreeSet::new(),
+            Some(value) if value.len() <= 4096 => {
+                serde_json::from_str::<BTreeSet<layer2_core::SubjectId>>(&value)
+                    .map_err(|_| format!("{owners_key} must be a JSON list"))?
+            }
+            Some(_) => return Err(format!("{owners_key} exceeds its byte limit")),
+        };
+        if owners.len() > MAX_RELEASES
+            || owners.iter().any(|owner| {
+                let text = owner.as_str();
+                text.is_empty()
+                    || text.len() > 256
+                    || text.trim() != text
+                    || text.chars().any(char::is_control)
+            })
+        {
+            return Err(format!("{owners_key} is invalid"));
+        }
+        if enabled && (!native || catalog.len() == 0 || owners.is_empty()) {
+            return Err(
+                "runtime canary writes require native allocation, a catalog and an owner scope"
+                    .into(),
+            );
+        }
+        Ok(Self { enabled, owners })
+    }
+
+    pub(crate) fn allows(&self, owner: &layer2_core::SubjectId) -> bool {
+        self.enabled && self.owners.contains(owner)
+    }
+
+    pub(crate) fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub(crate) fn fingerprint(&self) -> Result<String, String> {
+        layer2_core::profiles::content_digest(&("runtime-canary-owners-v1", &self.owners))
+            .map_err(|_| "runtime canary owner scope fingerprint is unavailable".into())
+    }
 }

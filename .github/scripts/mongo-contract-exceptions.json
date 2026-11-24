@@ -91,9 +91,17 @@
     "kind": "fixture",
     "reason": "Requires authenticated disposable service Mongo fixture; selected by image-manager-mongo-contract.sh."
   },
+  "store::isolation::tests::real_cancelled_terminal_command_can_end_its_own_session_under_the_exact_runtime_grant": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture; selected by image-manager-mongo-contract.sh."
+  },
   "store::isolation::tests::real_erasure_optional_authority_preserves_disabled_deployments": {
     "kind": "fixture",
     "reason": "Requires actual restricted credentials in the authenticated disposable replica set; selected by image-manager-mongo-contract.sh."
+  },
+  "store::isolation::tests::real_measured_custody_role_can_be_added_and_revoked_with_capture_off": {
+    "kind": "fixture",
+    "reason": "Requires the authenticated disposable service Mongo fixture. The image-manager Mongo contract runner selects this test."
   },
   "store::isolation::tests::real_progress_grants_cannot_delete_receipts_or_access_another_service": {
     "kind": "fixture",

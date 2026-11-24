@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::trigger_domain::{Launch, LaunchCommit, LaunchEvent, LaunchStoreError};
 use mongodb::bson::doc;
 use mongodb::ClientSession;
@@ -49,23 +50,23 @@ pub(super) async fn commit(
         let receipt = match commit_once(store, &commit, &mut session).await {
             Ok(receipt) => receipt,
             Err(AttemptError::Retry(reason)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(reason.into());
                 continue;
             }
             Err(AttemptError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(AttemptError::Driver(error))
                 if is_transient(&error) || is_duplicate_key(&error) =>
             {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(AttemptError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(unavailable(error));
             }
         };

@@ -37,9 +37,17 @@ impl MongoAgentLifecycleStore {
         lease: &LifecycleLease,
         update: impl Into<mongodb::options::UpdateModifications>,
     ) -> Result<(), StoreError> {
+        self.write_matching(lease.filter(), update).await
+    }
+
+    async fn write_matching(
+        &self,
+        filter: Document,
+        update: impl Into<mongodb::options::UpdateModifications>,
+    ) -> Result<(), StoreError> {
         let result = self
             .operations
-            .update_one(lease.filter(), update)
+            .update_one(filter, update)
             .await
             .map_err(driver)?;
         if result.matched_count != 1 {
@@ -193,29 +201,22 @@ impl MongoAgentLifecycleStore {
         lease: &LifecycleLease,
         sandbox_id: &str,
     ) -> Result<(), StoreError> {
+        // Ordinary operations can bind once. Canary admission has already
+        // bound its Sandbox, so either kind can only repeat an existing ID.
         let mut filter = lease.filter();
+        filter.insert("sandbox_id", doc! { "$not": { "$type": "array" } });
         filter.insert(
             "$or",
             [
-                doc! {"canary_admission": {"$exists": false}},
-                doc! {"sandbox_id": sandbox_id},
+                doc! { "sandbox_id": sandbox_id },
+                doc! { "canary_admission": { "$exists": false }, "sandbox_id": Bson::Null },
             ],
         );
-        let result = self
-            .operations
-            .update_one(
-                filter,
-                doc! {"$set": {"sandbox_id": sandbox_id, "updated_at": DateTime::now()}},
-            )
-            .await
-            .map_err(driver)?;
-        if result.matched_count != 1 {
-            return Err(StoreError::RevisionConflict {
-                expected: 0,
-                actual: 1,
-            });
-        }
-        Ok(())
+        self.write_matching(
+            filter,
+            doc! { "$set": { "sandbox_id": sandbox_id, "updated_at": DateTime::now() } },
+        )
+        .await
     }
 
     /// Pin the original probe result before allocating or building profiles.
@@ -318,15 +319,22 @@ impl MongoAgentLifecycleStore {
         error: &str,
         failure: Option<layer1_public::rest::AgentLifecycleFailure>,
     ) -> Result<(), StoreError> {
-        let mut fields = doc! { "status": "failed", "phase": "failed", "error": error,
-        "lease_token": Bson::Null, "lease_expires_at": Bson::Null, "updated_at": DateTime::now() };
-        if let Some(failure) = failure {
-            fields.insert(
-                "failure",
-                mongodb::bson::serialize_to_bson(&failure)
-                    .map_err(|error| StoreError::Malformed(error.to_string()))?,
-            );
-        }
-        self.write(lease, doc! {"$set": fields}).await
+        self.write(lease, failure_update(error, failure)?).await
     }
+}
+
+pub(super) fn failure_update(
+    error: &str,
+    failure: Option<layer1_public::rest::AgentLifecycleFailure>,
+) -> Result<Document, StoreError> {
+    let mut fields = doc! { "status": "failed", "phase": "failed", "error": error,
+    "lease_token": Bson::Null, "lease_expires_at": Bson::Null, "updated_at": DateTime::now() };
+    if let Some(failure) = failure {
+        fields.insert(
+            "failure",
+            mongodb::bson::serialize_to_bson(&failure)
+                .map_err(|error| StoreError::Malformed(error.to_string()))?,
+        );
+    }
+    Ok(doc! {"$set": fields})
 }

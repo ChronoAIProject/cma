@@ -135,8 +135,9 @@ pub use agent_work_validation::{
 };
 mod sandbox_admission;
 pub use sandbox_admission::{
-    allocated_sandbox_name, valid_admission_fingerprint, SandboxAdmission, SandboxAdmissionName,
-    SandboxAdmissionReplay, SandboxAdmissionResult, SandboxAdmissionStore, SandboxLimitClass,
+    allocated_sandbox_name, valid_admission_fingerprint, CreationFence, SandboxAdmission,
+    SandboxAdmissionName, SandboxAdmissionReplay, SandboxAdmissionResult, SandboxAdmissionStore,
+    SandboxLimitClass,
 };
 mod lifecycle_command;
 pub use lifecycle_command::*;
@@ -365,6 +366,7 @@ pub enum SandboxTransaction {
         /// Internal authority for deferred command revival; absent on legacy
         /// owner/system lifecycle transactions. Never serialized into aggregates.
         command_revival: Option<Arc<super::agent_io::CommandRevivalAuthorization>>,
+        released_runtime: Option<layer3_adapter::ReleasedRuntime>,
         expected_revision: u64,
         sandbox: Box<Sandbox>,
         event_at: String,

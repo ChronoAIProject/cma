@@ -30,6 +30,17 @@ for (const admin of [false, true]) {
           failedAssets.push(`${response.status()} ${new URL(response.url()).pathname}`);
       });
       await boundary.route(page, baseURL!);
+      await page.route('**/api/v1/agents/agt_contract/reply-preview', (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        return route.fulfill({
+          json: {
+            status: 'none',
+            agent_id: 'agt_contract',
+            source_through_seq: 0,
+            latest_assistant_reply: null,
+          },
+        });
+      });
       await metrics.route(page);
       await metrics.session(page, ['use_own_sandboxes', 'read_all_sandboxes']);
       let transportSelections = 0;

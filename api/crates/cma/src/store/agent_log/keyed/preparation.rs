@@ -39,7 +39,7 @@ pub(in crate::store) async fn prepare(
     let (admission, permit) = match result {
         Ok(value) => value,
         Err(error) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(domain(error));
         }
     };
@@ -52,7 +52,7 @@ pub(in crate::store) async fn prepare(
             ))
         }
         CommitOutcome::Retry(_) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(SandboxStoreError::Conflict);
         }
         CommitOutcome::Failed(error) => return Err(driver(error)),
