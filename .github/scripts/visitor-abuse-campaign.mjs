@@ -155,10 +155,21 @@ function validateMetrics(rows) {
       load.observations.load.below.refused === 0,
   );
   assert.ok(load.observations.load.above.refused > 0);
-  assert.equal(
-    totals.offered,
-    load.observations.load.below.offered + load.observations.load.above.offered,
-  );
+  for (const key of ["offered", "admitted", "refused"]) {
+    const waveTotal = natural(
+      load.observations.load.below[key] + load.observations.load.above[key],
+    );
+    assert.equal(
+      load.counts[key],
+      waveTotal,
+      `Load ${key} disagrees with its waves`,
+    );
+    assert.equal(
+      totals[key],
+      waveTotal,
+      `Campaign ${key} disagrees with its waves`,
+    );
+  }
   const fleet = object(load.observations.fleet);
   for (const key of ["before", "after", "ceiling"]) natural(fleet[key]);
   assert.ok(
@@ -173,8 +184,28 @@ function validateCleanup(journal, scenarios, context) {
   assert.ok(Array.isArray(journal) && journal.length > 0);
   const owners = new Map(scenarios.map((row) => [row.journalRun, row]));
   assert.equal(owners.size, scenarios.length);
+  const boundary = scenarios.find((row) => row.case === "boundary");
+  const refusedId = identifier(boundary.observations.thirdHome.id);
+  assert.ok(
+    boundary.requests.some(
+      (request) =>
+        request.actor === "boundary" &&
+        request.target !== undefined &&
+        request.method === "POST" &&
+        [201, 202].includes(request.status) &&
+        request.receiptId === refusedId,
+    ),
+    "Third-home refusal lacks its original admitted Launch",
+  );
+  const refusalKey = resourceKey({
+    run: boundary.journalRun,
+    kind: "launches",
+    id: refusedId,
+    subject: context.subjects.boundary,
+  });
   const created = new Map(),
-    settled = new Set();
+    settled = new Set(),
+    lastRecords = new Map();
   for (const row of journal) {
     object(row);
     const scenario = owners.get(row.run);
@@ -194,6 +225,12 @@ function validateCleanup(journal, scenarios, context) {
       ["launches", "agents", "workspaces", "sandboxes"].includes(row.kind),
     );
     const key = resourceKey(row);
+    const previous = lastRecords.get(key);
+    assert.ok(
+      !previous || instant(row.at) >= instant(previous.at),
+      "Cleanup timestamp precedes the previous record for this resource",
+    );
+    lastRecords.set(key, row);
     if (row.action === "created") {
       assert.ok(!created.has(key), "Duplicate resource ownership");
       created.set(key, row);
@@ -237,6 +274,15 @@ function validateCleanup(journal, scenarios, context) {
       assert.ok(row.status >= 200 && row.status < 300);
   }
   assert.ok(created.size > 0);
+  assert.ok(
+    created.has(refusalKey),
+    "Third-home refusal lacks resource ownership",
+  );
+  assert.equal(
+    lastRecords.get(refusalKey)?.action,
+    "terminal_refusal_reconciled",
+    "Third-home refusal lacks its dedicated terminal reconciliation",
+  );
   for (const key of created.keys())
     assert.ok(
       settled.has(key),
