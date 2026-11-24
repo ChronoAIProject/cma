@@ -68,6 +68,9 @@ pub const CMAEG_CMA_RECORD_ORIGIN_ALIASES: &str = "CMAEG_CMA_RECORD_ORIGIN_ALIAS
 pub const CMAEG_CMA_SERVICE_TOKEN: &str = "CMAEG_CMA_SERVICE_TOKEN";
 pub const CMAEG_CMA_SERVICE_TOKEN_FILE: &str = "CMAEG_CMA_SERVICE_TOKEN_FILE";
 pub const CMAEG_NYXID_BASE_URL: &str = "CMAEG_NYXID_BASE_URL";
+pub(crate) fn channel_cancel_create_enabled() -> Result<bool, ConfigError> {
+    routing::write_flag("CMAEG_CHANNEL_CANCEL_CREATE_ENABLED")
+}
 pub(crate) const CMAEG_NYXID_TURN_TRACE_ENABLED: &str = "CMAEG_NYXID_TURN_TRACE_ENABLED";
 pub const CMAEG_TOOLS_NYXID_SLUG: &str = "CMAEG_TOOLS_NYXID_SLUG";
 

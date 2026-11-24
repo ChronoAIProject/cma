@@ -61,6 +61,14 @@ pub fn management_router(state: ManagementState) -> Router {
             get(super::creation::recover_channel),
         )
         .route(
+            "/v1/channel-records/{record_id}/cancel-create",
+            post(super::creation::cancel_create),
+        )
+        .route(
+            "/v1/channel-records/cancel-create-capability",
+            get(super::creation::cancel_create_capability),
+        )
+        .route(
             "/v1/channels/{channel_id}",
             get(get_channel).put(update_channel).delete(delete_channel),
         )

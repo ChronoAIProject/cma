@@ -69,6 +69,11 @@ struct Introspection {
 }
 
 impl NyxIdAuth {
+    /// Issuer that must exactly match the assertion returned by introspection.
+    pub fn issuer(&self) -> &str {
+        &self.issuer
+    }
+
     pub fn new(
         issuer: &str,
         service: Service,

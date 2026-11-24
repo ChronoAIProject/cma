@@ -13,3 +13,4 @@ pub use import_gate::{
     ImportGate, GITHUB_IMPORT_DISABLED, GITHUB_IMPORT_KEYS_REQUIRED, GITHUB_IMPORT_UNREADABLE,
 };
 pub use kind::RecordKind;
+pub(crate) use mongo::{CancelCreate, CreateConnectionClaim};

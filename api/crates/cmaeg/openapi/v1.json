@@ -2058,6 +2058,82 @@
           }
         ]
       },
+      "CancelCreateCapability": {
+        "properties": {
+          "contract_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "contract_version"
+        ],
+        "type": "object"
+      },
+      "CancelCreateReceipt": {
+        "properties": {
+          "contract_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/CancelCreateReceiptOwner"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/CancelCreateReceiptProvider"
+          },
+          "record_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contract_version",
+          "status",
+          "record_id",
+          "owner",
+          "provider"
+        ],
+        "type": "object"
+      },
+      "CancelCreateReceiptOwner": {
+        "properties": {
+          "issuer": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "issuer",
+          "kind",
+          "subject"
+        ],
+        "type": "object"
+      },
+      "CancelCreateReceiptProvider": {
+        "properties": {
+          "binding_id": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "binding_id"
+        ],
+        "type": "object"
+      },
       "Capabilities": {
         "properties": {
           "attachments": {
@@ -10816,6 +10892,41 @@
         ]
       }
     },
+    "/channel-records/cancel-create-capability": {
+      "get": {
+        "operationId": "cancelCreateCapability",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelCreateCapability"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
     "/channel-records/{record_id}": {
       "get": {
         "operationId": "recoverChannel",
@@ -10847,6 +10958,51 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ChannelResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channel-records/{record_id}/cancel-create": {
+      "post": {
+        "operationId": "cancelChannelCreate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelCreateReceipt"
                 }
               }
             },

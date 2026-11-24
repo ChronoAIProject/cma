@@ -3,7 +3,11 @@ use super::{
     definition::{build_definition, channel_pointer, ChannelCreateRequest},
     management::*,
 };
-use crate::{auth::Creator, providers::BindingResponse, records::RecordError};
+use crate::{
+    auth::Creator,
+    providers::BindingResponse,
+    records::{CreateConnectionClaim, RecordError},
+};
 use cmaeg_core::{
     channel::{ChannelCreation, ChannelDefinition, ChannelMutationKind, ConformanceLevel},
     ids::{BindingId, RecordId},
@@ -11,11 +15,12 @@ use cmaeg_core::{
     ValidationError,
 };
 
-pub async fn create(
+pub(super) async fn create(
     state: &ManagementState,
     creator: &Creator,
     request: ChannelCreateRequest,
     record_id: RecordId,
+    claim: Option<&CreateConnectionClaim>,
 ) -> Result<CreatedChannel, ManagementError> {
     custom_attachments_allowed(state, &request.sources)?;
     let uuid = uuid::Uuid::parse_str(record_id.as_str()).map_err(|_| {
@@ -73,7 +78,7 @@ pub async fn create(
             let blob = seal_definition(&state.master_keys, &definition)?;
             match state
                 .records
-                .put(&record_id, &creator.subject, &blob, None)
+                .reserve_channel(&record_id, creator, &blob, claim)
                 .await
             {
                 Ok(version) => {

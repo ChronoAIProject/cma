@@ -820,6 +820,22 @@ allocating another. A provider that is not allowlisted is refused with 400
 Deletion releases the reservation; callers must never reuse a retired record UUID
 or race cleanup against an outstanding create attempt.
 
+`GET /v1/channel-records/cancel-create-capability` returns `{"contract_version":1}`
+to an authenticated creator with Channel delete permission when the Gateway can
+enforce cancellation on every writer. Availability can change, so callers must
+confirm the cancellation result.
+
+`POST /v1/channel-records/{record_id}/cancel-create` uses the original Gateway
+destination, creator bearer and canonical UUID v4. It takes no body. A 200 reply
+with `status: "creation_fenced_absent"` means any future create for that
+creator and record identity is permanently fenced. The version 1 receipt
+includes the original UUID, the authenticated issuer, human subject and kind,
+and the NyxBot binding derived from that UUID. A repeat returns the same
+receipt. An owned record returns 409 and remains eligible for exact-version
+deletion. A record owned by someone else has the same visibility as an absent
+record for the caller. An unavailable capability or an ambiguous response
+provides no receipt.
+
 
 A channel response has this shape (ellipsis denotes the previously supplied
 profile/policy objects, not a literal JSON value):
@@ -840,6 +856,8 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channels` | Optional `after` opaque cursor; no body | 200 `{items:[...],next_cursor}` with up to 50 owner-scoped channel responses | 401 unauthenticated; 503 record store unavailable |
 | `POST /v1/channels` | Complete create body; optional idempotency header and reserved record UUID | 201 channel response | 409 reused key with different content; 503 cache capacity |
 | `GET /v1/channel-records/{record_id}` | No body | 200 recovered channel response | 404 absent, unreserved, or other owner |
+| `GET /v1/channel-records/cancel-create-capability` | No body | 200 cancellation contract version | 503 when cancellation is unavailable |
+| `POST /v1/channel-records/{record_id}/cancel-create` | No body | 200 creator-scoped cancellation receipt | 409 when the creator still owns a record |
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
 | `GET /v1/channels/{channel_id}/activity` | No body | 200 bounded recent activity snapshot with cursor, retention and truncation | 404 absent or other owner; 503 store unavailable |
 | `GET /v1/channels/{channel_id}/activity/stream` | Optional `Last-Event-ID` or `cursor` | SSE `activity`/`reset` full snapshots; initial snapshot on every connection | 400 invalid cursor; 404 absent or other owner |
@@ -3784,6 +3802,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/channels` | `listChannels` |
 | `POST /v1/channels` | `createChannel` |
 | `GET /v1/channel-records/{record_id}` | `recoverChannel` |
+| `GET /v1/channel-records/cancel-create-capability` | `cancelCreateCapability` |
+| `POST /v1/channel-records/{record_id}/cancel-create` | `cancelChannelCreate` |
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `GET /v1/channels/{channel_id}/partition` | `inspectChannelPartition` |

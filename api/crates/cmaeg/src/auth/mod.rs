@@ -3,6 +3,7 @@
 mod creator;
 pub mod owner_keys;
 
+pub(crate) use creator::CancelCreateOwner;
 pub use creator::{
     Administrator, Creator, CreatorAuthError, CreatorAuthState, CreatorAuthenticator,
     IntegrationOwner,
