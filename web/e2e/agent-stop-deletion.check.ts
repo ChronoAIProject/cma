@@ -157,7 +157,33 @@ for (const { combined, uncertain } of [
       ...boundary.workspace,
       agents: [{ ...boundary.workspace.agents[0]!, status: 'ready' }, sibling],
     };
+    const siblingPath = `/api/v1/agents/${sibling.id}`;
+    const siblingReads = {
+      [siblingPath]: {
+        ...boundary.agent,
+        id: sibling.id,
+        status: sibling.status,
+        title: sibling.title,
+        worktree: { ...boundary.agent.worktree, id: sibling.worktree_id, agent_id: sibling.id },
+      },
+      [`${siblingPath}/transcript`]: { agent_id: sibling.id, through_seq: 0, turns: [] },
+      [`${siblingPath}/usage`]: {
+        agent_id: sibling.id,
+        through_seq: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        context_used: 0,
+      },
+      [`${siblingPath}/events`]: { items: [] },
+    };
     await boundary.route(page, baseURL!);
+    await page.route(
+      (url) => url.origin === baseURL && Object.hasOwn(siblingReads, url.pathname),
+      (route) =>
+        route.request().method() === 'GET'
+          ? route.fulfill({ json: siblingReads[new URL(route.request().url()).pathname] })
+          : route.fallback(),
+    );
     await page.route('**/api/v1/agents/agt_sibling/channel-usage', (route) =>
       route.fulfill({
         json: {
@@ -290,9 +316,9 @@ for (const { combined, uncertain } of [
     ).toBeVisible();
     expect(deletes).toHaveLength(combined && uncertain ? 2 : 1);
     expect(deletes[0]).not.toBe(stops[0]!.key);
-    // Reload from the Workspace so the Agent page's detail refresh cannot settle the receipt
+    // Reload from Agent Manager so the Agent page's detail refresh cannot settle the receipt
     // before the reopened status dialog observes cleanup.
-    await page.goto(`/workspaces/${boundary.workspace.id}`);
+    await page.goto('/agent-manager');
     await page.reload();
     await page.getByRole('button', { name: /View Agent deletion status/ }).click();
     const deleting = page.getByRole('dialog', { name: 'Deleting Agent', exact: true });

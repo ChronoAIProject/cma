@@ -186,9 +186,9 @@ for (const scenario of [
     expect(deletes).toHaveLength(scenario.uncertain ? 2 : 1);
     expect(deletes[0]!.key).toBeTruthy();
     if (scenario.uncertain) expect(deletes[1]).toEqual(deletes[0]);
-    // Reload from Home so the Sandbox page's detail refresh cannot settle the receipt
+    // Reload from Agent Manager so the Sandbox page's detail refresh cannot settle the receipt
     // before the reopened status dialog observes retirement.
-    await page.goto('/');
+    await page.goto('/agent-manager');
     await page.reload();
     await page.getByRole('button', { name: /View Sandbox deletion status/ }).click();
     const progress = page.getByRole('dialog', { name: 'Deleting Sandbox', exact: true });
