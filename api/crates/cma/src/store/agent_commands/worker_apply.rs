@@ -216,7 +216,7 @@ async fn fence_parent(
         .is_none())
 }
 
-pub(super) async fn write(
+pub(in crate::store) async fn write(
     store: &MongoSandboxStore,
     command: &AdmittedAgentCommand,
     expected_revision: u64,

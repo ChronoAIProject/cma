@@ -182,6 +182,7 @@ impl<S: FixtureStore> Harness<S> {
                     operation_id: "credential-1".into(),
                     value: RuntimeCredential::new("opaque-sandbox-key"),
                     custody_generation: Some(3),
+                    github_route: None,
                 },
             )
             .await

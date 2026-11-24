@@ -115,6 +115,7 @@ pub(super) fn retired_sandbox(id: &str) -> Sandbox {
 pub(super) fn credential(sandbox_id: &str, plaintext: &str) -> CredentialMaterial {
     CredentialMaterial {
         source: Default::default(),
+        github_route: None,
         sandbox_id: SandboxId(sandbox_id.into()),
         owner: SubjectId("owner".into()),
         authority: SandboxCredentialAuthority {
@@ -216,6 +217,7 @@ pub(super) fn worktree_and_agent(sandbox_id: &SandboxId) -> (Worktree, Agent) {
         ]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),
