@@ -29,7 +29,7 @@ pub const MEDIA_DOWNLOADS: &str = "cmaeg_media_downloads_total";
 pub const MEDIA_LINKS: &str = "cmaeg_media_links_total";
 pub const STT_AUDIO_SECONDS: &str = "cmaeg_stt_audio_seconds_total";
 pub const STT_CHANNELS_AT_BUDGET: &str = "cmaeg_stt_channels_at_budget";
-pub const FENCE_WAIT: &str = "cmaeg_media_fence_wait_seconds";
+pub use cmaeg_execution::turns::sequencer::FENCE_WAIT;
 pub const MEDIA_PREPARE: &str = "cmaeg_media_prepare_seconds";
 pub const MEDIA_TRANSFORM_TOTAL: &str = "cmaeg_media_transform_total";
 pub const MEDIA_TRANSFORM_SECONDS: &str = "cmaeg_media_transform_seconds";

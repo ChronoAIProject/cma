@@ -70,9 +70,7 @@ impl SandboxAdapter for HostedAdapter {
         runtime: &RuntimeProvisionRequest,
         home: &crate::HomeVolumeRequest,
     ) -> Result<crate::HomeVolumeRequest> {
-        let rendered = self
-            .deployment
-            .render_runtime(&runtime.spec, runtime.generation)?;
+        let rendered = self.deployment.render_request(runtime)?;
         self.backend.reserve_home_request(&rendered, home).await
     }
     fn verify_retained_home_route(
