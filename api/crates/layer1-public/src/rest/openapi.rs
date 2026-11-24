@@ -144,7 +144,7 @@ use super::trigger_openapi_shapes::*;
         super::profiles_marketplace::read,
         super::profiles_marketplace::fork,
         super::agents::create,
-        super::agents::create_lifecycle,
+        super::agents::lifecycle_creation::create_lifecycle,
         super::agents::read_lifecycle_operation,
         super::creation_outcomes::routes::lookup,
         super::agents::list,
