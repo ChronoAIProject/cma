@@ -214,7 +214,13 @@ export function registerDeletionStatusCases() {
         await page.clock.runFor(10000);
         await fixture.settled();
         expect(fixture.reads).toHaveLength(reads);
-        await expect(page.getByText('Deleting 1 environment')).toBeVisible();
+        await expect(page.getByText('Deleting 1 environment')).toHaveCount(0);
+        await page.getByRole('button', { name: 'View deletion status', exact: true }).click();
+        const progress = page.getByRole('dialog', { name: 'Deletion progress', exact: true });
+        await expect(progress.getByRole('code')).toHaveText(fixture.boundary.sandbox.id);
+        await page.keyboard.press('Escape');
+        await expect(progress).toHaveCount(0);
+        expect(fixture.reads).toHaveLength(reads);
         await page.evaluate(() => {
           localStorage.setItem(
             'cma:deletion-requests:local-owner:synthetic-other-agent',
