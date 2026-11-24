@@ -229,10 +229,10 @@ pub use admission_control::MongoAdmissionControlStore;
 #[cfg(test)]
 pub(crate) use agent_access_tools::fixtures as agent_access_fixtures;
 pub(crate) use agent_access_tools::MongoAgentAccessToolSource;
+pub(crate) use agent_lifecycle_operations::canary_admission as runtime_canary;
 pub(crate) use agent_lifecycle_operations::canary_key;
 #[cfg(test)]
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
-pub(crate) use agent_lifecycle_operations::canary_admission as runtime_canary;
 pub(crate) use agent_lifecycle_operations::{
     CanaryProfiles, CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput,
     LifecycleLease, MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
