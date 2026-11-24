@@ -10,6 +10,7 @@ export const operationLimitsMs = Object.freeze({
 
 const bindingFields = ['source', 'image', 'generation', 'configuration', 'cohort', 'window'];
 const matchedFields = ['image', 'cohort', 'workers', 'mongo_pool', 'resource_limits'];
+const campaignDeadlineMs = Date.UTC(2026, 10, 14, 6); // 14:00 SGT
 const finiteTime = value => Number.isFinite(value) && value >= 0;
 const attributed = value => typeof value === 'string' && value.trim().length > 0;
 
@@ -45,6 +46,14 @@ function measureOperations(evidence, enforceLimits) {
         reasons.push(`${name}:incomplete_boundary`);
         continue;
       }
+      // Operation and phase timestamps use the same UTC epoch millisecond clock.
+      if (!(sample.client_send_ms >= evidence.started_ms &&
+            sample.client_send_ms < evidence.ended_ms &&
+            sample.completed_ms <= evidence.ended_ms)) {
+        counts.incomplete++;
+        reasons.push(`${name}:outside_phase`);
+        continue;
+      }
       const elapsed = sample.completed_ms - sample.client_send_ms;
       counts.elapsed_ms.push({ index, elapsed_ms: elapsed });
       counts.maximum_ms = Math.max(counts.maximum_ms ?? 0, elapsed);
@@ -66,8 +75,7 @@ function windowDuration(window) {
   return window.ended_ms - window.started_ms;
 }
 
-// The caller supplies the approved UTC deadline in epoch milliseconds.
-export function qualifyOperations(evidence, deadlineMs) {
+export function qualifyOperations(evidence, requestedDeadlineMs = campaignDeadlineMs) {
   const { baseline, watch } = evidence ?? {};
   const baselineResult = measureOperations(baseline, false);
   const watchResult = measureOperations(watch, true);
@@ -91,7 +99,9 @@ export function qualifyOperations(evidence, deadlineMs) {
   if (baseline?.ended_ms > watch?.started_ms || before?.window === after?.window) {
     reasons.push('overlapping_evidence');
   }
-  if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= 0 || !(watch?.ended_ms <= deadlineMs)) {
+  const validDeadline = Number.isSafeInteger(requestedDeadlineMs) && requestedDeadlineMs > 0;
+  const deadlineMs = validDeadline ? Math.min(requestedDeadlineMs, campaignDeadlineMs) : campaignDeadlineMs;
+  if (!validDeadline || !(watch?.ended_ms <= deadlineMs)) {
     reasons.push('deadline_not_met');
   }
   return {

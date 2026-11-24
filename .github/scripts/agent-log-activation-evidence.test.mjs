@@ -16,7 +16,8 @@ function sampleWindow(id, fleet_percent, started_ms, ended_ms) {
       workers: 'fixture_workers', mongo_pool: 'fixture_pool', resource_limits: 'fixture_limits',
     },
     operations: Object.fromEntries(Object.entries(operationLimitsMs).map(([name, limit]) => [name, [{
-      client_send_ms: 100, completed_ms: 100 + limit, ack_ms: 101,
+      client_send_ms: started_ms + 100, completed_ms: started_ms + 100 + limit,
+      ack_ms: started_ms + 101,
       outcome: 'success', first_use: true, boundary: 'whole_operation',
     }]])),
   };
@@ -64,8 +65,9 @@ test('each hard limit, missing path, first-use sample and completion boundary re
 test('early ACK and favorable p95 cannot hide late completion or any exceedance', () => {
   const packet = evidence();
   const sample = packet.watch.operations.send_complete[0];
-  packet.watch.operations.send_complete = Array.from({ length: 100 }, () => ({ ...sample, completed_ms: 200 }));
-  packet.watch.operations.send_complete.push({ ...sample, ack_ms: 101, completed_ms: 1101 });
+  packet.watch.operations.send_complete = Array.from({ length: 100 }, () =>
+    ({ ...sample, completed_ms: sample.client_send_ms + 100 }));
+  packet.watch.operations.send_complete.push({ ...sample, completed_ms: sample.client_send_ms + 1001 });
   packet.p95_ms = 100;
   const result = qualifyOperations(packet, deadline);
   assert.equal(result.status, 'HOLD');
@@ -103,14 +105,47 @@ test('matches the baseline settings and enforces both window bounds and the dead
     change(packet);
     assert.ok(qualifyOperations(packet, deadline).reasons.includes(reason), reason);
   }
-  assert.ok(qualifyOperations(evidence()).reasons.includes('deadline_not_met'));
+  assert.equal(qualifyOperations(evidence()).status, 'QUALIFIED');
+  assert.ok(qualifyOperations(evidence(), deadline - 1).reasons.includes('deadline_not_met'));
+  assert.ok(qualifyOperations(evidence(), NaN).reasons.includes('deadline_not_met'));
+});
+
+test('each operation belongs to its own phase including completion at the right boundary', () => {
+  const packet = evidence();
+  packet.watch.operations.tab_open = packet.baseline.operations.tab_open;
+  assert.ok(qualifyOperations(packet).reasons.includes('tab_open:outside_phase'));
+
+  const good = evidence();
+  const sample = good.watch.operations.send_complete[0];
+  sample.client_send_ms = good.watch.ended_ms - 500;
+  sample.completed_ms = good.watch.ended_ms;
+  assert.equal(qualifyOperations(good).status, 'QUALIFIED');
+  sample.completed_ms++;
+  assert.ok(qualifyOperations(good).reasons.includes('send_complete:outside_phase'));
+
+  sample.client_send_ms = good.watch.ended_ms;
+  sample.completed_ms = good.watch.ended_ms;
+  assert.ok(qualifyOperations(good).reasons.includes('send_complete:outside_phase'));
+});
+
+test('a caller deadline after the campaign cutoff cannot admit late evidence', () => {
+  const tomorrow = 24 * 60 * minute;
+  const packet = {
+    baseline: sampleWindow('baseline', 0, deadline + tomorrow - 91 * minute,
+      deadline + tomorrow - 61 * minute),
+    watch: sampleWindow('watch', 10, deadline + tomorrow - 60 * minute, deadline + tomorrow),
+  };
+  const result = qualifyOperations(packet, deadline + tomorrow);
+  assert.deepEqual(result.reasons, ['deadline_not_met']);
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.deadline_ms, deadline);
 });
 
 test('retains measured baseline timings and errors for comparison', () => {
   const packet = evidence();
   const samples = packet.baseline.operations.interrupt_complete;
   samples[0].completed_ms++;
-  samples.push({ ...samples[0], completed_ms: 300, outcome: 'error' });
+  samples.push({ ...samples[0], completed_ms: samples[0].client_send_ms + 200, outcome: 'error' });
   const result = qualifyOperations(packet, deadline);
   assert.equal(result.status, 'QUALIFIED');
   assert.equal(result.baseline.interrupt_complete.error, 1);
