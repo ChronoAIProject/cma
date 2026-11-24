@@ -648,9 +648,11 @@ dependencies = [
  "cmaeg-core",
  "dashmap",
  "metrics",
+ "metrics-exporter-prometheus",
  "sha2 0.10.9",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
