@@ -302,7 +302,7 @@ impl HostedBackend for InMemoryHostedBackend {
                 process::close_agent(runtime, request)
             }
             RequestFrame::FenceAgentRestart(_) => {
-                return refused(operation, "agent_restart_fence_unsupported");
+                return refused(operation, "agent_restart_fence_unsupported")
             }
             RequestFrame::ProveAgentProcessClosed(_) => {
                 return refused(operation, "agent_process_close_proof_unsupported");

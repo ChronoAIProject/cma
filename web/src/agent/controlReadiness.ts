@@ -3,6 +3,15 @@ import type { AgentResourceState } from './controllerTypes';
 // Roll back the v2 early-control boundary without changing history hydration.
 const LIVE_HEAD_CONTROLS_ENABLED = true;
 
+export function agentRestartReady(state: AgentResourceState, agentId: string | undefined): boolean {
+  return (
+    state.status === 'ready' &&
+    state.detail.id === agentId &&
+    state.detail.status === 'stopped' &&
+    state.detail.restartAvailable === true
+  );
+}
+
 /** A verified live head supplies control targets independently of old activity. */
 export function controlBaselineReady(
   state: AgentResourceState,
