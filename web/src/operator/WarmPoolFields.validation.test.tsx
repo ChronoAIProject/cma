@@ -19,6 +19,7 @@ it.each([
   for (const value of [invalid, '', '1.5', '1048577']) {
     fireEvent.change(input, { target: { value } });
     expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input).toHaveAccessibleName(label);
     expect(input).toHaveAccessibleDescription(input.validationMessage);
     expect(screen.getByRole('button', { name: 'Save pool target' })).toBeDisabled();
     fireEvent.submit(form);

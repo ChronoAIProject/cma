@@ -19,6 +19,7 @@ export function WarmPoolNumber({
     <label className="operator-field">
       <span>{label}</span>
       <ValidatedNumberInput
+        aria-label={label}
         required
         min={minimum}
         max={maximum}
