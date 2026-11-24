@@ -8,6 +8,8 @@ pub use settlement::TurnTimeoutSettlement;
 pub mod approval;
 
 #[cfg(test)]
+mod clock_tests;
+#[cfg(test)]
 mod tests;
 
 /// Immutable execution identity captured before the corresponding dispatch.
@@ -373,12 +375,13 @@ impl TurnTimeout {
         approval: approval::ApprovalBudget,
         now_ms: i64,
     ) -> Result<Self, TurnTimeoutError> {
-        if self.approval.as_ref() == Some(&approval) {
+        let now_ms = now_ms.max(self.observed_at_ms);
+        if self.approval.as_ref() == Some(&approval) && now_ms == self.observed_at_ms {
             return Ok(self.clone());
         }
         let mut next = self.clone();
         next.revision += 1;
-        next.observed_at_ms = now_ms.max(self.observed_at_ms);
+        next.observed_at_ms = now_ms;
         if let Some(start) = approval.waiting_since_ms() {
             next.waiting_since_ms = start;
         }

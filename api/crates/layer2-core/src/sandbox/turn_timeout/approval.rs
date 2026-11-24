@@ -191,7 +191,7 @@ impl ApprovalBudget {
             .find(|old| old.binding.operation_id == binding.operation_id)
         {
             return if old.binding == binding {
-                Ok(self.clone())
+                Ok(self.with_observed_time(now_ms))
             } else {
                 Err(TurnTimeoutError::Conflict)
             };
@@ -200,7 +200,7 @@ impl ApprovalBudget {
         if now_ms > self.clock.valid_until_ms
             || self.operations.len() == MAX_OPERATIONS
             || self
-                .budget_exhaustion_at()
+                .deadline_at_ms()
                 .is_some_and(|deadline| deadline <= now_ms)
         {
             return Err(TurnTimeoutError::Conflict);
@@ -232,7 +232,7 @@ impl ApprovalBudget {
         let old = &self.operations[index];
         let fingerprint = fingerprint(receipt)?;
         if receipt.revision == old.revision && old.receipt_sha256.as_ref() == Some(&fingerprint) {
-            return Ok(self.clone());
+            return Ok(self.with_observed_time(now_ms));
         }
         if receipt.revision == 0
             || receipt.revision <= old.revision
@@ -289,7 +289,7 @@ impl ApprovalBudget {
         let old = &self.operations[index];
         let fingerprint = fingerprint(receipt)?;
         if receipt.revision == old.revision && old.receipt_sha256.as_ref() == Some(&fingerprint) {
-            return Ok(self.clone());
+            return Ok(self.with_observed_time(now_ms));
         }
         if receipt.revision <= old.revision || old.resolution.is_some() {
             return Err(TurnTimeoutError::Conflict);
@@ -413,6 +413,12 @@ impl ApprovalBudget {
             return Err(TurnTimeoutError::Conflict);
         }
         Ok(())
+    }
+
+    fn with_observed_time(&self, now_ms: i64) -> Self {
+        let mut next = self.clone();
+        next.observed_at_ms = now_ms.max(self.observed_at_ms);
+        next
     }
 }
 

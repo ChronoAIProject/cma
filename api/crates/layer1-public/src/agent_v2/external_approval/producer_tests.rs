@@ -34,7 +34,10 @@ async fn read(f: &Fixture, path: &str) -> (axum::http::HeaderMap, Vec<u8>) {
 
 #[tokio::test]
 async fn committed_approval_timeout_projects_the_same_order_in_snapshot_and_replayed_sse() {
-    for buffered in [false, true] {
+    for (buffered, fraction_ms) in [false, true]
+        .into_iter()
+        .flat_map(|buffered| [0, 1, 10, 100].map(|fraction| (buffered, fraction)))
+    {
         let mut f = fixture(true, false).await;
         f.router = router(
             f.state
@@ -49,7 +52,7 @@ async fn committed_approval_timeout_projects_the_same_order_in_snapshot_and_repl
         let dispatch = command.work.dispatch.as_ref().unwrap();
         let native = agent.conversation.conversation_id.as_ref().unwrap();
         let at = layer2_core::now_rfc3339();
-        let now_ms = layer2_core::seconds_from_rfc3339(&at).unwrap() as i64 * 1_000;
+        let now_ms = layer2_core::seconds_from_rfc3339(&at).unwrap() as i64 * 1_000 + fraction_ms;
         let admitted = TurnTimeout::admit_approval(
             TurnTimeoutBinding {
                 agent_id: id.clone(),
@@ -180,8 +183,11 @@ async fn committed_approval_timeout_projects_the_same_order_in_snapshot_and_repl
             )
             .await
             .unwrap();
+        // The publication clock uses whole seconds; settle at the first
+        // observation at or after the exact millisecond policy deadline.
+        let terminal_second = (waiting.deadline_at_ms() + 999) / 1_000;
         let terminal_at =
-            layer2_core::rfc3339_at(UNIX_EPOCH + Duration::from_millis((now_ms + 300_000) as u64));
+            layer2_core::rfc3339_at(UNIX_EPOCH + Duration::from_secs(terminal_second as u64));
         let snapshot = f.store.agent_message_snapshot(&id).await.unwrap().unwrap();
         assert!(waiting.binding().matches_active_turn(&snapshot.agent));
         assert!(snapshot
@@ -252,6 +258,42 @@ async fn committed_approval_timeout_projects_the_same_order_in_snapshot_and_repl
             .unwrap()
             .blocks_dispatch());
 
+        let recorder = DurableAgentUpdateRecorder::new(f.store.clone());
+        for update in [
+            AgentRuntimeUpdate::Said(
+                serde_json::from_value(json!({
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {"type": "text", "text": "Late output must not reopen this turn"}
+                }))
+                .unwrap(),
+            ),
+            AgentRuntimeUpdate::FailedForPrompt {
+                prompt_id: layer3_adapter::PromptIdentity::new(
+                    native,
+                    dispatch.runtime_generation,
+                    dispatch.turn_sequence,
+                ),
+                message: "Late runtime failure".into(),
+                capability: None,
+            },
+        ] {
+            recorder
+                .record_update(
+                    &id,
+                    dispatch.runtime_generation,
+                    &mut AgentMessageAssembly::default(),
+                    update,
+                    layer2_core::now_rfc3339(),
+                )
+                .await
+                .unwrap();
+        }
+        let (_, after_late_output) = read(&f, SNAPSHOT).await;
+        assert_eq!(
+            serde_json::from_slice::<Value>(&after_late_output).unwrap(),
+            terminal
+        );
+
         let (_, wire) = read(&f, &format!("{EVENTS}?follow=false")).await;
         let wire = String::from_utf8(wire).unwrap();
         let events: Vec<Value> = wire
@@ -293,6 +335,7 @@ async fn committed_approval_timeout_projects_the_same_order_in_snapshot_and_repl
             "EXTERNAL_APPROVAL_PRODUCER_FIXTURE {}",
             json!({
                 "buffered": buffered,
+                "fraction_ms": fraction_ms,
                 "response_headers": {
                     "Preference-Applied": headers["preference-applied"].to_str().unwrap(),
                     "CMA-Approval-Review-Origin": headers["cma-approval-review-origin"].to_str().unwrap(),

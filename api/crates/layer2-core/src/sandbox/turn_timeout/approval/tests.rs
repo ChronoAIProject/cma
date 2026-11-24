@@ -92,7 +92,10 @@ fn late_receipt_and_review_alias_never_refill_the_budget() {
         .pending(&first, 351_000)
         .unwrap();
     assert_eq!(policy.deadline_at_ms(), Some(301_000));
-    assert_eq!(policy.pending(&first, 451_000).unwrap(), policy);
+    let replay = policy.pending(&first, 451_000).unwrap();
+    assert_eq!(replay.observed_at_ms, 451_000);
+    assert_eq!(replay.operations, policy.operations);
+    assert_eq!(replay.deadline_at_ms(), policy.deadline_at_ms());
     let replacement = PendingApprovalReceipt {
         revision: 2,
         created_at_ms: 351_000,
@@ -128,7 +131,10 @@ fn independent_waits_and_resolution_replays_do_not_clear_each_other() {
     let policy = policy.resolve(&resolution, 51_000).unwrap();
     assert!(policy.is_waiting());
     assert_eq!(policy.deadline_at_ms(), Some(301_000));
-    assert_eq!(policy.resolve(&resolution, 81_000).unwrap(), policy);
+    let replay = policy.resolve(&resolution, 81_000).unwrap();
+    assert_eq!(replay.observed_at_ms, 81_000);
+    assert_eq!(replay.operations, policy.operations);
+    assert_eq!(replay.consumed_ms(51_000), 80_000);
     assert!(policy
         .pending(
             &PendingApprovalReceipt {
