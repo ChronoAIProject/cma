@@ -170,16 +170,57 @@ pub(in crate::store) async fn quarantine_row(
     row: &Document,
 ) -> Result<(), TransactionLogError> {
     let observed = crate::store::agents::read_agent(row).map_err(TransactionLogError::Domain)?;
-    let (filter, update) = quarantine_update(&observed)?;
-    let result = store
-        .agents
-        .update_one(filter, update)
-        .write_concern(mongodb::options::WriteConcern::majority())
+    let mut session = store
+        .client
+        .start_session()
         .await
         .map_err(TransactionLogError::Driver)?;
-    require_quarantine_match(result.matched_count)?;
-    fleet::telemetry::record(fleet::telemetry::Event::QuarantineWritten);
-    Ok(())
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .map_err(TransactionLogError::Driver)?;
+    let result = async {
+        if !allow_ordinary_quarantine(store, &observed, &mut session).await? {
+            return Ok(false);
+        }
+        write_quarantine(store, &observed, &mut session).await?;
+        Ok(true)
+    }
+    .await;
+    match result {
+        Ok(true) => commit_quarantine(&mut session).await,
+        other => {
+            let _ = session.abort_transaction().await;
+            other.map(|_| ())
+        }
+    }
+}
+
+async fn allow_ordinary_quarantine(
+    store: &MongoSandboxStore,
+    observed: &Agent,
+    session: &mut mongodb::ClientSession,
+) -> Result<bool, TransactionLogError> {
+    use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
+
+    match preparation::fence_parent(store, observed, session).await {
+        Ok(()) => return Ok(true),
+        Err(TransactionLogError::Domain(SandboxStoreError::Conflict)) => {}
+        Err(error) => return Err(error),
+    }
+    let parent = store
+        .sandboxes
+        .find_one(doc! {"_id": observed.sandbox_id.as_str()})
+        .projection(doc! {"_id": 1, LEDGER_MAINTENANCE_FIELD: 1})
+        .session(session)
+        .await
+        .map_err(TransactionLogError::Driver)?;
+    match parent {
+        // A legacy Agent can retain history after its Sandbox is absent.
+        None => Ok(true),
+        // Keep reporting the audit failure while maintenance owns the record.
+        Some(parent) if parent.contains_key(LEDGER_MAINTENANCE_FIELD) => Ok(false),
+        Some(_) => Err(SandboxStoreError::Conflict.into()),
+    }
 }
 
 pub(super) async fn quarantine_preparation(
@@ -188,15 +229,29 @@ pub(super) async fn quarantine_preparation(
     session: &mut mongodb::ClientSession,
 ) -> Result<(), TransactionLogError> {
     let observed = crate::store::agents::read_agent(row).map_err(TransactionLogError::Domain)?;
-    let (filter, update) = quarantine_update(&observed)?;
+    write_quarantine(store, &observed, session).await?;
+    preparation::fence_parent(store, &observed, session).await?;
+    commit_quarantine(session).await
+}
+
+async fn write_quarantine(
+    store: &MongoSandboxStore,
+    observed: &Agent,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), TransactionLogError> {
+    let (filter, update) = quarantine_update(observed)?;
     let result = store
         .agents
         .update_one(filter, update)
-        .session(&mut *session)
+        .session(session)
         .await
         .map_err(TransactionLogError::Driver)?;
-    require_quarantine_match(result.matched_count)?;
-    preparation::fence_parent(store, &observed, session).await?;
+    require_quarantine_match(result.matched_count)
+}
+
+async fn commit_quarantine(
+    session: &mut mongodb::ClientSession,
+) -> Result<(), TransactionLogError> {
     match crate::store::sandbox_mongo::commit_transaction(session).await {
         crate::store::sandbox_mongo::CommitOutcome::Committed => {
             fleet::telemetry::record(fleet::telemetry::Event::QuarantineWritten);

@@ -113,10 +113,29 @@ async fn preparation_quarantine_conflicts_with_hold_installed_after_snapshot() {
             .is_err()
     );
     let _ = session.abort_transaction().await;
+    // A retained observation from before the hold also reaches the independent
+    // ordinary audit path after its original snapshot has been released.
+    proof::quarantine_row(&store, &observed).await.unwrap();
     assert_eq!(
-        store.agents.find_one(agent_key).await.unwrap(),
-        Some(observed)
+        store.agents.find_one(agent_key.clone()).await.unwrap(),
+        Some(observed.clone())
     );
-    assert_eq!(store.sandboxes.find_one(parent_key).await.unwrap(), held);
+    assert_eq!(
+        store.sandboxes.find_one(parent_key.clone()).await.unwrap(),
+        held
+    );
+    other
+        .sandboxes
+        .update_one(parent_key, doc! {"$unset": {LEDGER_MAINTENANCE_FIELD: ""}})
+        .await
+        .unwrap();
+    proof::quarantine_row(&store, &observed).await.unwrap();
+    assert!(store
+        .agents
+        .find_one(agent_key)
+        .await
+        .unwrap()
+        .unwrap()
+        .contains_key(QUARANTINE_FIELD));
     client.database(&name).drop().await.unwrap();
 }
