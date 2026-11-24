@@ -376,12 +376,7 @@ fn request(
 }
 
 async fn stopped_agent(store: &MongoSandboxStore) -> (Agent, AgentRestartSource) {
-    let ready = super::super::common_fixtures::ready_conversation_fixture_with_history(
-        store,
-        "restart-admission",
-        true,
-    )
-    .await;
+    let ready = ready_conversation_fixture(store, "restart-admission").await;
     let mut sandbox = store.get_sandbox(&ready.sandbox_id).await.unwrap().unwrap();
     let mut home = SandboxHome::reserve(
         &sandbox.id,

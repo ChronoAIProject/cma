@@ -152,6 +152,48 @@ async fn exercise_cancellation(segmented: bool, delete: bool) {
 }
 
 async fn adopt(client: &Client, name: &str, store: &MongoSandboxStore, agent: &Agent) {
+    use crate::store::agent_log::log_document;
+    for (seq, kind) in [
+        (
+            1,
+            AgentLogKind::Created {
+                workspace_id: agent.workspace_id.clone(),
+                worktree_id: agent.worktree_id.clone(),
+            },
+        ),
+        (
+            2,
+            AgentLogKind::ConversationOpened {
+                conversation_id: agent.conversation.conversation_id.clone().unwrap(),
+                runtime_generation: agent.conversation.runtime_generation.unwrap(),
+            },
+        ),
+    ] {
+        let row = log_document(&AgentLogEntry {
+            agent_id: agent.id.clone(),
+            seq,
+            appended_at: NOW.into(),
+            kind,
+        })
+        .unwrap();
+        let replaced = store
+            .agent_log
+            .replace_one(
+                doc! {"agent_id": agent.id.as_str(), "seq": i64::try_from(seq).unwrap()},
+                row,
+            )
+            .await
+            .unwrap();
+        assert_eq!(replaced.matched_count, 1);
+    }
+    store
+        .agents
+        .update_one(
+            doc! {"_id": agent.id.as_str()},
+            doc! {"$unset": {crate::store::agent_log_integrity::INTEGRITY_FIELD: ""}},
+        )
+        .await
+        .unwrap();
     let db = client.database(name);
     segments::schema::migrate(&db).await.unwrap();
     crate::store::migrations::agent_log_source_keys::prepare_for_test(&db).await;

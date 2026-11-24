@@ -424,29 +424,7 @@ pub(super) async fn replace_worktree_fixture(store: &MongoSandboxStore, worktree
 }
 
 pub(super) async fn ready_conversation_fixture(store: &MongoSandboxStore, suffix: &str) -> Agent {
-    ready_conversation_fixture_with_history(store, suffix, false).await
-}
-
-pub(super) async fn ready_conversation_fixture_with_history(
-    store: &MongoSandboxStore,
-    suffix: &str,
-    created: bool,
-) -> Agent {
-    let (_, mut worktree, mut claimed) = claimed_agent_work_fixture(store, suffix).await;
-    if created {
-        store
-            .append_agent_log(
-                &claimed.id,
-                NOW.into(),
-                AgentLogKind::Created {
-                    workspace_id: claimed.workspace_id.clone(),
-                    worktree_id: claimed.worktree_id.clone(),
-                },
-            )
-            .await
-            .unwrap();
-        claimed = store.get_agent(&claimed.id).await.unwrap().unwrap();
-    }
+    let (_, mut worktree, claimed) = claimed_agent_work_fixture(store, suffix).await;
     let conversation_id = format!("conversation-{suffix}");
     let claimed = ready_publication_claim(claimed, &conversation_id);
     replace_agent_fixture(store, &claimed).await;
@@ -474,7 +452,7 @@ pub(super) async fn ready_conversation_fixture_with_history(
             to: AgentStatus::Ready,
         },
     ];
-    ready.conversation.last_seq += u64::try_from(log_kinds.len()).unwrap();
+    ready.conversation.last_seq = u64::try_from(log_kinds.len()).unwrap();
     let expected_worktree_revision = worktree.revision;
     worktree.transition(WorktreeStatus::Ready).unwrap();
     store
