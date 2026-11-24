@@ -166,6 +166,8 @@ async fn trigger_profile_reuse_is_atomic_and_replays_the_same_agent_after_newer_
 
 #[path = "agent_admission_mongo_integration_tests/creation_revival.rs"]
 mod creation_revival;
+#[path = "agent_admission_mongo_integration_tests/ledger_maintenance.rs"]
+mod ledger_maintenance;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
