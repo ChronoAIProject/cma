@@ -99,7 +99,9 @@ impl SandboxRuntimeUpdateService {
 
     /// Whether a retry of the pinned target may recover onto the observed release.
     pub fn retry_uses_latest(&self, sandbox: &Sandbox, pinned: &str, latest: &str) -> bool {
-        self.recovery.is_some()
+        sandbox.profile.content.runtime_image.is_none()
+            && !scoped_explicit_retry(sandbox)
+            && self.recovery.is_some()
             && sandbox.unpublished_recovery_candidate()
             && recover_on_latest(sandbox, pinned, latest)
     }
@@ -130,8 +132,8 @@ impl SandboxRuntimeUpdateService {
     }
 
     /// Automatic repair is available once per unresolved recovery incident after
-    /// ordinary retries stall or park/fail. Its existing target must still be current;
-    /// obsolete pinned targets require an explicit owner/operator update.
+    /// ordinary retries stall or park/fail. Managed recovery uses the current
+    /// release. Custom recovery reuses the validated migration image authority.
     pub async fn recover_failed_unpublished(
         &self,
         id: &SandboxId,
@@ -143,14 +145,8 @@ impl SandboxRuntimeUpdateService {
             .map_err(store_error)?
             .ok_or(SandboxRuntimeUpdateError::NotFound)?;
         let target = sandbox
-            .automatic_unpublished_recovery_target()
+            .automatic_unpublished_recovery_target_for_release(&self.latest_version())
             .ok_or(SandboxRuntimeUpdateError::NotAvailable)?;
-        if target != self.latest_version()
-            || sandbox.lifecycle.unpublished_recovery_attempted
-            || sandbox.lifecycle.unpublished_recovery.is_some()
-        {
-            return Err(SandboxRuntimeUpdateError::NotAvailable);
-        }
         self.recover_unpublished(&sandbox, target, true)
             .await
             .map_err(store_error)
@@ -256,6 +252,24 @@ impl SandboxRuntimeUpdateService {
             }
         }
         Err(SandboxRuntimeUpdateError::Unavailable)
+    }
+}
+
+impl Sandbox {
+    /// Discovery and the fresh admission read apply the same image policy.
+    pub fn automatic_unpublished_recovery_target_for_release(&self, latest: &str) -> Option<&str> {
+        if self.lifecycle.unpublished_recovery_attempted
+            || self.lifecycle.unpublished_recovery.is_some()
+        {
+            return None;
+        }
+        let target = self.automatic_unpublished_recovery_target()?;
+        let eligible = if self.profile.content.runtime_image.is_some() {
+            self.validate_custom_recovery_target(target).is_ok()
+        } else {
+            target == latest
+        };
+        eligible.then_some(target)
     }
 }
 
