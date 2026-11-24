@@ -34,6 +34,31 @@ it('keeps failed Sandboxes out of Live and counts them only in Needs attention',
   expect(screen.getAllByRole('treeitem')).toHaveLength(1);
 });
 
+it('lists failed repository Workspaces under their own Needs attention Sandboxes', () => {
+  const items = ['atlas', 'boreal'].map((name) => {
+    const id = `sbx_${name}`;
+    const workspace = {
+      ...workspaceFixture(),
+      id: `wsp_${name}`,
+      sandboxId: id,
+      status: 'failed' as const,
+      path: `/workspaces/${name}`,
+      agents: [],
+    };
+    return {
+      sandbox: { ...sandboxFixture('failed'), id, name, workspaces: [workspace] },
+      workspaces: [workspace],
+    };
+  });
+  render(<Tree {...props} items={items} />);
+  const group = within(screen.getByRole('region', { name: 'Needs attention sandboxes' }));
+  for (const name of ['atlas', 'boreal']) {
+    const link = group.getByRole('link', { name: new RegExp(`/workspaces/${name}`) });
+    expect(link).toHaveAttribute('href', `/workspaces/wsp_${name}`);
+    expect(link).toHaveTextContent('Needs attention');
+  }
+});
+
 it('places each visible Sandbox once, excludes deletion progress and preserves exact status filters', async () => {
   const actor = userEvent.setup();
   const statuses = [

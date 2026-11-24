@@ -21,6 +21,7 @@ pub(super) struct Store {
     pub(super) pauses: Mutex<Vec<SandboxInactivityPauseRequest>>,
     pub(super) failure: Mutex<Option<(&'static str, String, Failure)>>,
     pub(super) loss_race: Mutex<Option<Sandbox>>,
+    pub(super) restored_recovery_row: Mutex<Option<Sandbox>>,
     pub(super) delay: Duration,
     /// When set, pause requests are decided by this store instead of being
     /// refused: the fixture candidates have no live runtimes of their own.
@@ -35,6 +36,7 @@ impl Store {
             pauses: Mutex::default(),
             failure: Mutex::default(),
             loss_race: Mutex::default(),
+            restored_recovery_row: Mutex::default(),
             delay,
             pause_decisions: std::sync::OnceLock::new(),
         })
@@ -89,6 +91,15 @@ impl SandboxStore for Store {
     }
     async fn get_sandbox(&self, id: &SandboxId) -> Result<Option<Sandbox>, SandboxStoreError> {
         self.observe("get", id.as_str()).await?;
+        if let Some(row) = self
+            .restored_recovery_row
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|row| &row.id == id)
+        {
+            return Ok(Some(row.clone()));
+        }
         self.inner.get_sandbox(id).await
     }
     async fn save_sandbox(&self, revision: u64, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
@@ -99,6 +110,15 @@ impl SandboxStore for Store {
         id: &SandboxId,
     ) -> Result<SandboxUnpublishedRecoverySnapshot, SandboxStoreError> {
         self.observe("recovery_snapshot", id.as_str()).await?;
+        if let Some(row) = self
+            .restored_recovery_row
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|row| &row.id == id)
+        {
+            return Ok(restored_snapshot(row));
+        }
         self.inner.unpublished_runtime_recovery_snapshot(id).await
     }
     async fn admit_unpublished_runtime_recovery(
@@ -107,6 +127,17 @@ impl SandboxStore for Store {
     ) -> Result<Sandbox, SandboxStoreError> {
         self.observe("recovery_admit", request.snapshot.sandbox.id.as_str())
             .await?;
+        {
+            let mut restored = self.restored_recovery_row.lock().unwrap();
+            if let Some(row) = restored
+                .as_mut()
+                .filter(|row| row.id == request.snapshot.sandbox.id)
+            {
+                *row =
+                    apply_unpublished_runtime_recovery(&restored_snapshot(row), &request)?.sandbox;
+                return Ok(row.clone());
+            }
+        }
         self.inner.admit_unpublished_runtime_recovery(request).await
     }
     async fn list_sandboxes(
@@ -118,6 +149,14 @@ impl SandboxStore for Store {
     }
 }
 
+fn restored_snapshot(row: &Sandbox) -> SandboxUnpublishedRecoverySnapshot {
+    SandboxUnpublishedRecoverySnapshot {
+        sandbox: row.clone(),
+        agents: vec![],
+        workspaces: vec![],
+    }
+}
+
 #[async_trait::async_trait]
 impl SandboxReconciliationStore for Store {
     async fn sandbox_runtime_authority(
@@ -126,6 +165,12 @@ impl SandboxReconciliationStore for Store {
     ) -> Result<Page<Sandbox>, SandboxStoreError> {
         self.observe("authority", page.cursor.as_deref().unwrap_or("start"))
             .await?;
+        if let Some(row) = self.restored_recovery_row.lock().unwrap().as_ref() {
+            return Ok(Page {
+                items: vec![row.clone()],
+                next: None,
+            });
+        }
         self.inner
             .sandbox_runtime_authority(&PageRequest {
                 limit: 2,
