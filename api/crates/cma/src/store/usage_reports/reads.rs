@@ -256,6 +256,6 @@ impl MetricsStore for ReportingStore {
         self.read_owners(report, query).await
     }
     async fn series(&self, report: &Report, query: SeriesQuery) -> Result<Series> {
-        self.read_series(report, query).await
+        cma_am_reporting::read_series(self.collection(CHARTS), report, query, DB_DEADLINE).await
     }
 }

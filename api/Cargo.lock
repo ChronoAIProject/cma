@@ -427,6 +427,7 @@ dependencies = [
  "base64 0.22.1",
  "cma-allocator-qualification",
  "cma-am-mongo-primitives",
+ "cma-am-reporting",
  "cma-service-auth",
  "cmaeg",
  "cmaeg-core",
@@ -480,6 +481,18 @@ version = "0.1.0"
 dependencies = [
  "bson",
  "serde",
+]
+
+[[package]]
+name = "cma-am-reporting"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "layer2-core",
+ "mongodb",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]
