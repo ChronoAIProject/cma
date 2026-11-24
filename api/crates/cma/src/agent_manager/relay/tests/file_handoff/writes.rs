@@ -116,7 +116,7 @@ async fn only_a_proved_pre_entry_refusal_recovers_a_concurrent_file_edit() {
         let store = MongoSandboxStore::open(&client, &name).await.unwrap();
         let mut sandbox = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
         let binding = sandbox.runtime.as_mut().unwrap();
-        binding.provision_generation = Some(2);
+        binding.runtime_id = "replacement-file-edit-runtime".into();
         binding.boot_id = Some("b".repeat(32));
         sandbox.revision += 1;
         store
