@@ -40,7 +40,8 @@ async fn stale_turn_settlement_compares_the_acknowledged_acp_checkpoint() {
     let handle = RuntimeHandle::new(runtime.runtime_id.clone());
     let stream = uuid::Uuid::new_v4();
     let (observed_tx, observed_rx) = oneshot::channel();
-    let observed_tx = Arc::new(tokio::sync::Mutex::new(Some(observed_tx)));
+    let (dispatch_tx, dispatch_rx) = oneshot::channel();
+    let attachment = Arc::new(tokio::sync::Mutex::new(Some((dispatch_rx, observed_tx))));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let routes = Router::new()
@@ -52,10 +53,11 @@ async fn stale_turn_settlement_compares_the_acknowledged_acp_checkpoint() {
         .route(
             "/runtime/agents/{agent}/conversation",
             get(move |upgrade: WebSocketUpgrade| {
-                let observed_tx = observed_tx.clone();
+                let attachment = attachment.clone();
                 async move {
-                    let observed = observed_tx.lock().await.take().expect("one ACP attachment");
-                    upgrade.on_upgrade(move |socket| serve_acp(socket, stream, observed))
+                    let (dispatch, observed) =
+                        attachment.lock().await.take().expect("one ACP attachment");
+                    upgrade.on_upgrade(move |socket| serve_acp(socket, stream, dispatch, observed))
                 }
             }),
         );
@@ -97,13 +99,6 @@ async fn stale_turn_settlement_compares_the_acknowledged_acp_checkpoint() {
             .unwrap(),
     );
     let id = &command.receipt.envelope.command_id;
-    AgentCommandWorker::new(original.clone(), execution, "recorder-worker".into())
-        .unwrap()
-        .run_one(id)
-        .await
-        .unwrap();
-    original.reconcile_command(id).await.unwrap();
-
     let writer = replica(&client, &name).await;
     let reader_client = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
@@ -124,6 +119,16 @@ async fn stale_turn_settlement_compares_the_acknowledged_acp_checkpoint() {
     .await
     .unwrap();
     let owner = coordinator.acquire(&agent.id).await.unwrap().unwrap();
+    dispatch_tx
+        .send(())
+        .expect("ACP attachment is waiting for dispatch");
+    AgentCommandWorker::new(original.clone(), execution, "recorder-worker".into())
+        .unwrap()
+        .run_one(id)
+        .await
+        .unwrap();
+    original.reconcile_command(id).await.unwrap();
+
     let registry = Arc::new(LiveAgentRegistry::default());
     registry.install_ownership(coordinator.clone());
     owner
@@ -350,10 +355,10 @@ fn retained_frame(lane: u8, stream: uuid::Uuid, cursor: u64, payload: &[u8]) -> 
     frame
 }
 
-async fn binary(socket: &mut WebSocket) -> Vec<u8> {
+async fn binary(socket: &mut WebSocket, phase: &str) -> Vec<u8> {
     let Message::Binary(frame) = timeout(DEADLINE, socket.recv())
         .await
-        .unwrap()
+        .unwrap_or_else(|_| panic!("timed out waiting for ACP {phase}"))
         .unwrap()
         .unwrap()
     else {
@@ -362,7 +367,12 @@ async fn binary(socket: &mut WebSocket) -> Vec<u8> {
     frame.to_vec()
 }
 
-async fn serve_acp(mut socket: WebSocket, stream: uuid::Uuid, observed: oneshot::Sender<String>) {
+async fn serve_acp(
+    mut socket: WebSocket,
+    stream: uuid::Uuid,
+    dispatch: oneshot::Receiver<()>,
+    observed: oneshot::Sender<String>,
+) {
     let ready = serde_json::json!({
         "t": "ready", "wireVersion": 1, "lanes": ["ctl", "conv"], "agentId": SLOT,
         "outputAcknowledgement": {"version": 1, "streamId": stream},
@@ -379,7 +389,7 @@ async fn serve_acp(mut socket: WebSocket, stream: uuid::Uuid, observed: oneshot:
             serde_json::json!({"sessionId": CONVERSATION}),
         ),
     ] {
-        let frame = binary(&mut socket).await;
+        let frame = binary(&mut socket, method).await;
         assert_eq!(frame[0], CONVERSATION_LANE);
         let rpc: serde_json::Value = serde_json::from_slice(&frame[1..]).unwrap();
         assert_eq!(rpc["method"], method);
@@ -394,7 +404,11 @@ async fn serve_acp(mut socket: WebSocket, stream: uuid::Uuid, observed: oneshot:
             .await
             .unwrap();
     }
-    let frame = binary(&mut socket).await;
+    // Replica setup may outlast an individual ACP exchange.
+    if dispatch.await.is_err() {
+        return;
+    }
+    let frame = binary(&mut socket, "prompt").await;
     assert_eq!(frame[0], CONVERSATION_LANE);
     let prompt: serde_json::Value = serde_json::from_slice(&frame[1..]).unwrap();
     assert_eq!(prompt["method"], "session/prompt");
@@ -408,7 +422,7 @@ async fn serve_acp(mut socket: WebSocket, stream: uuid::Uuid, observed: oneshot:
         .unwrap();
     let mut acknowledged = 0;
     while acknowledged < CURSOR {
-        let ack = binary(&mut socket).await;
+        let ack = binary(&mut socket, "output acknowledgement").await;
         assert_eq!(ack.len(), 25);
         let cursor = u64::from_be_bytes(ack[17..].try_into().unwrap());
         assert!((acknowledged + 1..=CURSOR).contains(&cursor));
