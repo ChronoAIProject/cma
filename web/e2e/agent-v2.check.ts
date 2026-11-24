@@ -216,7 +216,9 @@ test('LOCAL: targeted control recovery retains its target and delivery leaves th
     await expect(
       page.getByRole('status').filter({ hasText: 'Your response action was delivered.' }),
     ).toHaveCount(0);
-    await expect(thinking(page)).toBeVisible();
+    await expect(
+      page.getByRole('status').filter({ hasText: /^Waiting for a response$/ }),
+    ).toBeVisible();
     expect(fixture.writes).toHaveLength(3);
     expect(fixture.writes[2]).toEqual(fixture.writes[0]);
     expect(fixture.writes[0]!.path).toBe('/api/v2/agents/agt_contract/responses/resp_1/controls');
@@ -228,7 +230,9 @@ test('LOCAL: targeted control recovery retains its target and delivery leaves th
     expect(fixture.reads).toContain('/api/v2/commands/cmd_control');
     await expect.poll(() => fixture.streams.size).toBe(1);
     fixture.append({ type: 'turn_cancelled', turn_sequence: 1 });
-    await expect(thinking(page)).toHaveCount(0);
+    await expect(
+      page.getByRole('region', { name: 'What the agent is working through' }),
+    ).toHaveCount(0);
     expect(fixture.writes).toHaveLength(3);
     clean(fixture);
   } finally {

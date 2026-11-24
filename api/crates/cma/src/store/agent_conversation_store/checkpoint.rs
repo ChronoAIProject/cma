@@ -91,6 +91,7 @@ pub(super) async fn carry(
 pub(in crate::store) enum Authority {
     Live,
     StaleTurn,
+    TurnPolicy,
     Reopen(Box<layer2_core::sandbox::store::AgentReopenGuard>),
     Capacity(Box<layer2_core::sandbox::store::AgentConversationCapacitySettlement>),
 }
