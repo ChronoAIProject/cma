@@ -186,8 +186,8 @@ test('inventory refuses a duplicate test key before JSON decoding can overwrite 
 });
 
 test('inventory compares both revision registries when a broader prefix still selects the case', () => {
-  const nested = 'storage::scope::';
-  const before = listing(executable(cmaBinary, 'cma', {[nested + 'mongo']: mongo}));
+  const nested = 'scope::';
+  const before = listing(executable(cmaBinary, 'cma', {['storage::' + nested + 'mongo']: mongo}));
   const mismatched = compare(before, before, {}, {
     basePrefixes: ['storage::', nested], candidatePrefixes: ['storage::'],
   });

@@ -92,7 +92,8 @@ def inventory(metadata, prefixes):
             "package-name", "binary-name", "kind", "build-platform",
         ))
         for name, ignored, selected in case_states(suite):
-            matched_suites = tuple(prefix for prefix in prefixes if name.startswith(prefix)) if selected else ()
+            # The runner's unanchored Nextest test(...) filter matches substrings.
+            matched_suites = tuple(prefix for prefix in prefixes if prefix in name) if selected else ()
             if selected and (not ignored or not matched_suites):
                 raise ValueError(f"Expected ordinary Mongo selector metadata for {binary_id} {name}")
             cases[binary_id, name] = (suite["testcases"][name]["kind"], ignored, selected, matched_suites)
