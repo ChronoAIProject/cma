@@ -147,6 +147,14 @@ pub(crate) fn fixture_with_pools(
     inventory: bool,
     pools: Option<Arc<dyn warm_pools::WarmPoolAdministration>>,
 ) -> Fixture {
+    fixture_with_options(inventory, pools, None)
+}
+
+fn fixture_with_options(
+    inventory: bool,
+    pools: Option<Arc<dyn warm_pools::WarmPoolAdministration>>,
+    diagnostics: Option<Arc<layer2_core::binding_diagnostics::BindingDiagnosticsService>>,
+) -> Fixture {
     let activity = Arc::new(MemoryActivity::default());
     let activity_service = ActivityService::new(activity.clone());
     let settings = Arc::new(PlatformSettingsService::new(
@@ -181,6 +189,9 @@ pub(crate) fn fixture_with_pools(
     if let Some(pools) = pools {
         state = state.with_warm_pools(pools);
     }
+    if let Some(service) = diagnostics {
+        state = state.with_binding_diagnostics(service);
+    }
     Fixture {
         app: router(state),
         sandboxes,
@@ -189,6 +200,9 @@ pub(crate) fn fixture_with_pools(
         names,
     }
 }
+
+#[path = "admin/binding_holds_tests.rs"]
+mod binding_holds_tests;
 
 fn request(
     method: Method,

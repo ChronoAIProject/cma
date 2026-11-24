@@ -207,6 +207,7 @@ use super::trigger_openapi_shapes::*;
         super::admin::triggers::pause,
         super::admin::triggers::resume,
         super::admin::runtime_inventory,
+        super::admin::binding_holds::read,
         super::admin::activity,
         super::admin::warm_pools::list,
         super::admin::warm_pools::configure,

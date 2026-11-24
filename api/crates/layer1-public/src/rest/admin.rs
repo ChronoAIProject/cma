@@ -22,6 +22,7 @@ use crate::AuthenticatedCaller;
 use super::{problem_document, problem_response};
 
 mod activity;
+pub(super) mod binding_holds;
 pub(crate) use activity::{__path_activity, activity, ActivityPageView, ActivityView};
 
 pub(super) mod admission;
@@ -39,6 +40,8 @@ pub mod warm_pools;
 /// Provider-neutral services used by the operator REST surface.
 #[derive(Clone)]
 pub struct AdminState {
+    pub(super) binding_diagnostics:
+        Option<Arc<layer2_core::binding_diagnostics::BindingDiagnosticsService>>,
     pub(super) warm_pools: Option<Arc<dyn warm_pools::WarmPoolAdministration>>,
     pub(super) users: Option<Arc<layer2_core::UserDirectory>>,
     pub(super) settings: Arc<PlatformSettingsService>,
@@ -59,6 +62,7 @@ impl AdminState {
         activity: Arc<ActivityService>,
     ) -> Self {
         Self {
+            binding_diagnostics: None,
             users: None,
             warm_pools: None,
             settings,
@@ -75,6 +79,14 @@ impl AdminState {
 
     pub fn with_user_directory(mut self, users: Arc<layer2_core::UserDirectory>) -> Self {
         self.users = Some(users);
+        self
+    }
+
+    pub fn with_binding_diagnostics(
+        mut self,
+        service: Arc<layer2_core::binding_diagnostics::BindingDiagnosticsService>,
+    ) -> Self {
+        self.binding_diagnostics = Some(service);
         self
     }
 
@@ -119,7 +131,16 @@ impl AdminState {
 
 /// Compose every route beneath the deliberately isolated admin path segment.
 pub fn router(state: AdminState) -> Router {
+    let diagnostics = if state.binding_diagnostics.is_some() {
+        Router::new().route(
+            "/api/v1/admin/runtime-binding-holds",
+            get(binding_holds::read),
+        )
+    } else {
+        Router::new()
+    };
     Router::new()
+        .merge(diagnostics)
         .merge(settings::routes(state.settings.clone()))
         .merge(spend::routes())
         .merge(admission::routes())
