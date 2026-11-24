@@ -296,6 +296,8 @@ impl ControlPlaneComposition {
             auth.clone(),
             adapter.clone(),
         )?;
+        let cancel_wake = (config.features.command_cancel_wake && ownership.is_some())
+            .then(|| Arc::new(tokio::sync::Notify::new()));
         let command_scheduler = media::commands(
             crate::commands::ProductionCommandDependencies {
                 source_guard: media::guard(&media),
@@ -309,21 +311,14 @@ impl ControlPlaneComposition {
             ownership.clone(),
             config.features.command_reconcile_pacing,
             adapters.model_funding.clone(),
-        )?;
-        let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
-            layer2_core::sandbox::control::SandboxControlWorker::new(
-                stores.sandbox_model.clone(),
-                resource_access.clone(),
-                auth.clone(),
-                connection_prerequisite.clone(),
-            ),
-        );
-        let sandbox_control_service = layer2_core::sandbox::control::SandboxControlService::new(
-            stores.sandbox_model.clone(),
+        )?
+        .with_cancel_wake(cancel_wake.clone());
+        let (sandbox_control_scheduler, sandbox_control_service) = access::sandbox_control(
+            &stores,
             resource_access.clone(),
             auth.clone(),
+            connection_prerequisite.clone(),
         );
-        sandbox_control_service.attach_platform_spend(stores.sandbox_model.clone());
         let deliverables = access::deliverables(
             &stores,
             projections.reads(),
@@ -340,6 +335,7 @@ impl ControlPlaneComposition {
             worker_holder,
             access::ToolServices {
                 ownership,
+                cancel_wake,
                 model_credit_required: config.features.model_credit_required,
                 model_funding: adapters.model_funding,
                 source: access_tools,
