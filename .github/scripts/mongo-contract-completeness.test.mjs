@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { requiredPrefixes } from './mongo-contract-test-prefixes.mjs';
@@ -75,6 +77,96 @@ except (ValueError, KeyError, TypeError) as error:
     env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'},
   });
 }
+
+function executable(binary, pkg, testcases) {
+  return {
+    'binary-id': binary, 'binary-name': pkg, 'package-name': pkg,
+    'build-platform': 'target', kind: 'bin', status: 'listed', testcases,
+  };
+}
+
+const cmaBinary = 'cma::bin/cma';
+const storageBinary = 'storage::bin/storage';
+const mongoCase = 'storage::mongo';
+const ordinaryCase = 'storage::ordinary';
+
+function listing(...suites) {
+  return {
+    'test-count': suites.reduce((total, suite) => total + Object.keys(suite.testcases).length, 0),
+    'rust-suites': Object.fromEntries(suites.map(suite => [suite['binary-id'], suite])),
+  };
+}
+
+const ordinary = { kind: 'test', ...caseMetadata(false, false) };
+const mongo = { kind: 'test', ...caseMetadata(true) };
+const control = { 'storage::control': mongo };
+const baselineListing = () => listing(executable(cmaBinary, 'cma', {
+  ...control, [mongoCase]: mongo, [ordinaryCase]: ordinary,
+}));
+
+function compare(base, candidate, changes = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'cma inventory '));
+  try {
+    const suites = join(dir, 'suites');
+    mkdirSync(suites);
+    writeFileSync(join(suites, 'storage.json'), JSON.stringify({prefix: 'storage::'}));
+    const [before, after, plan] = ['base.json', 'candidate.json', 'changes.json'].map(file => join(dir, file));
+    writeFileSync(before, JSON.stringify(base));
+    writeFileSync(after, typeof candidate === 'string' ? candidate : JSON.stringify(candidate));
+    writeFileSync(plan, JSON.stringify(changes));
+    return spawnSync('python3', [
+      fileURLToPath(new URL('mongo-contract-completeness.py', import.meta.url)),
+      '--compare', before, after, '--changes', plan, '--base-suites', suites, '--candidate-suites', suites,
+    ], {encoding: 'utf8'});
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+}
+
+test('inventory agrees after an exact package move and an explicitly added case', () => {
+  const before = baselineListing();
+  const after = listing(
+    executable(cmaBinary, 'cma', {...control, [ordinaryCase]: ordinary}),
+    executable(storageBinary, 'storage', {[mongoCase]: mongo, [ordinaryCase]: ordinary}),
+  );
+  const move = {from: [cmaBinary, mongoCase], to: [storageBinary, mongoCase]};
+  const addition = [storageBinary, ordinaryCase];
+  const result = compare(before, after, {moves: [move], additions: [addition]});
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /3 base cases; 4 candidate cases; 1 additions; 1 package moves/);
+  assert.match(compare(before, after).stderr, /Missing cases/);
+  assert.match(compare(before, after, {moves: [move, move]}).stderr, /Duplicate.*move/);
+  assert.match(compare(before, after, {moves: [move], additions: [addition, addition]}).stderr, /Duplicate.*addition/);
+});
+
+test('inventory refuses a missing ordinary case and changed Mongo membership', () => {
+  const before = baselineListing();
+  const missing = listing(executable(cmaBinary, 'cma', {...control, [mongoCase]: mongo}));
+  assert.match(compare(before, missing).stderr, /Missing cases:\n  cma::bin\/cma storage::ordinary/);
+  for (const changedCase of [{kind: 'test', ...caseMetadata(false)}, ordinary]) {
+    const changed = listing(executable(cmaBinary, 'cma', {
+      ...control, [mongoCase]: changedCase, [ordinaryCase]: ordinary,
+    }));
+    assert.match(compare(before, changed).stderr, /Changed case coverage:\n  cma::bin\/cma storage::mongo/);
+  }
+});
+
+test('inventory refuses a missing executable even when it contained no cases', () => {
+  const after = baselineListing();
+  const before = structuredClone(after);
+  before['rust-suites'][storageBinary] = executable(storageBinary, 'storage', {});
+  const result = compare(before, after);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Missing executables:\n  storage::bin\/storage/);
+});
+
+test('inventory refuses a duplicate test key before JSON decoding can overwrite it', () => {
+  const before = baselineListing();
+  const duplicate = JSON.stringify(before).replace('"storage::mongo":', '"storage::mongo":null,"storage::mongo":');
+  const result = compare(before, duplicate);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Duplicate JSON key: storage::mongo/);
+});
 
 test('metadata completeness accepts selected contracts and reports exact helper exclusions', () => {
   const result = check(inventory());
