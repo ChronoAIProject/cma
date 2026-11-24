@@ -156,13 +156,17 @@ pub struct AgentProcessCloseProof {
     pub worktree_path: String,
 }
 
-/// Advance the exact predecessor Close fence if no successor has been admitted.
+/// Fence a pending restart on its original runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentRestartFence {
     pub predecessor: AgentProcessCloseProof,
     pub successor_operation_id: String,
     pub authority_fence: u64,
+    /// With a digest, close the exact journaled successor. Without a digest,
+    /// advance the predecessor Close fence only if the successor never arrived.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub successor_open_request_sha256: Option<String>,
 }
 
 /// Correlated proof that a stopped agent's home was removed.
