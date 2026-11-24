@@ -1,5 +1,6 @@
 //! Filter held IDs before the page limit; optional ownership hints join their parent.
 use super::*;
+use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
 use layer2_core::sandbox::store::{AgentWorkDiscovery, StartupWorkFilter};
 
 #[cfg(test)]
@@ -146,6 +147,7 @@ fn build(
     ordinary.insert("work_ready_at", doc! {"$lte": now});
     ordinary.insert("$expr", doc! {"$not": [candidate.clone()]});
     let mut pipeline = vec![doc! {"$match": ordinary}];
+    pipeline.extend(exclude_held_sandboxes(store));
     pipeline.extend(super::ownership::discovery::filter(store));
     pipeline.extend(page(limit));
 
@@ -166,6 +168,7 @@ fn build(
         "record.sandbox_id": 1, "record.workspace_id": 1, "record.worktree_id": 1}
     };
     let mut wake = vec![doc! {"$match": paced}, doc! {"$project": projection}];
+    wake.extend(exclude_held_sandboxes(store));
     let mut holds = vec![
         Bson::Document(doc! {
             "$eq": [format!("{hint}.agent_revision"), "$revision"]
@@ -205,6 +208,17 @@ fn build(
     pipeline.push(doc! {"$group": {"_id": "$_id"}});
     pipeline.extend(page(limit));
     pipeline
+}
+
+fn exclude_held_sandboxes(store: &MongoSandboxStore) -> [Document; 2] {
+    [
+        doc! {"$lookup": {
+            "from": store.sandboxes.name(), "localField": "record.sandbox_id", "foreignField": "_id",
+            "pipeline": [{"$match": {LEDGER_MAINTENANCE_FIELD: {"$exists": true}}}, {"$project": {"_id": 1}}],
+            "as": "maintenance_parent",
+        }},
+        doc! {"$match": {"maintenance_parent.0": {"$exists": false}}},
+    ]
 }
 
 fn startup_candidate() -> Document {
