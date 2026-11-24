@@ -104,6 +104,21 @@ impl Claim {
         }
         Ok(())
     }
+
+    pub(super) async fn release_after_precommit_abort(
+        self,
+        store: &MongoSandboxStore,
+        current: &Agent,
+    ) -> Result<(), SandboxStoreError> {
+        // The server acknowledged the publication abort. Retire only this
+        // exact marker under the unheld Sandbox fence independently of the
+        // closed work authority. The cleanup can finish if the caller drops.
+        let store = store.clone();
+        let current = current.clone();
+        tokio::spawn(async move { self.release_known_abort(&store, &current).await })
+            .await
+            .map_err(|_| SandboxStoreError::Unavailable("keyed abort cleanup interrupted".into()))?
+    }
 }
 
 async fn update_marker(

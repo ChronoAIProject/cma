@@ -30,15 +30,22 @@ pub(super) fn after_abort(
                             .await.unwrap();
                         assert_eq!(result.matched_count, 1);
                     } else {
-                        let mut data = doc! {"appName":app,"failCommands":["update"]};
-                        if matches!(fault, AbortFault::CleanupUncertain) {
+                        let uncertain = matches!(fault, AbortFault::CleanupUncertain);
+                        let mut data = if uncertain {
+                            doc! {"appName":app,"failCommands":["commitTransaction"]}
+                        } else {
+                            doc! {"appName":app,"failCommands":["update"],
+                                "namespace":format!("{database}.agents")}
+                        };
+                        if uncertain {
                             data.insert("writeConcernError",doc! {"code":64_i32,
                                 "codeName":"WriteConcernFailed","errmsg":"cleanup acknowledgment unavailable"});
                         } else {
                             data.insert("errorCode", 1_i32);
                         }
                         admin.database("admin").run_command(doc! {
-                            "configureFailPoint":"failCommand", "mode":{"times":1}, "data":data,
+                            "configureFailPoint":"failCommand",
+                            "mode":{"times":if uncertain { 5_i32 } else { 1_i32 }}, "data":data,
                         }).await.unwrap();
                     }
                     admin.shutdown().await;
