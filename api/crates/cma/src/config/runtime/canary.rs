@@ -11,6 +11,7 @@ use super::{parse_pinned_image, parse_sandbox_namespace, SHA256_SEPARATOR};
 const KEY: &str = "CHRONO_RUNTIME_CANARY_RELEASES";
 const MAX_BYTES: usize = 32 * 1024;
 const MAX_RELEASES: usize = 8;
+const MAX_REPOSITORY_PATH_BYTES: usize = 255;
 const DESKTOP_LABEL: &str = "dev.chrono.cma.runtime-desktop";
 const DESKTOP_ENVIRONMENT_LABEL: &str = "dev.chrono.cma.desktop-environment";
 const SOURCE_LABEL: &str = "org.opencontainers.image.revision";
@@ -122,22 +123,32 @@ fn exact_image_digest(image: &str) -> Option<&str> {
     let (name, digest) = image.rsplit_once(SHA256_SEPARATOR)?;
     let (registry, repository) = name.split_once('/')?;
     if !valid_registry(registry)
-        || repository.contains(':')
-        || name.bytes().any(|byte| byte.is_ascii_uppercase())
-        || repository.split('/').any(|part| {
-            !part
-                .as_bytes()
-                .first()
-                .is_some_and(u8::is_ascii_alphanumeric)
-                || !part
-                    .as_bytes()
-                    .last()
-                    .is_some_and(u8::is_ascii_alphanumeric)
-        })
+        || repository.len() > MAX_REPOSITORY_PATH_BYTES
+        || !repository.split('/').all(valid_repository_component)
     {
         return None;
     }
     Some(digest)
+}
+
+fn valid_repository_component(mut component: &str) -> bool {
+    // Distribution path components alternate lowercase alphanumeric runs
+    // with a period, one or two underscores, or one or more hyphens.
+    loop {
+        let suffix = component.trim_start_matches(|character: char| {
+            character.is_ascii_lowercase() || character.is_ascii_digit()
+        });
+        if suffix.len() == component.len() {
+            return false;
+        }
+        component = match suffix.as_bytes() {
+            [] => return true,
+            [b'_', b'_', ..] => &suffix[2..],
+            [b'.' | b'_', ..] => &suffix[1..],
+            [b'-', ..] => suffix.trim_start_matches('-'),
+            _ => return false,
+        };
+    }
 }
 
 fn valid_registry(registry: &str) -> bool {
@@ -146,6 +157,12 @@ fn valid_registry(registry: &str) -> bool {
         None => (registry, None),
     };
     if !host.contains('.') && port.is_none() {
+        return false;
+    }
+    if host
+        .split('.')
+        .any(|part| parse_sandbox_namespace(KEY, part).is_err())
+    {
         return false;
     }
     if port.is_some_and(|port| {

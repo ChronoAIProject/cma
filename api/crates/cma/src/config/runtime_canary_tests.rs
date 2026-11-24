@@ -70,7 +70,7 @@ fn catalog_is_empty_by_default_and_does_not_select_releases_or_spares() {
     let desktop = release(
         "approved-desktop",
         "debian_desktop",
-        "registry.example:5000/fixture/debian",
+        "registry.example:5000/team__fixture/debian--desktop",
         "b",
         "1",
     );
@@ -154,10 +154,31 @@ fn catalog_rejects_tagged_or_ambiguous_image_references() {
         "registry.example:abcd/fixture/runtime",
         "fixture/runtime",
         "registry.example/../runtime",
+        "registry.example/fixture/a..b",
+        "registry.example/fixture/a___b",
+        "registry.example/fixture/a._b",
+        "registry.example/fixture/a-_b",
+        "registry.example/fixture/a-",
     ] {
         let item = release("approved-agent", "agent", name, "a", "0");
         let error = native_runtime(Some(&json!([item]).to_string())).unwrap_err();
         assert!(error.contains("only a digest"), "{name}: {error}");
+    }
+}
+
+#[test]
+fn catalog_enforces_the_distribution_repository_path_length() {
+    for (length, valid) in [(255, true), (256, false)] {
+        let path = format!(
+            "registry.example/fixture/{}",
+            "a".repeat(length - "fixture/".len())
+        );
+        let item = release("approved-agent", "agent", &path, "a", "0");
+        assert_eq!(
+            native_runtime(Some(&json!([item]).to_string())).is_ok(),
+            valid,
+            "repository path of {length} bytes"
+        );
     }
 }
 
