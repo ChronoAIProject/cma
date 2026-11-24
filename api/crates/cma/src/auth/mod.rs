@@ -312,8 +312,11 @@ impl AuthState {
         &self,
         headers: &HeaderMap,
     ) -> Result<Option<RequestAuth>, StoreError> {
-        if self.identity_proxy.is_some() && headers.contains_key(nyxid_proxy::HEADER) {
-            return self.proxy_request(headers).await;
+        if headers.contains_key(nyxid_proxy::HEADER) {
+            if self.identity_proxy.is_some() {
+                return self.proxy_request(headers).await;
+            }
+            nyxid_proxy::note_disabled();
         }
         if let Some(token) = bearer::bearer_token(headers) {
             if agent_keys::is_agent_key(&token) {

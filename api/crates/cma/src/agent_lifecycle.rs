@@ -90,6 +90,8 @@ pub(crate) struct InlineAgentLifecycle {
     bounds: ProfileCapacityBounds,
     capacity: layer3_adapter::SandboxCapacity,
     machine_sandbox_image: Option<String>,
+    /// When set, the machine image is this source's release at admission.
+    released: OnceLock<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
     operations: Arc<MongoAgentLifecycleStore>,
     native_prepared: Option<Arc<crate::store::MongoSandboxStore>>,
     desktop: Option<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>>,
@@ -97,6 +99,7 @@ pub(crate) struct InlineAgentLifecycle {
     task_experience: OnceLock<Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>>,
     failure_metadata_enabled: OnceLock<bool>,
     repository_preflight: OnceLock<Arc<dyn repository_preflight::RepositoryReadiness>>,
+    managed_repository_preflight: OnceLock<bool>,
     worker_slots: Arc<tokio::sync::Semaphore>,
     tasks: LifecycleDrain,
 }
@@ -146,6 +149,7 @@ impl InlineAgentLifecycle {
             bounds,
             capacity,
             machine_sandbox_image,
+            released: OnceLock::new(),
             operations,
             native_prepared,
             desktop,
@@ -153,6 +157,7 @@ impl InlineAgentLifecycle {
             task_experience: OnceLock::new(),
             failure_metadata_enabled: OnceLock::new(),
             repository_preflight: OnceLock::new(),
+            managed_repository_preflight: OnceLock::new(),
             worker_slots: Arc::new(tokio::sync::Semaphore::new(crate::store::DISCOVERY_BATCH)),
             tasks: LifecycleDrain::new(crate::store::DISCOVERY_BATCH + 1),
         });

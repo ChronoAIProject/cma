@@ -6,6 +6,30 @@ use domain::{
 };
 use layer2_core::sandbox::{store::AgentMessageCheckpoint, AgentUpdateOutcome};
 
+pub(in crate::store) async fn apply_stale_turn(
+    store: &MongoSandboxStore,
+    proof: &layer2_core::sandbox::store::StaleTurnSettlement,
+    scope: &mut TransactionScope<'_>,
+) -> Result<(), ApplyError> {
+    let snapshot = proof.snapshot();
+    // The ordinary publication hook writes the current Mongo membership
+    // and owner fences before appending. The root requires that they exist.
+    let (_, published) = Box::pin(apply(
+        store,
+        (&snapshot.agent, None),
+        snapshot.checkpoint.as_ref(),
+        proof.checkpoint(),
+        Some(proof.mutation()),
+        &Authority::StaleTurn,
+        scope,
+    ))
+    .await?;
+    if published.is_none() {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
+    Ok(())
+}
+
 pub(in crate::store) async fn apply(
     store: &MongoSandboxStore,
     source: (&Agent, Option<&adoption::Prepared>),
@@ -24,10 +48,8 @@ pub(in crate::store) async fn apply(
         Authority::Capacity(proof) => Some(proof.as_ref()),
         _ => None,
     };
-    let row = store
-        .agents
-        .find_one(doc! { "_id": current.id.as_str() })
-        .session(scope.session())
+    let row = scope
+        .find_one(&store.agents, doc! { "_id": current.id.as_str() })
         .await
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
@@ -103,7 +125,11 @@ pub(in crate::store) async fn apply(
                 .map_err(ApplyError::Domain)?;
         }
         let receipt = Box::pin(super::apply(
-            ScanCaller::Checkpoint,
+            if matches!(authority, Authority::StaleTurn) {
+                PublicationSource::StaleTurn
+            } else {
+                PublicationSource::Checkpoint
+            },
             store,
             mutation,
             capacity,
@@ -126,7 +152,9 @@ pub(in crate::store) async fn apply(
         }
         current
     };
-    if mutation.is_some() {
+    if matches!(authority, Authority::StaleTurn) {
+        // Both writers set the exact checkpoint in the publication CAS.
+    } else if mutation.is_some() {
         // Publication can adopt or advance the log envelope. Its original row
         // cannot certify the new format/head; retain the post-publication read.
         write(store, updated, Some(next), scope.session()).await?;

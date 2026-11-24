@@ -15,6 +15,8 @@ mod pre_capture;
 mod pre_capture_accounts;
 #[path = "pre_usage_capture_backup_census.rs"]
 mod pre_capture_backups;
+#[path = "pre_resource_execution_census.rs"]
+mod pre_execution;
 
 #[cfg(test)]
 pub(super) const PRE_BACKUP_COLLECTIONS: &[&str] = pre_backup::COLLECTIONS;
@@ -56,6 +58,8 @@ pub(crate) fn schema_sha256() -> String {
 fn collections(schema: &str) -> Result<Vec<&'static str>> {
     if schema == schema_sha256() {
         Ok(manifest_collections().collect())
+    } else if schema == pre_execution::SHA256 {
+        Ok(pre_execution::COLLECTIONS.to_vec())
     } else if schema == pre_capture::SHA256 {
         Ok(pre_capture::COLLECTIONS.to_vec())
     } else if schema == pre_capture_accounts::SHA256 {

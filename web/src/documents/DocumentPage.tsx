@@ -18,6 +18,7 @@ import {
   downloadSavedDocument,
   ownsSavedDocument,
   prepareSavedDocumentExport,
+  SavedDocumentAccessError,
   SavedDocumentExportError,
 } from './savedExport';
 import { savedDocumentExportEnabled } from './savedExportFeature';
@@ -54,6 +55,7 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
   const [conflict, setConflict] = useState(false);
   const [busy, setBusy] = useState(false);
   const [intent, setIntent] = useState<DocumentSaveIntent>();
+  const loadRequest = useRef<AbortController | undefined>(undefined);
   const mutation = useRef<AbortController | undefined>(undefined);
   const exportRequest = useRef<AbortController | undefined>(undefined);
   const [exporting, setExporting] = useState<AbortController>();
@@ -70,6 +72,7 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
         markdown.trim().length > 0 &&
         new TextEncoder().encode(markdown).length <= 1024 * 1024));
   const revoke = () => {
+    loadRequest.current?.abort();
     mutation.current?.abort();
     exportRequest.current?.abort();
     retainDocumentDraft(viewer, id);
@@ -88,8 +91,10 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
   useEffect(() => () => exportRequest.current?.abort(), [client, id, viewer]);
   useEffect(() => {
     const request = new AbortController();
+    loadRequest.current = request;
     void (async () => {
       const document = await client.read(id, { shareToken, signal: request.signal });
+      if (request.signal.aborted) return;
       const source = await client.source(id, {
         shareToken,
         revision: document.source_revision,
@@ -116,7 +121,10 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
       if (!request.signal.aborted)
         setError(cause instanceof Error ? cause.message : 'This document could not be loaded.');
     });
-    return () => request.abort();
+    return () => {
+      request.abort();
+      if (loadRequest.current === request) loadRequest.current = undefined;
+    };
   }, [client, id, viewer, shareToken, revision]);
   useEffect(() => {
     if (!loaded || !owner) return;
@@ -221,8 +229,12 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
       console.info('Saved document export download started.');
     } catch (cause) {
       if (!request.signal.aborted) {
+        const accessLost = cause instanceof SavedDocumentAccessError;
+        if (accessLost) revoke();
+        const failure = accessLost ? cause.cause : cause;
         console.warn('Saved document export failed.', {
-          status: cause instanceof DocumentError ? cause.status : undefined,
+          status: failure instanceof DocumentError ? failure.status : undefined,
+          accessLost,
         });
         setError(
           cause instanceof SavedDocumentExportError
@@ -443,30 +455,32 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
           onClose={() => setShareOpen(false)}
         />
       ) : null}
-      <Modal
-        open={discardOpen}
-        title="Load the latest document?"
-        onClose={() => setDiscardOpen(false)}
-        footer={
-          <>
-            <Button onClick={download}>Download draft</Button>
-            <Button
-              variant="danger"
-              onClick={() => {
-                retainDocumentDraft(viewer, id);
-                setDiscardOpen(false);
-                setIntent(undefined);
-                setLoaded(undefined);
-                setRevision((value) => value + 1);
-              }}
-            >
-              Discard draft and reload
-            </Button>
-          </>
-        }
-      >
-        <p>Your unsaved changes will be replaced by the latest saved version.</p>
-      </Modal>
+      {loaded ? (
+        <Modal
+          open={discardOpen}
+          title="Load the latest document?"
+          onClose={() => setDiscardOpen(false)}
+          footer={
+            <>
+              <Button onClick={download}>Download draft</Button>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  retainDocumentDraft(viewer, id);
+                  setDiscardOpen(false);
+                  setIntent(undefined);
+                  setLoaded(undefined);
+                  setRevision((value) => value + 1);
+                }}
+              >
+                Discard draft and reload
+              </Button>
+            </>
+          }
+        >
+          <p>Your unsaved changes will be replaced by the latest saved version.</p>
+        </Modal>
+      ) : null}
     </section>
   );
 }

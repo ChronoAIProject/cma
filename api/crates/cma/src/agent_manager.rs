@@ -1,6 +1,8 @@
 //! One participating process: renew, rebalance, revoke receivers, then release.
 mod containment;
 mod drain;
+#[cfg(test)]
+pub(crate) use drain::handoff as drain_receiver_for_test;
 mod maintenance;
 pub(crate) mod relay;
 mod renewal;
@@ -41,10 +43,11 @@ impl AgentManager {
         address: String,
         capacity: u32,
         cleanup_pacing: bool,
+        batch_renewal: bool,
     ) -> Result<Arc<Self>, String> {
         // Dormant until activation: startup can outlast a lease, and peers must
         // not place Agents on, or invite claims by, a process not yet serving.
-        let coordinator = OwnershipCoordinator::prepare_with_cleanup_pacing(
+        let coordinator = OwnershipCoordinator::prepare_with_options(
             store
                 .agent_ownership
                 .clone()
@@ -62,6 +65,7 @@ impl AgentManager {
                 max_owned_agents: capacity,
             },
             cleanup_pacing,
+            batch_renewal,
         );
         registry.install_ownership(coordinator.clone());
         let manager = Arc::new(Self {

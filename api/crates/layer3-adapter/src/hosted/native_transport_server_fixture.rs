@@ -1,4 +1,5 @@
 use super::*;
+use tokio::io::AsyncRead;
 
 pub(super) async fn serve_runtime(
     mut stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -255,6 +256,34 @@ pub(super) async fn serve_runtime(
     }
 }
 
+async fn read_request(stream: &mut (impl AsyncRead + Unpin)) -> Option<String> {
+    let mut request = Vec::new();
+    let mut buffer = [0; 4096];
+    loop {
+        let count = stream.read(&mut buffer).await.ok()?;
+        if count == 0 {
+            return None;
+        }
+        request.extend_from_slice(&buffer[..count]);
+        assert!(request.len() < 64 * 1024);
+        if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&request[..end]);
+            let length = head
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length: ")
+                        .map(str::to_owned)
+                })
+                .map(|s| s.parse::<usize>().unwrap())
+                .unwrap_or(0);
+            if request.len() >= end + 4 + length {
+                return String::from_utf8(request).ok();
+            }
+        }
+    }
+}
+
 fn persistent_response(request: &str) -> String {
     let (_, body) = request.split_once("\r\n\r\n").unwrap();
     let response = match serde_json::from_str::<RequestFrame>(body).unwrap() {
@@ -269,6 +298,14 @@ fn persistent_response(request: &str) -> String {
                 conversation_id: None,
             }))
         },
+        RequestFrame::CloseAgent(request) => ResponseFrame::CloseAgent(FencedReceipt::new(
+            request.authority_fence,
+            crate::wire::AgentCloseReceipt {
+                operation_id: request.request.operation_id,
+                request_sha256: request.request.request_sha256,
+                agent_id: request.request.agent_id,
+            },
+        )),
         RequestFrame::Install(request) => ResponseFrame::Install(crate::InstallReceipt {
             operation_id: request.operation_id,
             request_sha256: request.request_sha256,

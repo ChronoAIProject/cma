@@ -1,5 +1,7 @@
 //! The actual facade persists admission, restarts safely and retains its parent.
 use super::*;
+#[path = "agent_lifecycle_image_retirement_tests.rs"]
+mod image_retirement;
 #[path = "agent_lifecycle_repository_preflight_tests.rs"]
 mod repository_preflight;
 #[path = "agent_lifecycle_template_tests.rs"]

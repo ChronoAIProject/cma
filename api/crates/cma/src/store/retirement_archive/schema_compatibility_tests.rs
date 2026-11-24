@@ -123,6 +123,10 @@ async fn pre_proof_manifest_reconciles_without_capturing_live_creation_evidence(
     let pre_proof = export::build(&store, &request, &bytes, &custody, None)
         .await
         .unwrap();
+    assert_eq!(
+        pre_proof.schema_sha256,
+        "c75c5dc57ddbcab6d18543510bf2ddbf5beb4387622c48914909bed80df10a8a"
+    );
     assert!(!pre_proof
         .database
         .iter()

@@ -111,7 +111,7 @@ it('does not mistake pending=false metadata for an unsaved proposal', async () =
   expect(screen.queryByRole('button', { name: 'Apply settings' })).toBeNull();
 });
 
-it('keeps an edited proposal after conflict refresh and does not infer an active turn', async () => {
+it('keeps only edited fields after conflict refresh and does not infer an active turn', async () => {
   const reads = vi
     .fn()
     .mockResolvedValueOnce(defaults)
@@ -127,7 +127,7 @@ it('keeps an edited proposal after conflict refresh and does not infer an active
         'admission_conflict',
       ),
     )
-    .mockResolvedValue({ ...defaults, permission_mode: 'guarded' });
+    .mockResolvedValue({ ...defaults, reasoning_effort: 'low', permission_mode: 'guarded' });
   render(draw(clientFor(reads, updates)));
   await expand();
   permission('Guarded');
@@ -135,23 +135,37 @@ it('keeps an edited proposal after conflict refresh and does not infer an active
   const error = await screen.findByRole('alert');
   expect(error).toHaveTextContent('The Agent changed during the update.');
   expect(error).not.toHaveTextContent('The turn is active.');
+  expect(screen.getByRole('button', { name: /^Agent settings:/ })).toHaveAccessibleName(
+    /High.*Autonomous/,
+  );
   expect(screen.getByRole('button', { name: 'Apply settings' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Refresh current settings' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Apply settings' })).toBeEnabled());
   expect(screen.getByRole('button', { name: /^Agent settings:/ })).toHaveAccessibleName(
-    /High.*Guarded/,
+    /Low.*Autonomous/,
   );
+  expect(screen.getByRole('button', { name: /^Model and reasoning effort:/ })).toHaveAccessibleName(
+    /Low/,
+  );
+  expect(screen.getByRole('button', { name: 'Permission mode' })).toHaveTextContent('Guarded');
+  expect(screen.getByText('Unapplied changes to permission mode.')).toBeVisible();
+  expect(screen.queryByText('Settings applied to this Agent.')).toBeNull();
   expect(updates).toHaveBeenCalledOnce();
   fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
   await screen.findByText('Settings applied to this Agent.');
+  expect(updates).toHaveBeenCalledTimes(2);
   expect(updates.mock.calls[1]?.[1]).toEqual({
     model: 'gpt-6',
-    reasoning_effort: 'high',
+    reasoning_effort: 'low',
     permission_mode: 'guarded',
   });
   expect(updates.mock.calls[1]?.[2].idempotencyKey).not.toBe(
     updates.mock.calls[0]?.[2].idempotencyKey,
   );
+  expect(screen.getByRole('button', { name: /^Agent settings:/ })).toHaveAccessibleName(
+    /Low.*Guarded/,
+  );
+  expect(screen.queryByText(/Unapplied changes/)).toBeNull();
 });
 
 it('preserves a new edit during a refresh even when it returns to the previous baseline', async () => {
@@ -186,8 +200,13 @@ it('preserves a new edit during a refresh even when it returns to the previous b
     finish({ ...defaults, reasoning_effort: 'low', permission_mode: 'guarded' }),
   );
   expect(screen.getByRole('button', { name: /^Agent settings:/ })).toHaveAccessibleName(
-    /High.*Autonomous/,
+    /Low.*Guarded/,
   );
+  expect(screen.getByRole('button', { name: /^Model and reasoning effort:/ })).toHaveAccessibleName(
+    /Low/,
+  );
+  expect(screen.getByRole('button', { name: 'Permission mode' })).toHaveTextContent('Autonomous');
+  expect(screen.getByText('Unapplied changes to permission mode.')).toBeVisible();
   expect(updates).toHaveBeenCalledOnce();
 });
 
@@ -223,25 +242,33 @@ it.each([429, 503])(
   },
 );
 
-it('does not call an uncertain settings update confirmed merely because a GET matches', async () => {
+it.each([
+  ['a lost response', new TypeError('response lost')],
+  [
+    'an ambiguous conflict',
+    new AgentSettingsError('private', 409, undefined, 'agent_delivery_ambiguous'),
+  ],
+])('keeps the original command after %s even when the GET matches', async (_, failure) => {
   const reads = vi
     .fn()
     .mockResolvedValueOnce(defaults)
     .mockResolvedValue({ ...defaults, permission_mode: 'guarded' });
-  const updates = vi
-    .fn()
-    .mockRejectedValue(
-      new AgentSettingsError('private', 409, undefined, 'agent_delivery_ambiguous'),
-    );
+  const updates = vi.fn().mockRejectedValue(failure);
   render(draw(clientFor(reads, updates)));
   await expand();
   permission('Guarded');
   fireEvent.click(screen.getByRole('button', { name: 'Apply settings' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Refresh current settings' }));
-  await waitFor(() => expect(reads).toHaveBeenCalledTimes(2));
+  await screen.findByRole('button', { name: /Agent settings:.*High.*Guarded/ });
+  expect(reads).toHaveBeenCalledTimes(2);
+  expect(updates).toHaveBeenCalledOnce();
   expect(screen.queryByText('Settings applied to this Agent.')).toBeNull();
+  expect(screen.getByText(/Leaving loses the local retry details/)).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Retry settings update' }));
   await waitFor(() => expect(updates).toHaveBeenCalledTimes(2));
+  expect(JSON.stringify(updates.mock.calls[1]?.[1])).toBe(
+    JSON.stringify(updates.mock.calls[0]?.[1]),
+  );
   expect(updates.mock.calls[1]?.[2].idempotencyKey).toBe(updates.mock.calls[0]?.[2].idempotencyKey);
 });
 

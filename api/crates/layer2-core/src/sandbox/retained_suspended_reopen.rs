@@ -122,6 +122,7 @@ pub struct RetainedSuspendedReopenRequest {
     pub proof: RetainedSuspendedReopenProof,
     pub key_sha256: String,
     pub requested_at: String,
+    pub repeat_authorized: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

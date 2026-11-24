@@ -105,6 +105,8 @@ function statusSentence(status: number): string | undefined {
  * lost connection becomes a plain sentence that says what to do next.
  */
 export function readableError(error: unknown, fallback: string): string {
+  if (typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError')
+    return 'The request was interrupted. Check the current status and try again.';
   if (
     error instanceof TransportError ||
     (error instanceof TypeError && /fetch|network|load failed/i.test(error.message))

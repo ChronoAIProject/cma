@@ -172,7 +172,20 @@ impl InlineAgentLifecycle {
                 connection_target,
             }) => {
                 self.operations
-                    .wait_for_connection(&lease, services, connection_target)
+                    .wait_for_connection(&lease, services, connection_target, None)
+                    .await
+            }
+            Err(AgentLifecycleProvisioningError::RepositoryAccessRequired {
+                connection_target,
+                reason,
+            }) => {
+                self.operations
+                    .wait_for_connection(
+                        &lease,
+                        vec![crate::trigger::GITHUB_SERVICE.into()],
+                        connection_target,
+                        Some(reason),
+                    )
                     .await
             }
             Err(error) => {

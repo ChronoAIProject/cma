@@ -52,13 +52,32 @@ class CacheTests(unittest.TestCase):
             self.assertIn('--cache-from', args)
             self.assertEqual('--cache-to' in args, writer)
             self.assertEqual(any('mode=max' in arg for arg in args), writer)
-            self.assertTrue(all('type=gha,version=2,scope=cma-eg,' in arg for arg in args if not arg.startswith('--')))
+            values = [arg for arg in args if not arg.startswith('--')]
+            self.assertEqual(values[0], 'type=gha,version=2,scope=cma-cd-eg,timeout=2m')
+            self.assertEqual(values[1], 'type=gha,version=2,scope=cma-eg,timeout=2m')
+            if writer:
+                self.assertEqual(values[2], 'type=gha,version=2,scope=cma-cd-eg,timeout=2m,mode=max,ignore-error=true')
         self.assertEqual(len(set(SCOPES.values())), 5)
         for component, scope in SCOPES.items():
             self.assertIn('scope=' + scope + ',', layer_options(self.env, component)[1])
         for env, component in [(dict(self.env, GITHUB_REPOSITORY='fork/repo'), 'eg'), (self.env, 'unknown')]:
             with self.assertRaises(Refusal):
                 layer_options(env, component)
+
+    def test_cd_never_exports_a_scope_the_ci_image_builds_write(self):
+        # A shared scope let CI and CD replace each other's index; CD now only reads CI's.
+        from staging_cd_build_cache import CI_SCOPES
+        self.assertFalse(set(SCOPES.values()) & CI_SCOPES)
+        for component in SCOPES:
+            with self.subTest(component=component):
+                args = layer_options(dict(self.env, GITHUB_EVENT_NAME="push", GITHUB_REF="refs/heads/develop"), component)
+                options = list(zip(args[::2], args[1::2]))
+                exports = [value for flag, value in options if flag == "--cache-to"]
+                self.assertEqual(len(exports), 1)
+                self.assertNotIn(exports[0].split("scope=")[1].split(",")[0], CI_SCOPES)
+        ci = (Path(__file__).resolve().parents[1] / "workflows" / "ci-images.yml").read_text()
+        for scope in ("cma-am", "cma-eg", "cma-web"):
+            self.assertIn("'" + scope + "'", ci)
 
     def test_runtime_builds_read_shared_stages_and_export_only_their_own_scope(self):
         for component, scopes in (("runtime", ["cma-runtime", "runtime"]),

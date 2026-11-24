@@ -132,7 +132,11 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "provider_binding_preparations",
     "provider_tool_opens",
     "provider_tool_relays",
+    "resource_execution_effects_v1",
+    "resource_execution_grants_v1",
+    "resource_execution_records_v1",
     "resource_policies",
+    "resource_revocation_operations_v1",
     "resource_share_commands",
     "resource_shares",
     "sandbox_admissions",
@@ -172,8 +176,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "workspaces",
     "worktrees",
 ];
-// These derived stores are activated separately. Existing credentials must
-// still start while the feature is disabled; partial grants remain invalid.
+// These stores activate separately. Existing credentials still start while disabled.
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     super::sandbox_usage_export::CAPTURES,
     super::sandbox_usage_export::EVIDENCE,
@@ -185,6 +188,12 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     super::allocation_buckets::COLLECTION,
     super::agent_observation::COLLECTION,
     super::creation_outcomes::COLLECTION,
+    // Resource execution reads its activation record on ordinary share and
+    // revocation paths; credentials issued before it still start.
+    "resource_execution_effects_v1",
+    "resource_execution_grants_v1",
+    "resource_execution_records_v1",
+    "resource_revocation_operations_v1",
 ];
 const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
 const MIGRATION_ACTIONS: &[&str] = &["find", "insert", "update", "createCollection"];

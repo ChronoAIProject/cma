@@ -191,7 +191,9 @@ it.each(['mouse', 'keyboard'] as const)(
     expect(stop.querySelector('svg')).not.toBeNull();
     const remove = screen.getByRole('menuitem', { name: /^Delete task/ });
     expect(remove).toHaveAttribute('aria-disabled', 'true');
-    expect(remove).toHaveTextContent('Stop this Agent before deleting it and its Worktree.');
+    expect(remove).toHaveTextContent(
+      'Current owner access must be checked before stopping and deleting this Agent.',
+    );
     if (input === 'mouse') await user.click(stop);
     else {
       await user.keyboard('{Home}');
@@ -238,7 +240,7 @@ it.each(['stopped', 'failed', 'runtime-unavailable', 'busy', 'no-permission', 's
       if (condition === 'busy')
         expect(stop).toHaveTextContent('Another action is still being confirmed.');
       if (condition === 'runtime-unavailable')
-        expect(stop).toHaveTextContent('Available when the Sandbox is active.');
+        expect(stop).toHaveTextContent('Sandbox status is unavailable. Refresh and try again.');
       await user.click(stop!);
     }
     expect(onMoreAction).not.toHaveBeenCalled();

@@ -90,9 +90,24 @@ class SandboxControlFixtureTests(unittest.TestCase):
         receipt(value, value['sandbox_id'], 3, True)
         for fault in ({**value, 'command': 'revive'},
                       {**value, 'state': {'status': 'applied'}},
-                      {**value, 'revision': 1}):
+                      {**value, 'revision': 1},
+                      {**value, 'unknown': True},
+                      {**value, 'lifecycle': None},
+                      {**value, 'lifecycle': {'result': 'queued'}},
+                      {**value, 'lifecycle': {'result': {}, 'extra': 1}},
+                      {**value, 'lifecycle': {}}):
             with self.subTest(fault=fault), self.assertRaises(RuntimeError):
                 receipt(fault, value['sandbox_id'], 3, True)
+
+    def test_released_readers_optional_lifecycle_result_is_accepted(self):
+        # v0.20.0 and v0.22.0 serialize SandboxCommandReceiptView.lifecycle.
+        value = {'command_id': 'scmd_' + 'a' * 32, 'sandbox_id': 'sbx_' + 'b' * 32,
+                 'command': 'pause', 'expected_revision': 3,
+                 'admitted_at': '2026-01-01T00:00:00Z', 'queue_deadline': '2026-01-01T00:05:00Z',
+                 'revision': 2, 'state': {'status': 'rejected', 'at': '2026-01-01T00:00:01Z',
+                                           'reason': 'not_eligible'},
+                 'lifecycle': {'result': {'status': 'rejected'}}}
+        self.assertIs(receipt(value, value['sandbox_id'], 3, True), value)
 
     def test_terminal_progress_is_bounded_and_preserves_identity(self):
         saved = self.writer()['commands'][0]['receipt']

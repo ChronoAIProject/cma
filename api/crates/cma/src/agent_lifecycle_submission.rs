@@ -86,8 +86,7 @@ impl InlineAgentLifecycle {
                     .await?,
             ),
             None if request.machine_included => self
-                .machine_sandbox_image
-                .clone()
+                .released_machine_image()
                 .ok_or_else(|| {
                     AgentLifecycleProvisioningError::Invalid(
                         "Machine Included is not available in this deployment".into(),

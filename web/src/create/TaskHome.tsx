@@ -26,9 +26,11 @@ import { useTaskDraft } from './taskDraft';
 import { taskCreateRequest, useTaskTitleModeSupport } from './taskCreateRequest';
 import { useTaskTemplateDraftSwitch } from './TaskTemplateDraftSwitch';
 import { useConnectionGate } from '../connections/useConnectionGate';
+import { RepositoryConnectionRepair } from '../connections/ConnectionWizard';
 import '../ui/Input.css';
 import './AgentLifecycleCard.css';
 import './TaskHome.css';
+import './TaskStartLayout.css';
 import './TaskFeedback.css';
 
 const recoverTask = { label: 'Recover original task', kind: 'recover' } as const;
@@ -89,10 +91,15 @@ function TaskHomeContent({
   const [recovering, setRecovering] = useState(false);
   const titleId = useId();
   const errorId = useId();
-  const draft = useTaskDraft(viewerId, workspaceId, sandboxId);
+  const templateV1Availability = useTaskTemplateAvailability(client);
+  const templateV2Availability = useTaskTemplateAvailability(client, 2);
+  const allowTemplateV2 =
+    policy.confirmed && policy.task_home_admission && templateV2Availability === 'supported';
+  const draft = useTaskDraft(viewerId, workspaceId, sandboxId, allowTemplateV2);
   const input = useRef<HTMLTextAreaElement>(null);
   const [validation, setValidation] = useState<TemplateIssue>();
-  const templateAvailability = useTaskTemplateAvailability(client);
+  const templateAvailability =
+    draft.template?.version === 2 ? templateV2Availability : templateV1Availability;
   const templateSupported =
     templateAvailability === 'checking' ? undefined : templateAvailability === 'supported';
   const form = useRef<HTMLFormElement>(null);
@@ -258,6 +265,7 @@ function TaskHomeContent({
         <TaskTemplatePanel
           template={draft.template}
           availability={templateAvailability}
+          allowV2={allowTemplateV2}
           issue={validation}
           errorId={errorId}
           onChange={(template) => {
@@ -357,37 +365,58 @@ function TaskHomeContent({
         pending={lifecycle.pending}
         preparing={preparing}
         resolvedCommit={agent?.workspace.resolvedCommit}
+        recovery={
+          <>
+            {intent && !intent.receipt && !lifecycle.connection ? (
+              <Button
+                variant="outline"
+                placement="task-home__action"
+                disabled={lifecycle.pending || lifecycle.blocked}
+                onClick={() => {
+                  setRecovering(true);
+                  void lifecycle.submit();
+                }}
+              >
+                {recoverTask.label}
+              </Button>
+            ) : null}
+            {lifecycle.connection && !lifecycle.connection.repository_access ? (
+              <Button
+                variant="outline"
+                placement="task-home__action"
+                disabled={lifecycle.pending || lifecycle.blocked || connections.pending}
+                onClick={() => {
+                  if (viewerId && lifecycle.connection)
+                    void connections.checkAndRun(
+                      lifecycle.connection.target,
+                      viewerId,
+                      () => void lifecycle.submit(),
+                    );
+                }}
+              >
+                {continueTask.label}
+              </Button>
+            ) : null}
+            {failure && intent?.receipt ? (
+              <Button
+                variant="outline"
+                placement="task-home__action"
+                onClick={lifecycle.retryStatus}
+              >
+                {retryTaskStatus.label}
+              </Button>
+            ) : null}
+          </>
+        }
       />
-      {intent && !intent.receipt && !lifecycle.connection ? (
-        <Button
-          variant="outline"
-          placement="task-home__action"
-          disabled={lifecycle.pending || lifecycle.blocked}
-          onClick={() => {
-            setRecovering(true);
-            void lifecycle.submit();
-          }}
-        >
-          {recoverTask.label}
-        </Button>
-      ) : null}
       {connections.dialog}
-      {lifecycle.connection ? (
-        <Button
-          variant="outline"
-          placement="task-home__action"
-          disabled={lifecycle.pending || lifecycle.blocked || connections.pending}
-          onClick={() => {
-            if (viewerId && lifecycle.connection)
-              void connections.checkAndRun(
-                lifecycle.connection.target,
-                viewerId,
-                () => void lifecycle.submit(),
-              );
-          }}
-        >
-          {continueTask.label}
-        </Button>
+      {viewerId && lifecycle.connection?.repository_access ? (
+        <RepositoryConnectionRepair
+          owner={viewerId}
+          target={lifecycle.connection.target}
+          pending={lifecycle.pending || lifecycle.blocked}
+          onRecheck={() => void lifecycle.submit()}
+        />
       ) : null}
       {quotaFailed ? (
         <p role="alert">
@@ -418,15 +447,10 @@ function TaskHomeContent({
           {draft.error}
         </p>
       ) : null}
-      {failure ? (
+      {failure && !intent ? (
         <p className="task-home__alert" role="alert">
           {failure}
         </p>
-      ) : null}
-      {failure && intent?.receipt ? (
-        <Button variant="outline" placement="task-home__action" onClick={lifecycle.retryStatus}>
-          {retryTaskStatus.label}
-        </Button>
       ) : null}
       {connections.error ? (
         <p className="task-home__alert" role="alert">
