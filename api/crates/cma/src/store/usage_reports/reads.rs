@@ -1,6 +1,5 @@
 use super::*;
 use async_trait::async_trait;
-use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::{
     MetricsStore, PageQuery, Report, ReportQuery, Row, Rows, Scope, Series, SeriesQuery,
 };
@@ -88,50 +87,17 @@ impl MetricsStore for ReportingStore {
         self.submit_with_completion(scope, query, at).await
     }
     async fn report(&self, scope: &Scope, id: &str, at: u64) -> Result<Report> {
-        let d = self
-            .collection(JOBS)
-            .find_one(doc! {"_id":id,"principal":&scope.principal,"admin":scope.admin})
-            .max_time(DB_DEADLINE)
-            .await
-            .map_err(unavailable)?
-            .ok_or(MetricsError::NotFound)?;
-        let report: Report = decode(&d)?;
-        if report.expires_at <= at
-            || d.get_i64("retire_after")
-                .is_ok_and(|until| until <= at as i64)
-        {
-            return Err(MetricsError::Expired);
-        }
-        if report.status == layer2_core::sandbox_metrics::ReportStatus::Failed {
-            return Err(MetricsError::Unavailable);
-        }
-        Ok(report)
+        self.persistence.read_report(scope, id, at).await
     }
     async fn reauthorize(&self, report: &Report) -> Result<()> {
         self.verify_retained_snapshot(report).await?;
-        // Even admin cached membership must not retain another owner's old
-        // attribution after a transfer. Owner changes invalidate the snapshot.
-        let pipeline = [
-            doc! {"$match":{"report_id":&report.report_id}},
-            doc! {"$lookup":{"from":super::super::sandbox_usage::STATES,"localField":"sandbox_id","foreignField":"_id","as":"current"}},
-            doc! {"$lookup":{"from":"sandboxes","localField":"sandbox_id","foreignField":"_id","as":"sandbox"}},
-            doc! {"$match":{"$expr":{"$or":[
-                {"$ne":["$owner",{"$arrayElemAt":["$current.owner",0]}]},
-                {"$and":[{"$gt":[{"$size":"$sandbox"},0]},
-                    {"$ne":["$owner",{"$arrayElemAt":["$sandbox.owner",0]}]}]}
-            ]}}},
-            doc! {"$limit":1},
-            doc! {"$project":{"_id":1}},
-        ];
-        let mut cursor = self
-            .collection(ROWS)
-            .aggregate(pipeline)
-            .max_time(DB_DEADLINE)
-            .await
-            .map_err(unavailable)?;
-        if cursor.try_next().await.map_err(unavailable)?.is_some() {
-            return Err(MetricsError::NotFound);
-        }
+        self.persistence
+            .check_report_membership(
+                self.collection(ROWS),
+                super::super::sandbox_usage::STATES,
+                report,
+            )
+            .await?;
         if let Some(id) = &report.query.filters.sandbox_id {
             self.authorize_sandbox(&report.scope, id).await?;
         }
