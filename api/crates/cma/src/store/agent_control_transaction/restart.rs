@@ -1,7 +1,11 @@
 use super::restart_receipt as receipts;
 use super::*;
 use crate::store::{
-    agent_control_receipt::{consume_restart_predecessor, STOP_RECEIPT_FIELD},
+    agent_control_lineage::fence_restart_lineage,
+    agent_control_receipt::{
+        consume_restart_predecessor, matches_restart_predecessor, owner_stop_operation,
+        STOP_RECEIPT_FIELD,
+    },
     agent_log_integrity::{AppendCapacity, TransactionLogError},
     agent_log_segments::{
         publication::{self, PublicationIdentity},
@@ -122,11 +126,7 @@ async fn apply(
             live: u8::try_from(live).unwrap_or(u8::MAX),
         }));
     }
-    let row = scope
-        .find_one(&store.agents, doc! {"_id": current.agent.id.as_str()})
-        .await
-        .map_err(ApplyError::Driver)?
-        .ok_or(ApplyError::Domain(AgentControlStoreError::NotFound))?;
+    let row = &current.row;
     let revision = signed(current.agent.revision, "Agent revision")
         .map_err(AgentControlStoreError::Corrupt)
         .map_err(ApplyError::Domain)?;
@@ -157,14 +157,14 @@ async fn apply(
         consume_restart_predecessor(&current.receipts, &acceptance).map_err(ApplyError::Domain)?,
     );
     crate::store::agent_conversation_store::carry_checkpoint_fields(
-        &row,
+        row,
         &current.agent,
         &next,
         &mut fields,
     )
     .map_err(store_error)
     .map_err(ApplyError::Domain)?;
-    let publication = if crate::store::agent_log_segments::read_format(&row)
+    let publication = if crate::store::agent_log_segments::read_format(row)
         .map_err(store_error)
         .map_err(ApplyError::Domain)?
         .is_some()
@@ -197,7 +197,7 @@ async fn apply(
         Some(publication)
     } else {
         filter.insert("document_schema_version", DOCUMENT_SCHEMA_VERSION);
-        carry_integrity_for_revision(&row, &current.agent, &next, &mut fields)
+        carry_integrity_for_revision(row, &current.agent, &next, &mut fields)
             .map_err(store_error)
             .map_err(ApplyError::Domain)?;
         let applied = scope
@@ -211,7 +211,7 @@ async fn apply(
     };
     let session = scope.release();
     // Keep the existing parent write-conflict fence shared with Agent creation.
-    fence_control_lineage(store, &current, &acceptance.operation_id, session).await?;
+    fence_restart_lineage(store, &current, &acceptance.operation_id, session).await?;
     let removed = store
         .agents
         .update_one(
@@ -259,6 +259,7 @@ fn plan(
         || !sandbox.credential.delivered
         || sandbox.lifecycle.operation.is_some()
         || sandbox.lifecycle.checkpoint_capture.is_some()
+        || source.runtime.runtime.validate().is_err()
         || source.runtime.runtime.sandbox_id != sandbox.id.as_str()
         || home.as_ref() != Some(&source.runtime.runtime.home_identity)
         || sandbox.runtime.as_ref().is_none_or(|binding| {
@@ -271,6 +272,23 @@ fn plan(
         || agent.conversation.conversation_id.as_ref() != Some(&source.conversation_id)
         || !agent.work.receipts.contains(&source.predecessor_open)
         || !agent.work.receipts.contains(&source.predecessor_close)
+    {
+        return Err(AgentControlStoreError::Conflict);
+    }
+    let closed_at = layer2_core::seconds_from_rfc3339(&source.predecessor_close.completed_at)
+        .ok_or(AgentControlStoreError::Conflict)?;
+    if agent
+        .stopped_at
+        .as_deref()
+        .and_then(layer2_core::seconds_from_rfc3339)
+        .is_none_or(|stopped_at| closed_at > stopped_at)
+        || agent
+            .work
+            .receipts
+            .iter()
+            .filter(|receipt| receipt.step == AgentWorkStep::CloseProcess)
+            .count()
+            != 1
     {
         return Err(AgentControlStoreError::Conflict);
     }
@@ -292,6 +310,9 @@ fn plan(
         accepted_at: request.requested_at.clone(),
         source: source.clone(),
         next_incarnation,
+        predecessor_stop_operation: owner_stop_operation(&current.receipts)
+            .ok_or(AgentControlStoreError::Conflict)?
+            .to_owned(),
     };
     Ok((next, acceptance))
 }
@@ -313,6 +334,21 @@ fn validate_replay(
         return Err(AgentControlStoreError::Corrupt(
             "restart acceptance does not match the Agent".into(),
         ));
+    }
+    if acceptance.revision == agent.revision {
+        let active = snapshot.row.get(ACTIVE_RESTART_FIELD).and_then(|value| {
+            mongodb::bson::deserialize_from_bson::<AgentRestartAcceptance>(value.clone()).ok()
+        });
+        if agent.status != AgentStatus::Starting
+            || agent.work.step != AgentWorkStep::RestartConversation
+            || active.as_ref() != Some(acceptance)
+            || snapshot.row.contains_key(STOP_RECEIPT_FIELD)
+            || !matches_restart_predecessor(&snapshot.row, acceptance)
+        {
+            return Err(AgentControlStoreError::Corrupt(
+                "restart acceptance does not match the scheduled work".into(),
+            ));
+        }
     }
     Ok(())
 }

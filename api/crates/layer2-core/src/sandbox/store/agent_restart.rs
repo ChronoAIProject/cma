@@ -28,6 +28,7 @@ pub struct AgentRestartAcceptance {
     pub accepted_at: String,
     pub source: AgentRestartSource,
     pub next_incarnation: u64,
+    pub predecessor_stop_operation: String,
 }
 
 /// Exact process and durable source observed before admission. The acceptance

@@ -139,6 +139,20 @@ pub(super) struct StoredControlReceipts {
     delete: Option<ControlReceipt>,
 }
 
+pub(super) fn owner_stop_operation(receipts: &StoredControlReceipts) -> Option<&str> {
+    let stop = receipts.stop.as_ref()?;
+    matches!(&stop.request, ControlRequest::Stop(request)
+        if request.reason == layer2_core::sandbox::AgentStopReason::Owner)
+    .then_some(stop.operation_id.as_str())
+}
+
+pub(super) fn matches_restart_predecessor(
+    row: &Document,
+    acceptance: &layer2_core::sandbox::store::AgentRestartAcceptance,
+) -> bool {
+    restart::matches_acceptance(row, acceptance)
+}
+
 pub(super) fn consume_restart_predecessor(
     receipts: &StoredControlReceipts,
     acceptance: &layer2_core::sandbox::store::AgentRestartAcceptance,

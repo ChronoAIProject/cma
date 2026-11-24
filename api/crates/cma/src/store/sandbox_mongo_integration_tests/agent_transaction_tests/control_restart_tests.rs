@@ -107,6 +107,100 @@ async fn owner_restart_admission_reserves_one_slot_and_replays_after_supersessio
     client.database(&name).drop().await.unwrap();
 }
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn owner_restart_admission_respects_the_shared_creation_capacity() {
+    let (client, name) = database("owner_restart_capacity").await;
+    crate::store::MongoOperationStore::open_for_test(&client, &name)
+        .await
+        .unwrap();
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (stopped, mut source) = stopped_agent(&store).await;
+    let mut parent = store
+        .get_sandbox(&stopped.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    parent.limits.max_agents_per_workspace = 1;
+    parent.profile.content.max_agents_per_workspace = 1;
+    parent.profile.digest = layer2_core::profiles::content_digest(&parent.profile.content).unwrap();
+    parent.revision += 1;
+    store
+        .sandboxes
+        .update_one(
+            doc! {"_id": parent.id.as_str()},
+            doc! {"$set": crate::store::sandboxes::sandbox_replacement_fields(&parent).unwrap()},
+        )
+        .await
+        .unwrap();
+    source.sandbox_revision = parent.revision;
+    let fresh_creation = AgentAdmission {
+        binding: None,
+        created_by: None,
+        owner: stopped.owner.clone(),
+        workspace_id: stopped.workspace_id.clone(),
+        agent_id: AgentId::generate(),
+        worktree_id: WorktreeId::generate(),
+        profile: stopped.profile.clone(),
+        capabilities: stopped.capabilities.clone(),
+        title: None,
+        first_message: None,
+        origin: AgentOrigin::Manual,
+        creation_key: "competing-creation".into(),
+        event_at: TWO_MINUTES.into(),
+    };
+
+    let (restarted, created) = tokio::join!(
+        store.schedule_agent_restart(request(&stopped, &source, "restart", [3; 32])),
+        store.admit_agent(fresh_creation),
+    );
+    match (restarted, created) {
+        (Ok(_), Err(SandboxStoreError::AgentLimitReached { limit: 1, live: 1 })) => {}
+        (
+            Err(
+                AgentControlStoreError::Conflict
+                | AgentControlStoreError::LimitReached { limit: 1, live: 1 },
+            ),
+            Ok(_),
+        ) => {
+            source.sandbox_revision = store
+                .get_sandbox(&parent.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .revision;
+            source.workspace_revision = store
+                .get_workspace(&stopped.workspace_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .revision;
+            assert_eq!(
+                store
+                    .schedule_agent_restart(request(&stopped, &source, "restart", [3; 32]))
+                    .await,
+                Err(AgentControlStoreError::LimitReached { limit: 1, live: 1 }),
+            );
+        }
+        (restarted, created) => panic!(
+            "expected exactly one live slot reservation, restart {restarted:?}, create success {}",
+            created.is_ok()
+        ),
+    }
+    assert_eq!(
+        store
+            .agents
+            .count_documents(doc! {
+                "workspace_id": stopped.workspace_id.as_str(),
+                "status": {"$in": crate::store::agents::LIVE_STATUSES},
+            })
+            .await
+            .unwrap(),
+        1
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
 fn request(
     agent: &Agent,
     source: &AgentRestartSource,

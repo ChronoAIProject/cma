@@ -45,6 +45,24 @@ pub(super) fn encode_predecessor(
     })
 }
 
+pub(super) fn matches_acceptance(
+    row: &Document,
+    acceptance: &layer2_core::sandbox::store::AgentRestartAcceptance,
+) -> bool {
+    let Some(predecessor) = row.get(FIELD).and_then(|value| {
+        mongodb::bson::deserialize_from_bson::<RestartPredecessor>(value.clone()).ok()
+    }) else {
+        return false;
+    };
+    u64::try_from(predecessor.restart_revision) == Ok(acceptance.revision)
+        && predecessor.conversation_id == acceptance.source.conversation_id
+        && predecessor.provision_generation == acceptance.source.runtime.runtime.generation
+        && predecessor.restart_incarnation == acceptance.next_incarnation
+        && predecessor.close_operation_id == acceptance.source.predecessor_close.operation_id
+        && predecessor.close_request_sha256 == acceptance.source.predecessor_close.request_sha256
+        && predecessor.stop.operation_id == acceptance.predecessor_stop_operation
+}
+
 pub(super) fn validate_predecessor(
     row: &Document,
     agent: &Agent,

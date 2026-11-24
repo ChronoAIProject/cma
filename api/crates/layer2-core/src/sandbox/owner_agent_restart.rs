@@ -26,6 +26,16 @@ impl Agent {
             || self.failure.is_some()
             || self.conversation.active_turn.is_some()
             || !self.conversation.queued_messages.is_empty()
+            || self
+                .conversation
+                .first_message
+                .as_ref()
+                .is_some_and(|message| !message.is_terminal())
+            || self
+                .conversation
+                .operation
+                .as_ref()
+                .is_some_and(super::AgentOperationRecord::blocks_dispatch)
             || self.work.step != AgentWorkStep::None
             || self.work.lease.is_some()
             || self.work.cleanup_not_before.is_some()
