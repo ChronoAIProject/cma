@@ -73,7 +73,7 @@ pub use cursor::AgentHistoryCursor;
 mod output_memo;
 #[path = "agent_reads/response.rs"]
 mod response;
-pub use response::indexed::AgentOutputObservation;
+pub use response::{indexed::AgentOutputObservation, AgentResponseObservation};
 #[path = "agent_reads/buffered.rs"]
 mod buffered;
 pub use buffered::AgentBufferedEventRequest;
