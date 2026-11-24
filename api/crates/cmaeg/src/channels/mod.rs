@@ -16,6 +16,7 @@ mod lifecycle;
 pub mod management;
 pub(crate) mod mutation;
 pub mod observer;
+mod relay_telegram;
 mod requests;
 pub mod resolver;
 /// The routed channel the core's routing tests use, shared by this crate's tests.

@@ -125,6 +125,14 @@ const telegramSourceFields = {
   bot_username: optional(nullable(text)),
   type: enumeration('telegram'),
 };
+const TelegramSourceSchema = object({
+  ...telegramSourceFields,
+  member_join_chat_ids: optional(array(text)),
+});
+const TelegramSourceRequestSchema = object({
+  ...telegramSourceFields,
+  member_join_chat_ids: optional(nullable(array(text))),
+});
 
 export const SourceRequestSchema = tagged(
   {
@@ -155,10 +163,7 @@ export const SourceRequestSchema = tagged(
       conversation_history: optional(boolean),
       type: enumeration('discord'),
     }),
-    telegram: object({
-      ...telegramSourceFields,
-      member_join_chat_ids: optional(nullable(array(text))),
-    }),
+    telegram: TelegramSourceRequestSchema,
     nyxid_relay: object({
       admission: AdmissionPolicySchema,
       bot_id: optional(nullable(text)),
@@ -171,6 +176,7 @@ export const SourceRequestSchema = tagged(
       verify_raw_event: optional(boolean),
       lark_resources: optional(nullable(LarkResourceBindingSchema)),
       lark_message_effects: optional(nullable(LarkMessageEffectsBindingSchema)),
+      member_join_chat_ids: optional(nullable(array(text))),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({
@@ -392,6 +398,7 @@ export const SourceSchema = tagged(
       verify_raw_event: optional(boolean),
       lark_resources: optional(nullable(LarkResourceBindingSchema)),
       lark_message_effects: optional(nullable(LarkMessageEffectsBindingSchema)),
+      member_join_chat_ids: optional(array(text)),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({
