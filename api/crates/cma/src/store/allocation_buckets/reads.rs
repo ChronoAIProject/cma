@@ -43,8 +43,8 @@ impl ReportingStore {
                 let id = state.sandbox_id.to_string();
                 let cached_projection = match cached.get(&(id.clone(), day)) {
                     Some(bucket) if bucket.validate_source(state)? => {
-                        if bucket.total.range == selected {
-                            Some(bucket.total.projection.clone())
+                        if bucket.total().range == selected {
+                            Some(bucket.total().projection.clone())
                         } else {
                             bucket.project_boundary(state, selected)?
                         }
@@ -178,12 +178,12 @@ impl ReportingStore {
                 } else {
                     DayBucket::read_summary(&document)?
                 };
-                if !ids.contains(&bucket.sandbox_id.as_str())
-                    || bucket.day < range.from / DAY * DAY
-                    || bucket.day >= range.to
+                if !ids.contains(&bucket.sandbox_id())
+                    || bucket.day() < range.from / DAY * DAY
+                    || bucket.day() >= range.to
                     || out.len() >= states.len() * 31
                     || out
-                        .insert((bucket.sandbox_id.clone(), bucket.day), bucket)
+                        .insert((bucket.sandbox_id().to_owned(), bucket.day()), bucket)
                         .is_some()
                 {
                     return Err(MetricsError::Unavailable);

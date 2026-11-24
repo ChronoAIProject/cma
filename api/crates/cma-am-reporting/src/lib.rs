@@ -1,6 +1,7 @@
 //! Persistence for Agent Manager's bounded reporting read model.
 
 mod store {
+    pub mod allocation_buckets;
     pub(super) mod usage_reports;
 }
 
@@ -11,3 +12,5 @@ pub use store::usage_reports::{
 
 pub mod metric_bindings;
 pub mod metric_rollups;
+
+pub use store::allocation_buckets;

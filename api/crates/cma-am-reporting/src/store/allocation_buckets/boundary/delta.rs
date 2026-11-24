@@ -2,11 +2,7 @@
 use super::*;
 
 impl DayBucket {
-    pub(in crate::store::allocation_buckets) fn delta_revision(
-        &self,
-        state: &SandboxUsage,
-        range: Range,
-    ) -> Result<Option<u64>> {
+    pub fn delta_revision(&self, state: &SandboxUsage, range: Range) -> Result<Option<u64>> {
         // This also enforces identity, baseline and monotonic source metadata.
         // An older projected tail is deliberately not reusable by itself.
         let _complete_projection = self.validate_source(state)?;
@@ -26,7 +22,7 @@ impl DayBucket {
         Ok(Some(self.revision))
     }
 
-    pub(in crate::store::allocation_buckets) fn project_delta(
+    pub fn project_delta(
         &self,
         state: &SandboxUsage,
         appended: &[UsageEvent],
