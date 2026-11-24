@@ -5,6 +5,8 @@ mod budget_contracts;
 mod evidence_artifacts;
 #[path = "evidence/tests.rs"]
 mod evidence_contracts;
+#[path = "evidence/verification_tests.rs"]
+mod evidence_verification;
 #[path = "isolation_tests.rs"]
 mod output_isolation;
 use crate::config::RuntimeConfig;

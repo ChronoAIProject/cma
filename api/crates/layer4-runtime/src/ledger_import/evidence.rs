@@ -2,6 +2,7 @@
 mod output;
 mod records;
 mod source;
+pub(crate) mod verification;
 
 use std::fs::File;
 use std::io::Write;
