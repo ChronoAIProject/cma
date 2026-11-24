@@ -5,7 +5,12 @@ const { bridgePath } = require("./persist_conversations.cjs");
 const { createOpenCompletionRuntime } = require("./open_completion_runtime.cjs");
 const sourceSha256 = "84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c";
 const method = `  cmaReadOpenCompletion(params) {
-    if (params.action === "support") return { supported: true, version: 1 };
+    if (params.action === "support") return { supported: true, version: 1, current: true };
+    if (params.action === "current") {
+      if (typeof params.challenge !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(params.challenge))
+        throw RequestError.invalidParams();
+      return this.cmaOpenCompletion.current(params);
+    }
     if (params.action !== "read" || typeof params.sessionId !== "string" || !params.sessionId ||
         params.sessionId.length > 256 || typeof params.bindingDigest !== "string" || !/^v1:[a-f0-9]{64}$/.test(params.bindingDigest) ||
         typeof params.challenge !== "string" || !/^[A-Za-z0-9_-]{16,128}$/.test(params.challenge))
