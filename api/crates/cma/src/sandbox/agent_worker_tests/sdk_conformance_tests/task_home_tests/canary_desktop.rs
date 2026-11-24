@@ -1,14 +1,12 @@
 use super::*;
 use crate::agent_lifecycle::runtime_canary::Canaries;
+use crate::agent_models::test_runtime::Probe;
 use crate::config::desktop_canary_config;
 use layer1_public::rest::runtime_canary::{
     CanaryGrantRequest, CanaryPolicyRequest, CanaryRedeemRequest, CanaryRefusal,
     RuntimeCanaryService,
 };
 use mongodb::bson::{doc, DateTime, Document};
-
-#[path = "../../../../agent_models/cache/test_runtime.rs"]
-mod browserless;
 
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
@@ -29,7 +27,7 @@ async fn desktop_canary_checks_capacity_and_browser_before_consuming_the_grant()
             adapter: Some(if browser {
                 harness.adapter.clone()
             } else {
-                Arc::new(browserless::Probe::new(
+                Arc::new(Probe::new(
                     serde_json::from_value(json!({
                         "sandbox_id": "desktop-fixture",
                         "generation": 1,
