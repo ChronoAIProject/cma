@@ -1,6 +1,8 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[cfg(test)]
 mod agent_event_page_tests;
+#[cfg(test)]
+mod bounded_inactivity_log_tests;
 pub(super) mod home_backup;
 #[cfg(test)]
 mod home_backup_expiry_tests;
@@ -9,6 +11,8 @@ mod home_backup_tests;
 #[cfg(test)]
 #[path = "ingress_coordinator_tests.rs"]
 mod ingress_coordinator_tests;
+#[cfg(test)]
+mod native_close_lane_tests;
 #[cfg(test)]
 mod resource_list_tests;
 #[cfg(test)]
@@ -49,6 +53,7 @@ pub(crate) struct FeatureFlags {
     pub bounded_raw_output: bool,
     pub output_json_budget: bool,
     pub bounded_update_relay: bool,
+    pub native_close_agent_lane: bool,
     pub bounded_live_fragments: bool,
     pub quiet_output: Option<layer2_core::sandbox::AgentOutputCoalescePolicy>,
     pub retain_read_frames: bool,
@@ -68,6 +73,7 @@ pub(crate) struct FeatureFlags {
     pub admission_ceilings_writes_enabled: bool,
     pub pending_home_reconciliation: bool,
     pub agent_control_write_coordination: bool,
+    pub bounded_inactivity_legacy_log: bool,
     pub strict_inactivity_session_evidence: bool,
     pub bounded_title_reads: bool,
     pub access_snapshot_session: bool,
@@ -108,6 +114,7 @@ pub(crate) struct FeatureFlags {
     pub retained_context_lookup: bool,
     pub context_diagnostics: bool,
     pub event_driven_reconciliation: bool,
+    pub resume_agent_reconciliation: bool,
     pub stale_turn_reconciliation: bool,
     pub stale_turn_terminal: bool,
     pub agent_connection_observations: bool,
@@ -194,6 +201,7 @@ impl FeatureFlags {
             bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
             output_json_budget: flag(lookup, "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED")?,
             bounded_update_relay: flag(lookup, "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED")?,
+            native_close_agent_lane: flag(lookup, "CHRONO_NATIVE_CLOSE_AGENT_LANE_ENABLED")?,
             bounded_live_fragments: flag(lookup, "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED")?,
             quiet_output: super::quiet_output::from_lookup(lookup)?,
             retain_read_frames: flag(lookup, "CHRONO_READ_FRAME_BUDGET_ENABLED")?,
@@ -258,6 +266,10 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
             )?,
+            resume_agent_reconciliation: flag(
+                lookup,
+                "CHRONO_AGENT_RECONCILIATION_RESUME_ENABLED",
+            )?,
             empty_discovery: flag(lookup, "CHRONO_EMPTY_DISCOVERY_COALESCING_ENABLED")?,
             agent_connection_observations: flag(
                 lookup,
@@ -289,6 +301,10 @@ impl FeatureFlags {
             agent_control_write_coordination: flag(
                 lookup,
                 "CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED",
+            )?,
+            bounded_inactivity_legacy_log: flag(
+                lookup,
+                "CHRONO_BOUNDED_INACTIVITY_LEGACY_LOG_ENABLED",
             )?,
             strict_inactivity_session_evidence: flag(
                 lookup,

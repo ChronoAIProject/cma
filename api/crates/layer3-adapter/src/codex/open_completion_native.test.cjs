@@ -118,7 +118,7 @@ for (const family of ["cma_access", "cmaeg", "cma_channel"]) test(
   const f = await fixture(family);
   try {
     const bridge = await f.connect();
-    assert.deepEqual(await bridge.call("cma/open-completion", { action: "support" }), { supported: true, version: 1 });
+    assert.deepEqual(await bridge.call("cma/open-completion", { action: "support" }), { supported: true, version: 1, current: true });
     assert.equal((await f.read(bridge, "unobserved-thread")).complete, false);
     await assert.rejects(bridge.call("cma/open-completion", { action: "read", sessionId: "x", challenge: "short" }), /operation refused/);
     const { sessionId } = await bridge.call("session/new", f.params);

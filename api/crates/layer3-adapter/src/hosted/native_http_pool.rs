@@ -12,10 +12,10 @@ pub(super) const MAX_HTTP_SESSIONS: usize =
     crate::agent_sandbox::RuntimeCapacityConfig::NATIVE_HTTP_SESSION_LIMIT;
 pub(super) const HTTP_IDLE_TTL: Duration = Duration::from_secs(60);
 
-/// Receiver negotiations cannot queue behind a long application response body.
-/// Both lanes share the same state, identity fences and total session budget.
+/// Separate connections share the same state, identity fences and session budget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum NativeHttpLane {
+    CloseAgent,
     Control,
     Ownership,
 }

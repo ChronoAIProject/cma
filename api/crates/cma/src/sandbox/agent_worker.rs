@@ -40,6 +40,7 @@ mod ownership_pacing;
 mod prepared_open_ready;
 mod prepared_replay;
 mod reconcile;
+pub(crate) use reconcile::ConnectionSweep;
 mod startup;
 mod startup_hold_work;
 mod startup_holds;
