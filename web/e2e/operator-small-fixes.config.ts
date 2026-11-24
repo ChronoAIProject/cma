@@ -3,7 +3,7 @@ import { defineConfig } from '@playwright/test';
 const baseURL = 'http://127.0.0.1:4399';
 export default defineConfig({
   testDir: '.',
-  testMatch: ['operator-small-fixes.check.ts'],
+  testMatch: ['operator-small-fixes.check.ts', 'sandbox-scope.check.ts'],
   workers: 1,
   retries: 0,
   forbidOnly: true,
