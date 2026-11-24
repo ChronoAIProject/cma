@@ -121,6 +121,7 @@ pub(crate) struct FeatureFlags {
     pub agent_connection_observations: bool,
     pub empty_discovery: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
+    pub sandbox_binding_hold_metrics: bool,
 }
 /// Rollout gates graduated to default-on after their rollout completed in
 /// every environment. Unset means enabled; an explicit `false` remains the
@@ -283,6 +284,10 @@ impl FeatureFlags {
             sandbox_reconciliation_reserved_lane: flag(
                 lookup,
                 "CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED",
+            )?,
+            sandbox_binding_hold_metrics: flag(
+                lookup,
+                "CHRONO_SANDBOX_BINDING_HOLD_METRICS_ENABLED",
             )?,
             stale_turn_reconciliation: flag(lookup, "CHRONO_STALE_TURN_RECONCILIATION_ENABLED")?,
             stale_turn_terminal: flag(lookup, "CHRONO_STALE_TURN_TERMINAL_ENABLED")?,
