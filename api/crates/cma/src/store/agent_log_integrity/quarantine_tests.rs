@@ -164,8 +164,19 @@ async fn scoped_audit_preserves_the_sequence_error_after_a_hold() {
         .with_renewable_work(true);
     let (claimed, _) = claimed_pause_fixture(&store, "audit_scope").await;
     let agent = ready_agent(&claimed, "agt_scoped_quarantine");
-    // Retain the Agent head at sequence one with no corresponding log entry.
-    store.create_agent(agent.clone()).await.unwrap();
+    crate::store::sandbox_maintenance::mongo_integration_tests::insert_agent(
+        &store,
+        &agent,
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
+    // Simulate a retained gap after establishing a valid fixture.
+    let removed = store
+        .agent_log
+        .delete_one(doc! {"agent_id": agent.id.as_str(), "seq": 1_i64})
+        .await
+        .unwrap();
+    assert_eq!(removed.deleted_count, 1);
     let agent_key = doc! {"_id": agent.id.as_str()};
     let parent_key = doc! {"_id": claimed.id.as_str()};
 
