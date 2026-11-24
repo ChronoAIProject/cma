@@ -134,6 +134,23 @@ async fn owner_restart_admission_respects_the_shared_creation_capacity() {
         .await
         .unwrap();
     source.sandbox_revision = parent.revision;
+    let mut workspace = store
+        .get_workspace(&stopped.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    // The fixture inserted wt-1 directly, without advancing the allocator.
+    workspace.next_worktree_number = 2;
+    workspace.revision += 1;
+    store
+        .workspaces
+        .update_one(
+            doc! {"_id": workspace.id.as_str()},
+            doc! {"$set": crate::store::workspaces::workspace_replacement_fields(&workspace).unwrap()},
+        )
+        .await
+        .unwrap();
+    source.workspace_revision = workspace.revision;
     let fresh_creation = AgentAdmission {
         binding: None,
         created_by: None,
@@ -149,6 +166,27 @@ async fn owner_restart_admission_respects_the_shared_creation_capacity() {
         creation_key: "competing-creation".into(),
         event_at: TWO_MINUTES.into(),
     };
+
+    // Validate ordinary creation in the same initial state, then roll it back
+    // before racing the two admissions for the remaining slot.
+    let mut session = client.start_session().await.unwrap();
+    let mut scope =
+        crate::store::agent_log_segments::transaction_scope::TransactionScope::start(&mut session)
+            .await
+            .unwrap();
+    let control = crate::store::agent_log_segments::admission::apply(
+        &store,
+        &fresh_creation,
+        false,
+        None,
+        &mut scope,
+    )
+    .await;
+    assert!(matches!(
+        control,
+        Ok(crate::store::agent_admission_records::AdmissionReceipt::Created(_))
+    ));
+    scope.release().abort_transaction().await.unwrap();
 
     let (restarted, created) = tokio::join!(
         store.schedule_agent_restart(request(&stopped, &source, "restart", [3; 32])),
@@ -183,8 +221,7 @@ async fn owner_restart_admission_respects_the_shared_creation_capacity() {
             );
         }
         (restarted, created) => panic!(
-            "expected exactly one live slot reservation, restart {restarted:?}, create success {}",
-            created.is_ok()
+            "expected exactly one live slot reservation, restart {restarted:?}, create: {created:?}"
         ),
     }
     assert_eq!(
