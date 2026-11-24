@@ -64,3 +64,28 @@ export function saveRecoveryIntent(owner: string, sandbox: string, intent: Recov
     }),
   );
 }
+
+export function retireRecoveryReceipt(owner: string, sandbox: string, accepted: RecoveryIntent) {
+  const saved = loadRecoveryIntent(owner, sandbox);
+  if (saved.error) return saved;
+  if (
+    accepted.receipt &&
+    saved.intent?.key === accepted.key &&
+    saved.intent.revision === accepted.revision &&
+    saved.intent.receipt?.operation_id === accepted.receipt.operation_id &&
+    saved.intent.receipt.revision === accepted.receipt.revision &&
+    saved.intent.receipt.accepted_at === accepted.receipt.accepted_at
+  ) {
+    try {
+      sessionStorage.removeItem(storageKey(owner, sandbox));
+      return {};
+    } catch {
+      return {
+        ...saved,
+        error:
+          'The previous recovery receipt could not be removed. Restore browser session storage.',
+      };
+    }
+  }
+  return saved;
+}

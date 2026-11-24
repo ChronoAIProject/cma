@@ -83,6 +83,7 @@ pub(crate) fn fixture() -> RetainedReopenRequest {
         }],
     };
     RetainedReopenRequest {
+        repeat_authorized: false,
         snapshot: RetainedReopenSnapshot {
             command_lanes: vec![(child.id.clone(), Default::default())],
             command_state_sha256: "e".repeat(64),

@@ -39,6 +39,8 @@ type State =
   | { status: 'error'; message: string }
   | { status: 'ready'; sandbox: SandboxDetail; observedAt: string };
 
+const POLL_ERROR_DELAY = 5000;
+
 export function SandboxPage({
   client,
   sandboxId,
@@ -65,10 +67,13 @@ export function SandboxPage({
   const busy = submitting || lifecycleBusy;
   const views = useOwnerViews();
   const [retry, setRetry] = useState(0);
+  const pollScope = useMemo(() => ({ client, sandboxId, viewerId }), [client, sandboxId, viewerId]);
   const request = useMemo(
-    () => ({ client, sandboxId, revision, retry, views, viewerId }),
-    [client, sandboxId, revision, retry, views, viewerId],
+    () => ({ pollScope, revision, retry, views }),
+    [pollScope, revision, retry, views],
   );
+  const retryFloor = useRef<{ scope: typeof pollScope; at: number }>(undefined);
+  const pollNow = useRef<() => void>(undefined);
   const [stored, setStored] = useState<{
     request: typeof request;
     state: State;
@@ -78,13 +83,16 @@ export function SandboxPage({
     views?.client === detailReadSource(client) && views.viewerId === viewerId
       ? views.sandboxes.get(sandboxId)
       : undefined;
+  const previous = stored?.request.pollScope === pollScope ? stored : undefined;
   const state: State =
-    stored?.request === request
-      ? stored.state
-      : retained === undefined
-        ? { status: 'loading' }
-        : { status: 'ready', ...retained };
-  const pollError = stored?.request === request && stored.pollError;
+    previous?.request === request
+      ? previous.state
+      : retained !== undefined
+        ? { status: 'ready', ...retained }
+        : previous?.state.status === 'ready'
+          ? previous.state
+          : { status: 'loading' };
+  const pollError = previous?.pollError ?? false;
   const revalidating = stored?.request !== request || accessUncertain;
   const stale =
     pollError ||
@@ -132,12 +140,21 @@ export function SandboxPage({
   const documentTitle = state.status === 'ready' ? state.sandbox.name : 'Sandbox';
   useEffect(() => {
     const abort = new AbortController();
+    // A revision refresh restarts the effect while the same Sandbox still owes the wait.
+    const floor =
+      retryFloor.current?.scope === pollScope ? retryFloor.current : { scope: pollScope, at: 0 };
+    retryFloor.current = floor;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let inFlight = false;
     const delay = createPagePollDelay();
     const poll = () => {
       if (abort.signal.aborted || inFlight || document.hidden) return;
       clearTimeout(timer);
+      const remaining = floor.at - performance.now();
+      if (remaining > 0) {
+        timer = setTimeout(poll, Math.ceil(remaining));
+        return;
+      }
       inFlight = true;
       void client
         .readSandbox(sandboxId, { signal: abort.signal })
@@ -145,6 +162,7 @@ export function SandboxPage({
           if (abort.signal.aborted) return;
           if (sandbox.id !== sandboxId)
             throw new Error('Sandbox projection referred to another resource.');
+          floor.at = 0;
           const value = { sandbox, observedAt: new Date().toISOString() };
           if (
             views?.client === detailReadSource(client) &&
@@ -156,11 +174,15 @@ export function SandboxPage({
               views.sandboxes.put(sandboxId, value);
           } else views?.forgetSandbox(sandboxId);
           setStored((previous) =>
-            previous?.request === request &&
+            previous?.request.pollScope === pollScope &&
             previous.state.status === 'ready' &&
             previous.state.sandbox.owner === sandbox.owner &&
             previous.state.sandbox.revision > sandbox.revision
-              ? { ...previous, pollError: false }
+              ? {
+                  ...previous,
+                  request,
+                  pollError: previous.pollError || previous.request !== request,
+                }
               : { request, state: { status: 'ready', ...value }, pollError: false },
           );
           timer = setTimeout(
@@ -185,7 +207,7 @@ export function SandboxPage({
           const denied = error instanceof ApiError && [401, 403, 404, 410].includes(error.status);
           if (denied) views?.forgetSandbox(sandboxId);
           setStored((previous) => {
-            const current = previous?.request === request ? previous.state : undefined;
+            const current = previous?.request.pollScope === pollScope ? previous.state : undefined;
             const cached =
               views?.client === detailReadSource(client) && views.viewerId === viewerId
                 ? views.sandboxes.get(sandboxId)
@@ -204,7 +226,13 @@ export function SandboxPage({
                       },
             };
           });
-          timer = setTimeout(poll, 5000);
+          const retryAfter =
+            error instanceof ApiError && [429, 503].includes(error.status)
+              ? error.retryAfterMs
+              : undefined;
+          const wait = Math.max(POLL_ERROR_DELAY, retryAfter ?? 0);
+          if (retryAfter !== undefined) floor.at = performance.now() + wait;
+          if (!document.hidden) timer = setTimeout(poll, wait);
         })
         .finally(() => {
           inFlight = false;
@@ -217,13 +245,15 @@ export function SandboxPage({
       poll();
     };
     document.addEventListener('visibilitychange', visible);
+    pollNow.current = visible;
     poll();
     return () => {
       abort.abort();
+      pollNow.current = undefined;
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', visible);
     };
-  }, [client, sandboxId, request, views, viewerId]);
+  }, [client, sandboxId, request, views, viewerId, pollScope]);
   useDocumentTitle(documentTitle);
   useEffect(() => {
     heading.current?.focus();
@@ -244,7 +274,7 @@ export function SandboxPage({
           Sandbox unavailable
         </h1>
         <p>{state.message}</p>
-        <Button onClick={() => setRetry((value) => value + 1)}>Try again</Button>
+        <Button onClick={() => pollNow.current?.()}>Try again</Button>
       </section>
     );
   const { sandbox } = state;
@@ -409,7 +439,9 @@ export function SandboxPage({
           ownerId={viewerId}
           revision={sandbox.revision}
           failed={sandbox.status === 'failed'}
-          disabled={busy || stale || needsConnections}
+          stale={stale}
+          lifecycle={sandbox.lifecycle}
+          disabled={busy || needsConnections}
           onAccepted={() => setRetry((value) => value + 1)}
         />
       ) : null}

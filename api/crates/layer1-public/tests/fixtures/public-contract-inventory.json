@@ -3915,6 +3915,7 @@
         "missing_idempotency_key",
         "retained_recovery_consent_required",
         "retained_recovery_authority_changed",
+        "retained_recovery_revision_passed",
         "retained_recovery_not_proved",
         "retained_recovery_unavailable",
         "hierarchy_service_unavailable"
