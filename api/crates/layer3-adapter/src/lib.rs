@@ -6,6 +6,8 @@
 
 mod adapter;
 mod agent;
+mod agent_process_identity;
+pub use agent_process_identity::AgentProcessAction;
 mod agent_attachment;
 pub mod agent_capacity_recovery;
 mod agent_filesystem;

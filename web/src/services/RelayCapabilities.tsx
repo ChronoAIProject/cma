@@ -17,6 +17,7 @@ export interface RelayAuthoringCapabilities {
   readonly native_whatsapp_auto_activation_enabled?: boolean | null;
   readonly native_telegram_message_events_enabled?: boolean | null;
   readonly native_telegram_member_joins_enabled?: boolean | null;
+  readonly relay_telegram_member_joins_enabled?: boolean | null;
   readonly native_discord_thread_history_enabled?: boolean | null;
   readonly native_telegram_topic_lifecycle_enabled?: boolean | null;
   readonly native_telegram_topic_creation_enabled?: boolean | null;

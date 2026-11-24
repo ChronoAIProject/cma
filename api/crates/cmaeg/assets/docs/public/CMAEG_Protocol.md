@@ -2104,6 +2104,15 @@ group and topic, if present. The existing non-human routing policy controls
 which consumers receive the event. Retries reuse the original Telegram update
 identity and the admitted turn.
 
+A verified NyxID Telegram relay source may use the same group list when
+`relay_telegram_member_joins_enabled` is available. Configure an explicit
+receiving bot ID, the bound relay routes and each permitted group ID. The
+signed callback's normalized group and sender must agree with the original
+Telegram update. The CloudEvent source is `nyxid:route:<route_id>`, and
+deduplication uses that route and the original Telegram update ID. The reply
+uses the authenticated relay token for the original group. Each Telegram
+transport has its own authoring and intake switch.
+
 Activity kind is one of:
 
 | Type | Fields |
