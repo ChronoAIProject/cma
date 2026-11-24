@@ -87,7 +87,7 @@ impl KeyIssuer {
         owner_token: &str,
         services: &[ServiceId],
         connection: &crate::trigger::VerifiedGitHubConnection,
-    ) -> Result<PreparedMint, KeyIssuerError> {
+    ) -> Result<(PreparedMint, layer3_adapter::GithubCredentialRoute), KeyIssuerError> {
         use crate::trigger::GITHUB_SERVICE;
         if !services
             .iter()
@@ -100,17 +100,42 @@ impl KeyIssuer {
             .filter(|service| service.as_str() != GITHUB_SERVICE)
             .cloned()
             .collect::<Vec<_>>();
-        let mut allowed = if others.is_empty() {
-            Vec::new()
-        } else {
-            self.resolve_exact(owner_token, &others).await?
+        let mut route = layer3_adapter::GithubCredentialRoute {
+            service_id: connection.id().into(),
+            catalog_id: connection.catalog_id().into(),
+            other_services: Vec::new(),
         };
-        if allowed.iter().any(|id| id == connection.id()) {
+        if !others.is_empty() {
+            let rows = self.service_rows(USER_SERVICES_PATH, owner_token).await?;
+            for row in Self::resolve_service_rows(&rows, &others)? {
+                if row.catalog_service_id.as_deref() == Some(connection.catalog_id()) {
+                    return Err(KeyIssuerError::UnexpectedAuthority);
+                }
+                route
+                    .other_services
+                    .push(layer3_adapter::PlatformServiceRoute {
+                        service_id: row.id.clone(),
+                        slug: row
+                            .slug
+                            .clone()
+                            .ok_or(KeyIssuerError::UnexpectedAuthority)?,
+                        catalog_id: row.catalog_service_id.clone(),
+                    });
+            }
+        }
+        if !route.is_valid() {
             return Err(KeyIssuerError::UnexpectedAuthority);
         }
+        let mut allowed = route
+            .other_services
+            .iter()
+            .map(|service| service.service_id.clone())
+            .collect::<Vec<_>>();
         allowed.push(connection.id().to_owned());
-        self.prepare_allowed_mint(credential_id, owner, owner_token, allowed)
-            .await
+        let prepared = self
+            .prepare_allowed_mint(credential_id, owner, owner_token, allowed)
+            .await?;
+        Ok((prepared, route))
     }
 
     async fn prepare_allowed_mint(

@@ -275,6 +275,9 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
     let (parts, body) = request.into_parts();
     let target = match (state.allowed_host, &credential.github_route) {
         (Some("api.github.com"), Some(route)) => state.target.join_github(&parts.uri, route),
+        (None, Some(route)) if !state.model_proxy => {
+            state.target.join_selected_platform(&parts.uri, route)
+        }
         _ => state.target.join(&parts.uri),
     };
     let target = match target {

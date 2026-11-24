@@ -253,6 +253,9 @@ impl HostedBackend for InMemoryHostedBackend {
                 bootstrap::restore(runtime, request, operation)
             }
             RequestFrame::Credential(frame) => bootstrap::credential(runtime, frame, operation),
+            RequestFrame::CredentialForReceiver { .. } => {
+                refused(operation, "credential_github_route_unavailable")
+            }
             RequestFrame::PrepareWorkspace(request) => {
                 require_credential(runtime, operation)?;
                 workspace::prepare(runtime, request)

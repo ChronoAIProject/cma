@@ -133,16 +133,7 @@ impl ManagedSandboxCredentials {
                         "selected GitHub connection could not be verified".into(),
                     ),
                 })?;
-            let route = layer3_adapter::GithubCredentialRoute {
-                service_id: proof.id().to_owned(),
-                catalog_id: proof.catalog_id().to_owned(),
-            };
-            if !route.is_valid() {
-                return Err(CredentialError::Security(
-                    "selected GitHub connection has an invalid route".into(),
-                ));
-            }
-            let prepared = self
+            let (prepared, route) = self
                 .issuer
                 .prepare_github_mint(
                     &operation_id,

@@ -239,17 +239,20 @@ async fn retained_runtime_without_github_route_support_receives_no_new_credentia
         github_route: Some(crate::GithubCredentialRoute {
             service_id: "repository-connection".into(),
             catalog_id: "github-catalog".into(),
+            other_services: Vec::new(),
         }),
     };
     assert!(matches!(
         adapter.deliver_credential(&handle, frame).await,
         Err(AdapterError::Unsupported(_))
     ));
-    assert!(backend
-        .requests()
-        .await
-        .iter()
-        .all(|(_, request)| { !matches!(request, crate::wire::RequestFrame::Credential(_)) }));
+    assert!(backend.requests().await.iter().all(|(_, request)| {
+        !matches!(
+            request,
+            crate::wire::RequestFrame::Credential(_)
+                | crate::wire::RequestFrame::CredentialForReceiver { .. }
+        )
+    }));
 }
 
 #[path = "resume_tests.rs"]

@@ -197,3 +197,101 @@ async fn github_credential_route_status_requires_negotiation_and_a_configured_pr
         }
     }
 }
+
+#[tokio::test]
+async fn selected_credential_can_only_be_installed_by_the_negotiated_receiver() {
+    let platform = crate::config::ProxyConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        upstream: "https://provider.example".into(),
+        role: "platform",
+    };
+    let mut supervisors = Vec::new();
+    let mut cleanup = Vec::new();
+    for name in ["gh-one", "gh-two"] {
+        let mut config = RuntimeConfig {
+            home_identity: Some("a".repeat(43)),
+            ..RuntimeConfig::for_test(root(name))
+        };
+        config.github_proxy = crate::github_proxy::configuration(
+            &config.state_root,
+            &mut config.process_env,
+            Some(&platform),
+        )
+        .unwrap();
+        cleanup.extend([
+            config.home.clone(),
+            config.state_root.clone(),
+            config.checkpoint_root.clone(),
+        ]);
+        let supervisor =
+            Supervisor::new(config, crate::writer_fence::SupervisorBoundary::default()).unwrap();
+        let response = supervisor
+            .dispatch(RequestFrame::Install(InstallRequest::new(
+                "install",
+                vec![],
+            )))
+            .await;
+        assert!(
+            matches!(response, ResponseFrame::Install(_)),
+            "{response:?}"
+        );
+        supervisors.push(serve(supervisor).await);
+    }
+    let identity = RuntimeStatusRequest {
+        sandbox_id: "sandbox-test".into(),
+        generation: 1,
+        home_identity: "a".repeat(43),
+    };
+    let client = reqwest::Client::new();
+    let first = supervisors[0].0;
+    let replacement = supervisors[1].0;
+    let status: ResponseFrame = client
+        .post(format!("http://{first}/runtime/control"))
+        .header(header::ACCEPT, GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE)
+        .json(&RequestFrame::RuntimeStatus(identity.clone()))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let ResponseFrame::RuntimeStatus(status) = status else {
+        panic!("expected runtime status");
+    };
+    assert!(status.installation_ready && status.exact_github_credential_route);
+    let request = RequestFrame::CredentialForReceiver {
+        receiver: identity.clone(),
+        boot_id: status.boot_id,
+        credential: CredentialFrame {
+            operation_id: "selected-credential".into(),
+            value: RuntimeCredential::new("synthetic-selected-credential"),
+            custody_generation: Some(1),
+            github_route: Some(layer3_adapter::GithubCredentialRoute {
+                catalog_id: "github-catalog".into(),
+                service_id: "selected-connection".into(),
+                other_services: Vec::new(),
+            }),
+        },
+    };
+    let response = exchange(&client, replacement, &request).await;
+    assert!(
+        matches!(response, ResponseFrame::Failure(ref failure) if failure.code == "credential_receiver_changed")
+    );
+    let replacement_status =
+        exchange(&client, replacement, &RequestFrame::RuntimeStatus(identity)).await;
+    assert!(
+        matches!(replacement_status, ResponseFrame::RuntimeStatus(status) if !status.credential_ready)
+    );
+
+    let response = exchange(&client, first, &request).await;
+    assert!(
+        matches!(response, ResponseFrame::Credential(receipt) if receipt.installed && receipt.operation_id == "selected-credential")
+    );
+    for (_, server) in supervisors {
+        server.abort();
+        let _ = server.await;
+    }
+    for path in cleanup {
+        let _ = std::fs::remove_dir_all(path);
+    }
+}

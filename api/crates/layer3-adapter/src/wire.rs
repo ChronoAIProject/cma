@@ -257,6 +257,11 @@ pub enum RequestFrame {
     ResumeCheckpointWriters(CheckpointWriterResumeRequest),
     Restore(RestoreRequest),
     Credential(CredentialFrame),
+    CredentialForReceiver {
+        receiver: crate::RuntimeStatusRequest,
+        boot_id: String,
+        credential: CredentialFrame,
+    },
     Resources,
 }
 
@@ -294,7 +299,7 @@ impl RequestFrame {
             Self::CheckpointForTeardown(_) => WireOperation::CheckpointForTeardown,
             Self::ResumeCheckpointWriters(_) => WireOperation::ResumeCheckpointWriters,
             Self::Restore(_) => WireOperation::Restore,
-            Self::Credential(_) => WireOperation::Credential,
+            Self::Credential(_) | Self::CredentialForReceiver { .. } => WireOperation::Credential,
             Self::Resources => WireOperation::Resources,
         }
     }

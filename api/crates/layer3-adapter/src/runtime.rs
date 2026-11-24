@@ -376,18 +376,43 @@ pub struct CredentialFrame {
 pub struct GithubCredentialRoute {
     pub service_id: String,
     pub catalog_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub other_services: Vec<PlatformServiceRoute>,
 }
 
 impl GithubCredentialRoute {
     pub fn is_valid(&self) -> bool {
-        [&self.service_id, &self.catalog_id].into_iter().all(|id| {
-            !id.is_empty()
-                && id.len() <= 128
-                && id
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-        })
+        valid_proxy_selector(&self.service_id)
+            && valid_proxy_selector(&self.catalog_id)
+            && self.other_services.len() <= 32
+            && self.other_services.iter().all(|service| {
+                valid_proxy_selector(&service.service_id)
+                    && valid_proxy_selector(&service.slug)
+                    && service.service_id != self.service_id
+                    && service.slug != "api-github"
+                    && service
+                        .catalog_id
+                        .as_ref()
+                        .is_none_or(|id| valid_proxy_selector(id) && id != &self.catalog_id)
+            })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlatformServiceRoute {
+    pub service_id: String,
+    pub slug: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_id: Option<String>,
+}
+
+fn valid_proxy_selector(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 impl std::fmt::Debug for CredentialFrame {

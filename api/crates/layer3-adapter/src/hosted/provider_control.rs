@@ -199,6 +199,7 @@ fn request_capacity_class(request: &RequestFrame) -> RuntimeWorkloadClass {
         | RequestFrame::CheckpointForTeardown(_)
         | RequestFrame::ResumeCheckpointWriters(_)
         | RequestFrame::Restore(_)
-        | RequestFrame::Credential(_) => RuntimeWorkloadClass::Control,
+        | RequestFrame::Credential(_)
+        | RequestFrame::CredentialForReceiver { .. } => RuntimeWorkloadClass::Control,
     }
 }

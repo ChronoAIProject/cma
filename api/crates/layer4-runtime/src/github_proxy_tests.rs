@@ -158,7 +158,8 @@ async fn socket_and_configuration_are_private_recoverable_and_not_replaced_while
 async fn proxy_preserves_requests_rotates_custody_and_refuses_foreign_hosts() {
     let (sent, mut received) = mpsc::channel(8);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let fixture = Fixture::new(&format!("http://{}", listener.local_addr().unwrap()));
+    let listener_addr = listener.local_addr().unwrap();
+    let fixture = Fixture::new(&format!("http://{listener_addr}"));
     let upstream = tokio::spawn(async move {
         let app = axum::Router::new().fallback(any(move |request: axum::extract::Request| {
             let sent = sent.clone();
@@ -228,6 +229,11 @@ async fn proxy_preserves_requests_rotates_custody_and_refuses_foreign_hosts() {
         github_route: Some(layer3_adapter::GithubCredentialRoute {
             service_id: "repository-connection".into(),
             catalog_id: "github-catalog".into(),
+            other_services: vec![layer3_adapter::PlatformServiceRoute {
+                service_id: "skill-connection".into(),
+                slug: "ornn-api".into(),
+                catalog_id: None,
+            }],
         }),
     };
     holder.install(&exact).await.unwrap();
@@ -256,6 +262,63 @@ async fn proxy_preserves_requests_rotates_custody_and_refuses_foreign_hosts() {
         "/api/v1/proxy/github-catalog/user?per_page=1&_nyxid_via=repository-connection"
     );
     assert!(headers[header::AUTHORIZATION] == "Bearer exact-route-fixture-key");
+    let platform_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let platform_addr = platform_listener.local_addr().unwrap();
+    let platform_router = crate::upstream::router(
+        crate::upstream_target::TargetBase::parse(&format!("http://{}", listener_addr)).unwrap(),
+        holder.clone(),
+        None,
+    );
+    let platform = tokio::spawn(async move {
+        axum::serve(platform_listener, platform_router)
+            .await
+            .unwrap()
+    });
+    let platform_client = reqwest::Client::new();
+    for (request, forwarded) in [
+        (
+            "/api/v1/proxy/s/api-github/user",
+            "/api/v1/proxy/github-catalog/user?_nyxid_via=repository-connection",
+        ),
+        (
+            "/proxy/github-catalog/user",
+            "/api/v1/proxy/github-catalog/user?_nyxid_via=repository-connection",
+        ),
+        (
+            "/api/v1/proxy/s/ornn-api/skills",
+            "/api/v1/proxy/s/ornn-api/skills?_nyxid_via=skill-connection",
+        ),
+    ] {
+        assert_eq!(
+            platform_client
+                .get(format!("http://{platform_addr}{request}"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        let (_, uri, headers, _) = received.recv().await.unwrap();
+        assert_eq!(uri, forwarded);
+        assert!(headers[header::AUTHORIZATION] == "Bearer exact-route-fixture-key");
+    }
+    for request in [
+        "/api/v1/proxy/s/github-sibling/user",
+        "/api/v1/proxy/s/api-github/user?_nyxid_via=sibling-connection",
+        "/api/v1/proxy/sibling-connection/user",
+    ] {
+        assert_eq!(
+            platform_client
+                .get(format!("http://{platform_addr}{request}"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    platform.abort();
+    let _ = platform.await;
     assert_eq!(
         client
             .get("http://api.github.com/user?%5Fnyxid_via=other-connection")
