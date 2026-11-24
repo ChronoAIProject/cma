@@ -5,10 +5,11 @@ use axum::{
     response::{IntoResponse, Response},
     Json, Router,
 };
+use std::sync::Arc;
 use tokio::sync::watch;
 use tower::Layer as _;
 
-use crate::agent_manager::relay::DRAIN;
+use crate::agent_manager::relay::{Relay, DRAIN};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -24,14 +25,14 @@ pub(crate) struct Admission {
 }
 
 impl Admission {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             phase: watch::Sender::new(Phase::Starting),
             drained: watch::Sender::new(None),
         }
     }
 
-    pub(super) fn open(&self) -> bool {
+    pub(crate) fn open(&self) -> bool {
         self.phase.send_if_modified(|phase| {
             if *phase != Phase::Starting {
                 return false;
@@ -41,7 +42,7 @@ impl Admission {
         })
     }
 
-    pub(super) fn close(&self) {
+    pub(crate) fn close(&self) {
         self.phase.send_if_modified(|phase| {
             let changed = *phase != Phase::Draining;
             *phase = Phase::Draining;
@@ -82,20 +83,20 @@ impl Admission {
         self.drained.send_replace(Some(result.is_ok()));
     }
 
-    pub(super) fn wrap(&self, app: Router, has_manager: bool) -> Router {
+    pub(crate) fn wrap(&self, app: Router, relay: Option<Arc<Relay>>) -> Router {
         // Apply the gate around routing itself, including CORS preflight,
         // fallback routes and relay ingress.
-        let gate = middleware::from_fn_with_state((self.clone(), has_manager), gate);
+        let gate = middleware::from_fn_with_state((self.clone(), relay), gate);
         Router::new().fallback_service(gate.layer(app))
     }
 }
 
 async fn gate(
-    State((admission, has_manager)): State<(Admission, bool)>,
+    State((admission, relay)): State<(Admission, Option<Arc<Relay>>)>,
     mut request: Request,
     next: Next,
 ) -> Response {
-    if has_manager && request.method() == Method::POST && request.uri().path() == DRAIN {
+    if relay.is_some() && request.method() == Method::POST && request.uri().path() == DRAIN {
         // The existing control path authenticates the signed loopback request
         // before asking the process owner to close admission.
         request.extensions_mut().insert(admission);
@@ -110,7 +111,7 @@ async fn gate(
         Phase::Starting => "startup",
         _ => "draining",
     };
-    match (method, request.uri().path()) {
+    let mut response = match (method, request.uri().path()) {
         (&Method::GET | &Method::HEAD, "/livez") => crate::health::liveness().await.into_response(),
         _ => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -118,5 +119,9 @@ async fn gate(
             Json(serde_json::json!({"status":"not-ready", "reason":reason})),
         )
             .into_response(),
+    };
+    if let Some(relay) = relay.filter(|_| phase == Phase::Draining) {
+        relay.mark_draining_file_read(&request, &mut response);
     }
+    response
 }

@@ -9,7 +9,7 @@ pub(super) async fn serve(
     let listener = bind(config.bind).await?;
     let manager = composition.agent_manager.clone();
     let admission = Admission::new();
-    let app = admission.wrap(app, manager.is_some());
+    let app = admission.wrap(app, composition.agent_relay.clone());
     let (http_stop, http_signal) = watch::channel(false);
     let mut server = http_server(listener, app, config.http_connection_max_age, http_signal);
     let mut shutdown = ShutdownCoordinator::new();

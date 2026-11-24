@@ -25,6 +25,11 @@ on:
       infra_ref:
         required: true
         type: string
+      # Only an automatic promotion's first attempt may hand a transient
+      # refusal before any change to its one re-admission and retry.
+      retry_allowed:
+        type: boolean
+        default: false
     outputs:
       status:
         value: ${{ jobs.deploy.outputs.status }}
@@ -32,6 +37,8 @@ on:
         value: ${{ jobs.deploy.outputs.component_result }}
       disposition:
         value: ${{ jobs.deploy.outputs.disposition }}
+      retryable:
+        value: ${{ jobs.deploy.outputs.retryable }}
 
 permissions:
   contents: read
@@ -51,6 +58,7 @@ jobs:
       status: ${{ job.status }}
       component_result: ${{ steps.coordinate.outputs.component_result }}
       disposition: ${{ steps.release.outputs.disposition || steps.coordinate.outputs.disposition }}
+      retryable: ${{ steps.coordinate.outputs.retryable }}
     env:
       CD_STARTED_AT: ${{ inputs.started_at }}
       CD_DEPLOY_MODE: ${{ inputs.mode }}
@@ -147,6 +155,7 @@ jobs:
           CD_INFRA_REF: ${{ steps.private.outputs.revision }}
           CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
           CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+          CD_RETRY_ALLOWED: ${{ inputs.retry_allowed }}
         run: '"$RUNNER_TEMP/cma-deploy-tools/venv/bin/python" -B .github/scripts/staging_cd_invoke.py'
       - name: Verified staging receipts ${{ steps.coordinate.outputs.controller_proof }}
         if: always() && !cancelled() && steps.coordinate.outputs.controller_proof != ''

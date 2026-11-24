@@ -207,6 +207,21 @@ pub trait SandboxLifecycleExecutionStore: Send + Sync {
         &self,
         mutation: SandboxLifecycleMutation,
     ) -> Result<(), SandboxStoreError>;
+
+    async fn reopen_refusal_snapshot(
+        &self,
+        _id: &crate::AgentId,
+    ) -> Result<Option<super::AgentMessageSnapshot>, SandboxStoreError> {
+        Err(SandboxStoreError::Conflict)
+    }
+
+    async fn park_sandbox_reopen_refusal(
+        &self,
+        _mutation: SandboxLifecycleMutation,
+        _fence: super::ReopenRefusalFence,
+    ) -> Result<(), SandboxStoreError> {
+        Err(SandboxStoreError::Conflict)
+    }
 }
 
 pub trait SandboxLifecycleStore:

@@ -239,3 +239,52 @@ async fn runtime_change_and_store_failure_cannot_mint_desktop_authority() {
     );
     f.db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
+async fn strict_inactivity_and_exclusive_desktop_cannot_both_commit() {
+    use layer2_core::PlatformSettingsStore;
+
+    for _ in 0..6 {
+        let f = Fixture::new().await;
+        let settings =
+            crate::store::settings::MongoPlatformSettingsStore::open(f.db.client(), f.db.name())
+                .await
+                .unwrap();
+        let current = settings.read().await.unwrap();
+        let mut enabled = current.settings;
+        enabled.inactivity.auto_pause_enabled = true;
+        enabled.inactivity.grace_started_at = Some("2026-09-05T00:00:00Z".into());
+        let policy = settings.replace(current.revision, &enabled).await.unwrap();
+        let strict = f
+            .right
+            .clone()
+            .with_strict_inactivity_session_evidence(true);
+        let request = SandboxInactivityPauseRequest {
+            cause: InactivityPauseCause::Inactivity,
+            expected_policy_revision: Some(policy.revision),
+            pause_after_seconds: policy.settings.inactivity.pause_after_seconds,
+            ..f.pause()
+        };
+        assert_eq!(
+            strict
+                .preview_inactivity_pause(request.clone())
+                .await
+                .unwrap(),
+            SandboxMaintenanceOutcome::Scheduled
+        );
+        let (opened, paused) = tokio::join!(
+            f.left.acquire_exclusive_sandbox_session(&f.request),
+            strict.schedule_inactivity_pause(request),
+        );
+        match (opened, paused.unwrap()) {
+            (Ok(_), SandboxMaintenanceOutcome::NotEligible) => {}
+            (Err(SandboxStoreError::Conflict), SandboxMaintenanceOutcome::Scheduled) => {}
+            result => panic!(
+                "desktop claim and strict inactivity did not serialize: {:?}",
+                (result.0.is_ok(), result.1)
+            ),
+        }
+        f.db.drop().await.unwrap();
+    }
+}
