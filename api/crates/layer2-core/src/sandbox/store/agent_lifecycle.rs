@@ -7,6 +7,38 @@ use crate::seconds_from_rfc3339;
 
 use super::{Page, PageRequest, SandboxStoreError};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AgentWorkClaimDetail {
+    RetryExhausted,
+    Read,
+    Driver,
+    PublicationCustody,
+}
+
+/// The store error preserves retry semantics. The detail is a closed diagnostic.
+pub struct AgentWorkClaimError {
+    pub store_error: SandboxStoreError,
+    pub detail: Option<AgentWorkClaimDetail>,
+}
+
+impl AgentWorkClaimError {
+    pub fn with_detail(store_error: SandboxStoreError, detail: AgentWorkClaimDetail) -> Self {
+        Self {
+            store_error,
+            detail: Some(detail),
+        }
+    }
+}
+
+impl From<SandboxStoreError> for AgentWorkClaimError {
+    fn from(store_error: SandboxStoreError) -> Self {
+        Self {
+            store_error,
+            detail: None,
+        }
+    }
+}
+
 /// Advisory discovery for runtime-dependent background steps. A directed
 /// probe remains discoverable even when its Sandbox is hidden in ordinary work.
 #[derive(Clone, Copy, Default)]
@@ -413,6 +445,18 @@ pub trait AgentWorkerStore: Send + Sync {
         now: String,
         lease_expires_at: String,
     ) -> Result<Option<Agent>, SandboxStoreError>;
+
+    async fn claim_agent_work_observed(
+        &self,
+        id: &AgentId,
+        holder: &str,
+        now: String,
+        lease_expires_at: String,
+    ) -> Result<Option<Agent>, AgentWorkClaimError> {
+        self.claim_agent_work(id, holder, now, lease_expires_at)
+            .await
+            .map_err(Into::into)
+    }
 
     /// Publish a skill result under the captured parent environment. Unsupported
     /// stores must refuse rather than discard the parent authority.

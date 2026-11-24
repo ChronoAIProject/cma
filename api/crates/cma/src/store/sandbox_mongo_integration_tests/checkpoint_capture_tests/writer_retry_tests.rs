@@ -1,5 +1,6 @@
 use super::*;
 use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
+use layer2_core::sandbox::store::AgentWorkClaimDetail;
 use mongodb::event::command::CommandEvent;
 use mongodb::event::EventHandler;
 use std::sync::{Arc, Mutex};
@@ -195,7 +196,18 @@ async fn writer_claim_exhaustion_is_bounded_without_outer_retry_or_mutation() {
         // More faults than the inner budget prove outer claim loops do not
         // multiply it. Leave the failpoint armed until the public call returns.
         f.conflicts(25).await;
-        let result = f.claim(kind, &workspace, &agent).await;
+        let result = if kind == "agent" {
+            f.store
+                .claim_agent_work_observed(&agent.id, "writer", NOW.into(), MINUTE.into())
+                .await
+                .map(|row| row.map(|row| row.revision))
+                .map_err(|failure| {
+                    assert_eq!(failure.detail, Some(AgentWorkClaimDetail::RetryExhausted));
+                    failure.store_error
+                })
+        } else {
+            f.claim(kind, &workspace, &agent).await
+        };
         let boundaries = f.disable().await;
         let Err(SandboxStoreError::Unavailable(message)) = result else {
             panic!("expected bounded unavailable result, got {result:?}");
@@ -217,5 +229,65 @@ async fn writer_claim_exhaustion_is_bounded_without_outer_retry_or_mutation() {
         assert!(!row.contains_key("runtime_writer_claim_fence"));
         assert_eq!(f.store.get_sandbox(&parent.id).await.unwrap(), Some(parent));
     }
+    f.client.database(&f.name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
+async fn agent_claim_distinguishes_read_driver_and_publication_custody_failures() {
+    let f = Fixture::new().await;
+    let (_, _, mut agent) = f.due("agent").await;
+    for (command, detail) in [
+        ("find", AgentWorkClaimDetail::Read),
+        ("update", AgentWorkClaimDetail::Driver),
+    ] {
+        f.admin
+            .database("admin")
+            .run_command(doc! {
+                "configureFailPoint": "failCommand", "mode": { "times": 1 },
+                "data": { "failCommands": [command], "appName": &f.name, "errorCode": 2 }
+            })
+            .await
+            .unwrap();
+        let result = f
+            .store
+            .claim_agent_work_observed(&agent.id, "writer", NOW.into(), MINUTE.into())
+            .await;
+        f.disable().await;
+        let error = result.unwrap_err();
+        assert_eq!(error.detail, Some(detail));
+        assert!(matches!(
+            error.store_error,
+            SandboxStoreError::Unavailable(_)
+        ));
+        assert_eq!(
+            f.store.get_agent(&agent.id).await.unwrap(),
+            Some(agent.clone())
+        );
+    }
+
+    let revision = agent.revision;
+    agent.revision += 1;
+    agent.status = AgentStatus::Starting;
+    agent.work = AgentWorkState::new(AgentWorkStep::PublishReady, NOW.into());
+    f.store.save_agent(revision, agent.clone()).await.unwrap();
+    f.store
+        .agents
+        .update_one(
+            doc! {"_id": agent.id.as_str()},
+            doc! {"$set": {"pending_worker_log_adoption_v1": {"version": -1_i64}}},
+        )
+        .await
+        .unwrap();
+    let error = f
+        .store
+        .claim_agent_work_observed(&agent.id, "writer", NOW.into(), MINUTE.into())
+        .await
+        .unwrap_err();
+    assert_eq!(error.detail, Some(AgentWorkClaimDetail::PublicationCustody));
+    assert!(matches!(
+        error.store_error,
+        SandboxStoreError::Unavailable(_)
+    ));
     f.client.database(&f.name).drop().await.unwrap();
 }
