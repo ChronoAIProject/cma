@@ -63,7 +63,7 @@ export function Activity({
   readonly canSearchActors?: boolean;
 }) {
   const [actor, setActor] = useState('');
-  const [action, setAction] = useState<ActivityAction | ''>('');
+  const [action, setAction] = useState<ActivityAction | 'audit' | ''>('audit');
   const [filters, setFilters] = useState({ actor, action });
   const [search, setSearch] = useState('');
   const [reply, setReply] = useState<{ text: string; options?: readonly ActorOption[] }>();
@@ -159,8 +159,9 @@ export function Activity({
           <Picker
             label="Activity action"
             value={action}
-            onChange={(choice) => setAction(choice as ActivityAction | '')}
+            onChange={(choice) => setAction(choice as ActivityAction | 'audit' | '')}
             options={[
+              { value: 'audit', label: 'Audit events' },
               { value: '', label: 'All actions' },
               ...actions.map((value) => ({ value, label: stateWord(value) })),
             ]}
@@ -186,7 +187,7 @@ function ActivitySummarys({
   onItemsLoaded,
 }: {
   readonly client: OperatorClient;
-  readonly filters: { readonly actor: string; readonly action: ActivityAction | '' };
+  readonly filters: { readonly actor: string; readonly action: ActivityAction | 'audit' | '' };
   readonly onItemsLoaded: (items: readonly ActivitySummary[]) => void;
 }) {
   const load = useCallback(
@@ -196,7 +197,8 @@ function ActivitySummarys({
         signal,
         limit: 50,
         actor: filters.actor || undefined,
-        action: filters.action || undefined,
+        action: filters.action === 'audit' ? undefined : filters.action || undefined,
+        excludeSuccessfulReads: filters.action === 'audit' || undefined,
       }),
     [client, filters],
   );
@@ -204,9 +206,23 @@ function ActivitySummarys({
   useEffect(() => {
     if (records.page !== undefined) onItemsLoaded(records.page.items);
   }, [records.page, onItemsLoaded]);
+  const count = records.page?.items.length ?? 0;
   return (
     <>
-      <RecordControls {...records} />
+      <RecordControls
+        {...records}
+        position={
+          records.page && !records.loading ? (
+            <span role="status">
+              Page {records.pageNumber} ·{' '}
+              {count === 0
+                ? '0 records'
+                : `Records ${records.offset + 1}–${records.offset + count}`}{' '}
+              · {records.next ? 'More records available' : 'Last page'}
+            </span>
+          ) : undefined
+        }
+      />
       <FailureNotice failure={records.error} />
       <Table
         label="Activity"

@@ -118,11 +118,8 @@ function ConsoleContent({
   const operator = useOperatorClient();
   const publisher = usePublisherClient();
   const usagePrincipal = useReportOwner(user.id, user.capabilities, authEpoch);
-  const navigation = useNavigation(client);
+  const navigation = useNavigation(client, hierarchyRevision);
   const refreshNavigation = navigation.refresh;
-  useEffect(() => {
-    refreshNavigation();
-  }, [hierarchyRevision, refreshNavigation]);
   const refresh = useCallback(() => {
     refreshNavigation();
     setRevision((value) => value + 1);

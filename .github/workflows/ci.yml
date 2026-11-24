@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - "develop"
+      - "tl/release/**"
   # Required checks must also report on the develop merge queue's group refs.
   # Each entry's ref is unique, so a PR or push run never cancels it.
   merge_group:
