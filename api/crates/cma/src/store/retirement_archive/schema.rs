@@ -39,26 +39,30 @@ pub(super) const LEGACY_COLLECTIONS: &[&str] = legacy::COLLECTIONS;
 #[cfg(test)]
 pub(super) const LEGACY_SHA256: &str = legacy::SHA256;
 
+// Creation evidence follows its owner across Sandbox retirement.
+const CREATION_PROOFS: &str = super::super::creation_outcomes::COLLECTION;
+
 pub(crate) fn manifest_collections() -> &'static [&'static str] {
     static NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         super::super::isolation::COLLECTIONS
             .iter()
             .copied()
-            .filter(|name| !super::census_catalog::OUTSIDE_MANIFEST.contains(name))
+            .filter(|name| {
+                *name != CREATION_PROOFS && !super::census_catalog::OUTSIDE_MANIFEST.contains(name)
+            })
             .collect()
     });
     &NAMES
 }
 
 pub(crate) fn schema_sha256() -> String {
-    digest(
-        format!(
-            "archive-census-v2\n{:?}\n{}",
-            super::census_catalog::AUDIT,
-            manifest_collections().join("\n")
-        )
-        .as_bytes(),
-    )
+    let audit: Vec<_> = super::census_catalog::AUDIT
+        .iter()
+        .copied()
+        .filter(|(name, _)| *name != CREATION_PROOFS)
+        .collect();
+    let names = manifest_collections().join("\n");
+    digest(format!("archive-census-v2\n{audit:?}\n{names}").as_bytes())
 }
 
 fn collections(schema: &str) -> Result<&'static [&'static str]> {
