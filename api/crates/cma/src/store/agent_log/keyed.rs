@@ -157,7 +157,7 @@ pub(super) async fn append(
             match crate::store::sandbox_mongo::commit_transaction_with_refusal(session).await {
                 Ok(outcome) => outcome,
                 Err(crate::store::sandbox_mongo::PrecommitRefusal::Aborted(refusal)) => {
-                    claim.release_after_precommit_abort(store, &current).await?;
+                    claim.release_known_abort(store, &current).await?;
                     return Err(refusal);
                 }
                 Err(crate::store::sandbox_mongo::PrecommitRefusal::AbortUnacknowledged(error)) => {
