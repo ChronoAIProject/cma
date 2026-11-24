@@ -122,7 +122,10 @@ impl Sandbox {
             if request.failure.is_none() {
                 return Ok(false);
             }
-            if self.work.lease.is_some()
+            // Retained scoped clearance authorizes the original attempt only.
+            // An ordinary explicit retry cannot renew that activity admission.
+            if self.lifecycle.runtime_migration_admission.is_some()
+                || self.work.lease.is_some()
                 || self.admitted_runtime_update_target() != Some(target.as_str())
             {
                 return Err(invalid());

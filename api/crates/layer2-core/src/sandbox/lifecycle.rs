@@ -211,6 +211,8 @@ pub struct SandboxLifecycleState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_runtime: Option<Box<super::SandboxCustomRuntimeState>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_migration_admission: Option<Box<super::store::RuntimeMigrationAdmissionBasis>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unpublished_recovery: Option<Box<super::SandboxUnpublishedRecoveryState>>,
     /// Remains set until this recovery incident succeeds or is explicitly retired.
     #[serde(default, skip_serializing_if = "recovery_not_attempted")]
@@ -250,6 +252,7 @@ impl Default for SandboxLifecycleState {
             runtime_update: None,
             retained_startup_policy: None,
             custom_runtime: None,
+            runtime_migration_admission: None,
             unpublished_recovery: None,
             unpublished_recovery_attempted: false,
         }
@@ -483,14 +486,6 @@ fn paused_notice_is_invalid(notice: Option<&str>) -> bool {
             || notice.len() > MAX_PAUSED_NOTICE_BYTES
             || notice.chars().any(char::is_control)
     })
-}
-
-fn validate_writer_token(authority: &SandboxLifecycleAuthority) -> Result<(), SandboxModelError> {
-    let expected = authority.expected_writer_resume_token();
-    if authority.writer_resume_token.as_deref() != Some(expected.as_str()) {
-        return Err(invalid_lifecycle());
-    }
-    Ok(())
 }
 
 const fn invalid_lifecycle() -> SandboxModelError {
