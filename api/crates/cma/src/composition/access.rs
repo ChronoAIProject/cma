@@ -119,6 +119,7 @@ pub(super) fn compose(
 pub(super) fn sandbox_operators(
     stores: &MongoStores,
     activity: &Arc<ActivityService>,
+    reviewed_retirement: bool,
 ) -> Arc<SandboxOperatorService> {
     let retirement = Arc::new(StoredSandboxRetirement::new(stores.sandbox_model.clone()));
     Arc::new(
@@ -128,6 +129,7 @@ pub(super) fn sandbox_operators(
             retirement,
             Arc::clone(activity),
         )
-        .with_maintenance(stores.sandbox_model.clone()),
+        .with_maintenance(stores.sandbox_model.clone())
+        .with_reviewed_retirement(stores.sandbox_model.clone(), reviewed_retirement),
     )
 }

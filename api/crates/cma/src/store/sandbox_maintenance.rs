@@ -25,6 +25,7 @@ pub(crate) mod mongo_integration_tests;
 mod policy_fence;
 mod retained_availability;
 mod retry;
+mod reviewed_retirement;
 mod transaction;
 
 #[async_trait::async_trait]

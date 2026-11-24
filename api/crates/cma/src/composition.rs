@@ -54,7 +54,11 @@ impl ControlPlaneComposition {
         let authoring_bounds = profile_policy.capacity_bounds;
         let profile_scanner = Arc::clone(&profile_policy.public_value_scanner);
         profiles::seed_profiles(&stores, config, &profile_policy).await?;
-        let sandbox_operators = access::sandbox_operators(&stores, &activity);
+        let sandbox_operators = access::sandbox_operators(
+            &stores,
+            &activity,
+            config.features.reviewed_sandbox_retirement_enabled,
+        );
         let settings = profiles::platform_settings(config, &stores, &activity);
         let sandbox_policy = Arc::new(LiveSandboxPolicy::new(
             Arc::clone(&settings),
