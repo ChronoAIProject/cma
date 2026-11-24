@@ -5,9 +5,9 @@ use crate::config::task_audit::Selection;
 use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use mongodb::{
-    bson::doc,
+    bson::{doc, Binary},
     options::{Hint, ReadConcern},
-    ClientSession,
+    ClientSession, Database,
 };
 use std::{
     collections::BTreeSet,
@@ -35,26 +35,47 @@ pub(in crate::store) async fn observe(
             .duration_since(UNIX_EPOCH)
             .map_err(|_| "invalid_selection")?
             .as_secs();
-        let (from, to) = selection.bounds(observed)?;
-        super::migrations::require_command_cohort_index(
-            &store.client.database(&store.agent_commands.namespace().db),
-        )
-        .await
-        .map_err(|_| "database")?;
-        let mut session = store.client.start_session().await.map_err(|_| "database")?;
-        // Deliberately bypass ordinary work transaction setup: it can publish a
-        // work-authority fence. This transaction reads and aborts, never commits.
-        session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
+        let database = store.client.database(&store.agent_commands.namespace().db);
+        let identity = super::migrations::require_command_cohort_index(&database)
             .await
             .map_err(|_| "database")?;
-        let result = read(store, selection, from, to, observed, &mut session).await;
-        session.abort_guarded().await.map_err(|_| "database")?;
-        result
+        observe_snapshot(store, selection, observed, &database, &identity).await
     })
     .await
     .map_err(|_| "timeout")?
+}
+
+async fn observe_snapshot(
+    store: &MongoSandboxStore,
+    selection: &Selection,
+    observed: u64,
+    database: &Database,
+    identity: &Binary,
+) -> Result<Report> {
+    let (from, to) = selection.bounds(observed)?;
+    let mut session = store.client.start_session().await.map_err(|_| "database")?;
+    // Deliberately bypass ordinary work transaction setup: it can publish a
+    // work-authority fence. This transaction reads and aborts, never commits.
+    session
+        .start_transaction()
+        .read_concern(ReadConcern::snapshot())
+        .await
+        .map_err(|_| "database")?;
+    let result = async {
+        let report = read(store, selection, from, to, observed, &mut session).await?;
+        // Recheck while the snapshot is open. A drop before its first read can
+        // otherwise make the hinted count and find return a false healthy zero.
+        let current = super::migrations::require_command_cohort_index(database)
+            .await
+            .map_err(|_| "database")?;
+        if &current != identity {
+            return Err("invalid_snapshot");
+        }
+        Ok(report)
+    }
+    .await;
+    session.abort_guarded().await.map_err(|_| "database")?;
+    result
 }
 
 async fn read(

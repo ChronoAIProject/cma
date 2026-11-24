@@ -170,3 +170,70 @@ async fn message_selection_is_snapshot_consistent_bounded_and_keeps_bad_rows() {
     assert!(matches!(observe(&store, &selection).await, Err("database")));
     db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable MongoDB 8 replica set"]
+async fn dropping_a_qualified_collection_fails_sampling_and_retains_last_good() {
+    use mongodb::bson::Document;
+
+    let client = mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let name = format!("cma_audit_catalog_{}", uuid::Uuid::new_v4().simple());
+    let db = client.database(&name);
+    let commands = crate::store::durability::majority_collection::<Document>(&db, "agent_commands");
+    let index = mongodb::IndexModel::builder()
+        .keys(doc! {"record.receipt.admitted_at":1,"_id":1})
+        .options(
+            mongodb::options::IndexOptions::builder()
+                .name(INDEX.to_string())
+                .build(),
+        )
+        .build();
+    commands.create_index(index.clone()).await.unwrap();
+    let store = MongoSandboxStore::audit_handles(&client, &name);
+    let selection = Selection {
+        from: "2026-01-01T00:00:00Z".into(),
+        to: Some("2026-01-02T00:00:00Z".into()),
+        overdue_seconds: 60,
+    };
+    assert_eq!(observe(&store, &selection).await.unwrap().accepted, 0);
+    commands
+        .insert_one(doc! {"_id":"invalid-command","record":{"receipt":{
+            "admitted_at":&selection.from,"envelope":{"command":{"type":"message"}}
+        }}})
+        .await
+        .unwrap();
+    let cache = crate::telemetry::task_cohort::Cache::default();
+    cache.update(
+        observe(&store, &selection)
+            .await
+            .map(|report| report.metrics()),
+    );
+    assert!(cache
+        .render()
+        .contains("cma_task_cohort_accepted_tasks{window=\"release\"} 1"));
+
+    let identity = super::super::migrations::require_command_cohort_index(&db)
+        .await
+        .unwrap();
+    let observed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    commands.drop().await.unwrap();
+    let result = observe_snapshot(&store, &selection, observed, &db, &identity).await;
+    assert!(matches!(result, Err("database")));
+    cache.update(result.map(|report| report.metrics()));
+    let failed = cache.render();
+    assert!(failed.contains("cma_task_cohort_sample_success{window=\"release\"} 0"));
+    assert!(failed.contains("cma_task_cohort_accepted_tasks{window=\"release\"} 1"));
+
+    commands.create_index(index).await.unwrap();
+    assert!(matches!(
+        observe_snapshot(&store, &selection, observed, &db, &identity).await,
+        Err("invalid_snapshot")
+    ));
+    assert_eq!(observe(&store, &selection).await.unwrap().accepted, 0);
+    db.drop().await.unwrap();
+}

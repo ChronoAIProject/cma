@@ -32,16 +32,44 @@ type Result<T> = std::result::Result<T, &'static str>;
 const DEADLINE: Duration = Duration::from_secs(45);
 const IO: Duration = Duration::from_secs(5);
 
-/// Qualify the reviewed access path without applying a migration. A hinted
-/// query alone can return an empty result for a nonexistent collection.
+/// Qualify the reviewed access path and identify the collection incarnation.
+/// A hinted query alone can return an empty result for a nonexistent collection.
 pub(in crate::store) async fn require_command_cohort_index(
     database: &mongodb::Database,
-) -> Result<()> {
-    if command_cohort_index::inspect(database).await?.is_empty() {
-        Ok(())
-    } else {
-        Err("Command cohort index is missing")
+) -> Result<mongodb::bson::Binary> {
+    let response = database
+        .run_command(doc! {
+            "listCollections": 1,
+            "filter": {"name": "agent_commands"},
+            "cursor": {"batchSize": 2},
+            "maxTimeMS": 5000,
+        })
+        .await
+        .map_err(|_| "Command cohort collection unavailable")?;
+    crate::store::agent_log_segments::capture::preview_budget::catalog_response(&response)?;
+    let specifications = index_inventory::entries(&response)?;
+    let [specification] = specifications.as_slice() else {
+        return Err("Command cohort collection is missing");
+    };
+    if specification.get_str("name").ok() != Some("agent_commands")
+        || specification.get_str("type").ok() != Some("collection")
+    {
+        return Err("Command cohort collection is invalid");
     }
+    let Some(mongodb::bson::Bson::Binary(uuid)) = specification
+        .get_document("info")
+        .ok()
+        .and_then(|info| info.get("uuid"))
+    else {
+        return Err("Command cohort collection identity unavailable");
+    };
+    if uuid.subtype != mongodb::bson::spec::BinarySubtype::Uuid || uuid.bytes.len() != 16 {
+        return Err("Command cohort collection identity invalid");
+    }
+    if !command_cohort_index::inspect(database).await?.is_empty() {
+        return Err("Command cohort index is missing");
+    }
+    Ok(uuid.clone())
 }
 
 pub(in crate::store) async fn measured_custody_ready(database: &mongodb::Database) -> Result<bool> {
