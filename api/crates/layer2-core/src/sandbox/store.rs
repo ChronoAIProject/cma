@@ -373,6 +373,7 @@ pub enum SandboxTransaction {
         /// Internal authority for deferred command revival; absent on legacy
         /// owner/system lifecycle transactions. Never serialized into aggregates.
         command_revival: Option<Arc<super::agent_io::CommandRevivalAuthorization>>,
+        released_runtime: Option<layer3_adapter::ReleasedRuntime>,
         expected_revision: u64,
         sandbox: Box<Sandbox>,
         event_at: String,

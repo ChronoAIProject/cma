@@ -6,6 +6,10 @@ use mongodb::{
     Database,
 };
 use std::collections::{BTreeMap, BTreeSet};
+mod observation;
+#[cfg(test)]
+use observation::validate_observation_grants;
+pub(crate) use observation::verify_observation;
 pub(crate) mod replicas;
 pub(crate) const COLLECTIONS: &[&str] = &[
     "account_deletions",
@@ -177,6 +181,8 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "workspace_profiles",
     "workspaces",
     "worktrees",
+    super::released_runtimes::COLLECTION,
+    super::released_runtimes::TRANSITIONS_COLLECTION,
 ];
 // These stores activate separately. Existing credentials still start while disabled.
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
@@ -190,6 +196,8 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     super::home_backups::BACKUPS_COLLECTION,
     super::allocation_buckets::COLLECTION,
     super::agent_observation::COLLECTION,
+    super::released_runtimes::COLLECTION,
+    super::released_runtimes::TRANSITIONS_COLLECTION,
     super::creation_outcomes::COLLECTION,
     // Resource execution reads its activation record on ordinary share and
     // revocation paths; credentials issued before it still start.
@@ -484,17 +492,3 @@ mod segments;
 mod shared_schema_contract;
 #[cfg(test)]
 mod tests;
-
-/// Required only by the enabled read service; installation remains additive.
-pub(crate) async fn verify_observation(database: &Database) -> Result<(), StoreError> {
-    let status = database
-        .run_command(doc! {"connectionStatus": 1, "showPrivileges": true})
-        .await
-        .map_err(|_| StoreError::Unavailable("cannot verify observation grants".into()))?;
-    validate_observation_grants(&status, database.name())
-}
-fn validate_observation_grants(status: &Document, database: &str) -> Result<(), StoreError> {
-    let role = doc! {"privileges": [{"resource": {"db": database, "collection": super::agent_observation::COLLECTION}, "actions": ACTIONS}]};
-    cma_service_auth::mongodb_authority::verify_shared_schema(status, database, &role)
-        .map_err(|error| StoreError::Unavailable(error.into()))
-}

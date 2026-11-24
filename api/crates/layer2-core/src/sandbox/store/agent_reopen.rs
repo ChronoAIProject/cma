@@ -14,6 +14,7 @@ pub struct ReopenRefusalFence {
     pub agent_revision: u64,
     pub checkpoint: Option<Box<super::AgentMessageCheckpoint>>,
     pub owner: Option<crate::agent_ownership::OwnershipToken>,
+    pub released: Option<layer3_adapter::ReleasedRuntime>,
 }
 
 /// Authority for recording replacement output before publishing a reopened Agent.

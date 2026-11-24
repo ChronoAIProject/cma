@@ -16,7 +16,7 @@ use super::work_tests::{claim_request, live_request};
 use super::*;
 
 #[path = "resource_execution_tests.rs"]
-mod resource_execution;
+pub(in crate::store::sandbox_mongo_integration_tests) mod resource_execution;
 
 #[path = "capacity_execution_tests.rs"]
 mod capacity_execution;
