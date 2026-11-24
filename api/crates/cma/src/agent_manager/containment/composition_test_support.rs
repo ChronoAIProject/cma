@@ -29,6 +29,7 @@ pub(super) async fn configured(
             relay_address: "http://manager.invalid".into(),
             max_owned_agents: 2,
             skip_ineligible_reconciliation: false,
+            defer_foreign_reconciliation: false,
         },
         &features,
     )
