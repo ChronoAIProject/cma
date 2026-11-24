@@ -243,6 +243,9 @@ pub use mongo::MongoStores;
 pub use operation::MongoOperationStore;
 pub use registration_capacity::MongoRegistrationCapacityStore;
 pub(crate) use sandbox_credentials::MongoSandboxCredentialStore;
+pub(crate) use sandbox_mongo::{
+    commit_transaction, is_confirmed_body_retry, is_duplicate_key, start_transaction, CommitOutcome,
+};
 pub use sandbox_mongo::{MongoProfileStore, MongoSandboxStore};
 pub use settings::MongoPlatformSettingsStore;
 pub use trigger_definitions::MongoTriggerDefinitionStore;
