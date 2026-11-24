@@ -75,6 +75,14 @@ server {
         config += f"        if ($arg_state = store) {{ return 503 '{json.dumps(STORE_DOWN)}'; }}\n"
         config += f"        if ($arg_state = workers) {{ return 503 '{json.dumps(WORKERS_DOWN)}'; }}\n"
         config += f"        return 200 '{json.dumps(READY)}';\n    }}\n"
+        config += """    location ~ ^/api/v1/documents(?:/|$) {
+        client_max_body_size 64m;
+        add_header Cache-Control 'private, no-store' always;
+        add_header Referrer-Policy no-referrer always;
+        if ($arg_limit = 0) { return 400 '{"code":"invalid_query"}'; }
+        return 202 '{"reached":"agent-manager"}';
+    }
+"""
         # Any API body the web proxy forwards reaches the fake Agent Manager.
         config += """    location /api/ {
         client_max_body_size 64m;
@@ -123,6 +131,8 @@ server {
             connection.request("GET", path)
             response = connection.getresponse()
             headers = {key.lower(): value for key, value in response.getheaders()}
+            if "referrer-policy" in headers:
+                headers["referrer-policy"] = response.getheader("Referrer-Policy")
             return response.status, headers, response.read()
         finally:
             connection.close()
@@ -171,6 +181,23 @@ server {
         # The raised bounds are route-scoped; other API routes keep nginx's default.
         status, _ = self.post("PATCH", "/api/v1/agents/agent-a/settings", mib + 1)
         self.assertEqual(status, 413)
+
+    def test_document_response_keeps_one_strict_referrer_policy(self):
+        for path, expected in [
+            ("/api/v1/documents/doc-a", 202),
+            ("/api/v1/documents/doc-a/source", 202),
+            ("/api/v1/documents?limit=0", 400),
+            ("/api/agent-manager/v1/documents/doc-a/source", 202),
+        ]:
+            with self.subTest(path=path):
+                status, headers, _ = self.get(path)
+                self.assertEqual(status, expected)
+                self.assertEqual(headers["referrer-policy"], "no-referrer")
+                self.assertEqual(headers["cache-control"], "private, no-store")
+        self.assertEqual(
+            self.get("/api/v1/agents")[1]["referrer-policy"],
+            "strict-origin-when-cross-origin",
+        )
 
     def test_monitor_rejects_malformed_or_incomplete_assertions(self):
         for body in [b"{", b"null", b"[]", b'{}', b'{"status":"ready"}']:

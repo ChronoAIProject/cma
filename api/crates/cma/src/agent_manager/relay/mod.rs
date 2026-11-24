@@ -4,6 +4,7 @@ mod control;
 pub(crate) use control::{prestop, DRAIN};
 mod environment_diagnostics;
 mod file_read;
+mod file_write;
 mod forward;
 mod http;
 mod ingress;
@@ -115,6 +116,10 @@ impl Relay {
 
     pub(crate) fn enable_settings_owner_routing(&self) {
         self.settings_owner_routing.get_or_init(|| ());
+    }
+
+    pub(crate) fn enable_file_write_handoff(&self) {
+        self.authentication.enable_file_write_handoff();
     }
 
     async fn destination(&self, id: &AgentId) -> Result<Destination, Refusal> {

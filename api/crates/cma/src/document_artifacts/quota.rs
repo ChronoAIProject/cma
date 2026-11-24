@@ -68,7 +68,10 @@ impl MongoDocumentQuotaStore {
                 .max_commit_time(IO)
                 .await
                 .map_err(unavailable)?;
-            let outcome = self.reserve_transaction(source, &mut session).await;
+            let outcome = match crate::store::transaction_barrier::open(&mut session).await {
+                Ok(()) => self.reserve_transaction(source, &mut session).await,
+                Err(error) => Err(QuotaError::Driver(error)),
+            };
             match outcome {
                 Ok(()) => match session.commit_transaction().await {
                     Ok(()) => return Ok(()),

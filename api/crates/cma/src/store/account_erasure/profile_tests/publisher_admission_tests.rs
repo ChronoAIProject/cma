@@ -374,6 +374,7 @@ async fn declared_agent_under_trigger_workspace(retain_first: bool) {
             &mut Cursor::default(),
             Options {
                 agent_shared_observation: Some(false),
+                retain_legal_consents: false,
                 drain_qualification: Some(TransactionDrainQualification::fixture()),
                 billing_enabled: false,
                 allocation_rollups_enabled: Some(false),

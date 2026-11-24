@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { SandboxDetail } from '../api/types';
 import type { TreePermissions } from '../shell/Tree';
 import { agentClient } from '../test/agent';
-import { sandboxFixture } from '../test/hierarchy';
+import { sandboxFixture, workspaceFixture } from '../test/hierarchy';
 import { NamedReferences } from '../test/references';
 import { SandboxPage } from './SandboxPage';
 
@@ -365,6 +365,50 @@ it.each(['paused', 'reviving', 'rotating', 'provisioning', 'pausing', 'retiring'
       expect(screen.getByRole('button', { name: 'Resume' })).toBeEnabled();
       expect(screen.getByText(/Your work is preserved/)).toBeInTheDocument();
     }
+  },
+);
+
+it.each(['atlas', 'boreal'])(
+  'opens the retained failed repository Workspace for %s while creation is disabled',
+  async (name) => {
+    const sandboxId = `sbx_${name}`;
+    const workspace = {
+      ...workspaceFixture(),
+      id: `wsp_${name}`,
+      sandboxId,
+      name: `${name}-repository`,
+      status: 'failed' as const,
+      path: `/workspaces/${name}`,
+      agents: [],
+      worktrees: [],
+      agentCount: 0,
+      worktreeCount: 0,
+    };
+    const sandbox = { ...sandboxFixture('failed'), id: sandboxId, workspaces: [workspace] };
+    const onNavigate = vi.fn();
+    render(
+      <SandboxPage
+        client={agentClient({
+          readSandbox: async () => sandbox,
+          readWorkspace: async () => workspace,
+        })}
+        sandboxId={sandboxId}
+        revision={0}
+        permissions={{ ...permissions, createWorkspace: true, createAgent: true }}
+        busy={false}
+        onAction={vi.fn()}
+        onNavigate={onNavigate}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('tab', { name: 'Workspaces' }));
+    const link = await screen.findByRole('link', { name: workspace.name });
+    expect(link).toHaveAttribute('href', `/workspaces/${workspace.id}`);
+    expect(link.closest('tr')).toHaveTextContent('Needs attention');
+    expect(link.closest('tr')).toHaveTextContent(workspace.path);
+    expect(screen.getByRole('button', { name: 'New workspace' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: `New agent in ${workspace.name}` })).toBeDisabled();
+    fireEvent.click(link);
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'workspace', workspaceId: workspace.id });
   },
 );
 
