@@ -34,4 +34,3 @@ for (const mode of ['confirmed', 'pending', 'untrusted', 'tampered', 'legacy', '
     }
   });
 }
-
