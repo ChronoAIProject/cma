@@ -18,18 +18,29 @@ for (const outcome of ['delivered', 'cancelled'] as const) {
     );
     try {
       await fixture.route(page, baseURL!);
-      await page.route('**/api/v2/agents/agt_contract/queued-inputs*', (route) =>
-        confirmed
-          ? route.fulfill({
-              json: {
-                object: 'cma.agent.queued_inputs',
-                agent_id: 'agt_contract',
-                data: [],
-                next_after: null,
+      await page.route('**/api/v2/agents/agt_contract/queued-inputs*', (route) => {
+        if (!confirmed) return route.fallback();
+        if (outcome === 'cancelled')
+          return route.fulfill({
+            status: 503,
+            json: {
+              error: {
+                type: 'server_error',
+                code: 'unavailable',
+                message: 'Queue unavailable',
+                param: null,
               },
-            })
-          : route.fallback(),
-      );
+            },
+          });
+        return route.fulfill({
+          json: {
+            object: 'cma.agent.queued_inputs',
+            agent_id: 'agt_contract',
+            data: [],
+            next_after: null,
+          },
+        });
+      });
       await page.route('**/api/v2/commands/cmd_1', (route) =>
         confirmed && outcome === 'cancelled'
           ? route.fulfill({

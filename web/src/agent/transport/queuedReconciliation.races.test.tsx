@@ -1,7 +1,13 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useQueuedInputs } from './queuedInputsStatus';
-import { deferred, entry, reconciliationHarness, status } from './queuedReconciliation.fixture';
+import {
+  deferred,
+  entry,
+  reconciliationHarness,
+  status,
+  unavailable,
+} from './queuedReconciliation.fixture';
 import { json, accepted } from './controller.fixture';
 import { queuedReceipt } from './queued.fixture';
 import { commandStatus } from './controls.fixture';
@@ -190,6 +196,33 @@ it('observes and resolves an older legacy cancellation even when another input i
   expect(hook.result.current.items.map((item) => item.commandId)).toEqual(['cmd_2']);
   expect(hook.result.current.outcomes[0]).toMatchObject({ commandId: 'cmd_1', kind: 'cancelled' });
   expect(h.fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+  hook.unmount();
+});
+
+it('reads a pending cancellation through discovery failure and keeps it until the exact source confirms', async () => {
+  const h = mutationHarness();
+  h.loseReply();
+  const hook = renderHook(() => useQueuedInputs(h.session, true, true, '0', identity));
+  await advance();
+  h.list.mockImplementation(async () => unavailable(503));
+  h.command.mockImplementation(async () => unavailable(503));
+  await act(async () => {
+    await expect(hook.result.current.remove(hook.result.current.items[0]!)).rejects.toThrow(
+      'Lost reply',
+    );
+  });
+  const original = h.journal.queuedInputs.read()[0]!;
+  await advance(2000);
+  expect(h.command).toHaveBeenCalledWith(1);
+  expect(h.journal.queuedInputs.read()).toEqual([original]);
+  expect(hook.result.current.items[0]?.needsRecovery).toBe(true);
+
+  h.command.mockImplementation(async () => json(status(1, 'cancelled')));
+  await advance(10000);
+  expect(h.journal.queuedInputs.read()).toEqual([]);
+  expect(hook.result.current.items).toEqual([]);
+  expect(hook.result.current.outcomes[0]).toMatchObject({ kind: 'cancelled', terminal: true });
+  expect(h.fetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
   hook.unmount();
 });
 

@@ -172,7 +172,8 @@ export class QueuedCommandTracker {
     resolved?: (responseId: string) => void,
     isCurrent = () => !signal.aborted,
   ) {
-    if (Date.now() < this.throttleUntil) return this.schedule();
+    if (Date.now() < this.throttleUntil)
+      return { next: Math.max(2000, this.throttleUntil - Date.now()), cooldown: 2000 };
     await this.session.authorize(signal);
     if (!isCurrent()) return;
     const removals = this.seed();
@@ -201,7 +202,11 @@ export class QueuedCommandTracker {
           // Validate all identities before changing any queue membership.
           for (const item of page.data)
             this.validate(this.retain(item.response.receipt.command_id), item.response);
-          for (const entry of this.known.values()) entry.present = false;
+          const listed = new Set(page.data.map((item) => item.response.receipt.command_id));
+          for (const entry of this.known.values()) {
+            if (entry.present && !listed.has(entry.commandId)) entry.due = 0;
+            entry.present = false;
+          }
           for (const item of page.data) {
             const receipt = item.response.receipt;
             const entry = this.retain(receipt.command_id, receipt.response_id!, item.text);
@@ -220,7 +225,7 @@ export class QueuedCommandTracker {
             entry.input = item.text;
             entry.present = true;
             entry.outcome = commandOutcome(item.response);
-            entry.due = 0;
+            if (!removals.some((intent) => intent.commandId === entry.commandId)) entry.due = 0;
           }
           this.discoveryError = undefined;
           this.discoveryFailures = 0;
@@ -279,13 +284,7 @@ export class QueuedCommandTracker {
     for (let scanned = 0; scanned < entries.length && batch.length < 8; scanned++) {
       const entry = entries[this.cursor % entries.length]!;
       this.cursor = (this.cursor + 1) % entries.length;
-      if (
-        !entry.present &&
-        !entry.mutating &&
-        entry.due <= Date.now() &&
-        (!entry.outcome.terminal || removals.some((intent) => intent.commandId === entry.commandId))
-      )
-        batch.push(entry);
+      if (this.needsRead(entry, removals) && entry.due <= Date.now()) batch.push(entry);
     }
     let index = 0;
     const worker = async () => {
@@ -299,11 +298,18 @@ export class QueuedCommandTracker {
           if (!isCurrent()) return;
           if (entry.revision !== revision || entry.mutating) continue;
           entry.responseId = this.validate(entry, status);
-          entry.outcome = commandOutcome(status);
-          if (entry.outcome.terminal || status.delivery === 'execution_observed') {
+          const outcome = commandOutcome(status);
+          if (!entry.outcome.terminal || outcome.terminal) entry.outcome = outcome;
+          if (outcome.terminal || status.delivery === 'execution_observed') {
             for (const intent of removals)
-              if (intent.commandId === entry.commandId && intent.responseId === entry.responseId)
-                this.resolve(intent, resolved);
+              if (
+                intent.commandId === entry.commandId &&
+                intent.responseId === entry.responseId &&
+                this.resolve(intent, resolved)
+              ) {
+                entry.present = false;
+                if (status.delivery === 'execution_observed') entry.delivered = true;
+              }
           }
           entry.failures = 0;
           entry.due =
@@ -314,7 +320,7 @@ export class QueuedCommandTracker {
         } catch (error) {
           if (signal.aborted || identityChanged(error)) throw error;
           if (entry.revision !== revision || entry.mutating) continue;
-          entry.outcome = { kind: 'unknown', terminal: false };
+          if (!entry.outcome.terminal) entry.outcome = { kind: 'unknown', terminal: false };
           const delay = readRetryDelay(error, ++entry.failures, 2000);
           entry.due = Date.now() + delay;
           this.throttle(error, delay);
@@ -327,14 +333,17 @@ export class QueuedCommandTracker {
   private schedule(removals: readonly PendingRemoval[] = []) {
     let nextAt = this.discoveryNext;
     for (const entry of this.known.values())
-      if (
-        !entry.present &&
-        !entry.mutating &&
-        (!entry.outcome.terminal || removals.some((intent) => intent.commandId === entry.commandId))
-      )
-        nextAt = Math.min(nextAt, entry.due);
+      if (this.needsRead(entry, removals)) nextAt = Math.min(nextAt, entry.due);
     nextAt = Math.max(nextAt, this.throttleUntil);
     const next = Number.isFinite(nextAt) ? Math.max(2000, nextAt - Date.now()) : undefined;
     return { next, cooldown: 2000 };
+  }
+
+  private needsRead(entry: KnownCommand, removals: readonly PendingRemoval[]) {
+    return (
+      !entry.mutating &&
+      ((!entry.present && !entry.outcome.terminal) ||
+        removals.some((intent) => intent.commandId === entry.commandId))
+    );
   }
 }
