@@ -13,4 +13,6 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+metrics-exporter-prometheus = { workspace = true }
+tracing-subscriber = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
