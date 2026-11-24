@@ -39,7 +39,7 @@ pub(super) fn find_for_proof(
             ));
         }
     }
-    read_keyed(config, operation_id, subject, None, false)
+    read_keyed(config, operation_id, subject, None)
 }
 
 fn read(
@@ -67,7 +67,7 @@ fn read(
             return Ok(record);
         }
     }
-    read_keyed(config, operation_id, subject, exact, true)
+    read_keyed(config, operation_id, subject, exact)
 }
 
 fn read_keyed(
@@ -75,7 +75,6 @@ fn read_keyed(
     operation_id: &str,
     subject: &Subject,
     exact: Option<&Operation>,
-    sync_terminal: bool,
 ) -> Result<Option<Record>> {
     let path = io::journal_path(&crate::mutation_scope::root(config, subject), operation_id);
     let Some(record) = io::read_record(&path)? else {
@@ -94,8 +93,6 @@ fn read_keyed(
             "runtime journal contains another operation identity",
         ));
     }
-    if sync_terminal {
-        io::sync_terminal(&path, &record)?;
-    }
+    io::sync_terminal(&path, &record)?;
     Ok(Some(record))
 }

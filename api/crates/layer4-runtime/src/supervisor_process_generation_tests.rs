@@ -245,6 +245,11 @@ pub(in crate::supervisor) fn restart_open(
 
 #[tokio::test]
 async fn owner_stop_close_proof_requires_the_latest_exact_native_pair() {
+    check_owner_stop_close_proof(true).await;
+    check_owner_stop_close_proof(false).await;
+}
+
+async fn check_owner_stop_close_proof(started_successor: bool) {
     let mut fixture = Fixture::new();
     fixture.config.agent_process_restart_enabled = true;
     let supervisor = installed(&fixture).await;
@@ -306,31 +311,34 @@ async fn owner_stop_close_proof_requires_the_latest_exact_native_pair() {
     let mut successor = launch;
     successor.operation_id = "agent:agent:open:2:v1".into();
     successor.request_sha256 = "c".repeat(64);
-    let operation = crate::mutation_journal::Operation::open_agent(&successor);
-    supervisor
-        .mutations
-        .admit(3, std::slice::from_ref(&operation))
-        .await
-        .unwrap();
-    assert_eq!(
-        failure(supervisor.dispatch(request.clone()).await),
-        "agent_process_close_unproved"
-    );
-    assert!(!supervisor.mutations.admitted(&operation).await.unwrap());
-    assert!(matches!(
+    if started_successor {
+        let operation = crate::mutation_journal::Operation::open_agent(&successor);
         supervisor
             .mutations
-            .begin::<layer3_adapter::wire::AgentOpenReceipt>(&operation)
+            .admit(3, std::slice::from_ref(&operation))
             .await
-            .unwrap(),
-        crate::mutation_store::Begin::New(_)
-    ));
-    assert_eq!(
-        failure(supervisor.dispatch(request.clone()).await),
-        "agent_process_close_unproved"
-    );
-    assert!(!supervisor.mutations.completed(&operation).await.unwrap());
-    assert!(supervisor.bridge("agent").await.is_none());
+            .unwrap();
+        assert_eq!(
+            failure(supervisor.dispatch(request.clone()).await),
+            "agent_process_close_unproved"
+        );
+        assert!(!supervisor.mutations.admitted(&operation).await.unwrap());
+        assert!(matches!(
+            supervisor
+                .mutations
+                .begin::<layer3_adapter::wire::AgentOpenReceipt>(&operation)
+                .await
+                .unwrap(),
+            crate::mutation_store::Begin::New(_)
+        ));
+        assert_eq!(
+            failure(supervisor.dispatch(request.clone()).await),
+            "agent_process_close_unproved"
+        );
+        assert!(!supervisor.mutations.completed(&operation).await.unwrap());
+        assert!(supervisor.bridge("agent").await.is_none());
+        return;
+    }
     assert!(matches!(
         supervisor
             .dispatch(restart_open(&supervisor, 3, &successor))

@@ -1,6 +1,29 @@
 use super::*;
 use layer2_core::sandbox::AgentLogKind;
 
+fn interrupts_turn(mutation: &AgentWorkMutation) -> bool {
+    matches!(
+        mutation.agent_logs.first(),
+        Some(AgentLogKind::TurnInterrupted { .. })
+    )
+}
+
+pub(super) fn fence_live_lease(filter: &mut Document, mutation: &AgentWorkMutation) {
+    if interrupts_turn(mutation) {
+        filter.insert(
+            "$expr",
+            doc! {
+                "$gt": [
+                    { "$dateFromString": {
+                        "dateString": "$work_lease_expires_at", "onError": null, "onNull": null,
+                    }},
+                    "$$NOW",
+                ],
+            },
+        );
+    }
+}
+
 pub(super) async fn settle(
     store: &MongoSandboxStore,
     row: &Document,
@@ -9,10 +32,7 @@ pub(super) async fn settle(
     parents: Option<&AgentWorkPublicationParents>,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
-    if !matches!(
-        mutation.agent_logs.first(),
-        Some(AgentLogKind::TurnInterrupted { .. })
-    ) {
+    if !interrupts_turn(mutation) {
         return Ok(());
     }
     if parents.is_none()

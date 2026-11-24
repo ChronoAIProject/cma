@@ -23,6 +23,46 @@ fn owner_stop_close_proof_leaves_pending_journal_replacement_intact() {
 }
 
 #[test]
+fn owner_stop_close_proof_checks_durability_of_the_visible_terminal_record() {
+    use super::durability::{FaultGuard, Fixture, Step};
+
+    let fixture = Fixture::new("close-proof-durability", Status::Completed, false);
+    let path = &fixture.path;
+    assert!(!fixture.temporary.exists());
+    let guard = FaultGuard::arm(Some(Step::Directory(fixture.directory().into())));
+    assert_eq!(
+        find_proof_record(
+            &fixture.config,
+            &fixture.operation.operation_id,
+            &fixture.operation.subject
+        )
+        .unwrap_err()
+        .code,
+        "mutation_journal_io_failed"
+    );
+    assert_eq!(guard.completed(), [Step::File(path.clone())]);
+    assert_eq!(std::fs::read(path).unwrap(), fixture.terminal_bytes);
+    drop(guard);
+
+    let guard = FaultGuard::arm(None);
+    let proof = find_proof_record(
+        &fixture.config,
+        &fixture.operation.operation_id,
+        &fixture.operation.subject,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(proof, fixture.terminal);
+    assert_eq!(
+        guard.completed(),
+        [
+            Step::File(path.clone()),
+            Step::Directory(fixture.directory().into())
+        ]
+    );
+}
+
+#[test]
 fn direct_replay_recovers_a_matching_temporary_without_a_prior_started_scan() {
     let config = config("keyed-temporary");
     let operation = remove(5000);

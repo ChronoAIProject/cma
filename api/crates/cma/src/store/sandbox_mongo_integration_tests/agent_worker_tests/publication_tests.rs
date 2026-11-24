@@ -225,9 +225,26 @@ async fn agent_work_consumes_only_the_exact_durable_stop_intent() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn owner_stop_settlement_fences_parents_and_retains_partial_output() {
+    for segmented in [false, true] {
+        check_owner_stop_fences(false, segmented).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn owner_stop_settlement_refuses_expired_lease_without_takeover() {
+    for segmented in [false, true] {
+        check_owner_stop_fences(true, segmented).await;
+    }
+}
+
+async fn check_owner_stop_fences(expire: bool, segmented: bool) {
+    use layer2_core::budget::{BudgetPolicy, OwnerBudget, TurnReservation};
     use layer2_core::sandbox::store::{
-        AgentWorkPublication, AgentWorkPublicationLineage, AgentWorkPublicationParents,
+        AgentLogPublicationIdentity, AgentWorkPublication, AgentWorkPublicationLineage,
+        AgentWorkPublicationParents,
     };
+    use std::time::{Duration, SystemTime};
 
     let (client, name) = database("owner_stop_settlement").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
@@ -237,7 +254,7 @@ async fn owner_stop_settlement_fences_parents_and_retains_partial_output() {
         .delete_many(doc! {"agent_id": agent.id.as_str()})
         .await
         .unwrap();
-    let history = vec![
+    let mut history = vec![
         AgentLogKind::Created {
             workspace_id: agent.workspace_id.clone(),
             worktree_id: agent.worktree_id.clone(),
@@ -283,6 +300,66 @@ async fn owner_stop_settlement_fences_parents_and_retains_partial_output() {
         doc! {"$set": fields, "$unset": {(crate::store::agent_log_integrity::INTEGRITY_FIELD): ""}},
     ).await.unwrap();
 
+    if segmented {
+        use crate::store::agent_log_segments::publication::request_digest;
+        use crate::store::agent_worker_transaction::skill_result_test_support::{
+            assert_format, enable_segments,
+        };
+
+        enable_segments(&store, &agent).await;
+        let adopted = AgentLogKind::WorkStepCompleted {
+            step: AgentWorkStep::None,
+        };
+        store
+            .append_agent_log_keyed(
+                &agent.id,
+                &AgentLogPublicationIdentity {
+                    key: "owner-stop-adoption".into(),
+                    appended_at: layer2_core::now_rfc3339(),
+                    fingerprint: request_digest(&adopted).unwrap().bytes.try_into().unwrap(),
+                },
+                adopted.clone(),
+            )
+            .await
+            .unwrap();
+        assert_format(&store, &agent.id, true).await;
+        history.push(adopted);
+        agent = store.get_agent(&agent.id).await.unwrap().unwrap();
+    }
+    let budget_key = crate::store::budget::turn_key(&agent, 3);
+    let budget_owner_key = format!("owner:{}", agent.owner);
+    let policy = BudgetPolicy {
+        owner_day_limit: 100,
+        turn_limit: 10,
+        max_calls_per_turn: 5,
+        day_timezone: "UTC".into(),
+        input_token_units: 1,
+        output_token_units: 1,
+        max_unobserved_units: 2,
+        usage_timeout_seconds: 60,
+    };
+    let budget_now = layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339()).unwrap();
+    let mut owner_budget = OwnerBudget::default();
+    owner_budget.reserve(&policy, budget_now).unwrap();
+    let reservation = TurnReservation::new(policy, budget_now);
+    let turn_record = doc! {
+        "_id": &budget_key, "document_schema_version": 1_i64,
+        "record": {
+            "owner": agent.owner.as_str(), "agent_id": agent.id.as_str(),
+            "turn_sequence": 3_i64, "runtime_generation": 1_i64,
+            "reservation": mongodb::bson::serialize_to_bson(&reservation).unwrap(),
+        },
+    };
+    let owner_record = doc! {
+        "_id": &budget_owner_key, "document_schema_version": 1_i64,
+        "record": mongodb::bson::serialize_to_bson(&owner_budget).unwrap(),
+    };
+    store
+        .model_budget
+        .insert_many([turn_record.clone(), owner_record.clone()])
+        .await
+        .unwrap();
+
     let mut stopping = store
         .schedule_agent_stop(AgentStopRequest {
             target: AgentControlTarget::from(&agent),
@@ -302,8 +379,12 @@ async fn owner_stop_settlement_fences_parents_and_retains_partial_output() {
         completed_at: NOW.into(),
     });
     replace_agent_fixture(&store, &stopping).await;
+    let started_at = SystemTime::now();
+    let claimed_at = layer2_core::rfc3339_at(started_at);
+    let lease_duration = Duration::from_secs(if expire { 2 } else { 60 });
+    let expires_at = layer2_core::rfc3339_at(started_at + lease_duration);
     let claimed = store
-        .claim_agent_work(&agent.id, "worker", NOW.into(), MINUTE.into())
+        .claim_agent_work(&agent.id, "worker", claimed_at.clone(), expires_at)
         .await
         .unwrap()
         .unwrap();
@@ -314,12 +395,12 @@ async fn owner_stop_settlement_fences_parents_and_retains_partial_output() {
     let interrupted = stopped.settle_owner_stop_turn().unwrap();
     stopped
         .work
-        .advance("worker", fence, AgentWorkStep::None, NOW.into())
+        .advance("worker", fence, AgentWorkStep::None, claimed_at.clone())
         .unwrap();
     stopped
         .transition(
             AgentStatus::Stopped,
-            NOW.into(),
+            claimed_at.clone(),
             Some(AgentStopReason::Owner),
         )
         .unwrap();
@@ -330,7 +411,7 @@ async fn owner_stop_settlement_fences_parents_and_retains_partial_output() {
         fence,
         agent: stopped.clone(),
         worktree: None,
-        appended_at: NOW.into(),
+        appended_at: claimed_at,
         sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
             agent_id: agent.id.clone(),
             from: AgentStatus::Working,
@@ -372,7 +453,47 @@ async fn owner_stop_settlement_fences_parents_and_retains_partial_output() {
         store.try_publish_agent_work(proposal.clone(), stale).await,
         Err(SandboxStoreError::Conflict)
     );
-    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(claimed));
+    assert_eq!(
+        store.get_agent(&agent.id).await.unwrap(),
+        Some(claimed.clone())
+    );
+    if expire {
+        let wait = (started_at + lease_duration)
+            .duration_since(SystemTime::now())
+            .unwrap_or_default();
+        tokio::time::sleep(wait).await;
+        assert_eq!(
+            store.try_publish_agent_work(proposal, observed).await,
+            Err(SandboxStoreError::Conflict)
+        );
+        assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(claimed));
+        let actual: Vec<_> = store
+            .agent_log(&agent.id, 0, 20)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.kind)
+            .collect();
+        assert_eq!(actual, history);
+        assert_eq!(
+            store
+                .model_budget
+                .find_one(doc! {"_id": &budget_key})
+                .await
+                .unwrap(),
+            Some(turn_record)
+        );
+        assert_eq!(
+            store
+                .model_budget
+                .find_one(doc! {"_id": &budget_owner_key})
+                .await
+                .unwrap(),
+            Some(owner_record)
+        );
+        client.database(&name).drop().await.unwrap();
+        return;
+    }
     assert_eq!(
         store
             .try_publish_agent_work(proposal, observed)
@@ -389,6 +510,32 @@ async fn owner_stop_settlement_fences_parents_and_retains_partial_output() {
         .map(|entry| entry.kind)
         .collect();
     assert_eq!(&actual[..history.len()], history);
+    let settled = store
+        .model_budget
+        .find_one(doc! {"_id": &budget_key})
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(settled
+        .get_document("record")
+        .unwrap()
+        .get_document("reservation")
+        .unwrap()
+        .get_bool("settled")
+        .unwrap());
+    let owner = store
+        .model_budget
+        .find_one(doc! {"_id": &budget_owner_key})
+        .await
+        .unwrap()
+        .unwrap();
+    let owner: OwnerBudget =
+        mongodb::bson::deserialize_from_document(owner.get_document("record").unwrap().clone())
+            .unwrap();
+    assert_eq!(
+        (owner.reserved, owner.spent),
+        (0, reservation.reserved_units)
+    );
     assert_eq!(
         &actual[history.len()..],
         &[
