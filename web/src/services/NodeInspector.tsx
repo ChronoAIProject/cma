@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {
   ConfigurationSections,
+  OpenProducerConfiguration,
   scrollToConfiguration,
   useConfigurationSections,
 } from './ConfigurationSections';
@@ -163,7 +164,7 @@ export function NodeInspector({
   readonly initialSection?: 'overview' | 'activity';
   readonly sendAvailable?: boolean;
   readonly testsAvailable?: boolean;
-  readonly send?: (configure: () => void) => ReactNode;
+  readonly send?: ReactNode;
   readonly tests?: ReactNode;
   readonly activity?: ReactNode;
   readonly danger?: ReactNode;
@@ -210,7 +211,7 @@ export function NodeInspector({
       'Tool catalog',
       selection.kind === 'toolsets' ? <ChannelToolsets channel={channel} /> : null,
     ],
-    ['send', 'Send message', send?.(() => navigate(settings[0]?.id ?? `${id}-configuration`))],
+    ['send', 'Send message', send],
     ['tests', 'Tests', tests],
     ['activity', 'Activity', activity],
     ['delete', 'Delete', danger],
@@ -366,7 +367,15 @@ export function NodeInspector({
                       : undefined
                   }
                 >
-                  {content}
+                  {key === 'send' ? (
+                    <OpenProducerConfiguration
+                      value={() => navigate(settings[0]?.id ?? `${id}-configuration`)}
+                    >
+                      {content}
+                    </OpenProducerConfiguration>
+                  ) : (
+                    content
+                  )}
                 </ConfigurationSections>
               </section>
             ) : null,

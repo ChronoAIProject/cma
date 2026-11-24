@@ -86,15 +86,14 @@ it.each([{ routeIds: undefined }, { routeIds: ['', '  '] }])(
           channel={current}
           id="relay-inspector"
           selection={selection}
-          send={(configure) => (
+          send={
             <ChannelOutboundMessage
               owner="alice"
               channel={current}
               selection={selection}
               denied={vi.fn()}
-              onConfigureRoutes={configure}
             />
-          )}
+          }
         >
           <ChannelEditor channel={current} section={selection} onDone={vi.fn()} denied={vi.fn()} />
         </NodeInspector>

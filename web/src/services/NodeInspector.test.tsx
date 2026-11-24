@@ -93,7 +93,7 @@ it('hides unavailable section links while retaining pending controls', () => {
       selection={{ kind: 'channel' }}
       sendAvailable={available}
       testsAvailable={available}
-      send={() => <input aria-label="Pending send" defaultValue="Keep original intent" />}
+      send={<input aria-label="Pending send" defaultValue="Keep original intent" />}
       tests={<p>Run check</p>}
     >
       <Editor />

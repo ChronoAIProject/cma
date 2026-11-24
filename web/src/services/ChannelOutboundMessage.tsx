@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { Presence } from '../ui/Presence';
 import type { Channel } from './ChannelEditor';
+import { OpenProducerConfiguration } from './ConfigurationSections';
 import { Choice, TextField, Toggle } from './channelForm/Fields';
 import { object, list, text, type ChannelSelection } from './channelTopology';
 import { segment, serviceRequest, ServiceError, type Denied } from './client';
@@ -25,13 +26,13 @@ interface Props {
   readonly selection: ChannelSelection;
   readonly denied: Denied;
   readonly onAvailability?: (available: boolean) => void;
-  readonly onConfigureRoutes?: () => void;
 }
 /** Account/channel changes reset visible state without erasing uncertain operations. */
 export function ChannelOutboundMessage(props: Props) {
   return <Composer key={JSON.stringify([props.owner, props.channel.record_id])} {...props} />;
 }
-function Composer({ owner, channel, selection, denied, onAvailability, onConfigureRoutes }: Props) {
+function Composer({ owner, channel, selection, denied, onAvailability }: Props) {
+  const configureRoutes = useContext(OpenProducerConfiguration);
   const capabilities = useRelayCapabilities();
   const journal = useOutboundJournal(owner, channel.record_id);
   const { draft, receipt, uncertain = false, preparationExpired = false } = journal.intent ?? {};
@@ -200,7 +201,7 @@ function Composer({ owner, channel, selection, denied, onAvailability, onConfigu
       {!receipt && !draft && enabled && relay && !routes.length ? (
         <div>
           <p>No saved destinations. Add a NyxID route ID to this producer and save it.</p>
-          {onConfigureRoutes ? <Button onClick={onConfigureRoutes}>Configure routes</Button> : null}
+          {configureRoutes ? <Button onClick={configureRoutes}>Configure routes</Button> : null}
         </div>
       ) : null}
       {!receipt && !draft && canCompose ? (
