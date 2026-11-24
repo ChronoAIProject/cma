@@ -1,6 +1,7 @@
 //! Disposable daily and hourly projections over the allocated ledger.
 mod boundary;
 mod materialize;
+mod reads;
 mod schema;
 mod summary;
 
@@ -11,6 +12,7 @@ use layer2_core::{
 };
 pub use materialize::build_covered;
 use mongodb::bson::{doc, Document};
+pub use reads::read_bucket_page;
 use serde::{Deserialize, Serialize};
 
 pub const COLLECTION: &str = "sandbox_usage_allocation_buckets_v1";
@@ -48,14 +50,6 @@ pub struct DayBucket {
 }
 
 impl DayBucket {
-    pub fn sandbox_id(&self) -> &str {
-        &self.sandbox_id
-    }
-
-    pub fn day(&self) -> u64 {
-        self.day
-    }
-
     pub fn total(&self) -> &Slice {
         &self.total
     }
