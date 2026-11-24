@@ -111,7 +111,12 @@ async fn apply_at(
     let at = at.to_owned();
     let mut sandbox = current.clone();
     let scope = sandbox
-        .revise_live_service_access(&record.requester.owner, &services, at.clone())
+        .revise_live_service_access_with_connection(
+            &record.requester.owner,
+            &services,
+            record.approved_connection().cloned(),
+            at.clone(),
+        )
         .map_err(|_| AgentAccessError::Conflict)?;
     let floor = scope.credential_generation_floor;
     let event = SandboxEventKind::ServiceAccessRevised {
@@ -174,6 +179,9 @@ fn validate_replay(record: &AgentAccessRecord, sandbox: &Sandbox) -> Result<(), 
                 .ok_or(AgentAccessError::Invalid)?
         || scope.authorized_by != record.requester.owner
         || scope.services != record.approved_services()?
+        || record
+            .approved_connection()
+            .is_some_and(|connection| scope.connection.as_ref() != Some(connection))
         || Some(scope.credential_generation_floor) != record.progress.grant_generation_floor
     {
         return Err(AgentAccessError::Conflict);

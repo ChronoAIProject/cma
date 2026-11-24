@@ -19,6 +19,7 @@ mod index_toolkit;
 pub(in crate::store) mod opening_index;
 mod sandbox_usage_capture;
 mod steps;
+mod turn_policy_index;
 use steps::Step;
 mod authority;
 mod ledger;
@@ -106,6 +107,7 @@ async fn execute(arguments: &[String]) -> Result<Value> {
     let mut options = ClientOptions::parse(uri)
         .await
         .map_err(|_| "database configuration")?;
+    crate::store::transaction_barrier::bind(&mut options, &database);
     options.server_selection_timeout = Some(IO);
     options.connect_timeout = Some(IO);
     let client = Client::with_options(options).map_err(|_| "database configuration")?;

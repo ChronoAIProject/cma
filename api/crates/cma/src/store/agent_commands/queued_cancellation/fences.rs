@@ -14,6 +14,16 @@ pub(in crate::store::agent_commands) async fn current(
     request: &QueuedCancellationReservation,
     session: &mut ClientSession,
 ) -> Result<(Agent, Sandbox), ApplyError> {
+    current_with_observation(store, request, session)
+        .await?
+        .ok_or_else(|| CommandLedgerError::Conflict.into())
+}
+
+pub(in crate::store::agent_commands) async fn current_with_observation(
+    store: &MongoSandboxStore,
+    request: &QueuedCancellationReservation,
+    session: &mut ClientSession,
+) -> Result<Option<(Agent, Sandbox)>, ApplyError> {
     store
         .bindings
         .conversation_authority(request.command.binding.as_ref(), session)
@@ -38,7 +48,10 @@ pub(in crate::store::agent_commands) async fn current(
         .transpose()
         .map_err(|_| CommandLedgerError::Corrupt)?
         .ok_or(CommandLedgerError::NotFound)?;
-    request.validate_current(&agent, &parent)?;
+    request.validate_current_identity(&agent, &parent)?;
+    if !request.current_observation_matches(&agent, &parent) {
+        return Ok(None);
+    }
     let policy = store
         .resource_policies
         .find_one(doc! {"_id": parent.id.as_str()})
@@ -49,7 +62,7 @@ pub(in crate::store::agent_commands) async fn current(
         .transpose()
         .map_err(|_| CommandLedgerError::Corrupt)?;
     validate_command_reservation_policy(&request.command, &parent, policy.as_ref())?;
-    Ok((agent, parent))
+    Ok(Some((agent, parent)))
 }
 
 pub(in crate::store::agent_commands) async fn resources(

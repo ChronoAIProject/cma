@@ -12,6 +12,7 @@ struct PausedRenew {
     resume: Notify,
     before_pause: bool,
     pause_acquire: std::sync::atomic::AtomicBool,
+    pause_owner: bool,
 }
 
 #[async_trait::async_trait]
@@ -26,6 +27,10 @@ impl OwnershipStore for PausedRenew {
         self.inner.membership().await
     }
     async fn owner(&self, id: &AgentId) -> Result<Option<OwnershipLease>, OwnershipError> {
+        if self.pause_owner {
+            self.entered.notify_one();
+            self.resume.notified().await;
+        }
         self.inner.owner(id).await
     }
     async fn has_owner_history(&self, id: &AgentId) -> Result<bool, OwnershipError> {
@@ -36,12 +41,19 @@ impl OwnershipStore for PausedRenew {
         id: &AgentId,
         instance: &str,
     ) -> Result<Option<OwnershipLease>, OwnershipError> {
-        let acquired = self.inner.acquire(id, instance).await;
+        let acquired = if self.before_pause {
+            Some(self.inner.acquire(id, instance).await)
+        } else {
+            None
+        };
         if self.pause_acquire.load(Ordering::Acquire) {
             self.entered.notify_one();
             self.resume.notified().await;
         }
-        acquired
+        match acquired {
+            Some(result) => result,
+            None => self.inner.acquire(id, instance).await,
+        }
     }
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError> {
         if self.pause_acquire.load(Ordering::Acquire) {
@@ -75,7 +87,14 @@ impl OwnershipStore for PausedRenew {
 }
 
 async fn start(store: Arc<dyn OwnershipStore>) -> Arc<OwnershipCoordinator> {
-    OwnershipCoordinator::register(
+    start_with_policy(store, MaintenancePolicy::Legacy).await
+}
+
+async fn start_with_policy(
+    store: Arc<dyn OwnershipStore>,
+    policy: MaintenancePolicy,
+) -> Arc<OwnershipCoordinator> {
+    OwnershipCoordinator::register_with_policy(
         store,
         Member {
             instance_id: "manager".into(),
@@ -86,6 +105,8 @@ async fn start(store: Arc<dyn OwnershipStore>) -> Arc<OwnershipCoordinator> {
             owned_agents: 0,
             max_owned_agents: DEFAULT_MAX_OWNED_AGENTS,
         },
+        false,
+        policy,
     )
     .await
     .unwrap()
@@ -100,6 +121,7 @@ async fn late_success_or_stale_renewal_after_handoff_cannot_revive_or_fail_the_m
             resume: Notify::new(),
             before_pause,
             pause_acquire: std::sync::atomic::AtomicBool::new(false),
+            pause_owner: false,
         });
         let coordinator = start(store.clone()).await;
         let authority = coordinator
@@ -212,8 +234,9 @@ async fn slow_acquisition_cannot_block_renewal_and_drain_takes_custody_of_it() {
         inner: Arc::new(MemoryOwnershipStore::default()),
         entered: Notify::new(),
         resume: Notify::new(),
-        before_pause: false,
+        before_pause: true,
         pause_acquire: std::sync::atomic::AtomicBool::new(false),
+        pause_owner: false,
     });
     let coordinator = start(store.clone()).await;
     let healthy = coordinator
@@ -259,3 +282,90 @@ async fn slow_acquisition_cannot_block_renewal_and_drain_takes_custody_of_it() {
         .unwrap()
         .is_none());
 }
+
+#[tokio::test(start_paused = true)]
+async fn reconciliation_owner_lookup_times_out_without_serializing_acquisition() {
+    let store = Arc::new(PausedRenew {
+        inner: Arc::new(MemoryOwnershipStore::default()),
+        entered: Notify::new(),
+        resume: Notify::new(),
+        before_pause: false,
+        pause_acquire: std::sync::atomic::AtomicBool::new(false),
+        pause_owner: true,
+    });
+    let coordinator = start(store.clone()).await;
+    let candidate = AgentId("candidate".into());
+    let started = tokio::time::Instant::now();
+    let observed = tokio::spawn({
+        let coordinator = coordinator.clone();
+        let candidate = candidate.clone();
+        async move {
+            coordinator
+                .observe_foreign_reconciliation_owner(&candidate)
+                .await
+        }
+    });
+    store.entered.notified().await;
+    let healthy = coordinator
+        .acquire(&AgentId("healthy".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(healthy.is_current());
+    assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+    assert!(!observed.await.unwrap());
+    assert_eq!(started.elapsed(), std::time::Duration::from_millis(200));
+    let local = coordinator.acquire(&candidate).await.unwrap().unwrap();
+
+    // A cancelled local receiver with an unexpired same-instance lease must
+    // take the ordinary acquisition path and cannot revive its old epoch.
+    local.cancel_receiver();
+    let started = tokio::time::Instant::now();
+    assert!(
+        !coordinator
+            .observe_foreign_reconciliation_owner(&candidate)
+            .await
+    );
+    assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+    assert!(coordinator.acquire(&candidate).await.unwrap().is_none());
+    assert!(!local.is_current());
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancelled_acquisition_caller_cannot_hide_a_committed_write_from_drain() {
+    let store = Arc::new(PausedRenew {
+        inner: Arc::new(MemoryOwnershipStore::default()),
+        entered: Notify::new(),
+        resume: Notify::new(),
+        before_pause: true,
+        pause_acquire: std::sync::atomic::AtomicBool::new(true),
+        pause_owner: false,
+    });
+    let coordinator = start_with_policy(store.clone(), MaintenancePolicy::ContainFailures).await;
+    let id = AgentId("committed-unreturned".into());
+    let caller = tokio::spawn({
+        let coordinator = coordinator.clone();
+        let id = id.clone();
+        async move { coordinator.acquire(&id).await }
+    });
+    store.entered.notified().await;
+    assert!(store.inner.owner(&id).await.unwrap().is_some());
+    caller.abort();
+    assert!(caller
+        .await
+        .err()
+        .expect("caller was cancelled")
+        .is_cancelled());
+    store.resume.notify_one();
+    let custody = coordinator.begin_drain().await;
+    assert_eq!(
+        custody.len(),
+        1,
+        "drain must retain the committed result after its caller disappears"
+    );
+    assert_eq!(custody[0].token.agent_id, id);
+    assert!(!custody[0].is_current());
+}
+
+#[path = "coordinator_custody_tests.rs"]
+mod custody;

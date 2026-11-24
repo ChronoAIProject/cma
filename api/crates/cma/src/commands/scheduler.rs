@@ -8,7 +8,7 @@ use layer2_core::sandbox::agent_io::{
     AgentCommandWorker, CommandLedgerError, ScheduledAgentCommand,
 };
 use layer2_core::sandbox::store::{Page, PageRequest};
-use tokio::sync::watch;
+use tokio::sync::{watch, Notify};
 use tokio::task::{Id, JoinError, JoinHandle, JoinSet};
 use tokio::time::{Instant, MissedTickBehavior};
 
@@ -16,6 +16,7 @@ const PAGE_SIZE: u16 = 50;
 // At idle, at most four indexed discovery scans per second per replica. Existing
 // single-discovery, pagination and eight-command backpressure remain bounded.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+const CANCEL_WAKE_SPACING: Duration = Duration::from_millis(50);
 pub(super) const MAX_DEFERRED: usize = 4_096;
 
 pub(crate) struct CommandScheduler {
@@ -24,6 +25,7 @@ pub(crate) struct CommandScheduler {
     concurrency: usize,
     drain_timeout: Duration,
     reconcile_pacing: bool,
+    cancel_wake: Option<Arc<Notify>>,
 }
 
 #[async_trait::async_trait]
@@ -67,11 +69,17 @@ impl CommandScheduler {
             concurrency: 8,
             drain_timeout: Duration::from_secs(25),
             reconcile_pacing: false,
+            cancel_wake: None,
         }
     }
 
     pub(crate) fn with_reconcile_pacing(mut self, enabled: bool) -> Self {
         self.reconcile_pacing = enabled;
+        self
+    }
+
+    pub(crate) fn with_cancel_wake(mut self, wake: Option<Arc<Notify>>) -> Self {
+        self.cancel_wake = wake;
         self
     }
 
@@ -90,12 +98,14 @@ impl CommandScheduler {
     ) -> JoinHandle<()> {
         let interval = self.interval;
         let drain_timeout = self.drain_timeout;
+        let cancel_wake = self.cancel_wake;
         let work = ScheduledWork::new(self.worker, self.concurrency, self.reconcile_pacing);
         crate::worker_supervision::spawn(
             work,
             activity,
             shutdown,
             move |work, activity, mut shutdown| {
+                let cancel_wake = cancel_wake.clone();
                 Box::pin(async move {
                     work.activity = Some(activity.clone());
                     let telemetry = crate::telemetry::worker::Worker::start("agent_commands");
@@ -117,6 +127,7 @@ impl CommandScheduler {
                         if *shutdown.borrow() {
                             break;
                         }
+                        let next_cancel_scan = work.next_cancel_scan;
                         tokio::select! {
                             changed = shutdown.changed() => {
                                 if changed.is_err() || *shutdown.borrow() { break }
@@ -125,6 +136,17 @@ impl CommandScheduler {
                                 if let Some(result) = result { work.completed(result); }
                             }
                             _ = ticker.tick() => work.poll(),
+                            _ = async {
+                                tokio::time::sleep_until(next_cancel_scan).await;
+                                if let Some(wake) = &cancel_wake {
+                                    wake.notified().await;
+                                }
+                            }, if cancel_wake.is_some() && work.can_poll() => {
+                                if !*shutdown.borrow() {
+                                    work.poll();
+                                    work.next_cancel_scan = Instant::now() + CANCEL_WAKE_SPACING;
+                                }
+                            }
                         }
                         if !*shutdown.borrow() {
                             work.fill_slots();
@@ -177,6 +199,7 @@ struct ScheduledWork {
     reconciliation: super::reconcile_schedule::ReconcileSchedule,
     polling: bool,
     cursor: Option<String>,
+    next_cancel_scan: Instant,
 }
 
 impl ScheduledWork {
@@ -197,14 +220,19 @@ impl ScheduledWork {
             reconciliation: super::reconcile_schedule::ReconcileSchedule::new(reconcile_pacing),
             polling: false,
             cursor: None,
+            next_cancel_scan: Instant::now(),
         }
+    }
+
+    fn can_poll(&self) -> bool {
+        !self.polling && self.queued.is_empty() && self.in_flight.len() < self.concurrency
     }
 
     fn poll(&mut self) {
         let now = Instant::now();
         self.not_before.retain(|_, deadline| *deadline > now);
         self.reconciliation.prune(now);
-        if self.polling || !self.queued.is_empty() || self.in_flight.len() >= self.concurrency {
+        if !self.can_poll() {
             return;
         }
         let worker = self.worker.clone();

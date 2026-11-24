@@ -3,28 +3,29 @@
 use std::{future::Future, sync::Arc};
 
 use axum::{
-    extract::{Extension, Path, Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post, put},
     Json, Router,
 };
 use layer2_core::profiles::AgentProfileRef;
-use layer2_core::sandbox::{AgentOrigin, CreateAgent};
+use layer2_core::sandbox::{AgentDetailReading, AgentOrigin, CreateAgent};
 use layer2_core::{AgentId, AgentProfileId, Caller, Capability, WorkspaceId};
 
 #[path = "agent_state.rs"]
 mod agent_state;
 mod inventory;
-use super::agent_lifecycle::{
-    AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleProvisioningError,
-};
+pub(super) mod lifecycle_creation;
+use super::agent_lifecycle::AgentLifecycleProvisioningError;
 use super::agent_openapi_shapes::{AgentView, CreateAgentRequest};
 use super::agent_shared_shapes::{
     AccessibleAgentListItemView, AccessibleAgentPageView, AccessibleAgentView,
 };
 use super::idempotency::{self, IdempotencyKey, RequestBody};
 use super::instance_problem::InstanceProblem;
+use super::profiles_problem::ProfileProblem;
+use super::profiles_sandbox::readable_revision;
 use super::BodyProblem;
 use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
 pub use agent_state::AgentRoutesState;
@@ -36,7 +37,10 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
     let list = get(list).layer(axum::middleware::from_fn(agent_state::list_private_headers));
     Router::new()
         .route("/api/v1/workspaces/{id}/agents", post(create))
-        .route("/api/v1/agents", list.post(create_lifecycle))
+        .route(
+            "/api/v1/agents",
+            list.post(lifecycle_creation::create_lifecycle),
+        )
         .route(
             "/api/v1/desktop-capability",
             get(super::desktop_creation::read),
@@ -104,69 +108,6 @@ pub(crate) async fn read_lifecycle_operation(
         .read(&caller, &operation_id)
         .await
         .map(|view| (StatusCode::OK, Json(view)).into_response())
-        .unwrap_or_else(IntoResponse::into_response)
-}
-
-/// Create an Agent from one inline lifecycle request.  The provisioning port
-/// owns the sandbox/workspace/agent orchestration; this boundary never accepts
-/// profile, worktree, pod, or runtime identifiers. An optional owned workspace
-/// selects an existing context; the service verifies its creation authority.
-#[utoipa::path(
-    post,
-    path = "/api/v1/agents",
-    tag = "agents",
-    params(("Idempotency-Key" = String, Header)),
-    request_body = AgentLifecycleCreateRequest,
-    responses(
-        (status = 202, body = AgentLifecycleCreateReceipt),
-        (status = 422, description = "Invalid template inputs: task_template_field_required, task_template_field_placeholder, task_template_field_unknown, task_template_id_unknown, task_template_version_unsupported, task_template_message_mismatch or task_template_message_too_large; other invalid lifecycle requests use their existing problem codes.", body = crate::rest::ProblemDocument),
-        (status = 429, description = "sandbox_limit_reached", body = crate::rest::ProblemDocument),
-        (status = 503, body = crate::rest::ProblemDocument)
-    )
-)]
-pub(crate) async fn create_lifecycle(
-    State(state): State<AgentRoutesState>,
-    AuthenticatedCaller(caller): AuthenticatedCaller,
-    context: Option<Extension<layer2_core::resource_access::CallerContext>>,
-    credential: Option<Extension<DelegatedCredential>>,
-    key: IdempotencyKey,
-    body: Result<RequestBody<AgentLifecycleCreateRequest>, BodyProblem>,
-) -> Response {
-    if let Err(problem) = require_use(&caller) {
-        return problem.into_response();
-    }
-    let Some(provisioner) = state.lifecycle.clone() else {
-        return AgentLifecycleProvisioningError::Unavailable.into_response();
-    };
-    // The lifecycle's permanent owner/key ledger owns admission and resumption.
-    // An outer cached 202 would suppress requeue after connecting services.
-    let key = match key.into_required_value() {
-        Ok(key) => key,
-        Err(error) => return error.into_response(),
-    };
-    let request = match body.and_then(|body| body.into_parts().0) {
-        Ok(body) => body,
-        Err(error) => return error.into_response(),
-    };
-    if let Err(error) = request.validate_template() {
-        return error.into_response();
-    }
-    if request.desktop && request.initial_message.is_none() {
-        return AgentLifecycleProvisioningError::Invalid(
-            "desktop creation requires initial_message".into(),
-        )
-        .into_response();
-    }
-    provisioner
-        .create(
-            &caller,
-            context.as_ref().map(|Extension(value)| value),
-            credential.as_ref().map(|Extension(value)| value.value()),
-            request,
-            &key,
-        )
-        .await
-        .map(|receipt| (StatusCode::ACCEPTED, Json(receipt)).into_response())
         .unwrap_or_else(IntoResponse::into_response)
 }
 
@@ -296,25 +237,46 @@ pub(crate) async fn read(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
-) -> Result<Json<AccessibleAgentView>, InstanceProblem> {
-    if let Some(resource) = resource {
-        return state
+) -> Result<Response, InstanceProblem> {
+    let id = AgentId(id);
+    let detail = if let Some(resource) = resource {
+        state
             .reads
             .detail_authorized(
                 &resource.context,
                 resource.credential.as_ref().map(DelegatedCredential::value),
-                &AgentId(id),
+                &id,
             )
-            .await
-            .map(AccessibleAgentView::from)
-            .map(|view| Json(view.with_agent_page(&state.agent_page_origin)))
-            .map_err(InstanceProblem::from);
+            .await?
+    } else {
+        AgentDetailReading::Personal(Box::new(state.reads.lineage(&caller, &id).await?))
+    };
+    let (view, private) = match (detail, state.sandbox_profile_readability.as_deref()) {
+        (AgentDetailReading::Personal(lineage), Some(profiles)) => {
+            let pinned = &lineage.sandbox.profile;
+            let readable =
+                match readable_revision(profiles, &caller, pinned.id.as_str(), pinned.revision)
+                    .await
+                {
+                    Ok(revision) => Some(revision.digest == pinned.digest),
+                    Err(ProfileProblem::Forbidden | ProfileProblem::NotFound) => Some(false),
+                    Err(_) => None,
+                };
+            let view =
+                AgentView::from_lineage(*lineage, None).with_sandbox_profile_readability(readable);
+            (AccessibleAgentView::Personal(Box::new(view)), true)
+        }
+        (detail, _) => (AccessibleAgentView::from(detail), false),
+    };
+    let body = Json(view.with_agent_page(&state.agent_page_origin));
+    let mut response = body.into_response();
+    if private {
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("private, no-store"),
+        );
     }
-    read_view(&state, &caller, &AgentId(id)).await.map(|view| {
-        Json(
-            AccessibleAgentView::Personal(Box::new(view)).with_agent_page(&state.agent_page_origin),
-        )
-    })
+    Ok(response)
 }
 
 #[utoipa::path(

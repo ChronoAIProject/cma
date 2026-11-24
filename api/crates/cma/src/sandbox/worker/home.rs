@@ -46,20 +46,36 @@ impl SandboxWorker {
             .await
             {
                 Ok(Some(home)) if sandbox.lifecycle.home.is_none() => {
-                    let request = RuntimeProvisionRequest::new(
+                    // The reservation durably pins the new Sandbox's image: take
+                    // the release once, and admit it only while still current.
+                    let released = self.config.release();
+                    let mut request = RuntimeProvisionRequest::new(
                         sandbox.lifecycle.runtime_generation_high_water.max(1),
                         crate::sandbox::runtime_mapping::sandbox_spec(
                             sandbox,
                             &self.config.deployment_id,
-                        ),
+                        )
+                        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?,
                     );
-                    match crate::sandbox::home_native::reserve(
+                    request.released = released.clone();
+                    let reserved = crate::sandbox::home_native::reserve(
                         self.dependencies.adapter.as_ref(),
                         &request,
                         home,
                     )
                     .await
-                    {
+                    .and_then(|home| {
+                        match (&self.config.released, &released) {
+                            (Some(source), Some(released)) => source
+                                .require_current(released)
+                                .map(|()| home)
+                                .map_err(|stale| {
+                                    layer3_adapter::AdapterError::Unavailable(stale.to_string())
+                                }),
+                            _ => Ok(home),
+                        }
+                    });
+                    match reserved {
                         Ok(home) => home,
                         Err(error) => return Ok(Some(adapter_failure(error))),
                     }

@@ -4,6 +4,13 @@ use std::sync::Arc;
 use crate::{config::Config, store::MongoStores};
 
 pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String> {
+    // The one released-default authority, shared by every consumer of new work
+    // and by every store copy handed out while the stores open.
+    let released: Arc<dyn layer3_adapter::ReleasedRuntimeSource> =
+        Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+            config.runtime.sandbox_image.clone(),
+            config.runtime.machine_sandbox_image.clone(),
+        ));
     let mut stores = MongoStores::connect_with_policy(
         &config.mongodb_uri,
         &config.mongodb_database,
@@ -22,6 +29,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             initial_settings: crate::store::settings_defaults::InitialSettings::new(
                 config.features.visitor_two_sandbox_defaults,
             ),
+            released: Some(released.clone()),
         },
     )
     .await
@@ -46,16 +54,6 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .clone()
             .with_global_sandbox_limit(config.global_sandbox_limit)
             .with_launch_admission_policy(config.features.launch_admission_policy()),
-    );
-    // One released-default authority, shared by every consumer of new work.
-    stores.released_runtime = Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
-        config.runtime.sandbox_image.clone(),
-        config.runtime.machine_sandbox_image.clone(),
-    ));
-    stores.sandbox_model = Arc::new(
-        (*stores.sandbox_model)
-            .clone()
-            .with_released_runtime(stores.released_runtime.clone()),
     );
     stores.sandbox_model = Arc::new(
         (*stores.sandbox_model)
@@ -103,7 +101,8 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
     Ok(Arc::new(
         stores
             .with_empty_discovery(config.features.empty_discovery)
-            .with_writer_policy(config.task_experience.clone()),
+            .with_writer_policy(config.task_experience.clone())
+            .with_creation_writer_epoch(config.creation_writer_epoch.as_deref()),
     ))
 }
 

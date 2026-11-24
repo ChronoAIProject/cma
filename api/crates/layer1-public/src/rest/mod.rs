@@ -164,6 +164,7 @@ mod gateway_interactions;
 mod gateway_records;
 pub use gateway_connections::gateway_connection_record_router;
 pub use gateway_interactions::gateway_interaction_router;
+pub mod creation_outcomes;
 #[cfg(test)]
 mod gateway_records_tests;
 mod hierarchy_shared_shapes;
@@ -207,7 +208,7 @@ pub use agent_lifecycle::{
     AgentLifecycleOperationReadError, AgentLifecycleOperationReader, AgentLifecycleOperationView,
     AgentLifecyclePermissions, AgentLifecycleProfile, AgentLifecycleProvisioner,
     AgentLifecycleProvisioningError, AgentLifecycleRepository, AgentLifecycleSkill,
-    AgentLifecycleTitleMode,
+    AgentLifecycleTitleMode, RepositoryAccessRefusal,
 };
 pub use agent_source::agent_source_router;
 pub use agents::{

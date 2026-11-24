@@ -21,6 +21,8 @@ const MAX_AGENT_SLOTS: usize = 16;
 
 #[path = "supervisor_agent.rs"]
 mod agent;
+#[path = "supervisor_agent_process.rs"]
+mod agent_process;
 #[path = "supervisor_agent_recovery.rs"]
 mod agent_recovery;
 #[path = "supervisor_agent_resources.rs"]
@@ -282,6 +284,12 @@ impl Supervisor {
             return Err(RuntimeError::rejected(
                 "credential_operation_invalid",
                 "credential operation id is empty or too large",
+            ));
+        }
+        if frame.github_route.is_some() && !self.supports_exact_github_credential_route() {
+            return Err(RuntimeError::rejected(
+                "credential_github_route_unavailable",
+                "runtime does not have a GitHub credential proxy",
             ));
         }
         let phase = *self.phase.read().await;

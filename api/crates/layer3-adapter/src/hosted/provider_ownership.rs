@@ -283,7 +283,14 @@ impl ProviderHostedControlTransport {
                     };
                     let mut failure = OwnershipFailure::new(phase, reason);
                     failure.http_status = observed_status.status();
-                    failure.with_error(error)
+                    let origin = if observed_status.oversized() {
+                        crate::owner_protocol::ReceiverSettlementFailure::Invalid
+                    } else {
+                        observed_status.settlement_origin().unwrap_or(
+                            crate::owner_protocol::ReceiverSettlementFailure::Unclassified,
+                        )
+                    };
+                    failure.with_error(error).with_settlement_origin(origin)
                 })?;
             let status = reply.status.as_u16();
             observed_status.record_status(status);
@@ -308,7 +315,18 @@ impl ProviderHostedControlTransport {
                 .json(request)
                 .send()
                 .await
-                .map_err(|_| OwnershipFailure::new(phase, Reason::TransportUnavailable))?;
+                .map_err(|error| {
+                    let origin = if error.is_connect() || error.is_timeout() {
+                        crate::owner_protocol::ReceiverSettlementFailure::Unavailable
+                    } else {
+                        crate::owner_protocol::ReceiverSettlementFailure::Unclassified
+                    };
+                    OwnershipExchangeFailure::from(OwnershipFailure::new(
+                        phase,
+                        Reason::TransportUnavailable,
+                    ))
+                    .with_settlement_origin(origin)
+                })?;
             let status = reply.status().as_u16();
             observed_status.record_status(status);
             if !reply.status().is_success() {
@@ -387,91 +405,12 @@ struct ReceiverFence {
     legacy_incarnation: Option<ReceiverIncarnation>,
 }
 
-#[async_trait::async_trait]
-impl crate::owner_protocol::ReceiverRevocation for ReceiverFence {
-    fn identity(&self) -> String {
-        self.identity.clone()
-    }
+#[path = "provider_ownership_settlement.rs"]
+mod settlement;
 
-    async fn revoke(&self) -> crate::Result<()> {
-        self.settle(ReceiverConfirmationCustody::PossiblyDelivered)
-            .await?;
-        Ok(())
-    }
-
-    async fn settle(&self, custody: ReceiverConfirmationCustody) -> crate::Result<ReceiverCleanup> {
-        let status = Arc::new(NativeHttpObservation::default());
-        let operation = async {
-            let mut transport = self.template.clone();
-            // A dropped link must not discard custody of a receiver that may
-            // still hold this lease. A native revoke uses independent state
-            // bound to the captured incarnation; its open fences refuse a
-            // replaced Pod or container before anything is sent.
-            transport.state = match self.state.upgrade() {
-                Some(state) => state,
-                None => super::native_pool::revoke_state(&self.endpoint)
-                    .map(|state| Arc::new(Mutex::new(state)))
-                    .ok_or_else(|| {
-                        OwnershipFailure::new(Phase::Revoke, Reason::TransportUnavailable)
-                    })?,
-            };
-            let result: Result<(OwnerAcknowledgement, _), _> = transport
-                .owner_exchange(
-                    &self.endpoint,
-                    &self.owner,
-                    Phase::Revoke,
-                    &self.owner,
-                    &status,
-                )
-                .await;
-            match result {
-                Ok((reply, status)) => {
-                    validate_acknowledgement(&reply, &self.owner, Phase::Revoke, status)?;
-                    Ok(ReceiverCleanup::Acknowledged)
-                }
-                Err(failure) => {
-                    if custody == ReceiverConfirmationCustody::NeverSent
-                        && failure.observation.reason == Reason::MissingRoute
-                        && failure.observation.http_status == Some(404)
-                        && self.legacy_incarnation.is_some()
-                        && matches!(
-                            transport.legacy_receiver_incarnation(&self.endpoint).await,
-                            Ok(current) if current == self.legacy_incarnation
-                        )
-                    {
-                        use sha2::{Digest, Sha256};
-                        tracing::info!(
-                            stage = "revoke",
-                            http_status = 404_u16,
-                            outcome = "no_receiver_known_incompatible",
-                            receiver_sha256 = %format!("{:x}", Sha256::digest(self.identity.as_bytes())),
-                            "Native receiver cleanup obligation settled"
-                        );
-                        return Ok(ReceiverCleanup::NoReceiver);
-                    }
-                    Err(failure)
-                }
-            }
-        };
-        let result = tokio::time::timeout(NEGOTIATION_DEADLINE, operation)
-            .await
-            .unwrap_or_else(|_| {
-                let mut failure = OwnershipFailure::new(Phase::Revoke, Reason::Deadline);
-                failure.http_status = status.status();
-                Err(failure.into())
-            });
-        match result {
-            Ok(outcome) => Ok(outcome),
-            Err(failure) => {
-                if let Some(authority) = self.authority.upgrade() {
-                    authority.record_failure(failure.observation).await;
-                }
-                Err(failure.error)
-            }
-        }
-    }
-}
-
+#[cfg(test)]
+#[path = "provider_ownership_settlement_tests.rs"]
+mod settlement_tests;
 #[cfg(test)]
 #[path = "provider_ownership_revocation_tests.rs"]
 mod tests;

@@ -18,6 +18,47 @@ impl CommandScheduler {
             interval: self.interval,
         }
     }
+
+    pub(crate) fn observe_discovery(
+        mut self,
+        observations: tokio::sync::mpsc::Sender<Vec<AgentCommandId>>,
+        first_scan_release: Option<tokio::sync::oneshot::Receiver<()>>,
+    ) -> Self {
+        self.worker = Arc::new(ObservedWork {
+            inner: self.worker,
+            observations,
+            first_scan_release: Mutex::new(first_scan_release),
+        });
+        self
+    }
+}
+
+struct ObservedWork {
+    inner: Arc<dyn CommandScheduleWork>,
+    observations: tokio::sync::mpsc::Sender<Vec<AgentCommandId>>,
+    first_scan_release: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+}
+
+#[async_trait::async_trait]
+impl CommandScheduleWork for ObservedWork {
+    async fn discover(
+        &self,
+        page: &PageRequest,
+    ) -> Result<Page<ScheduledAgentCommand>, CommandLedgerError> {
+        let result = self.inner.discover(page).await?;
+        let _ = self
+            .observations
+            .try_send(result.items.iter().map(|item| item.id.clone()).collect());
+        let release = self.first_scan_release.lock().unwrap().take();
+        if let Some(release) = release {
+            release.await.expect("first discovery release");
+        }
+        Ok(result)
+    }
+
+    async fn run_one(&self, id: &AgentCommandId) -> Result<Duration, CommandLedgerError> {
+        self.inner.run_one(id).await
+    }
 }
 
 impl DrivenScheduler {
@@ -58,6 +99,7 @@ struct Probe {
     dispatched: Mutex<BTreeMap<AgentCommandId, bool>>,
     jobs: Mutex<BTreeMap<AgentCommandId, Behavior>>,
     calls: Mutex<Vec<AgentCommandId>>,
+    discovery_calls: Mutex<Vec<Instant>>,
     active: AtomicUsize,
     peak: AtomicUsize,
     fail_poll: AtomicBool,
@@ -86,6 +128,7 @@ impl Probe {
             concurrency,
             drain_timeout: Duration::from_secs(5),
             reconcile_pacing: false,
+            cancel_wake: None,
         }
     }
 }
@@ -104,6 +147,7 @@ impl CommandScheduleWork for Probe {
         &self,
         page: &PageRequest,
     ) -> Result<Page<ScheduledAgentCommand>, CommandLedgerError> {
+        self.discovery_calls.lock().unwrap().push(Instant::now());
         if self.fail_poll.swap(false, Ordering::SeqCst) {
             return Err(CommandLedgerError::Unavailable);
         }

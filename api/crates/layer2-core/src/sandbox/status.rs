@@ -187,7 +187,10 @@ impl AgentStatus {
                     Self::Working,
                     Self::Ready | Self::WaitingApproval | Self::Paused
                 )
-                | (Self::WaitingApproval, Self::Working | Self::Paused)
+                | (
+                    Self::WaitingApproval,
+                    Self::Working | Self::Ready | Self::Paused
+                )
                 | (Self::Paused, Self::Ready)
                 | (Self::Stopped | Self::Failed, Self::Deleted)
         ) || (live && next == Self::Stopped);

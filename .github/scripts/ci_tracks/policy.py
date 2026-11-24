@@ -3,7 +3,10 @@
 from pathlib import Path, PurePosixPath
 import re
 
+# cma-journey-probe is a standalone public-journey runner. It is in no image, and
+# its tests reuse Agent Manager wire fixtures, so the AM track owns it.
 AM = frozenset({"cma", "cma-image-manager", "cma-allocator-qualification"})
+AM_OPTIONAL = frozenset({"cma-journey-probe"})
 EG = frozenset({"cmaeg"})
 SHARED = frozenset({"layer1-public", "layer2-core", "layer3-adapter",
                     "layer4-runtime", "cma-service-auth", "cmaeg-core"})
@@ -66,8 +69,9 @@ class Workspace:
                 if dep.get("kind") != "dev":
                     self.production[p["name"]].add(target)
                 self.reverse[target].add(p["name"])
+        am_roots = AM | SHARED | (AM_OPTIONAL & self.names)
         self.owned = {
-            "am": closure(AM | SHARED, self.dependencies) - EG,
+            "am": closure(am_roots, self.dependencies) - EG,
             "eg": closure(EG, self.dependencies) | {"cmaeg-core", "cma-service-auth", "cma-allocator-qualification"},
         }
         if self.owned["am"] | self.owned["eg"] != self.names:

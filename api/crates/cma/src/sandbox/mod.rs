@@ -37,6 +37,7 @@ mod title_budget;
 mod title_scheduler;
 mod title_worker;
 pub(crate) mod titles;
+pub(crate) mod turn_timeout_worker;
 mod unavailable_credentials;
 pub(crate) mod unpublished_recovery;
 mod warmup;
@@ -58,7 +59,7 @@ pub(crate) use credential::{
 pub(crate) use live_agents::record_update_for_test;
 pub(crate) use live_agents::{LiveAgentRegistry, LiveAgentTarget};
 #[cfg(test)]
-pub(crate) use model_request_budget::tests::assert_metered_title_refusal;
+pub(crate) use model_request_budget::tests::assert_metered_auxiliary_refusal;
 pub(crate) use policy::LiveSandboxPolicy;
 pub(crate) use runtime_mapping::{runtime_capabilities, runtime_options};
 pub(crate) use title_worker::PlatformTitleEndpoint;

@@ -13,6 +13,7 @@ import { lifecycleFailureMessage } from './lifecycleFailure';
 import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { TaskCreationStatus } from './TaskCreationStatus';
+import { DiscardWaitingCreation } from './DiscardWaitingCreation';
 import { TaskHomeLayout, type TaskHomeOverview } from './TaskHomeLayout';
 import { TaskTemplatePanel } from './TaskTemplatePanel';
 import { TaskComposer } from './TaskComposer';
@@ -26,6 +27,7 @@ import { useTaskDraft } from './taskDraft';
 import { taskCreateRequest, useTaskTitleModeSupport } from './taskCreateRequest';
 import { useTaskTemplateDraftSwitch } from './TaskTemplateDraftSwitch';
 import { useConnectionGate } from '../connections/useConnectionGate';
+import { RepositoryConnectionRepair } from '../connections/ConnectionWizard';
 import '../ui/Input.css';
 import './AgentLifecycleCard.css';
 import './TaskHome.css';
@@ -95,10 +97,18 @@ function TaskHomeContent({
   const allowTemplateV2 =
     policy.confirmed && policy.task_home_admission && templateV2Availability === 'supported';
   const draft = useTaskDraft(viewerId, workspaceId, sandboxId, allowTemplateV2);
+  // Filled fields can arrive before discovery. Preview the corrected code format
+  // while checking and use it for a new command once the server confirms v2.
+  const template =
+    draft.template?.id === 'code' &&
+    draft.template.version === 1 &&
+    (templateV2Availability === 'checking' || templateV2Availability === 'supported')
+      ? { ...draft.template, version: 2 as const }
+      : draft.template;
   const input = useRef<HTMLTextAreaElement>(null);
   const [validation, setValidation] = useState<TemplateIssue>();
   const templateAvailability =
-    draft.template?.version === 2 ? templateV2Availability : templateV1Availability;
+    template?.version === 2 ? templateV2Availability : templateV1Availability;
   const templateSupported =
     templateAvailability === 'checking' ? undefined : templateAvailability === 'supported';
   const form = useRef<HTMLFormElement>(null);
@@ -166,11 +176,14 @@ function TaskHomeContent({
     preparationStatus !== 'waiting_for_connection' &&
     preparationStatus !== 'succeeded' &&
     (lifecycle.pending || Boolean(intent?.receipt));
-  const submission = taskSubmission(draft, {
-    machine: machineIncludedAvailable,
-    repository: repositorySupported,
-    template: templateSupported,
-  });
+  const submission = taskSubmission(
+    { ...draft, template },
+    {
+      machine: machineIncludedAvailable,
+      repository: repositorySupported,
+      template: templateSupported,
+    },
+  );
   const submissionDisabled =
     !policy.task_home_admission ||
     capacityUnavailable ||
@@ -241,7 +254,7 @@ function TaskHomeContent({
             target?.focus();
             return;
           }
-          const draftRevision = draft.persist();
+          const draftRevision = draft.persist(template);
           if (!draftRevision) return;
           if (!contextual) {
             setCheckingCapacity(true);
@@ -253,7 +266,7 @@ function TaskHomeContent({
           setRecovering(false);
           void lifecycle.submit(
             taskCreateRequest(
-              { ...draft, text: submission.text },
+              { ...draft, template, text: submission.text },
               { workspaceId, sandboxId },
               titleModeSupported,
             ),
@@ -379,7 +392,7 @@ function TaskHomeContent({
                 {recoverTask.label}
               </Button>
             ) : null}
-            {lifecycle.connection ? (
+            {lifecycle.connection && !lifecycle.connection.repository_access ? (
               <Button
                 variant="outline"
                 placement="task-home__action"
@@ -396,6 +409,20 @@ function TaskHomeContent({
                 {continueTask.label}
               </Button>
             ) : null}
+            {lifecycle.canDiscardWaiting ? (
+              <DiscardWaitingCreation
+                key={intent?.key}
+                label="task"
+                onDiscard={() => {
+                  if (!lifecycle.discardWaiting()) return;
+                  connections.cancel();
+                  connections.clearError();
+                  setRecovering(false);
+                  setValidation(undefined);
+                  requestAnimationFrame(() => input.current?.focus());
+                }}
+              />
+            ) : null}
             {failure && intent?.receipt ? (
               <Button
                 variant="outline"
@@ -409,6 +436,14 @@ function TaskHomeContent({
         }
       />
       {connections.dialog}
+      {viewerId && lifecycle.connection?.repository_access ? (
+        <RepositoryConnectionRepair
+          owner={viewerId}
+          target={lifecycle.connection.target}
+          pending={lifecycle.pending || lifecycle.blocked}
+          onRecheck={() => void lifecycle.submit()}
+        />
+      ) : null}
       {quotaFailed ? (
         <p role="alert">
           The Sandbox environment limit is now reached. Your task draft is saved. Manage

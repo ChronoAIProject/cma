@@ -25,6 +25,12 @@ it.each(Object.entries(queuedOutcomeText))(
         onRefresh={refresh}
       />,
     );
+    if (kind === 'cancelled') {
+      const summary = screen.getByText('Cancelled messages (1)');
+      expect(summary.closest('details')).not.toHaveAttribute('open');
+      expect(screen.getByText(text)).not.toBeVisible();
+      fireEvent.click(summary);
+    }
     expect(screen.getByText(text)).toBeVisible();
     expect(screen.getByText('Previously submitted message')).toBeVisible();
     expect(container).not.toHaveTextContent('private-command-id');

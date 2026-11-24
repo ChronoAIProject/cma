@@ -14,7 +14,9 @@ use super::admin::settings::{
     PlatformLimitsBody, PlatformSettingsBody, ProfileReferenceBody, ReplaceRequest, ResetRequest,
     RetentionSettingsBody, SettingsView, TriggerSettingsBody, UsageReportingSettingsBody,
 };
-use super::admin::{ActivityPageView, ActivityView, RuntimeEntryView, RuntimeInventoryView};
+use super::admin::{
+    ActivityActorView, ActivityPageView, ActivityView, RuntimeEntryView, RuntimeInventoryView,
+};
 use super::agent_openapi_shapes::*;
 use super::agent_shared_shapes::*;
 use super::instances_openapi_shapes::{
@@ -144,8 +146,9 @@ use super::trigger_openapi_shapes::*;
         super::profiles_marketplace::read,
         super::profiles_marketplace::fork,
         super::agents::create,
-        super::agents::create_lifecycle,
+        super::agents::lifecycle_creation::create_lifecycle,
         super::agents::read_lifecycle_operation,
+        super::creation_outcomes::routes::lookup,
         super::agents::list,
         super::agents::read,
         super::agent_access_requests::list,
@@ -176,7 +179,7 @@ use super::trigger_openapi_shapes::*;
         super::agent_reads::transcript,
         super::agent_reads::usage,
         super::agent_reads::resources,
-        super::sandboxes::create,
+        super::sandboxes::creation::create,
         super::sandboxes::list,
         super::sandboxes::read,
         super::sandboxes::remove,
@@ -208,6 +211,7 @@ use super::trigger_openapi_shapes::*;
         super::admin::triggers::resume,
         super::admin::runtime_inventory,
         super::admin::activity,
+        super::admin::activity_actors,
         super::admin::warm_pools::list,
         super::admin::warm_pools::configure,
         super::admin::warm_pools::resize,
@@ -386,6 +390,7 @@ use super::trigger_openapi_shapes::*;
         WorkspaceContextView,
         SandboxContextView,
         InstanceProfileReferenceView,
+        SandboxProfileReferenceView,
         FirstMessageStateView,
         AgentListItemView,
         AgentPageView,
@@ -463,6 +468,7 @@ use super::trigger_openapi_shapes::*;
         super::admin::warm_pools::ResizeWarmPoolBody,
         ActivityView,
         ActivityPageView,
+        ActivityActorView,
         super::bindings::PutBindingRequest, super::bindings::BindingTarget, super::bindings::BindingTools, super::bindings::BindingView, super::bindings::BindingRefusal, super::bindings::BindingConversationView, PutGatewayRequest, PutGateway, GatewayRecord, GatewayRecordHead, GatewayRecordPage,
     )),
     tags(

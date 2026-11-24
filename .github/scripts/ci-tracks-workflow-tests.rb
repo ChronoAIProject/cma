@@ -1,6 +1,5 @@
 #!/usr/bin/env ruby
 require 'yaml'
-require 'json'
 require_relative 'ci-track-validation'
 root = File.expand_path('../..', __dir__)
 
@@ -105,6 +104,7 @@ actions = Dir.glob(File.join(root, '.github/actions/**/action.{yml,yaml}')).to_h
   ["./#{File.dirname(file).delete_prefix(root + '/')}", YAML.load_file(file)]
 end
 validate(documents, actions)
+check_repo_secret_gate(root)
 workflows = Dir.glob(File.join(root, '.github/workflows/*.{yml,yaml}')).to_h do |file|
   [File.basename(file, File.extname(file)), YAML.load_file(file)]
 end
@@ -122,6 +122,32 @@ check_merge_group_triggers(workflows)
     next
   end
   abort 'merge-group trigger regression accepted'
+end
+check_flaky_tracker(workflows)
+tracker_job = ->(w) { w[TRACKER]['jobs']['track'] }
+[->(w) { w[TRACKER][true]['pull_request'] = {'branches' => ['develop']} },
+ ->(w) { w[TRACKER][true]['pull_request_target'] = {} },
+ ->(w) { w[TRACKER][true]['workflow_run'] = {'workflows' => ['CI'], 'types' => ['completed']} },
+ ->(w) { w[TRACKER][true]['schedule'][0]['cron'] = '* * * * *' },
+ ->(w) { w[TRACKER]['permissions'] = 'write-all' },
+ ->(w) { w[TRACKER]['concurrency']['cancel-in-progress'] = true },
+ ->(w) { tracker_job.call(w)['permissions']['contents'] = 'write' },
+ ->(w) { tracker_job.call(w)['permissions']['pull-requests'] = 'write' },
+ ->(w) { tracker_job.call(w)['if'] = "github.repository == 'ChronoAIProject/cma'" },
+ ->(w) { tracker_job.call(w)['steps'][0]['with']['ref'] = '${{ github.event.pull_request.head.sha }}' },
+ ->(w) { tracker_job.call(w)['steps'][1]['continue-on-error'] = true },
+ ->(w) { w['ci']['permissions']['issues'] = 'write' },
+ ->(w) { w['ci-rust']['jobs']['mongo-shards']['permissions']['issues'] = 'write' },
+ ->(w) { w['staging-cd']['permissions'] = {'contents' => 'read', 'issues' => 'write'} },
+ ->(w) { w.delete(TRACKER) }].each do |mutate|
+  copy = Marshal.load(Marshal.dump(workflows))
+  mutate.call(copy)
+  begin
+    check_flaky_tracker(copy)
+  rescue RuntimeError, KeyError
+    next
+  end
+  abort 'flaky tracker authority regression accepted'
 end
 check_artifact_downloads(workflows, actions)
 restore_step = ->(a) { a[ARCHIVE_ACTION]['runs']['steps'].find { |s| s['name'] == ARCHIVE_RESTORE['name'] } }
@@ -202,6 +228,8 @@ mutations = [
   ->(d) { steps = d['ci-images']['jobs']['images']['steps']; scan = steps.index { |s| s['name'] == 'Scan tested image as staging publication does' }; steps.insert(steps.index { |s| s['name'] == 'Retain tested native image' } + 1, steps.delete_at(scan)) },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].reject! { |s| s['name'] == 'Install pinned image secret scanner' } },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Scan tested Omarchy image as staging publication does' }['timeout-minutes'] = 120 },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-scan-input' }['if'] = 'success()' },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Export tested Omarchy image' }['run'].sub!('test "$OMARCHY_SCAN_STARTED" = true', 'true') },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].reject! { |s| s['name'] == 'API allocator qualification' } },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'] << d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }.dup },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['continue-on-error'] = true },
@@ -226,7 +254,10 @@ mutations = [
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Vulnerability scan' }['with'].delete('cache') },
   ->(d) { d['ci'][true].delete('push') },
   ->(d) { d['ci'][true]['push']['paths'] = ['web/**'] },
-  ->(d) { d['ci'][true]['pull_request']['branches'].delete('main') },
+  ->(d) { d['ci-pr-repo'][true]['pull_request']['branches'].delete('main') },
+  ->(d) { d['ci'][true]['push']['branches'].delete('tl/release/**') },
+  ->(d) { d['ci'][true]['push']['branches'] << '**' },
+  ->(d) { d['ci']['concurrency']['group'] = 'ci-shared' },
   ->(d) { d['ci']['jobs']['changes']['steps'].last['run'] = 'python3 -B .github/scripts/ci_tracks/selection.py' },
   ->(d) { d['ci']['jobs']['am']['if'] = 'false' },
   ->(d) { d['ci']['jobs']['eg']['if'] = 'false' },
@@ -240,9 +271,14 @@ mutations = [
   ->(d) { d['ci']['jobs']['version-label']['name'] = 'Optional label' },
   ->(d) { d['ci']['jobs']['version-label']['if'] = 'always()' },
   ->(d) { d['ci']['jobs']['version-label']['if'] = 'success()' },
-  ->(d) { d['ci'][true]['pull_request']['types'].delete('labeled') },
-  ->(d) { d['ci'][true]['pull_request']['types'].delete('unlabeled') },
-  ->(d) { d['ci'][true]['pull_request']['paths-ignore'] = ['README.md'] },
+  ->(d) { d['ci-pr-repo']['jobs']['version-label']['if'] = 'always()' },
+  ->(d) { d['ci-pr-repo']['jobs']['version-label']['if'] = 'success()' },
+  ->(d) { d['ci-pr-am'][true]['pull_request']['types'].delete('labeled') },
+  ->(d) { d['ci-pr-eg'][true]['pull_request']['types'].delete('unlabeled') },
+  ->(d) { d['ci-pr-web'][true]['pull_request']['paths-ignore'] = ['README.md'] },
+  ->(d) { d['ci-pr-am']['jobs']['runtime-images']['if'] = "needs.changes.outputs.am == 'true'" },
+  ->(d) { d['ci-pr-eg']['jobs']['gate-eg']['needs'] << 'runtime-images' },
+  ->(d) { d['ci-track-selection']['jobs']['changes']['steps'].last['run'] = 'true' },
   ->(d) { d['ci']['jobs']['gate-repo']['needs'].delete('version-label') },
   ->(d) { d['ci']['jobs']['version-label']['if'] = "needs.changes.outputs.deployables != '[]'" },
   ->(d) { d['ci']['jobs']['version-label']['continue-on-error'] = true },
@@ -277,6 +313,39 @@ mutations = [
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Load native image for scanning' }['with']['build-args'].sub!('${{ steps.os-refresh.outputs.value }}', '${{ github.run_id }}-${{ github.run_attempt }}') },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['id'] == 'os-refresh' }['continue-on-error'] = true },
 ]
+# The merge-queue flaky retry cannot widen: PR or push runs, the isolated
+# shard, a hardcoded count, another job or the nextest environment retrying,
+# a skipped or optional report, a lost record, or a moving expiry all fail.
+flaky_steps = ->(d) { d['ci-rust']['jobs']['mongo-shards']['steps'] }
+flaky_step = ->(d, id) { flaky_steps.call(d).find { |s| s['id'] == id || s['name'] == id } }
+retain_step = 'Retain the flaky test record for the tracking issue'
+[->(d) { flaky_step.call(d, 'flaky-retry')['if'] = "github.event_name != 'push'" },
+ ->(d) { flaky_step.call(d, 'flaky-retry')['if'] = "github.event_name == 'merge_group'" },
+ ->(d) { flaky_step.call(d, 'flaky-retry')['if'] = "github.event_name == 'merge_group' || github.event_name == 'pull_request'" },
+ ->(d) { flaky_step.call(d, 'flaky-retry').delete('if') },
+ ->(d) { flaky_step.call(d, 'flaky-retry')['continue-on-error'] = true },
+ ->(d) { flaky_steps.call(d).delete(flaky_step.call(d, 'flaky-retry')) },
+ ->(d) { flaky_step.call(d, 'contracts')['env']['CMA_MONGO_FLAKY_RETRIES'] = '1' },
+ ->(d) { flaky_step.call(d, 'contracts')['env']['NEXTEST_RETRIES'] = '1' },
+ ->(d) { flaky_step.call(d, 'contracts')['run'] += ' --retries 1' },
+ ->(d) { flaky_step.call(d, 'flaky-report')['if'] = "steps.flaky-retry.outputs.retries == '1'" },
+ ->(d) { flaky_step.call(d, 'flaky-report')['continue-on-error'] = true },
+ ->(d) { flaky_step.call(d, 'flaky-report')['run'] += ' || true' },
+ ->(d) { flaky_steps.call(d).delete(flaky_step.call(d, 'flaky-report')) },
+ ->(d) { flaky_step.call(d, retain_step)['with']['retention-days'] = 90 },
+ ->(d) { flaky_step.call(d, retain_step)['with']['if-no-files-found'] = 'ignore' },
+ ->(d) { flaky_step.call(d, retain_step)['uses'] = 'actions/upload-artifact@v4' },
+ ->(d) { flaky_steps.call(d).delete(flaky_step.call(d, retain_step)) },
+ ->(d) { d['ci-rust']['jobs']['mongo-shards']['env'][FLAKY_UNTIL] = '2026-12-1' },
+ ->(d) { d['ci-rust']['jobs']['mongo-shards']['env'][FLAKY_UNTIL] = '2026-02-30' },
+ ->(d) { d['ci-rust']['jobs']['mongo-shards']['env'].delete(FLAKY_UNTIL) },
+ ->(d) { d['ci-rust']['jobs']['mongo-shards']['permissions']['issues'] = 'write' },
+ ->(d) { d['ci-rust']['jobs']['tests']['env']['NEXTEST_RETRIES'] = '1' },
+ ->(d) { d['ci-rust']['jobs']['tests']['env'][FLAKY_UNTIL] = '2026-12-01' },
+ ->(d) { d['ci-rust']['jobs']['mongo-eg']['steps'].last['run'] += ' --retries 1' },
+ ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['run'] += ' --flaky-result pass' },
+ ->(d) { d['ci']['permissions']['issues'] = 'write' },
+ ->(d) { d['ci-repo']['jobs']['structure']['steps'].find { |s| s['name'] == 'Track selection and workflow regressions' }['run'].sub!(/^.*mongo_flaky_retry_tests.*\n/, '') }].each { |mutate| mutations << mutate }
 synthetic_index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == 'Synthetic authority and observer regressions' }
 restore_index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == 'Synthetic home restore evidence regressions' }
 mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'].delete_at(restore_index) }
@@ -338,6 +407,20 @@ documents['ci-images']['jobs']['images']['steps'].each_with_index do |step, inde
   mutations << ->(d) { d['ci-images']['jobs']['images']['steps'][index]['with'].delete('package-manager-cache') }
   mutations << ->(d) { d['ci-images']['jobs']['images']['steps'][index]['with']['cache'] = 'npm' }
 end
+repo_jobs = ->(d) { d['ci-repo']['jobs'] }
+mutations.concat([
+  ->(d) { repo_jobs.call(d)['secrets']['steps'].first['with']['fetch-depth'] = 1 },
+  ->(d) { repo_jobs.call(d)['secrets']['steps'].pop },
+  ->(d) { repo_jobs.call(d)['scanner-tests'].delete('needs') },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['steps'].first['with'].delete('ref') },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['strategy']['fail-fast'] = true },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['strategy']['matrix']['shard'].pop },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['outputs'].delete('shard_1') },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['steps'].last['continue-on-error'] = true },
+  ->(d) { repo_jobs.call(d)['result'].delete('if') },
+  ->(d) { repo_jobs.call(d)['result']['needs'].delete('scanner-tests') },
+  ->(d) { repo_jobs.call(d)['result']['steps'].last['run'] = 'true' }
+])
 mutations.each do |mutate|
   copy = Marshal.load(Marshal.dump(documents))
   mutate.call(copy)

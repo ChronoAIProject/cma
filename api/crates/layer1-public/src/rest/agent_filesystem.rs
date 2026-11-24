@@ -9,10 +9,10 @@ use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
+    Extension, Json, Router,
 };
 use base64::Engine as _;
-use layer2_core::sandbox::agent_filesystem::{AgentFileError, AgentFileService};
+use layer2_core::sandbox::agent_filesystem::{AgentFileError, AgentFileService, FileWriteTarget};
 use layer2_core::AgentId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -268,6 +268,7 @@ async fn write(
     State(service): State<Arc<AgentFileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     resource: Option<AuthenticatedResourceCaller>,
+    target: Option<Extension<FileWriteTarget>>,
     Path(id): Path<String>,
     body: Result<Json<WriteFileRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<FileMutationView>, FileProblem> {
@@ -288,6 +289,7 @@ async fn write(
             body.expected_sha256,
             body.content_base64,
             body.directory,
+            target.as_deref(),
         )
         .await?;
     Ok(Json(FileMutationView {

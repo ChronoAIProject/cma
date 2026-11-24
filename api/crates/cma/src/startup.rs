@@ -16,7 +16,7 @@ use crate::{
     agent_manager,
     composition::{self, ControlPlaneComposition},
     config::{Config, StartupConfig},
-    read_telemetry,
+    image_manager_retirement, read_telemetry,
     shutdown::{self, signalled, ShutdownCoordinator},
     startup_timing::{observe, Phase},
     telemetry, with_cors, with_request_context,
@@ -46,9 +46,13 @@ pub(crate) async fn serve() -> Result<(), String> {
         |_| None,
     )
     .await?;
-    let app = with_request_context(with_cors(
+    let router = with_cors(
         std::mem::take(&mut composition.router),
         std::mem::take(&mut config.cors_origins),
+    );
+    let app = with_request_context(image_manager_retirement::mount(
+        router,
+        config.features.image_manager_retirement,
     ))
     .layer(axum::Extension(telemetry::http::ContextDiagnosticsEnabled(
         config.features.context_diagnostics,
@@ -191,6 +195,9 @@ fn start_workers(composition: ControlPlaneComposition, shutdown: &mut ShutdownCo
         .sandbox_lifecycle
         .spawn(shutdown, &composition.workers);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
+    if let Some(outcomes) = composition.creation_outcomes {
+        shutdown.push(outcomes.spawn(shutdown.subscribe()));
+    }
     composition.usage.spawn(shutdown);
     composition.usage_metrics.spawn(shutdown);
 }
@@ -251,6 +258,23 @@ async fn serve_after_initialization(
     serving_entry(startup_started);
     let (http_stop, http_signal) = watch::channel(false);
     let mut server = http_server(listener, app, config.http_connection_max_age, http_signal);
+    if config.features.am_failure_containment_enabled {
+        let trigger = async {
+            use agent_manager::DrainCause;
+            match &manager {
+                Some(manager) => tokio::select! {
+                    _ = shutdown::shutdown_signal() => DrainCause::Shutdown,
+                    _ = manager.failed() => DrainCause::OwnershipFailure,
+                },
+                None => {
+                    shutdown::shutdown_signal().await;
+                    DrainCause::Shutdown
+                }
+            }
+        };
+        return shutdown::serve_contained(server, http_stop, trigger, manager.as_deref(), shutdown)
+            .await;
+    }
     let server_result = tokio::select! {
         result = &mut server => http_result(result),
         () = async {

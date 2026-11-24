@@ -230,12 +230,16 @@ fn image_error(error: AgentLifecycleProvisioningError) -> BotError {
         AgentLifecycleProvisioningError::SignInRequired => {
             BotError::Invalid("sign in again to authorize the selected image".into())
         }
+        AgentLifecycleProvisioningError::ImageSelectionUnsupported => {
+            BotError::ImageSelectionUnsupported
+        }
         AgentLifecycleProvisioningError::Invalid(error)
         | AgentLifecycleProvisioningError::DesktopUnsupported(error)
         | AgentLifecycleProvisioningError::Conflict(error) => BotError::Invalid(error),
         AgentLifecycleProvisioningError::SandboxLimitReached { .. }
         | AgentLifecycleProvisioningError::AdmissionPaused
         | AgentLifecycleProvisioningError::ConnectionRequired { .. }
+        | AgentLifecycleProvisioningError::RepositoryAccessRequired { .. }
         | AgentLifecycleProvisioningError::Unavailable => BotError::Unavailable,
     }
 }

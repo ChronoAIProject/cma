@@ -1,4 +1,5 @@
 use super::{Census, Member, Request, Result, Row, INVALID, MAX_SOURCE};
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     agents::read_agent, sandboxes::read_sandbox, workspaces::read_workspace,
     worktrees::read_worktree,
@@ -24,7 +25,7 @@ pub(in crate::store) async fn observe(
         .map_err(|_| INVALID)?;
     let result = read(database, request, request_sha256, &mut session).await;
     // Success never commits. A failed/unknown read never publishes a partial census.
-    session.abort_transaction().await.map_err(|_| INVALID)?;
+    session.abort_guarded().await.map_err(|_| INVALID)?;
     result
 }
 

@@ -12,6 +12,9 @@ pub(super) enum Policy {
     Empty,
 }
 use Policy::*;
+// Detached receipts have no Sandbox ownership or read grant. The schema
+// authority inventories them, but there is no receipt entry in a Sandbox manifest.
+pub(super) const OUTSIDE_MANIFEST: &[&str] = &[super::super::retained_consents::COLLECTION];
 pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("account_deletions", Independent),
     ("account_deletion_events", Independent),
@@ -157,6 +160,7 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("resource_share_commands", Sandbox(&["sandbox_id"])),
     ("resource_shares", Sandbox(&["sandbox_id"])),
     ("sandbox_admissions", Independent),
+    (super::super::creation_outcomes::COLLECTION, Independent),
     ("sandbox_billing_state", Sandbox(&["_id"])),
     ("sandbox_colors", Empty),
     ("sandbox_controls", Sandbox(&["sandbox_id"])),

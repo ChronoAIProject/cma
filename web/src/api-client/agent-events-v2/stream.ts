@@ -22,6 +22,7 @@ export async function* agentFrames(
   signal: AbortSignal,
   agentId: string,
   after?: V2AgentCursor,
+  externalApprovals = false,
 ): AsyncGenerator<V2AgentStreamFrame> {
   if (response.body === null) throw new ProtocolError('Agent stream carried no body');
   let sequence = after === undefined ? 0 : cursorSequence(after);
@@ -37,7 +38,7 @@ export async function* agentFrames(
     let frame: V2AgentStreamFrame;
     switch (message.event) {
       case 'cma.agent.event': {
-        const data = v2AgentEvent(value);
+        const data = v2AgentEvent(value, externalApprovals);
         if (message.id !== data.cursor)
           throw new ProtocolError('Agent durable frame has no matching explicit cursor');
         validateItem(data, incarnation ?? data.incarnation, sequence + 1);

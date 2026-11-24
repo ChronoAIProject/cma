@@ -12,6 +12,7 @@ QUEUE_REF = re.compile(r'refs/heads/gh-readonly-queue/develop/pr-([1-9][0-9]*)-[
 # release gate proves a release branch's head is on develop's first-parent
 # history; this only admits the name.
 RELEASE_BRANCH = re.compile(r'release/[0-9A-Za-z][0-9A-Za-z._-]{0,62}')
+CANDIDATE_REF_PREFIX = 'refs/heads/tl/release/'
 
 
 def release_head(ref):
@@ -47,8 +48,11 @@ def full_ci_required(event, event_name, repository):
     if event['repository']['full_name'] != repository:
         raise ValueError('event repository differs')
     if event_name == 'push':
-        if event['ref'] != 'refs/heads/develop' or event['deleted'] is not False:
-            raise ValueError('CI push must update develop')
+        ref = event['ref']
+        candidate = (isinstance(ref, str) and ref.startswith(CANDIDATE_REF_PREFIX)
+                     and len(ref) > len(CANDIDATE_REF_PREFIX))
+        if (ref != 'refs/heads/develop' and not candidate) or event['deleted'] is not False:
+            raise ValueError('CI push must update develop or an isolated release candidate')
         check_sha(event['before'])
         if check_sha(event['after']) == '0' * 40:
             raise ValueError('CI push requires a live commit')

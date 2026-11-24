@@ -1,6 +1,95 @@
 use super::*;
 
 impl ProviderHostedControlTransport {
+    /// Read the negotiated policy on the same native Pod and boot that supplied
+    /// the ordinary runtime status. A valid legacy reply supplies no policy.
+    pub async fn observe_native_startup_policy(
+        &self,
+        handle: &RuntimeHandle,
+        pod: &crate::agent_sandbox::PodBinding,
+        request: &crate::RuntimeStatusRequest,
+        boot_id: &str,
+    ) -> crate::Result<Option<crate::RuntimeStartupPolicyObservation>> {
+        request.validate()?;
+        let RuntimeDiscovery::AgentSandbox(client) = &self.client else {
+            return Err(AdapterError::Unsupported(
+                "startup policy requires a native Sandbox".into(),
+            ));
+        };
+        let endpoint = self
+            .endpoint(handle)
+            .await?
+            .with_accept(crate::RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE);
+        let Some((_, endpoint_pod)) = endpoint.native_binding() else {
+            return Err(AdapterError::Unsupported(
+                "startup policy requires a fenced native control stream".into(),
+            ));
+        };
+        if endpoint_pod != pod
+            || pod
+                .runtime_container_id
+                .as_deref()
+                .is_none_or(str::is_empty)
+            || endpoint
+                .native_identity()
+                .and_then(|identity| identity.sandbox_id.as_deref())
+                != Some(request.sandbox_id.as_str())
+        {
+            return Err(AdapterError::Rejected(
+                "startup policy target differs from the observed runtime container".into(),
+            ));
+        }
+        let exchange = async {
+            let _receiver = self.receiver_lease(&endpoint).await?;
+            let frame = RequestFrame::RuntimeStatus(request.clone());
+            let body = serde_json::to_vec(&frame).map_err(|_| {
+                AdapterError::Rejected("runtime status request could not be encoded".into())
+            })?;
+            let response = self
+                .native_http(
+                    &endpoint,
+                    http::Method::POST,
+                    endpoint.control()?,
+                    body,
+                    crate::runtime_startup_policy::MAX_RUNTIME_STARTUP_POLICY_STATUS_BYTES,
+                )
+                .await?;
+            if !response.status.is_success() {
+                return Err(AdapterError::Unavailable(
+                    "startup policy status request was refused".into(),
+                ));
+            }
+            let policy = crate::RuntimeStartupPolicyObservation::decode(&response.bytes, request)?;
+            let negotiated = response
+                .content_type
+                .as_ref()
+                .and_then(|value| value.to_str().ok())
+                == Some(crate::RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE);
+            if negotiated != policy.is_some() {
+                return Err(AdapterError::Rejected(
+                    "startup policy status did not match its negotiated media type".into(),
+                ));
+            }
+            if policy
+                .as_ref()
+                .is_some_and(|observation| observation.runtime.boot_id != boot_id)
+                || client.pod_binding(handle).await? != *pod
+            {
+                return Err(AdapterError::Rejected(
+                    "runtime container or boot changed during startup policy observation".into(),
+                ));
+            }
+            if let Some(authority) = crate::owner_protocol::current_authority() {
+                authority.check().await?;
+            }
+            response.recycle().await?;
+            Ok(policy)
+        };
+        tokio::time::timeout(CONTROL_DEADLINE, exchange)
+            .await
+            .map_err(|_| AdapterError::Unavailable("startup policy status timed out".into()))?
+    }
+
     pub fn with_native_close_agent_lane(mut self, enabled: bool) -> Self {
         self.native_close_agent_lane = enabled;
         self
@@ -79,10 +168,12 @@ impl ProviderHostedControlTransport {
                     .header(
                         reqwest::header::ACCEPT,
                         format!(
-                            "{}, {}, {}",
+                            "{}, {}, {}, {}, {}",
                             crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
                             crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
+                            crate::wire::AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE,
                             crate::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
+                            crate::wire::GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE,
                         ),
                     )
                     .json(request);
@@ -198,6 +289,7 @@ fn request_capacity_class(request: &RequestFrame) -> RuntimeWorkloadClass {
         | RequestFrame::CheckpointForTeardown(_)
         | RequestFrame::ResumeCheckpointWriters(_)
         | RequestFrame::Restore(_)
-        | RequestFrame::Credential(_) => RuntimeWorkloadClass::Control,
+        | RequestFrame::Credential(_)
+        | RequestFrame::CredentialForReceiver { .. } => RuntimeWorkloadClass::Control,
     }
 }

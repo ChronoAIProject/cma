@@ -55,6 +55,8 @@ mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
 pub(crate) mod stale_turns;
+pub(crate) mod transaction_barrier;
+pub(crate) mod turn_timeouts;
 #[cfg(test)]
 pub(crate) use agent_worker_transaction::adoption_probe;
 #[cfg(test)]
@@ -82,6 +84,7 @@ mod child_writer_claims;
 mod codex_subscriptions;
 mod contention;
 mod cooperative_budget;
+pub(crate) mod creation_outcomes;
 mod default_profiles;
 pub mod directory;
 mod durability;
@@ -92,8 +95,10 @@ pub(crate) mod legal_consents;
 mod media_uploads;
 pub(crate) mod provenance_progress;
 pub(crate) mod registration_capacity;
+mod retained_consents;
 mod segment_response;
 mod transaction_scope;
+pub(crate) mod transaction_terminal;
 pub(crate) use segment_response::emit as emit_response_reads;
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.
@@ -225,11 +230,12 @@ pub use admission_control::MongoAdmissionControlStore;
 #[cfg(test)]
 pub(crate) use agent_access_tools::fixtures as agent_access_fixtures;
 pub(crate) use agent_access_tools::MongoAgentAccessToolSource;
+pub(crate) use agent_lifecycle_operations::canary_key;
 #[cfg(test)]
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
-    CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput, LifecycleLease,
-    MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
+    CanaryProfiles, CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput,
+    LifecycleLease, MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
 };
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};
@@ -243,6 +249,9 @@ pub use mongo::MongoStores;
 pub use operation::MongoOperationStore;
 pub use registration_capacity::MongoRegistrationCapacityStore;
 pub(crate) use sandbox_credentials::MongoSandboxCredentialStore;
+pub(crate) use sandbox_mongo::{
+    commit_transaction, is_confirmed_body_retry, is_duplicate_key, start_transaction, CommitOutcome,
+};
 pub use sandbox_mongo::{MongoProfileStore, MongoSandboxStore};
 pub use settings::MongoPlatformSettingsStore;
 pub use trigger_definitions::MongoTriggerDefinitionStore;

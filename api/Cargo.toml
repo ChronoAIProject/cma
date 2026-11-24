@@ -6,11 +6,17 @@ members = [
     "crates/layer3-adapter",
     "crates/layer4-runtime",
     "crates/cma",
+    "crates/cma-am-auth",
+    "crates/cma-am-mongo-primitives",
     "crates/cmaeg-core",
+    "crates/cmaeg-engine",
+    "crates/cmaeg-execution",
+    "crates/cmaeg-http",
     "crates/cmaeg",
     "crates/cma-image-manager",
     "crates/cma-service-auth",
     "crates/cma-allocator-qualification",
+    "crates/cma-journey-probe",
 ]
 
 [workspace.package]

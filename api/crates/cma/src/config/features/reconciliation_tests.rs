@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn sandbox_profile_readability_and_binding_hold_metrics_are_independent_opt_ins() {
+    const READABILITY: &str = "CHRONO_SANDBOX_PROFILE_READABILITY_ENABLED";
+    const HOLD_METRICS: &str = "CHRONO_SANDBOX_BINDING_HOLD_METRICS_ENABLED";
+    for selected in [None, Some(READABILITY), Some(HOLD_METRICS)] {
+        let flags =
+            FeatureFlags::from_lookup(
+                &mut |key| Ok((Some(key) == selected).then(|| "true".into())),
+            )
+            .unwrap();
+        assert_eq!(
+            flags.sandbox_profile_readability,
+            selected == Some(READABILITY)
+        );
+        assert_eq!(
+            flags.sandbox_binding_hold_metrics,
+            selected == Some(HOLD_METRICS)
+        );
+    }
+    for key in [READABILITY, HOLD_METRICS] {
+        assert!(FeatureFlags::from_lookup(&mut |lookup| {
+            Ok((lookup == key).then(|| "1".into()))
+        })
+        .is_err());
+    }
+}
+
+#[test]
 fn batch_ownership_renewal_is_strict_and_default_off() {
     const KEY: &str = "CHRONO_AM_BATCH_OWNERSHIP_RENEWAL";
     for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
@@ -113,6 +140,20 @@ fn agent_reconciliation_continuation_is_independent_and_default_off() {
     assert!(
         FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "1".to_owned()))).is_err()
     );
+}
+
+#[test]
+fn command_cancel_wake_is_strict_and_default_off() {
+    const KEY: &str = "CHRONO_COMMAND_CANCEL_WAKE_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.command_cancel_wake, expected);
+        assert!(flags.command_reconcile_pacing);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "1".into()))).is_err());
 }
 
 #[test]

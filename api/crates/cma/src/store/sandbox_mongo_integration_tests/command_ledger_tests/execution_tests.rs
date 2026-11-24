@@ -41,6 +41,7 @@ mod bounded_fixtures;
 mod bounded_message_tests;
 mod bounded_read_proof_tests;
 mod bounded_receipt_tests;
+mod cancel_wake_tests;
 mod fleet_activation_tests;
 mod legacy_session_ceilings_tests;
 mod operator_stop_execution_tests;
@@ -48,6 +49,7 @@ mod ownership_tests;
 mod session_ceilings_tests;
 mod stale_turn_tests;
 mod supervision_tests;
+mod turn_timeout_tests;
 
 struct Authority(Mutex<Result<Caller, CommandAuthorizationError>>);
 #[async_trait::async_trait]
