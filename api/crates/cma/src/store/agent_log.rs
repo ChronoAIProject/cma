@@ -74,6 +74,9 @@ pub(in crate::store) async fn append_in_transaction(
         .map_err(SandboxStoreError::Corrupt)
         .map_err(TransactionLogError::Domain)?;
     let agent = read_agent(&aggregate).map_err(TransactionLogError::Domain)?;
+    // Low-level legacy appends support retained Agents without a parent row.
+    // When the parent exists, ordinary appends contend with its maintenance write.
+    super::work_publication::agent::fence_parent(store, &agent, session).await?;
     let previous = agent.conversation.last_seq;
     let (complete, semantic) = match trusted_summary(
         store,
