@@ -102,7 +102,9 @@ struct CommandTrace {
 
 mod common_fixtures;
 use common_fixtures::*;
-pub(super) use common_fixtures::{encryption_key, ready_conversation_fixture, ready_workspace, sandbox};
+pub(super) use common_fixtures::{
+    encryption_key, ready_conversation_fixture, ready_workspace, sandbox,
+};
 
 mod agent_capacity_recovery_tests;
 mod agent_log_read_tests;
