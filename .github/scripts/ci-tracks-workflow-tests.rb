@@ -422,7 +422,7 @@ def validate(documents, actions)
   check_merge_group_artifacts(documents)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
-  require_check(events.keys.sort == %w[merge_group pull_request push], 'CI must cover PRs, develop pushes and merge groups')
+  require_check(events.keys.sort == %w[merge_group push], 'post-merge CI must cover develop pushes and retained merge-group events')
   require_check(events['push'] == {'branches' => ['develop']}, 'CI push must cover develop without path filters')
   # Without a branch or path filter every queue entry creates the required
   # checks; a non-develop queue is refused by the selector, not left pending.
@@ -440,10 +440,6 @@ def validate(documents, actions)
   require_check(ci['concurrency'] == {'group' => 'ci-${{ github.workflow }}-${{ github.ref }}',
     'cancel-in-progress' => "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"},
     'CI concurrency must remain per ref and keep develop cache writers running')
-  pr = events.fetch('pull_request')
-  require_check(pr.fetch('branches') == %w[develop main], 'CI target differs')
-  require_check(pr.fetch('types').sort == %w[opened reopened synchronize edited labeled unlabeled].sort, 'label event coverage differs')
-  require_check(!pr.key?('paths') && !pr.key?('paths-ignore'), 'required checks must always be created')
   jobs = ci.fetch('jobs')
   require_check(jobs.keys.none? { |key| key.start_with?('trigger-') }, 'Trigger job retained')
   required = {
@@ -458,6 +454,42 @@ def validate(documents, actions)
     require_check(job.fetch('needs').sort == dependencies.sort, 'gate dependency omitted')
     require_check(job.fetch('steps').any? { |step| step.fetch('run', '').include?('ci_tracks/gate.py') }, 'gate validator missing')
   end
+  %w[repo am eg web].each_with_index do |track, index|
+    workflow = documents.fetch("ci-pr-#{track}")
+    events = workflow.fetch('on', workflow[true])
+    pr = events.fetch('pull_request')
+    require_check(events.keys == ['pull_request'] && pr.keys.sort == %w[branches types],
+      'PR product workflows must run without path or extra event filters')
+    require_check(pr.fetch('branches') == %w[develop main], 'CI target differs')
+    require_check(pr.fetch('types').sort == %w[opened reopened synchronize edited labeled unlabeled].sort,
+      'label event coverage differs')
+    number = index + 1
+    track_jobs = workflow.fetch('jobs')
+    gate_key = "gate-#{track}"
+    check_name, prerequisites = required.fetch(gate_key)
+    prerequisites -= %w[runtime-images omarchy] if track == 'eg'
+    selector = track_jobs.fetch('changes')
+    require_check(track_jobs.keys.first == 'changes' && selector['name'] == "#{number}.1 Select changes" &&
+      selector['uses'] == './.github/workflows/ci-track-selection.yml', 'each workflow selects before validating')
+    require_check(track_jobs.keys.sort == (prerequisites + [gate_key]).sort, 'product validation task missing or duplicated')
+    gate = track_jobs.fetch(gate_key)
+    require_check(gate['name'] == check_name && gate['if'] == 'always()' && gate['needs'].sort == prerequisites.sort &&
+      gate.fetch('steps').last.fetch('run') == "python3 -B .github/scripts/ci_tracks/gate.py #{track} --split",
+      'product result must use its original required context and check every prerequisite')
+    if %w[am eg].include?(track)
+      require_check(track_jobs.fetch('rust-test-build')['if'] == "needs.changes.outputs.#{track} == 'true'",
+        'each Rust product archive must be built in its own selected workflow')
+    end
+    if track == 'am'
+      %w[runtime-images omarchy].each do |key|
+        require_check(track_jobs.fetch(key).fetch('if') == "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'",
+          'Agent Manager must validate runtime images for changes to either Rust product')
+      end
+    end
+  end
+  select_workflow = documents.fetch('ci-track-selection')
+  require_check(select_workflow.fetch('jobs').fetch('changes') == jobs.fetch('changes'),
+    'pull requests and post-merge CI must use identical selection')
   version = jobs.fetch('version-label')
   require_check(version.fetch('name') == 'CI / Version label' && version.fetch('if') == 'always()', 'version gate missing')
   require_check(version.fetch('needs') == ['changes'], 'version must use selector')
@@ -856,7 +888,7 @@ mutations = [
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Vulnerability scan' }['with'].delete('cache') },
   ->(d) { d['ci'][true].delete('push') },
   ->(d) { d['ci'][true]['push']['paths'] = ['web/**'] },
-  ->(d) { d['ci'][true]['pull_request']['branches'].delete('main') },
+  ->(d) { d['ci-pr-repo'][true]['pull_request']['branches'].delete('main') },
   ->(d) { d['ci']['jobs']['changes']['steps'].last['run'] = 'python3 -B .github/scripts/ci_tracks/selection.py' },
   ->(d) { d['ci']['jobs']['am']['if'] = 'false' },
   ->(d) { d['ci']['jobs']['eg']['if'] = 'false' },
@@ -868,9 +900,12 @@ mutations = [
   ->(d) { d['ci']['jobs']['gate-eg']['needs'].delete('runtime-images') },
   ->(d) { d['ci']['jobs']['gate-am']['if'] = 'success()' },
   ->(d) { d['ci']['jobs']['version-label']['name'] = 'Optional label' },
-  ->(d) { d['ci'][true]['pull_request']['types'].delete('labeled') },
-  ->(d) { d['ci'][true]['pull_request']['types'].delete('unlabeled') },
-  ->(d) { d['ci'][true]['pull_request']['paths-ignore'] = ['README.md'] },
+  ->(d) { d['ci-pr-am'][true]['pull_request']['types'].delete('labeled') },
+  ->(d) { d['ci-pr-eg'][true]['pull_request']['types'].delete('unlabeled') },
+  ->(d) { d['ci-pr-web'][true]['pull_request']['paths-ignore'] = ['README.md'] },
+  ->(d) { d['ci-pr-am']['jobs']['runtime-images']['if'] = "needs.changes.outputs.am == 'true'" },
+  ->(d) { d['ci-pr-eg']['jobs']['gate-eg']['needs'] << 'runtime-images' },
+  ->(d) { d['ci-track-selection']['jobs']['changes']['steps'].last['run'] = 'true' },
   ->(d) { d['ci']['jobs']['gate-repo']['needs'].delete('version-label') },
   ->(d) { d['ci']['jobs']['version-label']['if'] = "needs.changes.outputs.deployables != '[]'" },
   ->(d) { d['ci']['jobs']['version-label']['continue-on-error'] = true },
