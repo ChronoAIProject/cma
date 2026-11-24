@@ -234,3 +234,26 @@ it('resets the open aggregate when the viewer changes without reading or submitt
   expect(source.readAgent).not.toHaveBeenCalled();
   expect(source.deleteAgent).not.toHaveBeenCalled();
 });
+
+it('withdraws the aggregate status list while current access is uncertain', () => {
+  persistDeletion('owner', {
+    key: 'synthetic-access-gated-request',
+    accepted: true,
+    action: { kind: 'delete_agent', agentId: 'task' },
+  });
+  const source = agentClient({ readAgent: vi.fn(), deleteAgent: vi.fn() });
+  function Notice({ enabled }: { readonly enabled: boolean }) {
+    return useResourceActions(source, vi.fn(), undefined, 'owner', undefined, enabled).notice;
+  }
+  const view = render(<Notice enabled />);
+  fireEvent.click(screen.getByRole('button', { name: 'View status' }));
+  expect(screen.getByRole('dialog', { name: 'Deletion progress' })).toBeVisible();
+  view.rerender(<Notice enabled={false} />);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  const open = screen.getByRole('button', { name: 'View status' });
+  expect(open).toBeDisabled();
+  fireEvent.click(open);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(source.readAgent).not.toHaveBeenCalled();
+  expect(source.deleteAgent).not.toHaveBeenCalled();
+});

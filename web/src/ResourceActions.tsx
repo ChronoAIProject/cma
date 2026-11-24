@@ -254,7 +254,7 @@ export function useResourceActions(
           <DeletionNotice
             key={viewerId}
             requests={deletionRequests}
-            disabled={pending || deletion !== undefined || stopping !== undefined}
+            disabled={!enabled || pending || deletion !== undefined || stopping !== undefined}
             onViewStatus={reopenDeletion}
           />
         ) : null}
