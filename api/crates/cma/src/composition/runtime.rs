@@ -3,6 +3,15 @@ use std::sync::Arc;
 
 use crate::{config::Config, store::MongoStores, warm_pools::NativeWarmPools};
 
+pub(super) fn image_manager_resolver(
+    config: &Config,
+) -> Result<Arc<crate::agent_lifecycle::ImageManagerResolver>, String> {
+    crate::agent_lifecycle::ImageManagerResolver::new(
+        config.image_manager_base_url.clone(),
+        config.features.image_manager_retirement,
+    )
+}
+
 pub(super) fn worker_observations(
     config: &Config,
     stores: &MongoStores,
