@@ -73,6 +73,13 @@ pub(in crate::store) async fn start_transaction(session: &mut ClientSession) -> 
         .read_concern(ReadConcern::snapshot())
         .write_concern(WriteConcern::majority())
         .await?;
+    // Read before the work-publication fence's Sandbox or Workspace write.
+    if let Err(error) = crate::store::transaction_barrier::open(session).await {
+        if let Err(abort) = session.abort_transaction().await {
+            tracing::warn!(error = %abort, "ordinary work transaction abort was not acknowledged");
+        }
+        return Err(error);
+    }
     if let Err(error) = crate::store::work_publication::fence_current(session).await {
         if let Err(abort) = session.abort_transaction().await {
             tracing::warn!(error = %abort, "ordinary work transaction abort was not acknowledged");

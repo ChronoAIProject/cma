@@ -43,18 +43,20 @@ export function DeletionReference({ request }: { readonly request: DeletionReque
 export function DeletionStatusPanel({
   request,
   observation,
+  completedInBackground = false,
   sending,
   readError,
   commandError,
 }: {
   readonly request: DeletionRequest;
   readonly observation?: DeletionObservation;
+  readonly completedInBackground?: boolean;
   readonly sending: boolean;
   readonly readError?: string;
   readonly commandError?: string;
 }) {
   const target = deletionTarget(request.action);
-  const complete = observation?.complete === true;
+  const complete = observation?.complete === true || completedInBackground;
   const unknownDelete = !request.accepted && deleteMayHaveBeenSent(request);
   const blocked = request.stop?.phase === 'blocked' && !request.accepted;
   const stopping =
@@ -138,19 +140,21 @@ export function DeletionStatusPanel({
           </time>
         </p>
       ) : null}
-      {observation?.failure === undefined ? null : (
+      {completedInBackground || observation?.failure === undefined ? null : (
         <p role="alert">
           Cleanup reported: {observation.failure.detail}. Deletion is not complete.
         </p>
       )}
-      {commandError === undefined || (blocked && commandError === stoppedProofMissing) ? null : (
+      {completedInBackground ||
+      commandError === undefined ||
+      (blocked && commandError === stoppedProofMissing) ? null : (
         <p role="alert">{commandError}</p>
       )}
-      {readError === undefined ? null : <p role="alert">{readError}</p>}
+      {completedInBackground || readError === undefined ? null : <p role="alert">{readError}</p>}
       <DeletionReference key={request.key} request={request} />
       <details className="deletion-status__details">
         <summary>Cleanup progress</summary>
-        {observation === undefined ? null : (
+        {completedInBackground || observation === undefined ? null : (
           <ProvisioningProgress title="Deletion progress" steps={observation.steps} />
         )}
         <LiveActivity
