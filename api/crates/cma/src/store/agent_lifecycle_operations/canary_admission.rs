@@ -53,12 +53,9 @@ impl CanaryProfiles {
                 .map_err(|_| invalid_authority())
         };
         Ok(Self {
-            agent: AgentProfileRef::new(AgentProfileId::new(profile_id("agent")?), 1),
-            workspace: WorkspaceProfileRef::new(
-                WorkspaceProfileId::new(profile_id("workspace")?),
-                1,
-            ),
-            sandbox: SandboxProfileRef::new(SandboxProfileId::new(profile_id("sandbox")?), 1),
+            agent: AgentProfileRef::new(AgentProfileId(profile_id("agent")?), 1),
+            workspace: WorkspaceProfileRef::new(WorkspaceProfileId(profile_id("workspace")?), 1),
+            sandbox: SandboxProfileRef::new(SandboxProfileId(profile_id("sandbox")?), 1),
         })
     }
 }
