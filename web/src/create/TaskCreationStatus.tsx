@@ -3,6 +3,7 @@ import type { AgentLifecycleOperationView } from '../api/client';
 import type { Intent } from './lifecycleIntentStorage';
 import { DocsLink } from '../services/DocsLink';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
+import { DiscardWaitingCreation } from './DiscardWaitingCreation';
 import { PreparationView } from '../preparation/PreparationView';
 import { derivePreparationView } from '../preparation/preparationPresentation';
 
@@ -15,12 +16,15 @@ export function TaskCreationStatus({
   recovery,
   draft,
   titleId,
+  hasFollowUp,
+  onDiscardWaiting,
 }: {
   readonly intent?: Intent;
   readonly operation?: AgentLifecycleOperationView;
   readonly failure?: string;
   readonly pending: boolean;
-  readonly preparing?: boolean;
+  readonly hasFollowUp?: boolean;
+  readonly onDiscardWaiting?: () => void;
   readonly resolvedCommit?: string;
   readonly recovery?: ReactNode;
   readonly draft?: ReactNode;
@@ -40,6 +44,15 @@ export function TaskCreationStatus({
       actions={
         <>
           {recovery}
+          {onDiscardWaiting ? (
+            hasFollowUp ? (
+              <p role="status">
+                Keep or copy your follow-up draft, then clear it to discard this task.
+              </p>
+            ) : (
+              <DiscardWaitingCreation key={intent.key} label="task" onDiscard={onDiscardWaiting} />
+            )
+          ) : null}
           {!intent.receipt && !pending ? (
             <DocsLink view="recover-and-continue">Help recovering this request</DocsLink>
           ) : null}

@@ -244,6 +244,9 @@ pub trait HostedBackend: Send + Sync {
             "provider suspension observation is unavailable".into(),
         ))
     }
+    fn retained_startup_policy(&self) -> Option<&dyn super::HostedRetainedStartupPolicy> {
+        None
+    }
     async fn resume(
         &self,
         _handle: &RuntimeHandle,

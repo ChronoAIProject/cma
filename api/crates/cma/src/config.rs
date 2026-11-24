@@ -437,7 +437,7 @@ use validation::{
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-pub(crate) use tests::desktop_canary_config;
+pub(crate) use tests::{desktop_canary_config, retained_runtime_config};
 
 #[cfg(test)]
 mod graduation_tests;

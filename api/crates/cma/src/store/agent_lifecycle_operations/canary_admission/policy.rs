@@ -5,6 +5,7 @@ use crate::store::account_deletions;
 use mongodb::{bson::Document, ClientSession};
 
 const POLICY_ID: &str = "runtime_canary_policy_v1";
+const RETAINED_POLICY_ID: &str = "retained_runtime_canary_policy_v1";
 const OWNER_SLOTS: &str = "runtime_canary_slots";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,11 +86,48 @@ pub(super) async fn fence_policy(
     owner_scope_sha256: &str,
     session: &mut ClientSession,
 ) -> Result<(), CanaryWriteError> {
+    fence_policy_record(
+        database,
+        POLICY_ID,
+        revision,
+        catalog_sha256,
+        owner_scope_sha256,
+        session,
+    )
+    .await
+}
+
+pub(in crate::store) async fn fence_retained_policy(
+    database: &Database,
+    revision: i64,
+    catalog_sha256: &str,
+    owner_scope_sha256: &str,
+    session: &mut ClientSession,
+) -> Result<(), CanaryWriteError> {
+    fence_policy_record(
+        database,
+        RETAINED_POLICY_ID,
+        revision,
+        catalog_sha256,
+        owner_scope_sha256,
+        session,
+    )
+    .await
+}
+
+async fn fence_policy_record(
+    database: &Database,
+    policy_id: &str,
+    revision: i64,
+    catalog_sha256: &str,
+    owner_scope_sha256: &str,
+    session: &mut ClientSession,
+) -> Result<(), CanaryWriteError> {
     let policies = database.collection::<CanaryPolicy>(crate::store::settings::SETTINGS);
     let updated = policies
         .update_one(
             doc! {
-                "_id": POLICY_ID,
+                "_id": policy_id,
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "revision": revision,
                 "open": true,
@@ -204,6 +242,43 @@ impl CanaryPolicy {
         catalog_sha256: String,
         owner_scope_sha256: String,
     ) -> Result<i64, CanaryWriteError> {
+        Self::configure_record(
+            database,
+            POLICY_ID,
+            expected_revision,
+            open,
+            catalog_sha256,
+            owner_scope_sha256,
+        )
+        .await
+    }
+
+    pub(crate) async fn configure_retained(
+        database: &Database,
+        expected_revision: i64,
+        open: bool,
+        catalog_sha256: String,
+        owner_scope_sha256: String,
+    ) -> Result<i64, CanaryWriteError> {
+        Self::configure_record(
+            database,
+            RETAINED_POLICY_ID,
+            expected_revision,
+            open,
+            catalog_sha256,
+            owner_scope_sha256,
+        )
+        .await
+    }
+
+    async fn configure_record(
+        database: &Database,
+        policy_id: &str,
+        expected_revision: i64,
+        open: bool,
+        catalog_sha256: String,
+        owner_scope_sha256: String,
+    ) -> Result<i64, CanaryWriteError> {
         if expected_revision < 0
             || !canonical_sha256(&catalog_sha256)
             || !canonical_sha256(&owner_scope_sha256)
@@ -215,7 +290,7 @@ impl CanaryPolicy {
             majority_collection::<CanaryPolicy>(database, crate::store::settings::SETTINGS);
         if expected_revision == 0 {
             let policy = CanaryPolicy {
-                id: POLICY_ID.into(),
+                id: policy_id.into(),
                 document_schema_version: DOCUMENT_SCHEMA_VERSION,
                 revision,
                 open,
@@ -232,7 +307,7 @@ impl CanaryPolicy {
         let updated = collection
             .update_one(
                 doc! {
-                    "_id": POLICY_ID,
+                    "_id": policy_id,
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "revision": expected_revision,
                 },
