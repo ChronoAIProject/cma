@@ -13,6 +13,7 @@ export default defineConfig({
   testMatch: [
     'account-usage.check.ts',
     'operations-usage.check.ts',
+    'binding-holds.check.ts',
     'usage-settings.check.ts',
     'usage-redesign.check.ts',
     'usage-coverage.check.ts',

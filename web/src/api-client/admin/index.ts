@@ -13,6 +13,8 @@ import {
 } from './warm-pools.js';
 export type * from './warm-pools.js';
 import type { ResolvedConfig } from '../config.js';
+import { bindingHoldOverview } from './binding-holds.js';
+export type * from './binding-holds.js';
 import { platformSpend, spendObservationRequest, type SpendObservationRequest } from './spend.js';
 import {
   admissionCeilingsState,
@@ -143,6 +145,13 @@ function bound(options: { readonly limit?: number; readonly cursor?: string }) {
 /** Public operator endpoints. Settings writes use revision CAS; no command is automatically retried. */
 export class Administration {
   constructor(readonly config: ResolvedConfig) {}
+
+  bindingHolds(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/runtime-binding-holds', bindingHoldOverview, {
+      ...options,
+      cache: 'no-store',
+    });
+  }
 
   listWarmPools(options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/warm-pools', warmPoolList, options);
