@@ -234,18 +234,7 @@ impl Fixture {
             .issue_browser_login(SubjectId::new("owner"))
             .await
             .unwrap();
-        let router = router(
-            auth.clone(),
-            Some(&crate::config::GatewayConfig {
-                binding_preparation_enabled: false,
-                conversation_reset_enabled: false,
-                base_url: gateway,
-                public_url: "https://gateway.example".into(),
-                public_api_url: "https://gateway.example".into(),
-                public_api_aliases: vec![],
-            }),
-        )
-        .unwrap();
+        let router = router(auth.clone(), Some(&gateway)).unwrap();
         Self {
             auth,
             store,
