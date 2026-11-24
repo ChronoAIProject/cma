@@ -23,6 +23,7 @@ export interface ConversationMessage {
   };
   /** Exact durable Responses command that owns this message, when available. */
   readonly commandId?: string;
+  readonly responseId?: string;
 }
 
 export interface ToolCall {
