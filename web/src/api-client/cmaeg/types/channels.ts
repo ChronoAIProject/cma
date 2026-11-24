@@ -120,6 +120,7 @@ const TelegramSourceSchema = object({
   topic_creation: optional(boolean),
   message_events: optional(boolean),
   channel_posts: optional(boolean),
+  member_join_chat_ids: optional(array(text)),
   admission: AdmissionPolicySchema,
   bot_id: text,
   bot_username: optional(nullable(text)),

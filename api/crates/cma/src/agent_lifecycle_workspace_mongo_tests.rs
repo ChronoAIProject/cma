@@ -1,5 +1,7 @@
 //! The actual facade persists admission, restarts safely and retains its parent.
 use super::*;
+#[path = "agent_lifecycle_canary_worker_tests.rs"]
+mod canary_worker;
 #[path = "agent_lifecycle_image_retirement_tests.rs"]
 mod image_retirement;
 #[path = "agent_lifecycle_repository_preflight_tests.rs"]
@@ -129,6 +131,7 @@ fn work(record: &crate::store::LifecycleRecord, existing: bool) -> ProvisionInpu
         existing_sandbox_id: existing.then(|| record.sandbox_id.clone()).flatten(),
         existing_agent_id: existing.then(|| record.agent_id.clone()).flatten(),
         actor: record.input.actor.clone(),
+        canary_profiles: None,
     }
 }
 

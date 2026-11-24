@@ -72,6 +72,52 @@ async fn probe(runtime: &Database, mode: MongoAuthorityMode, opening: Opening) {
     }
 }
 
+async fn barrier_allows_new_agent_index_and_independent_sandbox_write(
+    admin: &Database,
+    runtime: &Client,
+    writer: &Client,
+    index_name: &str,
+) {
+    let mut held = runtime.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut held)
+        .await
+        .unwrap();
+
+    let rows = writer
+        .database(admin.name())
+        .collection::<Document>("sandboxes");
+    let (index, written) = tokio::join!(
+        admin.run_command(doc! {
+            "createIndexes": "agents",
+            "indexes": [{"key": {index_name: 1_i32}, "name": index_name}],
+            "maxTimeMS": 2_000_i32,
+        }),
+        async {
+            let mut session = writer.start_session().await.unwrap();
+            crate::store::sandbox_mongo::start_transaction(&mut session)
+                .await
+                .unwrap();
+            let result = rows
+                .update_one(
+                    doc! {"_id": "synthetic-sandbox"},
+                    doc! {"$inc": {"writes": 1}},
+                )
+                .session(&mut session)
+                .await
+                .unwrap();
+            session.commit_transaction().await.unwrap();
+            result
+        },
+    );
+    let index = index.unwrap();
+    assert_eq!(
+        index.get_i32("numIndexesAfter").unwrap(),
+        index.get_i32("numIndexesBefore").unwrap() + 1
+    );
+    assert_eq!(written.modified_count, 1);
+    held.commit_transaction().await.unwrap();
+}
+
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn collectionless_and_indexed_transaction_opening_under_runtime_grants() {
@@ -92,6 +138,11 @@ async fn collectionless_and_indexed_transaction_opening_under_runtime_grants() {
     let agents = db.collection::<Document>("agents");
     let sentinel = doc! { "_id": "synthetic-agent" };
     agents.insert_one(sentinel.clone()).await.unwrap();
+    let sandboxes = db.collection::<Document>("sandboxes");
+    sandboxes
+        .insert_one(doc! {"_id": "synthetic-sandbox", "writes": 0})
+        .await
+        .unwrap();
 
     for (mode, username, roles) in [
         (
@@ -120,12 +171,26 @@ async fn collectionless_and_indexed_transaction_opening_under_runtime_grants() {
                 .source(name.clone())
                 .build(),
         );
-        let runtime = Client::with_options(options).unwrap().database(&name);
-        verify_with_authority(&runtime, mode).await.unwrap();
-        probe(&runtime, mode, Opening::Collectionless).await;
-        probe(&runtime, mode, Opening::IndexedRead).await;
+        crate::store::transaction_barrier::bind(&mut options, &name);
+        let writer = Client::with_options(options.clone()).unwrap();
+        let runtime = Client::with_options(options).unwrap();
+        let database = runtime.database(&name);
+        verify_with_authority(&database, mode).await.unwrap();
+        probe(&database, mode, Opening::Collectionless).await;
+        probe(&database, mode, Opening::IndexedRead).await;
+        barrier_allows_new_agent_index_and_independent_sandbox_write(
+            &db, &runtime, &writer, username,
+        )
+        .await;
     }
     assert_eq!(agents.find_one(doc! {}).await.unwrap(), Some(sentinel));
     assert_eq!(agents.count_documents(doc! {}).await.unwrap(), 1);
+    assert_eq!(
+        sandboxes
+            .find_one(doc! {"_id": "synthetic-sandbox"})
+            .await
+            .unwrap(),
+        Some(doc! {"_id": "synthetic-sandbox", "writes": 2})
+    );
     db.drop().await.unwrap();
 }

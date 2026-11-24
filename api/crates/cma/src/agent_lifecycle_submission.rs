@@ -24,6 +24,11 @@ impl InlineAgentLifecycle {
         if self.tasks.is_closed() {
             return Err(AgentLifecycleProvisioningError::Unavailable);
         }
+        if crate::store::canary_key::is_reserved(idempotency_key) {
+            return Err(AgentLifecycleProvisioningError::Invalid(
+                "The idempotency key is reserved.".into(),
+            ));
+        }
         validate_request(&request)?;
         caller
             .authorization

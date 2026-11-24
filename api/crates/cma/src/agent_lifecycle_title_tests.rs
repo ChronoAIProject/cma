@@ -202,6 +202,7 @@ async fn contextual_title_modes_preserve_exact_admission_and_persist_title_autho
                 existing_sandbox_id: None,
                 existing_agent_id: None,
                 actor: record.input.actor.clone(),
+                canary_profiles: None,
             };
             let provision = service.provision(&owner.caller, input);
             tokio::pin!(provision);

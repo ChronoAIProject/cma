@@ -25,6 +25,9 @@ use sha2::{Digest, Sha256};
 use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VERSION};
 
 mod admission;
+mod canary_admission;
+pub(crate) mod canary_key;
+pub(crate) use canary_admission::CanaryProfiles;
 #[cfg(test)]
 mod operator_stop_tests;
 pub(crate) use admission::LifecycleCreateError;
@@ -116,6 +119,8 @@ pub(crate) struct LifecycleRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creation_fence: Option<layer2_core::sandbox::store::CreationFence>,
     pub input: LifecycleInput,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canary_admission: Option<canary_admission::CanaryAdmission>,
     pub status: String,
     pub phase: String,
     pub events: Vec<LifecycleEvent>,
@@ -235,6 +240,10 @@ impl MongoAgentLifecycleStore {
         submission: Option<layer1_public::rest::creation_outcomes::Submission>,
     ) -> Result<CreateResult, LifecycleCreateError> {
         use layer1_public::rest::creation_outcomes::is_covered_key;
+
+        if canary_key::is_reserved(key) {
+            return Err(StoreError::Malformed("reserved lifecycle key".into()).into());
+        }
         let (creation_wire, creation_fence) = match submission {
             Some(submission) => (
                 Some(CreationWire {
@@ -282,6 +291,7 @@ impl MongoAgentLifecycleStore {
             creation_wire,
             creation_fence,
             input,
+            canary_admission: None,
             status: "queued".into(),
             phase: "queued".into(),
             events: Vec::new(),

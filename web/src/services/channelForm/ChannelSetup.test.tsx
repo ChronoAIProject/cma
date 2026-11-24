@@ -1,9 +1,72 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { RelayCapabilitiesContext } from '../RelayCapabilities';
 import { ChannelEditor } from '../ChannelEditor';
 
 afterEach(() => vi.unstubAllGlobals());
+
+it('focuses a blank channel name before other required fields and submits a trimmed name', async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response('{}'));
+  vi.stubGlobal('fetch', fetcher);
+  render(<ChannelEditor ownerSubject="local-owner" onDone={vi.fn()} denied={vi.fn()} />);
+  const name = screen.getByLabelText('Channel name');
+  const create = screen.getByRole('button', { name: 'Create channel' });
+  fireEvent.click(create);
+  expect(name).toHaveFocus();
+  fireEvent.change(name, { target: { value: '      ' } });
+  fireEvent.click(create);
+  expect(name).toHaveFocus();
+  expect(name).toBeInvalid();
+  expect(name).toHaveAccessibleDescription(/Enter a channel name/);
+  expect(
+    within(screen.getByRole('group', { name: 'Review' })).getByText('Name required'),
+  ).toBeVisible();
+  expect(fetcher).not.toHaveBeenCalled();
+
+  for (const [label, value] of [
+    ['Channel name', '  Relay updates  '],
+    ['NyxID issuer', 'https://example.test'],
+    ['Signing key ID', 'relay-key'],
+    ['Route IDs 1', 'relay-route'],
+    ['NyxID channel key', 'fixture-channel-key'],
+    ['Provider agent key', 'fixture-agent-key'],
+  ] as const) {
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  }
+  fireEvent.click(create);
+  await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+  expect(JSON.parse(fetcher.mock.calls[0]![1].body).name).toBe('Relay updates');
+});
+
+it('removes an added producer and keeps the surviving draft and its alternate connection settings', () => {
+  render(<ChannelEditor ownerSubject="local-owner" onDone={vi.fn()} denied={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText('Channel name'), { target: { value: 'Team channel' } });
+  fireEvent.change(screen.getByLabelText('NyxID channel key'), {
+    target: { value: 'fixture-key' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Add producer' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add producer' }));
+  expect(screen.queryByRole('button', { name: 'Remove producer 1' })).not.toBeInTheDocument();
+  const second = within(screen.getByRole('group', { name: 'Producer 2' }));
+  const third = within(screen.getByRole('group', { name: 'Producer 3' }));
+  fireEvent.change(second.getByLabelText('Prompt template'), { target: { value: 'Remove me' } });
+  fireEvent.change(third.getByLabelText('Prompt template'), { target: { value: 'Keep me' } });
+  fireEvent.click(third.getByRole('button', { name: 'Producer 3 connection type' }));
+  fireEvent.click(screen.getByRole('menuitemradio', { name: 'Direct Telegram bot' }));
+  fireEvent.change(third.getByLabelText('Bot ID'), { target: { value: '123' } });
+
+  fireEvent.click(second.getByRole('button', { name: 'Remove producer 2' }));
+  expect(screen.queryByRole('group', { name: 'Producer 3' })).not.toBeInTheDocument();
+  expect(screen.getByRole('group', { name: 'Producer 1' })).toHaveTextContent(
+    'NyxID messaging connection',
+  );
+  expect(second.getByLabelText('Bot ID')).toHaveValue('123');
+  expect(screen.getByLabelText('Channel name')).toHaveValue('Team channel');
+  expect(screen.getByLabelText('NyxID channel key')).toHaveValue('fixture-key');
+  fireEvent.click(second.getByRole('button', { name: 'Producer 2 connection type' }));
+  fireEvent.click(screen.getByRole('menuitemradio', { name: 'Custom event' }));
+  expect(second.getByLabelText('Prompt template')).toHaveValue('Keep me');
+});
 
 it('keeps required Agent identity visible while optional expert controls stay collapsed', () => {
   const fetcher = vi.fn();
