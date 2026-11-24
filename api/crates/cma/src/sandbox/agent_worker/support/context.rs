@@ -6,6 +6,20 @@ use layer2_core::sandbox::{SandboxStatus, WorkspaceStatus};
 mod overlap;
 
 impl AgentWorker {
+    fn inspection_identity(
+        &self,
+        agent: &Agent,
+    ) -> layer2_core::agent_ownership::ReceiverLogIdentity {
+        layer2_core::agent_ownership::ReceiverLogIdentity::for_agent(
+            &agent.id,
+            &agent.sandbox_id,
+            self.config
+                .ownership
+                .as_ref()
+                .map(|owner| owner.instance_id.as_str()),
+        )
+    }
+
     pub(in crate::sandbox::agent_worker) async fn startup_context(
         &self,
         agent: &Agent,
@@ -105,13 +119,11 @@ impl AgentWorker {
         )
         .await;
         self.observe_runtime_startup(&sandbox, inspection_started, &attached);
-        tracing::info!(
-            agent_id = %agent.id,
-            sandbox_id = %sandbox.id,
-            step = ?agent.work.step,
-            elapsed_ms = inspection_started.elapsed().as_millis() as u64,
-            succeeded = attached.is_ok(),
-            "Agent runtime inspection completed"
+        self.inspection_identity(agent).inspection(
+            agent.work.step,
+            inspection_started.elapsed(),
+            attached.is_ok(),
+            false,
         );
         let (attached, status) = attached.map_err(|error| {
             // Inspection is read-only. A timeout here cannot hide an uncertain
@@ -175,6 +187,10 @@ impl AgentWorker {
         Ok(prepared)
     }
 }
+
+#[cfg(test)]
+#[path = "context_diagnostics_tests.rs"]
+mod diagnostics_tests;
 
 fn validate_parents(
     agent: &Agent,

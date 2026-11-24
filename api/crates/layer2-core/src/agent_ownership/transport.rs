@@ -265,6 +265,11 @@ impl Authority {
                     // incumbent runtime must still be proven on the next attempt.
                 }
                 _ => {
+                    self.log_identity().with_receiver(&identity).warn(
+                        "receiver_revocation",
+                        &OwnershipError::Unavailable("receiving runtime revocation failed".into()),
+                        "Receiver revocation remains unconfirmed",
+                    );
                     return Err(super::OwnershipError::Unavailable(
                         "receiving runtime revocation failed".into(),
                     ));

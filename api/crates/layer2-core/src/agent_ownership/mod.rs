@@ -8,6 +8,8 @@ pub use placement::candidates;
 mod authority;
 pub use authority::{execution_authority, execution_owner, Authority};
 mod cleanup_pacing;
+mod diagnostics;
+pub use diagnostics::{observe_agent_sandbox, ReceiverLogIdentity};
 mod coordinator;
 mod observations;
 mod receiver_binding;

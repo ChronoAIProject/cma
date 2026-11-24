@@ -81,11 +81,10 @@ impl AgentManager {
             )
             .await;
             if let Err(failure) = &result {
-                tracing::warn!(
-                    agent_id = %authority.token.agent_id,
-                    phase = failure.phase,
-                    error = %failure.error,
-                    "Agent Manager drain handoff failed"
+                authority.log_identity().warn_phase(
+                    failure.phase,
+                    &failure.error,
+                    "Agent Manager drain handoff failed",
                 );
             }
             result

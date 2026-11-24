@@ -29,25 +29,19 @@ impl AgentWorker {
                     &admission,
                 )
                 .await;
-                tracing::info!(
-                    agent_id = %agent.id,
-                    sandbox_id = %sandbox.id,
-                    step = ?agent.work.step,
-                    elapsed_ms = inspection_started.elapsed().as_millis() as u64,
-                    succeeded = attached.is_ok(),
-                    parent_overlap = true,
-                    "Agent runtime inspection completed"
+                self.inspection_identity(agent).inspection(
+                    agent.work.step,
+                    inspection_started.elapsed(),
+                    attached.is_ok(),
+                    true,
                 );
                 attached
             },
         )
         .await?;
         self.observe_runtime_startup(&sandbox, started, &attached);
-        tracing::info!(
-            elapsed_ms = started.elapsed().as_millis(),
-            succeeded = attached.is_ok(),
-            "Agent parent reads and runtime inspection completed"
-        );
+        self.inspection_identity(agent)
+            .inspection_complete(started.elapsed(), attached.is_ok());
         let (runtime, status) = attached.map_err(adapter_failure)?;
         Ok(AgentContext {
             sandbox,
