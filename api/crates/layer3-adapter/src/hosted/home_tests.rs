@@ -151,6 +151,7 @@ async fn reattachment_and_credentials_require_the_original_disk_and_teardown_pre
                 operation_id: "credential-fixture".into(),
                 value: crate::RuntimeCredential::new("opaque-sandbox-key"),
                 custody_generation: Some(1),
+                github_route: None,
             }
         )
         .await

@@ -122,6 +122,46 @@ async fn scope_plan_and_mint_preserve_exact_grant_then_revoke_without_replay() {
 }
 
 #[tokio::test]
+async fn an_explicit_connection_cannot_be_replaced_by_a_slug_match() {
+    for active in [true, false] {
+        let mut peer = Peer::start().await;
+        let issuer = issuer(&peer.origin);
+        let task = tokio::spawn(async move {
+            issuer
+                .mint(
+                    "sbx_contract",
+                    &layer2_core::SubjectId::new("contract-owner"),
+                    "contract-owner-bearer",
+                    &[ServiceId::new("contract-service")],
+                )
+                .await
+        });
+        let catalog = peer.next().await;
+        assert_stage(&catalog, 0);
+        catalog.json(json!([
+            {"id":"other-service","slug":"contract-service","is_active":true},
+            {"id":"contract-service","slug":"api-github","is_active":active},
+        ]));
+        if active {
+            for stage in [1, 2] {
+                let request = peer.next().await;
+                assert_stage(&request, stage);
+                succeed(request, stage);
+            }
+            assert!(finish(task).await.is_ok());
+            assert_eq!(peer.count(), 3);
+        } else {
+            assert!(matches!(
+                finish(task).await,
+                Err(KeyIssuerError::ServiceNotGranted(service))
+                    if service.as_str() == "contract-service"
+            ));
+            assert_eq!(peer.count(), 1);
+        }
+    }
+}
+
+#[tokio::test]
 async fn every_issuance_stage_503_stops_with_typed_refusal_and_no_retry_or_later_write() {
     for stage in 0..3 {
         let mut peer = Peer::start().await;

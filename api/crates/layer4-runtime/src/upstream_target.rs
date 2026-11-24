@@ -45,6 +45,32 @@ impl TargetBase {
         }
         Ok(target)
     }
+
+    pub(crate) fn join_github(
+        &self,
+        uri: &Uri,
+        route: &layer3_adapter::GithubCredentialRoute,
+    ) -> Result<url::Url> {
+        let prefix = self
+            .base_path
+            .strip_suffix("/api-github")
+            .ok_or_else(invalid)?;
+        let selected = Self {
+            url: self.url.clone(),
+            base_path: format!("{prefix}/{}", route.slug),
+        };
+        let mut target = selected.join(uri)?;
+        if target.query_pairs().any(|(key, _)| key == "_nyxid_via") {
+            return Err(RuntimeError::rejected(
+                "proxy_github_selector_supplied",
+                "GitHub connection selection is managed by the Sandbox",
+            ));
+        }
+        target
+            .query_pairs_mut()
+            .append_pair("_nyxid_via", &route.service_id);
+        Ok(target)
+    }
 }
 
 pub(crate) fn unsafe_path(path: &str) -> bool {
