@@ -163,11 +163,6 @@ async fn run(fault: AbortFault) {
         "initial heartbeat must be real and successful"
     );
     assert_eq!(guard_calls.load(Ordering::SeqCst), 1);
-    assert!(
-        !events.iter().any(|event| matches!(event,
-        CommandEvent::Started(event) if event.command_name == "commitTransaction")),
-        "authority refusal must happen before any commit send"
-    );
     assert_eq!(receipts, 0);
     assert_eq!(logs, 2);
     assert_eq!(row.get_i64("last_seq").unwrap(), 2);
@@ -182,26 +177,34 @@ async fn run(fault: AbortFault) {
             _ => None,
         })
         .unwrap();
+    assert!(
+        !events.iter().any(|event| matches!(event,
+            CommandEvent::Started(event) if event.command_name == "commitTransaction"
+                && same_transaction(&event.command, &publication.command))),
+        "authority refusal must happen before any publication commit send"
+    );
+    let mut publication_aborts = 0;
     for event in &events {
         if let CommandEvent::Started(event) = event {
-            if event.command_name == "abortTransaction" {
-                assert_eq!(event.command.get("lsid"), publication.command.get("lsid"));
-                assert_eq!(
-                    event.command.get("txnNumber"),
-                    publication.command.get("txnNumber")
-                );
+            if event.command_name == "abortTransaction"
+                && same_transaction(&event.command, &publication.command)
+            {
+                publication_aborts += 1;
                 assert_eq!(event.connection.address, publication.connection.address);
                 assert_eq!(event.service_id, publication.service_id);
             }
         }
     }
+    assert!(publication_aborts > 0);
     let released = events
         .iter()
         .filter_map(|event| {
             let CommandEvent::Started(event) = event else {
                 return None;
             };
-            if event.command.contains_key("autocommit") {
+            if event.command.get_bool("autocommit").ok() != Some(false)
+                || same_transaction(&event.command, &publication.command)
+            {
                 return None;
             }
             let (query, change) = support::update(&event.command)?;
@@ -265,7 +268,7 @@ async fn run(fault: AbortFault) {
                 }
                 assert!(matches!(refused, Err(SandboxStoreError::Unavailable(_))));
                 assert!(events.iter().any(|event| matches!(event,
-                    CommandEvent::Succeeded(reply) if reply.command_name == "update"
+                    CommandEvent::Succeeded(reply) if reply.command_name == "commitTransaction"
                         && reply.reply.contains_key("writeConcernError"))));
             }
             _ => unreachable!(),
@@ -286,6 +289,7 @@ async fn run(fault: AbortFault) {
         assert_eq!(released.len(), 1);
         assert_eq!(released[0].1.get_document(FIELD).unwrap(), &marker);
         assert!(succeeded_command(&events, released[0].0.request_id));
+        assert!(has_majority_commit(&events, released[0].0));
         let release_position = events
             .iter()
             .position(|event| {
@@ -297,8 +301,11 @@ async fn run(fault: AbortFault) {
             events[..release_position]
                 .iter()
                 .any(|event| matches!(event,
-            CommandEvent::Succeeded(event) if event.command_name == "abortTransaction"
-                && !event.reply.contains_key("writeConcernError"))),
+                CommandEvent::Started(abort) if abort.command_name == "abortTransaction"
+                    && same_transaction(&abort.command, &publication.command)
+                    && events[..release_position].iter().any(|reply| matches!(reply,
+                        CommandEvent::Succeeded(reply) if reply.request_id == abort.request_id
+                        && !reply.reply.contains_key("writeConcernError"))))),
             "the same transaction abort must be acknowledged before exact release"
         );
         let mut parent = independent.get_sandbox(&claimed.id).await.unwrap().unwrap();

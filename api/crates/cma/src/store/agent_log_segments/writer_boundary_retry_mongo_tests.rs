@@ -8,7 +8,7 @@ use mongodb::{
     Client,
 };
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 use tokio::time::Instant;
@@ -58,28 +58,81 @@ fn deadline() -> String {
     layer2_core::rfc3339_at(std::time::SystemTime::now() + std::time::Duration::from_secs(300))
 }
 
-async fn observed(f: &mut Fixture) -> (Client, Trace, Arc<AtomicUsize>) {
+fn updates_marker(command: &Document, operator: &str) -> bool {
+    command.get_str("update").ok() == Some("agents")
+        && command.get_bool("autocommit").ok() == Some(false)
+        && command.get_array("updates").is_ok_and(|updates| {
+            updates
+                .iter()
+                .filter_map(|operation| operation.as_document())
+                .any(|operation| {
+                    operation
+                        .get_document("u")
+                        .ok()
+                        .and_then(|update| update.get_document(operator).ok())
+                        .is_some_and(|fields| fields.contains_key("keyed_publication_attempt_v1"))
+                })
+        })
+}
+
+async fn observed(f: &mut Fixture, control: bool) -> (Client, Trace, Arc<AtomicUsize>) {
     let admin = f.client.clone();
     let app = format!("m4-boundary-{}", uuid::Uuid::new_v4().simple());
     let trace = Arc::new(Mutex::new(Vec::new()));
     let seen = trace.clone();
     let injections = Arc::new(AtomicUsize::new(0));
     let injected = injections.clone();
+    let acquiring = Mutex::new(None::<Document>);
+    let acquisition_commit = Mutex::new(None);
+    let keyed_publication_due = AtomicBool::new(false);
     let database = f.store.agents.namespace().db;
     let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
     let mut options = ClientOptions::parse(&uri).await.unwrap();
     options.app_name = Some(app.clone());
     options.command_event_handler = Some(EventHandler::callback(move |event| {
+        if let CommandEvent::Succeeded(reply) = &event {
+            if !control
+                && reply.command_name == "commitTransaction"
+                && *acquisition_commit.lock().unwrap() == Some(reply.request_id)
+                && !reply.reply.contains_key("writeConcernError")
+            {
+                keyed_publication_due.store(true, Ordering::SeqCst);
+            }
+            return;
+        }
         let CommandEvent::Started(event) = event else {
             return;
         };
-        seen.lock().unwrap().push(event.command.clone());
+        if !control {
+            if event.db == database && updates_marker(&event.command, "$set") {
+                *acquiring.lock().unwrap() = Some(event.command.clone());
+            }
+            if event.command_name == "commitTransaction"
+                && event
+                    .command
+                    .get_document("writeConcern")
+                    .ok()
+                    .and_then(|concern| concern.get_str("w").ok())
+                    == Some("majority")
+                && acquiring.lock().unwrap().as_ref().is_some_and(|marker| {
+                    marker.get("lsid") == event.command.get("lsid")
+                        && marker.get("txnNumber") == event.command.get("txnNumber")
+                })
+            {
+                *acquisition_commit.lock().unwrap() = Some(event.request_id);
+            }
+        }
         if event.db != database
             || event.command.get_str("update").ok() != Some("sandboxes")
             || event.command.get_bool("startTransaction").ok() != Some(true)
-            || injected
-                .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
-                .is_err()
+            || (!control && !keyed_publication_due.swap(false, Ordering::SeqCst))
+        {
+            return;
+        }
+        seen.lock().unwrap().push(event.command.clone());
+        if injected
+            .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
         {
             return;
         }
@@ -149,7 +202,7 @@ async fn keyed_and_segmented_control_retry_aborted_start_with_original_authority
     f.store = f.store.clone().with_renewable_work(true);
     let claimed = authority(&f).await;
     let independent = f.store.clone();
-    let (admin, trace, injections) = observed(&mut f).await;
+    let (admin, trace, injections) = observed(&mut f, control).await;
     trace.lock().unwrap().clear();
     let result = WorkAuthority::new(
         ClaimedWork::Sandbox(Box::new(claimed.clone())),
@@ -187,13 +240,7 @@ async fn keyed_and_segmented_control_retry_aborted_start_with_original_authority
     )
     .await;
     clear(&admin).await;
-    let starts = trace
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|c| matches!(c.get_bool("startTransaction"), Ok(true)))
-        .cloned()
-        .collect::<Vec<_>>();
+    let starts = trace.lock().unwrap().clone();
     let row = f
         .store
         .agents
@@ -241,8 +288,10 @@ async fn keyed_uncertain_precommit_error_retains_original_claim_without_replay()
             // Claim acquisition already completed. Arm the exact uncertainty
             // before sending claim consumption, with no detached callback race.
             if event.db == db
-                && matches!(event.command.get_str("update"), Ok("agents"))
-                && matches!(event.command.get_bool("startTransaction"), Ok(true))
+                && updates_marker(&event.command, "$unset")
+                && observed
+                    .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
             {
                 let uri = uri.clone();
                 let app = app.clone();
@@ -263,7 +312,6 @@ async fn keyed_uncertain_precommit_error_retains_original_claim_without_replay()
                 })
                 .join()
                 .unwrap();
-                observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
         }
     }));

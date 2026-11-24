@@ -13,7 +13,8 @@ pub(super) async fn install(f: &mut Fixture, old: &Sandbox) -> Takeover {
     let result: Takeover = Arc::default();
     let observed = result.clone();
     let fired = AtomicBool::new(false);
-    let acquisition = Mutex::new(None);
+    let acquisition = Mutex::new(None::<Document>);
+    let commit_request = Mutex::new(None);
     let mut options = ClientOptions::parse(&uri).await.unwrap();
     options.command_event_handler = Some(EventHandler::callback(move |event| {
         let acknowledged = match event {
@@ -32,21 +33,33 @@ pub(super) async fn install(f: &mut Fixture, old: &Sandbox) -> Takeover {
                     });
                 if event.db == database
                     && event.command.get_str("update").ok() == Some("agents")
-                    && !event.command.contains_key("autocommit")
+                    && event.command.get_bool("autocommit").ok() == Some(false)
+                    && claims
+                {
+                    *acquisition.lock().unwrap() = Some(doc! {
+                        "lsid": event.command.get("lsid").unwrap().clone(),
+                        "txnNumber": event.command.get("txnNumber").unwrap().clone(),
+                    });
+                }
+                if event.command_name == "commitTransaction"
                     && event
                         .command
                         .get_document("writeConcern")
                         .ok()
                         .and_then(|w| w.get_str("w").ok())
                         == Some("majority")
-                    && claims
+                    && acquisition.lock().unwrap().as_ref().is_some_and(|claim| {
+                        claim.get("lsid") == event.command.get("lsid")
+                            && claim.get("txnNumber") == event.command.get("txnNumber")
+                    })
                 {
-                    *acquisition.lock().unwrap() = Some(event.request_id);
+                    *commit_request.lock().unwrap() = Some(event.request_id);
                 }
                 false
             }
             CommandEvent::Succeeded(event) => {
-                *acquisition.lock().unwrap() == Some(event.request_id)
+                event.command_name == "commitTransaction"
+                    && *commit_request.lock().unwrap() == Some(event.request_id)
                     && !event.reply.contains_key("writeConcernError")
                     && !event.reply.contains_key("writeErrors")
             }

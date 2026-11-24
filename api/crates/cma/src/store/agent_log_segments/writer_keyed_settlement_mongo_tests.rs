@@ -153,15 +153,19 @@ async fn keyed_caller_settles_uncertain_commit_without_republishing() {
             .unwrap(),
         appended_at: NOW.into(),
     };
-    admin.database("admin").run_command(doc! {
-        "configureFailPoint":"failCommand", "mode":{"times":5_i32},
-        "data":{"failCommands":["commitTransaction"],"appName":application,
-        "writeConcernError":{"code":50_i32,"codeName":"MaxTimeMSExpired","errmsg":"injected uncertainty"}}
-    }).await.unwrap();
-    let result = f
+    let result = after_keyed_claim(
+        f
         .store
-        .append_agent_log_keyed(&f.agent.id, &identity, kind.clone())
-        .await;
+        .append_agent_log_keyed(&f.agent.id, &identity, kind.clone()),
+        async {
+            admin.database("admin").run_command(doc! {
+                "configureFailPoint":"failCommand", "mode":{"times":5_i32},
+                "data":{"failCommands":["commitTransaction"],"appName":application,
+                "writeConcernError":{"code":50_i32,"codeName":"MaxTimeMSExpired","errmsg":"injected uncertainty"}}
+            }).await.unwrap();
+        },
+    )
+    .await;
     admin
         .database("admin")
         .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})

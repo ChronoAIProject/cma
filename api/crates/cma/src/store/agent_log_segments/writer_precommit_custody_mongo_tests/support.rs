@@ -1,4 +1,5 @@
 use super::*;
+use mongodb::event::command::CommandStartedEvent;
 
 pub(super) const FIELD: &str = "keyed_publication_attempt_v1";
 pub(super) type Trace = Arc<Mutex<Vec<CommandEvent>>>;
@@ -116,20 +117,13 @@ pub(super) fn acquired_marker(events: &[CommandEvent]) -> Document {
             let CommandEvent::Started(event) = event else {
                 return None;
             };
-            if event.command.contains_key("autocommit")
+            if event.command.get_bool("autocommit").ok() != Some(false)
                 || !succeeded_command(events, event.request_id)
             {
                 return None;
             }
             let (_, change) = update(&event.command)?;
-            if event
-                .command
-                .get_document("writeConcern")
-                .ok()?
-                .get_str("w")
-                .ok()
-                != Some("majority")
-            {
+            if !has_majority_commit(events, event) {
                 return None;
             }
             change
@@ -140,6 +134,28 @@ pub(super) fn acquired_marker(events: &[CommandEvent]) -> Document {
                 .cloned()
         })
         .expect("the exact majority durable claim must exist before publication")
+}
+
+pub(super) fn same_transaction(left: &Document, right: &Document) -> bool {
+    left.get("lsid")
+        .is_some_and(|session| right.get("lsid") == Some(session))
+        && left
+            .get("txnNumber")
+            .is_some_and(|number| right.get("txnNumber") == Some(number))
+}
+
+pub(super) fn has_majority_commit(
+    events: &[CommandEvent],
+    statement: &CommandStartedEvent,
+) -> bool {
+    events.iter().any(|event| {
+        matches!(event,
+        CommandEvent::Started(commit) if commit.command_name == "commitTransaction"
+            && same_transaction(&commit.command, &statement.command)
+            && commit.command.get_document("writeConcern").ok()
+                .and_then(|concern| concern.get_str("w").ok()) == Some("majority")
+            && succeeded_command(events, commit.request_id))
+    })
 }
 
 pub(super) fn close_at_guard(

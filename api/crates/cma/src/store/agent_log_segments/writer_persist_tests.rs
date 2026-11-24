@@ -2,6 +2,26 @@ use super::*;
 use crate::store::sandbox_mongo::{commit_transaction, CommitOutcome};
 use mongodb::ClientSession;
 
+async fn after_keyed_claim<T>(
+    append: impl std::future::Future<Output = T>,
+    act: impl std::future::Future<Output = ()>,
+) -> T {
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let (result, ()) = tokio::join!(
+            crate::store::agent_log::keyed::KEYED_CLAIM_COMMITTED.scope(barrier.clone(), append),
+            async {
+                barrier.wait().await;
+                act.await;
+                barrier.wait().await;
+            }
+        );
+        result
+    })
+    .await
+    .expect("keyed append must reach the committed claim boundary")
+}
+
 #[path = "writer_test_fixture.rs"]
 mod fixture;
 use fixture::*;

@@ -72,19 +72,22 @@ async fn unknown_without_receipt_survives_restart_and_later_head_without_replan(
     let (admin, app, original_session) = isolated_observed(&mut f).await;
     let kind = AgentLogKind::ConversationGap { frames: 1 };
     let identity = identity(&kind);
-    admin
-        .database("admin")
-        .run_command(doc! {
-            "configureFailPoint":"failCommand","mode":"alwaysOn",
-            "data":{"failCommands":["commitTransaction"],"appName":app,
-            "errorCode":50_i32,"errorLabels":["UnknownTransactionCommitResult"]}
-        })
-        .await
-        .unwrap();
-    let result = f
-        .store
-        .append_agent_log_keyed(&f.agent.id, &identity, kind.clone())
-        .await;
+    let result = after_keyed_claim(
+        f.store
+            .append_agent_log_keyed(&f.agent.id, &identity, kind.clone()),
+        async {
+            admin
+                .database("admin")
+                .run_command(doc! {
+                    "configureFailPoint":"failCommand","mode":"alwaysOn",
+                    "data":{"failCommands":["commitTransaction"],"appName":app,
+                    "errorCode":50_i32,"errorLabels":["UnknownTransactionCommitResult"]}
+                })
+                .await
+                .unwrap();
+        },
+    )
+    .await;
     admin
         .database("admin")
         .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})

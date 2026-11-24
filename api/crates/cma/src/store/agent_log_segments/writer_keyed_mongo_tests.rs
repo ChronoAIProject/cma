@@ -21,6 +21,98 @@ fn identity(key: &str, kind: &AgentLogKind) -> AgentLogPublicationIdentity {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn keyed_output_preserves_the_committed_receipt_and_pending_claim_under_hold() {
+    let f = fixture(2).await;
+    let mut parent =
+        crate::store::sandbox_mongo_integration_tests::sandbox(f.agent.sandbox_id.as_str());
+    parent.owner = f.agent.owner.clone();
+    f.store.create_sandbox(parent.clone()).await.unwrap();
+    let kind = AgentLogKind::ConversationGap { frames: 1 };
+    let first = identity("fixture-committed-before-hold", &kind);
+    let committed = f
+        .store
+        .append_agent_log_keyed(&f.agent.id, &first, kind.clone())
+        .await
+        .unwrap();
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let independent = mongodb::Client::with_uri_str(&uri).await.unwrap();
+    let name = f.store.agents.namespace().db;
+    let sandboxes = independent
+        .database(&name)
+        .collection::<Document>("sandboxes");
+    let sandbox_key = doc! {"_id": parent.id.as_str()};
+    let agent_key = doc! {"_id": f.agent.id.as_str()};
+    let hold = || async {
+        let locked = sandboxes
+            .update_one(
+                sandbox_key.clone(),
+                doc! {
+                    "$set": {"ledger_maintenance": mongodb::bson::Bson::Null}
+                },
+            )
+            .write_concern(mongodb::options::WriteConcern::majority())
+            .await
+            .unwrap();
+        assert_eq!(locked.modified_count, 1);
+    };
+    let next = identity("fixture-pending-at-hold", &kind);
+    let original = f.store.agents.find_one(agent_key.clone()).await.unwrap();
+    hold().await;
+    assert_eq!(
+        f.store
+            .append_agent_log_keyed(&f.agent.id, &next, kind.clone())
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        f.store.agents.find_one(agent_key.clone()).await.unwrap(),
+        original
+    );
+    sandboxes
+        .update_one(
+            sandbox_key.clone(),
+            doc! {"$unset": {"ledger_maintenance": ""}},
+        )
+        .write_concern(mongodb::options::WriteConcern::majority())
+        .await
+        .unwrap();
+
+    let mut claimed = None;
+    let result = after_keyed_claim(
+        f.store
+            .append_agent_log_keyed(&f.agent.id, &next, kind.clone()),
+        async {
+            hold().await;
+            claimed = f.store.agents.find_one(agent_key.clone()).await.unwrap();
+        },
+    )
+    .await;
+    assert_eq!(result, Err(SandboxStoreError::Conflict));
+    assert!(claimed
+        .as_ref()
+        .unwrap()
+        .contains_key("keyed_publication_attempt_v1"));
+    assert_eq!(
+        f.store
+            .append_agent_log_keyed(&f.agent.id, &first, kind)
+            .await
+            .unwrap(),
+        committed
+    );
+    assert_eq!(f.store.agents.find_one(agent_key).await.unwrap(), claimed);
+    assert_eq!(f.store.agent_log.count_documents(doc! {}).await.unwrap(), 3);
+    assert_eq!(
+        collection(&f.store, PUBLICATIONS)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        1
+    );
+    f.destroy().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn keyed_trait_replays_original_entry_after_later_append_and_rejects_changed_request() {
     let f = fixture(2).await;
     let kind = AgentLogKind::ConversationGap { frames: 1 };
