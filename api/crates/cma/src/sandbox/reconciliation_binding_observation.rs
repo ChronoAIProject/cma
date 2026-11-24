@@ -6,9 +6,9 @@ use layer2_core::binding_diagnostics::{
 
 impl crate::binding_diagnostics::LocalSource for BindingHolds {
     fn sample(&self) -> BindingHoldSample {
+        let holds = self.holds.lock().unwrap();
         let wall = SystemTime::now();
         let now = Instant::now();
-        let holds = self.holds.lock().unwrap();
         let mut sample = BindingHoldSample {
             observed_at: layer2_core::rfc3339_at(wall),
             truncated: holds.len() > MAX_HOLDS_PER_REPORTER,
