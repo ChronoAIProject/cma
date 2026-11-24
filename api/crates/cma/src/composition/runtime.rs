@@ -14,6 +14,7 @@ pub(super) fn worker_observations(
 
 pub(super) struct RuntimeServices {
     pub warm_pools: Arc<NativeWarmPools>,
+    pub pointer: Option<Arc<crate::runtime_pointer::RuntimePointerController>>,
     pub updates: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
     pub recovery: Arc<layer2_core::sandbox::RetainedRecoveryService>,
     pub reopen: Arc<layer2_core::sandbox::RetainedReopenService>,
@@ -24,14 +25,34 @@ impl RuntimeServices {
         config: &Config,
         stores: &MongoStores,
         adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let inspector = Arc::new(
             crate::sandbox::retained_recovery::RetainedRuntimeInspector::new(
                 adapter.clone(),
                 config.deployment_id.clone(),
             ),
         );
-        Self {
+        let warm_pools = NativeWarmPools::new(
+            stores.native_warm_pools.clone(),
+            adapter.clone(),
+            config.runtime.sandbox_image.clone(),
+            config.runtime.agent_sandbox_home_policy.clone(),
+            config.agent_manager_sandbox_capacity,
+            config.runtime.native_warm_pool_target,
+            config
+                .runtime
+                .machine_sandbox_image
+                .clone()
+                .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
+        )
+        .with_target_fencing(config.agent_manager_replicas.is_some())
+        .with_released_runtime(stores.released_runtime.clone());
+        let pointer = crate::runtime_pointer::RuntimePointerController::compose(
+            config,
+            stores,
+            warm_pools.clone(),
+        )?;
+        Ok(Self {
             reopen: Arc::new(
                 layer2_core::sandbox::RetainedReopenService::new(
                     stores.sandbox_model.clone(),
@@ -45,21 +66,8 @@ impl RuntimeServices {
                 stores.sandbox_model.clone(),
                 inspector,
             )),
-            warm_pools: NativeWarmPools::new(
-                stores.native_warm_pools.clone(),
-                adapter.clone(),
-                config.runtime.sandbox_image.clone(),
-                config.runtime.agent_sandbox_home_policy.clone(),
-                config.agent_manager_sandbox_capacity,
-                config.runtime.native_warm_pool_target,
-                config
-                    .runtime
-                    .machine_sandbox_image
-                    .clone()
-                    .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
-            )
-            .with_target_fencing(config.agent_manager_replicas.is_some())
-            .with_released_runtime(stores.released_runtime.clone()),
+            warm_pools,
+            pointer,
             updates: Arc::new(
                 layer2_core::sandbox::SandboxRuntimeUpdateService::with_released(
                     stores.sandbox_model.clone(),
@@ -72,7 +80,7 @@ impl RuntimeServices {
                     ),
                 )),
             ),
-        }
+        })
     }
 }
 

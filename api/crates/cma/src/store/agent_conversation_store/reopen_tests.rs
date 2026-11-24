@@ -419,6 +419,7 @@ async fn prove_refusal_fences(
         agent_revision: agent.revision,
         checkpoint: None,
         owner: Some(authority.token.clone()),
+        released: None,
     };
     assert_eq!(
         store
