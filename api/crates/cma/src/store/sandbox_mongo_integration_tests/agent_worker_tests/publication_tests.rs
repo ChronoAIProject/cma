@@ -10,6 +10,7 @@ async fn agent_work_publication_atomically_saves_agent_worktree_logs_and_event()
     replace_agent_fixture(&store, &claimed).await;
     let fence = claimed.work.lease.as_ref().unwrap().fence;
     let mut next = claimed.clone();
+    let initial_worktree = worktree.clone();
     next.work
         .advance(
             "worker",
@@ -34,26 +35,72 @@ async fn agent_work_publication_atomically_saves_agent_worktree_logs_and_event()
     ];
     next.conversation.last_seq += u64::try_from(log_kinds.len()).unwrap();
 
-    store
-        .commit_agent_work(AgentWorkMutation {
-            expected_agent_revision: claimed.revision,
-            holder: "worker".into(),
-            fence,
-            agent: next.clone(),
-            worktree: Some(VersionedWorktree {
-                expected_revision: expected_worktree_revision,
-                worktree: worktree.clone(),
-            }),
-            appended_at: NOW.into(),
-            sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
-                agent_id: next.id.clone(),
-                from: AgentStatus::Starting,
-                to: AgentStatus::Ready,
-            }),
-            agent_logs: log_kinds.clone(),
-        })
+    let mutation = AgentWorkMutation {
+        expected_agent_revision: claimed.revision,
+        holder: "worker".into(),
+        fence,
+        agent: next.clone(),
+        worktree: Some(VersionedWorktree {
+            expected_revision: expected_worktree_revision,
+            worktree: worktree.clone(),
+        }),
+        appended_at: NOW.into(),
+        sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+            agent_id: next.id.clone(),
+            from: AgentStatus::Starting,
+            to: AgentStatus::Ready,
+        }),
+        agent_logs: log_kinds.clone(),
+    };
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let maintenance_client = Client::with_uri_str(&uri).await.unwrap();
+    let sandboxes = maintenance_client
+        .database(&name)
+        .collection::<Document>("sandboxes");
+    let parent_key = doc! { "_id": parent.id.as_str() };
+    for hold in [
+        mongodb::bson::Bson::Document(doc! { "test_hold": true }),
+        mongodb::bson::Bson::Null,
+    ] {
+        let installed = sandboxes
+            .update_one(
+                parent_key.clone(),
+                doc! { "$set": { "ledger_maintenance": hold } },
+            )
+            .write_concern(mongodb::options::WriteConcern::majority())
+            .await
+            .unwrap();
+        assert_eq!(installed.modified_count, 1);
+        let held_parent = sandboxes.find_one(parent_key.clone()).await.unwrap();
+        assert_eq!(
+            store.commit_agent_work(mutation.clone()).await,
+            Err(SandboxStoreError::Conflict)
+        );
+        assert_eq!(
+            store.get_agent(&claimed.id).await.unwrap(),
+            Some(claimed.clone())
+        );
+        assert_eq!(
+            store.get_worktree(&worktree.id).await.unwrap(),
+            Some(initial_worktree.clone())
+        );
+        assert!(store.agent_log(&next.id, 0, 10).await.unwrap().is_empty());
+        assert!(store
+            .sandbox_events(&parent.id, 0, 10)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            sandboxes.find_one(parent_key.clone()).await.unwrap(),
+            held_parent
+        );
+    }
+    sandboxes
+        .update_one(parent_key, doc! { "$unset": { "ledger_maintenance": "" } })
+        .write_concern(mongodb::options::WriteConcern::majority())
         .await
         .unwrap();
+    store.commit_agent_work(mutation).await.unwrap();
 
     assert_eq!(store.get_agent(&next.id).await.unwrap(), Some(next.clone()));
     assert_eq!(

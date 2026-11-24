@@ -10,7 +10,6 @@ pub(super) struct Fixture {
     pub checkouts: Arc<AtomicU64>,
     pub commands: Arc<AtomicU64>,
     pub attempts: Arc<AtomicU64>,
-    pub updates: Arc<AtomicU64>,
     pub complete_reads: Arc<AtomicU64>,
     pub ambiguous_commits: Arc<AtomicU64>,
     pub app: String,
@@ -35,8 +34,6 @@ impl Fixture {
         let ambiguous_commits = Arc::new(AtomicU64::new(0));
         let commands = Arc::new(AtomicU64::new(0));
         let attempts = Arc::new(AtomicU64::new(0));
-        let updates = Arc::new(AtomicU64::new(0));
-        let update_count = updates.clone();
         let command_count = commands.clone();
         let attempt_count = attempts.clone();
         let complete = complete_reads.clone();
@@ -44,9 +41,6 @@ impl Fixture {
         options.command_event_handler = Some(EventHandler::callback(move |event| {
             if let CommandEvent::Started(event) = &event {
                 command_count.fetch_add(1, Ordering::SeqCst);
-                if event.command_name == "update" {
-                    update_count.fetch_add(1, Ordering::SeqCst);
-                }
                 if event.command.get_bool("startTransaction").unwrap_or(false) {
                     attempt_count.fetch_add(1, Ordering::SeqCst);
                 }
@@ -159,7 +153,6 @@ impl Fixture {
             checkouts,
             commands,
             attempts,
-            updates,
             complete_reads,
             ambiguous_commits,
             app,

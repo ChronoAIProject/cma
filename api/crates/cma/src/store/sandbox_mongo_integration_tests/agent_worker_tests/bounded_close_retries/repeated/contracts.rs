@@ -92,9 +92,17 @@ async fn repeated_failure_bounds_scans_with_conflicts_and_matches_full_snapshot(
                 f.reset(original).await;
                 f.store = f.store.with_bounded_close_retries(true);
                 if conflict {
-                    admin.database("admin").run_command(doc! { "configureFailPoint": "failCommand", "mode": { "times": 1 },
-                    "data": { "failCommands": ["update"], "appName": &f.app, "errorCode": 112, "errorLabels": ["TransientTransactionError"] }
-                }).await.unwrap();
+                    admin
+                        .database("admin")
+                        .run_command(
+                            doc! { "configureFailPoint": "failCommand", "mode": { "times": 1 },
+                                "data": { "failCommands": ["update"], "appName": &f.app,
+                                    "namespace": format!("{}.{AGENTS}", f.name),
+                                    "errorCode": 112, "errorLabels": ["TransientTransactionError"] }
+                            },
+                        )
+                        .await
+                        .unwrap();
                 }
                 let start_checkouts = f.checkouts.load(Ordering::SeqCst);
                 let start_commands = f.commands.load(Ordering::SeqCst);

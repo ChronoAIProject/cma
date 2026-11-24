@@ -137,6 +137,7 @@ async fn capacity_settlement_10001_rows_matches_full_snapshot_with_bounded_reads
                 if conflict {
                     admin.database("admin").run_command(doc! {"configureFailPoint": "failCommand",
                         "mode": {"times": 1}, "data": {"failCommands": ["update"], "appName": &f.app,
+                            "namespace": format!("{}.{AGENTS}", f.name),
                         "errorCode": 112, "errorLabels": ["TransientTransactionError"]}}).await.unwrap();
                 }
                 let before_attempts = f.attempts.load(Ordering::SeqCst);

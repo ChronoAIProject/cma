@@ -48,9 +48,17 @@ async fn repeated_failure_scan_baseline() {
                         ),
                 );
                 if conflict && attempt > 0 {
-                    admin.database("admin").run_command(doc! { "configureFailPoint": "failCommand", "mode": { "times": 1 },
-                    "data": { "failCommands": ["update"], "appName": &f.app, "errorCode": 112, "errorLabels": ["TransientTransactionError"] }
-                }).await.unwrap();
+                    admin
+                        .database("admin")
+                        .run_command(
+                            doc! { "configureFailPoint": "failCommand", "mode": { "times": 1 },
+                                "data": { "failCommands": ["update"], "appName": &f.app,
+                                    "namespace": format!("{}.{AGENTS}", f.name),
+                                    "errorCode": 112, "errorLabels": ["TransientTransactionError"] }
+                            },
+                        )
+                        .await
+                        .unwrap();
                 }
                 let start_checkouts = f.checkouts.load(Ordering::SeqCst);
                 let start_commands = f.commands.load(Ordering::SeqCst);
