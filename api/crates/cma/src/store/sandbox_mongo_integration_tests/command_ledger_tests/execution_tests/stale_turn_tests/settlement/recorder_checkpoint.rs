@@ -65,7 +65,7 @@ async fn stale_turn_settlement_compares_the_acknowledged_acp_checkpoint() {
         "synthetic-credential",
     ))
     .unwrap();
-    let (updates, mut received) = mpsc::channel(8);
+    let (updates, received) = mpsc::channel(8);
     let (channel, _) = timeout(
         DEADLINE,
         transport.open_agent(
@@ -87,7 +87,7 @@ async fn stale_turn_settlement_compares_the_acknowledged_acp_checkpoint() {
         Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         parent,
         None,
-        Some((channel.input, CONVERSATION.into())),
+        Some((channel.input.clone(), CONVERSATION.into())),
     )
     .await;
     let command = record(
@@ -124,27 +124,23 @@ async fn stale_turn_settlement_compares_the_acknowledged_acp_checkpoint() {
     .await
     .unwrap();
     let owner = coordinator.acquire(&agent.id).await.unwrap().unwrap();
-    let recorder = DurableAgentUpdateRecorder::new(writer.clone());
+    let registry = Arc::new(LiveAgentRegistry::default());
+    registry.install_ownership(coordinator.clone());
     owner
         .run(async {
-            let mut assembly = AgentMessageAssembly::default();
-            for cursor in 1..=CURSOR {
-                let output = timeout(DEADLINE, received.recv()).await.unwrap().unwrap();
-                assert!(
-                    matches!(&output, ConversationUpdate::RuntimeOutput { receipt, .. }
-                    if receipt.source.cursor == cursor)
-                );
-                recorder
-                    .record_update(
-                        &agent.id,
-                        1,
-                        &mut assembly,
-                        output,
-                        layer2_core::now_rfc3339(),
-                    )
-                    .await
-                    .unwrap();
-            }
+            let attachment = registry
+                .attach(
+                    agent.id.clone(),
+                    CONVERSATION.into(),
+                    agent.conversation.runtime_generation.unwrap(),
+                    1,
+                    agent.capabilities.clone(),
+                    channel.input,
+                    received,
+                    DurableAgentUpdateRecorder::new(writer.clone()),
+                )
+                .unwrap();
+            registry.publish_and_activate(&attachment).unwrap();
         })
         .await
         .unwrap();
@@ -273,6 +269,7 @@ async fn stale_turn_settlement_compares_the_acknowledged_acp_checkpoint() {
         1
     );
     assert_eq!(sends.load(Ordering::SeqCst), 1);
+    registry.detach_owner(&owner.token);
     transport.retire(&handle).await.unwrap();
     server.abort();
     client.database(&name).drop().await.unwrap();
@@ -397,9 +394,14 @@ async fn serve_acp(mut socket: WebSocket, stream: uuid::Uuid, observed: oneshot:
         ))
         .await
         .unwrap();
-    for cursor in 1..=CURSOR {
+    let mut acknowledged = 0;
+    while acknowledged < CURSOR {
         let ack = binary(&mut socket).await;
+        assert_eq!(ack.len(), 25);
+        let cursor = u64::from_be_bytes(ack[17..].try_into().unwrap());
+        assert!((acknowledged + 1..=CURSOR).contains(&cursor));
         assert_eq!(ack, retained_frame(OUTPUT_ACK_LANE, stream, cursor, &[]));
+        acknowledged = cursor;
     }
     observed.send(prompt_id).unwrap();
     let _ = socket.recv().await;
