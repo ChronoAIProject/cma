@@ -10,11 +10,11 @@ use super::{
     verification_error::ProviderVerificationError as Error,
 };
 
-pub(super) const MAX_BYTES: usize = 64 * 1024;
+pub const MAX_BYTES: usize = 64 * 1024;
 // Login/worker paths outside the retry sequence retain the HTTP client's budget.
-pub(super) const DIRECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+pub const DIRECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
-pub(super) async fn json(
+pub async fn json(
     request: RequestBuilder,
     deadline: Instant,
     endpoint: Endpoint,

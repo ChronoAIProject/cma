@@ -5,13 +5,13 @@ use reqwest::header::{HeaderMap, RETRY_AFTER};
 use tokio::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct RetryAfter {
+pub struct RetryAfter {
     observed: Instant,
     delay: Duration,
 }
 
 impl RetryAfter {
-    pub(crate) fn from_headers(headers: &HeaderMap) -> Self {
+    pub fn from_headers(headers: &HeaderMap) -> Self {
         // Missing/invalid hints must not create a hot retry loop. Multiple valid
         // hints are conservatively combined, never shortened to fit our budget.
         let delay = headers
@@ -27,11 +27,11 @@ impl RetryAfter {
         }
     }
 
-    pub(crate) fn remaining(self) -> Duration {
+    pub fn remaining(self) -> Duration {
         self.delay.saturating_sub(self.observed.elapsed())
     }
 
-    pub(super) fn seconds(self) -> u64 {
+    pub fn seconds(self) -> u64 {
         let remaining = self.remaining();
         remaining
             .as_secs()
@@ -39,7 +39,7 @@ impl RetryAfter {
             .max(1)
     }
 
-    pub(super) fn record(self) {
+    pub fn record(self) {
         let _ = HINT.try_with(|hint| hint.set(Some(hint.get().unwrap_or(0).max(self.seconds()))));
     }
 }
@@ -56,7 +56,7 @@ fn parse(value: &str, now: std::time::SystemTime) -> Option<Duration> {
 
 tokio::task_local! { static HINT: Cell<Option<u64>>; }
 
-pub(super) async fn capture<F: Future>(future: F) -> (F::Output, Option<u64>) {
+pub async fn capture<F: Future>(future: F) -> (F::Output, Option<u64>) {
     HINT.scope(Cell::new(None), async {
         let result = future.await;
         (result, HINT.with(Cell::get))
@@ -66,7 +66,7 @@ pub(super) async fn capture<F: Future>(future: F) -> (F::Output, Option<u64>) {
 
 /// Concurrent endpoint rejection is handled before this selection. If either
 /// endpoint throttles, retrying both must respect the longer provider delay.
-pub(super) fn select<T, U>(
+pub fn select<T, U>(
     first: &Result<T, super::verification_error::ProviderVerificationError>,
     second: &Result<U, super::verification_error::ProviderVerificationError>,
 ) -> Option<super::verification_error::ProviderVerificationError> {

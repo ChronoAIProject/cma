@@ -5,6 +5,7 @@ mod api_bearer;
 pub mod diagnostics;
 pub mod permissions;
 pub mod profile;
+pub mod provider;
 mod proxy_grant;
 mod records;
 pub mod request_observation;

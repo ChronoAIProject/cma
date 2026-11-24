@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use super::verification_diagnostics::Endpoint;
 
-pub(super) fn route() -> Arc<str> {
+pub fn route() -> Arc<str> {
     let route = layer2_core::diagnostic_context::DiagnosticContext::current().route;
     // Only fixed route templates enter these labels. Other routes remain counted
     // in the aggregate without accepting a caller-provided path as a metric key.
@@ -22,18 +22,18 @@ pub(super) fn route() -> Arc<str> {
     }
 }
 
-pub(super) fn resolution(source: &'static str) {
+pub fn resolution(source: &'static str) {
     metrics::counter!("cma_identity_verifications_total", "route" => route().to_string(), "source" => source).increment(1);
 }
 
-pub(super) struct Call {
+pub struct Call {
     endpoint: Endpoint,
     route: Arc<str>,
     finished: bool,
 }
 
 impl Call {
-    pub(super) fn start(endpoint: Endpoint) -> Self {
+    pub fn start(endpoint: Endpoint) -> Self {
         let route = route();
         metrics::counter!("cma_identity_provider_calls_total", "endpoint" => endpoint.label(), "route" => route.to_string()).increment(1);
         Self {
@@ -43,7 +43,7 @@ impl Call {
         }
     }
 
-    pub(super) fn finish(&mut self, status: Option<u16>) {
+    pub fn finish(&mut self, status: Option<u16>) {
         self.finished = true;
         let outcome = match status {
             Some(200) => "200",

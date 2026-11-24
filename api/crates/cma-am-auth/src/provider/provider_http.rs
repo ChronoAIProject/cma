@@ -4,14 +4,14 @@ use zeroize::Zeroizing;
 
 const MAX_BYTES: usize = 1_048_576;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProviderReadError {
+pub enum ProviderReadError {
     Unavailable,
     Invalid,
     Refused(u16),
 }
 
 /// Content-free observations; callers retain their existing public error policy.
-pub(super) enum EvidenceReadError {
+pub enum EvidenceReadError {
     Timeout,
     Read,
     Partial,
@@ -20,13 +20,13 @@ pub(super) enum EvidenceReadError {
     Refused(u16),
 }
 
-pub(crate) async fn read_json<T: DeserializeOwned>(
+pub async fn read_json<T: DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<T, ProviderReadError> {
     read_json_limited(response, MAX_BYTES).await
 }
 
-pub(super) async fn read_json_limited<T: DeserializeOwned>(
+pub async fn read_json_limited<T: DeserializeOwned>(
     response: reqwest::Response,
     max_bytes: usize,
 ) -> Result<T, ProviderReadError> {
@@ -39,7 +39,7 @@ pub(super) async fn read_json_limited<T: DeserializeOwned>(
         })
 }
 
-pub(super) async fn read_evidence<T: DeserializeOwned>(
+pub async fn read_evidence<T: DeserializeOwned>(
     mut response: reqwest::Response,
     max_bytes: usize,
 ) -> Result<T, EvidenceReadError> {

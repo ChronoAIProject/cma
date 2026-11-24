@@ -30,11 +30,11 @@ mod identity;
 mod identity_cooldown;
 mod identity_evidence;
 mod identity_flight;
-mod identity_http;
+use cma_am_auth::provider::identity_http;
 mod identity_lifetime;
-mod identity_observations;
+use cma_am_auth::provider::identity_observations;
 mod identity_retry;
-mod identity_throttle;
+use cma_am_auth::provider::identity_throttle;
 pub(crate) use identity_throttle::RetryAfter as ProviderRetryAfter;
 #[allow(dead_code, reason = "the aggregate-neutral issuer is consumed by #809")]
 pub mod keys;
@@ -47,7 +47,7 @@ pub mod organizations;
 mod permissions;
 pub mod persistence;
 pub use cma_am_auth::profile;
-pub(crate) mod provider_http;
+pub(crate) use cma_am_auth::provider::provider_http;
 mod provider_metadata;
 #[cfg(test)]
 mod public_contract_tests;
@@ -68,7 +68,7 @@ use cma_am_auth::token;
 mod tokens;
 mod usage_reporting;
 mod verification_diagnostics;
-mod verification_error;
+use cma_am_auth::provider::verification_error;
 mod worker_credentials;
 
 pub(crate) use flow::account_router;

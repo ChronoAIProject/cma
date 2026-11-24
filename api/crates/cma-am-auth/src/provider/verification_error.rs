@@ -1,7 +1,7 @@
 //! Distinguish an explicit credential refusal from unavailable provider evidence.
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub(super) enum ProviderVerificationError {
+pub enum ProviderVerificationError {
     #[error("{0}")]
     Rejected(String),
     #[error("{0}")]
@@ -16,13 +16,13 @@ pub(super) enum ProviderVerificationError {
 /// Travels with an unfinished flight's result, so each consumer retains the
 /// selected cause without borrowing the verification leader's request context.
 #[derive(Debug, Clone)]
-pub(super) struct VerificationFailure {
+pub struct VerificationFailure {
     pub error: ProviderVerificationError,
     pub cause: VerificationCause,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum VerificationCause {
+pub enum VerificationCause {
     Provider,
     Capacity,
     FenceCapacity,
@@ -36,11 +36,11 @@ pub(super) enum VerificationCause {
 }
 
 impl VerificationFailure {
-    pub(super) fn new(error: ProviderVerificationError, cause: VerificationCause) -> Self {
+    pub fn new(error: ProviderVerificationError, cause: VerificationCause) -> Self {
         Self { error, cause }
     }
 
-    pub(super) fn reason(&self) -> &'static str {
+    pub fn reason(&self) -> &'static str {
         match self.cause {
             VerificationCause::Provider => match &self.error {
                 ProviderVerificationError::Rejected(_) => "rejected",
@@ -66,7 +66,7 @@ impl VerificationFailure {
         }
     }
 
-    pub(super) fn status(&self) -> Option<u16> {
+    pub fn status(&self) -> Option<u16> {
         match &self.error {
             ProviderVerificationError::Transient("http_502") => Some(502),
             ProviderVerificationError::Transient("http_503") => Some(503),
@@ -83,7 +83,7 @@ impl From<ProviderVerificationError> for VerificationFailure {
 }
 
 impl ProviderVerificationError {
-    pub(super) fn reason(&self) -> &'static str {
+    pub fn reason(&self) -> &'static str {
         match self {
             Self::Transient(reason) => reason,
             Self::RateLimited(_) => "http_429",
@@ -94,7 +94,7 @@ impl ProviderVerificationError {
 
     /// Preserve the final typed verification reason before the public projection.
     /// This runs per caller, after single-flight fan-out.
-    pub(super) fn record_unavailable(&self) {
+    pub fn record_unavailable(&self) {
         use layer2_core::dependency_diagnostics::{Dependency, Failure, Reason};
         let reason = match self.reason() {
             "timeout" => Reason::Timeout,
@@ -112,7 +112,7 @@ impl ProviderVerificationError {
         }
     }
 
-    pub(super) fn transport(error: reqwest::Error) -> Self {
+    pub fn transport(error: reqwest::Error) -> Self {
         if error.is_timeout() {
             Self::Transient("timeout")
         } else if error.is_connect() || connection_io_failure(&error) {
@@ -122,7 +122,7 @@ impl ProviderVerificationError {
         }
     }
 
-    pub(super) fn status(status: reqwest::StatusCode) -> Self {
+    pub fn status(status: reqwest::StatusCode) -> Self {
         match status.as_u16() {
             401 | 403 => Self::Rejected("identity provider refused verification".into()),
             502 => Self::Transient("http_502"),
@@ -136,7 +136,7 @@ impl ProviderVerificationError {
         }
     }
 
-    pub(super) fn command_error(self) -> layer2_core::sandbox::agent_io::CommandAuthorizationError {
+    pub fn command_error(self) -> layer2_core::sandbox::agent_io::CommandAuthorizationError {
         use layer2_core::sandbox::agent_io::CommandAuthorizationError;
         match self {
             Self::Rejected(_) => CommandAuthorizationError::Revoked,
