@@ -25,6 +25,7 @@ rustls = { workspace = true }
 tokio-rustls = { workspace = true }
 webpki-roots = { workspace = true }
 cmaeg-core = { path = "../cmaeg-core" }
+cmaeg-execution = { path = "../cmaeg-execution" }
 axum = { workspace = true }
 dashmap = { workspace = true }
 futures-util = { workspace = true }

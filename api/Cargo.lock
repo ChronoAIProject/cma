@@ -562,6 +562,7 @@ dependencies = [
  "cma-allocator-qualification",
  "cma-service-auth",
  "cmaeg-core",
+ "cmaeg-execution",
  "dashmap",
  "futures-util",
  "governor",
@@ -620,6 +621,18 @@ dependencies = [
  "time",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "cmaeg-execution"
+version = "0.1.0"
+dependencies = [
+ "cmaeg-core",
+ "dashmap",
+ "metrics",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
