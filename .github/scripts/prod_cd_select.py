@@ -168,7 +168,8 @@ def evidence_lane(name, run_id):
     attempt, _, lane = name[len(prefix):].partition("-")
     if not attempt.isdigit() or attempt.startswith("0"):
         return None
-    return lane
+    # An automatic retry's evidence belongs to the same lane.
+    return lane[: -len("-retry")] if lane.endswith("-retry") else lane
 
 
 def staging_verified(images, request, download):

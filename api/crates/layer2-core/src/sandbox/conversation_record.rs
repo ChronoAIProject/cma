@@ -82,8 +82,13 @@ impl DurableAgentUpdateRecorder {
                 .filter(|checkpoint| checkpoint.update_id == update_id);
             let identity_terminal = is_identity_terminal_for_current(&current, update);
             let (replayed, buffered_replay) = if let Some(source) = &source {
-                let (replayed, buffered) =
-                    coalesce::replay_state(source, &current, previous.as_ref(), assembly)?;
+                let (replayed, buffered) = coalesce::replay_state(
+                    source,
+                    &current,
+                    previous.as_ref(),
+                    assembly,
+                    guard.is_some(),
+                )?;
                 // An older observer may have durably recorded this exact
                 // terminal as a quiet receipt. Preserve the validated source
                 // position, but let the replacement observer apply its

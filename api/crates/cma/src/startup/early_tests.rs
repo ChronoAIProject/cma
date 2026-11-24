@@ -17,7 +17,7 @@ async fn startup_refusals_bypass_the_application_and_leave_request_bodies_unread
     async fn application() -> StatusCode {
         panic!("application invoked")
     }
-    let app = admission.wrap(Router::new().fallback(application), false);
+    let app = admission.wrap(Router::new().fallback(application), None);
     for (method, path, status, body) in [
         ("GET", "/livez", StatusCode::OK, "ok"),
         ("POST", "/livez", StatusCode::SERVICE_UNAVAILABLE, "startup"),
@@ -88,7 +88,7 @@ async fn same_connection_uses_current_phase_and_preserves_peer_on_both_servers()
         let (stop, stopped) = watch::channel(false);
         let server = tokio::spawn(http_server(
             listener,
-            admission.wrap(app, false),
+            admission.wrap(app, None),
             connection_age,
             stopped,
         ));
