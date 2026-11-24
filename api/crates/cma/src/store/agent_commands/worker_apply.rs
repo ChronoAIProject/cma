@@ -166,7 +166,7 @@ async fn claim_next(
     Ok(None)
 }
 
-pub(super) async fn write(
+pub(in crate::store) async fn write(
     store: &MongoSandboxStore,
     command: &AdmittedAgentCommand,
     expected_revision: u64,
