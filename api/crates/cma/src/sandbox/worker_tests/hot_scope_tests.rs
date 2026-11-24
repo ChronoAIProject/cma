@@ -14,6 +14,7 @@ async fn hot_scope(harness: &Harness, active: &Sandbox, now: SystemTime) -> u64 
         .store
         .commit(SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision: active.revision,
             sandbox: Box::new(granted),
             event_at: rfc3339_at(now),

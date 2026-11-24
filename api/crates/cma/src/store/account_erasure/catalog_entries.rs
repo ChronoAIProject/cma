@@ -74,6 +74,8 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("cma_document_artifacts", Owner(&["owner_subject"]) => true, Reference(ReferenceRule::Documents) => false),
     entry!("cma_document_quotas", ObjectAccounting => false),
     entry!("native_warm_pool_targets", Global => true),
+    entry!("released_runtimes", Global => true),
+    entry!("released_runtime_transitions", Global => true),
     entry!("cma_agent_manager_members", Global => true),
     entry!("cma_agent_manager_owners", Retained("agent-ownership-fence") => true),
     entry!("agent_read_observers_v1", Linked(Agents, &["_id"]) => true),
