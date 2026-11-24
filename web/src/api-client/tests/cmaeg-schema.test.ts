@@ -608,3 +608,18 @@ it('retains independent Telegram creation consent and rejects a null archive dur
   expect(CreateThreadRequestSchema(request)).toEqual(request);
   expect(() => CreateThreadRequestSchema({ ...request, auto_archive_duration: null })).toThrow();
 });
+
+it('keeps Telegram member-join request nullability separate from stored sources', () => {
+  const source = { type: 'telegram', bot_id: '77', admission: { type: 'all' } };
+  for (const parse of [SourceRequestSchema, SourceSchema]) {
+    expect(parse(source)).toEqual(source);
+    for (const ids of [[], ['-100']]) {
+      const value = { ...source, member_join_chat_ids: ids };
+      expect(parse(value)).toEqual(value);
+    }
+    expect(() => parse({ ...source, member_join_chat_ids: [100] })).toThrow('member_join_chat_ids');
+  }
+  const nullUpdate = { ...source, member_join_chat_ids: null };
+  expect(SourceRequestSchema(nullUpdate)).toEqual(nullUpdate);
+  expect(() => SourceSchema(nullUpdate)).toThrow('member_join_chat_ids');
+});
