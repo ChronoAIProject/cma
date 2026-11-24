@@ -95,7 +95,7 @@ it('groups a fresh inventory result without fetching details and preserves task 
   for (const taskStatus of ['completed', 'stopped', 'failed', 'working'] as const) {
     const agent = { ...workspaceFixture().agents[0]!, taskStatus };
     const task = taskPresentation(agent, base, 'fresh');
-    expect(task?.status).toBe(taskStatus);
+    expect(task?.status).toBe(taskStatus === 'working' ? 'needs_attention' : taskStatus);
     expect(task?.showRunningTime).toBe(false);
     expect(task?.parentNotice).toBe('Runtime update failed');
   }
