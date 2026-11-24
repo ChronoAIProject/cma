@@ -360,6 +360,34 @@ mod tests {
             }),
         );
         assert_eq!(a.get(&another).await, Err(RecordError::NotFound));
+
+        for _ in 0..16 {
+            let id = uuid::Uuid::new_v4().to_string();
+            let racing = CreateFenceIdentity {
+                record: &id,
+                ..alice
+            };
+            let (reserved, cancelled) = tokio::join!(
+                a.reserve_channel_create(&racing, b"racing create", None),
+                b.cancel_channel_create(&racing),
+            );
+            match cancelled.unwrap() {
+                CancelCreate::FencedAbsent => {
+                    assert_eq!(
+                        reserved,
+                        Err(RecordError::GuardConflict {
+                            scope: "channel_create",
+                            expected: 0,
+                        }),
+                    );
+                    assert_eq!(a.get(&id).await, Err(RecordError::NotFound));
+                }
+                CancelCreate::RecordPresent => {
+                    assert_eq!(reserved.unwrap(), 1);
+                    assert_eq!(a.get(&id).await.unwrap().blob, b"racing create");
+                }
+            }
+        }
         db.drop().await.unwrap();
     }
 }
