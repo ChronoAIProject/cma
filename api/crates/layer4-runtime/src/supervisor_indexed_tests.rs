@@ -108,13 +108,41 @@ async fn indexed_owner_stop_close_proof_refuses_admitted_successor_without_recov
     let request = RequestFrame::ProveAgentProcessClosed(receipt.clone());
     assert_eq!(
         supervisor.dispatch(request.clone()).await,
-        ResponseFrame::ProveAgentProcessClosed(receipt)
+        ResponseFrame::ProveAgentProcessClosed(receipt.clone())
     );
 
     launch.operation_id = "agent:agent-1:open:2:v1".into();
     launch.request_sha256 = "c".repeat(64);
+    let fence = layer3_adapter::wire::AgentRestartFence {
+        predecessor: receipt,
+        successor_operation_id: launch.operation_id.clone(),
+        authority_fence: 4,
+    };
+    let fence_request = RequestFrame::FenceAgentRestart(fence.clone());
+    for _ in 0..2 {
+        assert_eq!(
+            supervisor.dispatch(fence_request.clone()).await,
+            ResponseFrame::FenceAgentRestart(fence.clone())
+        );
+    }
+    let late = super::persistent_home_tests::restart_open(&supervisor, 3, &launch);
+    assert_eq!(
+        failure(supervisor.dispatch(late).await).code,
+        "mutation_authority_stale"
+    );
+
     let operation = Operation::open_agent(&launch);
-    ledger.admit(3, vec![operation.clone()]).await.unwrap();
+    assert!(!supervisor
+        .mutations
+        .has_process_writer("agent-1", 2)
+        .await
+        .unwrap());
+    assert!(!ledger.admitted(operation.clone()).await.unwrap());
+    ledger.admit(5, vec![operation.clone()]).await.unwrap();
+    assert_eq!(
+        failure(supervisor.dispatch(fence_request).await).code,
+        "agent_process_close_unproved"
+    );
     assert_eq!(
         failure(supervisor.dispatch(request).await).code,
         "agent_process_close_unproved"

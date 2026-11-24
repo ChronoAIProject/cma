@@ -75,6 +75,37 @@ impl Supervisor {
         Ok(proof)
     }
 
+    pub(super) async fn fence_agent_restart(
+        &self,
+        request: layer3_adapter::wire::AgentRestartFence,
+    ) -> Result<layer3_adapter::wire::AgentRestartFence> {
+        let predecessor = &request.predecessor;
+        let incarnation = agent_validation::close(&predecessor.close)?;
+        let successor = incarnation
+            .checked_add(1)
+            .ok_or_else(invalid_restart_fence)?;
+        if request.authority_fence == 0
+            || request.successor_operation_id
+                != AgentProcessAction::Open
+                    .operation_id(predecessor.close.agent_id.as_str(), successor)
+        {
+            return Err(invalid_restart_fence());
+        }
+        let _writer = self
+            .removal_writer_guard()?
+            .ok_or_else(invalid_restart_fence)?;
+        // The operation gate excludes physical Open, and both proof reads and
+        // authority admission use the same serialized mutation store.
+        self.prove_agent_process_closed(predecessor.clone()).await?;
+        self.mutations
+            .admit(
+                request.authority_fence,
+                &[Operation::close_agent(&predecessor.close)],
+            )
+            .await?;
+        Ok(request)
+    }
+
     pub(super) async fn authorize_process_open(
         &self,
         request: &FencedRequest<AgentLaunch>,
@@ -169,4 +200,11 @@ impl Supervisor {
         }
         Ok(operation)
     }
+}
+
+fn invalid_restart_fence() -> RuntimeError {
+    RuntimeError::rejected(
+        "agent_restart_fence_invalid",
+        "the Agent restart fence has invalid successor authority",
+    )
 }
