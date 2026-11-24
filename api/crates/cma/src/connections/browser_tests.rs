@@ -177,6 +177,7 @@ fn fixture() -> (BrowserConnections, Arc<Broker>, Arc<Store>, Caller) {
             targets: Arc::new(Targets),
             broker: broker.clone(),
             subscriptions: CodexSubscriptions::new(store.clone()),
+            repository_access: None,
         },
         broker,
         store,

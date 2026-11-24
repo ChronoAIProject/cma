@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { cursor, LocalAgentV2 } from './agent-v2.fixture';
 
+const am = { version: '0.22.34', source_sha: 'b'.repeat(40) };
+const eg = { version: '0.11.16', source_sha: 'c'.repeat(40) };
+
 for (const clipboard of ['available', 'denied', 'absent'] as const) {
   test(`Compiled build identity with clipboard ${clipboard}`, async ({
     page,
@@ -26,10 +29,15 @@ for (const clipboard of ['available', 'denied', 'absent'] as const) {
       expect(identity.revision).toBe(process.env.CMA_EXPECTED_WEB_REVISION);
       expect(identity.version).toBe(process.env.CMA_EXPECTED_WEB_VERSION);
     }
-    const expected = `CMA ${identity.version} (${identity.revision || 'local'})${identity.local && identity.revision ? ' (local)' : ''}`;
+    const web = `${identity.version} (${identity.revision || 'local'})${identity.local && identity.revision ? ' (local)' : ''}`;
+    const expected = `Web ${web} · AM ${am.version} (${am.source_sha}) · EG ${eg.version} (${eg.source_sha})`;
     const fixture = new LocalAgentV2();
     try {
       await fixture.route(page, baseURL!);
+      await page.route('**/api/v1/build-info', (route) => route.fulfill({ json: am }));
+      await page.route('**/event-gateway/v1/readyz', (route) =>
+        route.fulfill({ status: 503, json: { ready: false, build: eg } }),
+      );
       await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
         route.fulfill({
           json: {
@@ -61,6 +69,11 @@ for (const clipboard of ['available', 'denied', 'absent'] as const) {
       await draft.fill('Unsent local fixture draft');
       await page.getByRole('button', { name: /Account menu for/ }).click();
       const copy = page.getByRole('menuitem', { name: /Copy build version/ });
+      const webLabel = identity.version + (identity.local ? ' (local)' : '');
+      await expect(copy).toHaveAccessibleName(
+        `Copy build version · Web ${webLabel} · AM ${am.version} · EG ${eg.version}`,
+      );
+      await expect(copy).toBeEnabled();
       await copy.focus();
       await page.keyboard.press('Enter');
       if (clipboard === 'available') {

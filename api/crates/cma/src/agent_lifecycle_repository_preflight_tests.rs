@@ -8,6 +8,9 @@ use layer2_core::{
 };
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+#[path = "agent_lifecycle_managed_repository_tests.rs"]
+mod managed;
+
 struct Probe {
     result: Result<String, AuthoringSourceError>,
     reads: AtomicUsize,

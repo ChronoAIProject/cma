@@ -34,6 +34,7 @@ mod health;
 #[allow(dead_code)] // Retention preparation has no qualified production deletion provider.
 mod home_backup_expiry;
 mod http_serving;
+mod image_manager_retirement;
 mod media_continuations;
 mod permissions;
 mod producer_token;

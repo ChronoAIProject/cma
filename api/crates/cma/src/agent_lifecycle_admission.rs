@@ -90,10 +90,7 @@ pub(super) fn sandbox_admission_error(
     };
     AgentLifecycleProvisioningError::ConnectionRequired {
         services,
-        connection_target: json!({
-            "type":"sandbox_profile",
-            "profile":{"id":profile.id.to_string(),"revision":profile.revision}
-        }),
+        connection_target: connection_profile_target(profile),
     }
 }
 
@@ -181,4 +178,8 @@ impl InlineAgentLifecycle {
         }
         Err(AgentLifecycleProvisioningError::Unavailable)
     }
+}
+
+pub(super) fn connection_profile_target(profile: &SandboxProfileRef) -> serde_json::Value {
+    json!({"type":"sandbox_profile", "profile":profile})
 }
