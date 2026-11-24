@@ -37,6 +37,7 @@ pub(super) async fn exchange(
             .await
             .map_err(|_| DocumentError::Unavailable)?;
         let result = async {
+            crate::store::transaction_barrier::open(&mut session).await?;
             if crate::store::account_deletions::fence_subject_in_session(&database,recipient,&mut session).await? {
                 return Ok::<_,mongodb::error::Error>(None);
             }

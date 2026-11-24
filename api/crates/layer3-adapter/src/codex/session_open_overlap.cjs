@@ -49,6 +49,7 @@ function sessionOpenOverlap(source) {
 }
 
 function withoutSessionOpenOverlap(source) {
+  source = require("./prompt_output_identity.cjs").withoutPromptOutputIdentity(source);
   if (!source.includes(method)) {
     assert(!source.includes("cmaSessionWithModels"), "Unexpected session overlap implementation");
     return source;

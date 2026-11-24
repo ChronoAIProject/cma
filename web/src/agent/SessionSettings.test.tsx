@@ -111,6 +111,31 @@ it('does not offer an apply operation while a turn is active', async () => {
   expect(update).not.toHaveBeenCalled();
 });
 
+it('closes the checked model choice without editing the confirmed settings', async () => {
+  const user = userEvent.setup();
+  const update = vi.fn().mockResolvedValue(defaults);
+  render(
+    draw(
+      agentClient({
+        readAgentModels: catalog,
+        readAgentSettings: async () => ({ ...defaults, reasoning_effort: 'medium' }),
+        updateAgentSettings: update,
+      }),
+    ),
+  );
+  await expandSettings();
+  await chooseEffort(user, 'High');
+  await user.click(screen.getByRole('button', { name: 'Apply settings' }));
+  await screen.findByText('Settings applied to this Agent.');
+  await openCard(user);
+  await chooseOptionValue(user, model(), defaults.model);
+  expect(model()).toHaveAttribute('aria-expanded', 'false');
+  expect(slider()).toHaveAttribute('aria-valuetext', 'High');
+  expect(screen.getByRole('status').textContent).toBe('Settings applied to this Agent.');
+  expect(screen.queryByRole('button', { name: 'Apply settings' })).not.toBeInTheDocument();
+  expect(update).toHaveBeenCalledTimes(1);
+});
+
 it('allows correction after a definitive rejection without replaying its command key', async () => {
   const user = userEvent.setup();
   const update = vi

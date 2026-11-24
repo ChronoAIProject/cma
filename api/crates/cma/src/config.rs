@@ -153,6 +153,7 @@ pub struct Config {
     pub(crate) account_deletion_enabled: bool,
     /// Published terms and privacy notice; `None` records no consent.
     pub(crate) legal_terms: Option<layer2_core::legal_consent::LegalTerms>,
+    pub(crate) retain_legal_consents: bool,
     pub(crate) account_erasure_transaction_drain_seconds: u64,
     pub(crate) global_sandbox_limit: u16,
     pub(crate) public_owner_sandbox_limit: Option<std::num::NonZeroU16>,
@@ -294,6 +295,7 @@ impl Config {
             ServiceAuthorizationConfig::from_lookup(&mut lookup, features.service_authorization)?;
         let account_deletion_enabled = account_deletion::enabled(&mut lookup)?;
         let legal_terms = legal_terms::from_lookup(&mut lookup)?;
+        let retain_legal_consents = account_deletion::retain_legal_consents(&mut lookup)?;
         let account_erasure_transaction_drain_seconds =
             account_deletion::transaction_drain(&mut lookup)?;
         let global_sandbox_limit = global_admission::from_lookup(&mut lookup)?;
@@ -351,6 +353,7 @@ impl Config {
             public_owner_sandbox_limit,
             account_deletion_enabled,
             legal_terms,
+            retain_legal_consents,
             account_erasure_transaction_drain_seconds,
             bind,
             http_connection_max_age: http_connections::max_age(&mut lookup)?,

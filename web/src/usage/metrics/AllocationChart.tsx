@@ -10,7 +10,7 @@ import { Picker } from '../../ui/Picker';
 import { Table, TableCell } from '../../ui/Table';
 import { displayQuantity, type Metric } from './model';
 import { sandboxCount } from './sandboxCount';
-import { combineAllocationCoverage } from './allocationCoverage';
+import { combineAllocationCoverage, type AllocationCoverageEvidence } from './allocationCoverage';
 import { AllocationCoverageNote, AllocationCoverageStatus } from './AllocationCoverageStatus';
 
 const resources = {
@@ -49,6 +49,7 @@ export function AllocationChart({
   admin,
   api,
   reportId,
+  reportCoverage,
   active,
   onFailure,
 }: {
@@ -56,6 +57,7 @@ export function AllocationChart({
   readonly admin: boolean;
   readonly api: MetricsClient;
   readonly reportId: string;
+  readonly reportCoverage?: AllocationCoverageEvidence;
   readonly active: boolean;
   readonly onFailure: (failure: MetricsFailure) => void;
 }) {
@@ -107,6 +109,9 @@ export function AllocationChart({
       <p className="usage-chart-unit">
         {resource.label} · {resource.unit} in the report period
       </p>
+      {reportCoverage && (
+        <AllocationCoverageNote scope="Report allocation" value={reportCoverage} />
+      )}
       {byOwner ? (
         <OwnerAllocationChart
           key={reportId}
