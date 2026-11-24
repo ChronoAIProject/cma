@@ -13,6 +13,13 @@ pub(crate) enum LifecycleCreateError {
 }
 
 impl MongoAgentLifecycleStore {
+    pub(crate) fn supports_creation(
+        &self,
+        fence: &layer2_core::sandbox::store::CreationFence,
+    ) -> bool {
+        self.creation_writer_epoch.as_deref() == Some(fence.epoch.as_str())
+    }
+
     pub(super) async fn finish_create(
         &self,
         record: LifecycleRecord,
