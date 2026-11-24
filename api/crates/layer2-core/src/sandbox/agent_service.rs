@@ -1,11 +1,12 @@
 mod binding;
+mod control;
 mod creation;
 mod launch;
 mod support;
 use launch::CreationAttribution;
 use support::{
-    control_error, creation_key, profile_error, require, require_launch, runtime_error,
-    store_error, validate_title,
+    control_error, creation_key, profile_error, require, require_launch, store_error,
+    validate_title,
 };
 
 use std::sync::Arc;
@@ -27,12 +28,12 @@ use crate::{
 
 use super::service_trust::{validate_agent_profile, validate_agent_revision};
 use super::store::{
-    AgentAdmission, AgentAdmissionResult, AgentControlStoreError, AgentControlTarget,
-    AgentDeleteRequest, AgentServiceStore, AgentStopRequest, Page, PageRequest, SandboxStoreError,
+    AgentAdmission, AgentAdmissionResult, AgentControlStoreError, AgentServiceStore, Page,
+    PageRequest, SandboxStoreError,
 };
 use super::{
     Agent, AgentLogEntry, AgentOrigin, AgentRuntimeError, AgentRuntimeRegistry, AgentStatus,
-    AgentStopReason, AgentWorkStep, FirstMessageRecord, Sandbox, Workspace, WorkspaceStatus,
+    AgentWorkStep, FirstMessageRecord, Sandbox, Workspace, WorkspaceStatus,
 };
 
 const MAX_TITLE_SCALARS: usize = 64;
@@ -329,31 +330,6 @@ impl AgentService {
             .map_err(store_error)
     }
 
-    pub async fn stop(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-        reason: AgentStopReason,
-    ) -> Result<Agent, AgentServiceError> {
-        require(caller)?;
-        let agent = self.owned_agent(caller, id).await?;
-        let scheduled = self
-            .store
-            .schedule_agent_stop(AgentStopRequest {
-                target: AgentControlTarget::from(&agent),
-                reason,
-                requested_at: now_rfc3339(),
-            })
-            .await
-            .map(|result| result.into_agent())
-            .map_err(control_error)?;
-        self.runtimes
-            .fence(&scheduled.id, scheduled.work.next_fence)
-            .await
-            .map_err(runtime_error)?;
-        Ok(scheduled)
-    }
-
     pub async fn recover_worktree(
         &self,
         caller: &Caller,
@@ -372,19 +348,6 @@ impl AgentService {
                 now_rfc3339(),
             )
             .await
-            .map_err(control_error)
-    }
-
-    pub async fn delete(&self, caller: &Caller, id: &AgentId) -> Result<Agent, AgentServiceError> {
-        require(caller)?;
-        let agent = self.owned_agent(caller, id).await?;
-        self.store
-            .schedule_agent_delete(AgentDeleteRequest {
-                target: AgentControlTarget::from(&agent),
-                requested_at: now_rfc3339(),
-            })
-            .await
-            .map(|result| result.into_agent())
             .map_err(control_error)
     }
 
