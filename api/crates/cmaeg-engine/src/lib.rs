@@ -5,6 +5,7 @@ mod delivery_checkpoint;
 mod delivery_receipt;
 mod execution_attribution;
 mod recovery;
+mod scheduler;
 mod stored_receipt;
 mod turn_outcome;
 
@@ -17,6 +18,7 @@ pub use delivery_receipt::{
 };
 pub use execution_attribution::ExecutionAttribution;
 pub use recovery::{ExecutionError, Phase, RecoverySupport};
+pub use scheduler::{Disposition, ScheduleConfig, ScheduleReport};
 pub use stored_receipt::{PartsManifest, StoredReceipt};
 pub use turn_outcome::TurnOutcome;
 
