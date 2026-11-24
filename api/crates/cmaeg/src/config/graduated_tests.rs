@@ -14,6 +14,7 @@ const STILL_EXPLICIT: &[&str] = &[
     "CMAEG_MEDIA_CONTINUATIONS_ENABLED",
     "CMAEG_MEDIA_ENABLED",
     "CMAEG_NATIVE_DISCORD_VOICE_ENABLED",
+    "CMAEG_NYXID_COMMONMARK_LARK_FEISHU_DISCORD_ENABLED",
     "CMAEG_NYXID_COMMONMARK_RELAY_ENABLED",
     "CMAEG_NYXID_COMPLETE_REPLIES",
     "CMAEG_NYXID_NATIVE_MEDIA_ENABLED",
@@ -449,7 +450,7 @@ fn observed() -> Result<BTreeMap<&'static str, bool>, String> {
     use crate::config as c;
     let error = |error: ConfigError| error.to_string();
     // `crate::run` reads these before the configuration, and fails on any.
-    c::nyxid_commonmark_relay_from_env().map_err(error)?;
+    c::CommonmarkRelay::from_env().map_err(error)?;
     c::nyxid_complete_replies_from_env().map_err(error)?;
     c::nyxid_native_media_from_env().map_err(error)?;
     c::relay_text_edits_from_env().map_err(error)?;

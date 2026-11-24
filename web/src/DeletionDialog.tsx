@@ -32,7 +32,6 @@ export function DeletionDialog({
   viewerId,
   initial,
   restored,
-  settledElsewhere = false,
   onChanged,
   onAccepted,
   onAbandoned,
@@ -46,7 +45,6 @@ export function DeletionDialog({
   readonly viewerId: string;
   readonly initial: DeletionRequest;
   readonly restored: boolean;
-  readonly settledElsewhere?: boolean;
   readonly onChanged: () => void;
   readonly onAccepted?: (request: DeletionRequest) => void;
   readonly onAbandoned?: (request: DeletionRequest) => void;
@@ -432,10 +430,13 @@ export function DeletionDialog({
     onClose();
   };
   const name = observation?.name ?? target;
-  const sameViewer = identity.client === client && identity.viewerId === viewerId;
-  const complete =
-    observation?.complete === true ||
-    (settledElsewhere && request.accepted && enabled && sameViewer);
+  const completedInBackground =
+    request.accepted &&
+    identity.client === client &&
+    identity.viewerId === viewerId &&
+    deletionWasSettled(client, request) &&
+    observation?.complete !== true;
+  const complete = observation?.complete === true || completedInBackground;
   if (!started && !complete)
     return (
       <DeletionConfirmation
@@ -487,10 +488,10 @@ export function DeletionDialog({
       <DeletionStatusPanel
         request={request}
         observation={observation}
-        complete={complete}
+        completedInBackground={completedInBackground}
         sending={sending}
-        commandError={complete ? undefined : commandError}
-        readError={complete ? undefined : readError}
+        commandError={commandError}
+        readError={readError}
       />
     </Modal>
   );

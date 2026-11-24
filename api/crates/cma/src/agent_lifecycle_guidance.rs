@@ -31,10 +31,28 @@ pub(crate) fn managed_v3() -> &'static str {
     INSTRUCTIONS.get_or_init(|| format!("{}\n\n{DOCUMENTS_V1}", managed_v2()))
 }
 
+const SESSION_GUIDANCE_V1: &str = "CMA session guidance (v1):\n\
+If an ambiguous or compound request could lead to a long build, substantial new work, or an external write, ask one targeted question to resolve the costly choice before committing to it. Continue clearly authorized low-cost work when useful.\n\
+When a missing capability blocks the task, identify the smallest permission needed and give the owner a usable remedy in the same reply. Verify the tool or link against this session's available capabilities and explain what access it requests and what you can resume after approval. For a missing NyxID service, use the advertised CMA access-request tool when available and keep the same request key for transport retries. Wait for owner approval and CMA confirmation, then verify the needed access on the actual service path before reporting success. A read-only result does not prove write permission. Never ask for pasted credentials or assume consent to additional access.\n\
+When this session cannot submit a requested CMA report, use an available authorized handoff if the owner has approved it. Otherwise prepare a redacted title and report for the owner to review and submit at https://github.com/ChronoAIProject/cma/issues/new. Include the observed limitation, expected behavior and a safe reproduction. Remove credentials and private details. State whether you submitted the report or handed it to the owner.";
+
+fn managed_v4() -> &'static str {
+    static INSTRUCTIONS: OnceLock<String> = OnceLock::new();
+    INSTRUCTIONS.get_or_init(|| format!("{SESSION_GUIDANCE_V1}\n\n{}", managed_v3()))
+}
+
+pub(super) fn admission_instructions(v4_enabled: bool) -> &'static str {
+    if v4_enabled {
+        managed_v4()
+    } else {
+        managed_v3()
+    }
+}
+
 /// Split only exact, already-versioned guidance with its original separator.
 /// Similar owner-authored text is never treated as platform instructions.
 pub(crate) fn split_managed(prompt: &str) -> (Option<&'static str>, &str) {
-    for managed in [managed_v3(), managed_v2(), GITHUB_API_V1] {
+    for managed in [managed_v4(), managed_v3(), managed_v2(), GITHUB_API_V1] {
         if prompt == managed {
             return (Some(managed), "");
         }
@@ -64,11 +82,16 @@ impl layer2_core::sandbox::AgentInstructionPolicy for ManagedInstructionPolicy {
         split_managed(agent.system_prompt()).1.to_owned()
     }
     fn compose(&self, agent: &layer2_core::sandbox::Agent, owner: &str) -> String {
-        let managed = (agent.conversation.managed_guidance_revision >= 1)
-            .then_some(managed_v3())
+        let managed = self
+            .pinned_managed_guidance(agent)
+            .or_else(|| (agent.conversation.managed_guidance_revision >= 1).then_some(managed_v3()))
             .or_else(|| split_managed(agent.system_prompt()).0)
             .or_else(|| split_managed(&agent.profile.content.system_prompt).0);
         compose_managed(managed, owner)
+    }
+    fn pinned_managed_guidance(&self, agent: &layer2_core::sandbox::Agent) -> Option<&'static str> {
+        (split_managed(&agent.profile.content.system_prompt).0 == Some(managed_v4()))
+            .then_some(managed_v4())
     }
 }
 

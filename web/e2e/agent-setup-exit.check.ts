@@ -180,9 +180,7 @@ for (const scenario of [
       expect(deletes).toHaveLength(1);
       await retry.click();
     }
-    await expect(
-      page.getByText('Sandbox delete request accepted. Cleanup continues in the background.'),
-    ).toBeVisible();
+    await expect(page.getByText('Deleting 1 environment')).toBeVisible();
     expect(deletes).toHaveLength(scenario.uncertain ? 2 : 1);
     expect(deletes[0]!.key).toBeTruthy();
     if (scenario.uncertain) expect(deletes[1]).toEqual(deletes[0]);
@@ -192,6 +190,10 @@ for (const scenario of [
     // before the reopened status dialog observes retirement.
     await page.goto('/agent-manager');
     await page.reload();
+    await page
+      .getByRole('region', { name: 'Deletion request', exact: true })
+      .getByRole('button', { name: 'View status', exact: true })
+      .click();
     const reopen = page.getByRole('button', { name: /View Sandbox deletion status/ });
     await expect(reopen).toBeEnabled();
     if (detailFirst) await page.clock.pauseAt(new Date(Date.now() + 500));

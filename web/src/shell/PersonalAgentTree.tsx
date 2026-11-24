@@ -13,7 +13,6 @@ import type { TreeProps } from './Tree';
 import { TreeRow } from './TreeRow';
 import { agentActions } from './treeActions';
 import { keyboardNavigation, agentSignal } from './treePresentation';
-import { observedTaskStatus } from './taskStatus';
 import { taskPresentation } from './taskPresentation';
 import { IconDataOutline16 } from '../ui/icons';
 import { sandboxChildStatus } from '../sandbox/lifecycle';
@@ -27,22 +26,12 @@ interface AgentCard {
 }
 
 /** Flat navigation keeps each Agent's parent only for status and action eligibility. */
-function agentCards(
-  items: TreeProps['items'],
-  statusFilter: string,
-  currentTask?: TreeProps['currentTask'],
-): readonly AgentCard[] {
+function agentCards(items: TreeProps['items']): readonly AgentCard[] {
   return items
     .flatMap(({ sandbox, workspaces }) =>
       workspaces
         .filter((workspace) => workspace.status !== 'removed')
         .flatMap((workspace) => workspace.agents)
-        .filter(
-          (agent) =>
-            agent.status !== 'deleted' &&
-            (statusFilter === 'all' ||
-              observedTaskStatus(agent, sandbox, currentTask) === statusFilter),
-        )
         .map((agent) => ({ sandbox, agent })),
     )
     .sort(
@@ -85,14 +74,19 @@ export function PersonalAgentTree({
 >) {
   const cards = useMemo(
     () =>
-      agentCards(items, statusFilter ?? 'all', currentTask).flatMap((card) => {
+      agentCards(items).flatMap((card) => {
         const presentation = taskPresentation(
           card.agent,
           card.sandbox,
           refreshError === undefined ? 'fresh' : 'stale',
           currentTask,
         );
-        return presentation ? [{ ...card, presentation }] : [];
+        if (
+          !presentation ||
+          (statusFilter && statusFilter !== 'all' && presentation.status !== statusFilter)
+        )
+          return [];
+        return [{ ...card, presentation }];
       }),
     [items, statusFilter, refreshError, currentTask],
   );

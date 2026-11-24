@@ -31,9 +31,12 @@ const AT: &str = "2026-09-05T00:30:00Z";
 #[path = "suspended_assessment_tests.rs"]
 mod assessment;
 
+#[path = "repeat_tests.rs"]
+mod repeat;
+
 async fn live(store: &MongoSandboxStore, id: &str, active: bool) -> Agent {
     let original = super::super::mongo_fixtures::reopen_fixture(store, id).await;
-    let mut agent = original.snapshot.retained.agents[0].clone();
+    let agent = original.snapshot.retained.agents[0].clone();
     let generation = original
         .snapshot
         .retained
@@ -42,6 +45,15 @@ async fn live(store: &MongoSandboxStore, id: &str, active: bool) -> Agent {
         .unwrap()
         .provision_generation
         .unwrap();
+    set_live_child(store, agent, generation, active).await
+}
+
+async fn set_live_child(
+    store: &MongoSandboxStore,
+    mut agent: Agent,
+    generation: u64,
+    active: bool,
+) -> Agent {
     agent.status = if active {
         AgentStatus::Working
     } else {
@@ -156,6 +168,7 @@ async fn suspended_admission_refuses_changed_membership_and_organization_ownersh
     let id = &child.sandbox_id;
     let snapshot = store.retained_suspended_reopen_snapshot(id).await.unwrap();
     let mut request = RetainedSuspendedReopenRequest {
+        repeat_authorized: false,
         proof: proof(&snapshot).unwrap(),
         snapshot,
         key_sha256: "b".repeat(64),
@@ -294,7 +307,7 @@ async fn competing_consents_settle_once_and_flag_rollback_keeps_only_exact_repla
     assert!(matches!(
         off.request(&owner, id, parent.revision, "fresh-key", true)
             .await,
-        Err(RetainedReopenError::Conflict)
+        Err(RetainedReopenError::StaleRequest)
     ));
     assert!(matches!(
         off.request(
@@ -314,6 +327,7 @@ async fn competing_consents_settle_once_and_flag_rollback_keeps_only_exact_repla
 
 async fn save_failed_revival(store: &MongoSandboxStore, id: &SandboxId) {
     let mut bound = store.get_sandbox(id).await.unwrap().unwrap();
+    let observed_at = bound.updated_at.clone();
     // Present the already installed synthetic replacement at its restore phase.
     // The actual terminal state and event go through the ordinary claimed save.
     let mut replacement = *bound.lifecycle.suspended_runtime.take().unwrap();
@@ -334,7 +348,7 @@ async fn save_failed_revival(store: &MongoSandboxStore, id: &SandboxId) {
         .claim_sandbox_work(
             id,
             "fixture-worker",
-            AT.into(),
+            observed_at.clone(),
             crate::store::sandbox_mongo_integration_tests::work_lease_deadline(),
         )
         .await
@@ -347,7 +361,7 @@ async fn save_failed_revival(store: &MongoSandboxStore, id: &SandboxId) {
             "synthetic failed installation".into(),
             &lease.holder,
             lease.fence,
-            AT.into(),
+            observed_at.clone(),
         )
         .unwrap();
     store
@@ -356,7 +370,7 @@ async fn save_failed_revival(store: &MongoSandboxStore, id: &SandboxId) {
             sandbox: failed,
             agents: Vec::new(),
             agent_scope: SandboxLifecycleAgentScope::Touched,
-            appended_at: AT.into(),
+            appended_at: observed_at,
             events: vec![SandboxEventKind::Failed { failure }],
         })
         .await
@@ -387,6 +401,7 @@ fn legacy_request(snapshot: RetainedReopenSnapshot, key: String) -> RetainedReop
     };
     proof.validate(&snapshot).unwrap();
     RetainedReopenRequest {
+        repeat_authorized: false,
         snapshot,
         proof,
         key_sha256: key,
@@ -402,6 +417,7 @@ async fn suspended_receipt_pair_survives_failed_revive_and_reconciliation() {
     let id = &child.sandbox_id;
     let snapshot = store.retained_suspended_reopen_snapshot(id).await.unwrap();
     let request = RetainedSuspendedReopenRequest {
+        repeat_authorized: false,
         proof: proof(&snapshot).unwrap(),
         snapshot,
         key_sha256: "a".repeat(64),
@@ -409,11 +425,13 @@ async fn suspended_receipt_pair_survives_failed_revive_and_reconciliation() {
     };
     let mut session = client.start_session().await.unwrap();
     let scope = TransactionScope::start(&mut session).await.unwrap();
-    let Applied::Commit(receipt, event) = apply(&store, &request, scope).await.unwrap() else {
+    let Applied::Commit(receipt, event, repeat) = apply(&store, &request, scope).await.unwrap()
+    else {
         panic!("expected atomic settlement")
     };
     session.commit_transaction().await.unwrap();
     let time = session.operation_time().unwrap();
+    assert!(!repeat);
     let committed = row(&store, id).await;
     assert_eq!(pair(&committed).unwrap().as_ref(), Some(receipt.as_ref()));
 
@@ -438,17 +456,16 @@ async fn suspended_receipt_pair_survives_failed_revive_and_reconciliation() {
     for field in [FIELD, SUSPENDED_FIELD] {
         assert_eq!(failed.get(field), committed.get(field));
     }
-    reconcile(&store, &receipt, &event, time).await.unwrap();
+    reconcile(&store, &receipt, &event, time, repeat)
+        .await
+        .unwrap();
     let exact = store.admit_suspended_reopen(request.clone()).await.unwrap();
     assert_eq!(exact, receipt.accepted);
-    let snapshot = store.retained_reopen_snapshot(id).await.unwrap();
-    for key in [request.key_sha256.clone(), "f".repeat(64)] {
-        let legacy = legacy_request(snapshot.clone(), key);
-        assert!(matches!(
-            store.admit_retained_reopen(legacy).await,
-            Err(SandboxStoreError::Corrupt(_))
-        ));
-    }
+    // The predecessor's ordinary reader still refuses the suspended marker.
+    assert!(matches!(
+        transaction::read_receipt(&failed),
+        Err(SandboxStoreError::Corrupt(_))
+    ));
     assert_eq!(row(&store, id).await, failed);
     assert_eq!(store.sandbox_events(id, 0, 10).await.unwrap().len(), 2);
     let control =

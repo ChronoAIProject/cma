@@ -311,9 +311,7 @@ for (const { combined, uncertain } of [
       await expect.poll(() => deletes.length).toBe(2);
       expect(deletes[1]).toBe(deletes[0]);
     }
-    await expect(
-      page.getByText('Agent delete request accepted. Cleanup continues in the background.'),
-    ).toBeVisible();
+    await expect(page.getByText('Deleting 1 Agent')).toBeVisible();
     expect(deletes).toHaveLength(combined && uncertain ? 2 : 1);
     expect(deletes[0]).not.toBe(stops[0]!.key);
     const detailFirst = !combined && !uncertain;
@@ -322,6 +320,10 @@ for (const { combined, uncertain } of [
     // before the reopened status dialog observes cleanup.
     await page.goto('/agent-manager');
     await page.reload();
+    await page
+      .getByRole('region', { name: 'Deletion request', exact: true })
+      .getByRole('button', { name: 'View status', exact: true })
+      .click();
     const reopen = page.getByRole('button', { name: /View Agent deletion status/ });
     await expect(reopen).toBeEnabled();
     if (detailFirst) await page.clock.pauseAt(new Date(Date.now() + 500));

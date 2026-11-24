@@ -1,4 +1,24 @@
 use super::*;
+use crate::profile_authoring::CmaProfileAuthoringSource;
+use layer2_core::profiles::{authoring::ProfileAuthoringService, ProfileCapacityBounds};
+
+pub(super) fn authoring_router(
+    config: &Config,
+    auth: &Arc<AuthState>,
+    bounds: ProfileCapacityBounds,
+) -> Result<axum::Router, String> {
+    let service = ProfileAuthoringService::new(
+        bounds,
+        CmaProfileAuthoringSource::production(config, Arc::clone(auth))?,
+    );
+    let public_origin = config
+        .nyxid_public_url
+        .as_deref()
+        .map(reqwest::Url::parse)
+        .transpose()
+        .map_err(|_| "NyxID public origin is invalid".to_string())?;
+    Ok(rest::profile_authoring_router(service, public_origin))
+}
 
 pub(super) async fn seed_profiles(
     stores: &MongoStores,

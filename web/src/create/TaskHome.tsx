@@ -13,6 +13,7 @@ import { lifecycleFailureMessage } from './lifecycleFailure';
 import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { TaskCreationStatus } from './TaskCreationStatus';
+import { DiscardWaitingCreation } from './DiscardWaitingCreation';
 import { TaskHomeLayout, type TaskHomeOverview } from './TaskHomeLayout';
 import { TaskTemplatePanel } from './TaskTemplatePanel';
 import { TaskComposer } from './TaskComposer';
@@ -26,6 +27,7 @@ import { useTaskDraft } from './taskDraft';
 import { taskCreateRequest, useTaskTitleModeSupport } from './taskCreateRequest';
 import { useTaskTemplateDraftSwitch } from './TaskTemplateDraftSwitch';
 import { useConnectionGate } from '../connections/useConnectionGate';
+import { RepositoryConnectionRepair } from '../connections/ConnectionWizard';
 import '../ui/Input.css';
 import './AgentLifecycleCard.css';
 import './TaskHome.css';
@@ -379,7 +381,7 @@ function TaskHomeContent({
                 {recoverTask.label}
               </Button>
             ) : null}
-            {lifecycle.connection ? (
+            {lifecycle.connection && !lifecycle.connection.repository_access ? (
               <Button
                 variant="outline"
                 placement="task-home__action"
@@ -396,6 +398,20 @@ function TaskHomeContent({
                 {continueTask.label}
               </Button>
             ) : null}
+            {lifecycle.canDiscardWaiting ? (
+              <DiscardWaitingCreation
+                key={intent?.key}
+                label="task"
+                onDiscard={() => {
+                  if (!lifecycle.discardWaiting()) return;
+                  connections.cancel();
+                  connections.clearError();
+                  setRecovering(false);
+                  setValidation(undefined);
+                  requestAnimationFrame(() => input.current?.focus());
+                }}
+              />
+            ) : null}
             {failure && intent?.receipt ? (
               <Button
                 variant="outline"
@@ -409,6 +425,14 @@ function TaskHomeContent({
         }
       />
       {connections.dialog}
+      {viewerId && lifecycle.connection?.repository_access ? (
+        <RepositoryConnectionRepair
+          owner={viewerId}
+          target={lifecycle.connection.target}
+          pending={lifecycle.pending || lifecycle.blocked}
+          onRecheck={() => void lifecycle.submit()}
+        />
+      ) : null}
       {quotaFailed ? (
         <p role="alert">
           The Sandbox environment limit is now reached. Your task draft is saved. Manage
