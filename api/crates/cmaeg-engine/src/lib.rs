@@ -4,6 +4,7 @@ mod custom_delivery;
 mod delivery_checkpoint;
 mod delivery_receipt;
 mod execution_attribution;
+mod readiness;
 mod recovery;
 mod scheduler;
 mod stored_receipt;
@@ -17,6 +18,7 @@ pub use delivery_receipt::{
     ConfirmedMessagePart, DeliveryOutcome, IntentReceipt, TypingOutcome, TypingReceipt,
 };
 pub use execution_attribution::ExecutionAttribution;
+pub use readiness::ReadinessReport;
 pub use recovery::{ExecutionError, Phase, RecoverySupport};
 pub use scheduler::{Disposition, ScheduleConfig, ScheduleReport, WorkSelection};
 pub use stored_receipt::{PartsManifest, StoredReceipt};
