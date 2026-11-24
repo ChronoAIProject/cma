@@ -393,6 +393,7 @@ use super::trigger_openapi_shapes::*;
         WorkspaceContextView,
         SandboxContextView,
         InstanceProfileReferenceView,
+        SandboxProfileReferenceView,
         FirstMessageStateView,
         AgentListItemView,
         AgentPageView,

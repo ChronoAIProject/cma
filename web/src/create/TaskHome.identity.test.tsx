@@ -11,6 +11,64 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
+it('keeps a managed repository wait on the same request until an explicit recheck', async () => {
+  const writes: { key: string | null; body: unknown }[] = [];
+  const readInventory = vi.fn(async () =>
+    Response.json({ owner: 'owner', github: { manage_url: 'https://nyx.example/keys' } }),
+  );
+  const transport: typeof fetch = async (input, options) => {
+    if (String(input) === '/auth/connections/repository-access') {
+      return readInventory();
+    }
+    if (options?.method === 'POST') {
+      writes.push({
+        key: new Headers(options.headers).get('Idempotency-Key'),
+        body: JSON.parse(String(options.body)),
+      });
+      return Response.json({ id: 'repository-operation', status: 'provisioning' }, { status: 202 });
+    }
+    if (String(input).includes('/agent-lifecycle/')) {
+      return Response.json({
+        id: 'repository-operation',
+        status: 'waiting_for_connection',
+        phase: 'admission',
+        connection: {
+          services: ['api-github'],
+          target: { type: 'sandbox_profile', profile: { id: 'profile-owned', revision: 1 } },
+          repository_access: 'verification_unavailable',
+        },
+        events: [],
+      });
+    }
+    throw new Error('Unexpected read');
+  };
+  render(
+    <TaskHome
+      client={taskClient(transport)}
+      viewerId="owner"
+      canCreateSandbox
+      onCreated={vi.fn()}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
+  );
+  fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Inspect the source' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add git repo' }));
+  fireEvent.change(screen.getByLabelText('GitHub repository'), {
+    target: { value: 'https://github.com/example/project' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Add repo' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
+  await screen.findByRole('link', { name: 'Manage permissions in NyxID' });
+  expect(writes).toHaveLength(1);
+  expect(readInventory).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('button', { name: 'Continue original task' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Recheck repository access' }));
+  await waitFor(() => expect(writes).toHaveLength(2));
+  expect(writes[1]).toEqual(writes[0]);
+});
+
 it('clears drafts and retained requests on sign-out and account change before reauthentication restores Home', async () => {
   const transport = vi.fn<typeof fetch>(async () => {
     throw new TypeError('Response lost');
