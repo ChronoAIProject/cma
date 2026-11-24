@@ -107,7 +107,7 @@ pub(super) async fn router_with_policy(
         store.clone(),
         layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         profiles,
-        ImageManagerResolver::new("http://127.0.0.1:1".into()).unwrap(),
+        ImageManagerResolver::new("http://127.0.0.1:1".into(), false).unwrap(),
         ProfileCapacityBounds {
             min_cpu_millis: 100,
             max_cpu_millis: 8000,

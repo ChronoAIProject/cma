@@ -486,3 +486,7 @@ fn invalid(detail: impl Into<String>) -> RuntimeError {
 fn state_io(operation: &'static str, error: std::io::Error) -> RuntimeError {
     RuntimeError::unavailable("install_state_unavailable", format!("{operation}: {error}"))
 }
+
+pub(crate) fn inspection_temporary_name(name: &str) -> Result<bool> {
+    classify(name).map(|kind| kind == FileKind::Temporary)
+}

@@ -2,6 +2,7 @@
 pub mod aggregate;
 pub mod allocation;
 pub mod cursor;
+pub mod measured_evidence;
 pub mod model;
 pub mod options;
 pub mod owner_allocation;

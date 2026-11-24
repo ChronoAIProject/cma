@@ -5,18 +5,21 @@ use layer2_core::sandbox::{
     channel_usage::*,
     store::{
         AgentChannelUsageStore, AgentCreation, AgentProvenanceBackfillStore, AgentProvenanceStore,
-        PageRequest, ProvenanceBackfillOutcome,
+        ClaimedWork, PageRequest, ProvenanceBackfillOutcome, SandboxWorkerStore, WorkAuthority,
     },
     AgentCreationProvenance, FirstMessageRecord,
 };
+use tokio::time::Instant;
 
 #[path = "metadata_unknown_tests/fixture.rs"]
 pub(in crate::store) mod fixture;
 #[path = "metadata_unknown_tests/observations.rs"]
 mod observations;
+#[path = "metadata_unknown_tests/readonly.rs"]
+mod readonly;
 #[path = "metadata_unknown_tests/reuse_precommit.rs"]
 mod reuse_precommit;
-use fixture::{Fixture, Operation};
+use fixture::{Fixture, Operation, Outcome};
 
 async fn metadata_unknown_committed_recovers_exact_receipt_without_new_transaction_case(
     operation: Operation,
@@ -24,7 +27,7 @@ async fn metadata_unknown_committed_recovers_exact_receipt_without_new_transacti
     let f = Fixture::new(operation).await;
     f.fail("commitTransaction", 5, Some(true), false).await;
     let result = f.run(operation).await;
-    f.clear().await;
+    f.clear_and_settle_commit().await;
     let commands = f.commands();
     let state = f.state().await;
     f.drop_database().await;
@@ -76,6 +79,49 @@ async fn metadata_unknown_uncommitted_refuses_without_reapplying_absent_receipt_
         "{operation:?}: unknown commit changed durable facts"
     );
     assert_receipt_only(&commands, operation);
+}
+
+async fn metadata_known_abort_at_start_retries_original_authority_with_fresh_snapshot_case(
+    operation: Operation,
+) {
+    let f = Fixture::new(operation).await;
+    let claimed = f.claim().await;
+    let result = WorkAuthority::new(
+        ClaimedWork::Sandbox(Box::new(claimed.clone())),
+        Instant::now(),
+    )
+    .run(
+        async {
+            f.fail("update", 1, None, false).await;
+            crate::store::work_publication::scope(&f.store, f.run(operation)).await
+        },
+        || async {
+            f.independent
+                .renew_sandbox_authority(&claimed, &fixture::now(), &fixture::deadline())
+                .await
+        },
+    )
+    .await;
+    f.clear().await;
+    let commands = f.commands();
+    let state = f.state().await;
+    f.drop_database().await;
+
+    let outcome = result.expect("known-aborted startup fence must retry from a fresh snapshot");
+    if matches!(operation, Operation::Snapshot | Operation::History) {
+        assert!(matches!(outcome, Outcome::Read));
+    } else {
+        f.assert_committed(operation, outcome, state);
+    }
+    let starts = starts(&commands);
+    assert_eq!(starts.len(), 2, "{operation:?}: exactly one fresh retry");
+    assert!(starts
+        .iter()
+        .all(|command| command.get_str("update").ok() == Some("sandboxes")));
+    assert!(
+        starts[0].get("lsid") != starts[1].get("lsid")
+            || starts[0].get("txnNumber") != starts[1].get("txnNumber")
+    );
 }
 
 async fn metadata_precommit_unknown_dominates_duplicate_and_transient_labels_case(

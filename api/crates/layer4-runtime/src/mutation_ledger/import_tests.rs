@@ -3,6 +3,71 @@ use crate::ledger_storage::fault_vfs::{Event, Vfs};
 use crate::mutation_ledger::tests::{close, Fixture};
 
 #[tokio::test]
+async fn held_import_projects_the_exact_unclosed_incarnation_in_any_record_order() {
+    use crate::mutation_journal::Operation;
+    use layer3_adapter::wire::{AgentCloseReceipt, AgentOpenReceipt};
+    use layer3_adapter::{AgentCloseRequest, AgentLaunch, AgentProcessAction, AgentSlot};
+
+    let fixture = Fixture::new();
+    let config = &fixture.config;
+    let store = HeldImport::create(fixture.database(), config.clone(), 32_768)
+        .await
+        .unwrap();
+    let agent = AgentSlot::new("agent");
+    let opened = |incarnation| {
+        let launch = AgentLaunch {
+            operation_id: AgentProcessAction::Open.operation_id(agent.as_str(), incarnation),
+            request_sha256: "a".repeat(64),
+            agent_id: agent.clone(),
+            cwd: crate::worktree::expected_path(&config.home, "project", "agent")
+                .to_string_lossy()
+                .into_owned(),
+            home: config
+                .agent_home(agent.as_str())
+                .to_string_lossy()
+                .into_owned(),
+            program: "/bin/sh".into(),
+            args: vec![],
+            env: Default::default(),
+        };
+        Record::started(config, &Operation::open_agent(&launch))
+            .unwrap()
+            .completed(&AgentOpenReceipt {
+                operation_id: launch.operation_id,
+                request_sha256: launch.request_sha256,
+                agent_id: launch.agent_id,
+                cwd: launch.cwd,
+                home: launch.home,
+                conversation_id: None,
+            })
+            .unwrap()
+            .encode()
+            .unwrap()
+    };
+    let old = opened(1);
+    let current = opened(2);
+    store.journal(0, current.clone()).await.unwrap();
+    store.journal(0, old.clone()).await.unwrap();
+    assert!(store.verify_process(0, old.clone()).await.is_err());
+
+    let request = AgentCloseRequest::new("agent:agent:close:v1", agent);
+    let closed = Record::started(config, &Operation::close_agent(&request))
+        .unwrap()
+        .completed(&AgentCloseReceipt {
+            operation_id: request.operation_id,
+            request_sha256: request.request_sha256,
+            agent_id: request.agent_id,
+        })
+        .unwrap()
+        .encode()
+        .unwrap();
+    store.journal(0, closed).await.unwrap();
+    assert!(!store.verify_process(0, old).await.unwrap());
+    assert!(store.verify_process(0, current).await.unwrap());
+    assert_eq!(store.finish(1).await.unwrap()["logical_processes"], 1);
+}
+
+#[tokio::test]
 async fn import_commit_faults_preserve_atomic_raw_results_and_never_clear_the_hold() {
     for event in [
         Event::JournalWrite,

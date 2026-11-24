@@ -1,7 +1,7 @@
 //! Exact archive census versions. Compatibility never means an arbitrary subset.
 use super::*;
 use crate::retirement_archive::Manifest;
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::LazyLock};
 
 #[path = "legacy_census.rs"]
 mod legacy;
@@ -15,6 +15,15 @@ mod pre_capture;
 mod pre_capture_accounts;
 #[path = "pre_usage_capture_backup_census.rs"]
 mod pre_capture_backups;
+#[path = "pre_resource_execution_census.rs"]
+mod pre_execution;
+#[path = "pre_legal_consent_census.rs"]
+#[cfg(test)]
+mod pre_legal_consent;
+#[cfg(test)]
+pub(super) const PRE_LEGAL_CONSENT_SHA256: &str = pre_legal_consent::SHA256;
+#[cfg(test)]
+pub(super) const PRE_LEGAL_CONSENT_COLLECTIONS: &[&str] = pre_legal_consent::COLLECTIONS;
 
 #[cfg(test)]
 pub(super) const PRE_BACKUP_COLLECTIONS: &[&str] = pre_backup::COLLECTIONS;
@@ -30,12 +39,23 @@ pub(super) const LEGACY_COLLECTIONS: &[&str] = legacy::COLLECTIONS;
 #[cfg(test)]
 pub(super) const LEGACY_SHA256: &str = legacy::SHA256;
 
+pub(crate) fn manifest_collections() -> &'static [&'static str] {
+    static NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+        super::super::isolation::COLLECTIONS
+            .iter()
+            .copied()
+            .filter(|name| !super::census_catalog::OUTSIDE_MANIFEST.contains(name))
+            .collect()
+    });
+    &NAMES
+}
+
 pub(crate) fn schema_sha256() -> String {
     digest(
         format!(
             "archive-census-v2\n{:?}\n{}",
             super::census_catalog::AUDIT,
-            super::super::isolation::COLLECTIONS.join("\n")
+            manifest_collections().join("\n")
         )
         .as_bytes(),
     )
@@ -43,7 +63,9 @@ pub(crate) fn schema_sha256() -> String {
 
 fn collections(schema: &str) -> Result<&'static [&'static str]> {
     if schema == schema_sha256() {
-        Ok(super::super::isolation::COLLECTIONS)
+        Ok(manifest_collections())
+    } else if schema == pre_execution::SHA256 {
+        Ok(pre_execution::COLLECTIONS)
     } else if schema == pre_capture::SHA256 {
         Ok(pre_capture::COLLECTIONS)
     } else if schema == pre_capture_accounts::SHA256 {

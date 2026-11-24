@@ -53,6 +53,8 @@ export const operatorDispatch: Record<string, Dispatch> = {
   'PUT /api/v1/admin/warm-pools/{id}': ({ client, param, body }) =>
     client.admin.resizeWarmPool(param('id'), body),
   'GET /api/v1/admin/activity': ({ client, options }) => client.admin.listActivity(options),
+  'GET /api/v1/admin/activity/actors': ({ client, query }) =>
+    client.admin.searchActivityActors(query.get('q') ?? ''),
   'GET /auth/session': ({ client }) => client.auth.readSession(),
   'GET /auth/signup-options': ({ client }) => client.auth.readSignupOptions(),
   'POST /api/v1/mcp': ({ client }) => client.unsupported.mcp(),

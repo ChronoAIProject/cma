@@ -76,7 +76,21 @@ pub(super) async fn projected_transcript(
 pub(super) mod answer;
 pub(super) mod page;
 mod transcript;
-pub(super) use transcript::page as transcript_page;
+
+pub(super) async fn transcript_page(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    request: &layer2_core::sandbox::AgentTranscriptPageRequest,
+    mode: segments::capture::CaptureMode,
+) -> Result<Option<layer2_core::sandbox::AgentTranscriptPage>, SandboxStoreError> {
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+    transcript::page_with_capture(store, agent, &mut session, request, mode).await
+}
 
 /// Read one bounded source range from a certified format-2 history. A
 /// transaction-safe form is selected with `snapshot = false`; a transaction

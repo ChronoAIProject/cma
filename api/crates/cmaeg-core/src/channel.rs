@@ -102,6 +102,10 @@ pub enum Source {
         /// Admit native channel posts as non-human channel identities; requires message_events.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         channel_posts: bool,
+        /// Exact Telegram groups that opted into one event per human membership update.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schema(max_items = 16)]
+        member_join_chat_ids: Vec<String>,
         bot_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bot_username: Option<String>,
@@ -153,6 +157,10 @@ pub enum Source {
         /// Optional exact NyxID connection for embedded Lark/Feishu resources.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_resources: Option<LarkResourceBinding>,
+        /// Exact Telegram relay groups opted into one event per human membership update.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schema(max_items = 16)]
+        member_join_chat_ids: Vec<String>,
         /// Explicit write authority; independent of resource reads.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_message_effects: Option<Box<LarkMessageEffectsBinding>>,

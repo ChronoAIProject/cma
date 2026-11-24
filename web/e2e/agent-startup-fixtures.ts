@@ -164,6 +164,15 @@ export class LocalStartup {
         );
       }
       switch (url.pathname.replace(this.agent.id, 'agt_contract')) {
+        case '/api/v1/ui/image-manager-retirement':
+          return reply(false);
+        case '/api/v1/agents/agt_contract/preferences':
+          return reply({
+            revision: 0,
+            system_prompt: '',
+            prompt_pending: false,
+            prompt_supported: false,
+          });
         case '/api/v2/ui/task-experience':
         case '/api/v1/agents/agt_contract/suggestions':
           return reply({ code: 'not_found', detail: 'Optional capability unavailable.' }, 404);
@@ -227,7 +236,14 @@ export class LocalStartup {
             policy_revision: 1,
           });
         case '/api/v1/profile-authoring/services':
-          return reply([{ id: 'api-github', catalog_id: 'catalog-github', name: 'GitHub' }]);
+          return reply([
+            {
+              id: 'api-github',
+              catalog_id: 'catalog-github',
+              name: 'GitHub',
+              detail_url: 'https://catalog.example.test/services/catalog-github',
+            },
+          ]);
         case '/api/v1/profile-authoring/skills':
           return reply({
             items: [{ id: url.searchParams.get('q'), name: 'TypeScript', versions: ['1.2'] }],

@@ -79,7 +79,7 @@ async fn reopen_confirmation_releases_the_writer_for_output_and_accepted_stop() 
             let agent = AgentId("agt_reopen".into());
             let guard = guard();
             tokio::join!(
-                drain(opening, &mut receiver, &recorder, &agent, &guard),
+                drain(opening, &mut receiver, &recorder, &agent, &guard, false),
                 stop,
             )
         })
@@ -116,6 +116,7 @@ async fn reopen_retries_the_receipt_without_repolling_completed_confirmation() {
             &recorder,
             &AgentId("agt_reopen".into()),
             &guard(),
+            false,
         ),
     )
     .await
@@ -155,6 +156,7 @@ async fn concurrent_open_completion_cannot_hide_a_refused_receipt() {
                 &recorder,
                 &AgentId("agt_reopen".into()),
                 &guard(),
+                false,
             ),
         )
         .await
@@ -192,6 +194,7 @@ async fn expired_reopen_releases_the_writer_without_acknowledging_uncommitted_ou
         &recorder,
         &AgentId("agt_reopen".into()),
         &guard,
+        false,
     )
     .await;
     assert_eq!(

@@ -1,4 +1,4 @@
-import type { DocumentsClient, DocumentView } from '../api/documents';
+import { DocumentError, type DocumentsClient, type DocumentView } from '../api/documents';
 
 export interface SavedDocumentDownload {
   readonly blob: Blob;
@@ -6,9 +6,40 @@ export interface SavedDocumentDownload {
 }
 
 export class SavedDocumentExportError extends Error {}
+export class SavedDocumentAccessError extends SavedDocumentExportError {}
 
 export function ownsSavedDocument(document: DocumentView, viewer: string): boolean {
   return viewer.length > 0 && document.access === 'owner' && document.owner_subject === viewer;
+}
+
+function accessDenied(cause: unknown): boolean {
+  return cause instanceof DocumentError && (cause.status === 401 || cause.status === 403);
+}
+
+async function readOwnedDocument(
+  client: Pick<DocumentsClient, 'read'>,
+  id: string,
+  viewer: string,
+  signal: AbortSignal,
+): Promise<DocumentView> {
+  // Export requires owner authority independent of any share link.
+  const document = await client.read(id, { signal }).catch((cause: unknown) => {
+    signal.throwIfAborted();
+    if (
+      accessDenied(cause) ||
+      (cause instanceof DocumentError &&
+        cause.status === 404 &&
+        cause.code === 'document_not_found')
+    )
+      throw new SavedDocumentAccessError('This document is no longer available to you.', { cause });
+    throw cause;
+  });
+  signal.throwIfAborted();
+  if (document.id !== id)
+    throw new SavedDocumentExportError('Saved document metadata is incomplete or invalid.');
+  if (!ownsSavedDocument(document, viewer))
+    throw new SavedDocumentAccessError('Only documents you own can be exported.');
+  return document;
 }
 
 export async function prepareSavedDocumentExport(
@@ -18,14 +49,8 @@ export async function prepareSavedDocumentExport(
   signal: AbortSignal,
 ): Promise<SavedDocumentDownload> {
   signal.throwIfAborted();
-  // Do not carry share-link authority into an owner-only export.
-  const document = await client.read(id, { signal });
-  signal.throwIfAborted();
-  if (!ownsSavedDocument(document, viewer)) {
-    throw new SavedDocumentExportError('Only documents you own can be exported.');
-  }
+  const document = await readOwnedDocument(client, id, viewer, signal);
   if (
-    document.id !== id ||
     typeof document.title !== 'string' ||
     !document.title.trim() ||
     new TextEncoder().encode(document.title).length > 240 ||
@@ -39,7 +64,19 @@ export async function prepareSavedDocumentExport(
   ) {
     throw new SavedDocumentExportError('Saved document metadata is incomplete or invalid.');
   }
-  const source = await client.source(id, { revision: document.source_revision, signal });
+  const source = await client
+    .source(id, { revision: document.source_revision, signal })
+    .catch(async (cause: unknown) => {
+      signal.throwIfAborted();
+      if (accessDenied(cause))
+        throw new SavedDocumentAccessError('This document is no longer available to you.', {
+          cause,
+        });
+      // The source endpoint uses 404 for both a missing revision and denied access.
+      if (cause instanceof DocumentError && cause.status === 404)
+        await readOwnedDocument(client, id, viewer, signal);
+      throw cause;
+    });
   signal.throwIfAborted();
   if (
     source.id !== id ||

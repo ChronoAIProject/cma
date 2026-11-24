@@ -12,10 +12,11 @@ pub(super) struct ProductionAdapters {
 pub(super) fn desktop_creation(
     config: &Config,
     adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+    stores: &crate::store::MongoStores,
 ) -> Result<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>, String> {
-    layer2_core::sandbox::desktop_creation::DesktopCreationService::new(
+    layer2_core::sandbox::desktop_creation::DesktopCreationService::with_released(
         adapter,
-        config.runtime.sandbox_image.clone(),
+        stores.released_runtime.clone(),
         config.desktop_verified_runtime_image.clone(),
     )
     .map_err(str::to_owned)
@@ -42,6 +43,8 @@ pub(super) async fn production_adapter(
     let mut routing_options = mongodb::options::ClientOptions::parse(&config.mongodb_uri)
         .await
         .map_err(|_| "runtime routing database unavailable")?;
+    // Every transaction opens with a barrier read in this database (#3217).
+    crate::store::transaction_barrier::bind(&mut routing_options, &config.mongodb_database);
     routing_options.cmap_event_handler = Some(mongodb::event::EventHandler::callback(
         crate::store::mongo_latency::observer(&routing_options, "routing"),
     ));
@@ -171,6 +174,7 @@ pub(super) async fn production_adapter(
         .with_bounded_update_relay(config.features.bounded_update_relay)
         .with_output_json_budget(config.features.output_json_budget)
         .with_shared_runtime_output(config.features.shared_runtime_output)
+        .with_native_close_agent_lane(config.features.native_close_agent_lane)
         .with_legacy_receiver_image(config.runtime.legacy_receiver_image.clone());
         let transport = register_owner_control(config, "native", transport, &mut owner_controls);
         backends.agent_sandbox = Some(Arc::new(layer3_adapter::hosted::AgentSandboxBackend::new(

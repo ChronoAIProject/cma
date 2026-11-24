@@ -52,6 +52,7 @@ impl SandboxLimitClass {
 #[derive(Debug, Clone)]
 pub struct SandboxAdmission {
     pub binding: Option<crate::sandbox::binding::BindingAdmissionFence>,
+    lifecycle_lease: Option<LifecycleAdmissionLease>,
     pub sandbox: Sandbox,
     pub name: SandboxAdmissionName,
     pub admission_fingerprint: String,
@@ -60,7 +61,28 @@ pub struct SandboxAdmission {
     pub event_at: String,
 }
 
+#[derive(Clone)]
+struct LifecycleAdmissionLease(String);
+
+impl std::fmt::Debug for LifecycleAdmissionLease {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("LifecycleAdmissionLease(..)")
+    }
+}
+
 impl SandboxAdmission {
+    /// The initiating worker's in-memory claim. It is excluded from the
+    /// replay fingerprint so a new worker can recover a committed admission.
+    #[must_use]
+    pub fn with_lifecycle_lease(mut self, token: &str) -> Self {
+        self.lifecycle_lease = Some(LifecycleAdmissionLease(token.to_owned()));
+        self
+    }
+
+    pub fn lifecycle_lease(&self) -> Option<&str> {
+        self.lifecycle_lease.as_ref().map(|lease| lease.0.as_str())
+    }
+
     pub fn new(
         sandbox: Sandbox,
         name: SandboxAdmissionName,
@@ -70,6 +92,7 @@ impl SandboxAdmission {
         let admission_fingerprint = fingerprint(&sandbox, &name)?;
         let admission = Self {
             binding: None,
+            lifecycle_lease: None,
             sandbox,
             name,
             admission_fingerprint,

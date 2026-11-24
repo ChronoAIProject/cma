@@ -44,8 +44,10 @@ function mount(client: ReturnType<typeof publicClient>) {
 }
 
 function retain(recovery: boolean) {
+  const original = createIntent(route);
   const intent = {
-    ...createIntent(route),
+    ...original,
+    wireBody: JSON.stringify(original.body),
     owner: PUBLIC_USER.id,
     submitted: true,
     ...(recovery ? { credentialRecovery: 'retry' as const } : {}),

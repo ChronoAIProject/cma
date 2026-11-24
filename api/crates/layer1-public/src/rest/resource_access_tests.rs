@@ -63,7 +63,7 @@ impl layer2_core::UserDirectoryStore for ShareDirectory {
         })
     }
 }
-struct Authority {
+pub(super) struct Authority {
     member: AtomicBool,
 }
 pub(super) fn context(subject: &str) -> CallerContext {
@@ -116,7 +116,7 @@ impl OrganizationAuthority for Authority {
         unreachable!()
     }
 }
-async fn app() -> (Router, Arc<InMemorySandboxStore>, Arc<Authority>) {
+pub(super) async fn app() -> (Router, Arc<InMemorySandboxStore>, Arc<Authority>) {
     let fixture = fixture().await;
     insert_agent(
         &fixture.store,
@@ -133,7 +133,7 @@ async fn app() -> (Router, Arc<InMemorySandboxStore>, Arc<Authority>) {
     ));
     (router, fixture.store, authority)
 }
-fn request(
+pub(super) fn request(
     method: &str,
     path: &str,
     subject: &str,

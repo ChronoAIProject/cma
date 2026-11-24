@@ -1,6 +1,6 @@
 use super::*;
 
-mod mongo;
+pub(in crate::store) mod mongo;
 mod retry_tests;
 mod settlement;
 

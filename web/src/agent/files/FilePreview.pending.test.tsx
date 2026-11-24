@@ -1,5 +1,10 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { agentFilesClient } from '../../api/rest/agentFiles';
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 import { AgentFileError, type AgentFilesClient } from '../../api/agentFiles';
 import { FileExplorer } from './FileExplorer';
 
@@ -85,4 +90,89 @@ it('keeps the latest A selection when aborted A and B responses arrive late', as
   });
   expect(editor).toHaveValue('hi');
   expect(screen.queryByRole('textbox', { name: 'Contents of b.txt' })).toBeNull();
+});
+
+it('keeps explicit preview pacing through selection changes, hiding and remount', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] });
+  const other = { ...file, name: 'b.txt', path: 'b.txt' };
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          code: 'store_failed',
+          retryable: false,
+          detail: 'private upstream content',
+        }),
+        { status: 503, headers: { 'Retry-After': '3' } },
+      ),
+    )
+    .mockImplementation(async () => new Response(JSON.stringify(content)));
+  vi.stubGlobal('fetch', fetcher);
+  const client = {
+    ...agentFilesClient(),
+    list: vi.fn(async () => [file, other]),
+    write: vi.fn(),
+    remove: vi.fn(),
+    download: vi.fn(),
+  };
+  const props = { client, agentId: 'one', readOnly: false, onClose: vi.fn() };
+  const first = render(<FileExplorer {...props} />);
+  await act(async () => vi.advanceTimersByTimeAsync(0));
+  fireEvent.click(screen.getByRole('button', { name: 'a.txt' }));
+  await act(async () => vi.advanceTimersByTimeAsync(0));
+  expect(screen.queryByText(/private upstream/)).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry preview' }));
+  await act(async () => vi.advanceTimersByTimeAsync(500));
+  fireEvent.click(screen.getByRole('button', { name: 'b.txt' }));
+  first.rerender(<FileExplorer {...props} active={false} />);
+  await act(async () => vi.advanceTimersByTimeAsync(500));
+  first.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+  const second = render(<FileExplorer {...props} />);
+  await act(async () => vi.advanceTimersByTimeAsync(0));
+  fireEvent.click(screen.getByRole('button', { name: 'a.txt' }));
+  await act(async () => vi.advanceTimersByTimeAsync(1999));
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('textbox', { name: 'Contents of a.txt' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
+  await act(async () => vi.advanceTimersByTimeAsync(1));
+  expect(screen.getByRole('textbox', { name: 'Contents of a.txt' })).toHaveValue('hi');
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(client.write).not.toHaveBeenCalled();
+  expect(client.remove).not.toHaveBeenCalled();
+  expect(client.download).not.toHaveBeenCalled();
+  second.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('clears preview access on a malformed HTTP 403 without displaying the body', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] });
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify(content)))
+    .mockResolvedValueOnce(new Response('<html>private upstream content</html>', { status: 403 }));
+  vi.stubGlobal('fetch', fetcher);
+  const accessChanged = vi.fn();
+  const client = { ...agentFilesClient(), list: vi.fn(async () => [file]) };
+  const view = render(
+    <FileExplorer
+      client={client}
+      agentId="one"
+      readOnly={false}
+      onClose={vi.fn()}
+      onAccessChanged={accessChanged}
+    />,
+  );
+  await act(async () => vi.advanceTimersByTimeAsync(0));
+  fireEvent.click(screen.getByRole('button', { name: 'a.txt' }));
+  await act(async () => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByRole('textbox', { name: 'Contents of a.txt' })).toHaveValue('hi');
+  fireEvent.click(screen.getByRole('button', { name: 'a.txt' }));
+  await act(async () => vi.advanceTimersByTimeAsync(0));
+  expect(accessChanged).toHaveBeenCalledOnce();
+  expect(screen.queryByRole('textbox', { name: 'Contents of a.txt' })).toBeNull();
+  expect(screen.queryByText(/private upstream/)).toBeNull();
+  view.unmount();
+  expect(vi.getTimerCount()).toBe(0);
 });

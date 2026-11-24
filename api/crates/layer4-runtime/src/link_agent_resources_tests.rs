@@ -1,4 +1,7 @@
 use super::*;
+
+#[path = "link_native_close_effect_fixture.rs"]
+mod close_effect;
 use crate::config::RuntimeConfig;
 use layer3_adapter::wire::{
     AGENT_COMPUTER_STATUS_MEDIA_TYPE, AGENT_RESOURCES_STATUS_MEDIA_TYPE,

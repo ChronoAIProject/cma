@@ -4,6 +4,7 @@ import type { InputErrorOwner } from './actionError';
 import type { AgentCommand, ApprovalDecision } from './controller';
 import type { MessageAcceptance } from './controllerTypes';
 import { ApiError, type AnswerContext } from '@cma/client';
+import { stoppedInputMessage } from './controllerError';
 import { submitV2Control, recoverV2Control } from './transport/controls';
 import {
   submitV2Interruption,
@@ -77,10 +78,15 @@ export function useAgentActions({
         actionAbortRef.current !== undefined ||
         ((commandsBlocked || currentCommandsBlocked.current) && typeof approval !== 'string') ||
         !inputAvailability.allowed
-      )
+      ) {
+        if (typeof approval === 'string' && mode === 'send') onRefused?.();
         return;
+      }
       const current = stateRef.current;
-      if (current.status !== 'ready' || current.detail.id !== agentId) return;
+      if (current.status !== 'ready' || current.detail.id !== agentId) {
+        if (typeof approval === 'string' && mode === 'send') onRefused?.();
+        return;
+      }
       if (
         historyIncomplete &&
         typeof approval !== 'string' &&
@@ -109,8 +115,10 @@ export function useAgentActions({
       if (
         current.detail.status === 'starting' &&
         (session === undefined || typeof approval !== 'string')
-      )
+      ) {
+        if (typeof approval === 'string' && mode === 'send') onRefused?.();
         return;
+      }
       if (session === undefined) replayAbortRef.current?.abort();
       const controller = new AbortController();
       actionAbortRef.current = controller;
@@ -312,7 +320,11 @@ export function useAgentActions({
               : undefined,
           );
         if (!controller.signal.aborted && !onIdentityChange(error))
-          setActionError(errorMessage(error), retainedInput);
+          setActionError(
+            (!approving && !accepted && stoppedInputMessage(error, stateRef.current, agentId)) ||
+              errorMessage(error),
+            retainedInput,
+          );
       } finally {
         if (actionAbortRef.current === controller) {
           actionAbortRef.current = undefined;

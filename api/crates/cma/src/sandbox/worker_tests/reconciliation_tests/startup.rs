@@ -27,6 +27,8 @@ async fn startup_thirty_four_bindings_finish_before_orphan_and_home_cleanup() {
     }
 }
 
+/// A non-transient runtime refusal still stops startup; see `transient` for the
+/// unreachable-runtime case that defers one binding instead.
 #[tokio::test]
 async fn startup_error_waits_for_started_adoptions_and_never_enters_cleanup() {
     let fixture = fixture(12, Some(12), Some(2), Duration::ZERO).await;
@@ -88,3 +90,5 @@ async fn startup_full_batch_capacity_and_exclusive_context_select_the_real_path(
 
 #[path = "startup_targets.rs"]
 mod targets;
+#[path = "startup_transient.rs"]
+mod transient;
