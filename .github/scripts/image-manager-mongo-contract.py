@@ -80,6 +80,7 @@ def main():
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "console", "shared_", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "optional_forms_storage", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "optional_media_continuation_storage", "--", "--ignored", "--test-threads=1"],
+                ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "transaction_terminal::", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "nextest", "run", "--workspace", "--locked", "-E",
                  "package(=cmaeg) and kind(lib) and test(~activity::history::mongo_tests::)",
                  "--run-ignored", "only", "--test-threads", "1", "--no-fail-fast"],

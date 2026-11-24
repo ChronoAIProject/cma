@@ -5,6 +5,7 @@ use crate::store::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, unsigned, CommitOutcome,
     TRANSACTION_ATTEMPTS,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 pub(in crate::store) async fn save(
     store: &MongoSandboxStore,
@@ -28,15 +29,15 @@ pub(in crate::store) async fn save(
         match apply(store, &mut session, expected, sandbox, &at, acquisition).await {
             Ok(()) => {}
             Err(TransactionEventError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 continue;
             }
             Err(TransactionEventError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(unavailable(error));
             }
             Err(TransactionEventError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
         }
