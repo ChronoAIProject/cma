@@ -21,7 +21,10 @@ mod transactions;
 pub(crate) use transactions::{
     commit_transaction, is_confirmed_body_retry, is_duplicate_key, start_transaction, CommitOutcome,
 };
-pub(super) use transactions::{commit_transaction_with_refusal, is_transient, PrecommitRefusal};
+pub(super) use transactions::{
+    commit_transaction_with_refusal, is_transient, start_transaction_before_work_fence,
+    PrecommitRefusal,
+};
 
 pub use super::profile_mongo::MongoProfileStore;
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
