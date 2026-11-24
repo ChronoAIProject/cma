@@ -238,6 +238,8 @@ mutations = [
   ->(d) { d['ci']['jobs']['gate-eg']['needs'].delete('runtime-images') },
   ->(d) { d['ci']['jobs']['gate-am']['if'] = 'success()' },
   ->(d) { d['ci']['jobs']['version-label']['name'] = 'Optional label' },
+  ->(d) { d['ci']['jobs']['version-label']['if'] = 'always()' },
+  ->(d) { d['ci']['jobs']['version-label']['if'] = 'success()' },
   ->(d) { d['ci'][true]['pull_request']['types'].delete('labeled') },
   ->(d) { d['ci'][true]['pull_request']['types'].delete('unlabeled') },
   ->(d) { d['ci'][true]['pull_request']['paths-ignore'] = ['README.md'] },

@@ -241,7 +241,7 @@ def validate(documents, actions)
     require_check(job.fetch('steps').any? { |step| step.fetch('run', '').include?('ci_tracks/gate.py') }, 'gate validator missing')
   end
   version = jobs.fetch('version-label')
-  require_check(version.fetch('name') == 'CI / Version label' && version.fetch('if') == 'always()', 'version gate missing')
+  require_check(version.fetch('name') == 'CI / Version label' && version.fetch('if') == '${{ !cancelled() }}', 'version gate missing')
   require_check(version.fetch('needs') == ['changes'], 'version must use selector')
   require_check(!version.key?('continue-on-error'), 'version job must propagate failure')
   label_check = version.fetch('steps').last
