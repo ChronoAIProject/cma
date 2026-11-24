@@ -22,6 +22,8 @@ mod authority;
 mod http;
 use http::{bounded_body, classify_status};
 #[cfg(test)]
+pub(super) mod test_support;
+#[cfg(test)]
 mod warmup;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
