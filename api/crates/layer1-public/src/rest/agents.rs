@@ -10,7 +10,7 @@ use axum::{
     Json, Router,
 };
 use layer2_core::profiles::AgentProfileRef;
-use layer2_core::sandbox::{AgentOrigin, CreateAgent};
+use layer2_core::sandbox::{AgentDetailReading, AgentOrigin, CreateAgent};
 use layer2_core::{AgentId, AgentProfileId, Caller, Capability, WorkspaceId};
 
 #[path = "agent_state.rs"]
@@ -25,6 +25,8 @@ use super::agent_shared_shapes::{
 };
 use super::idempotency::{self, IdempotencyKey, RequestBody};
 use super::instance_problem::InstanceProblem;
+use super::profiles_problem::ProfileProblem;
+use super::profiles_sandbox::readable_revision;
 use super::BodyProblem;
 use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
 pub use agent_state::AgentRoutesState;
@@ -298,25 +300,46 @@ pub(crate) async fn read(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
-) -> Result<Json<AccessibleAgentView>, InstanceProblem> {
-    if let Some(resource) = resource {
-        return state
+) -> Result<Response, InstanceProblem> {
+    let id = AgentId(id);
+    let detail = if let Some(resource) = resource {
+        state
             .reads
             .detail_authorized(
                 &resource.context,
                 resource.credential.as_ref().map(DelegatedCredential::value),
-                &AgentId(id),
+                &id,
             )
-            .await
-            .map(AccessibleAgentView::from)
-            .map(|view| Json(view.with_agent_page(&state.agent_page_origin)))
-            .map_err(InstanceProblem::from);
+            .await?
+    } else {
+        AgentDetailReading::Personal(Box::new(state.reads.lineage(&caller, &id).await?))
+    };
+    let (view, private) = match (detail, state.sandbox_profile_readability.as_deref()) {
+        (AgentDetailReading::Personal(lineage), Some(profiles)) => {
+            let pinned = &lineage.sandbox.profile;
+            let readable =
+                match readable_revision(profiles, &caller, pinned.id.as_str(), pinned.revision)
+                    .await
+                {
+                    Ok(revision) => Some(revision.digest == pinned.digest),
+                    Err(ProfileProblem::Forbidden | ProfileProblem::NotFound) => Some(false),
+                    Err(_) => None,
+                };
+            let view =
+                AgentView::from_lineage(*lineage, None).with_sandbox_profile_readability(readable);
+            (AccessibleAgentView::Personal(Box::new(view)), true)
+        }
+        (detail, _) => (AccessibleAgentView::from(detail), false),
+    };
+    let body = Json(view.with_agent_page(&state.agent_page_origin));
+    let mut response = body.into_response();
+    if private {
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("private, no-store"),
+        );
     }
-    read_view(&state, &caller, &AgentId(id)).await.map(|view| {
-        Json(
-            AccessibleAgentView::Personal(Box::new(view)).with_agent_page(&state.agent_page_origin),
-        )
-    })
+    Ok(response)
 }
 
 #[utoipa::path(

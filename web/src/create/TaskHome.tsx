@@ -30,6 +30,7 @@ import { useTaskTemplateDraftSwitch } from './TaskTemplateDraftSwitch';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { usePreparationDraft } from '../preparation/usePreparationDraft';
 import { PreparationDraft } from '../preparation/PreparationDraft';
+import { RepositoryConnectionRepair } from '../connections/ConnectionWizard';
 import '../ui/Input.css';
 import './AgentLifecycleCard.css';
 import './TaskHome.css';
@@ -410,7 +411,7 @@ function TaskHomeContent({
                 {recoverTask.label}
               </Button>
             ) : null}
-            {lifecycle.connection ? (
+            {lifecycle.connection && !lifecycle.connection.repository_access ? (
               <Button
                 variant="outline"
                 placement="task-home__action"
@@ -440,6 +441,14 @@ function TaskHomeContent({
         }
       />
       {connections.dialog}
+      {viewerId && lifecycle.connection?.repository_access ? (
+        <RepositoryConnectionRepair
+          owner={viewerId}
+          target={lifecycle.connection.target}
+          pending={lifecycle.pending || lifecycle.blocked}
+          onRecheck={() => void lifecycle.submit()}
+        />
+      ) : null}
       {quotaFailed ? (
         <p role="alert">
           The Sandbox environment limit is now reached. Your task draft is saved. Manage

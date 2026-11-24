@@ -79,6 +79,9 @@ export const agentLifecycleFailure = object({
 });
 export type AgentLifecycleFailure = Output<typeof agentLifecycleFailure>;
 
+export const repositoryAccessRefusal = enumeration('verification_unavailable');
+export type RepositoryAccessRefusal = Output<typeof repositoryAccessRefusal>;
+
 export const agentLifecycleOperation = object({
   callback_url: optional(nullable(text)),
   id: text,
@@ -93,7 +96,13 @@ export const agentLifecycleOperation = object({
   error: optional(text),
   failure: optional(agentLifecycleFailure),
   events: array(agentLifecycleEvent),
-  connection: optional(object({ services: array(text), target: agentLifecycleConnectionTarget })),
+  connection: optional(
+    object({
+      services: array(text),
+      target: agentLifecycleConnectionTarget,
+      repository_access: optional(repositoryAccessRefusal),
+    }),
+  ),
 });
 /** Phase readiness is separate from the terminal operation status. */
 export type AgentLifecycleOperation = Output<typeof agentLifecycleOperation>;

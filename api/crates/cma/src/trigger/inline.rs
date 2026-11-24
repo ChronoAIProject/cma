@@ -9,7 +9,7 @@ use layer2_core::profiles::{
     WorkspaceProfileContent, WorkspaceProfileRef,
 };
 use layer2_core::trigger_domain::{
-    TriggerInlineTargetMaterializer, TriggerReferenceError, TriggerTarget,
+    TriggerInlineTarget, TriggerInlineTargetMaterializer, TriggerReferenceError, TriggerTarget,
 };
 use layer2_core::SubjectId;
 
@@ -55,23 +55,70 @@ impl TriggerInlineTargetMaterializer for InlineTriggerProfileMaterializer {
         target: &TriggerTarget,
         delegated_credential: Option<&str>,
     ) -> Result<TriggerTarget, TriggerReferenceError> {
+        self.materialize_target(owner, target, None, delegated_credential)
+            .await
+    }
+
+    async fn materialize_draft_update(
+        &self,
+        owner: &SubjectId,
+        target: &TriggerTarget,
+        existing: &TriggerTarget,
+        delegated_credential: Option<&str>,
+    ) -> Result<TriggerTarget, TriggerReferenceError> {
+        if self.image_resolver.retirement_enabled()
+            && retains_image_settings(target.inline.as_ref(), existing.inline.as_ref())
+        {
+            // The edit changes no inline settings. Retain the exact profile
+            // references from the stored target and avoid creating new profiles.
+            return Ok(existing.clone());
+        }
+        self.materialize_target(
+            owner,
+            target,
+            existing.inline.as_ref(),
+            delegated_credential,
+        )
+        .await
+    }
+}
+
+impl InlineTriggerProfileMaterializer {
+    async fn materialize_target(
+        &self,
+        owner: &SubjectId,
+        target: &TriggerTarget,
+        existing: Option<&TriggerInlineTarget>,
+        delegated_credential: Option<&str>,
+    ) -> Result<TriggerTarget, TriggerReferenceError> {
         let Some(inline) = &target.inline else {
             return Ok(target.clone());
         };
         let mut inline = inline.clone();
         if let Some(image) = inline.image.as_mut() {
-            image.reference = Some(
-                self.image_resolver
-                    .resolve(
-                        delegated_credential,
-                        &AgentLifecycleImageReference {
-                            id: image.id.clone(),
-                            version: image.version.clone(),
-                        },
-                    )
-                    .await
-                    .map_err(image_reference_error)?,
-            );
+            let selection = AgentLifecycleImageReference {
+                id: image.id.clone(),
+                version: image.version.clone(),
+            };
+            // Only a stored, owner-authorized draft can supply the retained
+            // digest. The request itself has no authority to attach a digest.
+            let pinned = existing
+                .and_then(|target| target.image.as_ref())
+                .filter(|saved| image.id == saved.id && image.version == saved.version)
+                .and_then(|saved| saved.reference.as_deref());
+            let reference = match pinned {
+                Some(reference) => {
+                    self.image_resolver
+                        .resolve_retained(delegated_credential, &selection, reference)
+                        .await
+                }
+                None => {
+                    self.image_resolver
+                        .resolve(delegated_credential, &selection)
+                        .await
+                }
+            };
+            image.reference = Some(reference.map_err(image_reference_error)?);
         }
 
         inline
@@ -164,6 +211,29 @@ impl TriggerInlineTargetMaterializer for InlineTriggerProfileMaterializer {
     }
 }
 
+fn retains_image_settings(
+    requested: Option<&TriggerInlineTarget>,
+    saved: Option<&TriggerInlineTarget>,
+) -> bool {
+    let (Some(requested), Some(saved)) = (requested, saved) else {
+        return false;
+    };
+    let (Some(image), Some(pin)) = (&requested.image, &saved.image) else {
+        return false;
+    };
+    // Clients can omit the server-resolved digest while resending identical
+    // settings. An explicit digest must agree with the stored one.
+    pin.reference.is_some()
+        && image.id == pin.id
+        && image.version == pin.version
+        && image
+            .reference
+            .as_ref()
+            .is_none_or(|reference| pin.reference.as_ref() == Some(reference))
+        && requested.agent == saved.agent
+        && requested.workspace == saved.workspace
+}
+
 fn unavailable(field: &'static str) -> TriggerReferenceError {
     TriggerReferenceError::Unavailable { field }
 }
@@ -179,6 +249,9 @@ fn image_reference_error(
         }
         layer1_public::rest::AgentLifecycleProvisioningError::SignInRequired => {
             TriggerReferenceError::ImageSignInRequired { field: FIELD }
+        }
+        layer1_public::rest::AgentLifecycleProvisioningError::ImageSelectionUnsupported => {
+            TriggerReferenceError::ImageSelectionUnsupported { field: FIELD }
         }
         _ => unavailable(FIELD),
     }
