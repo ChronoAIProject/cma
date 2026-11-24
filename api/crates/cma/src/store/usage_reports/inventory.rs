@@ -156,7 +156,12 @@ impl Inventory {
                     .is_some_and(|r| &r.runtime_version == v)
             })
             && (filters.search.is_empty()
-                || self.state.name.to_lowercase().starts_with(&filters.search)
+                || self
+                    .state
+                    .name
+                    .trim_start()
+                    .to_lowercase()
+                    .starts_with(&filters.search)
                 || self.state.sandbox_id.as_str().starts_with(&filters.search))
     }
 }

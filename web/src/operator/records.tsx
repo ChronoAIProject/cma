@@ -139,13 +139,13 @@ export function RecordControls({
 export function Timestamp({ value }: { readonly value: string }) {
   const date = new Date(value);
   return (
-    <time dateTime={value}>
+    <time dateTime={value} title={value}>
       {Number.isNaN(date.valueOf())
         ? value
         : date.toLocaleString('en-SG', {
             timeZone: 'Asia/Singapore',
             dateStyle: 'medium',
-            timeStyle: 'short',
+            timeStyle: 'medium',
           })}
     </time>
   );

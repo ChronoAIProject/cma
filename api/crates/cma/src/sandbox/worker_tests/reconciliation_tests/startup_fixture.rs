@@ -213,7 +213,7 @@ pub(super) async fn fixture_with(
             .adapter
             .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
                 1,
-                sandbox_spec(&sandbox, "test"),
+                sandbox_spec(&sandbox, "test").unwrap(),
             ))
             .await
             .unwrap();
@@ -224,7 +224,7 @@ pub(super) async fn fixture_with(
         harness.store.create_sandbox(sandbox.clone()).await.unwrap();
         authority.insert(sandbox.id.clone(), sandbox);
     }
-    let mut orphan = sandbox_spec(&base, "test");
+    let mut orphan = sandbox_spec(&base, "test").unwrap();
     orphan.sandbox_id = "sbx_startup_orphan".into();
     harness.adapter.provision(&orphan).await.unwrap();
     let inventory = harness.adapter.runtime_inventory().await.unwrap();

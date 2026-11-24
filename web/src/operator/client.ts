@@ -34,6 +34,7 @@ export interface OperatorClient {
     | 'setSandboxAlwaysOn'
     | 'listActivity'
     | 'listActivitySummary'
+    | 'searchActivityActors'
     | 'listWarmPools'
     | 'configureWarmPool'
     | 'resizeWarmPool'

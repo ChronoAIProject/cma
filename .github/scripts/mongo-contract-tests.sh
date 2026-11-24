@@ -5,6 +5,21 @@ script_directory=$(dirname -- "${BASH_SOURCE[0]}")
 repo_root=$(CDPATH='' cd -- "${script_directory}/../.." && pwd -P)
 readonly repo_root
 unset CHRONO_TEST_MONGODB_URI CHRONO_TEST_MONGODB_FAILPOINT_URI CMA_IM_TEST_MONGODB_URI
+# Retries come only from the explicit merge-queue flag below, never the environment.
+unset NEXTEST_RETRIES NEXTEST_FLAKY_RESULT
+# Owner-approved merge-queue flaky retry: only the workflow's policy step
+# (.github/scripts/mongo_flaky_retry.py policy) sets 1, for an ordinary
+# merge-group shard before CMA_MONGO_FLAKY_RETRY_UNTIL. Unset or 0 runs none.
+case "${CMA_MONGO_FLAKY_RETRIES:-}" in
+  ''|0) ;;
+  1)
+    if [[ ! "${CMA_MONGO_FLAKY_REPORT_DIR:-}" =~ ^/[A-Za-z0-9._/-]+$ || ! -d "$CMA_MONGO_FLAKY_REPORT_DIR" ]]; then
+      echo 'CMA_MONGO_FLAKY_RETRIES=1 needs an existing absolute CMA_MONGO_FLAKY_REPORT_DIR' >&2
+      exit 2
+    fi
+    ;;
+  *) echo 'CMA_MONGO_FLAKY_RETRIES must be unset, 0 or 1' >&2; exit 2 ;;
+esac
 # shellcheck source=.github/scripts/backend-nextest.sh
 source "$script_directory/backend-nextest.sh"
 
@@ -62,6 +77,16 @@ nextest_contracts() {
     ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test) or test(=$bson_ceiling_test) or test(=$first_response_test) or test(=$history_test)) & not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets) or test(=$observation_budget_test))" ;;
   esac
   [[ "$selection" != ordinary ]] || set -- "$@" --profile "$ordinary_profile"
+  # One retry, for ordinary partitions only and never for a dedicated mode.
+  # The partition's JUnit report records each pass on retry as flakyFailure,
+  # which the workflow flags; the tool config sets only that report's path.
+  if [[ "$selection" == ordinary && "$1" == run && "${CMA_MONGO_FLAKY_RETRIES:-}" == 1 ]]; then
+    local flaky_stem=${partition//[:\/]/-}
+    local flaky_config="$CMA_MONGO_FLAKY_REPORT_DIR/nextest-$flaky_stem.toml"
+    printf '[profile.%s.junit]\npath = "%s"\n' "$ordinary_profile" \
+      "$CMA_MONGO_FLAKY_REPORT_DIR/junit-$flaky_stem.xml" > "$flaky_config"
+    set -- "$@" --retries 1 --flaky-result pass --tool-config-file "cma-flaky-retry:$flaky_config"
+  fi
   # Isolated role proof belongs to image-manager-mongo-contract.sh, which owns
   # an authenticated fixture. Never run it against this unauthenticated set.
   # Process children need their parent's request/database; their parents invoke

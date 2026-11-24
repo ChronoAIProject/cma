@@ -61,6 +61,7 @@ export function NativeLarkSourceFields({
           hint="Use this app’s ou_ bot identity. Identities from another app cannot be reused."
         />
         <Toggle
+          path="separate_app"
           label="This is a separate app with its own webhook"
           value={value.separate_app}
           onChange={(separate_app) => onChange({ ...value, separate_app })}
