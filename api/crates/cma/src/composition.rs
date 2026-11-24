@@ -82,18 +82,17 @@ impl ControlPlaneComposition {
                 .with_account_standing(standing.clone())
                 .with_account_deletion_enabled(config.account_deletion_enabled)
                 .with_privacy_export_enabled(config.features.privacy_export_enabled);
-        let broker = credentials::connection_broker(config, auth.clone(), subscriptions.clone())?;
-        let connection_prerequisite = crate::connections::ConnectionPrerequisite::new(
+        let credentials::Connections {
+            broker,
+            browser: browser_connections,
+            prerequisite: connection_prerequisite,
+        } = credentials::connections(
+            config,
             auth.clone(),
-            broker.clone(),
-            sandbox_policy.clone(),
-        );
-        let browser_connections = crate::connections::BrowserConnections::new(
-            stores.clone(),
-            sandbox_policy.clone(),
-            broker.clone(),
             subscriptions,
-        );
+            &stores,
+            sandbox_policy.clone(),
+        )?;
         let sandbox_service = SandboxService::with_policy_source(
             stores.sandbox_model.clone(),
             stores.sandbox_profiles.clone(),
@@ -157,7 +156,8 @@ impl ControlPlaneComposition {
         )
         .with_released_runtime(stores.released_runtime.clone())
         .with_task_experience(config.task_experience.clone())
-        .with_failure_metadata(config.lifecycle_failure_metadata_enabled);
+        .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
+        .with_managed_repository_preflight(config.features.github_repository_preflight);
         let lifecycle_drain = inline_lifecycle.drain_handle();
         if let Some(manager) = &agent_manager {
             manager.register_lifecycle(lifecycle_drain.clone())?;

@@ -90,6 +90,9 @@ it('opens only a durable request, keeps required scopes fixed, and submits only 
   show();
   await screen.findByRole('dialog', { name: 'Agent key access' });
   expect(screen.getByText(request.reason)).toBeVisible();
+  expect(
+    screen.getByText('GitHub connection selection is separate from service approval.'),
+  ).toBeVisible();
   expect(decide).not.toHaveBeenCalled();
   for (const scope of ['chrono-llm-public', 'ornn-api']) {
     expect(screen.getByRole('checkbox', { name: `${scope} Required` })).toBeChecked();
