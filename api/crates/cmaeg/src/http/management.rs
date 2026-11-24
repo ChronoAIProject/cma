@@ -7,10 +7,7 @@ use axum::{
     routing::{get, post, put},
     Json, Router,
 };
-use cmaeg_core::{
-    channel::{ChannelMutationKind, ConformanceLevel},
-    problem::ProblemCode,
-};
+use cmaeg_core::{channel::ConformanceLevel, problem::ProblemCode};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -205,13 +202,7 @@ pub async fn create_channel(
                     };
                 if !retained.is_some_and(|current| {
                     entry.body["channel_id"].as_str() == Some(current.channel_id.as_str())
-                        && current
-                            .definition
-                            .creation
-                            .is_some_and(|creation| creation.ready)
-                        && !current.definition.mutation.is_some_and(|mutation| {
-                            mutation.operation == ChannelMutationKind::Delete
-                        })
+                        && current.create_replayable()
                 }) {
                     return problem(
                         StatusCode::CONFLICT,

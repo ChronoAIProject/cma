@@ -2,10 +2,26 @@
 use super::*;
 
 impl RecordClient {
+    pub(crate) async fn channel_create_capability(
+        &self,
+        issuer: &str,
+    ) -> Result<bool, RecordError> {
+        if !self.channel_cancellation_enabled()
+            || self.channel_create_issuer.as_deref() != Some(issuer)
+        {
+            return Ok(false);
+        }
+        let database = self.database().ok_or_else(|| {
+            RecordError::Unavailable("Channel create fences need Gateway Mongo".into())
+        })?;
+        super::super::mongo::check_create_fence_floor(&database, issuer).await
+    }
+
     pub(crate) async fn cancel_channel_create(
         &self,
         record_id: &RecordId,
         owner: &crate::auth::CancelCreateOwner,
+        keys: &cmaeg_core::seal::MasterKeyRing,
     ) -> Result<super::super::CancelCreate, RecordError> {
         if !self.channel_cancellation_enabled()
             || self.channel_create_issuer.as_deref() != Some(owner.issuer.as_str())
@@ -23,7 +39,7 @@ impl RecordClient {
             subject: &owner.subject,
             record: record_id.as_str(),
         };
-        database.cancel_channel_create(&identity).await
+        database.cancel_channel_create(&identity, keys).await
     }
 
     pub(crate) async fn reserve_channel(

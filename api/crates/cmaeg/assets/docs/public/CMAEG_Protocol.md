@@ -835,7 +835,8 @@ creator and record identity is permanently fenced. The version 1 receipt
 includes the original UUID, the authenticated issuer, human subject and kind,
 and the NyxBot binding derived from that UUID. A repeat returns the same
 receipt. An owned record returns 409 and remains eligible for exact-version
-deletion. A record owned by someone else has the same visibility as an absent
+deletion. An unresolved managed Connection claim also returns 409.
+A record owned by someone else has the same visibility as an absent
 record for the caller. An unavailable capability or an ambiguous response
 provides no receipt.
 

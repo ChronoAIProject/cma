@@ -17,6 +17,8 @@ pub mod store;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+pub(crate) use tests::connection as fixture_connection;
+#[cfg(test)]
 mod tool_catalog_tests;
 mod webhook;
 pub use service::ConnectionService;

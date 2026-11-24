@@ -1,4 +1,7 @@
-use super::{management::ManagementState, mutation_fixture::Fixture};
+use super::{
+    management::ManagementState,
+    mutation_fixture::{wait, Fixture},
+};
 use crate::{auth::CreatorAuthenticator, records::mongo};
 use axum::{
     body::{to_bytes, Body},
@@ -9,22 +12,25 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{atomic::Ordering, Arc},
+};
 use tower::ServiceExt;
 
 async fn request(router: &Router, method: &str, path: &str, body: Option<&Value>) -> Response {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(header::AUTHORIZATION, "Bearer fixture-bearer")
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(key) = body.and_then(|body| body["record_id"].as_str()) {
+        request = request.header("Idempotency-Key", key);
+    }
     let body = body.map_or_else(Body::empty, |value| Body::from(value.to_string()));
     router
         .clone()
-        .oneshot(
-            Request::builder()
-                .method(method)
-                .uri(path)
-                .header(header::AUTHORIZATION, "Bearer fixture-bearer")
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(body)
-                .unwrap(),
-        )
+        .oneshot(request.body(body).unwrap())
         .await
         .unwrap()
 }
@@ -136,6 +142,38 @@ async fn authenticated_cancel_receipt_fences_a_regular_create_across_gateways() 
         .await
         .unwrap()
         .is_none());
+
+    let live = fixture.body();
+    let response = request(&gateway_b, "POST", "/v1/channels", Some(&live)).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let created = read(response).await;
+    let delete_path = format!(
+        "/v1/channels/{}?expected_version={}",
+        created["channel_id"].as_str().unwrap(),
+        created["version"].as_u64().unwrap()
+    );
+    let retiring = router(fixture.state().await, db.clone(), &issuer, &service, true);
+    fixture.peer.pause.store(true, Ordering::SeqCst);
+    let delete =
+        tokio::spawn(async move { request(&retiring, "DELETE", &delete_path, None).await });
+    wait(&fixture.peer.started).await;
+    let (warm, cold) = tokio::join!(
+        request(&gateway_b, "POST", "/v1/channels", Some(&live)),
+        request(&disabled, "POST", "/v1/channels", Some(&live)),
+    );
+    assert_eq!(warm.status(), StatusCode::CONFLICT);
+    assert_eq!(cold.status(), StatusCode::CONFLICT);
+    assert_eq!(*fixture.peer.calls.lock().unwrap(), ["PUT", "DELETE"]);
+    fixture.peer.resume.notify_one();
+    assert_eq!(delete.await.unwrap().status(), StatusCode::NO_CONTENT);
+
+    db.run_command(mongodb::bson::doc! {"collMod":mongo::RECORDS, "validationAction":"warn"})
+        .await
+        .unwrap();
+    assert_eq!(
+        request(&gateway_b, "GET", capability, None).await.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
     db.drop().await.unwrap();
     server.abort();
 }

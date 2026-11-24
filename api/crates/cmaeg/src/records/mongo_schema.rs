@@ -1,4 +1,4 @@
-use super::{create_fences::CREATE_FENCES, create_fences_floor};
+use super::create_fences::CREATE_FENCES;
 use super::{
     failure, COLLECTIONS, CONNECTIONS, INTERACTIONS, MEDIA_CONTINUATIONS, MIGRATIONS, RECORDS,
     SESSIONS, THREAD_FENCES, WHATSAPP_FLOWS,
@@ -67,7 +67,8 @@ pub async fn verify_with_authority(
             let collection = resource.get_str("collection").map_err(|_| invalid())?;
             if resource.len() != 2
                 || resource.get_str("db").ok() != Some(db.name())
-                || (!COLLECTIONS.contains(&collection)
+                || (!collection.is_empty()
+                    && !COLLECTIONS.contains(&collection)
                     && !crate::activity::history::schema::COLLECTIONS.contains(&collection)
                     && ![
                         CREATE_FENCES,
@@ -85,8 +86,9 @@ pub async fn verify_with_authority(
             }
             for action in grant.get_array("actions").map_err(|_| invalid())? {
                 let action = action.as_str().ok_or_else(&invalid)?;
-                let allowed = if crate::activity::history::schema::COLLECTIONS.contains(&collection)
-                {
+                let allowed = if collection.is_empty() {
+                    &["listCollections"][..]
+                } else if crate::activity::history::schema::COLLECTIONS.contains(&collection) {
                     crate::activity::history::schema::runtime_actions(collection)
                 } else if collection == USES {
                     &["find", "insert", "listIndexes"][..]
@@ -213,7 +215,6 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
     cma_service_auth::browser::migrate(db, SESSIONS)
         .await
         .map_err(failure)?;
-    let protected = create_fences_floor::installed(db).await?;
     let ordinary = record_validator(false);
     let mut interaction_validator = ordinary.clone();
     let interaction_schema = interaction_validator
@@ -228,13 +229,24 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
         .unwrap()
         .insert("expires_at", doc! {"bsonType":"date"});
     for (name, validator) in [
-        (RECORDS, record_validator(protected)),
+        (RECORDS, ordinary.clone()),
         (CONNECTIONS, ordinary),
         (INTERACTIONS, interaction_validator),
         (MIGRATIONS, migration_validator()),
     ] {
         match db.run_command(doc!{"create":name,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await{
-            Ok(_)=>{},Err(error) if matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code==48)=>{db.run_command(doc!{"collMod":name,"validator":validator,"validationLevel":"strict","validationAction":"error"}).await.map_err(failure)?;},Err(error)=>return Err(failure(error)),
+            Ok(_) => {},
+            Err(error) if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(command) if command.code == 48) => {
+                // The dedicated writer-floor migration owns the existing
+                // Channel validator. A base migration can overlap installation.
+                if name != RECORDS {
+                    db.run_command(doc! {
+                        "collMod": name, "validator": validator,
+                        "validationLevel": "strict", "validationAction": "error"
+                    }).await.map_err(failure)?;
+                }
+            },
+            Err(error) => return Err(failure(error)),
         }
     }
     for name in [RECORDS, CONNECTIONS, INTERACTIONS] {

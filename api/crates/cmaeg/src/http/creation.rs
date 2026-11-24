@@ -102,12 +102,19 @@ pub(crate) async fn cancel_create_capability(
     if !state.records.channel_cancellation_enabled() {
         return cancellation_unavailable();
     }
-    if let Err(error) = state
+    let owner = match state
         .creator_auth
         .authenticate_create_cancellation(&headers)
         .await
     {
-        return no_store(error.into_response());
+        Ok(owner) => owner,
+        Err(error) => return no_store(error.into_response()),
+    };
+    if !matches!(
+        state.records.channel_create_capability(&owner.issuer).await,
+        Ok(true)
+    ) {
+        return cancellation_unavailable();
     }
     no_store(
         Json(CancelCreateCapability {
@@ -142,7 +149,7 @@ pub(crate) async fn cancel_create(
     };
     match state
         .records
-        .cancel_channel_create(&record_id, &owner)
+        .cancel_channel_create(&record_id, &owner, &state.master_keys)
         .await
     {
         Ok(CancelCreate::FencedAbsent) => no_store(
@@ -166,6 +173,11 @@ pub(crate) async fn cancel_create(
             StatusCode::CONFLICT,
             ProblemCode::Conflict,
             "record_present",
+        )),
+        Ok(CancelCreate::CreatePending) => no_store(problem(
+            StatusCode::CONFLICT,
+            ProblemCode::Conflict,
+            "create_pending",
         )),
         Err(error) => management_error(ManagementError::Record(error)),
     }

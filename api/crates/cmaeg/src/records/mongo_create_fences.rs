@@ -1,6 +1,7 @@
 //! Serialize creator cancellation with the first durable Channel reservation.
 use super::{failure, MongoRecords, Record, RecordError, RecordKind, CONNECTIONS};
-use futures_util::FutureExt;
+use cmaeg_core::seal::{open_connection, MasterKeyRing};
+use futures_util::{FutureExt, TryStreamExt};
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, Document},
     error::{Error, ErrorKind, WriteFailure},
@@ -39,6 +40,7 @@ impl CreateFenceIdentity<'_> {
 pub(crate) enum CancelCreate {
     FencedAbsent,
     RecordPresent,
+    CreatePending,
 }
 
 pub(crate) struct CreateConnectionClaim {
@@ -129,19 +131,28 @@ impl MongoRecords {
     pub(crate) async fn cancel_channel_create(
         &self,
         identity: &CreateFenceIdentity<'_>,
+        keys: &MasterKeyRing,
     ) -> Result<CancelCreate, RecordError> {
         if self.kind != RecordKind::Channel || !identity.valid() {
             return Err(RecordError::Rejected("invalid Channel cancellation".into()));
         }
         let result = tokio::time::timeout(TRANSACTION_TIMEOUT, async {
+            if !super::create_fences_floor::verify(&self.db, identity.issuer)
+                .await
+                .map_err(Error::custom)?
+            {
+                return Err(Error::custom(RecordError::Unavailable(
+                    "Channel writer floor is unavailable".into(),
+                )));
+            }
             let mut session = self.db.client().start_session().await?;
             session
                 .start_transaction()
                 .read_concern(ReadConcern::snapshot())
                 .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
                 .and_run(
-                    (&self.db, &self.records, identity),
-                    |session, (db, records, identity)| {
+                    (&self.db, &self.records, identity, keys),
+                    |session, (db, records, identity, keys)| {
                         async move {
                             let fence = guard(db, identity, session).await?;
                             if records
@@ -151,6 +162,9 @@ impl MongoRecords {
                                 .is_some()
                             {
                                 return Err(Error::custom(CancelCreate::RecordPresent));
+                            }
+                            if owned_connection_claim(db, identity, keys, session).await? {
+                                return Err(Error::custom(CancelCreate::CreatePending));
                             }
                             if !fence.cancelled {
                                 db.collection::<Document>(CREATE_FENCES)
@@ -171,12 +185,62 @@ impl MongoRecords {
         .await
         .map_err(deadline)?;
         result.or_else(|error| {
-            error
-                .get_custom::<CancelCreate>()
-                .copied()
-                .ok_or_else(|| failure(error))
+            if let Some(outcome) = error.get_custom::<CancelCreate>() {
+                return Ok(*outcome);
+            }
+            Err(error
+                .get_custom::<RecordError>()
+                .cloned()
+                .unwrap_or_else(|| failure(error)))
         })
     }
+}
+
+async fn owned_connection_claim(
+    db: &Database,
+    identity: &CreateFenceIdentity<'_>,
+    keys: &MasterKeyRing,
+    session: &mut ClientSession,
+) -> mongodb::error::Result<bool> {
+    const SCAN_LIMIT: usize = 256;
+    let unavailable = || {
+        Error::custom(RecordError::Unavailable(
+            "Cannot prove absence of a managed Connection claim".into(),
+        ))
+    };
+    let mut cursor = db
+        .collection::<Record>(CONNECTIONS)
+        .find(doc! {"owner": identity.subject})
+        .limit((SCAN_LIMIT + 1) as i64)
+        .session(&mut *session)
+        .await?;
+    let mut rows = cursor.stream(session);
+    let mut inspected = 0;
+    while let Some(row) = rows.try_next().await? {
+        inspected += 1;
+        if inspected > SCAN_LIMIT {
+            return Err(unavailable());
+        }
+        let opened = open_connection(keys, &row.id, &row.blob.bytes).map_err(|_| unavailable())?;
+        let value: serde_json::Value =
+            serde_json::from_slice(&opened.payload).map_err(|_| unavailable())?;
+        let object = value.as_object().ok_or_else(unavailable)?;
+        if !object.contains_key("record_kind") {
+            continue;
+        }
+        let stored = serde_json::from_value(value).map_err(|_| unavailable())?;
+        if let crate::connections::model::Stored::Connection(connection) = stored {
+            if connection.id != row.id || connection.owner != row.owner {
+                return Err(unavailable());
+            }
+            if connection.organization == (identity.kind == "organization")
+                && connection.channel_record.as_deref() == Some(identity.record)
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn deadline(_: tokio::time::error::Elapsed) -> RecordError {
@@ -238,6 +302,8 @@ async fn claim_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use cmaeg_core::seal::seal_connection;
 
     #[tokio::test]
     #[ignore = "requires a disposable Mongo replica set"]
@@ -249,10 +315,15 @@ mod tests {
         let db = first.database(&db_name);
         super::super::migrate(&db).await.unwrap();
         let issuer = "https://issuer.example";
-        super::super::migrate_create_fence_floor(&db, issuer)
+        tokio::try_join!(
+            super::super::migrate_create_fence_floor(&db, issuer),
+            super::super::migrate(&db),
+        )
+        .unwrap();
+        assert!(super::super::create_fences_floor::verify(&db, issuer)
             .await
-            .unwrap();
-        super::super::migrate(&db).await.unwrap();
+            .unwrap());
+        let keys = MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([42; 32]))).unwrap();
         let a = MongoRecords::read_failure_fixture(db.clone());
         let b = MongoRecords::read_failure_fixture(second.database(&db_name));
         let legacy_record = uuid::Uuid::new_v4().to_string();
@@ -273,19 +344,21 @@ mod tests {
             ..alice
         };
         assert_eq!(
-            a.cancel_channel_create(&alice).await.unwrap(),
+            a.cancel_channel_create(&alice, &keys).await.unwrap(),
             CancelCreate::FencedAbsent,
         );
         let connection = uuid::Uuid::new_v4().to_string();
         let connection_rows = a.for_kind(RecordKind::Connection);
+        let before = seal_connection(&keys, &connection, br#"{"fixture":"before claim"}"#).unwrap();
+        let after = seal_connection(&keys, &connection, br#"{"fixture":"after claim"}"#).unwrap();
         connection_rows
-            .put(&connection, "alice", b"before claim", None)
+            .put(&connection, "alice", &before, None)
             .await
             .unwrap();
         let claim = CreateConnectionClaim {
             record_id: connection.clone(),
             expected_revision: 1,
-            sealed_payload: b"after claim".to_vec(),
+            sealed_payload: after.clone(),
         };
         assert_eq!(
             b.reserve_channel_create(&alice, b"fixture", Some(&claim))
@@ -312,16 +385,16 @@ mod tests {
         ));
         assert_eq!(connection_rows.get(&connection).await.unwrap().version, 1);
         assert_eq!(
-            a.cancel_channel_create(&bob).await.unwrap(),
+            a.cancel_channel_create(&bob, &keys).await.unwrap(),
             CancelCreate::RecordPresent,
         );
         assert_eq!(
-            b.cancel_channel_create(&alice).await.unwrap(),
+            b.cancel_channel_create(&alice, &keys).await.unwrap(),
             CancelCreate::FencedAbsent,
         );
         assert!(b.delete(&missing, 1).await.unwrap());
         assert_eq!(
-            a.cancel_channel_create(&bob).await.unwrap(),
+            a.cancel_channel_create(&bob, &keys).await.unwrap(),
             CancelCreate::FencedAbsent,
         );
         assert_eq!(
@@ -342,10 +415,7 @@ mod tests {
                 .unwrap(),
             1,
         );
-        assert_eq!(
-            connection_rows.get(&connection).await.unwrap().blob,
-            b"after claim"
-        );
+        assert_eq!(connection_rows.get(&connection).await.unwrap().blob, after);
         let another = uuid::Uuid::new_v4().to_string();
         let stale = CreateFenceIdentity {
             record: &another,
@@ -369,7 +439,7 @@ mod tests {
             };
             let (reserved, cancelled) = tokio::join!(
                 a.reserve_channel_create(&racing, b"racing create", None),
-                b.cancel_channel_create(&racing),
+                b.cancel_channel_create(&racing, &keys),
             );
             match cancelled.unwrap() {
                 CancelCreate::FencedAbsent => {
@@ -382,12 +452,62 @@ mod tests {
                     );
                     assert_eq!(a.get(&id).await, Err(RecordError::NotFound));
                 }
+                CancelCreate::CreatePending => panic!("no claim for racing identity"),
                 CancelCreate::RecordPresent => {
                     assert_eq!(reserved.unwrap(), 1);
                     assert_eq!(a.get(&id).await.unwrap().blob, b"racing create");
                 }
             }
         }
+        let orphan_id = uuid::Uuid::new_v4().to_string();
+        let orphan = CreateFenceIdentity {
+            record: &orphan_id,
+            ..alice
+        };
+        let mut foreign = crate::connections::fixture_connection("bob", false);
+        foreign.channel_record = Some(orphan_id.clone());
+        let foreign_id = foreign.id.clone();
+        let stored = crate::connections::model::Stored::Connection(Box::new(foreign));
+        let sealed =
+            seal_connection(&keys, &foreign_id, &serde_json::to_vec(&stored).unwrap()).unwrap();
+        connection_rows
+            .put(&foreign_id, "bob", &sealed, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            a.cancel_channel_create(&orphan, &keys).await.unwrap(),
+            CancelCreate::FencedAbsent
+        );
+        let owned_id = uuid::Uuid::new_v4().to_string();
+        let owned = CreateFenceIdentity {
+            record: &owned_id,
+            ..alice
+        };
+        let mut claim = crate::connections::fixture_connection("alice", false);
+        claim.channel_record = Some(owned_id.clone());
+        let claim_id = claim.id.clone();
+        let stored = crate::connections::model::Stored::Connection(Box::new(claim));
+        let sealed =
+            seal_connection(&keys, &claim_id, &serde_json::to_vec(&stored).unwrap()).unwrap();
+        connection_rows
+            .put(&claim_id, "alice", &sealed, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            b.cancel_channel_create(&owned, &keys).await.unwrap(),
+            CancelCreate::CreatePending
+        );
+        assert_eq!(a.get(&owned_id).await, Err(RecordError::NotFound));
+        db.run_command(doc! {"collMod": super::super::RECORDS, "validationAction": "warn"})
+            .await
+            .unwrap();
+        assert!(super::super::create_fences_floor::verify(&db, issuer)
+            .await
+            .is_err());
+        assert!(matches!(
+            b.cancel_channel_create(&alice, &keys).await,
+            Err(RecordError::Unavailable(_))
+        ));
         db.drop().await.unwrap();
     }
 }

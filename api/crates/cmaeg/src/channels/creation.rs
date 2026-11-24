@@ -113,7 +113,14 @@ pub(super) async fn create(
         });
     }
     if creation.ready {
-        return Ok(completed(current));
+        return if current.create_replayable() {
+            Ok(completed(current))
+        } else {
+            Err(ManagementError::Conflict {
+                expected: 0,
+                actual: Some(current.record.version),
+            })
+        };
     }
     super::github_sources::validate(state, None, &current.definition).await?;
     super::custom_execution::validate_providers(&state.providers, &current.definition)?;
@@ -223,11 +230,12 @@ pub(super) async fn create(
                 // conflict with a provider outage or prove creation succeeded.
                 return Err(error);
             };
-            if retained
-                .definition
-                .creation
-                .as_ref()
-                .is_some_and(|value| value.ready && value.fingerprint == fingerprint)
+            if retained.create_replayable()
+                && retained
+                    .definition
+                    .creation
+                    .as_ref()
+                    .is_some_and(|value| value.fingerprint == fingerprint)
             {
                 return Ok(completed(retained));
             }

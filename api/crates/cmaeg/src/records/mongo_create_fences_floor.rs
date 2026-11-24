@@ -3,7 +3,7 @@ use super::{create_fences::CREATE_FENCES, failure, schema, RecordError, MIGRATIO
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{doc, Document},
-    options::{Acknowledgment, ReadConcern, WriteConcern},
+    options::{Acknowledgment, ReadConcern, ValidationAction, ValidationLevel, WriteConcern},
     Database,
 };
 
@@ -22,9 +22,14 @@ pub fn role(database: &str, migration: bool) -> Document {
     } else {
         vec!["find", "insert", "update", "listIndexes"]
     };
-    let mut privileges = vec![doc! {
-        "resource": {"db": database, "collection": CREATE_FENCES}, "actions": actions
-    }];
+    let mut privileges = vec![
+        doc! {
+            "resource": {"db": database, "collection": CREATE_FENCES}, "actions": actions
+        },
+        doc! {
+            "resource": {"db": database, "collection": ""}, "actions": ["listCollections"]
+        },
+    ];
     if migration {
         privileges.extend([
             doc! {"resource": {"db": database, "collection": RECORDS}, "actions": ["find", "update", "collMod"]},
@@ -91,12 +96,33 @@ pub(crate) async fn verify(db: &Database, issuer: &str) -> Result<bool, RecordEr
             .options
             .as_ref()
             .is_some_and(|options| options.expire_after.is_some())
+        || !channel_validator_is_strict(db).await?
     {
         return Err(RecordError::Unavailable(
             "Channel create fence writer floor is incompatible".into(),
         ));
     }
     Ok(true)
+}
+
+async fn channel_validator_is_strict(db: &Database) -> Result<bool, RecordError> {
+    let collection = db
+        .list_collections()
+        .filter(doc! {"name": RECORDS})
+        .await
+        .map_err(failure)?
+        .try_next()
+        .await
+        .map_err(failure)?;
+    Ok(collection.is_some_and(|collection| {
+        matches!(
+            collection.options.validation_level,
+            Some(ValidationLevel::Strict)
+        ) && matches!(
+            collection.options.validation_action,
+            Some(ValidationAction::Error)
+        ) && collection.options.validator == Some(schema::record_validator(true))
+    }))
 }
 
 pub async fn migrate(db: &Database, issuer: &str) -> Result<(), RecordError> {
