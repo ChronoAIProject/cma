@@ -81,15 +81,6 @@ impl NativeBackend {
     pub async fn request(&self) -> ProviderSandboxRequest {
         self.row.lock().await.as_ref().unwrap().request.clone()
     }
-    pub async fn stage_reserved_request(&self, request: ProviderSandboxRequest) {
-        let mut rows = self.row.lock().await;
-        let row = rows.as_mut().unwrap();
-        assert_eq!(row.request.image, request.image);
-        assert_eq!(row.request.volumes, request.volumes);
-        row.observation.generation = request.metadata["cma/runtime-generation"].parse().unwrap();
-        row.request = request;
-        // The retained provider object and failed Pod have not been replaced.
-    }
     pub async fn restart_process(&self) {
         self.retirement_incarnation.fetch_add(1, Ordering::SeqCst);
         let rows = self.row.lock().await;
