@@ -365,3 +365,6 @@ mod binding_recovery;
 
 #[path = "command_funding_check_race_tests.rs"]
 mod check_races;
+
+#[path = "command_funding_cancellation_tests.rs"]
+mod cancellation;
