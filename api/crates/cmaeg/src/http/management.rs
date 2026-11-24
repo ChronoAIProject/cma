@@ -7,7 +7,10 @@ use axum::{
     routing::{get, post, put},
     Json, Router,
 };
-use cmaeg_core::{channel::ConformanceLevel, problem::ProblemCode};
+use cmaeg_core::{
+    channel::{ChannelMutationKind, ConformanceLevel},
+    problem::ProblemCode,
+};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -153,7 +156,7 @@ pub struct DeleteQuery {
     operation_id = "createChannel",
     tag = "channels",
     security(("creatorBearer" = [])),
-    params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("Idempotency-Key" = Option<String>, Header, description = "1..=256 ASCII bytes; identical creates replay locally for ten minutes")),
+    params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("Idempotency-Key" = Option<String>, Header, description = "1..=256 ASCII bytes; identical creates replay locally for ten minutes. For a supplied record_id, replay requires the original channel to remain ready and unretired.")),
     request_body = ChannelCreateRequest,
     responses((status = 201, body = ChannelResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
 )]
@@ -181,7 +184,7 @@ pub async fn create_channel(
     };
     if let (Some(key), Some(cache)) = (&key, cache_guard.as_mut()) {
         cache.retain(|_, entry| entry.expires_at > std::time::Instant::now());
-        if let Some(entry) = cache.get(&(creator.subject.clone(), key.clone())) {
+        if let Some(entry) = cache.get(&(creator.subject.clone(), key.clone())).cloned() {
             if entry.fingerprint != fingerprint {
                 return problem(
                     StatusCode::CONFLICT,
@@ -189,7 +192,35 @@ pub async fn create_channel(
                     "Idempotency-Key was used for another request",
                 );
             }
-            return (StatusCode::CREATED, Json(entry.body.clone())).into_response();
+            drop(cache_guard);
+            if let Some(record_id) = &body.record_id {
+                // A different replica can retire this identity while this
+                // replica still has its original successful response.
+                let retained =
+                    match crate::channels::creation::load_record(&state, &creator, record_id).await
+                    {
+                        Ok(retained) => Some(retained),
+                        Err(ManagementError::NotFound) => None,
+                        Err(error) => return management_error(error),
+                    };
+                if !retained.is_some_and(|current| {
+                    entry.body["channel_id"].as_str() == Some(current.channel_id.as_str())
+                        && current
+                            .definition
+                            .creation
+                            .is_some_and(|creation| creation.ready)
+                        && !current.definition.mutation.is_some_and(|mutation| {
+                            mutation.operation == ChannelMutationKind::Delete
+                        })
+                }) {
+                    return problem(
+                        StatusCode::CONFLICT,
+                        ProblemCode::Conflict,
+                        "Idempotency-Key no longer has a ready channel for this record_id",
+                    );
+                }
+            }
+            return no_store((StatusCode::CREATED, Json(entry.body)).into_response());
         }
         if cache.len() >= 10_000 {
             return problem(

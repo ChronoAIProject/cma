@@ -800,6 +800,9 @@ thirty-minute run.
 An optional `Idempotency-Key` header of 1–256 ASCII bytes replays an identical
 create for the same creator on the same replica for ten minutes. Different
 content under the same key returns 409. It is not durable or cross-replica.
+When the request supplies a record UUID, cached success also requires the
+matching ready channel to remain present and free of an admitted deletion.
+A stale cache entry returns 409.
 
 A creator may additionally reserve a canonical UUID in the optional `record_id`
 create field. CMAEG stores an encrypted pending definition at that identity before
