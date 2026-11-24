@@ -41,7 +41,7 @@ describe('Activity summary pages', () => {
     const user = userEvent.setup();
     const { container } = render(<Activity client={client} />);
     await screen.findByText('earlier');
-    const times = [...container.querySelectorAll('tbody time')];
+    const times = [...container.querySelectorAll<HTMLTimeElement>('tbody time')];
     expect(times.map((time) => time.dateTime)).toEqual([latest, latest, earlier]);
     expect(times.map((time) => time.title)).toEqual([latest, latest, earlier]);
     expect(times[0]).toHaveTextContent('10:18:29');
