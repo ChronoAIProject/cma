@@ -477,3 +477,72 @@ async fn frozen_lane_retains_candidate_until_provider_work_settles() {
     assert!(confirmed.frozen && confirmed.candidate.is_none());
     database.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn same_image_cold_canary_does_not_block_ordinary_pool_retirement_or_drain() {
+    let (mut sandbox, target, _) = super::eligibility_tests::upgraded();
+    let old_image = target.plan.spec.image.uri.clone();
+    sandbox.runtime.as_mut().unwrap().runtime_version = old_image.clone();
+    sandbox.profile.content.runtime_image = Some(old_image);
+    sandbox.profile.digest =
+        layer2_core::profiles::content_digest(&sandbox.profile.content).unwrap();
+    let (db, store, old, image) = fixture_with_old(target).await;
+    let sandboxes = db.collection::<Document>("sandboxes");
+    let filter = doc! { "_id": sandbox.id.as_str() };
+    let ordinary = crate::store::sandboxes::sandbox_document(&sandbox, 0).unwrap();
+    sandboxes.insert_one(ordinary).await.unwrap();
+    assert_eq!(store.retirement_homes(&old, &image).await.unwrap(), None);
+    assert_eq!(
+        store.retirement_drain_homes(&old, &image).await.unwrap(),
+        Some(vec![sandbox
+            .lifecycle
+            .home
+            .as_ref()
+            .unwrap()
+            .attachment()
+            .unwrap()])
+    );
+
+    let home = sandbox.lifecycle.home.as_mut().unwrap();
+    let native = home.native_pool.as_mut().unwrap();
+    let pool = &mut native.request.pool;
+    pool.spec.cold_canary = true;
+    pool.name = "canary-pool".into();
+    pool.uid = "canary-pool-uid".into();
+    pool.config_sha256 = "c".repeat(64);
+    native.claim.as_mut().unwrap().request = native.request.clone();
+    let receipt = home.receipt.as_mut().unwrap();
+    receipt.native_authority.as_mut().unwrap().claim = native.claim.clone().unwrap();
+    sandbox.validate().unwrap();
+    sandboxes
+        .replace_one(
+            filter.clone(),
+            crate::store::sandboxes::sandbox_document(&sandbox, 0).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.retirement_homes(&old, &image).await.unwrap(),
+        Some(vec![])
+    );
+    assert_eq!(
+        store.retirement_drain_homes(&old, &image).await.unwrap(),
+        Some(vec![])
+    );
+
+    sandbox.lifecycle.home.as_mut().unwrap().receipt = None;
+    sandboxes
+        .replace_one(
+            filter,
+            crate::store::sandboxes::sandbox_document(&sandbox, 0).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(store.retirement_homes(&old, &image).await.unwrap(), None);
+    assert_eq!(
+        store.retirement_drain_homes(&old, &image).await.unwrap(),
+        None
+    );
+    db.drop().await.unwrap();
+}
