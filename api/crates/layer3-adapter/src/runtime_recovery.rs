@@ -58,6 +58,17 @@ pub struct NonexecutingRecoveryVerification {
 
 #[async_trait::async_trait]
 pub trait RuntimeRecovery: Send + Sync {
+    /// Confirm a completed native Close on the observed writer without repairing journals.
+    async fn prove_agent_process_closed(
+        &self,
+        _handle: &crate::RuntimeHandle,
+        _proof: &crate::wire::AgentProcessCloseProof,
+    ) -> Result<()> {
+        Err(AdapterError::Unsupported(
+            "native Agent Close proof is unavailable".into(),
+        ))
+    }
+
     /// Read-only proof for reopening already restored, idle conversations.
     /// Requires complete settled history and no Agent/unowned process. This
     /// grants no authority to stop a process or suspend the retained runtime.

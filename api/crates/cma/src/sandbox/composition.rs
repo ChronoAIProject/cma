@@ -56,6 +56,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub native_create_retry_enabled: bool,
     pub reopen_output_refusal_enabled: bool,
     pub cleanup_continuation_enabled: bool,
+    pub owner_stop_settlement_enabled: bool,
     pub bounded_live_fragments: bool,
     pub quiet_output: Option<layer2_core::sandbox::AgentOutputCoalescePolicy>,
     pub coordinated_ingress: bool,
@@ -244,6 +245,7 @@ impl SandboxLifecycleComposition {
         .with_work_retry_policy(config.work_retry_policy_enabled)
         .with_managed_documents(config.managed_documents_enabled)
         .with_access_transport_migration(config.access_transport_migration);
+        agent_config.owner_stop_settlement_enabled = config.owner_stop_settlement_enabled;
         if config.native_retirement_finality_enabled {
             agent_config.retirement_reporter = Some(dependencies.store.clone());
         }

@@ -5,6 +5,7 @@ mod agent_event_page_tests;
 mod bounded_inactivity_log_tests;
 #[cfg(test)]
 mod failure_containment_tests;
+mod gates;
 pub(super) mod home_backup;
 #[cfg(test)]
 mod home_backup_expiry_tests;
@@ -18,7 +19,9 @@ mod native_close_lane_tests;
 #[cfg(test)]
 mod resource_list_tests;
 mod rollout_tail;
-pub(super) use rollout_tail::flag;
+pub(super) use gates::flag;
+#[cfg(test)]
+pub(super) use gates::GRADUATED;
 #[cfg(test)]
 mod segmentation_tests;
 #[cfg(test)]
@@ -124,6 +127,7 @@ pub(crate) struct FeatureFlags {
     pub native_create_retry_enabled: bool,
     pub reopen_output_refusal_enabled: bool,
     pub cleanup_continuation_enabled: bool,
+    pub owner_stop_settlement_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
     pub context_diagnostics: bool,
@@ -262,6 +266,10 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_AGENT_CLEANUP_CONTINUATION_ENABLED",
             )?,
+            owner_stop_settlement_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_OWNER_STOP_SETTLEMENT_ENABLED",
+            )?,
             agent_log_scan_cooperative_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED",
@@ -369,102 +377,74 @@ impl FeatureFlags {
 }
 
 #[cfg(test)]
-mod usage_cursor_tests;
-
-#[cfg(test)]
-mod capacity_tests;
-
-#[cfg(test)]
-mod parent_pacing_tests;
-
+#[path = "admission_control_tests.rs"]
+mod admission_control_tests;
 #[cfg(test)]
 mod approval_tests;
-
 #[cfg(test)]
-mod tests;
-
+mod capacity_tests;
 #[cfg(test)]
 mod close_retry_tests;
-
 #[cfg(test)]
-#[path = "sandbox_detail_diagnostics_tests.rs"]
-mod sandbox_read_tests;
-
+mod discovery_tests;
 #[cfg(test)]
-mod reconciliation_tests;
-
-#[cfg(test)]
-mod sandbox_batch_tests;
-
-#[cfg(test)]
-mod response_tests;
-
-#[cfg(test)]
-mod paged_event_tests;
-
-#[cfg(test)]
-mod permission_bound_tests;
-#[cfg(test)]
-mod transcript_tests;
-
+mod document_maintenance_tests;
 #[cfg(test)]
 mod live_buffer_tests;
 #[cfg(test)]
-mod read_frame_tests;
-
-#[cfg(test)]
-mod relay_tests;
-
-#[cfg(test)]
-mod rollout_tail_tests;
-
-#[cfg(test)]
-mod raw_output_tests;
-
-#[cfg(test)]
-mod retained_json_tests;
-
-#[cfg(test)]
-#[path = "sandbox_enrichment_tests.rs"]
-mod sandbox_enrichment_tests;
-
-#[cfg(test)]
-mod retry_single_marker_tests;
-
-#[cfg(test)]
-mod work_retry_tests;
-
-#[cfg(test)]
-#[path = "scan_cooperation_tests.rs"]
-mod scan_cooperation_tests;
-
-#[cfg(test)]
-mod document_maintenance_tests;
-
-#[cfg(test)]
-#[path = "admission_control_tests.rs"]
-mod admission_control_tests;
-
-#[cfg(test)]
-mod runtime_loss_tests;
-
-#[cfg(test)]
-#[path = "sandbox_projection_tests.rs"]
-mod sandbox_projection_tests;
-
-#[cfg(test)]
 #[path = "features/native_create_retry_tests.rs"]
 mod native_create_retry_tests;
-
-#[cfg(test)]
-mod discovery_tests;
-
 #[cfg(test)]
 mod observation_tests;
-
 #[cfg(test)]
 #[path = "features/ownership_retry_hint_tests.rs"]
 mod ownership_retry_hint_tests;
+#[cfg(test)]
+mod paged_event_tests;
+#[cfg(test)]
+mod parent_pacing_tests;
+#[cfg(test)]
+mod permission_bound_tests;
+#[cfg(test)]
+mod raw_output_tests;
+#[cfg(test)]
+mod read_frame_tests;
+#[cfg(test)]
+mod reconciliation_tests;
+#[cfg(test)]
+mod relay_tests;
+#[cfg(test)]
+mod response_tests;
+#[cfg(test)]
+mod retained_json_tests;
+#[cfg(test)]
+mod retry_single_marker_tests;
+#[cfg(test)]
+mod rollout_tail_tests;
+#[cfg(test)]
+mod runtime_loss_tests;
+#[cfg(test)]
+mod sandbox_batch_tests;
+#[cfg(test)]
+#[path = "sandbox_enrichment_tests.rs"]
+mod sandbox_enrichment_tests;
+#[cfg(test)]
+#[path = "sandbox_projection_tests.rs"]
+mod sandbox_projection_tests;
+#[cfg(test)]
+#[path = "sandbox_detail_diagnostics_tests.rs"]
+mod sandbox_read_tests;
+#[cfg(test)]
+#[path = "scan_cooperation_tests.rs"]
+mod scan_cooperation_tests;
+#[cfg(test)]
+mod tests;
+#[cfg(test)]
+mod transcript_tests;
+#[cfg(test)]
+mod usage_cursor_tests;
+#[cfg(test)]
+mod work_retry_tests;
 
 mod launch_admission;
 

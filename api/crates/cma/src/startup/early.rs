@@ -50,7 +50,7 @@ async fn initialize(
     if admission.is_draining() {
         return Ok(());
     }
-    warm_pools(&composition, Some(admission)).await?;
+    let writer_ready = warm_pools(&composition, Some(admission), shutdown).await?;
     if admission.is_draining() {
         return Ok(());
     }
@@ -61,7 +61,7 @@ async fn initialize(
     // The phase check admits activation. If draining wins afterward, the
     // owner joins activation and drains any membership it acquired.
     listening(config);
-    activate_and_start_workers(composition, shutdown, Some(admission)).await
+    activate_and_start_workers(composition, shutdown, Some(admission), writer_ready).await
 }
 
 async fn until_stopping(

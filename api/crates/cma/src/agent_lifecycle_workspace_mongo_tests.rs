@@ -557,3 +557,6 @@ async fn assert_profile_counts(db: &mongodb::Database, expected_agents: u64) {
         );
     }
 }
+
+#[path = "agent_lifecycle_release_source_tests.rs"]
+mod release_source_tests;

@@ -16,8 +16,7 @@ import { useControllerMode } from './controllerMode';
 import { agentReadRetryAt, errorMessage, retainHistoryOnFailure } from './controllerError';
 import { loadAgent, transientReadFailure, type AgentLoadLineage } from './loadAgent';
 export { loadAgent, type ReadyAgent } from './loadAgent';
-import type { CmaWebClient } from '../api/client';
-import { CommandKeys } from '../api/client';
+import { CommandKeys, type CmaWebClient } from '../api/client';
 import type { AgentLiveEvent } from '../api/types';
 import { accessCheckedInputAvailability, useSandboxInput } from './sandboxInput';
 import { ConversationHydration } from './transport/hydration';
@@ -117,7 +116,6 @@ export function useAgentController(
     },
     [agentId, setState],
   );
-
   const reload = useAgentReload(
     agentId,
     stateRef,

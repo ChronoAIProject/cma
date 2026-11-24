@@ -41,6 +41,7 @@ pub mod platform_service;
 pub mod pressure;
 pub mod pressure_service;
 pub mod profiles;
+pub mod released_runtime;
 pub mod resource_access;
 mod retry_schedule;
 pub mod sandbox;
