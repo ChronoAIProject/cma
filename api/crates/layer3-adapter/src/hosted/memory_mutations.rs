@@ -12,6 +12,10 @@ use crate::{
     WorktreeRequest,
 };
 
+#[cfg(test)]
+#[path = "memory_skill_tests.rs"]
+mod skill_tests;
+
 pub(super) fn add_worktree(
     runtime: &mut MemoryRuntime,
     request: FencedRequest<WorktreeRequest>,
@@ -355,9 +359,9 @@ pub(super) fn install_skill(
                     "agent_skill_upgrade_conflict: previous installation differs".into(),
                 ));
             };
+            // Initial home plans may omit display names; the runtime proves archive content.
             if previous.id != upgrade.previous.id
                 || previous.version != upgrade.previous.version
-                || previous.name != upgrade.previous.name
                 || previous.archive_sha256 != upgrade.previous.archive_sha256
             {
                 return Err(crate::AdapterError::OperationIdentityConflict(

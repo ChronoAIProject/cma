@@ -58,6 +58,26 @@ impl LifecycleRecord {
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
         })
     }
+
+    /// The release selected by the ordinary creation of a new Machine Sandbox.
+    pub(in crate::store) fn admitted_machine_image(&self) -> Option<&str> {
+        let request = &self.input.request;
+        if self.document_schema_version != DOCUMENT_SCHEMA_VERSION
+            || self.canary_admission.is_some()
+            || canary_key::is_reserved(&self.key)
+            || self.input.behavior != LifecycleBehavior::PromptRepository
+            || !request.machine_included
+            || request.image.is_some()
+            || request.workspace_id.is_some()
+            || request.sandbox_id.is_some()
+        {
+            return None;
+        }
+        self.input
+            .resolved_image
+            .as_deref()
+            .filter(|image| crate::agent_lifecycle::valid_immutable_image(image))
+    }
 }
 
 impl MongoAgentLifecycleStore {
