@@ -287,6 +287,10 @@ async fn native_stop_trace_recorder_ack_matches_a_fresh_checkpoint() {
         1
     );
     assert_eq!(
+        peer.reconcile_command(id).await.unwrap().status,
+        AgentResponseStatus::Failed
+    );
+    assert_eq!(
         peer.get_command(id).await.unwrap().unwrap().status,
         AgentResponseStatus::Failed
     );
