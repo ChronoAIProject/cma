@@ -25,7 +25,7 @@ fn typed_classes_are_private_even_with_selective_span_filters() {
         let writer = log.clone();
         let layer = tracing_subscriber::fmt::layer()
             .json()
-            .event_format(crate::diagnostic_format::json())
+            .event_format(cma_am_auth::diagnostics::json())
             .with_writer(move || writer.clone())
             .with_filter(tracing_subscriber::filter::filter_fn(move |metadata| {
                 root_enabled || metadata.name() != "authentication_failure"
@@ -107,7 +107,7 @@ fn dispatch(log: Log, json: bool, exclude_root: bool, filter: Filter) -> tracing
                     tracing_subscriber::registry().with(
                         layer
                             .json()
-                            .event_format(crate::diagnostic_format::json())
+                            .event_format(cma_am_auth::diagnostics::json())
                             .with_filter(filter),
                     ),
                 )
@@ -132,7 +132,7 @@ fn dispatch(log: Log, json: bool, exclude_root: bool, filter: Filter) -> tracing
                 tracing::Dispatch::new(
                     subscriber
                         .json()
-                        .event_format(crate::diagnostic_format::json())
+                        .event_format(cma_am_auth::diagnostics::json())
                         .finish(),
                 )
             } else {

@@ -7,11 +7,10 @@ use tracing_subscriber::{
 };
 
 const LIFECYCLE_TARGET: &str = "agent_scheduler_failure";
-// Preserve the auth emitter's original module target and filter namespace.
-pub(crate) const AUTHENTICATION_TARGET: &str = "cma::auth::middleware::failure_diagnostics";
-pub(crate) const PROVIDER_IDENTITY_TARGET: &str = "cma::auth::verification_diagnostics";
-pub(crate) const ORGANIZATION_PRINCIPAL_TARGET: &str =
-    "cma::auth::organizations::principal_diagnostics";
+pub(crate) use cma_am_auth::diagnostics::{
+    AUTHENTICATION_TARGET, ORGANIZATION_PRINCIPAL_TARGET, PROVIDER_IDENTITY_TARGET,
+};
+
 pub(crate) const OPENING_DECISION_TARGET: &str = "cma::store::agent_opening_reads";
 pub(crate) const OPENING_DECISION_ROOT: &str = "agent_opening_decision";
 

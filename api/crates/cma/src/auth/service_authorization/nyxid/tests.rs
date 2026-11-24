@@ -149,7 +149,7 @@ impl Fixture {
         .with_browser_origins(&["https://app.example".parse().unwrap()])
         .with_service_authorization(
             true,
-            Some(&crate::config::ServiceAuthorizationConfig {
+            Some(&cma_am_auth::service_config::ServiceAuthorizationConfig {
                 issuer: Url::parse("https://identity.example/").unwrap(),
                 api_origin: Url::parse("https://api.identity.example/").unwrap(),
             }),

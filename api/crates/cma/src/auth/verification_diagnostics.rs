@@ -105,7 +105,7 @@ pub(super) fn record(
     // Enter a root span at the event's level so its entire scope is content-free.
     let context = layer2_core::diagnostic_context::DiagnosticContext::current();
     let span = tracing::warn_span!(
-        target: crate::diagnostic_format::PROVIDER_IDENTITY_TARGET,
+        target: cma_am_auth::diagnostics::PROVIDER_IDENTITY_TARGET,
         parent: None,
         "identity_verification"
     );
@@ -114,7 +114,7 @@ pub(super) fn record(
     }
     let _entered = span.enter();
     tracing::warn!(
-        target: crate::diagnostic_format::PROVIDER_IDENTITY_TARGET,
+        target: cma_am_auth::diagnostics::PROVIDER_IDENTITY_TARGET,
         parent: &span,
         event = "identity_verification_failure",
         request_hash = context.request_hash.as_ref(),

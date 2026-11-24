@@ -2,10 +2,14 @@
 
 pub mod actor_links;
 mod api_bearer;
+pub mod diagnostics;
 pub mod permissions;
 pub mod profile;
 mod proxy_grant;
 mod records;
+pub mod request_observation;
+pub mod service_config;
+pub mod shutdown;
 mod store;
 pub mod token;
 

@@ -14,7 +14,7 @@ pub(super) fn record(error: &StoreError, failure: Failure) {
     // provider event cannot attribute failure to each admitted caller.
     let context = DiagnosticContext::current();
     let span = tracing::warn_span!(
-        target: crate::diagnostic_format::AUTHENTICATION_TARGET,
+        target: cma_am_auth::diagnostics::AUTHENTICATION_TARGET,
         parent: None,
         "authentication_failure"
     );
@@ -36,7 +36,7 @@ pub(super) fn record(error: &StoreError, failure: Failure) {
     }
     let _entered = span.enter();
     tracing::warn!(
-        target: crate::diagnostic_format::AUTHENTICATION_TARGET,
+        target: cma_am_auth::diagnostics::AUTHENTICATION_TARGET,
         parent: &span,
         event = "authentication_failure",
         request_hash = context.request_hash.as_ref(),

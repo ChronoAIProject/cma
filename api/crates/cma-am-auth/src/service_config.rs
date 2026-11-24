@@ -2,13 +2,13 @@
 use url::Url;
 
 #[derive(Clone, Debug)]
-pub(crate) struct ServiceAuthorizationConfig {
+pub struct ServiceAuthorizationConfig {
     pub issuer: Url,
     pub api_origin: Url,
 }
 
 impl ServiceAuthorizationConfig {
-    pub(super) fn from_lookup(
+    pub fn from_lookup(
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
         enabled: bool,
     ) -> Result<Option<Self>, String> {

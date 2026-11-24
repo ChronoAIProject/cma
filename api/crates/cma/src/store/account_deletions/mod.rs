@@ -230,3 +230,13 @@ async fn backoff(attempt: usize, jitter: u64) {
         tokio::time::sleep(Duration::from_millis(delay)).await;
     }
 }
+
+#[async_trait::async_trait]
+impl crate::auth::account_standing::SnapshotSource for MongoAccountDeletionStore {
+    async fn active_hashes(&self) -> Result<BTreeSet<String>, AccountDeletionError> {
+        MongoAccountDeletionStore::active_hashes(self).await
+    }
+    async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
+        MongoAccountDeletionStore::erasing(self, subject).await
+    }
+}

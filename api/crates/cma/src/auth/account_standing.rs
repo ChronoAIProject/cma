@@ -16,7 +16,6 @@ use layer2_core::{
 };
 
 use super::{AuthMode, AuthState, RequestAuth};
-use crate::store::account_deletions::MongoAccountDeletionStore;
 
 const MAX_SNAPSHOT_AGE: Duration = Duration::from_secs(10);
 const REFRESH_PERIOD: Duration = Duration::from_secs(1);
@@ -24,19 +23,9 @@ const MAX_POINT_READS: usize = 256;
 const MAX_CACHED_DENIALS: usize = 256;
 
 #[async_trait::async_trait]
-trait SnapshotSource: Send + Sync {
+pub(crate) trait SnapshotSource: Send + Sync {
     async fn active_hashes(&self) -> Result<BTreeSet<String>, AccountDeletionError>;
     async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError>;
-}
-
-#[async_trait::async_trait]
-impl SnapshotSource for MongoAccountDeletionStore {
-    async fn active_hashes(&self) -> Result<BTreeSet<String>, AccountDeletionError> {
-        MongoAccountDeletionStore::active_hashes(self).await
-    }
-    async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
-        MongoAccountDeletionStore::erasing(self, subject).await
-    }
 }
 
 #[derive(Default)]
@@ -56,7 +45,7 @@ pub(crate) struct ErasingSnapshot {
 }
 
 impl ErasingSnapshot {
-    pub(crate) fn new(source: Arc<MongoAccountDeletionStore>) -> Self {
+    pub(crate) fn new(source: Arc<dyn SnapshotSource>) -> Self {
         Self::with_source(source)
     }
     fn with_source(source: Arc<dyn SnapshotSource>) -> Self {

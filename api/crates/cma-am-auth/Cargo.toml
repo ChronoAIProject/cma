@@ -9,9 +9,16 @@ test-support = []
 
 [dependencies]
 async-trait = { workspace = true }
+axum = { workspace = true }
 layer2-core = { workspace = true }
+metrics = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+tokio = { workspace = true }
+url = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
+
+[dev-dependencies]
+metrics-exporter-prometheus = { workspace = true }

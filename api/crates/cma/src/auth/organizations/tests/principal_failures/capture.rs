@@ -33,19 +33,19 @@ pub(super) async fn capture<F: Future>(future: F) -> (F::Output, Vec<Value>) {
         .with(
             tracing_subscriber::fmt::layer()
                 .json()
-                .event_format(crate::diagnostic_format::json())
+                .event_format(cma_am_auth::diagnostics::json())
                 .with_writer(move || writer.clone()),
         )
         .with(
             tracing_subscriber::fmt::layer()
-                .event_format(crate::diagnostic_format::text())
+                .event_format(cma_am_auth::diagnostics::text())
                 .with_ansi(false)
                 .with_writer(move || plain_writer.clone()),
         )
         .with(
             tracing_subscriber::fmt::layer()
                 .json()
-                .event_format(crate::diagnostic_format::json())
+                .event_format(cma_am_auth::diagnostics::json())
                 .with_writer(move || hidden_writer.clone())
                 .with_filter(tracing_subscriber::filter::filter_fn(|meta| {
                     meta.name() != "organization_principal"
@@ -108,7 +108,7 @@ pub(super) async fn disabled_root<F: Future>(future: F) -> (F::Output, String) {
     let subscriber = tracing_subscriber::registry().with(
         tracing_subscriber::fmt::layer()
             .json()
-            .event_format(crate::diagnostic_format::json())
+            .event_format(cma_am_auth::diagnostics::json())
             .with_writer(move || writer.clone())
             .with_filter(tracing_subscriber::filter::filter_fn(|meta| {
                 meta.name() != "organization_principal"

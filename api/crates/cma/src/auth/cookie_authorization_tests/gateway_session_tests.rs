@@ -227,20 +227,18 @@ async fn session_authority_scenario() {
     );
 
     let gateway = GatewayFixture::new(&issuer, &access, gateway_secret.clone()).await;
-    let config = crate::config::GatewayConfig {
-        binding_preparation_enabled: false,
-        conversation_reset_enabled: false,
-        base_url: gateway.origin.clone(),
-        public_url: "https://gateway.example.test".into(),
-        public_api_url: "https://gateway.example.test".into(),
-        public_api_aliases: vec![],
-    };
     let app = crate::auth::router(fixture.auth.clone())
         .layer(middleware::from_fn_with_state(
             fixture.auth.clone(),
             crate::auth::attach_subject,
         ))
-        .merge(crate::auth::service_portal::router(fixture.auth.clone(), Some(&config)).unwrap());
+        .merge(
+            crate::auth::service_portal::router(
+                fixture.auth.clone(),
+                Some(gateway.origin.as_str()),
+            )
+            .unwrap(),
+        );
     let cookie = sign_in(&app).await;
     let cookie_value = cookie.split_once('=').unwrap().1;
     let secrets = [

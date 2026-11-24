@@ -16,7 +16,7 @@ pub(super) struct Nyxid {
 impl Nyxid {
     pub(super) fn new(
         auth: &AuthState,
-        config: &crate::config::ServiceAuthorizationConfig,
+        config: &cma_am_auth::service_config::ServiceAuthorizationConfig,
     ) -> Option<Self> {
         let browser = Url::parse(&auth.nyxid_public_url).ok()?;
         if browser.scheme() != "https"

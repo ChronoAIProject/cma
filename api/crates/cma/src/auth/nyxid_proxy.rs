@@ -25,7 +25,7 @@ pub(super) use jwt::HEADER;
 fn note_unaccepted(stage: &'static str, reason: &'static str) {
     let context = layer2_core::diagnostic_context::DiagnosticContext::current();
     let span = tracing::warn_span!(
-        target: crate::diagnostic_format::PROVIDER_IDENTITY_TARGET,
+        target: cma_am_auth::diagnostics::PROVIDER_IDENTITY_TARGET,
         parent: None,
         "identity_verification"
     );
@@ -34,7 +34,7 @@ fn note_unaccepted(stage: &'static str, reason: &'static str) {
     }
     let _entered = span.enter();
     tracing::warn!(
-        target: crate::diagnostic_format::PROVIDER_IDENTITY_TARGET,
+        target: cma_am_auth::diagnostics::PROVIDER_IDENTITY_TARGET,
         parent: &span,
         event = "identity_verification_failure",
         request_hash = context.request_hash.as_ref(),

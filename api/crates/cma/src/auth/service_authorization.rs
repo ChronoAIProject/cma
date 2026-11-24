@@ -150,7 +150,7 @@ impl AuthState {
     pub(crate) fn with_service_authorization(
         mut self: Arc<Self>,
         enabled: bool,
-        config: Option<&crate::config::ServiceAuthorizationConfig>,
+        config: Option<&cma_am_auth::service_config::ServiceAuthorizationConfig>,
     ) -> Arc<Self> {
         if enabled && matches!(self.mode, AuthMode::Provider { .. }) {
             let provider: Arc<dyn GrantAuthority> = config

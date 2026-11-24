@@ -459,7 +459,10 @@ impl ControlPlaneComposition {
                 crate::health::router_with_workers(stores.clone(), workers.clone()),
                 tool_routes.merge(service_portal::router(
                     auth.clone(),
-                    config.gateway.as_ref(),
+                    config
+                        .gateway
+                        .as_ref()
+                        .map(|gateway| gateway.base_url.as_str()),
                 )?),
             ),
             relay.as_ref(),

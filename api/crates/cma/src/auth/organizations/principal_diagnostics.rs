@@ -69,7 +69,7 @@ pub(super) fn record(
     let status = verification.and_then(VerificationFailure::status);
     let context = DiagnosticContext::current();
     let span = tracing::warn_span!(
-        target: crate::diagnostic_format::ORGANIZATION_PRINCIPAL_TARGET,
+        target: cma_am_auth::diagnostics::ORGANIZATION_PRINCIPAL_TARGET,
         parent: None,
         "organization_principal"
     );
@@ -78,7 +78,7 @@ pub(super) fn record(
     }
     let _entered = span.enter();
     tracing::warn!(
-        target: crate::diagnostic_format::ORGANIZATION_PRINCIPAL_TARGET,
+        target: cma_am_auth::diagnostics::ORGANIZATION_PRINCIPAL_TARGET,
         parent: &span,
         event = "organization_principal_failure",
         request_hash = context.request_hash.as_ref(),

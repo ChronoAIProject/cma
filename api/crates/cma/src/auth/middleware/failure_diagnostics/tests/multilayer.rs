@@ -19,13 +19,13 @@ where
         if private_format {
             layer
                 .json()
-                .event_format(crate::diagnostic_format::json())
+                .event_format(cma_am_auth::diagnostics::json())
                 .boxed()
         } else {
             layer.json().boxed()
         }
     } else {
-        layer.event_format(crate::diagnostic_format::text()).boxed()
+        layer.event_format(cma_am_auth::diagnostics::text()).boxed()
     };
     if dynamic {
         layer
@@ -147,7 +147,7 @@ fn stock_json_counterexample_requires_the_diagnostic_formatter() {
             let event: Value = serde_json::from_str(line).unwrap();
             assert_eq!(
                 event["target"],
-                crate::diagnostic_format::AUTHENTICATION_TARGET
+                cma_am_auth::diagnostics::AUTHENTICATION_TARGET
             );
             assert_eq!(event["span"]["secret"], "must-not-leak-span");
         }

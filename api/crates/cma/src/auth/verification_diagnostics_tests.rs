@@ -71,7 +71,7 @@ fn identity_diagnostic_requires_the_exact_root_in_its_dispatcher() {
     let output = Output::default();
     let json = fmt::layer()
         .json()
-        .event_format(crate::diagnostic_format::json())
+        .event_format(cma_am_auth::diagnostics::json())
         .with_writer(output.clone())
         .with_filter(filter_fn(hides_identity_root));
     tracing::subscriber::with_default(tracing_subscriber::registry().with(json), emit);
@@ -90,13 +90,13 @@ fn identity_diagnostic_uses_the_exact_root_visible_to_each_output_layer() {
         let text_output = Output::default();
         let json = fmt::layer()
             .json()
-            .event_format(crate::diagnostic_format::json())
+            .event_format(cma_am_auth::diagnostics::json())
             .with_writer(json_output.clone())
             .with_filter(filter_fn(move |metadata| {
                 !hide_json_root || hides_identity_root(metadata)
             }));
         let text = fmt::layer()
-            .event_format(crate::diagnostic_format::text())
+            .event_format(cma_am_auth::diagnostics::text())
             .with_ansi(false)
             .with_writer(text_output.clone());
         tracing::subscriber::with_default(

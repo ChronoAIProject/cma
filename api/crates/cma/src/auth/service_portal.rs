@@ -49,10 +49,7 @@ impl PortalError {
     }
 }
 
-pub(crate) fn router(
-    auth: Arc<AuthState>,
-    gateway: Option<&crate::config::GatewayConfig>,
-) -> Result<Router, String> {
+pub(crate) fn router(auth: Arc<AuthState>, gateway: Option<&str>) -> Result<Router, String> {
     let Some(gateway) = gateway else {
         return Ok(Router::new());
     };
@@ -70,7 +67,7 @@ pub(crate) fn router(
         .route("/api/event-gateway/{*path}", any(forward))
         .with_state(Arc::new(Portal {
             auth,
-            base: gateway.base_url.trim_end_matches('/').into(),
+            base: gateway.trim_end_matches('/').into(),
             http,
         })))
 }
