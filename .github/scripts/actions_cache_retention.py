@@ -23,10 +23,12 @@ OMARCHY = re.compile(rf"omarchy-layer-archive-v1-runtime-omarchy-deps-{HEX}")
 # is the PR analysis; neither release nor develop CI restores this namespace.
 CODEQL_BASE = re.compile(r"(codeql-overlay-base-database-1-[a-f0-9]+-[a-z+_-]+-[0-9]+\.[0-9]+\.[0-9]+)-[a-f0-9]{40}-[0-9]+-[0-9]+")
 TRIVY = re.compile(r"(cache-trivy)-([0-9]{4}-[0-9]{2}-[0-9]{2})")
+RUST_CI = re.compile(r"(v0-rust-(?:build|lint)-Linux-x64-[0-9a-f]{8})-[0-9a-f]{8}")
 AUXILIARY = (
     re.compile(rf"(cma-develop-selection-v2-{HEX})-[a-f0-9]{{40}}-[0-9]+-[0-9]+"),
     CODEQL_BASE,
     TRIVY,
+    RUST_CI,
 )
 
 
@@ -100,6 +102,12 @@ def recovery_kind(action, today, policy):
         # Omarchy restores by exact recipe and builds from pinned inputs on
         # a cache miss. Retain the archive used by current develop.
         return "superseded-omarchy-archive"
+    rust_ci, replacement = RUST_CI.fullmatch(old.key), RUST_CI.fullmatch(keep.key)
+    if (rust_ci and replacement and rust_ci[1] == replacement[1]
+            and old.created.astimezone(timezone.utc).date() < today and old.accessed < keep.accessed):
+        # The pinned Rust cache action tries the exact key and then this
+        # environment prefix. It cleans stale target files after a partial hit.
+        return "superseded-rust-ci-cache"
     cargo, replacement = CARGO.fullmatch(old.key), CARGO.fullmatch(keep.key)
     if cargo and replacement and cargo[1] == replacement[1] and old.created.astimezone(timezone.utc).date() < today:
         return "prior-day-v4-seed"
@@ -147,7 +155,9 @@ def generations(entries, policy):
             continue
         if keep.size == 0:
             continue
-        for _, old in ordered[1:]:
+        # Retain two lockfile generations per Rust CI restore prefix and version.
+        candidates_to_retire = ordered[2:] if RUST_CI.fullmatch(keep.key) else ordered[1:]
+        for _, old in candidates_to_retire:
             if (group.startswith(("index-", "cargo-"))
                     and (old.created, old.id) > (keep.created, keep.id)):
                 # A backfill/rerun or an index-counter reset can complete out of

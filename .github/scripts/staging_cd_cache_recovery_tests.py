@@ -6,6 +6,7 @@ import os
 import sys
 import unittest
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
@@ -115,6 +116,25 @@ class Recovery(unittest.TestCase):
         ):
             with self.subTest(old=old.key, keep=keep.key):
                 self.assertIsNone(recovery_kind(Removal(old, "superseded", keep), CLOCK.date(), POLICY))
+
+    def test_rust_ci_recovery_keeps_two_generations_and_requires_a_newer_reader(self):
+        oldest = entry(1, "v0-rust-build-Linux-x64-01234567-aaaaaaaa", size=30)
+        spare = entry(2, "v0-rust-build-Linux-x64-01234567-bbbbbbbb")
+        newest = replace(entry(3, "v0-rust-build-Linux-x64-01234567-cccccccc"),
+                         accessed=CLOCK + timedelta(seconds=10))
+        unrelated = entry(4, "v0-rust-lint-Linux-x64-01234567-dddddddd")
+        full = entry(5, "buildkit-blob-opaque", size=BUDGET - 55)
+        api = Inventory(oldest, spare, newest, unrelated, full)
+        code, result, events, *_ = self.execute(api, "--apply-recovery")
+        self.assertEqual((code, result["status"], result["deleted_bytes"]), (0, "recovered", 30))
+        self.assertEqual([(row["id"], row["successor"], row["reason"]) for row in events if row["action"] == "deleted"],
+                         [(oldest.id, newest.id, "superseded-rust-ci-cache")])
+        self.assertEqual(set(api.rows), {spare.id, newest.id, unrelated.id, full.id})
+        for changed in (replace(newest, accessed=oldest.accessed),
+                        replace(newest, key=newest.key.replace("01234567", "76543210")), unrelated):
+            self.assertIsNone(recovery_kind(Removal(oldest, "superseded", changed),
+                                            CLOCK.date() + timedelta(days=1), POLICY))
+        self.assertIsNone(recovery_kind(Removal(oldest, "superseded", newest), CLOCK.date(), POLICY))
 
     def test_keeps_current_base_shared_layers_and_other_namespaces(self):
         oldest, newest = base(1), base(2)
