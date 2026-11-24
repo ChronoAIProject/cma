@@ -31,7 +31,6 @@ import { DeletionConfirmation } from './DeletionConfirmation';
 import { DeletionStatusPanel } from './DeletionStatusPanel';
 import { transitionRefreshDelay } from './sandbox/lifecycle';
 import { readableError } from './vocabulary/errors';
-
 export function DeletionDialog({
   client,
   viewerId,
@@ -96,7 +95,8 @@ export function DeletionDialog({
   );
   const complete =
     observation?.complete === true ||
-    (settlements?.client === identity.client &&
+    (enabled &&
+      settlements?.client === identity.client &&
       client === identity.client &&
       settlements.viewerId === identity.viewerId &&
       viewerId === identity.viewerId &&

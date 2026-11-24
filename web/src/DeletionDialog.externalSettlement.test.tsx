@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { DeletionDialog } from './DeletionDialog';
 import { useResourceActions } from './ResourceActions';
 import { useDeletionNoticeReconciliation } from './useDeletionNoticeReconciliation';
 import { persistDeletion, restoreDeletions } from './deletionRecovery';
@@ -247,3 +248,34 @@ it('does not infer completion from a missing receipt', async () => {
   expect(f.deleteAgent).not.toHaveBeenCalled();
   expect(f.stopAgent).not.toHaveBeenCalled();
 });
+
+it.each(['disabled', 'different viewer', 'different client'] as const)(
+  'does not consume a terminal settlement with %s authority',
+  async (scope) => {
+    const client = agentClient();
+    const otherClient = agentClient();
+    const props = {
+      client,
+      viewerId: 'owner',
+      initial: request,
+      restored: true,
+      onClose: vi.fn(),
+      onChanged: vi.fn(),
+      enabled: false,
+    };
+    const view = render(<DeletionDialog {...props} />);
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Deleting Agent');
+    view.rerender(
+      <DeletionDialog
+        {...props}
+        enabled={scope !== 'disabled'}
+        viewerId={scope === 'different viewer' ? 'other-owner' : 'owner'}
+        client={scope === 'different client' ? otherClient : client}
+        settlements={{ client, viewerId: 'owner', requests: [request] }}
+      />,
+    );
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Deleting Agent');
+    expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+  },
+);
