@@ -15,6 +15,11 @@ pub(in crate::store) async fn prepare(
     let mut session = store.client.start_session().await.map_err(driver)?;
     start_transaction(&mut session).await.map_err(driver)?;
     let result = async {
+        if !crate::store::work_publication::agent::fence_parent(store, current, &mut session)
+            .await?
+        {
+            return Err(SandboxStoreError::Conflict.into());
+        }
         let admission = writer_admission::admit(
             &database,
             current,

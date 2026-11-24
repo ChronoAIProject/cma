@@ -5,11 +5,15 @@ use crate::store::agent_log_segments::{
 };
 use crate::store::sandbox_mongo::start_transaction;
 use futures_util::TryStreamExt;
-use layer2_core::sandbox::AgentLogKind;
+use layer2_core::sandbox::{store::SandboxStore, AgentLogKind};
 use mongodb::bson::{DateTime, RawDocumentBuf};
 
 async fn legacy_fixture() -> Fixture {
     let mut f = fixture(2).await;
+    let mut parent =
+        crate::store::sandbox_mongo_integration_tests::sandbox(f.agent.sandbox_id.as_str());
+    parent.owner = f.agent.owner.clone();
+    f.store.create_sandbox(parent).await.unwrap();
     let mut kinds = vec![
         AgentLogKind::TurnStarted {
             turn_sequence: 3,
@@ -150,6 +154,94 @@ async fn raw_source(f: &Fixture) -> Vec<RawDocumentBuf> {
         .try_collect()
         .await
         .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn held_sandbox_refuses_new_log_admission_and_existing_bootstrap_batches() {
+    let f = legacy_fixture().await;
+    let (operation, admitted, permit) = admitted(&f).await;
+    let name = f.store.agents.namespace().db;
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let second = mongodb::Client::with_uri_str(&uri).await.unwrap();
+    let db = second.database(&name);
+    let sandboxes = db.collection::<Document>("sandboxes");
+    let key = doc! {"_id": f.agent.sandbox_id.as_str()};
+    assert_eq!(
+        sandboxes
+            .update_one(
+                key.clone(),
+                doc! {
+                    "$set": {"ledger_maintenance": mongodb::bson::Bson::Null}
+                }
+            )
+            .write_concern(mongodb::options::WriteConcern::majority())
+            .await
+            .unwrap()
+            .modified_count,
+        1
+    );
+    let held = sandboxes.find_one(key).await.unwrap();
+    let gates = db.collection::<Document>(gate::COLLECTION);
+    let before: Vec<Document> = gates
+        .find(doc! {})
+        .sort(doc! {"_id": 1})
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    let original = raw_source(&f).await;
+    let another = PublicationIdentity {
+        key: "another-publication".into(),
+        ..operation.clone()
+    };
+    assert!(matches!(
+        crate::store::agent_log::keyed::preparation::prepare(
+            &f.store,
+            &f.agent,
+            &another,
+            Some(admission::AdmissionKind::Activation),
+        )
+        .await,
+        Err(SandboxStoreError::Conflict)
+    ));
+    assert!(matches!(
+        writer_bootstrap::stage(&f.store, &f.agent, &operation, &admitted, permit).await,
+        Err(TransactionLogError::Domain(SandboxStoreError::Conflict))
+    ));
+    let after: Vec<Document> = gates
+        .find(doc! {})
+        .sort(doc! {"_id": 1})
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    assert_eq!(after, before);
+    assert_eq!(
+        collection(&f.store, admission::COLLECTION)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        collection(&f.store, EVIDENCE)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(raw_source(&f).await, original);
+    assert_eq!(
+        sandboxes
+            .find_one(doc! {"_id": f.agent.sandbox_id.as_str()})
+            .await
+            .unwrap(),
+        held
+    );
+    f.client.database(&name).drop().await.unwrap();
 }
 
 #[tokio::test]
