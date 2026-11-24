@@ -11,6 +11,8 @@ import type {
 } from './sandboxInput';
 import type { QueuedMessageControl } from './transport/queuedStatus';
 import type { QueuedInputsControl } from './transport/queuedInputsStatus';
+import type { SelectedRetiredAgent } from '../useDeletionNoticeReconciliation';
+import type { RetainedAgentRead } from './retainedHistory';
 
 export type MessageAcceptance =
   { readonly commandId: string; readonly responseId: string } | { readonly runId: string };
@@ -25,6 +27,7 @@ export type AgentCommand = 'send' | 'interrupt' | 'approval' | 'stop' | 'delete'
 export type ApprovalDecision = 'allow' | 'deny' | 'abort';
 
 export interface AgentController {
+  readonly retained?: RetainedAgentRead;
   readonly readSuggestionRequest?: () => LegacySuggestionRecord | InputRecord | null | undefined;
   readonly applyAgentTitle?: (title: string) => void;
   readonly queuedMessage?: QueuedMessageControl;
@@ -73,6 +76,8 @@ export interface AgentController {
 }
 
 export interface AgentControllerOptions {
+  readonly selectedRetired?: SelectedRetiredAgent;
+  readonly authEpoch?: number;
   readonly viewerId?: string;
   readonly suspended?: boolean;
   readonly authorizedLineage?: AgentLoadLineage;

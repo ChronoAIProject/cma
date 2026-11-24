@@ -120,6 +120,8 @@ pub fn agent_router(state: AgentRoutesState) -> Router {
     routes()
         .merge(super::agent_operate::routes())
         .merge(super::agent_reads::routes())
+        .merge(super::agent_original_request::routes())
+        .merge(super::agent_reply_preview::routes())
         .merge(super::agent_retained_output::routes())
         .with_state(state)
 }

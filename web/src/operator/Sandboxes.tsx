@@ -24,7 +24,8 @@ export function Sandboxes({
   const [selection, onSelection] = useUsageSelection(true);
   const [revision, setRevision] = useState(0);
   const [detail, setDetail] = useState<string>();
-  const [target, setTarget] = useState<Pick<UsageMetricRow, 'sandbox_id' | 'name' | 'status'>>();
+  const [target, setTarget] =
+    useState<Pick<UsageMetricRow, 'sandbox_id' | 'name' | 'status' | 'owner'>>();
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<OperatorFailure>();
   const [uncertain, setUncertain] = useState(false);
@@ -113,7 +114,7 @@ export function Sandboxes({
           <RiskConfirmation
             open
             title={`Retire ${target.name}`}
-            description={`Retiring Sandbox ${target.sandbox_id} stops its Agents and releases its runtime. It cannot be resumed. The operator action is audited.`}
+            description={`Owner: ${target.owner?.display_name ?? 'Name unavailable'}. Retiring Sandbox ${target.sandbox_id} stops its Agents and releases its runtime. It cannot be resumed. The operator action is audited.`}
             acknowledgeLabel="I understand this Sandbox cannot be resumed."
             confirmLabel={uncertain ? 'Check current state' : 'Retire Sandbox'}
             busy={busy}
