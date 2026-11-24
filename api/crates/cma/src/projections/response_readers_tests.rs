@@ -215,6 +215,8 @@ async fn fixture_with_terminal(terminal: Option<AgentLogKind>) -> Fixture {
     );
     agent.conversation.conversation_id = Some("composed-conversation".into());
     agent.conversation.runtime_generation = Some(1);
+    // A retained Agent already passed readiness before its first turn.
+    agent.ready_at = Some(agent.created_at.clone());
     agent.conversation.active_turn = terminal.is_none().then_some(3);
     agent.conversation.last_seq = 5 + u64::from(terminal.is_some());
     let worktree = test_resources::worktree(
