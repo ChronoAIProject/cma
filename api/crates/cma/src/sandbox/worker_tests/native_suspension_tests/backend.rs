@@ -31,6 +31,7 @@ pub(super) struct NativeBackend {
     pub lose_resume: Arc<AtomicBool>,
     pub lose_delete: Arc<AtomicBool>,
     pub reject_reopen: Arc<AtomicBool>,
+    pub fail_reopen_transiently: Arc<AtomicBool>,
     pub reopen_output: Arc<reopen_fixture::StartupOutput>,
     pub adoption_pause: Arc<Mutex<Option<Arc<RetirementProbePause>>>>,
     pub hold_reopen: Arc<AtomicBool>,
