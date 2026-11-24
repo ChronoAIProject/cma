@@ -130,6 +130,7 @@ mod marketplace_mutations;
 mod marketplace_query;
 mod marketplace_support;
 mod marketplace_visibility;
+pub(crate) mod measured_capture;
 mod message_feedback;
 pub(crate) mod migrations;
 pub mod mongo;

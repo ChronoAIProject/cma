@@ -146,6 +146,88 @@ fn provider_fingerprint_has_a_stable_golden_encoding() {
 }
 
 #[test]
+fn retained_startup_policy_successor_changes_only_the_admitted_fields() {
+    use crate::provider::{ProviderPersistentVolumeClaim, ProviderVolume};
+
+    let image = format!("registry.example/runtime@sha256:{}", "a".repeat(64));
+    let mut predecessor = request();
+    predecessor.image.uri = image.clone();
+    predecessor.volumes.push(ProviderVolume {
+        name: "home".into(),
+        pvc: ProviderPersistentVolumeClaim {
+            claim_name: "home-one".into(),
+            create_if_not_exists: false,
+            delete_on_sandbox_termination: false,
+        },
+        mount_path: "/home/cma".into(),
+        read_only: false,
+        sub_path: Some("home".into()),
+    });
+    predecessor
+        .metadata
+        .insert("cma/home-identity".into(), "a".repeat(43));
+    predecessor
+        .metadata
+        .insert(RUNTIME_GENERATION_METADATA.into(), "2".into());
+    predecessor
+        .metadata
+        .insert(RUNTIME_IMAGE_METADATA.into(), image_sha256(&image));
+    predecessor
+        .env
+        .insert("CHRONO_RUNTIME_GENERATION".into(), "2".into());
+    predecessor
+        .env
+        .insert("CHRONO_SANDBOX_REACHES".into(), "chrono-llm-public".into());
+    predecessor.env.insert(
+        "CHRONO_UPSTREAM_BASE_URL".into(),
+        "https://model.example/v1".into(),
+    );
+    predecessor.metadata.insert(
+        SPEC_FINGERPRINT_METADATA.into(),
+        provider_request_fingerprint(&predecessor).unwrap(),
+    );
+    let target = format!("registry.example/runtime@sha256:{}", "b".repeat(64));
+
+    for (image, enabled) in [(&image, true), (&target, false)] {
+        let successor = predecessor
+            .retained_startup_policy_successor(image, 5, enabled)
+            .unwrap();
+        let mut expected = predecessor.clone();
+        expected.image.uri.clone_from(image);
+        expected
+            .env
+            .insert("CHRONO_RUNTIME_GENERATION".into(), "5".into());
+        expected.env.insert(
+            "CHRONO_RUNTIME_LEGACY_JOURNAL_RECOVERY_ENABLED".into(),
+            enabled.to_string(),
+        );
+        expected
+            .metadata
+            .insert(RUNTIME_GENERATION_METADATA.into(), "5".into());
+        expected
+            .metadata
+            .insert(RUNTIME_IMAGE_METADATA.into(), image_sha256(image));
+        expected.metadata.remove(SPEC_FINGERPRINT_METADATA);
+        expected.metadata.insert(
+            SPEC_FINGERPRINT_METADATA.into(),
+            provider_request_fingerprint(&expected).unwrap(),
+        );
+        assert_eq!(successor, expected);
+    }
+
+    assert!(predecessor
+        .retained_startup_policy_successor(&target, 2, false)
+        .is_err());
+    predecessor.env.insert(
+        "CHRONO_SANDBOX_REACHES".into(),
+        "changed-after-freeze".into(),
+    );
+    assert!(predecessor
+        .retained_startup_policy_successor(&target, 5, false)
+        .is_err());
+}
+
+#[test]
 fn persistent_mount_identity_cannot_be_replayed_with_another_claim_or_path() {
     use crate::provider::{ProviderPersistentVolumeClaim, ProviderVolume};
 

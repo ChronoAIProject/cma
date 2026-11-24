@@ -220,6 +220,7 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("sandbox_usage_outbox_v1", Retained("usage-delivery-custody") => false),
     entry!("sandbox_usage_streams_v1", Retained("usage-capture-custody") => false),
     entry!("sandbox_usage_inventory_v1", Retained("usage-capture-custody") => false),
+    entry!("sandbox_billing_measured_observations_v1", Retained("measured-billing-custody") => false),
     entry!("sandbox_profile_revisions", Reference(ReferenceRule::Profiles) => false),
     entry!("sandbox_profiles", Reference(ReferenceRule::Profiles) => false),
     entry!("sandbox_retained_availability", Linked(Sandboxes, &["_id"]) => true),

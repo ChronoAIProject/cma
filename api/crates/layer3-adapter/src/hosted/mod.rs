@@ -76,6 +76,7 @@ pub(crate) use deployment::{
 pub use deployment::{
     HostedDeployment, MODEL_PROXY_BASE_URL, NYXID_PROXY_BASE_URL, PLACEHOLDER_CREDENTIAL,
 };
+pub(crate) use deployment_request::JOURNAL_RECOVERY;
 pub use managed_context::HostedContextRefresh;
 pub use memory::{InMemoryHostedBackend, InMemoryRuntimeSnapshot};
 pub(crate) use nonexecuting::IdleBootstrapProof;
