@@ -3,10 +3,14 @@ import { HydrationEvents } from '../mergeHydration';
 import { mergeTranscriptSnapshot } from '../chronology';
 import type { ConversationState } from '../model';
 import { foldV2Frame } from './projection';
+import { ApprovalBaselineRequired } from './approvalBaseline';
+
+export const EXTERNAL_APPROVAL_BUFFER_LIMIT = 256;
 
 /** Rebase a live tail onto rich history without dropping or replaying new output. */
 export class ConversationHydration extends HydrationEvents {
   private frames: V2AgentStreamFrame[] = [];
+  private approvalOverflow = false;
   private incarnation?: string;
   private baseline?: ConversationState;
   private transcript?: ConversationState;
@@ -15,6 +19,7 @@ export class ConversationHydration extends HydrationEvents {
   override reset(snapshot?: ConversationState) {
     super.reset(snapshot);
     this.frames = [];
+    this.approvalOverflow = false;
     this.incarnation = snapshot?.agentIncarnation;
     this.baseline = undefined;
     this.transcript = undefined;
@@ -30,6 +35,15 @@ export class ConversationHydration extends HydrationEvents {
     agent: string,
     buffering: boolean,
   ): ConversationState {
+    if (this.approvalOverflow) throw new ApprovalBaselineRequired('overflow');
+    if (
+      buffering &&
+      isExternalApproval(frame) &&
+      this.frames.filter(isExternalApproval).length >= EXTERNAL_APPROVAL_BUFFER_LIMIT
+    ) {
+      this.approvalOverflow = true;
+      throw new ApprovalBaselineRequired('overflow');
+    }
     // HTTP history can overtake an already released SSE fragment. Only an
     // authoritative newer prefix can prove that its old turn is now obsolete;
     // keep the reducer's identity and same-boundary protocol checks intact.
@@ -67,6 +81,7 @@ export class ConversationHydration extends HydrationEvents {
   }
 
   override merge(snapshot: ConversationState, agent: string, complete: boolean) {
+    if (this.approvalOverflow) throw new ApprovalBaselineRequired('overflow');
     if (!complete) {
       if (snapshot.agentIncarnation === undefined) this.transcript = snapshot;
       else this.baseline = snapshot;
@@ -143,4 +158,12 @@ function foldHydratingFrame(
     return foldV2Frame(state, { ...frame, data: { ...frame.data, kind: null } }, agent);
   }
   return foldV2Frame(state, frame, agent);
+}
+
+function isExternalApproval(frame: V2AgentStreamFrame) {
+  return (
+    frame.type === 'cma.agent.event' &&
+    (frame.data.kind?.type === 'external_approval_requested' ||
+      frame.data.kind?.type === 'external_approval_resolved')
+  );
 }

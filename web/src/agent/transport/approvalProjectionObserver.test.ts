@@ -31,14 +31,12 @@ it('removes stale policy even if buffered history arrives later, without alterin
     { current: state },
     publish,
   );
-  expect(() => observe({ supported: false, canReview: false })).toThrow(
-    'fresh conversation baseline',
-  );
+  expect(() => observe({ supported: false, canReview: false })).toThrow('Reload this Agent');
   expect(session.approvalProjectionAvailable).toBe(false);
   const delayed = approvalProjectionView(state);
   if (delayed.status !== 'ready') throw new Error('Expected retained history');
   expect(delayed.conversation.externalApprovalReviewPolicy).toBeUndefined();
-  expect(() => observe(policy)).toThrow('fresh conversation baseline');
+  expect(() => observe(policy)).toThrow('Reload this Agent');
   expect(session.journal.read()).toEqual(pending);
   const fresh = session.forSnapshotRefresh();
   expect(fresh.approvalProjectionAvailable).toBe(true);

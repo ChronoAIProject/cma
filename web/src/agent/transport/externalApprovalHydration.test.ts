@@ -105,3 +105,84 @@ it('keeps the strict missing-request and identity boundaries after complete hist
     'retained request',
   );
 });
+
+it('bounds external receipt retention, refuses overflow without acknowledging it, and requires reset', () => {
+  const hydration = new ConversationHydration();
+  let state = hydration.merge(head(), agent, false);
+  for (let index = 0; index < 256; index += 1) {
+    const sequence = 10 + index;
+    state = hydration.applyV2(
+      state,
+      frame({
+        ...fixture.live_requested.data,
+        sequence,
+        cursor: `ag1.${raw.incarnation}.${sequence}`,
+      }),
+      agent,
+      true,
+    );
+  }
+  const retained = state;
+  const sequence = 266;
+  expect(() =>
+    hydration.applyV2(
+      state,
+      frame({
+        ...fixture.live_requested.data,
+        sequence,
+        cursor: `ag1.${raw.incarnation}.${sequence}`,
+      }),
+      agent,
+      true,
+    ),
+  ).toThrow('Reload this Agent');
+  expect(state).toBe(retained);
+  expect(state.cursor).toBe(265);
+  expect(state.approvals).toEqual([]);
+  expect(() => hydration.merge(snapshot(), agent, true)).toThrow('Reload this Agent');
+  hydration.reset();
+  expect(hydration.merge(snapshot(), agent, true).approvals).toHaveLength(1);
+});
+
+it('does not apply a buffered old-turn request to a successor or retain it across incarnation reset', () => {
+  const hydration = new ConversationHydration();
+  const state = hydration.merge(head(), agent, false);
+  hydration.applyV2(
+    state,
+    frame({ ...fixture.live_requested.data, sequence: 12, cursor: `ag1.${raw.incarnation}.12` }),
+    agent,
+    true,
+  );
+  let newer = foldV2Item(snapshot(), v2AgentEvent(fixture.live_terminal.data, true));
+  newer = foldV2Item(
+    newer,
+    v2AgentEvent(
+      {
+        ...fixture.live_requested.data,
+        sequence: 11,
+        cursor: `ag1.${raw.incarnation}.11`,
+        kind: { type: 'turn_started', turn_sequence: 11 },
+        response_binding: {
+          command_id: 'cmd_successor',
+          response_id: 'resp_successor',
+          turn_sequence: 11,
+        },
+      },
+      true,
+    ),
+  );
+  const merged = hydration.merge(newer, agent, true);
+  expect(merged.activeRunId).toBe('11');
+  expect(
+    merged.approvals.filter(
+      (approval) => approval.source === 'external' && approval.runId === '11',
+    ),
+  ).toEqual([]);
+  hydration.reset();
+  const replacement = {
+    ...head(),
+    agentIncarnation: 'b'.repeat(64),
+    agentCursor: `ag1.${'b'.repeat(64)}.9`,
+  };
+  expect(hydration.merge(replacement, agent, true).approvals).toEqual([]);
+});

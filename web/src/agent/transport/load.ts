@@ -14,6 +14,7 @@ import { createProjectionPublication } from './publication';
 import { readAgentProjections } from './projections';
 import type { AuthorizedOpeningReads } from './openingReads';
 import { IdentityChangedError } from './identity';
+import { ApprovalBaselineRequired } from './approvalBaseline';
 import { OPENING_EVENT_PAGE_LIMIT } from './openingReplay';
 
 export async function loadV2Agent(
@@ -237,7 +238,7 @@ export async function loadV2Agent(
         )
       ) {
         v2.invalidateApprovalProjection();
-        throw new Error('Approval projection changed during history loading. Reload the Agent.');
+        throw new ApprovalBaselineRequired('policy');
       }
       conversation = withApprovalProjection(conversation, page.externalApprovalProjection);
     }

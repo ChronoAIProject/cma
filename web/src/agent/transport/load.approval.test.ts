@@ -35,7 +35,7 @@ it('refuses a changed page policy and invalidates any earlier live action author
   );
   const result = await h.start();
   expect(result.error).toEqual(
-    expect.objectContaining({ message: expect.stringContaining('Approval projection changed') }),
+    expect.objectContaining({ message: expect.stringContaining('Approval access changed') }),
   );
   expect(h.v2.approvalProjectionAvailable).toBe(false);
   expect(h.post).not.toHaveBeenCalled();
@@ -59,7 +59,7 @@ it('compares the independently negotiated head policy against the completed snap
   );
   await expect(
     loadV2Agent(h.client, 'agt_1', h.abort.signal, h.v2, false, undefined, undefined, vi.fn()),
-  ).rejects.toThrow('Approval projection changed');
+  ).rejects.toThrow('Approval access changed');
   expect(h.v2.approvalProjectionAvailable).toBe(false);
   expect(h.post).not.toHaveBeenCalled();
 });

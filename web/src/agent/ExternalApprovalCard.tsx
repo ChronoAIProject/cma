@@ -49,9 +49,7 @@ export function ExternalApprovalCard({
               </p>
             </>
           ) : (
-            <p className="approval__decision">
-              {approval.decision ?? 'This request is no longer active in the current turn.'}
-            </p>
+            <p className="approval__decision">{approvalOutcome(approval.decision)}</p>
           )}
         </div>
       </div>
@@ -68,4 +66,23 @@ export function ExternalApprovalCard({
       ) : null}
     </section>
   );
+}
+
+function approvalOutcome(decision: string | undefined) {
+  switch (decision) {
+    case 'approved':
+      return 'Approved';
+    case 'denied':
+      return 'Denied';
+    case 'expired':
+      return 'The approval request expired.';
+    case 'disconnected':
+      return 'The connection to this approval request ended.';
+    case 'timed_out':
+      return 'The approval wait timed out.';
+    case 'cancelled':
+      return 'The approval request was cancelled.';
+    default:
+      return 'This request is no longer active in the current turn.';
+  }
 }

@@ -184,7 +184,7 @@ for (const theme of ['light', 'dark']) {
       fixture.approvalReviewAllowed = false;
       fixture.endTails();
       await expect(review).toHaveCount(0);
-      await expect(page.getByText(/Approval projection changed/)).toBeVisible();
+      await expect(page.getByText(/Approval access changed/)).toBeVisible();
       await page.reload();
       await expect(page.getByRole('heading', { name: 'Waiting for your approval' })).toBeVisible();
       await expect(review).toHaveCount(0);

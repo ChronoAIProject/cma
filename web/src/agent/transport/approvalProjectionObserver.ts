@@ -1,4 +1,4 @@
-import { ProtocolError } from '@cma/client';
+import { ApprovalBaselineRequired } from './approvalBaseline';
 import type { AgentResourceState } from '../controllerTypes';
 import type { AgentV2Session } from './client';
 import type { ExternalApprovalProjection } from '../../api-client/agent-events-v2/external-approval';
@@ -39,9 +39,7 @@ export function observeApprovalProjection(
         ...current,
         conversation: withApprovalProjection(current.conversation, unavailable),
       });
-      throw new ProtocolError(
-        'Approval projection changed. Reload the Agent to read a fresh conversation baseline.',
-      );
+      throw new ApprovalBaselineRequired('policy');
     }
     publish({ ...current, conversation: withApprovalProjection(current.conversation, projection) });
   };
