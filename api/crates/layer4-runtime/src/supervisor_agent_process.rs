@@ -101,8 +101,10 @@ impl Supervisor {
             .removal_writer_guard()?
             .ok_or_else(invalid_restart_fence)?;
         if let Some(digest) = request.successor_open_request_sha256.as_deref() {
-            self.close_restart_successor(&request, successor, digest)
+            let close = self
+                .prepare_restart_successor_close(&request, successor, digest)
                 .await?;
+            self.close_agent(request.authority_fence, close).await?;
             return Ok(request);
         }
         // The operation gate excludes physical Open, and both proof reads and
@@ -117,12 +119,13 @@ impl Supervisor {
         Ok(request)
     }
 
-    async fn close_restart_successor(
+    /// The caller holds the operation gate and boot writer guard.
+    pub(super) async fn prepare_restart_successor_close(
         &self,
         request: &AgentRestartFence,
         incarnation: u64,
         digest: &str,
-    ) -> Result<()> {
+    ) -> Result<AgentCloseRequest> {
         let proof = &request.predecessor;
         let (_, predecessor) = self.verify_completed_process_pair(proof).await?;
         let slot = &proof.close.agent_id;
@@ -193,10 +196,20 @@ impl Supervisor {
                 return Err(close_unproved());
             }
         }
-        self.mutations
-            .admit(request.authority_fence, std::slice::from_ref(&closing))
-            .await?;
         if open.status() == Status::Started {
+            if self
+                .mutations
+                .recovery_fence(&operation)
+                .await?
+                .is_none_or(|fence| fence >= request.authority_fence)
+            {
+                return Err(RuntimeError::rejected(
+                    "mutation_authority_stale",
+                    "the restart teardown fence must advance beyond the successor Open",
+                ));
+            }
+            // Complete the matching live Open before replacing its writer. A
+            // subsequent recovery can then settle Close without superseding Open.
             let Begin::Started(ticket) =
                 self.mutations.begin::<AgentOpenReceipt>(&operation).await?
             else {
@@ -211,8 +224,10 @@ impl Supervisor {
                 return Err(close_unproved());
             }
         }
-        self.close_agent(request.authority_fence, close).await?;
-        Ok(())
+        self.mutations
+            .admit(request.authority_fence, std::slice::from_ref(&closing))
+            .await?;
+        Ok(close)
     }
 
     fn matches_open_path(&self, operation: &Operation, proof: &AgentProcessCloseProof) -> bool {
