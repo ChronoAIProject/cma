@@ -4,6 +4,7 @@ use layer2_core::released_runtime::{CandidateRelease, ReleasedLaneRecord};
 use mongodb::ClientSession;
 
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 impl MongoNativeWarmPools {
     pub(super) async fn authorize_candidate_effect(
@@ -56,7 +57,7 @@ impl MongoNativeWarmPools {
         )
         .await?;
         session
-            .commit_transaction()
+            .commit_guarded()
             .await
             .map_err(|_| WarmPoolError::Unavailable)?;
         Ok(true)

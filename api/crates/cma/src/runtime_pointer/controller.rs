@@ -10,6 +10,7 @@ use mongodb::bson::DateTime;
 use super::*;
 use crate::store::native_warm_pools::MongoNativeWarmPools;
 use crate::store::released_runtimes::{BootWriter, ResolverLease, StoreReleasedRuntime};
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::warm_pools::NativeWarmPools;
 
 mod boot;
@@ -157,7 +158,7 @@ impl RuntimePointerController {
                     .clear_candidate(lane == ReleasedLane::Machine, Some(candidate), &mut session)
                     .await
                     .map_err(pool_error)?;
-                session.commit_transaction().await.map_err(unavailable)?;
+                session.commit_guarded().await.map_err(unavailable)?;
             }
             return Ok(());
         }
@@ -221,7 +222,7 @@ impl RuntimePointerController {
                     .fence_current(&current, &mut session)
                     .await?;
             }
-            return session.commit_transaction().await.map_err(unavailable);
+            return session.commit_guarded().await.map_err(unavailable);
         }
         if active.target_replicas == 0 {
             return Ok(());
@@ -380,7 +381,7 @@ impl RuntimePointerController {
                         .lanes
                         .replace(current, quiescing, Some(&mut session))
                         .await?;
-                    return session.commit_transaction().await.map_err(unavailable);
+                    return session.commit_guarded().await.map_err(unavailable);
                 }
                 Err(error) => return Err(pool_error(error)),
             }
@@ -421,7 +422,7 @@ impl RuntimePointerController {
             .lanes
             .replace(current, next, Some(&mut session))
             .await?;
-        session.commit_transaction().await.map_err(unavailable)?;
+        session.commit_guarded().await.map_err(unavailable)?;
         tracing::info!(
             ?lane,
             ?candidate,

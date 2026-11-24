@@ -2,6 +2,7 @@
 //! single-document insert. Recovery never repeats this admission check.
 
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::SandboxStoreError;
 
 #[derive(Debug, thiserror::Error)]
@@ -74,7 +75,7 @@ impl MongoAgentLifecycleStore {
                 .session(&mut session)
                 .await
             {
-                Ok(_) => session.commit_transaction().await,
+                Ok(_) => session.commit_guarded().await,
                 Err(error) => Err(error),
             }
         } else {

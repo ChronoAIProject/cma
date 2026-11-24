@@ -4,6 +4,7 @@ use layer2_core::sandbox::SandboxStoreError;
 use super::ReleasedLane;
 use crate::store::native_warm_pools::MongoNativeWarmPools;
 use crate::store::released_runtimes::MongoReleasedRuntimes;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 pub(crate) async fn set_following(
     lanes: &MongoReleasedRuntimes,
@@ -64,7 +65,7 @@ async fn commit_lane(
     lanes
         .replace(current, next.clone(), Some(&mut *session))
         .await?;
-    match session.commit_transaction().await {
+    match session.commit_guarded().await {
         Ok(()) => Ok(()),
         Err(error) if error.contains_label("UnknownTransactionCommitResult") => {
             if lanes.load(current.lane).await?.is_some_and(|observed| {
