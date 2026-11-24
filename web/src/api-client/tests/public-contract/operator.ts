@@ -56,6 +56,16 @@ export const operatorDispatch: Record<string, Dispatch> = {
     client.runtimeCanaries.revoke(body),
   'POST /api/v1/runtime-canary-redemptions': ({ client, body, command }) =>
     client.runtimeCanaries.redeem(body, command),
+  'PUT /api/v1/admin/retained-runtime-policy': ({ client, body }) =>
+    client.retainedRuntime.configure(body),
+  'POST /api/v1/admin/retained-runtime-preview': ({ client, body }) =>
+    client.retainedRuntime.preview(body),
+  'POST /api/v1/admin/retained-runtime-grants': ({ client, body }) =>
+    client.retainedRuntime.grant(body),
+  'POST /api/v1/admin/retained-runtime-grants/abort': ({ client, body }) =>
+    client.retainedRuntime.abort(body),
+  'POST /api/v1/retained-runtime-redemptions': ({ client, body }) =>
+    client.retainedRuntime.redeem(body),
   'GET /api/v1/admin/warm-pools': ({ client }) => client.admin.listWarmPools(),
   'POST /api/v1/admin/warm-pools': ({ client, body, command }) =>
     client.admin.configureWarmPool(body, command),

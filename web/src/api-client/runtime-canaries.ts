@@ -4,8 +4,8 @@ import type { OperationOptions } from './http.js';
 import { command, input, read, type CommandOptions } from './resources.js';
 import { boolean, integer, object, text, type Output } from './schema.js';
 
-const policyRequest = object({ expected_revision: integer, open: boolean });
-const policyView = object({ revision: integer });
+export const runtimeCanaryPolicyRequest = object({ expected_revision: integer, open: boolean });
+export const runtimeCanaryPolicyView = object({ revision: integer });
 const grantTarget = { owner: text, release_key: text, expected_revision: integer };
 const grantRequest = object({
   ...grantTarget,
@@ -23,7 +23,7 @@ const redeemRequest = object({
   initial_message: text,
 });
 
-export type RuntimeCanaryPolicyRequest = Output<typeof policyRequest>;
+export type RuntimeCanaryPolicyRequest = Output<typeof runtimeCanaryPolicyRequest>;
 export type RuntimeCanaryGrantRequest = Output<typeof grantRequest>;
 export type RuntimeCanaryRevokeRequest = Output<typeof revokeRequest>;
 export type RuntimeCanaryRedeemRequest = Output<typeof redeemRequest>;
@@ -32,10 +32,10 @@ export class RuntimeCanaries {
   constructor(private readonly config: ResolvedConfig) {}
 
   configure(body: RuntimeCanaryPolicyRequest, options: OperationOptions = {}) {
-    return read(this.config, '/api/v1/admin/runtime-canary-policy', policyView, {
+    return read(this.config, '/api/v1/admin/runtime-canary-policy', runtimeCanaryPolicyView, {
       ...options,
       method: 'PUT',
-      body: input(policyRequest, body),
+      body: input(runtimeCanaryPolicyRequest, body),
     });
   }
 
