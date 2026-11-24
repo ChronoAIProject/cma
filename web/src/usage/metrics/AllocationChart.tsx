@@ -1,7 +1,8 @@
 import './AllocationChart.css';
+import { MeasuredChart } from './MeasuredChart';
 import { useId, useMemo, useState } from 'react';
 import type { UsageMetricPage, UsageMetricRow } from '@cma/client';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from 'recharts';
 import { OwnerAllocationChart } from './OwnerAllocationChart';
 import type { MetricsFailure } from './failure';
 import type { MetricsClient } from './model';
@@ -127,70 +128,66 @@ export function AllocationChart({
             aria-describedby={id}
             style={{ height: Math.max(240, plotted.length * 40 + 40) }}
           >
-            <div aria-hidden="true" className="usage-allocation-chart__canvas">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-                <BarChart
-                  data={plotted}
-                  layout="vertical"
-                  margin={{ top: 8, right: 24, bottom: 8, left: 0 }}
-                  accessibilityLayer={false}
-                >
-                  <CartesianGrid
-                    horizontal={false}
-                    stroke="var(--dsw-alias-border-l2)"
-                    strokeDasharray="3 3"
-                  />
-                  <XAxis
-                    type="number"
-                    tick={{ fill: 'var(--dsw-alias-label-secondary)', fontSize: 12 }}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value: number) =>
-                      Intl.NumberFormat('en-SG', { notation: 'compact' }).format(value)
-                    }
-                  />
-                  <YAxis
-                    dataKey="id"
-                    type="category"
-                    width={136}
-                    tickLine={false}
-                    axisLine={false}
-                    interval={0}
-                    tick={({ x, y, payload }) => (
-                      <AllocationLabel
-                        x={Number(x)}
-                        y={Number(y)}
-                        name={
-                          plotted.find((row) => row.id === payload.value)?.name ??
-                          String(payload.value)
-                        }
-                      />
-                    )}
-                  />
-                  <Tooltip
-                    cursor={{ fill: 'var(--dsw-alias-interactive-bg-hover)' }}
-                    labelFormatter={(value) =>
-                      plotted.find((row) => row.id === value)?.name ?? value
-                    }
-                    formatter={(value) => [displayQuantity(Number(value)), resource.unit]}
-                    contentStyle={{
-                      background: 'var(--dsw-alias-bg-layer-2)',
-                      color: 'var(--dsw-alias-label-primary)',
-                      borderColor: 'var(--dsw-alias-border-l2)',
-                      borderRadius: 8,
-                    }}
-                  />
-                  <Bar
-                    dataKey="value"
-                    name={resource.label}
-                    fill="var(--dsw-alias-brand-primary)"
-                    barSize={16}
-                    radius={[0, 4, 4, 0]}
-                    isAnimationActive={false}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            <MeasuredChart className="usage-allocation-chart__canvas">
+              <BarChart
+                data={plotted}
+                layout="vertical"
+                margin={{ top: 8, right: 24, bottom: 8, left: 0 }}
+                accessibilityLayer={false}
+              >
+                <CartesianGrid
+                  horizontal={false}
+                  stroke="var(--dsw-alias-border-l2)"
+                  strokeDasharray="3 3"
+                />
+                <XAxis
+                  type="number"
+                  tick={{ fill: 'var(--dsw-alias-label-secondary)', fontSize: 12 }}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(value: number) =>
+                    Intl.NumberFormat('en-SG', { notation: 'compact' }).format(value)
+                  }
+                />
+                <YAxis
+                  dataKey="id"
+                  type="category"
+                  width={136}
+                  tickLine={false}
+                  axisLine={false}
+                  interval={0}
+                  tick={({ x, y, payload }) => (
+                    <AllocationLabel
+                      x={Number(x)}
+                      y={Number(y)}
+                      name={
+                        plotted.find((row) => row.id === payload.value)?.name ??
+                        String(payload.value)
+                      }
+                    />
+                  )}
+                />
+                <Tooltip
+                  cursor={{ fill: 'var(--dsw-alias-interactive-bg-hover)' }}
+                  labelFormatter={(value) => plotted.find((row) => row.id === value)?.name ?? value}
+                  formatter={(value) => [displayQuantity(Number(value)), resource.unit]}
+                  contentStyle={{
+                    background: 'var(--dsw-alias-bg-layer-2)',
+                    color: 'var(--dsw-alias-label-primary)',
+                    borderColor: 'var(--dsw-alias-border-l2)',
+                    borderRadius: 8,
+                  }}
+                />
+                <Bar
+                  dataKey="value"
+                  name={resource.label}
+                  fill="var(--dsw-alias-brand-primary)"
+                  barSize={16}
+                  radius={[0, 4, 4, 0]}
+                  isAnimationActive={false}
+                />
+              </BarChart>
+            </MeasuredChart>
           </div>
           <AllocationCoverageNote
             scope="Plotted Sandboxes"
