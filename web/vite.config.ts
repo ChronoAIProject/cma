@@ -39,6 +39,9 @@ export default defineConfig(({ command, mode }) => {
       __CHRONO_WEB_REPLICA_RECOVERY_ENABLED__: JSON.stringify(recovery),
     },
     test: {
+      ...(mode === 'approval-contract'
+        ? { include: ['src/api-client/tests/external-approval-wire.contract.ts'] }
+        : {}),
       globals: true,
       // Components under test render real DOM and use browser focus behavior.
       environment: 'jsdom',

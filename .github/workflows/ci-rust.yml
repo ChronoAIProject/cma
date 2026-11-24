@@ -142,6 +142,19 @@ jobs:
         env:
           SHARD: "${{ matrix.shard }}"
         run: "python3 ../.github/scripts/ci_tracks/rust.py tests --shard \"$SHARD\""
+      -
+        uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
+        if: "inputs.track == 'am' && matrix.shard == 1 && (contains(fromJSON(inputs.packages), 'layer1-public') || contains(fromJSON(inputs.packages), '*'))"
+        with:
+          node-version: "24.15.0"
+          package-manager-cache: false
+      -
+        name: "External approval producer and Web contract"
+        if: "inputs.track == 'am' && matrix.shard == 1 && (contains(fromJSON(inputs.packages), 'layer1-public') || contains(fromJSON(inputs.packages), '*'))"
+        working-directory: "web"
+        run: |
+          npm ci
+          npm run test:approval-contract
   timing:
     name: "Timing budgets"
     runs-on: "ubuntu-latest"
