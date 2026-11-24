@@ -383,6 +383,27 @@ impl IntoResponse for AgentLifecycleProvisioningError {
 /// Provisioning port implemented by the composed Agent Manager.
 #[async_trait]
 pub trait AgentLifecycleProvisioner: Send + Sync {
+    async fn create_with_submission(
+        &self,
+        caller: &Caller,
+        context: Option<&CallerContext>,
+        delegated_credential: Option<&str>,
+        request: AgentLifecycleCreateRequest,
+        idempotency_key: &str,
+        submission: super::creation_outcomes::Submission,
+    ) -> Result<AgentLifecycleCreateReceipt, AgentLifecycleProvisioningError> {
+        if submission.fence.is_some() || submission.replay_operation_id.is_some() {
+            return Err(AgentLifecycleProvisioningError::Unavailable);
+        }
+        self.create(
+            caller,
+            context,
+            delegated_credential,
+            request,
+            idempotency_key,
+        )
+        .await
+    }
     async fn desktop_capability(
         &self,
         _caller: &Caller,

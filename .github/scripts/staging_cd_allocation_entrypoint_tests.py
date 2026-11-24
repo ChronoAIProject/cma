@@ -40,7 +40,7 @@ def retries(output):
 
 
 class AllocationEntrypointTests(unittest.TestCase):
-    def execute(self, *, fail_after_first=False, unlabelled=False, command=None, failing_read=None):
+    def execute(self, *, fail_after_first=False, labels=None, command=None, failing_read=None):
         """Run the allocation step against the fixture remote on a fake clock.
 
         `command(server, args, kwargs, advance)` replaces the git runner of every
@@ -75,8 +75,8 @@ class AllocationEntrypointTests(unittest.TestCase):
             result = request(path, **kwargs)
             if fail_after_first and "/cma-web/pending/" in path:
                 return dict(result, object={"type": "tag", "sha": "0" * 40})
-            if unlabelled and path.startswith("pulls/"):
-                return dict(result, labels=[])
+            if labels is not None and path.startswith("pulls/"):
+                return dict(result, labels=[{"name": name} for name in labels])
             return result
 
         def store(api, token, root, bounded_io, *, mark):
@@ -307,8 +307,16 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertTrue(output.endswith("FAIL allocation\nFAIL allocation GITHUB_READ_DENIED\n"))
         self.assertEqual(server.refs, {})
 
-    def test_a_refusal_that_needs_a_person_fails_the_allocation_step_itself(self):
-        status, server, store, output, events, emitted = self.execute(unlabelled=True)
+    def test_unlabelled_merged_pr_reserves_patch_for_each_component(self):
+        status, server, store, output, _, _ = self.execute(labels=["train"])
+        self.assertEqual(status, 0)
+        self.assertEqual(len(server.refs), 4)
+        self.assertEqual({(item["component"], item["bump"]) for item in store.list()},
+                         {("am", "patch"), ("web", "patch")})
+        self.assertTrue(output.endswith("PASS allocation\n"))
+
+    def test_conflicting_labels_fail_the_allocation_step_itself(self):
+        status, server, _, output, _, emitted = self.execute(labels=["version-upgrade:major", "version-upgrade:patch"])
         self.assertEqual(status, 1)
         emitted.assert_not_called()
         self.assertEqual(server.refs, {})

@@ -143,6 +143,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "resource_share_commands",
     "resource_shares",
     "sandbox_admissions",
+    super::creation_outcomes::COLLECTION,
     super::sandbox_mongo::SANDBOX_BILLING,
     super::sandbox_colors::COLLECTION,
     "sandbox_controls",
@@ -178,8 +179,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "workspaces",
     "worktrees",
 ];
-// These derived stores are activated separately. Existing credentials must
-// still start while the feature is disabled; partial grants remain invalid.
+// These stores activate separately. Existing credentials still start while disabled.
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     retained_consents::COLLECTION,
     super::migrations::measured_custody::COLLECTION,
@@ -192,6 +192,7 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     super::home_backups::BACKUPS_COLLECTION,
     super::allocation_buckets::COLLECTION,
     super::agent_observation::COLLECTION,
+    super::creation_outcomes::COLLECTION,
     // Resource execution reads its activation record on ordinary share and
     // revocation paths; credentials issued before it still start.
     "resource_execution_effects_v1",
