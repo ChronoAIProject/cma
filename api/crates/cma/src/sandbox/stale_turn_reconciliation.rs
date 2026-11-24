@@ -132,10 +132,15 @@ impl Worker {
             }
             investigations += 1;
             let mut budget = ProofBudget::default();
-            let observation = tokio::time::timeout_at(
-                stop_investigating,
-                self.store.observe(&candidate, lease.now, &mut budget),
-            )
+            let observation = tokio::time::timeout_at(stop_investigating, async {
+                if self.terminal_adapter.is_some() {
+                    self.store
+                        .observe_for_terminal(&candidate, lease.now, &mut budget)
+                        .await
+                } else {
+                    self.store.observe(&candidate, lease.now, &mut budget).await
+                }
+            })
             .await;
             let reason = match observation {
                 Ok(Ok(Observation::Progressing)) => {
@@ -213,7 +218,7 @@ impl Worker {
                     .terminal_adapter
                     .as_ref()
                     .ok_or("producer_seal_unavailable")?;
-                let expected = StaleTurnSettlement::target(
+                let expected = StaleTurnSettlement::receipt_target(
                     &evidence.snapshot,
                     &evidence.parent,
                     &evidence.command,
@@ -238,6 +243,16 @@ impl Worker {
                     Err(StaleTurnHold::Unsupported) => return Err("producer_seal_unavailable"),
                     Err(StaleTurnHold::CanonicalResult) => return Err("canonical_result"),
                     Err(StaleTurnHold::Unconfirmed) => {
+                        // A partial candidate may only read a stop already
+                        // admitted while the assembly was empty.
+                        if evidence
+                            .snapshot
+                            .checkpoint
+                            .as_ref()
+                            .is_some_and(|checkpoint| !checkpoint.assembly.is_empty())
+                        {
+                            return Err("output_uncommitted");
+                        }
                         let fresh = self
                             .store
                             .observe(candidate, now, budget)
@@ -290,7 +305,7 @@ impl Worker {
                 // recorder can drain retained frames and advance this checkpoint.
                 let fresh = self
                     .store
-                    .observe(candidate, now, budget)
+                    .observe_for_terminal(candidate, now, budget)
                     .await
                     .map_err(|error| error.outcome())?;
                 let evidence = match fresh {

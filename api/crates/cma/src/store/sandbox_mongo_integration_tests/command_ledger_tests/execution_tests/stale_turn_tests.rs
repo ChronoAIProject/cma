@@ -6,6 +6,7 @@ use crate::{
     store::stale_turns::{Candidate, Observation, ProofBudget, StaleTurnStore},
 };
 
+mod native_stop_trace;
 pub(super) mod settlement;
 
 #[tokio::test]
