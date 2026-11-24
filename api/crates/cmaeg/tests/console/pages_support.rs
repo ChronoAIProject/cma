@@ -102,6 +102,7 @@ pub fn definition(record: &RecordId, owner: &str, name: &str) -> ChannelDefiniti
             verify_raw_event: false,
             lark_message_effects: None,
             lark_resources: None,
+            member_join_chat_ids: Vec::new(),
             admission: AdmissionPolicy::Scoped {
                 bot_messages: Default::default(),
                 senders: IdentityAdmission::Allowlist(vec!["ou_sender_fixture_1".into()]),

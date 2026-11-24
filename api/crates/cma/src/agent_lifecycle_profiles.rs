@@ -108,6 +108,25 @@ pub(super) async fn create_profiles(
     Ok((agent_revision, workspace_ref, sandbox_ref))
 }
 
+pub(crate) fn canary_sandbox_content(
+    input: &LifecycleInput,
+    workspace: WorkspaceProfileRef,
+) -> Result<SandboxProfileContent, AgentLifecycleProvisioningError> {
+    let capacity = input
+        .capacity
+        .ok_or(AgentLifecycleProvisioningError::Unavailable)?;
+    let request =
+        guidance::provisioning_request(&input.request, input.managed_agent_instructions.as_deref());
+    inline_sandbox_content(
+        &request,
+        input.resolved_image.clone(),
+        capacity,
+        input.captured_limits(),
+        input.behavior,
+        Some(workspace),
+    )
+}
+
 pub(super) fn inline_sandbox_content(
     request: &AgentLifecycleCreateRequest,
     runtime_image: Option<String>,
