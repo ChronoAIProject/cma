@@ -209,9 +209,7 @@ impl Bridge {
         frame: Vec<u8>,
         authority: Option<crate::manager_ownership::OwnerSession>,
     ) -> bool {
-        if frame.len() > MAX_FRAME_BYTES
-            || (self.stale_turn.is_some() && stale_turn::is_untrusted_stop(&frame))
-        {
+        if frame.len() > MAX_FRAME_BYTES || stale_turn::is_untrusted_stop(&frame) {
             return false;
         }
         if let Some(authority) = &authority {
@@ -224,7 +222,11 @@ impl Bridge {
         }
         if self
             .input
-            .send(BridgeInput { frame, authority })
+            .send(BridgeInput {
+                frame,
+                authority,
+                stop: None,
+            })
             .await
             .is_err()
         {

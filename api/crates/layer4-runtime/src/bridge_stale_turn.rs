@@ -5,10 +5,14 @@ use layer3_adapter::stale_turn::{
 use layer3_adapter::RuntimeOutputSource;
 use serde::Deserialize;
 
+use super::input::QueuedStop;
 use super::observation::NativeObservation;
 use super::{Bridge, BridgeInput, OutputRetention, OUTPUT_ACKNOWLEDGED};
 use crate::manager_ownership::OwnerSession;
-use std::sync::atomic::Ordering;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
 
 pub(crate) const FLAG: &str = "CHRONO_RUNTIME_STALE_TURN_SEAL_ENABLED";
@@ -22,11 +26,15 @@ pub(super) struct Stop {
     receipt: String,
     expires_at: Instant,
     cursor: Option<u64>,
+    discarded: Arc<AtomicBool>,
 }
 
 impl Stop {
     fn matches(&self, target: &StaleTurnTarget, stream_id: uuid::Uuid) -> bool {
-        if self.expires_at <= Instant::now() || target.writer_epoch < self.target.writer_epoch {
+        if self.discarded.load(Ordering::Acquire)
+            || self.expires_at <= Instant::now()
+            || target.writer_epoch < self.target.writer_epoch
+        {
             return false;
         }
         if let Some(expected_stream) = target.stream_id.as_deref() {
@@ -73,27 +81,23 @@ fn frame_method(frame: &[u8], method: &str) -> Option<serde_json::Value> {
 mod tests;
 
 pub(super) fn is_untrusted_stop(frame: &[u8]) -> bool {
-    #[derive(Deserialize)]
-    struct Method {
-        method: Option<String>,
-    }
-    if frame.first().is_some_and(|first| *first == b'{')
-        && !frame.contains(&b'\\')
-        && !frame
-            .windows(STOP.len())
-            .any(|window| window == STOP.as_bytes())
-    {
-        return false;
-    }
-    let is_stop = |method: Method| method.method.as_deref() == Some(STOP);
-    if let Ok(request) = serde_json::from_slice::<Method>(frame) {
-        is_stop(request)
-    } else if let Ok(batch) = serde_json::from_slice::<Vec<Method>>(frame) {
-        batch.into_iter().any(is_stop)
-    } else {
-        // Reject invalid request envelopes while the privileged method is enabled.
-        true
-    }
+    use serde_json::Value;
+    let is_stop = |request: &Value| request.get("method").and_then(Value::as_str) == Some(STOP);
+    frame.split(|byte| *byte == b'\n').any(|line| {
+        if !line.contains(&b'\\')
+            && !line
+                .windows(STOP.len())
+                .any(|window| window == STOP.as_bytes())
+        {
+            return false;
+        }
+        serde_json::from_slice::<Value>(line).is_ok_and(|value| {
+            is_stop(&value)
+                || value
+                    .as_array()
+                    .is_some_and(|batch| batch.iter().any(is_stop))
+        })
+    })
 }
 
 impl Bridge {
@@ -120,13 +124,13 @@ impl Bridge {
         let prompt = target.prompt();
         if observed.conversation_id.as_deref() != Some(target.conversation_id.as_str())
             || !matches!(&observed.native_state, Some(ConfirmedAgentState::Working { prompt_id }) if prompt_id == prompt.as_str())
+            || self.retained_output.recovery_evidence().await.is_none()
         {
             return Err(StaleTurnHold::Unconfirmed);
         }
-        if let Some(previous) = stop
-            .as_ref()
-            .filter(|previous| previous.prompt == prompt.as_str())
-        {
+        if let Some(previous) = stop.as_ref().filter(|previous| {
+            previous.prompt == prompt.as_str() && !previous.discarded.load(Ordering::Acquire)
+        }) {
             return if previous.matches(target, self.retained_output.stream_id()) {
                 Ok(())
             } else {
@@ -145,16 +149,22 @@ impl Bridge {
             .input
             .try_reserve()
             .map_err(|_| StaleTurnHold::Unconfirmed)?;
+        let discarded = Arc::new(AtomicBool::new(false));
         *stop = Some(Stop {
             target: target.clone(),
             prompt: prompt.as_str().into(),
             receipt,
             expires_at: Instant::now() + RETAIN_FOR,
             cursor: None,
+            discarded: Arc::clone(&discarded),
         });
         queued.send(BridgeInput {
             frame,
             authority: Some(authority),
+            stop: Some(QueuedStop {
+                output: Arc::clone(&self.retained_output),
+                discarded,
+            }),
         });
         Ok(())
     }
@@ -240,6 +250,7 @@ pub(super) async fn observe_fence(
     let mut state = state.lock().await;
     if let Some(stop) = state.as_mut().filter(|stop| {
         stop.cursor.is_none()
+            && !stop.discarded.load(Ordering::Acquire)
             && stop.expires_at > Instant::now()
             && fence.version == SEAL_VERSION
             && fence.thread_id == stop.target.conversation_id
