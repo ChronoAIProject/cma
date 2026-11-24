@@ -1,6 +1,37 @@
 import { Button } from '../../ui/Button';
 import { Choice, NumberField, Section, StringList, TextField, Toggle } from './Fields';
 import { object, optional, records, strings, without, type Fields } from './model';
+
+const routingLimits = {
+  max_targets: 8,
+  max_hops: 4,
+  per_consumer_per_minute: 30,
+  per_channel_per_minute: 60,
+} as const;
+
+export function routingLimitErrors(value: Fields) {
+  const events = object(value.agent_events);
+  const invalid = (candidate: unknown, maximum: number) =>
+    typeof candidate !== 'number' ||
+    !Number.isInteger(candidate) ||
+    candidate < 1 ||
+    candidate > maximum
+      ? `Enter a whole number from 1 to ${maximum}.`
+      : undefined;
+  return {
+    max_targets: invalid(value.max_targets ?? 4, routingLimits.max_targets),
+    max_hops: invalid(events.max_hops ?? 2, routingLimits.max_hops),
+    per_consumer_per_minute: invalid(
+      events.per_consumer_per_minute ?? 10,
+      routingLimits.per_consumer_per_minute,
+    ),
+    per_channel_per_minute: invalid(
+      events.per_channel_per_minute ?? 30,
+      routingLimits.per_channel_per_minute,
+    ),
+  };
+}
+
 export const initialRouting = (): Fields => ({
   version: 1,
   default_consumer: { name: 'default' },
@@ -105,9 +136,11 @@ export function ConsumerPolicyFields({
 export function RoutingFields({
   value,
   onChange,
+  limitErrors,
 }: {
   value: Fields;
   onChange: (v: Fields) => void;
+  limitErrors: ReturnType<typeof routingLimitErrors>;
 }) {
   const addressing = object(value.addressing),
     events = object(value.agent_events),
@@ -136,7 +169,8 @@ export function RoutingFields({
           value={value.max_targets ?? 4}
           onChange={(v) => set('max_targets', v)}
           min={1}
-          max={8}
+          max={routingLimits.max_targets}
+          validationMessage={limitErrors.max_targets}
         />
         <Choice
           label="Reply labels"
@@ -307,7 +341,8 @@ export function RoutingFields({
           label="Maximum handoff hops"
           value={events.max_hops ?? 2}
           min={1}
-          max={4}
+          max={routingLimits.max_hops}
+          validationMessage={limitErrors.max_hops}
           onChange={(max_hops) =>
             set('agent_events', {
               per_consumer_per_minute: 10,
@@ -321,7 +356,8 @@ export function RoutingFields({
           label="Events per consumer per minute"
           value={events.per_consumer_per_minute ?? 10}
           min={1}
-          max={30}
+          max={routingLimits.per_consumer_per_minute}
+          validationMessage={limitErrors.per_consumer_per_minute}
           onChange={(per_consumer_per_minute) =>
             set('agent_events', {
               max_hops: 2,
@@ -335,7 +371,8 @@ export function RoutingFields({
           label="Events per channel per minute"
           value={events.per_channel_per_minute ?? 30}
           min={1}
-          max={60}
+          max={routingLimits.per_channel_per_minute}
+          validationMessage={limitErrors.per_channel_per_minute}
           onChange={(per_channel_per_minute) =>
             set('agent_events', {
               max_hops: 2,

@@ -233,8 +233,10 @@ fn runtime_update_parked(sandbox: &Sandbox) -> bool {
     let Some(request) = sandbox.runtime_update_request() else {
         return false;
     };
-    if request.started_at.is_none()
-        || request.completed_at.is_some()
+    let Some(started_at) = request.started_at.as_deref() else {
+        return false;
+    };
+    if request.completed_at.is_some()
         || request.failure.is_none()
         || sandbox.work.step != SandboxWorkStep::None
         || sandbox.work.lease.is_some()
@@ -246,7 +248,35 @@ fn runtime_update_parked(sandbox: &Sandbox) -> bool {
         (
             SandboxStatus::Rotating,
             Some(SandboxLifecycleOperation::ImageRotation { authority, .. }),
-        ) => request.started_at.as_deref() == Some(authority.requested_at.as_str()),
+        ) => {
+            started_at == authority.requested_at
+                || (!request.automatic
+                    && sandbox
+                        .lifecycle
+                        .unpublished_recovery
+                        .as_ref()
+                        .is_some_and(|recovery| {
+                            recovery.operation_id == authority.operation_id
+                                && recovery.validate_for(sandbox).is_ok()
+                        })
+                    && sandbox
+                        .lifecycle
+                        .custom_runtime
+                        .as_ref()
+                        .is_some_and(|custom| custom.completed_at.is_none())
+                    && sandbox
+                        .validate_custom_recovery_target(&request.target_version)
+                        .is_ok()
+                    && matches!(
+                        (
+                            crate::seconds_from_rfc3339(&request.requested_at),
+                            crate::seconds_from_rfc3339(started_at),
+                            crate::seconds_from_rfc3339(&authority.requested_at),
+                        ),
+                        (Some(requested), Some(started), Some(recovery))
+                            if requested <= started && started < recovery
+                    ))
+        }
         (SandboxStatus::Reviving, Some(SandboxLifecycleOperation::Revive { .. })) => true,
         _ => false,
     }

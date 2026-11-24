@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 311,
+  "openapi_operations": 313,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -166,6 +166,16 @@
         "operator_service_unavailable"
       ]
     },
+    "GET /api/v1/admin/activity/actors": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/activity.rs# The actor search requires Activity and directory read capabilities and exposes bounded identity options.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
     "GET /api/v1/admin/profiles": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
@@ -175,6 +185,18 @@
         "not_authenticated",
         "operator_service_unavailable"
       ]
+    },
+    "GET /api/v1/admin/runtime-binding-holds": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/binding_holds.rs# Authenticated cross-owner readers receive bounded binding observations or a typed refusal.",
+      "required_problems": [
+        "binding_observation_unavailable",
+        "forbidden",
+        "not_authenticated"
+      ],
+      "non_problem_statuses": {
+        "404": "api/crates/layer1-public/src/rest/admin.rs# The admin router omits the diagnostics route when its service is disabled."
+      }
     },
     "GET /api/v1/admin/runtime-inventory": {
       "classification": "openapi",

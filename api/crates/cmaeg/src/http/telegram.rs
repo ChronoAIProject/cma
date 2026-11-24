@@ -160,24 +160,24 @@ async fn admit_update(
             ));
         }
     };
-    let Some((bot_id, bot_username, admission, channel_posts)) = channel
+    let Some((bot_id, bot_username, admission, channel_posts, member_join_chat_ids)) = channel
         .definition
         .sources
         .iter()
         .find_map(|source| match source {
             Source::Telegram {
-                topic_lifecycle: _,
-                topic_creation: _,
-                message_events: _,
                 channel_posts,
+                member_join_chat_ids,
                 bot_id,
                 bot_username,
                 admission,
+                ..
             } => Some((
                 bot_id.clone(),
                 bot_username.clone(),
                 admission,
                 *channel_posts,
+                member_join_chat_ids,
             )),
             _ => None,
         })
@@ -250,14 +250,22 @@ async fn admit_update(
         .map_err(|error| events::failure(state, &record, error))?;
         return Ok(Admitted::Event(event));
     }
-    let observed = match telegram::observe_source(
-        raw,
-        &bot_id,
-        bot_username.as_deref(),
-        state.media_enabled,
-        admission,
-        channel_posts,
-    ) {
+    let observation = if state.native_telegram_member_joins_enabled
+        && !member_join_chat_ids.is_empty()
+        && telegram::member_joins::requested(&raw)
+    {
+        telegram::member_joins::observe(&raw, &bot_id, member_join_chat_ids)
+    } else {
+        telegram::observe_source(
+            raw,
+            &bot_id,
+            bot_username.as_deref(),
+            state.media_enabled,
+            admission,
+            channel_posts,
+        )
+    };
+    let observed = match observation {
         Ok(Outcome::Admitted(observed)) => *observed,
         Ok(Outcome::Refused(reason)) => return Err(refuse(reason)),
         Err(error) => return Err(reject(error)),

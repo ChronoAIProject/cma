@@ -25,7 +25,6 @@ mod usage;
 use crate::{
     auth::{service_portal, AuthState},
     config::Config,
-    profile_authoring::CmaProfileAuthoringSource,
     profile_policy::profile_route_policy,
     projections::{AdapterAgentHistoryExporter, AdapterSandboxResources, AgentProjectionServices},
     sandbox::{
@@ -37,7 +36,6 @@ use crate::{
 };
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
 use layer2_core::{
-    profiles::authoring::ProfileAuthoringService,
     sandbox::{AgentContextService, HierarchyReadService, SandboxService, WorkspaceService},
     ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
 };

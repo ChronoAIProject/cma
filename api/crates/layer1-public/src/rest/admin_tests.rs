@@ -62,6 +62,14 @@ impl ActivityStore for MemoryActivity {
                     .as_ref()
                     .is_none_or(|actor| record.actor.as_ref() == Some(actor))
                     && query.action.is_none_or(|action| record.action == action)
+                    && !(query.exclude_successful_reads
+                        && matches!(
+                            record.action,
+                            ActivityAction::Read
+                                | ActivityAction::List
+                                | ActivityAction::GatewayRecordRead
+                        )
+                        && record.outcome == ActivityOutcome::Succeeded)
             })
             .take(query.limit as usize)
             .cloned()
@@ -136,7 +144,7 @@ pub(crate) struct Fixture {
     pub(crate) sandboxes: Arc<InMemorySandboxStore>,
     pub(crate) profiles: Arc<InMemoryProfileStore>,
     activity: Arc<MemoryActivity>,
-    names: Arc<crate::rest::public_names::tests::Names>,
+    pub(crate) names: Arc<crate::rest::public_names::tests::Names>,
 }
 
 pub(crate) fn fixture(inventory: bool) -> Fixture {
@@ -202,7 +210,7 @@ fn fixture_with_options(
 }
 
 #[path = "admin/binding_holds_tests.rs"]
-mod binding_holds_tests;
+pub(in crate::rest) mod binding_holds_tests;
 
 fn request(
     method: Method,

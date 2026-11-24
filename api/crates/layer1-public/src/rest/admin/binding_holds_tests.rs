@@ -61,6 +61,28 @@ fn observed(unavailable: bool, hang: bool) -> (Fixture, Arc<Source>) {
     (fixture_with_options(false, None, Some(service)), source)
 }
 
+pub(in crate::rest) fn contract_scenario(
+    name: &str,
+) -> Option<crate::rest::public_contract_tests::Scenario> {
+    use crate::rest::public_contract_tests::Scenario;
+    use layer2_core::Authorization;
+
+    let (fixture, subject, can_read) = match name.strip_prefix("binding_holds_")? {
+        "operator" => (observed(false, false).0, Some("operator-a"), true),
+        "forbidden" => (observed(false, false).0, Some("operator-a"), false),
+        "anonymous" => (observed(false, false).0, None, false),
+        "unavailable" => (observed(true, false).0, Some("operator-a"), true),
+        "disabled" => (fixture(false), Some("operator-a"), true),
+        _ => return None,
+    };
+    Some(Scenario {
+        router: fixture.app,
+        subject,
+        authorization: Authorization::new(can_read.then_some(Capability::ReadAllSandboxes)),
+        symbols: Default::default(),
+    })
+}
+
 #[tokio::test]
 async fn binding_observations_require_cross_owner_read_before_sampling() {
     let (f, source) = observed(false, false);
