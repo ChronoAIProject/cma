@@ -141,6 +141,27 @@ test('a caller deadline after the campaign cutoff cannot admit late evidence', (
   assert.equal(result.deadline_ms, deadline);
 });
 
+test('a send that starts during the watch retains its timing when it finishes after the watch', () => {
+  const packet = evidence();
+  const sends = packet.watch.operations.send_complete;
+  sends[0].completed_ms = sends[0].client_send_ms + 100;
+  sends.push({
+    ...sends[0],
+    client_send_ms: packet.watch.ended_ms - 1000,
+    completed_ms: packet.watch.ended_ms + 1,
+  });
+  const result = qualifyOperations(packet);
+  assert.equal(result.status, 'HOLD');
+  assert.ok(result.reasons.includes('send_complete:outside_phase'));
+  const summary = result.operations.send_complete;
+  assert.equal(summary.success, 2);
+  assert.equal(summary.maximum_ms, 1001);
+  assert.deepEqual(summary.elapsed_ms, [
+    { index: 0, elapsed_ms: 100 }, { index: 1, elapsed_ms: 1001 },
+  ]);
+  assert.deepEqual(summary.exceedances, [{ index: 1, elapsed_ms: 1001 }]);
+});
+
 test('retains measured baseline timings and errors for comparison', () => {
   const packet = evidence();
   const samples = packet.baseline.operations.interrupt_complete;

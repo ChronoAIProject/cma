@@ -47,13 +47,13 @@ function measureOperations(evidence, enforceLimits) {
         continue;
       }
       // Operation and phase timestamps use the same UTC epoch millisecond clock.
-      if (!(sample.client_send_ms >= evidence.started_ms &&
-            sample.client_send_ms < evidence.ended_ms &&
-            sample.completed_ms <= evidence.ended_ms)) {
+      const startedInPhase = sample.client_send_ms >= evidence.started_ms &&
+        sample.client_send_ms < evidence.ended_ms;
+      if (!startedInPhase || sample.completed_ms > evidence.ended_ms) {
         counts.incomplete++;
         reasons.push(`${name}:outside_phase`);
-        continue;
       }
+      if (!startedInPhase) continue;
       const elapsed = sample.completed_ms - sample.client_send_ms;
       counts.elapsed_ms.push({ index, elapsed_ms: elapsed });
       counts.maximum_ms = Math.max(counts.maximum_ms ?? 0, elapsed);
