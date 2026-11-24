@@ -450,8 +450,7 @@ impl SandboxReconciler {
             Err(error) => error,
         };
         if error.is_native_home_identity_refusal() {
-            // A concurrent lifecycle transition can supersede the binding
-            // after the authority snapshot but before home verification.
+            // Home verification can race a new durable binding.
             let current = measure(
                 Stage::DurableRead,
                 self.store.get_sandbox(&sandbox.id),
