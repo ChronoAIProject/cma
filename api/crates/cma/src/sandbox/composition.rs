@@ -61,6 +61,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub event_driven_reconciliation: bool,
+    pub resume_agent_reconciliation: bool,
     pub stale_turn_reconciliation: bool,
     pub stale_turn_terminal: bool,
     pub skip_ineligible_reconciliation: bool,
@@ -299,6 +300,7 @@ impl SandboxLifecycleComposition {
             capacity_recovery: None,
             stale_turns,
             agent: AgentScheduler::new(agent_worker, agent_admitted)
+                .with_resumable_reconciliation(config.resume_agent_reconciliation)
                 .with_event_driven_reconciliation(
                     Arc::clone(&dependencies.store.agent_parent_ready),
                     config.event_driven_reconciliation,
