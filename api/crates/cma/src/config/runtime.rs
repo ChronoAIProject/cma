@@ -40,6 +40,7 @@ impl RuntimeMode {
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeConfig {
     pub capacity: layer3_adapter::agent_sandbox::RuntimeCapacityConfig,
+    pub migration: super::runtime_migration::RuntimeMigrationConfig,
     pub agent_sandbox: Option<layer3_adapter::agent_sandbox::AgentSandboxConfig>,
     pub agent_sandbox_connection: Option<layer3_adapter::agent_sandbox::RemoteKubernetesConfig>,
     pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
@@ -271,6 +272,7 @@ impl RuntimeConfig {
         }
         Ok(Self {
             capacity: super::runtime_capacity::from_lookup(lookup)?,
+            migration: super::runtime_migration::RuntimeMigrationConfig::from_lookup(lookup)?,
             agent_sandbox,
             agent_sandbox_connection,
             agent_sandbox_runtime_transport,

@@ -58,6 +58,7 @@ pub(super) struct NativeBackend {
     pub run_before_suspend: Arc<AtomicBool>,
     pub interrupted_workspace: Arc<AtomicBool>,
     pub calls: ActionLog,
+    pub adoptions: Arc<AtomicUsize>,
     pub inputs: Arc<Mutex<Vec<layer3_adapter::ConversationInput>>>,
     pub inspected_generations: Arc<Mutex<Vec<u64>>>,
 }
@@ -274,6 +275,7 @@ impl HostedBackend for NativeBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> layer3_adapter::Result<Option<RuntimeObservation>> {
+        self.adoptions.fetch_add(1, Ordering::SeqCst);
         let pause = self.adoption_pause.lock().unwrap().take();
         if let Some(pause) = pause {
             pause.entered.notify_one();

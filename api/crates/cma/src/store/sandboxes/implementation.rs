@@ -133,6 +133,13 @@ impl SandboxStore for MongoSandboxStore {
     }
 
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
+        if sandbox.lifecycle.custom_runtime.is_some()
+            || sandbox.lifecycle.runtime_migration_admission.is_some()
+        {
+            return Err(SandboxStoreError::InvalidTransaction(
+                "custom runtime authority requires retained migration admission",
+            ));
+        }
         if self.global_sandbox_limit != 0 {
             return Err(SandboxStoreError::InvalidTransaction(
                 "global capacity requires transactional sandbox admission",
@@ -223,7 +230,11 @@ impl MongoSandboxStore {
             .get_sandbox(&sandbox.id)
             .await?
             .ok_or(SandboxStoreError::NotFound)?;
-        if current.revision != expected_revision {
+        if current.revision != expected_revision
+            || current.lifecycle.custom_runtime != sandbox.lifecycle.custom_runtime
+            || current.lifecycle.runtime_migration_admission
+                != sandbox.lifecycle.runtime_migration_admission
+        {
             return Err(SandboxStoreError::Conflict);
         }
         current

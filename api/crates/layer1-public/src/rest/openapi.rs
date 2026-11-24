@@ -201,7 +201,7 @@ use super::trigger_openapi_shapes::*;
         super::admin::sandboxes::read,
         super::admin::sandboxes::events,
         super::admin::sandboxes::retire, super::admin::sandboxes::always_on, super::admin::auto_pause::preview, super::admin::auto_pause::pause_idle_now,
-        super::admin::runtime_update::update,
+        super::admin::runtime_update::update, super::admin::runtime_migration::migrate, super::admin::runtime_migration::observe,
         super::admin::profiles::list,
         super::admin::profiles::retire,
         super::admin::triggers::pause,

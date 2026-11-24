@@ -101,8 +101,8 @@ struct CommandTrace {
 }
 
 mod common_fixtures;
-pub(super) use common_fixtures::sandbox;
 use common_fixtures::*;
+pub(super) use common_fixtures::{ready_workspace, sandbox};
 
 mod agent_capacity_recovery_tests;
 mod agent_log_read_tests;
