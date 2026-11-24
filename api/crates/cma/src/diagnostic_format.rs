@@ -53,7 +53,10 @@ where
                 return Ok(());
             }
         }
-        if target == LIFECYCLE_TARGET || root.is_some() {
+        if target == LIFECYCLE_TARGET
+            || target == layer2_core::agent_ownership::receiver_diagnostics::TARGET
+            || root.is_some()
+        {
             self.context_free.format_event(ctx, writer, event)
         } else {
             self.ordinary.format_event(ctx, writer, event)
