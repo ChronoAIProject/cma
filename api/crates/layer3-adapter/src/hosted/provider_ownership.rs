@@ -186,12 +186,10 @@ impl ProviderHostedControlTransport {
             Ok(()) => return Ok(()),
             Err(failed) => failed,
         };
-        if let Some(deadline) = deadline
-            && failed.retryable
-            && authority.is_current()
-            && crate::file_read_retry::take()
-            && let Ok(retry_deadline) = attempt_deadline(Some(deadline))
-        {
+        let retry_deadline = deadline
+            .filter(|_| failed.retryable && authority.is_current() && crate::file_read_retry::take())
+            .and_then(|deadline| attempt_deadline(Some(deadline)).ok());
+        if let Some(retry_deadline) = retry_deadline {
             let reason = failed.failure.observation.reason.as_str();
             let result = self
                 .negotiate_attempt(endpoint, authority, identity, retry_deadline, true)
