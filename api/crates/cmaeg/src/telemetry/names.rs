@@ -12,7 +12,7 @@ pub const TURNS_INFLIGHT: &str = "cmaeg_turns_inflight";
 pub const CHANNELS_CACHED: &str = "cmaeg_channels_cached";
 pub const RELAY_ENVELOPE_REPAIRS: &str = "cmaeg_relay_envelope_repairs_total";
 pub const CALLBACK_INVALID: &str = "cmaeg_callback_invalid_total";
-pub const DELIVERY_WORKER_RESTARTS: &str = "cmaeg_delivery_worker_restarts_total";
+pub use cmaeg_execution::delivery::engine::DELIVERY_WORKER_RESTARTS;
 pub const MEDIA_ACTIVITY_DEGRADED: &str = "cmaeg_media_activity_degraded_total";
 pub const MEDIA_FACTS_REPAIRED: &str = "cmaeg_media_facts_repaired_total";
 pub const MEDIA_ITEMS: &str = "cmaeg_media_items_total";

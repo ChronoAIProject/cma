@@ -104,6 +104,7 @@ impl Sandbox {
                 started_at: None,
                 completed_at: None,
                 failure: None,
+                retained_transition: None,
             }),
         });
         next.lifecycle.custom_runtime = Some(Box::new(SandboxCustomRuntimeState {

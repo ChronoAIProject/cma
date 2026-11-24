@@ -81,6 +81,7 @@ impl Sandbox {
                 started_at: Some(at.into()),
                 completed_at: None,
                 failure: None,
+                retained_transition: None,
             }),
         });
         next.preserve_custom_recovery_request(self)?;

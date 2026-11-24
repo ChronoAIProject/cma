@@ -177,3 +177,6 @@ impl HostedAdapter {
 
 #[path = "adapter_sandbox.rs"]
 mod sandbox;
+
+#[path = "adapter_retained_policy.rs"]
+mod retained_policy;

@@ -207,6 +207,8 @@ pub struct SandboxLifecycleState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_update: Option<super::SandboxRuntimeUpdateState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_startup_policy: Option<Box<super::RetainedRuntimePolicyBinding>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_runtime: Option<Box<super::SandboxCustomRuntimeState>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_migration_admission: Option<Box<super::store::RuntimeMigrationAdmissionBasis>>,
@@ -248,6 +250,7 @@ impl Default for SandboxLifecycleState {
             paused_notice: None,
             rotation: SandboxRotationAccounting::default(),
             runtime_update: None,
+            retained_startup_policy: None,
             custom_runtime: None,
             runtime_migration_admission: None,
             unpublished_recovery: None,
@@ -278,6 +281,11 @@ impl SandboxLifecycleState {
         }
         if let Some(update) = &self.runtime_update {
             update.validate()?;
+            if let Some(request) = &update.request {
+                if let Some(retained) = &request.retained_transition {
+                    retained.validate_for(sandbox, request)?;
+                }
+            }
         }
         if let Some(interruption) = &self.interruption {
             interruption.validate()?;

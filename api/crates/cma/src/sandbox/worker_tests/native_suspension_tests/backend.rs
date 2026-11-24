@@ -2,6 +2,7 @@
 use super::*;
 mod recovery;
 mod reopen_fixture;
+mod retained_policy;
 mod retirement;
 use layer3_adapter::hosted::{HostedAgentOpenSettings, HostedBackend};
 use layer3_adapter::provider::ProviderSandboxRequest;
@@ -81,12 +82,6 @@ impl NativeBackend {
     pub async fn request(&self) -> ProviderSandboxRequest {
         self.row.lock().await.as_ref().unwrap().request.clone()
     }
-    pub async fn restart_process(&self) {
-        self.retirement_incarnation.fetch_add(1, Ordering::SeqCst);
-        let rows = self.row.lock().await;
-        let pod = rows.as_ref().unwrap().pod.as_ref().unwrap();
-        self.inner.restart_persistent_process(pod).await.unwrap();
-    }
     pub async fn lose_object(&self) {
         self.row.lock().await.take();
     }
@@ -113,6 +108,12 @@ fn absent() -> layer3_adapter::AdapterError {
 
 #[async_trait::async_trait]
 impl HostedBackend for NativeBackend {
+    fn retained_startup_policy(
+        &self,
+    ) -> Option<&dyn layer3_adapter::hosted::HostedRetainedStartupPolicy> {
+        Some(self)
+    }
+
     async fn run_recovery_command(
         &self,
         handle: &RuntimeHandle,

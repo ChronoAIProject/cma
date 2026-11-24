@@ -1,7 +1,6 @@
-use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::{
-    apply_image_rotation, apply_proved_inactivity_pause, SandboxImageRotationRequest,
-    SandboxInactivityPauseRequest, SandboxMaintenanceApplication, SandboxMaintenanceOutcome,
+    apply_image_rotation, apply_proved_inactivity_pause, apply_retained_runtime_abort,
+    apply_retained_runtime_transition, SandboxMaintenanceApplication, SandboxMaintenanceOutcome,
     SandboxStoreError,
 };
 use layer2_core::sandbox::{Sandbox, SandboxEvent};
@@ -20,49 +19,12 @@ use super::evidence::{
     LogValidation,
 };
 
+mod reconciliation;
+mod request;
 mod scoped;
+pub(super) use reconciliation::reconcile;
+pub(super) use request::MaintenanceRequest;
 pub(super) use scoped::attempt;
-
-pub(super) enum MaintenanceRequest {
-    Inactivity(SandboxInactivityPauseRequest),
-    Rotation(SandboxImageRotationRequest),
-    FleetRotation(
-        SandboxImageRotationRequest,
-        Box<layer2_core::sandbox::store::RuntimeMigrationAdmissionBasis>,
-    ),
-    Custom(Box<layer2_core::sandbox::store::SandboxCustomRuntimeMigrationAdmission>),
-}
-
-impl MaintenanceRequest {
-    pub(super) fn requires_desktop_guard(&self) -> bool {
-        matches!(self, Self::FleetRotation(..) | Self::Custom(_))
-    }
-    pub(super) fn basis(
-        &self,
-    ) -> Option<&layer2_core::sandbox::store::RuntimeMigrationAdmissionBasis> {
-        match self {
-            Self::FleetRotation(_, basis) => Some(basis),
-            Self::Custom(admission) => Some(&admission.basis),
-            _ => None,
-        }
-    }
-
-    pub(super) fn sandbox_id(&self) -> &SandboxId {
-        match self {
-            Self::Inactivity(request) => &request.sandbox_id,
-            Self::Rotation(request) | Self::FleetRotation(request, _) => &request.sandbox_id,
-            Self::Custom(admission) => admission.sandbox_id(),
-        }
-    }
-
-    pub(super) fn requested_at(&self) -> &str {
-        match self {
-            Self::Inactivity(request) => &request.requested_at,
-            Self::Rotation(request) | Self::FleetRotation(request, _) => &request.requested_at,
-            Self::Custom(admission) => &admission.basis.admitted_at,
-        }
-    }
-}
 
 pub(super) struct MaintenanceReceipt {
     pub(super) sandbox: Sandbox,
@@ -119,7 +81,7 @@ pub(super) async fn apply(
     .await
 }
 
-async fn apply_with_sources(
+pub(super) async fn apply_with_sources(
     store: &MongoSandboxStore,
     request: &MaintenanceRequest,
     session: &mut ClientSession,
@@ -280,6 +242,26 @@ async fn apply_with_sources(
                 &current, &agents, admission,
             )
         }
+        MaintenanceRequest::RetainedTransition {
+            request,
+            requested_at,
+        } => {
+            if super::evidence::queued_control(store, &current.id, session).await?
+                || !super::evidence::agentless_commands_clear(store, &agents, session).await?
+                || open_session(store, &current, requested_at, session).await?
+            {
+                return Ok(MaintenanceReceipt {
+                    sandbox: current,
+                    event: None,
+                    outcome: SandboxMaintenanceOutcome::NotEligible,
+                });
+            }
+            apply_retained_runtime_transition(&current, &agents, request, requested_at)
+        }
+        MaintenanceRequest::RetainedTransitionAbort {
+            receipt,
+            requested_at,
+        } => apply_retained_runtime_abort(&current, receipt, requested_at),
     }
     .map_err(ApplyError::Domain)?;
     let (expected_revision, sandbox, event) = match application {
@@ -345,7 +327,13 @@ async fn apply_with_sources(
     validate_in_transaction(store, &current.id, last_seq, session).await?;
     // Snapshot isolation needs actual writes to prevent a concurrent Agent turn
     // from committing after the evidence read without conflicting with admission.
-    if !matches!(request, MaintenanceRequest::Inactivity(_)) {
+    if matches!(
+        request,
+        MaintenanceRequest::Rotation(_)
+            | MaintenanceRequest::FleetRotation(..)
+            | MaintenanceRequest::Custom(_)
+            | MaintenanceRequest::RetainedTransition { .. }
+    ) {
         if !super::evidence::fence_idle_workspaces(store, &current, session).await? {
             return Ok(MaintenanceReceipt {
                 sandbox: current,
@@ -372,6 +360,14 @@ async fn apply_with_sources(
         "last_seq": signed(last_seq, "sandbox maintenance event sequence")
             .map_err(|_| ApplyError::Domain(SandboxStoreError::SequenceConflict))?,
     };
+    if matches!(
+        request,
+        MaintenanceRequest::RetainedTransition { .. }
+            | MaintenanceRequest::RetainedTransitionAbort { .. }
+    ) {
+        revision_filter =
+            crate::store::work_claim_authority::without_ledger_maintenance(revision_filter);
+    }
     if desktop_activity_fence == 0 {
         revision_filter.insert(
             "$or",

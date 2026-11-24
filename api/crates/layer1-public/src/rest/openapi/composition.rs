@@ -42,6 +42,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
     document.merge(crate::rest::sandbox_metrics::document());
     document.merge(crate::rest::sandbox_retained_recovery::document());
     document.merge(crate::rest::runtime_canary::document());
+    document.merge(crate::rest::retained_runtime_transition::document());
     document.merge(crate::rest::sandbox_commands::document());
     document.merge(crate::rest::bindings::preparation::document());
     document.merge(crate::rest::bindings::inspection::document());

@@ -226,6 +226,9 @@ impl HostedBackend for AgentSandboxBackend {
     ) -> Result<()> {
         self.client.verify_suspended(handle, request).await
     }
+    fn retained_startup_policy(&self) -> Option<&dyn super::HostedRetainedStartupPolicy> {
+        Some(self)
+    }
     async fn resume(
         &self,
         handle: &RuntimeHandle,
@@ -492,3 +495,6 @@ mod routing_tests;
 #[cfg(test)]
 #[path = "agent_sandbox_backend_ingress_tests.rs"]
 mod ingress_tests;
+
+#[path = "retained_startup_policy_native.rs"]
+mod retained_policy;

@@ -316,7 +316,22 @@ fn bind_runtime(
     at: &str,
 ) -> Result<(), crate::sandbox::SandboxModelError> {
     let binding = submitted.runtime.clone().ok_or_else(invalid_execution)?;
-    expected.bind_lifecycle_runtime(binding, holder, fence, at.into())
+    if expected.admitted_retained_runtime_transition().is_some() {
+        let evidence = submitted
+            .lifecycle
+            .retained_startup_policy
+            .as_ref()
+            .ok_or_else(invalid_execution)?;
+        expected.bind_retained_lifecycle_runtime(
+            binding,
+            evidence.observation.clone(),
+            holder,
+            fence,
+            at.into(),
+        )
+    } else {
+        expected.bind_lifecycle_runtime(binding, holder, fence, at.into())
+    }
 }
 
 fn advance_queue(

@@ -2,6 +2,14 @@ use super::*;
 
 #[async_trait::async_trait]
 impl super::super::HostedControlTransport for super::ProviderHostedControlTransport {
+    async fn verify_retained_startup_policy(
+        &self,
+        handle: &RuntimeHandle,
+        readback: &crate::RetainedStartupPolicyReadback<'_>,
+    ) -> crate::Result<crate::RuntimeStartupPolicyObservation> {
+        self.verify_retained_policy(handle, readback).await
+    }
+
     async fn challenge_retirement_receiver(
         &self,
         handle: &RuntimeHandle,

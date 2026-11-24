@@ -4,6 +4,7 @@ use super::*;
 use sha2::{Digest, Sha256};
 
 mod policy;
+pub(in crate::store) use policy::fence_retained_policy;
 pub(crate) use policy::{
     CanaryLane, CanaryPolicy, CanaryWriteError, FreshCanaryGrant, PrepareCanaryGrant,
     RevokeCanaryGrant,

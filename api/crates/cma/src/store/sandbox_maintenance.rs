@@ -29,6 +29,7 @@ pub(crate) mod mongo_integration_tests;
 mod policy_fence;
 mod reconcile;
 mod retained_availability;
+pub(crate) mod retained_transition;
 mod retry;
 pub(super) mod runtime_activity;
 mod transaction;

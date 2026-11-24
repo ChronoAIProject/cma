@@ -1,16 +1,17 @@
 //! Model-owned transitions for one claimed sandbox lifecycle phase.
 use super::lifecycle_execution_support::{
-    invalid_execution, lifecycle_failure_class, queued_message_phase, valid_runtime_binding,
+    invalid_execution, lifecycle_failure_class, queued_message_phase,
 };
 use super::{
-    RuntimeBinding, Sandbox, SandboxCheckpointPublication, SandboxCheckpointRef,
-    SandboxImageRotationPhase, SandboxLifecycleOperation, SandboxModelError, SandboxPausePhase,
-    SandboxRevivePhase, SandboxStatus, SandboxWorkStep, TypedFailure,
+    Sandbox, SandboxCheckpointPublication, SandboxCheckpointRef, SandboxImageRotationPhase,
+    SandboxLifecycleOperation, SandboxModelError, SandboxPausePhase, SandboxRevivePhase,
+    SandboxStatus, SandboxWorkStep, TypedFailure,
 };
 
 const MAX_FAILURE_DETAIL_BYTES: usize = 4 * 1024;
 
 mod checkpoints;
+mod runtime_binding;
 
 impl Sandbox {
     /// Advance a durable-home pause without capturing or publishing a CMA
@@ -119,57 +120,6 @@ impl Sandbox {
             fence,
             at,
         )
-    }
-
-    /// Bind the generation-specific replacement after restore bootstrap succeeds.
-    pub fn bind_lifecycle_runtime(
-        &mut self,
-        binding: RuntimeBinding,
-        holder: &str,
-        fence: u64,
-        at: String,
-    ) -> Result<(), SandboxModelError> {
-        self.validate_resumed_binding(&binding)?;
-        if self.runtime.is_some()
-            || !valid_runtime_binding(&binding, &at)
-            || self
-                .lifecycle
-                .runtime_provision
-                .as_ref()
-                .is_none_or(|reservation| {
-                    binding.provision_generation != Some(reservation.generation)
-                })
-        {
-            return Err(invalid_execution());
-        }
-        self.apply_claimed(holder, fence, at.clone(), at, |next| {
-            match next.lifecycle.operation.as_mut() {
-                Some(SandboxLifecycleOperation::Revive { phase, .. })
-                    if *phase == SandboxRevivePhase::RuntimeProvisioning =>
-                {
-                    *phase = SandboxRevivePhase::CredentialDelivery;
-                }
-                Some(SandboxLifecycleOperation::ImageRotation {
-                    phase,
-                    target_runtime_version,
-                    ..
-                }) if *phase == SandboxImageRotationPhase::RuntimeProvisioning
-                    && *target_runtime_version == binding.runtime_version =>
-                {
-                    *phase = SandboxImageRotationPhase::CredentialDelivery;
-                }
-                _ => return Err(invalid_execution()),
-            }
-            next.runtime = Some(binding);
-            if next.lifecycle.unpublished_recovery.is_some() {
-                next.require_unpublished_runtime_quiescence()?;
-                next.lifecycle.unpublished_recovery = None;
-                next.lifecycle.unpublished_recovery_attempted = true;
-            }
-            next.lifecycle.suspended_runtime = None;
-            next.lifecycle.runtime_provision = None;
-            Ok(())
-        })
     }
 
     pub fn complete_lifecycle_credential_delivery(
