@@ -19,7 +19,10 @@ use super::sandbox_mongo::{
 };
 
 const CONTROL_ATTEMPTS: usize = 8;
+mod restart;
+mod restart_receipt;
 mod segmented;
+pub(super) use restart::schedule_restart;
 
 enum ApplyError {
     Domain(AgentControlStoreError),

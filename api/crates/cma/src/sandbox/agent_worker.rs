@@ -342,7 +342,9 @@ impl AgentWorker {
             AgentWorkStep::RemoveHome => Box::pin(self.remove_home(agent, now)),
             AgentWorkStep::RemoveWorktree => Box::pin(self.remove_worktree(agent, now)),
             AgentWorkStep::PublishDeleted => Box::pin(self.publish_deleted(agent, now)),
-            AgentWorkStep::None => Box::pin(async { Err(SandboxStoreError::Conflict) }),
+            AgentWorkStep::RestartConversation | AgentWorkStep::None => {
+                Box::pin(async { Err(SandboxStoreError::Conflict) })
+            }
         }
     }
 }

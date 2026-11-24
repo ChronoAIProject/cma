@@ -6,6 +6,7 @@ pub(in crate::store) mod capacity_tests;
 
 mod control_commit_tests;
 mod control_mutation_tests;
+mod control_restart_tests;
 mod control_snapshot_tests;
 mod control_validation_tests;
 mod conversation_tests;

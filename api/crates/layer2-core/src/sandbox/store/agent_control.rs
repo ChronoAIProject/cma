@@ -106,6 +106,15 @@ pub trait AgentControlStore: Send + Sync {
         Err(AgentControlStoreError::WorktreeRecoveryConflict)
     }
 
+    /// Read an exact acceptance or atomically reserve capacity for a proven restart.
+    /// A replay never needs a fresh runtime observation.
+    async fn schedule_agent_restart(
+        &self,
+        _request: super::AgentRestartRequest,
+    ) -> Result<super::AgentRestartAcceptance, AgentControlStoreError> {
+        Err(AgentControlStoreError::Conflict)
+    }
+
     /// Schedule stop once; matching active stop work is an idempotent replay.
     async fn schedule_agent_stop(
         &self,

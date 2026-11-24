@@ -139,6 +139,29 @@ pub(super) struct StoredControlReceipts {
     delete: Option<ControlReceipt>,
 }
 
+pub(super) fn consume_restart_predecessor(
+    receipts: &StoredControlReceipts,
+    acceptance: &layer2_core::sandbox::store::AgentRestartAcceptance,
+) -> Result<Document, AgentControlStoreError> {
+    let stop = receipts
+        .stop
+        .as_ref()
+        .ok_or(AgentControlStoreError::Conflict)?;
+    let ControlRequest::Stop(request) = &stop.request else {
+        return Err(AgentControlStoreError::Conflict);
+    };
+    if request.reason != layer2_core::sandbox::AgentStopReason::Owner
+        || receipts.delete.is_some()
+        || layer2_core::seconds_from_rfc3339(&request.requested_at).is_none_or(|requested_at| {
+            layer2_core::seconds_from_rfc3339(&acceptance.source.predecessor_close.completed_at)
+                .is_none_or(|closed_at| closed_at < requested_at)
+        })
+    {
+        return Err(AgentControlStoreError::Conflict);
+    }
+    restart::encode_predecessor(stop, acceptance)
+}
+
 pub(super) fn read_control_receipts(
     document: &Document,
     agent: &Agent,

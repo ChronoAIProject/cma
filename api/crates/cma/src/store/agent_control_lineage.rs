@@ -24,8 +24,8 @@ pub(super) enum LineageError {
 pub(super) struct ControlSnapshot {
     pub(super) agent: Agent,
     pub(super) receipts: StoredControlReceipts,
-    worktree: Worktree,
-    workspace: Workspace,
+    pub(super) worktree: Worktree,
+    pub(super) workspace: Workspace,
     pub(super) sandbox: Sandbox,
 }
 

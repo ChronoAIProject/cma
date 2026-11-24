@@ -45,6 +45,8 @@ mod workspace_worker;
 pub use workspace_worker::{WorkspacePreparationCompletion, WorkspaceWorkerStore};
 
 mod agent_control;
+mod agent_restart;
+pub use agent_restart::{AgentRestartAcceptance, AgentRestartRequest, AgentRestartSource};
 mod background_checkpoint;
 pub use agent_control::{
     AgentControlResult, AgentControlStore, AgentControlStoreError, AgentControlTarget,

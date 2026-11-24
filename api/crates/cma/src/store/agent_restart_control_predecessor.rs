@@ -6,9 +6,9 @@ use super::{
 use layer2_core::sandbox::AgentStopReason;
 use layer3_adapter::{AgentCloseRequest, AgentProcessAction, AgentSlot};
 
-const FIELD: &str = "control_restart_predecessor_v1";
+pub(super) const FIELD: &str = "control_restart_predecessor_v1";
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct RestartPredecessor {
     restart_revision: i64,
@@ -19,6 +19,30 @@ struct RestartPredecessor {
     close_operation_id: String,
     close_request_sha256: String,
     stop: ControlReceipt,
+}
+
+pub(super) fn encode_predecessor(
+    stop: &ControlReceipt,
+    acceptance: &layer2_core::sandbox::store::AgentRestartAcceptance,
+) -> Result<Document, AgentControlStoreError> {
+    let predecessor = RestartPredecessor {
+        restart_revision: i64::try_from(acceptance.revision)
+            .map_err(|_| AgentControlStoreError::Conflict)?,
+        conversation_id: acceptance.source.conversation_id.clone(),
+        provision_generation: acceptance.source.runtime.runtime.generation,
+        closed_incarnation: acceptance
+            .next_incarnation
+            .checked_sub(1)
+            .ok_or(AgentControlStoreError::Conflict)?,
+        restart_incarnation: acceptance.next_incarnation,
+        close_operation_id: acceptance.source.predecessor_close.operation_id.clone(),
+        close_request_sha256: acceptance.source.predecessor_close.request_sha256.clone(),
+        stop: stop.clone(),
+    };
+    Ok(mongodb::bson::doc! {
+        (FIELD): super::record_bson(&predecessor)
+            .map_err(|error| AgentControlStoreError::Corrupt(error.to_string()))?,
+    })
 }
 
 pub(super) fn validate_predecessor(
