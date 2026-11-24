@@ -6,7 +6,7 @@ import type {
   AgentLifecycleCreateReceipt,
   CmaWebClient,
 } from '../api/client';
-import { ConnectionWizard } from '../connections/ConnectionWizard';
+import { ConnectionWizard, RepositoryConnectionRepair } from '../connections/ConnectionWizard';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { IconAgentPresetOutline16 } from '../ui/icons';
@@ -361,7 +361,14 @@ function AgentLifecycleForm({
           </Button>
         ) : null}
       </Modal>
-      {connectionRequest === undefined ? null : (
+      {viewerId && connectionRequest?.repository_access ? (
+        <RepositoryConnectionRepair
+          owner={viewerId}
+          target={connectionRequest.target}
+          pending={pending}
+          onRecheck={() => void lifecycle.submit()}
+        />
+      ) : connectionRequest === undefined ? null : (
         <ConnectionWizard
           target={connectionRequest.target}
           expectedOwner={viewerId}

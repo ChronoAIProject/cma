@@ -3,6 +3,8 @@ use layer3_adapter::ConversationInputSender;
 
 #[path = "targeted_control_budget_tests.rs"]
 mod budget;
+#[path = "cancel_admission_wake_tests.rs"]
+mod cancel_wake;
 #[path = "targeted_control_commit_tests.rs"]
 mod commit;
 #[path = "targeted_control_public_tests.rs"]
