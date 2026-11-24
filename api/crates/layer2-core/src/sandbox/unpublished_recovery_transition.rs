@@ -15,6 +15,7 @@ impl Sandbox {
         at: &str,
     ) -> Result<Self, SandboxModelError> {
         let invalid = || SandboxModelError::invalid_value("sandbox.unpublished_runtime_recovery");
+        self.validate_custom_recovery_target(target)?;
         let mut next = self.clone();
         let previous = next
             .runtime
@@ -77,6 +78,7 @@ impl Sandbox {
                 failure: None,
             }),
         });
+        next.preserve_custom_recovery_request(self)?;
         next.work
             .schedule(SandboxWorkStep::RunLifecycleOperation, at.into());
         next.updated_at = at.into();
