@@ -237,3 +237,200 @@ fn retained_payload_checks_both_digests_and_preserves_replay_semantics() {
     )
     .is_err());
 }
+
+mod intervals {
+    use super::*;
+    use crate::sandbox_metrics::measured_evidence::interval::{
+        normalize_series, CpuSeconds, CustodySample, MeasuredInterval, Quantity, Unresolved,
+        POLICY_VERSION,
+    };
+
+    fn retained(
+        binding: &Binding,
+        metric: SourceMetric,
+        timestamp_ms: u64,
+        value: f64,
+        mapping_revision: u64,
+    ) -> (RetainedObservation, String) {
+        let rows = [series(binding, metric, &[(timestamp_ms, value)])];
+        let observation = capture_observations(
+            binding,
+            mapping_revision,
+            metric,
+            &rows,
+            Range { from: 0, to: 600 },
+        )
+        .unwrap()
+        .pop()
+        .unwrap();
+        let digest = observation.evidence_sha256().unwrap();
+        let retained = RetainedObservation::decode(
+            &serde_json::to_vec(&observation).unwrap(),
+            observation.physical_sample_id(),
+            &digest,
+        )
+        .unwrap();
+        (retained, digest)
+    }
+
+    fn pair(
+        first: &RetainedObservation,
+        next: &RetainedObservation,
+    ) -> Result<MeasuredInterval, Unresolved> {
+        let interval = normalize_series(&[
+            CustodySample::Undisputed(first),
+            CustodySample::Undisputed(next),
+        ])?
+        .pop()
+        .unwrap();
+        interval.quantity?;
+        Ok(interval)
+    }
+
+    #[test]
+    fn subtracts_exact_cpu_values_before_rounding_and_orders_provenance() {
+        let binding = binding(BindingKind::Compute);
+        let metric = SourceMetric::CpuCounter;
+        let (first, first_digest) = retained(&binding, metric, 21_001, 1.0, 2);
+        let (next, next_digest) = retained(&binding, metric, 50_000, (1_u64 << 54) as f64, 1);
+        let measured = pair(&next, &first).unwrap();
+        assert_eq!(measured, pair(&first, &next).unwrap());
+        assert_eq!(measured.policy_version, POLICY_VERSION);
+        assert_eq!((measured.from_ms, measured.to_ms), (21_001, 50_000));
+        assert_eq!(measured.evidence_sha256, [first_digest, next_digest]);
+        assert_eq!(
+            measured.quantity,
+            Ok(Quantity::Cpu(CpuSeconds {
+                significand: (1_u128 << 54) - 1,
+                exponent: 0,
+            }))
+        );
+    }
+
+    #[test]
+    fn bounds_the_canonical_cpu_delta_after_subtraction() {
+        let binding = binding(BindingKind::Compute);
+        let metric = SourceMetric::CpuCounter;
+        let (first, _) = retained(&binding, metric, 21_000, 1.0, 1);
+        for (power, significand) in [(76, (1_u128 << 76) - 1), (128, u128::MAX)] {
+            let (next, _) = retained(&binding, metric, 30_000, 2_f64.powi(power), 1);
+            assert_eq!(
+                pair(&first, &next).unwrap().quantity,
+                Ok(Quantity::Cpu(CpuSeconds {
+                    significand,
+                    exponent: 0
+                }))
+            );
+        }
+        let (too_large, _) = retained(&binding, metric, 30_000, 2_f64.powi(129), 1);
+        assert_eq!(pair(&first, &too_large), Err(Unresolved::Precision));
+    }
+
+    #[test]
+    fn spacing_limit_and_cpu_reset_leave_only_the_affected_pair_pending() {
+        let binding = binding(BindingKind::Compute);
+        let metric = SourceMetric::CpuCounter;
+        let (first, _) = retained(&binding, metric, 1_000, 3.0, 1);
+        let (reset, _) = retained(&binding, metric, 91_000, 2.0, 1);
+        let (equal, _) = retained(&binding, metric, 181_000, 2.0, 1);
+        let (gap, _) = retained(&binding, metric, 271_001, 9.0, 1);
+        let intervals = normalize_series(&[
+            CustodySample::Undisputed(&gap),
+            CustodySample::Undisputed(&first),
+            CustodySample::Undisputed(&equal),
+            CustodySample::Undisputed(&reset),
+        ])
+        .unwrap();
+        assert_eq!(intervals.len(), 3);
+        assert_eq!(intervals[0].quantity, Err(Unresolved::CounterReset));
+        let zero = &intervals[1];
+        assert_eq!((zero.from_ms, zero.to_ms), (91_000, 181_000));
+        assert_eq!(
+            zero.quantity,
+            Ok(Quantity::Cpu(CpuSeconds {
+                significand: 0,
+                exponent: 0
+            }))
+        );
+        assert_eq!(intervals[2].quantity, Err(Unresolved::Coverage));
+    }
+
+    #[test]
+    fn keeps_disputes_and_competing_owners_in_physical_timestamp_order() {
+        let original = binding(BindingKind::Home);
+        let mut competitor = original.clone();
+        competitor.owner_subject = "owner-b".into();
+        let metric = SourceMetric::PvcUsed;
+        let (first, _) = retained(&original, metric, 30_000, 15.0, 1);
+        let (disputed, _) = retained(&original, metric, 60_000, 28.0, 1);
+        let (other_owner, _) = retained(&competitor, metric, 60_000, 28.0, 1);
+        let (last, _) = retained(&original, metric, 90_000, 32.0, 1);
+        let normalize = |middle| {
+            normalize_series(&[
+                CustodySample::Undisputed(&last),
+                CustodySample::Undisputed(&first),
+                middle,
+            ])
+            .unwrap()
+        };
+        let disputed_intervals = normalize(CustodySample::Disputed(&disputed));
+        assert_eq!(
+            (disputed_intervals[0].from_ms, disputed_intervals[1].to_ms),
+            (30_000, 90_000)
+        );
+        assert_eq!(
+            disputed_intervals[0].evidence_sha256[1],
+            disputed_intervals[1].evidence_sha256[0]
+        );
+        assert!(disputed_intervals
+            .iter()
+            .all(|pair| pair.quantity == Err(Unresolved::Disputed)));
+        let conflicting = normalize(CustodySample::Undisputed(&other_owner));
+        assert!(conflicting
+            .iter()
+            .all(|pair| pair.quantity == Err(Unresolved::Attribution)));
+    }
+
+    #[test]
+    fn higher_binding_revision_controls_both_endpoints_independently_of_capture_order() {
+        let original = binding(BindingKind::Compute);
+        let metric = SourceMetric::WorkingSet;
+        let (last, _) = retained(&original, metric, 40_000, 29.0, 8);
+        let mut newer = original.clone();
+        newer.revision += 1;
+        newer.valid_until = None;
+        newer.observed_at = 40;
+        let (first, _) = retained(&newer, metric, 30_000, 17.0, 2);
+        assert_eq!(pair(&last, &first), Err(Unresolved::Attribution));
+        newer.observed_at += 1;
+        let (extended, _) = retained(&newer, metric, 30_000, 17.0, 2);
+        assert_eq!(
+            pair(&last, &extended).unwrap().quantity,
+            Ok(Quantity::ByteMilliseconds(170_000))
+        );
+        newer.id.push_str("-replacement");
+        let (replacement, _) = retained(&newer, metric, 30_000, 17.0, 2);
+        assert_eq!(pair(&last, &replacement), Err(Unresolved::Attribution));
+    }
+
+    #[test]
+    fn equal_binding_revisions_must_agree_and_gauges_require_integer_bytes() {
+        let initial = binding(BindingKind::Home);
+        for metric in [SourceMetric::PvcUsed, SourceMetric::PvcCapacity] {
+            let (first, _) = retained(&initial, metric, 20_000, 17.0, 1);
+            let (next, _) = retained(&initial, metric, 21_003, 25.0, 1);
+            let interval = pair(&first, &next).unwrap();
+            assert_eq!(interval.metric, metric);
+            assert_eq!(
+                interval.quantity,
+                Ok(Quantity::ByteMilliseconds(17 * 1_003))
+            );
+            let (fractional, _) = retained(&initial, metric, 21_003, 25.5, 1);
+            assert_eq!(pair(&first, &fractional), Err(Unresolved::Precision));
+            let mut changed = initial.clone();
+            changed.valid_from += 1;
+            let (conflicting, _) = retained(&changed, metric, 21_003, 25.0, 2);
+            assert_eq!(pair(&first, &conflicting), Err(Unresolved::Attribution));
+        }
+    }
+}

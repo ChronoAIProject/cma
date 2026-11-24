@@ -13,6 +13,10 @@ use crate::store::{
 
 const INVALID: &str =
     "measured capture requires one Sandbox and a past window of at most 900 seconds";
+const PREVIEW_INVALID: &str =
+    "measured preview requires one physical sample ID and a past window of at most 900 seconds";
+const PREVIEW_UNAVAILABLE: &str =
+    "measured preview could not establish a complete custody snapshot";
 const UNAVAILABLE: &str = "measured capture is unavailable or its write outcome is unresolved";
 const AUTHORITY: &str = "measured capture requires isolated append-only custody authority";
 const MAX_BINDINGS: usize = 16;
@@ -23,7 +27,36 @@ type Result<T> = std::result::Result<T, &'static str>;
 mod tests;
 
 pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
+    if arguments
+        .first()
+        .is_some_and(|value| value == "--measured-preview")
+    {
+        let (anchor, window) = preview_invocation(arguments, usage_reports::now())?;
+        let database = open_database().await?;
+        return tokio::time::timeout(Duration::from_secs(30), async {
+            verify_authority(&database).await?;
+            check_schema(&database).await?;
+            MeasuredCapture::new(&database)
+                .preview(anchor, window)
+                .await
+                .map_err(|_| PREVIEW_UNAVAILABLE)
+        })
+        .await
+        .map_err(|_| PREVIEW_UNAVAILABLE)?;
+    }
     let (sandbox, range) = invocation(arguments, usage_reports::now())?;
+    let database = open_database().await?;
+    let source = std::env::var("CHRONO_USAGE_METRICS_URL").map_err(|_| UNAVAILABLE)?;
+    let source = MetricsClient::internal(&source).map_err(|_| UNAVAILABLE)?;
+    tokio::time::timeout(Duration::from_secs(90), async {
+        verify_authority(&database).await?;
+        execute(&database, &source, sandbox, range).await
+    })
+    .await
+    .map_err(|_| UNAVAILABLE)?
+}
+
+async fn open_database() -> Result<Database> {
     if std::env::var("CHRONO_MEASURED_CAPTURE_ENABLED").as_deref() != Ok("true") {
         return Err("measured capture is disabled");
     }
@@ -34,16 +67,8 @@ pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
     }
     let db_name = std::env::var("CHRONO_MONGODB_DATABASE").map_err(|_| UNAVAILABLE)?;
     let uri = std::env::var("CHRONO_MONGODB_URI").map_err(|_| UNAVAILABLE)?;
-    let source = std::env::var("CHRONO_USAGE_METRICS_URL").map_err(|_| UNAVAILABLE)?;
     let client = Client::with_uri_str(uri).await.map_err(|_| UNAVAILABLE)?;
-    let source = MetricsClient::internal(&source).map_err(|_| UNAVAILABLE)?;
-    let database = client.database(&db_name);
-    tokio::time::timeout(Duration::from_secs(90), async {
-        verify_authority(&database).await?;
-        execute(&database, &source, sandbox, range).await
-    })
-    .await
-    .map_err(|_| UNAVAILABLE)?
+    Ok(client.database(&db_name))
 }
 
 async fn verify_authority(database: &Database) -> Result<()> {
@@ -69,12 +94,38 @@ fn invocation(arguments: &[String], now: u64) -> Result<(&str, Range)> {
         && sandbox
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
-    let from = from.parse::<u64>().map_err(|_| INVALID)?;
-    let to = to.parse::<u64>().map_err(|_| INVALID)?;
-    if command != "--measured-capture" || !valid || from >= to || to - from > 900 || to > now {
+    if command != "--measured-capture" || !valid {
         return Err(INVALID);
     }
-    Ok((sandbox, Range { from, to }))
+    Ok((sandbox, bounded_range(from, to, now).ok_or(INVALID)?))
+}
+
+fn preview_invocation(arguments: &[String], now: u64) -> Result<(&str, Range)> {
+    let [command, anchor, from, to] = arguments else {
+        return Err(PREVIEW_INVALID);
+    };
+    if command != "--measured-preview"
+        || anchor.len() != 64
+        || !anchor
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(PREVIEW_INVALID);
+    }
+    Ok((anchor, bounded_range(from, to, now).ok_or(PREVIEW_INVALID)?))
+}
+
+fn bounded_range(from: &str, to: &str, now: u64) -> Option<Range> {
+    let from = from.parse::<u64>().ok()?;
+    let to = to.parse::<u64>().ok()?;
+    (from < to && to - from <= 900 && to <= now).then_some(Range { from, to })
+}
+
+async fn check_schema(database: &Database) -> Result<()> {
+    if !measured_custody_ready(database).await? {
+        return Err("measured custody requires its explicit schema migration");
+    }
+    Ok(())
 }
 
 async fn execute(
@@ -83,9 +134,7 @@ async fn execute(
     sandbox: &str,
     range: Range,
 ) -> Result<Value> {
-    if !measured_custody_ready(database).await? {
-        return Err("measured custody requires its explicit schema migration");
-    }
+    check_schema(database).await?;
     let (revision, bindings) = binding_snapshot(database, sandbox, range).await?;
     let mut observations = Vec::new();
     let mut incomplete = 0;
