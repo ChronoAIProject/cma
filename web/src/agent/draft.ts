@@ -187,14 +187,21 @@ export function useAgentDraft(
       message,
       bind: (key, storage) => {
         const current = latest.current;
-        if (current?.scope !== scope || current.entry.value.revision !== snapshot.revision)
+        const mounted = current?.scope === scope;
+        if (
+          !agentId ||
+          (mounted && current.entry.value.revision !== snapshot.revision) ||
+          (current && (current.scope.viewerId !== viewerId || current.scope.client !== client))
+        )
           return 'superseded';
         try {
           requireDraftIdentity();
-          const saved = readAgentDraft(viewerId, agentId!, storage);
-          if (current.entry.unread || saved.revision !== snapshot.revision)
+          const saved = readAgentDraft(viewerId, agentId, storage);
+          if (!mounted && saved.revision !== snapshot.revision) return 'superseded';
+          if ((mounted && current.entry.unread) || saved.revision !== snapshot.revision)
             throw new Error(draftWriteError);
-          saveAgentDraft(viewerId, agentId!, { ...saved, commandKey: key }, storage);
+          saveAgentDraft(viewerId, agentId, { ...saved, commandKey: key }, storage);
+          if (!mounted) return 'bound';
           setStored((previous) =>
             previous.scope === scope && previous.entry.value.revision === snapshot.revision
               ? {
@@ -210,6 +217,7 @@ export function useAgentDraft(
           );
           return 'bound';
         } catch {
+          if (!mounted) return 'unavailable';
           setStored((previous) =>
             previous.scope === scope &&
             previous.entry.value.revision === snapshot.revision &&
