@@ -34,7 +34,7 @@ fn captured(emit: impl FnOnce()) -> Vec<serde_json::Value> {
     let output = Output::default();
     let json = fmt::layer()
         .json()
-        .event_format(cma_am_auth::diagnostics::json())
+        .event_format(crate::diagnostic_format::json())
         .with_writer(output.clone());
     tracing::subscriber::with_default(tracing_subscriber::registry().with(json), || {
         let caller = tracing::info_span!("proxy_caller", private = PRIVATE_CALLER);

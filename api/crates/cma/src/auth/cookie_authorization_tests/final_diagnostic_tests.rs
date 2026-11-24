@@ -25,7 +25,7 @@ async fn capture<F: std::future::Future>(future: F) -> (F::Output, Vec<Value>) {
     let writer = log.clone();
     let subscriber = tracing_subscriber::fmt()
         .json()
-        .event_format(cma_am_auth::diagnostics::json())
+        .event_format(crate::diagnostic_format::json())
         .with_max_level(tracing::Level::INFO)
         .with_writer(move || writer.clone())
         .finish();

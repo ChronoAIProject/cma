@@ -19,13 +19,13 @@ where
         if private_format {
             layer
                 .json()
-                .event_format(cma_am_auth::diagnostics::json())
+                .event_format(crate::diagnostic_format::json())
                 .boxed()
         } else {
             layer.json().boxed()
         }
     } else {
-        layer.event_format(cma_am_auth::diagnostics::text()).boxed()
+        layer.event_format(crate::diagnostic_format::text()).boxed()
     };
     if dynamic {
         layer
