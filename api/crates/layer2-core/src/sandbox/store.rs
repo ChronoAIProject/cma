@@ -108,9 +108,10 @@ mod agent_sign_in;
 pub use agent_lifecycle::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome,
-    AgentConnectionRecoveryRequest, AgentCreateAdmission, AgentRetryObservation, AgentWorkMutation,
-    AgentWorkPublication, AgentWorkPublicationLineage, AgentWorkPublicationParents,
-    AgentWorkerStore, StartupWorkFilter, VersionedWorktree,
+    AgentConnectionRecoveryRequest, AgentCreateAdmission, AgentRetryObservation,
+    AgentWorkDiscovery, AgentWorkMutation, AgentWorkPublication, AgentWorkPublicationLineage,
+    AgentWorkPublicationParents, AgentWorkerStore, PendingAgentWork, StartupWorkFilter,
+    VersionedWorktree,
 };
 pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;
