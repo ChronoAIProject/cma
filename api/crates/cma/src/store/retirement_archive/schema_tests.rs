@@ -90,8 +90,7 @@ async fn frozen_pre_capture_census_requires_new_evidence_namespaces_to_be_empty(
         old.database
             .retain(|row| collections.contains(&row.collection.as_str()));
         assert!(matches_current(&old, current.clone()).unwrap());
-        for name in manifest_collections().filter(|name| !collections.contains(name))
-        {
+        for name in manifest_collections().filter(|name| !collections.contains(name)) {
             let mut pending = current.clone();
             pending
                 .database
