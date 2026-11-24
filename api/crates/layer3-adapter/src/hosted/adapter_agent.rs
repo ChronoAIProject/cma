@@ -304,6 +304,11 @@ pub(super) async fn open_agent(
             "invalid Agent restart runtime authority".into(),
         ));
     }
+    if restart && held_conversation.is_none() && request.resume_conversation.is_none() {
+        return Err(AdapterError::Rejected(
+            "Agent restart requires a retained conversation".into(),
+        ));
+    }
     validate_fence(authority_fence)?;
     let launch = adapter.runtime.launch(request)?;
     let mut settings = adapter.runtime.open_settings(request)?;

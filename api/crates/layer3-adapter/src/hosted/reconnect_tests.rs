@@ -183,6 +183,9 @@ async fn restart_conflict_preserves_runtime_pin_without_legacy_retry() {
     request.restart_runtime = Some(runtime);
     let before = backend.opens.load(Ordering::SeqCst);
     let (updates, _receiver) = mpsc::channel(4);
+    rejected(adapter.open_agent(&handle, 3, &request, updates).await);
+    assert_eq!(backend.opens.load(Ordering::SeqCst), before);
+    let (updates, _receiver) = mpsc::channel(4);
     assert!(matches!(
         adapter
             .reconnect_agent(&handle, 3, &request, CONVERSATION, updates)
