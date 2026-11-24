@@ -162,7 +162,7 @@ async fn title_candidates(
         let segmented = crate::store::agent_log_segments::read_format(&document)
             .map_err(map_store_error)?
             .is_some();
-        if !title_state.effect.unknown()
+        if (!title_state.effect.unknown() || title_state.stored.is_none())
             && (title_state.effect.accepted().is_some()
                 || title_state.retry.eligible(mongodb::bson::DateTime::now()))
             && title_state

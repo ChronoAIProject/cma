@@ -1,13 +1,14 @@
 //! Atomic, owner-consented reopening on an already restored retained runtime.
 use layer2_core::{
     sandbox::{
-        RetainedReopenAccepted, RetainedReopenReceipt, RetainedReopenRequest,
+        RetainedReopenAccepted, RetainedReopenPath, RetainedReopenReceipt, RetainedReopenRequest,
         RetainedReopenSnapshot, SandboxStoreError,
     },
     SandboxId,
 };
 use mongodb::{bson::doc, options::ReadConcern};
 
+use super::agent_log_integrity::IntegrityFailurePolicy;
 use super::agent_log_segments::transaction_scope::TransactionScope;
 use super::sandbox_mongo::{
     commit_transaction, is_transient, wait_for_reconciliation, CommitOutcome, MongoSandboxStore,
@@ -16,32 +17,52 @@ use super::sandbox_mongo::{
 use super::sandbox_unpublished_recovery::transaction::ApplyError;
 use super::sandbox_unpublished_recovery::transaction::NativeFacts;
 
+mod history;
 mod load;
 #[cfg(test)]
 pub(in crate::store) mod mongo_fixtures;
 #[cfg(test)]
 mod mongo_tests;
+mod suspended;
 mod transaction;
 const FIELD: &str = "retained_reopen_receipt_v1";
+
+pub(super) use history::{indexes as receipt_indexes, read as read_history, read_for_service};
+pub(super) use suspended::{admit_suspended, replay};
+
+pub(super) async fn snapshot_in_transaction(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+    session: &mut mongodb::ClientSession,
+    facts: &NativeFacts,
+    path: RetainedReopenPath,
+    policy: IntegrityFailurePolicy,
+) -> Result<(RetainedReopenSnapshot, u64), ApplyError> {
+    match path {
+        RetainedReopenPath::Idle => {
+            load::snapshot_with_sources(store, id, session, Some(facts), policy).await
+        }
+        RetainedReopenPath::Suspended => {
+            load::suspended_snapshot(store, id, session, facts, policy).await
+        }
+    }
+}
 
 pub(super) async fn snapshot(
     store: &MongoSandboxStore,
     id: &SandboxId,
+    path: RetainedReopenPath,
+    policy: IntegrityFailurePolicy,
 ) -> Result<RetainedReopenSnapshot, SandboxStoreError> {
     let mut session = store.client.start_session().await.map_err(unavailable)?;
     let mut scope = TransactionScope::start(&mut session)
         .await
         .map_err(unavailable)?;
-    let facts = NativeFacts::capture_reopen(store, id, &mut scope).await;
-    let session = scope.release();
-    let result = match facts {
-        Ok(facts) => load::snapshot_with_sources(store, id, session, Some(&facts)).await,
-        Err(error) => Err(error),
-    }
-    .map(|(snapshot, _)| snapshot)
-    .map_err(ApplyError::domain);
-    let _ = session.abort_transaction().await;
+    let result = scope.retained_reopen_view(store, id, path, policy).await;
+    let _ = scope.release().abort_transaction().await;
     result
+        .map(|(snapshot, _)| snapshot)
+        .map_err(ApplyError::domain)
 }
 
 pub(super) async fn receipt(
@@ -82,7 +103,12 @@ pub(super) async fn admit(
             }
         };
         // An exact replay needs no write or event and was read at majority.
-        let transaction::Applied::Commit { receipt, event } = applied else {
+        let transaction::Applied::Commit {
+            receipt,
+            event,
+            repeat,
+        } = applied
+        else {
             let transaction::Applied::Replay(accepted) = applied else {
                 unreachable!()
             };
@@ -98,7 +124,7 @@ pub(super) async fn admit(
                 })?;
                 let store = store.clone();
                 return wait_for_reconciliation("retained reopening commit", async move {
-                    transaction::reconcile(&store, &receipt, &event, time).await?;
+                    transaction::reconcile(&store, &receipt, &event, time, repeat).await?;
                     Ok(receipt.accepted)
                 })
                 .await

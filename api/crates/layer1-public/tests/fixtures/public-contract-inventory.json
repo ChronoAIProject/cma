@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 297,
+  "openapi_operations": 312,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -159,6 +159,16 @@
     "GET /api/v1/admin/activity": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/activity/actors": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/activity.rs# The actor search requires Activity and directory read capabilities and exposes bounded identity options.",
       "required_problems": [
         "forbidden",
         "invalid_admin_request",
@@ -382,7 +392,7 @@
     },
     "GET /api/v1/agui/events": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output. Agent turn failures use the fixed public_agent_turn_failure allowlist; unknown retained classes map to agent_turn_failed.",
       "required_problems": [
         "cursor_beyond_end",
         "forbidden",
@@ -398,16 +408,15 @@
         "agent_log_capacity_exceeded",
         "agent_turn_failed",
         "failed",
-        "input_not_written",
         "operator",
         "owner",
         "runtime_lost",
         "sandbox_retired"
       ],
-      "opaque_protocol_failures": "api/crates/layer1-public/src/agui/events.rs# RUN_ERROR propagates arbitrary persisted TurnFailed.failure.class values; fixed agent_turn_failed and input_not_written have Core producers. Stopped.reason is restricted by Core AgentStopReason to owner, operator, runtime_lost, sandbox_retired, and failed, and Deleted maps to fixed agent_deleted. Opaque external failure classes are not a finite catalog.",
       "unreachable_protocol_failures": {
         "provisioning_timeout": "api/crates/layer1-public/src/agui/replay.rs# GET replay does not perform readiness admission; provisioning_timeout belongs to initiating requests, not durable AgentLog projection.",
-        "response_unavailable": "api/crates/layer1-public/src/agui/replay.rs# A failed following read ends AG-UI silently; fixed response_unavailable is emitted only by the Responses stream projection."
+        "response_unavailable": "api/crates/layer1-public/src/agui/replay.rs# A failed following read ends AG-UI silently; fixed response_unavailable is emitted only by the Responses stream projection.",
+        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_failure_projection.rs# Retained input_not_written failures project as agent_turn_failed. The internal send disposition and no-replay policy remain unchanged."
       }
     },
     "GET /api/v1/agui/launches/{id}/events": {
@@ -523,7 +532,7 @@
     },
     "GET /api/v1/responses/{response_id}": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract. Agent turn failures use the fixed public_agent_turn_failure allowlist; unknown retained classes map to agent_turn_failed.",
       "required_problems": [
         "forbidden",
         "instance_service_unavailable",
@@ -532,10 +541,8 @@
         "responses_field_unsupported"
       ],
       "required_protocol_failures": [
-        "agent_turn_failed",
-        "input_not_written"
+        "agent_turn_failed"
       ],
-      "opaque_protocol_failures": "api/crates/layer1-public/src/responses/retrieve.rs# project maps arbitrary persisted TurnFailed.failure.class into ResponseObject.error.code with status=failed; retrieval remains HTTP200. Fixed agent_turn_failed and input_not_written have Core producers, but opaque external failure classes are not a finite catalog.",
       "unreachable_protocol_failures": {
         "agent_deleted": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Deleted is not converted into a ResponseError.",
         "failed": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Failed is not converted into a ResponseError.",
@@ -544,7 +551,8 @@
         "provisioning_timeout": "api/crates/layer1-public/src/responses/stream.rs# provisioning_timeout creates a failure frame during POST readiness admission; retrieval has no readiness wait or persisted timeout failure.",
         "response_unavailable": "api/crates/layer1-public/src/responses/retrieve.rs# GET read failures return typed HTTP refusals; fixed response_unavailable is only produced by the admitted POST stream.",
         "runtime_lost": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::RuntimeLost is not converted into a ResponseError.",
-        "sandbox_retired": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::SandboxRetired is not converted into a ResponseError."
+        "sandbox_retired": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::SandboxRetired is not converted into a ResponseError.",
+        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_failure_projection.rs# Retained input_not_written failures project as agent_turn_failed. The internal send disposition and no-replay policy remain unchanged."
       }
     },
     "GET /api/v1/sandbox-profiles": {
@@ -1119,9 +1127,17 @@
         "store_failed"
       ]
     },
+    "POST /api/v1/agui/run/receipt": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agui/run.rs# Current authorization and the exact original input identify a retained command without admission.",
+      "required_problems": [
+        "thread_not_found",
+        "not_authenticated"
+      ]
+    },
     "POST /api/v1/agui/run": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract.",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract. Agent turn failures use the fixed public_agent_turn_failure allowlist; unknown retained classes map to agent_turn_failed.",
       "required_problems": [
         "agent_approval_not_pending",
         "agent_command_observation_timeout",
@@ -1139,17 +1155,16 @@
       "required_protocol_failures": [
         "agent_turn_failed",
         "failed",
-        "input_not_written",
         "operator",
         "owner",
         "runtime_lost",
         "sandbox_retired"
       ],
-      "opaque_protocol_failures": "api/crates/layer1-public/src/agui/events.rs# RUN_ERROR propagates arbitrary persisted TurnFailed.failure.class values. Stopped.reason is restricted by Core AgentStopReason to owner, operator, runtime_lost, sandbox_retired, and failed. Opaque external failure classes are not a finite catalog.",
       "unreachable_protocol_failures": {
         "agent_deleted": "api/crates/layer1-public/src/agui/replay.rs# Following::queue ends an admitted run at its first terminal turn or Stopped event. Core deletion requires Stopped or Failed, and startup failure cannot follow run admission, so a later Deleted event cannot be the admitted run's terminal outcome.",
         "provisioning_timeout": "api/crates/layer1-public/src/conversation/commands.rs# Unbound readiness observation timeout is HTTP agent_command_observation_timeout and cannot invent a failed turn.",
-        "response_unavailable": "api/crates/layer1-public/src/responses/stream.rs# Loss of current read or authorization evidence closes the stream without fabricating a durable outcome."
+        "response_unavailable": "api/crates/layer1-public/src/responses/stream.rs# Loss of current read or authorization evidence closes the stream without fabricating a durable outcome.",
+        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_failure_projection.rs# Retained input_not_written failures project as agent_turn_failed. The internal send disposition and no-replay policy remain unchanged."
       },
       "unreachable_problems": {
         "agent_capability_unsupported": "api/crates/layer1-public/src/conversation/commands/errors.rs# Common admission rejects an Agent without Conversation as agent_not_ready; later worker capability refusal is a committed agent_command_execution_failed.",
@@ -1242,7 +1257,7 @@
     },
     "POST /api/v1/responses": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract. Agent turn failures use the fixed public_agent_turn_failure allowlist; unknown retained classes map to agent_turn_failed.",
       "required_problems": [
         "agent_command_observation_timeout",
         "agent_not_ready",
@@ -1258,10 +1273,8 @@
         "relay_observer_capacity_exhausted"
       ],
       "required_protocol_failures": [
-        "agent_turn_failed",
-        "input_not_written"
+        "agent_turn_failed"
       ],
-      "opaque_protocol_failures": "api/crates/layer1-public/src/responses/stream.rs# Admitted streams project arbitrary persisted TurnFailed.failure.class through retrieve::project; read loss closes the connection without inventing failure.",
       "unreachable_protocol_failures": {
         "agent_deleted": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Deleted is not converted into a ResponseError.",
         "failed": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Failed is not converted into a ResponseError.",
@@ -1270,7 +1283,8 @@
         "runtime_lost": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::RuntimeLost is not converted into a ResponseError.",
         "sandbox_retired": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::SandboxRetired is not converted into a ResponseError.",
         "provisioning_timeout": "api/crates/layer1-public/src/conversation/commands.rs# Unbound readiness observation timeout is HTTP agent_command_observation_timeout and cannot invent a failed turn.",
-        "response_unavailable": "api/crates/layer1-public/src/responses/stream.rs# Loss of current read or authorization evidence closes the stream without fabricating a durable outcome."
+        "response_unavailable": "api/crates/layer1-public/src/responses/stream.rs# Loss of current read or authorization evidence closes the stream without fabricating a durable outcome.",
+        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_failure_projection.rs# Retained input_not_written failures project as agent_turn_failed. The internal send disposition and no-replay policy remain unchanged."
       },
       "unreachable_problems": {
         "agent_capability_unsupported": "api/crates/layer1-public/src/conversation/commands/errors.rs# Common admission rejects an Agent without Conversation as agent_not_ready; later worker capability refusal is a committed agent_command_execution_failed.",
@@ -1939,7 +1953,10 @@
         "resource_not_found",
         "share_capacity",
         "unsafe_interactive_share"
-      ]
+      ],
+      "unreachable_problems": {
+        "share_recipient_unavailable": "api/crates/layer2-core/src/resource_access/sharing_service.rs# Organization-only share creation does not treat an organization ID as a personal account recipient; personal recipient refusals belong to selected-user links and redemption."
+      }
     },
     "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}": {
       "classification": "openapi",
@@ -1961,7 +1978,8 @@
         "not_authenticated",
         "resource_access_unavailable",
         "resource_forbidden",
-        "resource_not_found"
+        "resource_not_found",
+        "resource_revocation_pending"
       ]
     },
     "GET /api/v1/gateway/channel-records": {
@@ -2009,6 +2027,14 @@
       ],
       "required_protocol_failures": [
         "agent_command_authority_revoked"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/receipt": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/input_receipt.rs# Current authorization and the exact original input identify a retained command without admission.",
+      "required_problems": [
+        "response_not_found",
+        "authentication_required"
       ]
     },
     "POST /api/v2/agents/{agent_id}/responses": {
@@ -2617,7 +2643,15 @@
         "permission_denied",
         "temporarily_unavailable",
         "desktop_unsupported",
-        "invalid_request"
+        "invalid_request",
+        "task_template_field_placeholder",
+        "task_template_field_required",
+        "task_template_field_unknown",
+        "task_template_id_unknown",
+        "task_template_message_mismatch",
+        "task_template_message_too_large",
+        "task_template_version_unsupported",
+        "sandbox_limit_reached"
       ]
     },
     "GET /api/v1/agent-lifecycle/{id}": {
@@ -2935,7 +2969,8 @@
         "idempotency_key_reused",
         "invalid_share_command",
         "not_authenticated",
-        "resource_not_found"
+        "resource_not_found",
+        "share_recipient_unavailable"
       ]
     },
     "DELETE /api/v1/agents/{id}/share-links/{share_id}": {
@@ -2962,7 +2997,8 @@
       "required_problems": [
         "not_authenticated",
         "organization_authority_unavailable",
-        "resource_not_found"
+        "resource_not_found",
+        "share_recipient_unavailable"
       ]
     },
     "DELETE /api/v1/agents/{id}/files": {
@@ -3136,6 +3172,18 @@
         "not_authenticated"
       ]
     },
+    "GET /api/v1/documents/{id}/share-recipients": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Owner-authorized bounded search returns public document recipient identities.",
+      "required_problems": [
+        "account_deletion_in_progress",
+        "document_not_found",
+        "document_unavailable",
+        "invalid_document_request",
+        "not_authenticated",
+        "recipient_directory_unavailable"
+      ]
+    },
     "PUT /api/v1/documents/{id}/shares/{subject}": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
@@ -3147,9 +3195,12 @@
         "idempotency_key_reused",
         "invalid_idempotency_key",
         "invalid_json",
+        "invalid_share_recipient",
         "json_content_type_required",
         "missing_idempotency_key",
-        "not_authenticated"
+        "not_authenticated",
+        "recipient_directory_unavailable",
+        "share_recipient_unavailable"
       ]
     },
     "DELETE /api/v1/documents/{id}/shares/{subject}": {
@@ -3334,6 +3385,14 @@
         "not_authenticated"
       ]
     },
+    "POST /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Verify a required output against its bound turn and current owner.",
+      "required_problems": [
+        "agent_not_found",
+        "not_authenticated"
+      ]
+    },
     "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Explicit selected-resource descriptors and completed-answer deliveries retain independent resource authority, revision/hash identity, opaque downloads and named refusals. Shared cases replay the real composition for documents, artifacts and mounted-home files.",
@@ -3349,7 +3408,7 @@
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/agent_browser.rs# Current authorized Agent, runtime incarnation and bounded browser context observation; explicit owner enablement and observer release.",
       "required_problems": [
-        "file_conflict",
+        "browser_runtime_conflict",
         "file_runtime_not_ready",
         "file_runtime_unsupported",
         "file_unavailable",
@@ -3362,7 +3421,7 @@
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/agent_browser.rs# Current authorized Agent, runtime incarnation and bounded browser context observation; explicit owner enablement and observer release.",
       "required_problems": [
-        "file_conflict",
+        "browser_runtime_conflict",
         "file_runtime_not_ready",
         "file_runtime_unsupported",
         "file_unavailable",
@@ -3375,7 +3434,7 @@
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/agent_browser.rs# Current authorized Agent, runtime incarnation and bounded browser context observation; explicit owner enablement and observer release.",
       "required_problems": [
-        "file_conflict",
+        "browser_runtime_conflict",
         "file_runtime_not_ready",
         "file_runtime_unsupported",
         "file_unavailable",
@@ -3593,12 +3652,10 @@
       "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
       "required_problems": [
         "forbidden",
+        "invalid_query",
         "not_authenticated",
         "usage_unavailable"
-      ],
-      "non_problem_statuses": {
-        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
-      }
+      ]
     },
     "GET /api/v1/admin/usage/sandboxes": {
       "classification": "openapi",
@@ -3608,10 +3665,7 @@
         "invalid_query",
         "not_authenticated",
         "usage_unavailable"
-      ],
-      "non_problem_statuses": {
-        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
-      }
+      ]
     },
     "GET /api/v1/usage": {
       "classification": "openapi",
@@ -3630,10 +3684,7 @@
         "invalid_query",
         "not_authenticated",
         "usage_unavailable"
-      ],
-      "non_problem_statuses": {
-        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
-      }
+      ]
     },
     "GET /api/v1/usage/sandboxes/{id}": {
       "classification": "openapi",
@@ -3652,10 +3703,7 @@
         "not_authenticated",
         "not_found",
         "usage_unavailable"
-      ],
-      "non_problem_statuses": {
-        "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
-      }
+      ]
     },
     "POST /api/v1/usage/metrics/reports": {
       "classification": "openapi",
@@ -3877,6 +3925,7 @@
         "missing_idempotency_key",
         "retained_recovery_consent_required",
         "retained_recovery_authority_changed",
+        "retained_recovery_revision_passed",
         "retained_recovery_not_proved",
         "retained_recovery_unavailable",
         "hierarchy_service_unavailable"
@@ -4069,6 +4118,117 @@
         "invalid_request",
         "model_budget_writes_unavailable",
         "platform_spend_unavailable"
+      ]
+    },
+    "GET /api/v1/sandboxes/capacity": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_capacity.rs# Authenticated owner quota snapshot.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "hierarchy_service_unavailable"
+      ]
+    },
+    "POST /api/v1/account/deletion": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/account_deletion.rs# Owner-only account deletion acceptance and safe progress reads use the durable deletion ledger and typed refusals.",
+      "required_problems": [
+        "not_authenticated",
+        "account_deletion_unavailable",
+        "account_deletion_acknowledgement_required",
+        "account_deletion_requires_owner_session",
+        "missing_idempotency_key",
+        "invalid_idempotency_key",
+        "idempotency_recovery_required",
+        "invalid_json",
+        "json_content_type_required",
+        "store_failed"
+      ]
+    },
+    "GET /api/v1/account/deletion": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/account_deletion.rs# Owner-only account deletion acceptance and safe progress reads use the durable deletion ledger and typed refusals.",
+      "required_problems": [
+        "not_authenticated",
+        "account_deletion_requires_owner_session",
+        "account_deletion_not_found",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/admin/admission/pending-homes/reconcile": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/pending_homes.rs# ConfigurePlatform and the ceilings write gate protect preview and audited correction; observed counter CAS rejects stale apply commands.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "pending_homes_unavailable",
+        "admission_ceilings_writes_unavailable",
+        "invalid_request",
+        "pending_homes_conflict"
+      ]
+    },
+    "POST /api/v1/resource-revocations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_revocations.rs# Owner-authorized revocation creation and status preserve pending outcomes and original keys.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_not_found",
+        "resource_revocation_unavailable",
+        "missing_idempotency_key",
+        "invalid_share_command",
+        "idempotency_key_reused",
+        "resource_revocation_conflict",
+        "resource_revocation_capacity"
+      ]
+    },
+    "GET /api/v1/resource-revocations/{operation_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_revocations.rs# Owner-authorized revocation creation and status preserve pending outcomes and original keys.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_not_found",
+        "resource_revocation_unavailable"
+      ]
+    },
+    "GET /api/v1/account/privacy-export": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/privacy_export.rs# Verified, personal account export and bounded retained history.",
+      "required_problems": [
+        "privacy_export_owner_session_required",
+        "privacy_export_invalid_page"
+      ]
+    },
+    "GET /api/v1/account/privacy-export/agents/{id}/transcript": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/privacy_export.rs# Verified, personal account export and bounded retained history.",
+      "required_problems": [
+        "privacy_export_owner_session_required",
+        "privacy_export_source_unavailable",
+        "privacy_export_page_too_large"
+      ]
+    },
+    "GET /api/v1/account/legal-consent": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/legal_consent.rs# Owner-only legal consent reads and acceptance of the exact published version use typed refusals.",
+      "required_problems": [
+        "not_authenticated",
+        "legal_consent_requires_owner_session",
+        "legal_terms_not_configured",
+        "store_failed"
+      ]
+    },
+    "PUT /api/v1/account/legal-consent": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/legal_consent.rs# Owner-only legal consent reads and acceptance of the exact published version use typed refusals.",
+      "required_problems": [
+        "not_authenticated",
+        "legal_consent_requires_owner_session",
+        "legal_terms_not_configured",
+        "legal_terms_version_mismatch",
+        "legal_consent_sign_in_required",
+        "invalid_json",
+        "json_content_type_required",
+        "store_failed"
       ]
     }
   },

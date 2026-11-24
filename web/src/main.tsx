@@ -17,6 +17,9 @@ import { createOperatorClient } from './operator/client';
 import { createTriggerPublisherClient } from './trigger-publisher/client';
 import { createPublicClient } from './public/client';
 import { clearAgentTransport } from './agent/transport/journal';
+import { prepareHistoryDocument } from './routing/historyDocument';
+import { HomeDecorationProvider } from './decoration/HomeDecorationProvider';
+import { ImageManagerRetirement } from './services/ImageManagerRetirement';
 
 /*
  * Before the first render, so the page never paints in the wrong theme and
@@ -35,48 +38,54 @@ if (!container) {
  * replacing the mock with the real adapter a one-line change. The mock remains
  * for tests.
  */
-const identityProvider = createNyxidAuthProvider();
-const authProvider = {
-  ...identityProvider,
-  async signOut() {
-    await identityProvider.signOut();
-    clearAgentTransport(sessionStorage);
-  },
-};
-const sdk = createClient();
-const client = createRestWebClient(sdk, {
-  storage: sessionStorage,
-  recovery: { enabled: replicaRecoveryEnabled, delay: readRetryDelay },
-  currentUser: currentTransportUser(identityProvider),
-});
-const profiles = createProfileViewsClient(sdk);
-const creation = createCreationClient(sdk);
-const operator = createOperatorClient(sdk);
-const publisher = createTriggerPublisherClient(sdk);
-const publicClient = createPublicClient(sdk);
+if (prepareHistoryDocument()) {
+  const identityProvider = createNyxidAuthProvider();
+  const authProvider = {
+    ...identityProvider,
+    async signOut() {
+      await identityProvider.signOut();
+      clearAgentTransport(sessionStorage);
+    },
+  };
+  const sdk = createClient();
+  const client = createRestWebClient(sdk, {
+    storage: sessionStorage,
+    recovery: { enabled: replicaRecoveryEnabled, delay: readRetryDelay },
+    currentUser: currentTransportUser(identityProvider),
+  });
+  const profiles = createProfileViewsClient(sdk);
+  const creation = createCreationClient(sdk);
+  const operator = createOperatorClient(sdk);
+  const publisher = createTriggerPublisherClient(sdk);
+  const publicClient = createPublicClient(sdk);
 
-createRoot(container, {
-  onUncaughtError(error) {
-    window.cmaReportFatal?.('react_error');
-    console.error(error);
-  },
-  onCaughtError(error) {
-    window.cmaReportFatal?.('react_error');
-    console.error(error);
-  },
-}).render(
-  <StrictMode>
-    <AuthContextProvider provider={authProvider}>
-      <CmaClientProvider
-        client={client}
-        profiles={profiles}
-        creation={creation}
-        operator={operator}
-        publisher={publisher}
-        publicClient={publicClient}
-      >
-        <App />
-      </CmaClientProvider>
-    </AuthContextProvider>
-  </StrictMode>,
-);
+  createRoot(container, {
+    onUncaughtError(error) {
+      window.cmaReportFatal?.('react_error');
+      console.error(error);
+    },
+    onCaughtError(error) {
+      window.cmaReportFatal?.('react_error');
+      console.error(error);
+    },
+  }).render(
+    <StrictMode>
+      <AuthContextProvider provider={authProvider}>
+        <CmaClientProvider
+          client={client}
+          profiles={profiles}
+          creation={creation}
+          operator={operator}
+          publisher={publisher}
+          publicClient={publicClient}
+        >
+          <HomeDecorationProvider>
+            <ImageManagerRetirement>
+              <App />
+            </ImageManagerRetirement>
+          </HomeDecorationProvider>
+        </CmaClientProvider>
+      </AuthContextProvider>
+    </StrictMode>,
+  );
+}

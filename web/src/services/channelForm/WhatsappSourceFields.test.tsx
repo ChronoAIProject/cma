@@ -108,7 +108,7 @@ it('drops stale native credentials after switching producer type and excludes th
   ).toEqual({ agent_key: 'provider-private' });
   expect(
     channelRequest(
-      { sources: [defaultSource('custom')] },
+      { sources: [{ ...defaultSource('custom'), auth: { type: 'nyxid_key', key_hashes: [] } }] },
       { agent_key: 'provider-private', whatsapp: bundle },
       undefined,
       channel.record_id,
@@ -117,7 +117,7 @@ it('drops stale native credentials after switching producer type and excludes th
   expect(
     JSON.stringify(
       channelRequest(
-        { sources: [defaultSource('custom')] },
+        { sources: [{ ...defaultSource('custom'), auth: { type: 'nyxid_key', key_hashes: [] } }] },
         { agent_key: 'provider-private', whatsapp: bundle },
         undefined,
         channel.record_id,

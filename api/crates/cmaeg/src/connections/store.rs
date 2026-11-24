@@ -1,6 +1,6 @@
 //! Durable CAS records; no gateway replica is an authority for pending setup.
 use super::{model::*, Error};
-use crate::records::{RecordClient, RecordError};
+use crate::records::{ReadFailure, RecordClient, RecordError};
 use cmaeg_core::{
     ids::RecordId,
     seal::{open_connection, seal_connection, MasterKeyRing},
@@ -22,11 +22,34 @@ impl Store {
     }
     pub async fn load(&self, id: &str) -> Result<(Stored, u64), Error> {
         let url = self.records.record_url(id).map_err(|_| Error::NotFound)?;
-        let value = self.records.get(url.as_str()).await.map_err(map_error)?;
+        let value = self
+            .records
+            .get_observed(url.as_str())
+            .await
+            .map_err(|failure| self.read_error("get", failure))?;
         let bytes = open_connection(&self.keys, id, &value.blob)
-            .map_err(|_| Error::Unavailable)?
+            .map_err(|_| {
+                self.read_failed("decrypt", "envelope", None);
+                Error::Unavailable
+            })?
             .payload;
-        let record = serde_json::from_slice(&bytes).map_err(|_| Error::Unavailable)?;
+        let value_json: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| {
+            self.read_failed("decode", "record_decode", None);
+            Error::Unavailable
+        })?;
+        // Other stores (Discord inbox, reaction and fence state) keep records in
+        // this kind under the same owner. A JSON object without this store's tag
+        // is theirs, not a corrupt connection; an unknown tag still fails closed.
+        if value_json
+            .as_object()
+            .is_some_and(|object| !object.contains_key("record_kind"))
+        {
+            return Err(Error::NotFound);
+        }
+        let record = serde_json::from_value(value_json).map_err(|_| {
+            self.read_failed("decode", "record_decode", None);
+            Error::Unavailable
+        })?;
         Ok((record, value.version))
     }
     pub async fn connection(&self, id: &str) -> Result<(Connection, u64), Error> {
@@ -73,9 +96,27 @@ impl Store {
         after: Option<&str>,
     ) -> Result<Vec<crate::records::RecordHead>, Error> {
         self.records
-            .list(owner, after, 100)
+            .list_observed(owner, after, 100)
             .await
-            .map_err(map_error)
+            .map_err(|failure| self.read_error("page", failure))
+    }
+    fn read_error(&self, stage: &'static str, failure: ReadFailure) -> Error {
+        self.read_failed(stage, failure.class.as_str(), failure.class.http_status());
+        map_error(failure.error)
+    }
+    fn read_failed(
+        &self,
+        stage: &'static str,
+        error_class: &'static str,
+        http_status: Option<u16>,
+    ) {
+        tracing::warn!(
+            stage,
+            backend = self.records.read_backend().as_str(),
+            error_class,
+            http_status,
+            "connection record read failed"
+        );
     }
     pub async fn claim_bot(
         &self,

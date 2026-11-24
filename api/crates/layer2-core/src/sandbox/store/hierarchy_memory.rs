@@ -119,31 +119,37 @@ impl HierarchyReadStore for InMemorySandboxStore {
         let Some(workspace) = state.workspaces.get(id).cloned() else {
             return Ok(None);
         };
+        let (task_statuses, task_turns) = state
+            .agents
+            .values()
+            .filter(|agent| &agent.workspace_id == id)
+            .map(|agent| {
+                let entries = state
+                    .agent_logs
+                    .get(&agent.id)
+                    .map_or(&[][..], Vec::as_slice);
+                let pending_work = state.agent_commands.values().any(|command| {
+                    command.receipt.envelope.agent_id == agent.id && !command.status.is_terminal()
+                });
+                let (status, turn) =
+                    crate::sandbox::AgentTaskStatus::observe_log(agent, entries, pending_work);
+                ((agent.id.clone(), status), (agent.id.clone(), turn))
+            })
+            .unzip();
         Ok(Some(WorkspaceHierarchyRecord {
+            task_statuses,
+            task_turns,
+            task_activity_at: state.agents.values()
+                .filter(|agent| &agent.workspace_id == id)
+                .filter_map(|agent| {
+                    let entries = state.agent_logs.get(&agent.id).map_or(&[][..], Vec::as_slice);
+                    crate::sandbox::task_activity::from_log(agent, entries).map(|at| (agent.id.clone(), at))
+                }).collect(),
             task_started_at: state.agents.values().filter(|agent| &agent.workspace_id == id).filter_map(|agent| {
                 let turn = agent.conversation.active_turn?;
                 let at = state.agent_logs.get(&agent.id)?.iter().find(|entry| matches!(entry.kind, crate::sandbox::AgentLogKind::TurnStarted { turn_sequence, .. } if turn_sequence == turn))?.appended_at.clone();
                 Some((agent.id.clone(), at))
             }).collect(),
-            task_statuses: state
-                .agents
-                .values()
-                .filter(|agent| &agent.workspace_id == id)
-                .map(|agent| {
-                    let entries = state
-                        .agent_logs
-                        .get(&agent.id)
-                        .map_or(&[][..], Vec::as_slice);
-                    let pending_work = state.agent_commands.values().any(|command| {
-                        command.receipt.envelope.agent_id == agent.id
-                            && !command.status.is_terminal()
-                    });
-                    (
-                        agent.id.clone(),
-                        crate::sandbox::AgentTaskStatus::from_log(agent, entries, pending_work),
-                    )
-                })
-                .collect(),
             workspace,
             worktrees: state
                 .worktrees

@@ -93,7 +93,7 @@ async fn parent_cas_race_aborts_scoped_publication_then_public_root_refuses_stal
         .save_sandbox(sandbox.revision, winner.clone())
         .await
         .unwrap();
-    let attempted = transaction::apply_scoped(&store, &loss(&sandbox), scope).await;
+    let attempted = transaction::apply_scoped(&store, &loss(&sandbox), None, scope).await;
     assert!(matches!(attempted, Err(ApplyError::Driver(error)) if is_transient(&error)));
     session.abort_transaction().await.unwrap();
     unchanged(&store, &winner, &agent, &original).await;

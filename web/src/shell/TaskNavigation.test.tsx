@@ -23,7 +23,6 @@ const permissions = {
 
 const taskNavigationProps = {
   scope: '',
-  choices: { options: [{ value: '', label: 'Personal' }], selected: undefined, unavailable: false },
   route: { kind: 'agent_manager' } as const,
   viewerId: 'task-navigation-viewer',
   permissions,
@@ -67,7 +66,7 @@ it('distinguishes an unstarted ready task from a successfully completed ready ta
     within(screen.getByRole('treeitem', { name: /New research/ })).getByText('Ready to start'),
   ).toBeVisible();
   expect(
-    within(screen.getByRole('treeitem', { name: /Finished research/ })).getByText('Completed'),
+    within(screen.getByRole('treeitem', { name: /Finished research/ })).getByText('Turn ended'),
   ).toBeVisible();
 });
 
@@ -95,12 +94,11 @@ it('opens Sandbox management through Tasks filters and returns to the selected f
   const task = screen.getByRole('treeitem', { name: /Agent one/ });
   task.focus();
   await user.keyboard('{Enter}');
-  await expandNavigationFilters(user);
-  await user.click(screen.getByRole('button', { name: 'Manage environments' }));
-  expect(screen.getByRole('button', { name: 'Back to tasks' })).toHaveFocus();
+  await user.click(screen.getByRole('button', { name: 'Environments' }));
+  expect(screen.getByRole('button', { name: 'Environments' })).toHaveFocus();
   await user.click(screen.getByRole('link', { name: /Atlas/ }));
   expect(screen.getByRole('treeitem', { name: /^Atlas/ })).toHaveAttribute('aria-selected', 'true');
-  await user.click(screen.getByRole('button', { name: 'Back to tasks' }));
+  await user.click(screen.getByRole('button', { name: 'Tasks' }));
   expect(screen.getByRole('treeitem', { name: /Agent one/ })).toHaveAttribute(
     'aria-selected',
     'true',
@@ -159,6 +157,8 @@ it('restores shared task scope, focus and scroll after browsing a different envi
             },
           ],
         });
+      if (new URL(String(input)).pathname === '/api/v1/organizations')
+        return Response.json({ items: [] });
       return Response.json({ code: 'not_found' }, { status: 404 });
     },
   });
@@ -166,7 +166,7 @@ it('restores shared task scope, focus and scroll after browsing a different envi
     const [scope, onScope] = useState('shared');
     const [route, onNavigate] = useState<AppRoute>({ kind: 'agent', agentId: 'agt_shared' });
     return (
-      <div className="sidebar__navigation" data-testid="navigation-scroll">
+      <div className="sidebar__navigation">
         <ManagerNavigation
           {...taskNavigationProps}
           scope={scope}
@@ -174,14 +174,6 @@ it('restores shared task scope, focus and scroll after browsing a different envi
           route={route}
           onNavigate={onNavigate}
           client={client}
-          choices={{
-            options: [
-              { value: '', label: 'Personal' },
-              { value: 'shared', label: 'Shared' },
-            ],
-            selected: undefined,
-            unavailable: false,
-          }}
           navigation={{ status: 'ready', items: navigationFixture(), refresh: vi.fn() }}
         />
       </div>
@@ -190,15 +182,14 @@ it('restores shared task scope, focus and scroll after browsing a different envi
   render(<Navigation />);
   const row = await screen.findByRole('treeitem', { name: /^Shared research/ });
   row.focus();
-  const scrollport = screen.getByTestId('navigation-scroll');
+  const scrollport = row.closest<HTMLElement>('.manager-navigation__list')!;
   scrollport.scrollTop = 240;
+  await user.click(screen.getByRole('button', { name: 'Environments' }));
   await expandNavigationFilters(user);
-  await user.click(screen.getByRole('button', { name: 'Manage environments' }));
-  await expandNavigationFilters(user);
-  await chooseOption(user, 'Navigation scope', 'Personal');
+  expect(screen.getByRole('button', { name: 'Navigation scope' })).toHaveTextContent('Personal');
   await user.click(screen.getByRole('link', { name: /Atlas/ }));
   scrollport.scrollTop = 0;
-  await user.click(screen.getByRole('button', { name: 'Back to tasks' }));
+  await user.click(screen.getByRole('button', { name: 'Tasks' }));
   expect(screen.getByRole('button', { name: 'Navigation scope' })).toHaveTextContent('Shared');
   expect(await screen.findByRole('treeitem', { name: /^Shared research/ })).toHaveFocus();
   expect(screen.getByRole('treeitem', { name: /^Shared research/ })).toHaveAttribute(
@@ -243,7 +234,7 @@ it('filters by completed task outcome without confusing ready or failed turns', 
     />,
   );
   await expandNavigationFilters(user);
-  await chooseOption(user, 'Agent status filter', 'Completed');
+  await chooseOption(user, 'Agent status filter', 'Turn ended');
   expect(screen.getByRole('treeitem', { name: /^Finished task/ })).toBeVisible();
   expect(screen.queryByRole('treeitem', { name: /^New task/ })).not.toBeInTheDocument();
   await chooseOption(user, 'Agent status filter', 'Failed');

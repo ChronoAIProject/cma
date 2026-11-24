@@ -138,3 +138,73 @@ async fn identity_phase_is_scoped_to_resolution_and_keeps_request_labels() {
             .all(|(_, phase)| *phase == "identity"));
     }
 }
+
+struct Standing(Result<bool, layer2_core::account_deletion::AccountDeletionError>);
+
+#[async_trait::async_trait]
+impl layer2_core::account_deletion::AccountStanding for Standing {
+    async fn erasing(
+        &self,
+        _: &SubjectId,
+    ) -> Result<bool, layer2_core::account_deletion::AccountDeletionError> {
+        self.0.clone()
+    }
+
+    async fn authoritative(
+        &self,
+        _: &SubjectId,
+    ) -> Result<bool, layer2_core::account_deletion::AccountDeletionError> {
+        panic!("browser request gating must use the standing snapshot")
+    }
+}
+
+#[tokio::test]
+async fn both_browser_readers_preserve_deletion_gating_and_fail_closed() {
+    use axum::{body::Body, http::Request, http::StatusCode, routing::get, Router};
+    use layer2_core::account_deletion::AccountDeletionError;
+    use tower::ServiceExt;
+
+    for joined in [false, true] {
+        for (standing, expected, code) in [
+            (Ok(false), StatusCode::NO_CONTENT, ""),
+            (
+                Ok(true),
+                StatusCode::FORBIDDEN,
+                "account_deletion_in_progress",
+            ),
+            (
+                Err(AccountDeletionError::Unavailable),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "store_failed",
+            ),
+        ] {
+            let store = Arc::new(MemoryAuthStore::default());
+            store.put_browser_login(login(false)).await.unwrap();
+            let auth = auth(store, joined).with_account_standing(Arc::new(Standing(standing)));
+            let app = Router::new()
+                .route("/probe", get(|| async { StatusCode::NO_CONTENT }))
+                .layer(axum::middleware::from_fn_with_state(
+                    auth,
+                    middleware::attach_subject,
+                ));
+            let response = app
+                .oneshot(
+                    Request::get("/probe")
+                        .header(header::COOKIE, "cma_session=fixture-cookie")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected, "joined={joined}");
+            if !code.is_empty() {
+                assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+                let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024)
+                    .await
+                    .unwrap();
+                let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(body["code"], code);
+            }
+        }
+    }
+}

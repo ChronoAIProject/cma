@@ -266,6 +266,11 @@ pub enum SandboxEventKind {
         receipt: Box<super::SandboxUnpublishedRecoveryQuiescence>,
     },
     Revived,
+    HomeRestored {
+        restore_id: String,
+        backup_id: String,
+        restored_to: String,
+    },
     Rotated {
         runtime_version: String,
     },

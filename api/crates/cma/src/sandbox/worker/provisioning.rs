@@ -34,7 +34,6 @@ impl SandboxWorker {
                 .await;
         }
         timing.completed("home_preparation");
-        let spec = sandbox_spec(&sandbox, &self.config.deployment_id);
         if sandbox.work.execution.is_none() {
             let expected = sandbox.revision;
             sandbox.work.execution = Some(self.config.execution);
@@ -63,11 +62,13 @@ impl SandboxWorker {
             };
             sandbox = next;
         }
+        let spec = sandbox_spec(&sandbox, &self.config.deployment_id)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
         let generation = sandbox.lifecycle.runtime_generation_high_water.max(1);
         let runtime_version = spec
             .runtime_image
             .clone()
-            .unwrap_or_else(|| self.config.runtime_version.clone());
+            .unwrap_or_else(|| self.config.released.snapshot().agent);
         let funded_until = match self
             .funding
             .ensure_coverage(&sandbox, SystemTime::now())
@@ -88,7 +89,7 @@ impl SandboxWorker {
                 timing.completed("runtime_provision");
                 let boot_id = match crate::sandbox::runtime_attachment::provisioned_runtime_status(
                     self.dependencies.adapter.as_ref(),
-                    &sandbox_spec(&sandbox, &self.config.deployment_id),
+                    &request.spec,
                     &handle,
                     generation,
                 )
@@ -349,6 +350,26 @@ impl SandboxWorker {
             .create_profile_workspace(&sandbox, &runtime, profile, index, &operation_id(&sandbox))
             .await
         {
+            if matches!(
+                sandbox.origin,
+                layer2_core::sandbox::SandboxOrigin::Lifecycle { .. }
+            ) && self
+                .dependencies
+                .store
+                .get_sandbox(&sandbox.id)
+                .await?
+                .is_some_and(|current| {
+                    current.owner == sandbox.owner
+                        && current.origin == sandbox.origin
+                        && matches!(
+                            current.status,
+                            SandboxStatus::Retiring | SandboxStatus::Retired
+                        )
+                })
+            {
+                // Workspace failure can atomically advance this same parent to retirement.
+                return Ok(());
+            }
             return self
                 .handle_failure(sandbox, dependency_failure(error), now)
                 .await;

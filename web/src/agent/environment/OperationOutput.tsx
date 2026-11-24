@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef } from 'react';
 import type { ToolCall } from '../model';
-import { durationLabel, toolDuration } from '../workspaceTime';
+import { toolTimingLabel } from '../toolTiming';
+import { toolOutcome, toolOutcomeWord } from '../toolStatus';
 import { useTerminalSelection, type AgentComputerObservation } from './observation';
 
 export const OperationOutput = memo(function OperationOutput({
@@ -71,16 +72,16 @@ export const OperationOutput = memo(function OperationOutput({
   }, [active, selected, selectedPresent]);
   if (!toolCalls) return active ? <p role="status">Loading recorded operations…</p> : null;
   const operations = toolCalls.filter((tool) => tool.kind === 'execute');
-  if (!operations.length) return <p>No command operations reported for this Agent.</p>;
+  if (!operations.length) return <p>No tool operations were recorded for this Agent.</p>;
   return (
     <div className="workspace-terminal" ref={root} hidden={!active} inert={!active || undefined}>
       <header className="workspace-terminal__header">
-        <strong>bash</strong>
+        <strong>Operations</strong>
         <span>{workingDirectory}</span>
-        {activeRunId ? <span>● Live</span> : null}
       </header>
+      <p>Recorded tool activity; this is not an interactive terminal.</p>
       {operations.map((tool) => {
-        const duration = toolDuration(tool.startedAt, tool.finishedAt);
+        const duration = toolTimingLabel(tool);
         return (
           <article
             key={tool.id}
@@ -90,23 +91,29 @@ export const OperationOutput = memo(function OperationOutput({
             aria-label={`Operation: ${tool.title}`}
           >
             <header>
-              <code aria-label="Recorded command">$ {tool.detail ?? tool.title}</code>
-              {duration === undefined ? null : <time>{durationLabel(duration)}</time>}
+              <code aria-label="Operation name">{tool.title}</code>
+              <span>{toolOutcomeWord(toolOutcome(tool, activeRunId), tool.status)}</span>
+              {duration === undefined ? null : (
+                <span title="Recorded tool interval">{duration}</span>
+              )}
             </header>
+            {tool.detail ? (
+              <details>
+                <summary>Recorded details</summary>
+                <pre aria-label="Recorded details">{tool.detail}</pre>
+              </details>
+            ) : null}
             {tool.output ? (
               <>
                 <pre aria-label="Recorded output">{tool.output.text}</pre>
                 {tool.output.truncated ? <p>Output truncated</p> : null}
               </>
             ) : (
-              <p>Output not reported</p>
+              <p>No output was recorded for this operation.</p>
             )}
           </article>
         );
       })}
-      <p className="workspace-terminal__end">
-        {activeRunId ? <span aria-label="Terminal cursor">▌</span> : '— agent paused —'}
-      </p>
     </div>
   );
 });

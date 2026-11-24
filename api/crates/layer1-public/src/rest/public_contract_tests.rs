@@ -8,6 +8,7 @@ use layer2_core::Authorization;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod account_deletion_cases;
 mod admission_control_cases;
 mod agent_access_cases;
 mod agent_cases;
@@ -38,6 +39,7 @@ mod gateway_cases;
 mod gateway_interaction_cases;
 mod inventory;
 mod inventory_cases;
+mod legal_consent_cases;
 mod lifecycle_cases;
 mod lifecycle_result_contract;
 mod message_feedback_cases;
@@ -48,6 +50,7 @@ mod provider_association_cases;
 mod queued_cancellation_cases;
 mod queued_input_cases;
 mod replay;
+mod resource_revocation_cases;
 mod response_control_cases;
 mod response_headers;
 mod responses_v2_cases;
@@ -174,10 +177,22 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = super::privacy_export::tests::contract_scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = resource_revocation_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = platform_spend_cases::scenario(name) {
         return scenario;
     }
     if let Some(scenario) = admission_control_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = account_deletion_cases::scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = legal_consent_cases::scenario(name) {
         return scenario;
     }
     if let Some(scenario) = capacity_recovery_cases::scenario(name).await {

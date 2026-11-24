@@ -4,6 +4,7 @@ pub use authority::{BotDelegation, BotOwnerAuthority, BotOwnership};
 mod control;
 mod creation;
 pub use control::*;
+mod effects;
 mod execution;
 mod model;
 mod profiles;
@@ -23,12 +24,16 @@ pub use store::*;
 pub enum BotError {
     #[error("bot management is forbidden")]
     Forbidden,
+    #[error("account deletion is in progress")]
+    AccountDeletionInProgress,
     #[error("bot not found")]
     NotFound,
     #[error("bot operation conflicts with current work")]
     Conflict,
     #[error("{0}")]
     Invalid(String),
+    #[error("new custom image selections are unavailable")]
+    ImageSelectionUnsupported,
     #[error("the selected services need to be connected before creating this consumer")]
     ConnectionRequired {
         services: Vec<String>,

@@ -61,6 +61,7 @@ fn source(
         topic_creation: false,
         message_events: false,
         channel_posts: false,
+        member_join_chat_ids: None,
         bot_id: material.bot_id.clone(),
         bot_username: Some(material.username.clone()),
         admission: admission.ok_or_else(|| invalid("connection_admission is required"))?,
@@ -94,6 +95,9 @@ pub async fn expand_create(
         .is_some_and(|current| current != record_id.as_str())
     {
         return Err(invalid("connection is already bound to another channel"));
+    }
+    if connection.channel_record.is_none() && !state.managed_telegram_setup_enabled {
+        return Err(invalid("managed_telegram_setup_disabled"));
     }
     let material = connection.material.as_ref().ok_or_else(failed)?;
     request.sources = vec![source(material, request.connection_admission.clone())?];
@@ -172,47 +176,57 @@ fn updated_source(
     if bot_id != &material.bot_id {
         return Err(invalid("managed connection bot identity changed"));
     }
-    let (topic_lifecycle, topic_creation, message_events, channel_posts, admission) =
-        match request.sources.as_slice() {
-            [] => (
+    let (
+        topic_lifecycle,
+        topic_creation,
+        message_events,
+        channel_posts,
+        member_join_chat_ids,
+        admission,
+    ) = match request.sources.as_slice() {
+        [] => (
+            *topic_lifecycle,
+            *topic_creation,
+            *message_events,
+            *channel_posts,
+            None,
+            admission.clone(),
+        ),
+        [SourceRequest::Telegram {
+            bot_id,
+            bot_username,
+            topic_lifecycle,
+            topic_creation,
+            message_events,
+            channel_posts,
+            member_join_chat_ids,
+            admission,
+        }] if bot_id == &material.bot_id
+            && bot_username
+                .as_ref()
+                .is_none_or(|name| name == &material.username) =>
+        {
+            (
                 *topic_lifecycle,
                 *topic_creation,
                 *message_events,
                 *channel_posts,
+                member_join_chat_ids.clone(),
                 admission.clone(),
-            ),
-            [SourceRequest::Telegram {
-                bot_id,
-                bot_username,
-                topic_lifecycle,
-                topic_creation,
-                message_events,
-                channel_posts,
-                admission,
-            }] if bot_id == &material.bot_id
-                && bot_username
-                    .as_ref()
-                    .is_none_or(|name| name == &material.username) =>
-            {
-                (
-                    *topic_lifecycle,
-                    *topic_creation,
-                    *message_events,
-                    *channel_posts,
-                    admission.clone(),
-                )
-            }
-            _ => {
-                return Err(invalid(
-                    "managed connection accepts only its original Telegram source",
-                ))
-            }
-        };
+            )
+        }
+        _ => {
+            return Err(invalid(
+                "managed connection accepts only its original Telegram source",
+            ))
+        }
+    };
     Ok(SourceRequest::Telegram {
         topic_lifecycle,
         topic_creation,
         message_events,
         channel_posts,
+        member_join_chat_ids,
         bot_id: material.bot_id.clone(),
         bot_username: Some(material.username.clone()),
         admission: request.connection_admission.clone().unwrap_or(admission),

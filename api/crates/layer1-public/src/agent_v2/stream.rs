@@ -47,7 +47,7 @@ pub(super) async fn read(
 }
 
 async fn open(
-    state: AgentV2State,
+    mut state: AgentV2State,
     auth: AuthenticatedResourceCaller,
     id: AgentId,
     raw: Option<String>,
@@ -55,7 +55,9 @@ async fn open(
 ) -> Result<Following, Error> {
     let (after, follow) = parse::tail(raw, &headers)?;
     let message_bindings = projection::message_bindings(&headers);
-    let authorization = snapshot::authorize(&state, &auth, &id).await?;
+    let mut authorization = snapshot::authorize(&state, &auth, &id).await?;
+    let observation = state.reads.observe_event_stream(&mut authorization)?;
+    state.event_wake |= observation.is_some();
     // Subscription precedes the initial head observation, including its IO.
     let watching = if follow {
         match &state.updates {
@@ -84,6 +86,7 @@ async fn open(
     let mut open = Following {
         state,
         authorization,
+        observation,
         through: (!follow).then_some(header.head),
         header,
         identity,
@@ -120,6 +123,8 @@ pub(super) struct Frame {
 pub(super) struct Following {
     pub state: AgentV2State,
     pub(super) authorization: AgentEventStreamAuthorization,
+    pub(super) observation:
+        Option<layer2_core::sandbox::agent_observation::AgentObservationSubscription>,
     pub header: AgentEventStreamHeader,
     pub identity: String,
     pub after: u64,
@@ -234,7 +239,17 @@ impl Following {
             return false;
         }
         if frame.fragment.is_some() {
-            if !self.live_batch_needs_validation {
+            if self
+                .state
+                .reads
+                .validate_event_stream_standing(&self.authorization)
+                .await
+                .is_err()
+            {
+                self.release_failed = true;
+                return false;
+            }
+            if !self.live_batch_needs_validation && self.observation.is_none() {
                 return true;
             }
             self.live_batch_needs_validation = false;

@@ -55,7 +55,7 @@ def main():
         if sys.argv[1:] == ["cleanup"]:
             return cleanup(os.environ, masker)
         return False
-    return run_private(operation, None)
+    return run_private(operation, None, subject="private-checkout")
 
 
 if __name__ == "__main__":

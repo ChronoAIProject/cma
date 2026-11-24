@@ -9,6 +9,16 @@ use crate::store::sandbox_mongo::record_bson;
 
 pub(in crate::store) const FIELD: &str = "agent_message_checkpoint";
 
+pub(in crate::store) fn set_field(
+    fields: &mut Document,
+    value: &AgentMessageCheckpoint,
+) -> Result<(), SandboxStoreError> {
+    value.validate()?;
+    let encoded = record_bson(value).map_err(SandboxStoreError::Corrupt)?;
+    fields.insert(FIELD, encoded);
+    Ok(())
+}
+
 pub(in super::super) fn carry_fields(
     row: &Document,
     current: &Agent,
@@ -80,6 +90,7 @@ pub(super) async fn carry(
 
 pub(in crate::store) enum Authority {
     Live,
+    StaleTurn,
     Reopen(Box<layer2_core::sandbox::store::AgentReopenGuard>),
     Capacity(Box<layer2_core::sandbox::store::AgentConversationCapacitySettlement>),
 }
@@ -179,7 +190,26 @@ async fn commit_inner(
         if let Some(mutation) = &mutation {
             admission::require_current(mutation, &mut session).await?;
         }
-        store.fence_agent_effect(&current.id, &mut session).await?;
+        if let Err(error) = store
+            .fence_agent_effect_transaction(&current.id, &mut session)
+            .await
+        {
+            let _ = session.abort_transaction().await;
+            match error {
+                crate::store::agent_ownership::FenceError::Domain(error) => return Err(error),
+                crate::store::agent_ownership::FenceError::Driver(error)
+                    if is_transient(&error) =>
+                {
+                    last_transient = Some("checkpoint ownership fence aborted".into());
+                    continue;
+                }
+                crate::store::agent_ownership::FenceError::Driver(_) => {
+                    return Err(SandboxStoreError::Unavailable(
+                        "checkpoint ownership fence unavailable".into(),
+                    ));
+                }
+            }
+        }
         let published = publication.is_some();
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
@@ -235,10 +265,11 @@ async fn commit_inner(
             }
         }
     }
-    Err(SandboxStoreError::Unavailable(format!(
-        "agent message transaction exhausted its retry budget: {}",
-        last_transient.unwrap_or_else(|| "no driver result".into())
-    )))
+    // Every attempt here failed before commit or was definitively aborted.
+    // Let the recorder refresh its snapshot; Unavailable would retain an
+    // ambiguous receipt that can never follow a later checkpoint advance.
+    // Unknown commit outcomes return through reconciliation above instead.
+    Err(contention::exhausted(last_transient))
 }
 
 pub(in crate::store) fn replay(

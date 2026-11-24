@@ -7,6 +7,7 @@ use super::{
     store::Store,
 };
 use crate::{http::ManagementState, ingress::routing_store::PlanStore, Config};
+use std::net::SocketAddr;
 use tokio::task::JoinHandle;
 
 pub(crate) struct Runtime {
@@ -30,6 +31,7 @@ impl Runtime {
         config: &Config,
         state: &ManagementState,
         control: Control,
+        local_address: Option<SocketAddr>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         if !config.routing.recovery_enabled || !config.routing.admission_enabled {
             return Err("replica mode requires durable routed admission and recovery".into());
@@ -45,7 +47,7 @@ impl Runtime {
             crate::records::mongo::verify_replicas(&database),
         )
         .await??;
-        let address = config::direct_address()?;
+        let address = config::direct_address(local_address)?;
         if reqwest::Url::parse(&address)?.port() != Some(config.listen.port()) {
             return Err("replica advertised port must match gateway listener".into());
         }

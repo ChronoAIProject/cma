@@ -45,11 +45,10 @@ use super::live_agents::{
     LiveAgentRegistryError, LiveAgentTarget,
 };
 
-const DEPLOYMENT_ID: &str = "lifecycle-test";
-
 pub(crate) mod context_overlap_fixture;
 mod fixture_store;
 use fixture_store::FixtureStore;
+mod active_recovery_tests;
 mod cleanup_contention_tests;
 mod cleanup_scheduling_tests;
 mod connection_contention_tests;
@@ -61,6 +60,7 @@ mod ledger_hold_tests;
 mod lifecycle_connection_tests;
 mod lifecycle_failure_tests;
 mod open_publication_recovery_tests;
+mod ownership_pacing_tests;
 mod prepared_pair_tests;
 mod retired_runtime_tests;
 mod runtime_attachment_tests;
@@ -69,6 +69,7 @@ mod settings_replay_tests;
 mod sign_in_tests;
 mod skill_home;
 mod skill_material_tests;
+mod skill_publication_contention_tests;
 mod staged_connection_tests;
 mod startup_failure_tests;
 mod startup_hold_tests;
@@ -497,4 +498,4 @@ mod fixture_models;
 mod registry_cases;
 mod skill_resolution_cases;
 mod startup_cases;
-use fixture_models::{agent_profile, sandbox, sandbox_spec, workspace};
+use fixture_models::{agent_profile, sandbox, sandbox_spec, workspace, DEPLOYMENT_ID};

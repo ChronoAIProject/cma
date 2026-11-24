@@ -1132,6 +1132,32 @@
       "captures": {
         "usage_as_of": "/as_of"
       }
+    },
+    {
+      "id": "usage-admin-summary-unknown-query",
+      "operation": "GET /api/v1/admin/usage",
+      "scenario": "usage_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage?unknown=private-input",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Use a valid cursor and a limit from 1 through 200.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
     }
   ]
 }

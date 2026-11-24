@@ -119,6 +119,7 @@ pub(super) async fn stalled(
             sandbox_id: active.id.clone(),
             expected_revision: active.revision,
             expected_runtime: active.runtime.clone(),
+            native_retirement_finality: false,
             retain_runtime: true,
             interruption_cause: Default::default(),
             observed_at: stamp.clone(),
@@ -141,7 +142,8 @@ pub(super) async fn stalled(
     assert_eq!(snapshot.runtime_generation().unwrap(), 1);
     assert_eq!(snapshot.sandbox.lifecycle.runtime_generation_high_water, 2);
     if let Some(generation) = provider_generation {
-        let spec = crate::sandbox::runtime_mapping::sandbox_spec(&snapshot.sandbox, "test");
+        let spec =
+            crate::sandbox::runtime_mapping::sandbox_spec(&snapshot.sandbox, "test").unwrap();
         let request = CodexSandboxSpec::default()
             .deployment
             .render_runtime(&spec, generation)

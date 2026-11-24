@@ -1,9 +1,11 @@
+import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { unavailableClient, type CmaWebClient } from '../api/client';
 import { taskExperience } from '../test/taskExperience';
 import { TaskHome } from './TaskHome';
+import { taskDraftStorageKey } from './taskDraft';
 
 const preparing = 'Preparing a cloud computer for your Agent…';
 afterEach(() => {
@@ -18,6 +20,7 @@ function draw(
   const create = vi.fn().mockRejectedValue(new Error('Receipt uncertain'));
   const client = {
     ...unavailableClient,
+    readSandboxCapacity: async () => AVAILABLE_CAPACITY,
     taskExperience: taskExperience('owner'),
     readTaskCreationSupport: async () => true,
     readTaskRepositorySupport: async () => true,
@@ -61,7 +64,7 @@ it('validates, normalizes, edits and removes a repository while preserving the t
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   expect(create).not.toHaveBeenCalled();
   expect(screen.getByText('feature/demo')).toBeVisible();
-  const key = `cma:task-draft:${JSON.stringify([location.origin, 'owner', null, null])}`;
+  const key = taskDraftStorageKey('owner');
   expect(JSON.parse(sessionStorage.getItem(key)!)).toMatchObject({
     repositoryUrl: 'https://github.com/owner/repo',
     repositoryRef: 'feature/demo',
@@ -105,39 +108,6 @@ it.each([false, true])(
   },
 );
 
-it.each([
-  [
-    'Research a topic',
-    'Research [topic] and summarize the key findings, with links to sources.',
-    '[topic]',
-  ],
-  [
-    'Analyze a spreadsheet',
-    'Analyze the spreadsheet at [link] and point out trends, outliers and what to do next.',
-    '[link]',
-  ],
-  [
-    'Write a document',
-    'Write a [type of document] about [subject] for [audience].',
-    '[type of document]',
-  ],
-  [
-    'Build a website',
-    'Build a one-page website for [project] and share a preview link.',
-    '[project]',
-  ],
-  ['Write code', 'Write a [language] script that [does what].', '[language]'],
-])('inserts %s and selects its first placeholder', async (name, prompt, placeholder) => {
-  const { create } = draw();
-  const input = screen.getByLabelText<HTMLTextAreaElement>('Your task');
-  fireEvent.change(input, { target: { value: 'Old unsent draft' } });
-  fireEvent.click(screen.getByRole('button', { name }));
-  await waitFor(() => expect(input).toHaveFocus());
-  expect(input.value).toBe(prompt);
-  expect(input.value.slice(input.selectionStart, input.selectionEnd)).toBe(placeholder);
-  expect(create).not.toHaveBeenCalled();
-});
-
 it.each(['metaKey', 'ctrlKey'])(
   'submits once with %s+Enter, ignoring composing and empty input',
   async (modifier) => {
@@ -162,7 +132,7 @@ it.each(['metaKey', 'ctrlKey'])(
     fireEvent.keyDown(input, { key: 'Enter', [modifier]: true });
     fireEvent.keyDown(input, { key: 'Enter', [modifier]: true });
     fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-    expect(create).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
     expect(screen.getByText(preparing)).toHaveAttribute('role', 'status');
     expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
     await act(async () => reject(new Error('Receipt uncertain')));
@@ -273,13 +243,21 @@ it('does not call a pending repository check unsupported when submitting a retai
     }),
   );
   let resolve!: (value: boolean) => void;
+  let resolveCapacity!: (value: typeof AVAILABLE_CAPACITY) => void;
   const { create } = draw({
+    readSandboxCapacity: () =>
+      new Promise<typeof AVAILABLE_CAPACITY>((done) => {
+        resolveCapacity = done;
+      }),
     readTaskRepositorySupport: () =>
       new Promise<boolean>((done) => {
         resolve = done;
       }),
   });
   await ready();
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  await act(async () => resolveCapacity(AVAILABLE_CAPACITY));
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   expect(screen.getByRole('alert')).toHaveTextContent(
     'Checking repository support. Wait for the check to finish before starting.',

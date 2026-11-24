@@ -1,9 +1,17 @@
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import type { UsageMetricReport } from '@cma/client';
+import { useMetricFilterDraft } from './useMetricFilterDraft';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
 import { Picker } from '../../ui/Picker';
 import { ReportSelector } from './ReportSelector';
-import { metricQuery, statuses, type MetricsClient, type Range, type Selection } from './model';
+import {
+  metricQuery,
+  statusOptions,
+  type MetricsClient,
+  type Range,
+  type Selection,
+} from './model';
 
 function localInput(value: string): string {
   const date = new Date(value);
@@ -21,6 +29,8 @@ export function MetricFilters({
   active,
   onApply,
   agentPicker,
+  sandboxReport,
+  selectionUnavailable = false,
 }: {
   readonly api: MetricsClient;
   readonly selection: Selection;
@@ -28,12 +38,10 @@ export function MetricFilters({
   readonly active: boolean;
   readonly onApply: (value: Selection) => void;
   readonly agentPicker?: (draft: Selection, update: (value: Selection) => void) => ReactNode;
+  readonly sandboxReport?: UsageMetricReport;
+  readonly selectionUnavailable?: boolean;
 }) {
-  const [stored, setStored] = useState({ selection, draft: selection });
-  const [error, setError] = useState('');
-  if (stored.selection !== selection) setStored({ selection, draft: selection });
-  const draft = stored.selection === selection ? stored.draft : selection;
-  const update = (value: Selection) => setStored({ selection, draft: value });
+  const { draft, error, changed, update, setError } = useMetricFilterDraft(selection);
   return (
     <form
       className="usage-metric-filters"
@@ -112,10 +120,7 @@ export function MetricFilters({
             placement="usage-filter-control"
             label="Usage Sandbox status"
             value={draft.status}
-            options={[
-              { value: '', label: 'Any status' },
-              ...statuses.map((value) => ({ value, label: value.replaceAll('_', ' ') })),
-            ]}
+            options={[{ value: '', label: 'Any status' }, ...statusOptions]}
             onChange={(status) => update({ ...draft, status })}
           />
         </label>
@@ -133,11 +138,10 @@ export function MetricFilters({
         </label>
       )}
       <label className="usage-filter-field">
-        <span>Search name or ID</span>
+        <span>Sandbox name or ID starts with</span>
         <Input
           placement="usage-filter-control"
           type="search"
-          aria-label="Usage Sandbox search"
           value={draft.search}
           maxLength={200}
           onChange={(event) => update({ ...draft, search: event.target.value })}
@@ -151,6 +155,8 @@ export function MetricFilters({
           active={active}
           kind="sandbox"
           value={draft.sandbox}
+          selectedReport={sandboxReport}
+          unavailable={selectionUnavailable && draft.sandbox === selection.sandbox}
           onChange={(sandbox) => update({ ...draft, sandbox, agent: '' })}
         />
       </div>
@@ -165,6 +171,11 @@ export function MetricFilters({
           Apply filters
         </Button>
       </div>
+      {changed && (
+        <p className="usage-filter-notice" role="status">
+          Changes apply when you select Apply filters.
+        </p>
+      )}
       {error && <p role="alert">{error}</p>}
     </form>
   );

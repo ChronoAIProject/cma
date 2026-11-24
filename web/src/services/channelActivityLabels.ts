@@ -24,7 +24,14 @@ export function activityLabel(event: ChannelActivityEvent): string {
 }
 
 export function activityActor(event: ChannelActivityEvent): string {
-  return event.actor.kind === 'unknown'
-    ? 'Actor not reported'
-    : (event.actor.display_name ?? event.actor.id);
+  switch (event.actor.kind) {
+    case 'human':
+      return 'Participant';
+    case 'bot':
+      return 'Bot';
+    case 'system':
+      return 'System';
+    default:
+      return 'Actor not reported';
+  }
 }

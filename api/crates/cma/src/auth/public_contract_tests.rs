@@ -78,6 +78,10 @@ impl Drop for Scenario {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    // A `_legal` suffix publishes terms over an otherwise identical scenario.
+    let (name, legal) = name
+        .strip_suffix("_legal")
+        .map_or((name, false), |base| (base, true));
     assert!(
         matches!(
             name,
@@ -198,6 +202,7 @@ async fn scenario(name: &str) -> Scenario {
                 verifier: SecretValue::new("contract-verifier".into()),
                 return_to: Some("/t/public-contract/placement-contract".into()),
                 actor_link_intent: None,
+                service_authorization: None,
                 silent: name == "auth_callback_silent_declined",
                 consent_requested: false,
                 custody_reserved: false,
@@ -255,7 +260,15 @@ async fn scenario(name: &str) -> Scenario {
         store,
         Some("https://identity.example.test".into()),
     )
-    .with_silent_sign_in(name != "auth_anonymous_disabled");
+    .with_silent_sign_in(name != "auth_anonymous_disabled")
+    .with_legal_terms(legal.then(|| {
+        layer2_core::legal_consent::LegalTerms::new(
+            "2026-11-30",
+            "https://legal.example.test/terms",
+            "https://legal.example.test/privacy",
+        )
+        .unwrap()
+    }));
     Arc::get_mut(&mut auth).unwrap().preference_clock =
         || SystemTime::UNIX_EPOCH + Duration::from_secs(1);
     if matches!(

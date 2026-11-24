@@ -4,6 +4,13 @@ use crate::sandbox::{AgentOrigin, SandboxEventKind, SandboxReviveCause, Workspac
 
 #[async_trait]
 impl AgentAdmissionStore for InMemorySandboxStore {
+    async fn replay_agent_admission(
+        &self,
+        admission: &AgentAdmission,
+    ) -> Result<Option<AgentAdmissionResult>, SandboxStoreError> {
+        replay_agent_admission(&self.lock(), admission)
+    }
+
     async fn admit_agent_with_trigger_initiator(
         &self,
         admission: AgentAdmission,
@@ -59,57 +66,8 @@ impl InMemorySandboxStore {
                 .ok_or(SandboxStoreError::Conflict)?;
             fence.require_agent(binding, conversation, &admission)?;
         }
-        let binding = state
-            .agent_reuse_bindings
-            .get(&(admission.owner.clone(), admission.creation_key.clone()))
-            .cloned();
-        if binding
-            .as_ref()
-            .is_some_and(|(id, _)| !state.agents.contains_key(id))
-        {
-            return Err(SandboxStoreError::Corrupt(
-                "Agent reuse binding target is missing".into(),
-            ));
-        }
-        if binding.as_ref().is_some_and(|(_, fingerprint)| {
-            admission.fingerprint().ok().as_ref() != Some(fingerprint)
-        }) {
-            return Err(SandboxStoreError::AgentCreationConflict);
-        }
-        if let Some(existing) = state
-            .agents
-            .values()
-            .find(|agent| {
-                agent.owner == admission.owner
-                    && (binding.as_ref().map_or_else(
-                        || agent.creation_key == admission.creation_key,
-                        |(id, _)| &agent.id == id,
-                    ))
-            })
-            .cloned()
-        {
-            let worktree = state
-                .worktrees
-                .get(&existing.worktree_id)
-                .cloned()
-                .ok_or_else(|| SandboxStoreError::Corrupt("agent worktree is missing".into()))?;
-            let initial_log = state
-                .agent_logs
-                .get(&existing.id)
-                .and_then(|entries| entries.first())
-                .cloned()
-                .ok_or_else(|| SandboxStoreError::Corrupt("agent initial log is missing".into()))?;
-            let creation = crate::sandbox::store::AgentCreation {
-                agent: existing,
-                worktree,
-                initial_log,
-            };
-            creation.validate_replay()?;
-            return if binding.is_some() || admission.matches(&creation)? {
-                Ok(AgentAdmissionResult::Existing(creation))
-            } else {
-                Err(SandboxStoreError::AgentCreationConflict)
-            };
+        if let Some(replay) = replay_agent_admission(&state, &admission)? {
+            return Ok(replay);
         }
 
         let workspace = state
@@ -188,7 +146,7 @@ impl InMemorySandboxStore {
                 let revival = next_sandbox
                     .record_creation_admission_with_managed_runtime(
                         SandboxReviveCause::TriggerLaunch,
-                        self.managed_runtime_version(),
+                        self.managed_runtime_version().as_deref(),
                         admission.event_at.clone(),
                     )
                     .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
@@ -293,7 +251,7 @@ impl InMemorySandboxStore {
             &mut next_sandbox,
             &workspace,
             cause,
-            self.managed_runtime_version(),
+            self.managed_runtime_version().as_deref(),
         )?;
         candidate
             .sandboxes
@@ -339,4 +297,64 @@ impl InMemorySandboxStore {
         *state = candidate;
         Ok(AgentAdmissionResult::Created(creation))
     }
+}
+
+fn replay_agent_admission(
+    state: &State,
+    admission: &AgentAdmission,
+) -> Result<Option<AgentAdmissionResult>, SandboxStoreError> {
+    let binding = state
+        .agent_reuse_bindings
+        .get(&(admission.owner.clone(), admission.creation_key.clone()))
+        .cloned();
+    if binding
+        .as_ref()
+        .is_some_and(|(id, _)| !state.agents.contains_key(id))
+    {
+        return Err(SandboxStoreError::Corrupt(
+            "Agent reuse binding target is missing".into(),
+        ));
+    }
+    if binding
+        .as_ref()
+        .is_some_and(|(_, fingerprint)| admission.fingerprint().ok().as_ref() != Some(fingerprint))
+    {
+        return Err(SandboxStoreError::AgentCreationConflict);
+    }
+    if let Some(existing) = state
+        .agents
+        .values()
+        .find(|agent| {
+            agent.owner == admission.owner
+                && (binding.as_ref().map_or_else(
+                    || agent.creation_key == admission.creation_key,
+                    |(id, _)| &agent.id == id,
+                ))
+        })
+        .cloned()
+    {
+        let worktree = state
+            .worktrees
+            .get(&existing.worktree_id)
+            .cloned()
+            .ok_or_else(|| SandboxStoreError::Corrupt("agent worktree is missing".into()))?;
+        let initial_log = state
+            .agent_logs
+            .get(&existing.id)
+            .and_then(|entries| entries.first())
+            .cloned()
+            .ok_or_else(|| SandboxStoreError::Corrupt("agent initial log is missing".into()))?;
+        let creation = crate::sandbox::store::AgentCreation {
+            agent: existing,
+            worktree,
+            initial_log,
+        };
+        creation.validate_replay()?;
+        return if binding.is_some() || admission.matches(&creation)? {
+            Ok(Some(AgentAdmissionResult::Existing(creation)))
+        } else {
+            Err(SandboxStoreError::AgentCreationConflict)
+        };
+    }
+    Ok(None)
 }

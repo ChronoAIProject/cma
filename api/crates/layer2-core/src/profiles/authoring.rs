@@ -91,6 +91,8 @@ pub trait ProfileAuthoringSource: Send + Sync {
 pub enum ProfileAuthoringError {
     #[error("profile authoring is forbidden")]
     Forbidden,
+    #[error("owner catalog access is forbidden")]
+    CatalogForbidden,
     #[error("profile authoring query is invalid")]
     InvalidQuery,
     #[error(transparent)]
@@ -133,6 +135,13 @@ impl ProfileAuthoringService {
             .map_err(|_| ProfileAuthoringError::Forbidden)
     }
 
+    pub fn authorize_catalog(&self, caller: &Caller) -> Result<(), ProfileAuthoringError> {
+        caller
+            .require(Capability::UseOwnSandboxes)
+            .or_else(|_| caller.require(Capability::ManageOwnProfiles))
+            .map_err(|_| ProfileAuthoringError::CatalogForbidden)
+    }
+
     pub fn bounds(&self, caller: &Caller) -> Result<ProfileCapacityBounds, ProfileAuthoringError> {
         self.authorize(caller)?;
         Ok(self.bounds)
@@ -143,7 +152,7 @@ impl ProfileAuthoringService {
         caller: &Caller,
         credential: Option<&AuthoringCredential>,
     ) -> Result<Vec<AuthoringServiceEntry>, ProfileAuthoringError> {
-        self.authorize(caller)?;
+        self.authorize_catalog(caller)?;
         let mut entries = self
             .source
             .services(&caller.subject, credential)
@@ -162,7 +171,7 @@ impl ProfileAuthoringService {
         query: SkillCatalogQuery,
         credential: Option<&AuthoringCredential>,
     ) -> Result<ProfilePage<AuthoringSkillEntry>, ProfileAuthoringError> {
-        self.authorize(caller)?;
+        self.authorize_catalog(caller)?;
         if !validation::query(&query) {
             return Err(ProfileAuthoringError::InvalidQuery);
         }
@@ -217,3 +226,7 @@ impl ProfileAuthoringService {
 #[cfg(test)]
 #[path = "authoring_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "catalog_authorization_tests.rs"]
+mod catalog_authorization_tests;

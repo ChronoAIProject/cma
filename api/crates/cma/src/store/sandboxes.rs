@@ -324,7 +324,8 @@ fn read_admission_replay_metadata(
             let name = decoded.map_err(|error| {
                 SandboxStoreError::Corrupt(format!("sandbox admission name is invalid: {error}"))
             })?;
-            SandboxAdmissionReplay::new(sandbox.clone(), name, fingerprint.clone()).map(Some)
+            SandboxAdmissionReplay::from_retained(sandbox.clone(), name, fingerprint.clone())
+                .map(Some)
         }
         _ => Err(SandboxStoreError::Corrupt(
             "sandbox admission metadata disagrees with its origin".into(),
@@ -344,5 +345,6 @@ pub(super) fn sandbox_replacement_fields(sandbox: &Sandbox) -> Result<Document, 
     Ok(fields)
 }
 
+mod capacity;
 mod failed_admission;
 mod implementation;

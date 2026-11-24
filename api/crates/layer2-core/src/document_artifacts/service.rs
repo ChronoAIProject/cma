@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub struct DocumentService {
+    pub(super) standing: Arc<dyn crate::account_deletion::AccountStanding>,
+    pub(super) directory: Option<Arc<crate::UserDirectory>>,
     pub(super) store: Arc<dyn DocumentStore>,
     pub(super) blobs: Arc<dyn DocumentBlobStore>,
     pub(super) revocation_reserve_enabled: bool,
@@ -30,6 +32,8 @@ impl DocumentService {
         Arc::new(Self {
             store,
             blobs,
+            standing: Arc::new(crate::account_deletion::AvailableAccounts),
+            directory: None,
             revocation_reserve_enabled,
             quota,
         })
@@ -50,6 +54,7 @@ impl DocumentService {
         guard: Option<&super::runtime::RuntimeGuard<'_>>,
     ) -> Result<DocumentView, DocumentError> {
         principal(caller)?;
+        self.require_account_available(&caller.subject).await?;
         operation_key(key)?;
         if !types::valid_title(&body.title)
             || !types::valid_markdown(&body.markdown)
@@ -69,12 +74,11 @@ impl DocumentService {
             return creation_replay(caller, existing, &fingerprint);
         }
         let now = crate::now_rfc3339();
-        let sha256 = digest(body.markdown.as_bytes());
-        let object_key = object_key(caller.subject.as_str(), &id, &sha256);
         if let Some(guard) = guard {
             guard.validate(None).await?;
         }
-        self.upload(caller.subject.as_str(), &id, body.markdown.as_bytes())
+        let source = self
+            .upload(caller.subject.as_str(), &id, body.markdown.as_bytes())
             .await?;
         let metadata = DocumentView {
             id,
@@ -82,8 +86,8 @@ impl DocumentService {
             title: body.title.clone(),
             revision: 1,
             source_revision: 1,
-            sha256,
-            size_bytes: body.markdown.len() as u64,
+            sha256: source.sha256.clone(),
+            size_bytes: source.bytes,
             created_at: now.clone(),
             updated_at: now.clone(),
             origin_agent_id: body.origin_agent_id,
@@ -101,7 +105,7 @@ impl DocumentService {
                     created_at: now,
                     author_subject: caller.subject.to_string(),
                 },
-                object_key,
+                object_key: source.object_key(),
             }],
             metadata: metadata.clone(),
             shares: vec![],
@@ -114,7 +118,7 @@ impl DocumentService {
             guard.validate(Some(&record)).await?;
         }
         self.validate_write(&record, false)?;
-        if self.store.insert(&record).await? {
+        if self.store.insert_source(&record, &source).await? {
             return Ok(metadata);
         }
         creation_replay(
@@ -141,6 +145,7 @@ impl DocumentService {
         query: &DocumentQuery,
     ) -> Result<DocumentPage<DocumentView>, DocumentError> {
         principal(caller)?;
+        self.require_account_available(&caller.subject).await?;
         query.validate()?;
         let mut records = self.store.list(caller.subject.as_str(), query).await?;
         if records.len() > query.limit() + 1 {
@@ -155,6 +160,14 @@ impl DocumentService {
         };
         let mut items = Vec::new();
         for row in records {
+            if self
+                .standing
+                .erasing(&crate::SubjectId::new(&row.metadata.owner_subject))
+                .await
+                .map_err(|_| DocumentError::Unavailable)?
+            {
+                continue;
+            }
             // Inventory metadata and grants come from one atomic majority read.
             // Source retrieval independently checks current policy before delivery.
             match row.view(caller.subject.as_str()) {
@@ -283,6 +296,7 @@ impl DocumentService {
         comment: bool,
     ) -> Result<StoredDocument, DocumentError> {
         principal(caller)?;
+        self.require_account_available(&caller.subject).await?;
         if !valid_id(id, "doc_") {
             return Err(DocumentError::NotFound);
         }
@@ -291,6 +305,8 @@ impl DocumentService {
         if comment && access == DocumentAccess::Read {
             return Err(DocumentError::NotFound);
         }
+        self.require_account_available(&crate::SubjectId::new(&record.metadata.owner_subject))
+            .await?;
         Ok(record)
     }
     pub(super) async fn owner(
@@ -309,7 +325,7 @@ impl DocumentService {
         owner: &str,
         id: &str,
         bytes: &[u8],
-    ) -> Result<(), DocumentError> {
+    ) -> Result<DocumentSourceReservation, DocumentError> {
         let source = DocumentSourceReservation::new(owner, id, bytes);
         source.validate()?;
         if let Some(quota) = &self.quota {
@@ -320,7 +336,8 @@ impl DocumentService {
             self.blobs.put(&source.object_key(), bytes.to_vec()),
         )
         .await
-        .map_err(|_| DocumentError::Unavailable)?
+        .map_err(|_| DocumentError::Unavailable)??;
+        Ok(source)
     }
 }
 pub(super) fn access(

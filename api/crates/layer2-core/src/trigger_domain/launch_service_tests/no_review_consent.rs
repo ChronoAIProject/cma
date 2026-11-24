@@ -83,6 +83,7 @@ async fn no_review_click_retains_exact_consent_through_connection_setup_and_rest
     let restarted = fixture.service_with_policy(LaunchPolicy {
         enabled: true,
         orchestration_paused: false,
+        visitor_launches_per_day: 5,
     });
     for connected in 0..3 {
         fixture.broker.set(requirements(connected));

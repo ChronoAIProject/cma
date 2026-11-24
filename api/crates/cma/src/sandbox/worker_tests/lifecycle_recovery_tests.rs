@@ -248,7 +248,7 @@ pub(super) async fn prepare_agent(
     now: SystemTime,
     number: u64,
 ) -> Agent {
-    prepare_agent_with_conversation(harness, sandbox, now, number, None).await
+    prepare_agent_with_conversation(harness, sandbox, now, number, None, None).await
 }
 
 pub(super) async fn prepare_agent_with_conversation(
@@ -257,8 +257,10 @@ pub(super) async fn prepare_agent_with_conversation(
     now: SystemTime,
     number: u64,
     conversation: Option<String>,
+    settings: Option<layer2_core::sandbox::AgentSettings>,
 ) -> Agent {
     let mut agent = lifecycle_queue_tests::ready_agent(sandbox, now);
+    agent.conversation.settings = settings;
     agent.creation_key = format!("restore-agent-{number}");
     agent.work.next_fence = 3;
     let runtime = RuntimeHandle(sandbox.runtime.as_ref().unwrap().runtime_id.clone());

@@ -28,7 +28,27 @@ pub(super) struct Descriptor {
 impl Descriptor {
     pub(super) fn load(config: &RuntimeConfig) -> Result<Self> {
         let bytes = io::read(&config.state_root.join(MANIFEST))?;
-        let descriptor: Self = serde_json::from_slice(&bytes).map_err(|_| hold())?;
+        let descriptor = Self::decode(config, &bytes, active_format(config)?.as_deref())?;
+        if io::read(&descriptor.marker())? != bytes {
+            return Err(hold());
+        }
+        // A committed activation must have consumed its publication artifacts.
+        // Their reappearance is a maintenance operation, never serving authority.
+        for name in [STAGE, TEMP] {
+            if io::exists(&config.state_root.join(name))? {
+                return Err(hold());
+            }
+        }
+        descriptor.inodes()?;
+        Ok(descriptor)
+    }
+
+    pub(super) fn decode(
+        config: &RuntimeConfig,
+        bytes: &[u8],
+        active_digest: Option<&str>,
+    ) -> Result<Self> {
+        let descriptor: Self = serde_json::from_slice(bytes).map_err(|_| hold())?;
         if !matches!(descriptor.version, 1..=3)
             || (descriptor.version == 3 && descriptor.active_v2_sha256.is_none())
             || descriptor.sandbox != config.sandbox_id
@@ -44,19 +64,10 @@ impl Descriptor {
                 .ok()
                 .as_deref()
                 != Some(descriptor.archive.as_str())
-            || io::read(&descriptor.marker())? != bytes
-            || descriptor.active_v2_sha256 != active_format(config)?
+            || descriptor.active_v2_sha256.as_deref() != active_digest
         {
             return Err(hold());
         }
-        // A committed activation must have consumed its publication artifacts.
-        // Their reappearance is a maintenance operation, never serving authority.
-        for name in [STAGE, TEMP] {
-            if io::exists(&config.state_root.join(name))? {
-                return Err(hold());
-            }
-        }
-        descriptor.inodes()?;
         Ok(descriptor)
     }
 

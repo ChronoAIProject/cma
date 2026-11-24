@@ -27,17 +27,62 @@ impl SandboxAdmissionName {
     }
 }
 
+/// The authority whose mutable Sandbox cap applies to this new admission.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SandboxLimitClass {
+    #[default]
+    Owner,
+    Visitor,
+}
+
+impl SandboxLimitClass {
+    pub fn current_limit(
+        self,
+        settings: &crate::PlatformSettings,
+    ) -> Result<u16, SandboxStoreError> {
+        let limit = match self {
+            Self::Owner => settings.limits.max_sandboxes_per_user,
+            Self::Visitor => settings.limits.visitor_max_sandboxes,
+        };
+        u16::try_from(limit)
+            .map_err(|_| SandboxStoreError::Corrupt("Sandbox limit is out of range".into()))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SandboxAdmission {
     pub binding: Option<crate::sandbox::binding::BindingAdmissionFence>,
+    lifecycle_lease: Option<LifecycleAdmissionLease>,
     pub sandbox: Sandbox,
     pub name: SandboxAdmissionName,
     pub admission_fingerprint: String,
     pub live_limit: u16,
+    pub limit_class: SandboxLimitClass,
     pub event_at: String,
 }
 
+#[derive(Clone)]
+struct LifecycleAdmissionLease(String);
+
+impl std::fmt::Debug for LifecycleAdmissionLease {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("LifecycleAdmissionLease(..)")
+    }
+}
+
 impl SandboxAdmission {
+    /// The initiating worker's in-memory claim. It is excluded from the
+    /// replay fingerprint so a new worker can recover a committed admission.
+    #[must_use]
+    pub fn with_lifecycle_lease(mut self, token: &str) -> Self {
+        self.lifecycle_lease = Some(LifecycleAdmissionLease(token.to_owned()));
+        self
+    }
+
+    pub fn lifecycle_lease(&self) -> Option<&str> {
+        self.lifecycle_lease.as_ref().map(|lease| lease.0.as_str())
+    }
+
     pub fn new(
         sandbox: Sandbox,
         name: SandboxAdmissionName,
@@ -47,10 +92,12 @@ impl SandboxAdmission {
         let admission_fingerprint = fingerprint(&sandbox, &name)?;
         let admission = Self {
             binding: None,
+            lifecycle_lease: None,
             sandbox,
             name,
             admission_fingerprint,
             live_limit,
+            limit_class: SandboxLimitClass::Owner,
             event_at,
         };
         admission.validate()?;
@@ -95,6 +142,9 @@ pub struct SandboxAdmissionReplay {
     pub sandbox: Sandbox,
     pub name: SandboxAdmissionName,
     pub admission_fingerprint: String,
+    // Proven original policy is admission identity; sandbox.profile.always_on
+    // remains the independently mutable current policy returned to callers.
+    admitted_always_on: Option<bool>,
 }
 
 impl SandboxAdmissionReplay {
@@ -104,12 +154,43 @@ impl SandboxAdmissionReplay {
         admission_fingerprint: String,
     ) -> Result<Self, SandboxStoreError> {
         let replay = Self {
+            admitted_always_on: sandbox.profile.always_on,
             sandbox,
             name,
             admission_fingerprint,
         };
         replay.validate()?;
         Ok(replay)
+    }
+
+    /// Read a retained receipt without replacing its original fingerprint.
+    /// Historical rows stored the three-state policy only inside that digest.
+    /// A complete digest match proves its original value; every other identity
+    /// field must still match the current aggregate. Fresh admissions use `new`.
+    pub fn from_retained(
+        sandbox: Sandbox,
+        name: SandboxAdmissionName,
+        admission_fingerprint: String,
+    ) -> Result<Self, SandboxStoreError> {
+        if valid_admission_fingerprint(&admission_fingerprint) {
+            for admitted_always_on in [None, Some(false), Some(true)] {
+                if fingerprint_with_policy(&sandbox, &name, admitted_always_on)?
+                    == admission_fingerprint
+                {
+                    let replay = Self {
+                        sandbox,
+                        name,
+                        admission_fingerprint,
+                        admitted_always_on,
+                    };
+                    replay.validate()?;
+                    return Ok(replay);
+                }
+            }
+        }
+        Err(corrupt_replay(
+            "profile snapshot or admission fingerprint is invalid",
+        ))
     }
 
     pub fn validate(&self) -> Result<(), SandboxStoreError> {
@@ -131,7 +212,8 @@ impl SandboxAdmissionReplay {
             .map_err(|error| corrupt_replay(&error.to_string()))?;
         if profile_digest != self.sandbox.profile.digest
             || !valid_admission_fingerprint(&self.admission_fingerprint)
-            || self.admission_fingerprint != fingerprint(&self.sandbox, &self.name)?
+            || self.admission_fingerprint
+                != fingerprint_with_policy(&self.sandbox, &self.name, self.admitted_always_on)?
         {
             return Err(corrupt_replay(
                 "profile snapshot or admission fingerprint is invalid",
@@ -189,6 +271,16 @@ fn fingerprint(
     sandbox: &Sandbox,
     name: &SandboxAdmissionName,
 ) -> Result<String, SandboxStoreError> {
+    fingerprint_with_policy(sandbox, name, sandbox.profile.always_on)
+}
+
+fn fingerprint_with_policy(
+    sandbox: &Sandbox,
+    name: &SandboxAdmissionName,
+    admitted_always_on: Option<bool>,
+) -> Result<String, SandboxStoreError> {
+    let mut profile = sandbox.profile.clone();
+    profile.always_on = admitted_always_on;
     let mut reaches = sandbox.credential.reaches.clone();
     reaches.sort();
     reaches.dedup();
@@ -196,7 +288,7 @@ fn fingerprint(
         owner: &sandbox.owner,
         origin: &sandbox.origin,
         name,
-        profile: &sandbox.profile,
+        profile: &profile,
         reaches: &reaches,
         credential_source: &sandbox.credential.source,
         sign_in: AdmissionSignInMode::from(sandbox.credential.sign_in),
@@ -253,4 +345,16 @@ pub trait SandboxAdmissionStore: Send + Sync {
         &self,
         admission: SandboxAdmission,
     ) -> Result<SandboxAdmissionResult, SandboxStoreError>;
+
+    /// Catalogue-backed callers require exact pin admission with the new resource.
+    async fn admit_catalogue_sandbox(
+        &self,
+        admission: SandboxAdmission,
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
+        self.admit_sandbox(admission).await
+    }
 }
+
+#[cfg(test)]
+#[path = "sandbox_admission_policy_tests.rs"]
+mod policy_tests;

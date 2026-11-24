@@ -2,8 +2,67 @@ use super::*;
 use crate::agent_sandbox::{RuntimeCapacityReason, RuntimePermitKind, RuntimeWorkloadClass};
 use crate::hosted::HostedControlTransport;
 
+#[path = "native_close_effect_tests.rs"]
+mod close_effect;
+
+#[path = "native_close_lane_tests.rs"]
+mod close_lane;
+
 #[path = "native_http_reserve_tests.rs"]
 mod session_reserve;
+
+#[path = "native_http_pool/telemetry/tests.rs"]
+mod telemetry_tests;
+
+#[tokio::test]
+async fn native_pool_measurements_distinguish_idle_cache_from_busy_checkout() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let metrics = recorder.handle();
+    let _recorder = metrics::set_default_local_recorder(&recorder);
+    let fixture = Fixture::start(Mode::Persistent, NativeRuntimeTransport::KubernetesExec).await;
+    fixture
+        .transport
+        .bind_native_runtime(&handle(), "sandbox-metrics", &"a".repeat(64))
+        .await
+        .unwrap();
+    let endpoint = fixture.endpoint().await;
+    for _ in 0..2 {
+        fixture
+            .transport
+            .control(&endpoint, &RequestFrame::Resources)
+            .await
+            .unwrap();
+    }
+    let rendered = metrics.render();
+    for (kind, value) in [
+        ("slots", 1),
+        ("cached_connections", 1),
+        ("busy", 0),
+        ("waiting", 0),
+    ] {
+        assert!(
+            rendered.contains(&format!(
+                "cma_adapter_native_http_pool{{pool=\"native\",kind=\"{kind}\"}} {value}"
+            )),
+            "{rendered}"
+        );
+    }
+    assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.transport.runtime_capacity.available_requests(), 32);
+    fixture.transport.retire(&handle()).await.unwrap();
+    fixture.drained().await;
+    let rendered = metrics.render();
+    for kind in ["slots", "cached_connections", "busy", "waiting"] {
+        assert!(
+            rendered.contains(&format!(
+                "cma_adapter_native_http_pool{{pool=\"native\",kind=\"{kind}\"}} 0"
+            )),
+            "{rendered}"
+        );
+    }
+    assert!(!rendered.contains("sandbox-metrics"));
+    assert!(!rendered.contains("agent-sandbox:"));
+}
 
 #[tokio::test]
 async fn session_reserve_does_not_bypass_a_busy_control_lane_for_authorized_close() {

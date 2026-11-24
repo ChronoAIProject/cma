@@ -1,5 +1,5 @@
 //! Replica participation is an explicit protocol opt-in, never an inferred pod count.
-use std::{env, time::Duration};
+use std::{env, net::SocketAddr, time::Duration};
 
 pub const CMAEG_REPLICAS_ENABLED: &str = "CMAEG_REPLICAS_ENABLED";
 pub const CMAEG_REPLICA_ADDRESS: &str = "CMAEG_REPLICA_ADDRESS";
@@ -45,11 +45,22 @@ mod tests {
     }
 }
 
-/// The membership origin is a configured direct pod address, never a request URL.
-pub(crate) fn direct_address() -> Result<String, &'static str> {
-    let value = env::var(CMAEG_REPLICA_ADDRESS)
-        .map_err(|_| "CMAEG_REPLICA_ADDRESS is required in replica mode")?;
-    validate_address(&value)
+/// Membership uses the configured pod address or a bound ephemeral loopback.
+pub(crate) fn direct_address(local_address: Option<SocketAddr>) -> Result<String, &'static str> {
+    resolve_address(env::var(CMAEG_REPLICA_ADDRESS), local_address)
+}
+
+fn resolve_address(
+    configured: Result<String, env::VarError>,
+    local_address: Option<SocketAddr>,
+) -> Result<String, &'static str> {
+    match (configured, local_address) {
+        (Ok(value), _) => validate_address(&value),
+        (Err(env::VarError::NotPresent), Some(address)) if address.ip().is_loopback() => {
+            validate_address(&format!("http://{address}"))
+        }
+        _ => Err("CMAEG_REPLICA_ADDRESS is required in replica mode"),
+    }
 }
 
 pub(crate) fn validate_address(value: &str) -> Result<String, &'static str> {
@@ -100,4 +111,22 @@ fn direct_origin_rejects_untrusted_urls() {
     ] {
         assert!(validate_address(origin).is_err());
     }
+}
+
+#[test]
+fn a_bound_loopback_is_only_a_fallback_for_an_absent_replica_address() {
+    let bound = Some("127.0.0.1:12345".parse().unwrap());
+    let absent = Err(env::VarError::NotPresent);
+    assert_eq!(
+        resolve_address(absent.clone(), bound).unwrap(),
+        "http://127.0.0.1:12345"
+    );
+    let explicit = "http://192.0.2.24:12345".to_owned();
+    assert_eq!(
+        resolve_address(Ok(explicit.clone()), bound).unwrap(),
+        explicit
+    );
+    assert!(resolve_address(absent.clone(), None).is_err());
+    assert!(resolve_address(absent, Some("0.0.0.0:12345".parse().unwrap())).is_err());
+    assert!(resolve_address(Ok("http://127.0.0.1:0".to_owned()), bound).is_err());
 }

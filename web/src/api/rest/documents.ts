@@ -1,4 +1,4 @@
-import { ProtocolError } from '@cma/client';
+import { ProtocolError, type Cma } from '@cma/client';
 import { DocumentError } from '../documents';
 import type {
   DocumentsClient,
@@ -61,11 +61,13 @@ function view(value: unknown): DocumentView {
     !/^doc_[a-f0-9]{32}$/.test(value.id) ||
     typeof value.title !== 'string' ||
     typeof value.owner_subject !== 'string' ||
+    value.owner_subject.trim().length === 0 ||
     !Number.isSafeInteger(value.revision) ||
     Number(value.revision) < 1 ||
     !Number.isSafeInteger(value.source_revision) ||
     Number(value.source_revision) < 1 ||
-    !['owner', 'read', 'comment'].includes(String(value.access)) ||
+    typeof value.access !== 'string' ||
+    !['owner', 'read', 'comment'].includes(value.access) ||
     typeof value.sha256 !== 'string' ||
     !/^[a-f0-9]{64}$/.test(value.sha256) ||
     !Number.isSafeInteger(value.size_bytes) ||
@@ -91,7 +93,7 @@ function mutation(value: unknown): DocumentMutation {
   if (!record(value)) throw new ProtocolError('CMA did not confirm this document update.');
   return { ...value, document: view(value.document) } as unknown as DocumentMutation;
 }
-export function documentsClient(): DocumentsClient {
+export function documentsClient(sdk: Pick<Cma['documents'], 'shareRecipients'>): DocumentsClient {
   return {
     async list(options) {
       return page(
@@ -157,6 +159,7 @@ export function documentsClient(): DocumentsClient {
       if (!Array.isArray(result)) throw new ProtocolError('Invalid document recipients.');
       return result;
     },
+    shareRecipients: (id, text, options) => sdk.shareRecipients(id, text, options),
     async grant(id, subject, input, options) {
       return view(
         await request(path(id, `/shares/${encodeURIComponent(subject)}`), options, 'PUT', input),

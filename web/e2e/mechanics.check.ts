@@ -1,8 +1,12 @@
-import { test, expect } from '@playwright/test';
-import { createServer } from 'node:http';
+import { test, expect, type Browser, type BrowserContext } from '@playwright/test';
+import { mkdirSync, rmSync } from 'node:fs';
+import { createServer, type RequestListener } from 'node:http';
 import { workspaceAgentButton } from './lifecycle-creation';
 import { assertPageSafe, readOnlyGuard } from './security';
 import { inspectOwnerStream, ownerStreamTap, streamBounds } from './owner-stream';
+import { Harness } from './harness';
+import { fixtureDocument } from './environment.fixture';
+import type { Hooks } from './environment';
 
 // This suite tests the harness against intercepted local HTML, never staging journeys.
 test('LOCAL smoke guard allows reads and refuses browser POST and DELETE', async ({ page }) => {
@@ -217,6 +221,208 @@ for (const mode of ['complete', 'deadline'] as const) {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
       );
+    }
+  });
+}
+
+for (const attemptedWrite of [false, true]) {
+  test(`LOCAL TC117 navigation ${attemptedWrite ? 'refuses automatic writes' : 'has no work effects'}`, async ({
+    browser,
+  }) => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { navigationProbes } = await import('./visitor-abuse-load');
+    const { newCounts } = await import('./visitor-abuse-model');
+    const directory = mkdtempSync(join(tmpdir(), 'cma-tc117-navigation-'));
+    const bearerFile = join(directory, 'bearer');
+    writeFileSync(bearerFile, 'local-navigation-fixture', { mode: 0o600 });
+    let writes = 0;
+    let authorized = false;
+    const service = createServer((incoming, response) => {
+      if (incoming.method === 'POST') writes++;
+      if (incoming.headers.authorization === 'Bearer local-navigation-fixture') authorized = true;
+      incoming.resume();
+      response.writeHead(200, { 'Content-Type': 'text/html' });
+      response.end(
+        `<!doctype html><title>Local TC117 navigation</title>${attemptedWrite ? '<script>fetch("/api/v1/triggers/public/local/launches", { method: "POST" }).catch(() => {});</script>' : ''}`,
+      );
+    });
+    await new Promise<void>((resolve) => service.listen(0, '127.0.0.1', resolve));
+    const address = service.address();
+    if (!address || typeof address === 'string') throw new Error('Local port missing');
+    const snapshot = {
+      fleetLive: 0,
+      launches: { b: [], c: [] },
+      sandboxes: [],
+      liveByVisitor: { b: 0, c: 0 },
+      totals: {},
+    };
+    const driver = {
+      config: { baseURL: `http://127.0.0.1:${address.port}` },
+      fixture: {
+        accounts: { c: { bearerFile } },
+        triggers: { reuseA: { publicId: 'local', placementId: 'local-place' } },
+      },
+      counts: newCounts(),
+      observations: {},
+      snapshot: async () => snapshot,
+      send: async () => ({ status: 200 }),
+      read: async () => ({}),
+    };
+    try {
+      const result = navigationProbes(
+        driver as unknown as import('./visitor-abuse-client').TC117Client,
+        browser,
+      );
+      if (attemptedWrite) await expect(result).rejects.toThrow('attempted a browser write');
+      else await expect(result).resolves.toBeUndefined();
+      expect(authorized).toBe(true);
+      expect(writes).toBe(0);
+    } finally {
+      service.closeAllConnections();
+      await new Promise<void>((resolve) => service.close(() => resolve()));
+    }
+  });
+}
+
+for (const start of ['same', 'path', 'origin', 'query', 'fragment', 'invalidated'] as const) {
+  test(`LOCAL ready preserves response inspection with ${start} destination`, async ({
+    browser,
+  }) => {
+    const fixture = fixtureDocument();
+    mkdirSync(fixture.env.CMA_E2E_OUTPUT_DIR);
+    const subject = fixture.document.visitors['J4-oauth']!.subject;
+    const launch = {
+      id: 'local-launch',
+      state: 'ready',
+      resolution: { agent: { id: 'local-agent' } },
+    };
+    const catalog = [{ id: 'local-catalog-entry' }];
+    let launchReads = 0;
+    const serve: RequestListener = (request, response) => {
+      if (request.url === '/api/v1/launches/local-launch') launchReads++;
+      const json =
+        request.url === '/auth/session'
+          ? { authenticated: true, subject }
+          : request.url === '/api/v1/profile-authoring/services'
+            ? catalog
+            : request.url === '/api/v1/launches/local-launch'
+              ? launch
+              : undefined;
+      response.writeHead(200, { 'Content-Type': json ? 'application/json' : 'text/html' });
+      response.end(
+        json
+          ? JSON.stringify(json)
+          : '<!doctype html><title>Local readiness</title><div id="agent-message">Ready</div>',
+      );
+    };
+    const servers = [createServer(serve), createServer(serve)];
+    const origins: string[] = [];
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let inspecting!: () => void;
+    const inspectionStarted = new Promise<void>((resolve) => {
+      inspecting = resolve;
+    });
+    let context: BrowserContext | undefined;
+    let inspectedBody: string | undefined;
+    let inspections = 0;
+    const wrapped = {
+      newContext: async (...args: Parameters<Browser['newContext']>) => {
+        context = await browser.newContext(...args);
+        context.on('response', (response) => {
+          if (!response.url().endsWith('/api/v1/profile-authoring/services')) return;
+          const original = response.text.bind(response);
+          response.text = async () => {
+            inspections++;
+            inspecting();
+            await barrier;
+            inspectedBody = await original();
+            return inspectedBody;
+          };
+        });
+        return context;
+      },
+    } as Browser;
+    try {
+      for (const server of servers) {
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Local port missing');
+        origins.push(`http://127.0.0.1:${address.port}`);
+      }
+      const previous = Object.fromEntries(
+        Object.keys(fixture.env).map((key) => [key, process.env[key]]),
+      );
+      let h: Harness;
+      try {
+        Object.assign(process.env, fixture.env);
+        h = new Harness(wrapped, {} as Hooks, 'J4-oauth');
+      } finally {
+        for (const [key, value] of Object.entries(previous)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+      h.config.baseURL = origins[0]!;
+      const page = await h.open('visitor');
+      const destination = `${h.config.baseURL}/agents/local-agent`;
+      await page.goto(destination);
+      const finished = page.waitForEvent('requestfinished', (request) =>
+        request.url().endsWith('/api/v1/profile-authoring/services'),
+      );
+      expect(
+        await page.evaluate(async () => {
+          const response = await fetch('/api/v1/profile-authoring/services');
+          await response.text();
+          return response.status;
+        }),
+      ).toBe(200);
+      const request = await finished;
+      await inspectionStarted;
+      expect(request.failure()).toBeNull();
+      expect(inspections).toBe(1);
+      if (start === 'invalidated') await page.reload();
+      else if (start !== 'same') {
+        release();
+        await h.flush();
+        const initial = {
+          path: `${h.config.baseURL}/before`,
+          origin: `${origins[1]}/agents/local-agent`,
+          query: `${destination}?view=local`,
+          fragment: `${destination}#local`,
+        }[start];
+        await page.goto(initial);
+      }
+      let navigations = 0;
+      page.on('framenavigated', (frame) => {
+        if (frame === page.mainFrame()) navigations++;
+      });
+      expect(await h.ready(page, launch.id)).toEqual(launch);
+      release();
+      await h.flush();
+      expect(h.violations).toEqual(start === 'invalidated' ? ['response_inspection_failed'] : []);
+      expect(inspectedBody).toBe(start === 'invalidated' ? undefined : JSON.stringify(catalog));
+      expect(navigations).toBe(start === 'same' || start === 'invalidated' ? 0 : 1);
+      expect(launchReads).toBe(2);
+      expect(page.url()).toBe(destination);
+      expect(request.failure()).toBeNull();
+      expect(h.commands).toEqual([]);
+      expect(h.journal.resources).toEqual([]);
+    } finally {
+      release();
+      await context?.close();
+      for (const server of servers) {
+        server.closeAllConnections();
+        if (server.listening)
+          await new Promise<void>((resolve, reject) =>
+            server.close((error) => (error ? reject(error) : resolve())),
+          );
+      }
+      rmSync(fixture.directory, { recursive: true, force: true });
     }
   });
 }

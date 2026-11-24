@@ -326,6 +326,7 @@ async fn buffered_result_cannot_extend_expired_membership() {
     let held = AuthorizedResource {
         snapshot,
         decision,
+        caller: recipient.caller.clone(),
         binding: None,
     };
     tokio::time::sleep(Duration::from_millis(30)).await;

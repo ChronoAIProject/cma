@@ -67,6 +67,7 @@ pub(crate) fn target() -> PoolTarget {
         lease: Some("lease".into()),
         lease_until: mongodb::bson::DateTime::from_millis(i64::MAX),
         reconcile_after: mongodb::bson::DateTime::from_millis(0),
+        operator_replicas: None,
     }
 }
 
@@ -137,10 +138,13 @@ impl PoolTargetStore for Memory {
         &self,
         id: &str,
         body: &ResizeWarmPoolBody,
+        operator_choice: bool,
     ) -> Result<PoolTarget, WarmPoolError> {
         self.calls.lock().unwrap().push(format!(
-            "store-resize:{id}:{}:{}",
-            body.expected_revision, body.target_replicas,
+            "store-resize:{id}:{}:{}{}",
+            body.expected_revision,
+            body.target_replicas,
+            if operator_choice { ":choice" } else { "" },
         ));
         let mut target = self.target.lock().unwrap();
         assert_eq!(id, target.id);
@@ -158,6 +162,14 @@ impl PoolTargetStore for Memory {
         self.calls.lock().unwrap().push(format!("claim:{id}"));
         let target = self.target.lock().unwrap();
         Ok((target.id == id && !target.retiring && !target.retired).then(|| target.clone()))
+    }
+    async fn claim_retirement(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("claim-retire:{id}"));
+        let target = self.target.lock().unwrap();
+        Ok((target.id == id && !target.retired).then(|| target.clone()))
     }
     async fn bind(&self, _: &PoolTarget, binding: &NativePoolBinding) -> Result<(), WarmPoolError> {
         self.calls.lock().unwrap().push("persist-binding".into());
@@ -425,40 +437,8 @@ fn inventory_identifies_original_and_current_default_policy_even_with_identical_
     );
 }
 
-#[test]
-fn readiness_requires_original_binding_and_observed_current_target() {
-    let mut original = target();
-    let provider = Provider {
-        calls: Arc::default(),
-        original: original.plan.clone(),
-        refuse_replaced_uid: AtomicBool::new(false),
-        retired: AtomicBool::new(false),
-    };
-    let mut live = NativePoolStatus {
-        binding: provider.binding(),
-        desired_replicas: 3,
-        ready_replicas: 3,
-        observed: true,
-    };
-    original.binding = Some(live.binding.clone());
-    original.applied_revision = original.revision;
-    assert_eq!(original.view(Some(&live), true).status, "ready");
-    live.binding.uid = "replacement".into();
-    assert_eq!(original.view(Some(&live), true).ready_replicas, None);
-    live.binding = original.binding.clone().unwrap();
-    live.observed = false;
-    assert_eq!(original.view(Some(&live), true).status, "pending");
-    live.observed = true;
-    live.desired_replicas = 2;
-    assert!(!original.view(Some(&live), true).observed);
-    let missing = original.view(None, false);
-    assert_eq!(missing.status, "unavailable");
-    assert_eq!(missing.ready_replicas, None);
-    live.desired_replicas = 0;
-    live.ready_replicas = 0;
-    original.target_replicas = 0;
-    assert_eq!(original.view(Some(&live), true).status, "disabled");
-}
+#[path = "view_tests.rs"]
+mod view;
 
 #[test]
 fn ordinary_and_inventory_only_users_cannot_manage_pools() {

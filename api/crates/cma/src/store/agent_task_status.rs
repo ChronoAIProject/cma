@@ -7,8 +7,12 @@ use layer2_core::sandbox::{
 };
 use mongodb::{bson::doc, ClientSession};
 
+pub(super) mod activity;
 mod batch;
 pub(super) use batch::read_many;
+pub(super) use batch::read_many_with_turns;
+
+type Observation = (AgentTaskStatus, Option<u64>);
 
 pub(super) async fn ensure_indexes(
     collection: &mongodb::Collection<mongodb::bson::Document>,
@@ -31,13 +35,13 @@ pub(super) async fn ensure_indexes(
         })
 }
 
-pub(super) async fn read(
+async fn read_with_turn(
     store: &MongoSandboxStore,
     agent: &Agent,
     session: &mut ClientSession,
-) -> Result<AgentTaskStatus, SandboxStoreError> {
+) -> Result<Observation, SandboxStoreError> {
     if agent.status != AgentStatus::Ready {
-        return Ok(AgentTaskStatus::from_latest(agent, None, None, false));
+        return Ok((AgentTaskStatus::from_latest(agent, None, None, false), None));
     }
     let document = store.agent_log.find_one(doc! {
         "agent_id": agent.id.as_str(),
@@ -82,11 +86,9 @@ pub(super) async fn read(
         super::agent_commands::read_command(document)
             .map_err(|_| SandboxStoreError::Corrupt("task command evidence is invalid".into()))?;
     }
-    Ok(AgentTaskStatus::from_latest(
-        agent,
-        latest.as_ref(),
-        gap.as_ref(),
-        pending.is_some(),
+    Ok((
+        AgentTaskStatus::from_latest(agent, latest.as_ref(), gap.as_ref(), pending.is_some()),
+        AgentTaskStatus::observed_turn(agent, latest.as_ref()),
     ))
 }
 

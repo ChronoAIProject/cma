@@ -1,3 +1,4 @@
+import { sandboxCapacity } from './instances/capacity.js';
 import type { ResolvedConfig } from './config.js';
 import type { OperationOptions } from './http.js';
 import { ProtocolError, ValidationError } from './errors.js';
@@ -62,9 +63,30 @@ export interface AccessibleSandboxListOptions extends SandboxListOptions {
 export class Sandboxes {
   constructor(private readonly config: ResolvedConfig) {}
 
+  capacity(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/sandboxes/capacity', sandboxCapacity, options);
+  }
+
   /** Admit a durable personal/shared lifecycle intent with a current revision. */
   submitCommand(id: string, body: SandboxCommandRequest, options: CommandOptions) {
-    input(sandboxCommandRequest, body);
+    // Capture the JSON before request ID resolution yields. Forward extra fields
+    // so the server can continue to return its typed input refusal.
+    let snapshot: unknown;
+    let submitted: SandboxCommandRequest;
+    try {
+      submitted = sandboxCommandRequest(body);
+      snapshot = JSON.parse(JSON.stringify(body)) as unknown;
+      const encoded = sandboxCommandRequest(snapshot);
+      if (
+        encoded.command !== submitted.command ||
+        encoded.expected_revision !== submitted.expected_revision
+      )
+        throw new ProtocolError('Sandbox command changed during JSON encoding');
+    } catch (cause) {
+      throw new ValidationError(cause instanceof Error ? cause.message : 'invalid request body', {
+        cause,
+      });
+    }
     return read(
       this.config,
       `/api/v1/sandboxes/${segment(id)}/commands`,
@@ -72,13 +94,13 @@ export class Sandboxes {
         const result = sandboxCommandReceipt(value);
         if (
           result.sandbox_id !== id ||
-          result.command !== body.command ||
-          result.expected_revision !== body.expected_revision
+          result.command !== submitted.command ||
+          result.expected_revision !== submitted.expected_revision
         )
           throw new ProtocolError('Sandbox command receipt did not match the request');
         return result;
       },
-      { ...command(options), method: 'POST', body, expectedStatus: 202 },
+      { ...command(options), method: 'POST', body: snapshot, expectedStatus: 202 },
     );
   }
 

@@ -12,6 +12,9 @@ use super::sandbox_mongo::{
     nullable, read_record, record_bson, require_version, signed, DOCUMENT_SCHEMA_VERSION,
 };
 
+#[path = "profile_retained_reader.rs"]
+mod retained_reader;
+
 pub(super) struct ProfileDocumentInput<'a, T> {
     pub id: &'a str,
     pub owner: &'a SubjectId,
@@ -66,7 +69,12 @@ pub(super) fn revision_document<T: Serialize>(
 pub(super) fn decode_record<T: DeserializeOwned>(
     document: &Document,
 ) -> Result<T, ProfileStoreError> {
-    read_record(document).map_err(ProfileStoreError::Corrupt)
+    let hydrated = retained_reader::hydrate(document)?;
+    read_record(hydrated.as_ref().unwrap_or(document)).map_err(ProfileStoreError::Corrupt)
+}
+
+pub(super) fn is_retained_profile(document: &Document) -> Result<bool, ProfileStoreError> {
+    retained_reader::is_retained(document)
 }
 
 fn aggregate_document<T: Serialize>(record: &T) -> Result<Document, ProfileStoreError> {
@@ -94,6 +102,21 @@ pub(super) async fn save_draft<T: Serialize>(
     expected: u64,
     input: ProfileDocumentInput<'_, T>,
 ) -> Result<(), ProfileStoreError> {
+    let (filter, update) = draft_mutation(expected, &input)?;
+    let result = collection
+        .update_one(filter, update)
+        .await
+        .map_err(|error| ProfileStoreError::Unavailable(error.to_string()))?;
+    if result.matched_count == 1 {
+        return Ok(());
+    }
+    Err(classify_profile_miss(collection, input.id).await?)
+}
+
+pub(super) fn draft_mutation<T: Serialize>(
+    expected: u64,
+    input: &ProfileDocumentInput<'_, T>,
+) -> Result<(Document, Document), ProfileStoreError> {
     let next = expected.checked_add(1).ok_or(ProfileStoreError::Conflict)?;
     if input.draft_version != next || input.retired_at.is_some() {
         return Err(ProfileStoreError::Conflict);
@@ -115,6 +138,7 @@ pub(super) async fn save_draft<T: Serialize>(
         "draft_version": expected,
         "record.draft_version": expected,
         "retired_at": Bson::Null,
+        "account_erasure_fenced": { "$ne": true },
     };
     for name in ["id", "owner", "visibility", "uses_count", "created_at"] {
         filter.insert(format!("record.{name}"), required_field(&record, name)?);
@@ -154,14 +178,7 @@ pub(super) async fn save_draft<T: Serialize>(
                 required_field(&record, "availability")?,
             );
     }
-    let result = collection
-        .update_one(filter, update)
-        .await
-        .map_err(|error| ProfileStoreError::Unavailable(error.to_string()))?;
-    if result.matched_count == 1 {
-        return Ok(());
-    }
-    Err(classify_profile_miss(collection, input.id).await?)
+    Ok((filter, update))
 }
 
 async fn classify_profile_miss(
@@ -181,3 +198,7 @@ async fn classify_profile_miss(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "profile_retained_reader_tests.rs"]
+mod retained_reader_tests;

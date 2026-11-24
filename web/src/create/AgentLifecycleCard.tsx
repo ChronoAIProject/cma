@@ -1,10 +1,12 @@
+import { useSandboxCapacity } from '../sandbox/useSandboxCapacity';
+import { SandboxCapacityPanel } from '../sandbox/SandboxCapacityPanel';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentLifecycleCreateInput,
   AgentLifecycleCreateReceipt,
   CmaWebClient,
 } from '../api/client';
-import { ConnectionWizard } from '../connections/ConnectionWizard';
+import { ConnectionWizard, RepositoryConnectionRepair } from '../connections/ConnectionWizard';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { IconAgentPresetOutline16 } from '../ui/icons';
@@ -14,6 +16,7 @@ import { lifecycleFailureMessage } from './lifecycleFailure';
 import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
+import { DiscardWaitingCreation } from './DiscardWaitingCreation';
 import { agentNameFor, validRepository } from './repository';
 import { retainLifecycleHandoff } from '../resources/lifecycleHandoff';
 import './Create.css';
@@ -57,7 +60,21 @@ function AgentLifecycleForm({
   // The action that opened this dialog fixes its destination. The global action
   // always provisions a new Sandbox; contextual actions keep their exact parent.
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
+  const capacity = useSandboxCapacity(client, viewerId);
+  const newEnvironment = !workspaceId && !sandboxId;
+  const [checkingCapacity, setCheckingCapacity] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const capacityUnavailable =
+    newEnvironment &&
+    (!capacity.value || Boolean(capacity.error) || capacity.value.available === 0);
   const { pending, operation, connection: connectionRequest } = lifecycle;
+  const repositoryRepair = Boolean(viewerId && connectionRequest?.repository_access);
   const createdReceipt = lifecycle.intent?.receipt;
   const failure = lifecycleFailureMessage(
     lifecycle.failure,
@@ -121,6 +138,10 @@ function AgentLifecycleForm({
     openTarget,
     viewerId,
   ]);
+  const close = () => {
+    lifecycle.abandon();
+    onClose();
+  };
   const repositoryUrl = repository.trim();
   const repositoryValid = validRepository(repositoryUrl);
   const canCreate = workspaceId !== undefined || sandboxId !== undefined || canCreateSandbox;
@@ -131,7 +152,7 @@ function AgentLifecycleForm({
     if (machineIncludedAvailable && machineIncluded)
       void import('@novnc/novnc').catch(() => undefined);
   }, [machineIncludedAvailable, machineIncluded]);
-  const submit = () => {
+  const submit = async () => {
     if (!canCreate) return;
     if (!repositoryValid) {
       setRepositoryError(true);
@@ -145,6 +166,13 @@ function AgentLifecycleForm({
       ...(sandboxId === undefined ? {} : { sandbox_id: sandboxId }),
       ...(repositoryUrl === '' ? {} : { repository: { url: repositoryUrl } }),
     };
+    if (newEnvironment) {
+      setCheckingCapacity(true);
+      const current = await capacity.ensureFresh();
+      if (!mounted.current) return;
+      setCheckingCapacity(false);
+      if (!current || current.available === 0) return;
+    }
     void lifecycle.submit(input);
   };
   const form = (
@@ -220,7 +248,7 @@ function AgentLifecycleForm({
   return (
     <>
       <Modal
-        open={connectionRequest === undefined}
+        open={connectionRequest === undefined || repositoryRepair}
         title="New agent"
         description={
           workspaceId !== undefined
@@ -232,7 +260,7 @@ function AgentLifecycleForm({
         onClose={() => {
           if (operation?.status === 'succeeded' || operation?.status === 'failed')
             lifecycle.clear();
-          onClose();
+          close();
         }}
         dismissible={!pending}
         footer={
@@ -242,7 +270,7 @@ function AgentLifecycleForm({
                 onClick={() => {
                   if (operation?.status === 'succeeded' || operation?.status === 'failed')
                     lifecycle.clear();
-                  onClose();
+                  close();
                 }}
               >
                 Close
@@ -274,12 +302,17 @@ function AgentLifecycleForm({
               <p className="agent-lifecycle-note">
                 Includes access to ChronoAI models and the Ornn skill library.
               </p>
-              <Button disabled={pending} onClick={onClose}>
+              <Button disabled={pending} onClick={close}>
                 Cancel
               </Button>
               <Button
                 variant="primary"
-                disabled={pending || lifecycle.blocked || (!lifecycle.intent && !canCreate)}
+                disabled={
+                  pending ||
+                  checkingCapacity ||
+                  lifecycle.blocked ||
+                  (!lifecycle.intent && (!canCreate || capacityUnavailable))
+                }
                 onClick={lifecycle.intent ? () => void lifecycle.submit() : submit}
               >
                 {pending
@@ -292,6 +325,7 @@ function AgentLifecycleForm({
           )
         }
       >
+        {newEnvironment ? <SandboxCapacityPanel client={client} capacity={capacity} /> : null}
         {createdReceipt !== undefined ? (
           <AgentProvisioningProgress receipt={createdReceipt} operation={operation} />
         ) : null}
@@ -324,12 +358,33 @@ function AgentLifecycleForm({
           <Button onClick={lifecycle.retryStatus}>{retryStatus.label}</Button>
         ) : null}
         {operation?.status === 'waiting_for_connection' && !connectionRequest ? (
-          <Button onClick={() => lifecycle.setConnection(operation.connection)}>
+          <Button disabled={pending} onClick={() => lifecycle.setConnection(operation.connection)}>
             Connect services
           </Button>
         ) : null}
+        {viewerId && connectionRequest?.repository_access ? (
+          <RepositoryConnectionRepair
+            owner={viewerId}
+            target={connectionRequest.target}
+            pending={pending || lifecycle.blocked}
+            onRecheck={() => void lifecycle.submit()}
+          />
+        ) : null}
+        {lifecycle.canDiscardWaiting ? (
+          <DiscardWaitingCreation
+            key={lifecycle.intent?.key}
+            label="creation"
+            onDiscard={() => {
+              if (!lifecycle.discardWaiting()) return;
+              setRepository('');
+              setRepositoryError(false);
+              setMachineIncluded(false);
+              requestAnimationFrame(() => document.getElementById('agent-repository')?.focus());
+            }}
+          />
+        ) : null}
       </Modal>
-      {connectionRequest === undefined ? null : (
+      {connectionRequest === undefined || repositoryRepair ? null : (
         <ConnectionWizard
           target={connectionRequest.target}
           expectedOwner={viewerId}

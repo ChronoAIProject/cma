@@ -1,8 +1,12 @@
 """Dispatch queue time, cold setup and retries all consume the original clock."""
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
-from staging_cd_clock import dispatch_started, elapsed, remaining, timestamp
+import yaml
+
+from staging_cd_clock import (ADMISSION_SECONDS, PRODUCTION_WATCHDOG_SECONDS, WATCHDOG_SECONDS, controller_seconds,
+                              dispatch_started, elapsed, remaining, timestamp)
 from staging_cd_common import Refusal
 
 
@@ -10,9 +14,29 @@ class ClockTests(unittest.TestCase):
     def test_single_absolute_clock_cannot_reset_at_phase_boundaries(self):
         started = timestamp(1000)
         self.assertEqual(elapsed(started, 1020), 20)
-        self.assertEqual(remaining(started, now=1020), 25)
-        self.assertEqual(remaining(started, 610, now=1595), 15)
-        for value, now in ((timestamp(1001), 1000), (started, 1045),
+        for age in (47, 62, 110):
+            self.assertEqual(remaining(started, now=1000 + age), 120 - age)
+        self.assertEqual(remaining(started, mode="bootstrap", now=1020), 25)
+        with self.assertRaises(Refusal):
+            remaining(started, mode="bootstrap", now=1045)
+        for mode, limit in (("bootstrap", 600), ("release", 990)):
+            with self.subTest(mode=mode):
+                self.assertEqual(controller_seconds(mode), limit)
+                self.assertEqual(remaining(started, limit, now=1000 + limit - 5), 5)
+                with self.assertRaises(Refusal):
+                    remaining(started, limit, now=1000 + limit)
+        self.assertEqual(WATCHDOG_SECONDS, 1005)
+        # Explicit staging is the default; only a production release changes its total.
+        for mode, staging, production in (("bootstrap", 600, 600), ("release", 990, 3600)):
+            with self.subTest(mode=mode):
+                self.assertEqual(controller_seconds(mode, "staging"), staging)
+                self.assertEqual(controller_seconds(mode, "production"), production)
+        self.assertEqual(PRODUCTION_WATCHDOG_SECONDS, 3615)
+        self.assertEqual(remaining(started, controller_seconds("release", "production"), now=4595), 5)
+        for mode, target in (("release", "prod"), ("release", None), ("deploy", "production")):
+            with self.subTest(mode=mode, target=target), self.assertRaises(Refusal):
+                controller_seconds(mode, target)
+        for value, now in ((timestamp(1001), 1000), (started, 1120), (started, 1125),
                            ("1000", 1000), ("2026-01-01T00:00:00", 1000),
                            ("2026-99-99T00:00:00Z", 1000), (None, 1000)):
             with self.subTest(value=value), self.assertRaises(ValueError):
@@ -33,8 +57,17 @@ class ClockTests(unittest.TestCase):
                                ("repository", {"full_name": "Example/fork"})):
                 with self.subTest(key=key), self.assertRaises(Refusal):
                     dispatch_started(env, Mock(return_value=dict(run, **{key: value})))
-        with patch("staging_cd_clock.time.time", return_value=1060), self.assertRaises(Refusal):
+        with patch("staging_cd_clock.time.time", return_value=1125), self.assertRaises(Refusal):
             dispatch_started(env, api)
+
+    def test_each_deploy_job_outlives_its_release_watchdog(self):
+        # Setup before the clock starts and cleanup after it need at least one
+        # admission window beyond the watchdog, so a total cannot outgrow its job.
+        workflows = Path(__file__).resolve().parent.parent / "workflows"
+        for name, watchdog in (("staging-deploy", WATCHDOG_SECONDS), ("prod-deploy", PRODUCTION_WATCHDOG_SECONDS)):
+            with self.subTest(workflow=name):
+                job = yaml.safe_load((workflows / f"{name}.yml").read_text(encoding="utf-8"))["jobs"]["deploy"]
+                self.assertGreater(job["timeout-minutes"] * 60, watchdog + ADMISSION_SECONDS)
 
 
 if __name__ == "__main__":

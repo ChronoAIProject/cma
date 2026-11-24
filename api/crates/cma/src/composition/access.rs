@@ -29,11 +29,36 @@ pub(super) struct AccessComposition {
     pub tool_routes: Router,
 }
 pub(super) struct ToolServices {
+    pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    pub cancel_wake: Option<Arc<tokio::sync::Notify>>,
+    pub model_credit_required: bool,
+    pub model_funding: Option<Arc<layer2_core::sandbox::model_credit::AgentTurnFunding>>,
     pub source: Arc<MongoAgentAccessToolSource>,
     pub documents: Option<Arc<layer2_core::document_artifacts::DocumentService>>,
     pub deliverables: Arc<layer2_core::sandbox::answer_deliverables::AnswerDeliverableService>,
     pub public_origin: String,
     pub task_experience: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
+}
+
+pub(super) fn sandbox_control(
+    stores: &MongoStores,
+    access: Arc<ResourceAccessService>,
+    auth: Arc<AuthState>,
+    connections: Arc<crate::connections::ConnectionPrerequisite>,
+) -> (
+    crate::commands::SandboxControlScheduler,
+    Arc<layer2_core::sandbox::control::SandboxControlService>,
+) {
+    use layer2_core::sandbox::control::{SandboxControlService, SandboxControlWorker};
+    let store = stores.sandbox_model.clone();
+    let worker =
+        SandboxControlWorker::new(store.clone(), access.clone(), auth.clone(), connections);
+    let service = SandboxControlService::new(store.clone(), access, auth);
+    service.attach_platform_spend(store);
+    (
+        crate::commands::SandboxControlScheduler::new(worker),
+        service,
+    )
 }
 
 pub(super) fn deliverables(
@@ -49,6 +74,7 @@ pub(super) fn deliverables(
     )
     .with_documents(documents)
     .with_files(AgentFileService::new(access, adapter))
+    .with_task_store(stores.sandbox_model.clone())
 }
 
 pub(super) fn compose(
@@ -62,7 +88,11 @@ pub(super) fn compose(
 ) -> AccessComposition {
     let commands =
         AgentCommandService::new(stores.sandbox_model.clone(), resource_access, auth.clone())
-            .with_task_experience(tools.task_experience);
+            .with_task_experience(tools.task_experience)
+            .with_ownership(tools.ownership)
+            .with_cancel_wake(tools.cancel_wake)
+            .with_model_credit_required(tools.model_credit_required)
+            .with_model_funding(tools.model_funding);
     let service = AgentAccessService::new(stores.sandbox_model.clone(), auth.clone(), policy);
     let worker = AgentAccessWorker::new(
         stores.sandbox_model.clone(),

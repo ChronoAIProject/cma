@@ -37,7 +37,7 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                         &sandbox,
                         &event_at,
                         &event,
-                        self.managed_runtime_version(),
+                        self.managed_runtime_version().as_deref(),
                     )?;
                 }
                 let id = sandbox.id.clone();
@@ -86,6 +86,7 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                 workspace,
                 event_at,
                 event,
+                ..
             } => {
                 let id = workspace.id.clone();
                 let sandbox_id = workspace.sandbox_id.clone();

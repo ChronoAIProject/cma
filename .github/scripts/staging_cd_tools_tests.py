@@ -6,6 +6,7 @@ import os
 import tarfile
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -63,6 +64,25 @@ class ToolTests(unittest.TestCase):
             with self.assertRaises(Refusal):
                 tools.download("https://example.invalid", "0" * 64)
 
+    def test_download_repeats_transport_failures_but_not_checksum_mismatches(self):
+        response = Mock(status=200)
+        response.read.return_value = b"fixture"
+        digest = hashlib.sha256(b"fixture").hexdigest()
+        for failure in (urllib.error.URLError(ConnectionResetError()), TimeoutError(),
+                        urllib.error.HTTPError("https://example.invalid", 502, "private", {}, None)):
+            with self.subTest(failure=type(failure).__name__), \
+                    patch.object(tools.urllib.request, "urlopen",
+                                 side_effect=[failure, contextlib.nullcontext(response)]) as opened:
+                self.assertEqual(tools.download("https://example.invalid", digest,
+                                                retry={"sleep": lambda _seconds: None}), b"fixture")
+                self.assertEqual(opened.call_count, 2)
+        for failure in (urllib.error.HTTPError("https://example.invalid", 404, "private", {}, None), None):
+            outcome = failure or contextlib.nullcontext(response)
+            with self.subTest(failure=failure), self.assertRaises((Refusal, urllib.error.HTTPError)), \
+                    patch.object(tools.urllib.request, "urlopen", side_effect=[outcome, outcome]) as opened:
+                tools.download("https://example.invalid", "0" * 64, retry={"sleep": lambda _seconds: None})
+            self.assertEqual(opened.call_count, 1)
+
     def test_private_requirements_are_exact_pins_and_install_without_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             env = {"RUNNER_TEMP": directory, "GITHUB_WORKSPACE": directory,
@@ -106,8 +126,12 @@ class ToolTests(unittest.TestCase):
                 return Mock(returncode=1, stdout="private diagnostic")
             output = io.StringIO()
             with patch.object(tools.sys, "platform", "linux"), patch.object(tools.os, "uname", return_value=Mock(machine="x86_64")), contextlib.redirect_stdout(output):
-                self.assertEqual(run_private(lambda _: tools.install(env, Mock(), failure), None), 1)
-            self.assertEqual(output.getvalue(), "FAIL\n")
+                self.assertEqual(run_private(lambda _: tools.install(env, Mock(), failure), None,
+                                             subject="deploy-tools"), 1)
+            line, annotation = output.getvalue().splitlines()
+            self.assertRegex(line, r"\AFAIL deploy-tools reason=refused at=staging_cd_tools\.py:\d+ cause=unknown\Z")
+            self.assertTrue(annotation.startswith("::error file=.github/scripts/staging_cd_tools.py,line="))
+            self.assertNotIn("private", line + annotation)
 
     def test_symlinked_tools_and_unsupported_runners_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:

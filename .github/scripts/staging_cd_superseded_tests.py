@@ -14,17 +14,24 @@ from staging_cd_allocate import allocate_queue
 from staging_cd_common import Refusal
 from staging_cd_history import DevelopHistory
 from staging_cd_publish_tests import PublicationTests
-from staging_cd_receipts_tests import fixture_identity
-from staging_cd_reservations import Reservations, next_reservation
-from staging_cd_versions import version_tuple
+from staging_cd_receipts_tests import fixture_identity, fixture_receipt, fixture_runtime_receipt, fixture_tag
+from staging_cd_reservations import ReservationSuperseded, Reservations, next_reservation
+from staging_cd_versions import DEPLOYABLES, version_tuple
+
+LANES = sorted(DEPLOYABLES)
+
+
+def final_tag(value):
+    make = fixture_runtime_receipt if value['component'].startswith('runtime') else fixture_receipt
+    return fixture_tag(make(**{k: v for k, v in value.items() if k != 'schema'}))
 
 
 class SupersededTests(unittest.TestCase):
-    def fixture(self):
+    def fixture(self, component='am'):
         sources = [letter * 40 for letter in 'abcd']
         pending = []
         for index, source in enumerate(sources[:3]):
-            pending.append(next_reservation('am', source, 'e' * 40, index + 1, 'patch',
+            pending.append(next_reservation(component, source, 'e' * 40, index + 1, 'patch',
                                             index + 10, 1, [], pending))
         history = DevelopHistory(sources[-1], list(reversed(sources)))
         api, store = Mock(), Mock()
@@ -46,7 +53,7 @@ class SupersededTests(unittest.TestCase):
         store.list.side_effect = lambda: copy.deepcopy(pending)
         store.insert.side_effect = lambda value: pending.append(copy.deepcopy(value)) is None
         queue = {'head': sources[-1], 'event_source': sources[-1], 'changes': [
-            {'source': source, 'tree': 'e' * 40, 'deployables': ['cma-agent-manager']} for source in sources]}
+            {'source': source, 'tree': 'e' * 40, 'deployables': [DEPLOYABLES[component]]} for source in sources]}
         return queue, api, store, pending
 
     def test_three_pending_plus_new_source_schedule_one_build_and_keep_watermark(self):
@@ -68,11 +75,19 @@ class SupersededTests(unittest.TestCase):
     def test_stale_queue_never_allocates_over_newer_pending_source(self):
         queue, api, store, pending = self.fixture()
         queue['changes'] = queue['changes'][:1]
-        self.assertEqual(allocate_queue(queue, api, store, 99, 1), {'include': []})
-        store.insert.assert_not_called()
-        self.assertEqual(len(pending), 3)
+        # The lane has no final. Its newest failed attempt stays its baseline
+        # though the queue no longer selects that source: retry exactly there.
+        matrix = allocate_queue(queue, api, store, 99, 1)
+        task, = json.loads(matrix['include'][0]['tasks'])
+        self.assertEqual(task['mode'], 'publish')
+        self.assertEqual(task['reservation']['source'], pending[2]['source'])
+        self.assertEqual(task['reservation']['previous'], pending[2]['version'])
+        # The newer pending source still fences the older selected source.
+        self.assertNotEqual(task['reservation']['source'], queue['changes'][0]['source'])
+        store.insert.assert_called_once()
+        self.assertEqual(len(pending), 4)
 
-    def test_active_old_owner_refuses_without_silent_loss_or_reservation_writes(self):
+    def test_active_old_owner_is_superseded_without_waiting(self):
         queue, api, store, pending = self.fixture()
         request = api.request.side_effect
         def active(path, **kwargs):
@@ -81,13 +96,14 @@ class SupersededTests(unittest.TestCase):
                 result['status'] = 'in_progress'
             return result
         api.request.side_effect = active
-        with self.assertRaisesRegex(Refusal, 'drained before supersession'):
-            allocate_queue(queue, api, store, 99, 1)
-        store.insert.assert_not_called()
-        self.assertEqual(len(pending), 3)
+        matrix = allocate_queue(queue, api, store, 99, 1)
+        self.assertEqual(json.loads(matrix['include'][0]['tasks'])[0]['reservation'], pending[-1])
+        self.assertEqual(len(pending), 4)
+        self.assertFalse(any(c.args[0].startswith('actions/') for c in api.request.call_args_list))
 
     def test_shared_failed_owner_is_checked_once_per_allocation(self):
         queue, api, store, pending = self.fixture()
+        queue['changes'].pop()  # The latest requested source already has an owner.
         for value in pending:
             value['run_id'] = 10
         allocate_queue(queue, api, store, 99, 1)
@@ -107,15 +123,62 @@ class SupersededTests(unittest.TestCase):
         allocate_queue(queue, api, store, 99, 1)
         real = Reservations(api, 'fixture', Path.cwd(), runner=Mock())
         real.list = lambda _component=None: copy.deepcopy(pending)
-        self.assertTrue(real.require_current(pending[-1]))
+        self.assertTrue(real.require_current(pending[-1], build_started=False))
         for value in pending[:-1]:
             with self.assertRaisesRegex(Refusal, 'superseded and burned'):
-                real.require_current(value)
+                real.require_current(value, build_started=False)
         current = pending[-1]
         real.list = lambda _component=None: []
-        with self.assertRaisesRegex(Refusal, 'missing'):
-            real.require_current(current)
+        for started in (False, True):
+            with self.assertRaisesRegex(Refusal, 'missing'):
+                real.require_current(current, build_started=started)
         real.runner.assert_not_called()
+
+    def test_started_build_in_every_lane_ignores_higher_pending_but_never_a_higher_final(self):
+        for component in LANES:
+            with self.subTest(component=component):
+                queue, api, store, pending = self.fixture(component)
+                allocate_queue(queue, api, store, 99, 1)
+                real = Reservations(api, 'fixture', Path.cwd(), runner=Mock())
+                real.list = lambda _component=None: copy.deepcopy(pending)
+                for value in pending[:-1]:
+                    # A queued older build yields; one already running may finish.
+                    with self.assertRaises(ReservationSuperseded):
+                        real.require_current(value, build_started=False)
+                    self.assertTrue(real.require_current(value, build_started=True))
+                api.tags.return_value = [final_tag(pending[-1])]
+                real.list = lambda _component=None: copy.deepcopy(pending[:-1])
+                for started in (False, True):
+                    for value in pending[:-1]:
+                        with self.assertRaisesRegex(Refusal, 'superseded and burned') as error:
+                            real.require_current(value, build_started=started)
+                        # A higher final fails a started build; it never becomes a skip.
+                        self.assertEqual(isinstance(error.exception, ReservationSuperseded), not started)
+                real.runner.assert_not_called()
+
+    def test_finalize_of_a_started_build_in_every_lane_passes_pending_successors_but_not_a_higher_final(self):
+        class Pushed(Exception):
+            pass
+        for component in LANES:
+            queue, api, store, pending = self.fixture(component)
+            allocate_queue(queue, api, store, 99, 1)
+            receipt = final_tag(pending[0])['receipt']
+            for finals in ([], [final_tag(pending[-1])]):
+                with self.subTest(component=component, higher_final=bool(finals)):
+                    real = Reservations(api, 'fixture', Path.cwd(), runner=Mock())
+                    real.list = lambda _component=None: copy.deepcopy(pending if not finals else pending[:-1])
+                    api.tags.return_value = finals
+                    real.command = Mock(side_effect=Pushed())
+                    if finals:
+                        with self.assertRaisesRegex(Refusal, 'superseded and burned') as error:
+                            real.finalize(receipt, lambda _repository, _digest: True)
+                        self.assertNotIsInstance(error.exception, ReservationSuperseded)
+                        real.command.assert_not_called()
+                    else:
+                        # Higher pending successors no longer fence the finalizer: it reaches the push.
+                        with self.assertRaises(Pushed):
+                            real.finalize(receipt, lambda _repository, _digest: True)
+                        self.assertEqual(real.command.call_args.args[0], 'mktag')
 
     def test_current_owner_can_build_but_superseded_owner_never_snapshots(self):
         identity = fixture_identity()
@@ -150,10 +213,10 @@ class SupersededTests(unittest.TestCase):
                     self.assertTrue(publish.call_args.kwargs['reservation_check']())
 
     def test_supersession_during_qualification_refuses_registry_copy(self):
-        for stale_at in (0, 1, None):
+        for stale_at in (0, 1, 2, None):
             with self.subTest(stale_at=stale_at), tempfile.TemporaryDirectory() as directory:
                 archive, digest, registry, scanner, runner = PublicationTests().fixture(directory)
-                checks = [True, True]
+                checks = [True, True, True]
                 if stale_at is not None:
                     checks[stale_at] = Refusal('Publication reservation is superseded and burned')
                 guard = Mock(side_effect=checks)
@@ -168,7 +231,7 @@ class SupersededTests(unittest.TestCase):
                         with self.assertRaisesRegex(Refusal, 'superseded and burned'):
                             run()
                 copies = [call for call in runner.call_args_list if call.args[0][:2] == ['skopeo', 'copy']]
-                self.assertEqual(len(copies), 1 if stale_at is None else 0)
+                self.assertEqual(len(copies), 1 if stale_at in (2, None) else 0)
                 self.assertFalse((Path(directory) / 'registry-auth.json').exists())
 
 

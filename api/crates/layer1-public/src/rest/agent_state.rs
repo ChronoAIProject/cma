@@ -2,8 +2,21 @@ use std::sync::Arc;
 
 use super::super::agent_history::AgentHistoryExporter;
 use super::super::agent_lifecycle::{AgentLifecycleOperationReader, AgentLifecycleProvisioner};
+use layer2_core::profiles::SandboxProfileStore;
 use layer2_core::sandbox::{AgentOperationService, AgentReadService, AgentService};
 use layer2_core::OperationStore;
+
+pub(super) async fn list_private_headers(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        "private, no-store".parse().unwrap(),
+    );
+    response
+}
 
 #[derive(Clone)]
 pub struct AgentRoutesState {
@@ -22,6 +35,7 @@ pub struct AgentRoutesState {
     pub(in crate::rest) lifecycle: Option<Arc<dyn AgentLifecycleProvisioner>>,
     pub(in crate::rest) lifecycle_operations: Option<Arc<dyn AgentLifecycleOperationReader>>,
     pub(in crate::rest) history_exporter: Option<Arc<dyn AgentHistoryExporter>>,
+    pub(super) sandbox_profile_readability: Option<Arc<dyn SandboxProfileStore>>,
 }
 
 impl AgentRoutesState {
@@ -76,6 +90,7 @@ impl AgentRoutesState {
             lifecycle: None,
             lifecycle_operations: None,
             history_exporter: None,
+            sandbox_profile_readability: None,
         }
     }
 
@@ -96,6 +111,14 @@ impl AgentRoutesState {
 
     pub fn with_history_exporter(mut self, exporter: Arc<dyn AgentHistoryExporter>) -> Self {
         self.history_exporter = Some(exporter);
+        self
+    }
+
+    pub fn with_sandbox_profile_readability(
+        mut self,
+        profiles: Arc<dyn SandboxProfileStore>,
+    ) -> Self {
+        self.sandbox_profile_readability = Some(profiles);
         self
     }
 

@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from '../test/agent';
 import { ApiError } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
-import { sandboxFixture, workspaceFixture } from '../test/hierarchy';
+import { workspaceFixture } from '../test/hierarchy';
 import { conversationFromTranscript, type ConversationState } from './conversation';
 import type { AgentController } from './controller';
 import { useAgentController } from './controller';
@@ -134,117 +134,6 @@ it('preserves a draft and visible history while incomplete event activity retrie
     view.unmount();
     vi.useRealTimers();
   }
-});
-
-const ALL_ACTIONS = {
-  createWorkspace: true,
-  createAgent: true,
-  pauseSandbox: true,
-  deleteSandbox: true,
-  removeWorkspace: true,
-  stopAgent: true,
-  deleteAgent: true,
-  exportHistory: true,
-};
-
-it('offers Stop, Export and Delete from the header, with the reason Delete is unavailable', async () => {
-  const onAgentAction = vi.fn();
-  const actor = userEvent.setup();
-  const ready = controller(
-    {
-      status: 'ready',
-      detail: AGENT_DETAIL,
-      workspace: workspaceFixture(),
-      conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
-    },
-    undefined,
-    { progressObservation: { sandbox: sandboxFixture(), stale: false } },
-  );
-  render(
-    <AgentSurface
-      agentId="agt_1"
-      controller={ready}
-      detailsOpen={false}
-      onDetailsOpenChange={vi.fn()}
-      onNavigate={vi.fn()}
-      permissions={ALL_ACTIONS}
-      onAgentAction={onAgentAction}
-    />,
-  );
-  await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
-  expect(
-    screen.getByRole('menuitem', {
-      name: 'Delete task Stop this Agent before deleting it and its Worktree.',
-    }),
-  ).toHaveAttribute('aria-disabled', 'true');
-  expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeEnabled();
-  const rows = screen.getAllByRole('menuitem');
-  for (const [index, label] of [
-    'Rename',
-    'Update system prompt',
-    'Update skills',
-    'Export history',
-    'View deletion status',
-    'Delete task',
-  ].entries())
-    expect(rows[index]).toHaveAccessibleName(expect.stringContaining(label));
-  expect(screen.getByRole('menu').querySelectorAll('[role="separator"]')).toHaveLength(1);
-  expect(screen.queryByRole('menuitem', { name: 'Stop agent' })).not.toBeInTheDocument();
-  expect(onAgentAction).not.toHaveBeenCalled();
-});
-
-it('holds every header action while another action is being confirmed', async () => {
-  const onAgentAction = vi.fn();
-  const actor = userEvent.setup();
-  render(
-    <AgentSurface
-      agentId="agt_1"
-      controller={controller(
-        {
-          status: 'ready',
-          detail: AGENT_DETAIL,
-          workspace: workspaceFixture(),
-          conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
-        },
-        undefined,
-        { progressObservation: { sandbox: sandboxFixture(), stale: false } },
-      )}
-      detailsOpen={false}
-      onDetailsOpenChange={vi.fn()}
-      onNavigate={vi.fn()}
-      permissions={ALL_ACTIONS}
-      actionsBusy
-      onAgentAction={onAgentAction}
-    />,
-  );
-  await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
-  const stop = screen.getByRole('menuitem', {
-    name: 'Delete task Another action is still being confirmed.',
-  });
-  await actor.click(stop);
-  expect(onAgentAction).not.toHaveBeenCalled();
-});
-
-it('offers only the Details toggle and creation origin to a reader without actions', async () => {
-  render(
-    <AgentSurface
-      agentId="agt_1"
-      controller={controller({
-        status: 'ready',
-        detail: AGENT_DETAIL,
-        workspace: workspaceFixture(),
-        conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
-      })}
-      detailsOpen={false}
-      onDetailsOpenChange={vi.fn()}
-      onNavigate={vi.fn()}
-    />,
-  );
-  await userEvent.setup().click(screen.getByRole('button', { name: 'More Agent actions' }));
-  expect(screen.getAllByRole('menuitem')).toHaveLength(6);
-  for (const item of screen.getAllByRole('menuitem'))
-    expect(item).toHaveAttribute('aria-disabled', 'true');
-  expect(screen.getByRole('button', { name: 'Show Agent details' })).toBeEnabled();
 });
 
 it('holds approval and Stop response controls during history hydration', async () => {
@@ -396,12 +285,12 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
   expect(screen.getByRole('heading', { name: 'Agent one' })).toBeInTheDocument();
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'View activity' })).not.toBeInTheDocument();
-  await actor.click(screen.getByRole('button', { name: 'Typecheck' }));
+  await actor.click(screen.getByRole('button', { name: 'Typecheck Duration unavailable' }));
   const tool = screen.getByRole('article', { name: 'Tool call: Typecheck' });
   expect(within(tool).getByRole('img', { name: 'Completed' })).toBeInTheDocument();
   await actor.click(within(tool).getByRole('button', { name: /Typecheck/ }));
   expect(tool.querySelector('.tool-call__details pre')).toHaveTextContent('Typecheck');
-  expect(tool).not.toHaveTextContent(/duration/i);
+  expect(tool).toHaveTextContent('Duration unavailable');
   expect(screen.queryByText('Check the types.')).not.toBeInTheDocument();
   expect(screen.getByText('Conversation recovery')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /^Agent settings:/ })).toHaveAccessibleDescription(

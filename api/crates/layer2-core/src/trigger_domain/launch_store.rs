@@ -170,6 +170,8 @@ pub struct LaunchCommit {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LaunchStoreError {
+    #[error("account deletion is in progress")]
+    AccountDeletionInProgress,
     #[error("daily visitor Launch allowance exhausted")]
     VisitorQuota {
         limit: u32,
@@ -208,6 +210,7 @@ pub enum LaunchStoreError {
 impl LaunchStoreError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::AccountDeletionInProgress => "account_deletion_in_progress",
             Self::VisitorQuota { .. } => "resource_quota",
             Self::NotFound => "launch_not_found",
             Self::Duplicate => "launch_already_exists",
@@ -229,6 +232,17 @@ impl LaunchStoreError {
 
 #[async_trait]
 pub trait LaunchStore: Send + Sync {
+    /// Read the owner's admitted visitor count for early refusal only.
+    /// The admission transaction remains the authority, including when this
+    /// optional optimization returns its default count of zero.
+    async fn visitor_launches_admitted(
+        &self,
+        _owner: &SubjectId,
+        _utc_day: u64,
+    ) -> Result<u32, LaunchStoreError> {
+        Ok(0)
+    }
+
     /// Atomically verifies the exact published Trigger revision, inserts the
     /// Launch and its initial events, and increments the Trigger launch count
     /// plus the ready count when admission itself resolves an existing Agent.

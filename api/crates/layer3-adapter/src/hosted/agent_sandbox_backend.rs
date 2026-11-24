@@ -1,5 +1,8 @@
 use super::{HostedAgentOpenSettings, HostedBackend, HostedControlTransport};
 use crate::binding_diagnostics::{adapter as timed, Stage};
+use crate::ingress_budget::{
+    AdmissionRefusal, AdmittedError, AdmittedOperation, IngressOwnershipPolicy, OwnedWork,
+};
 use crate::{
     agent_sandbox::AgentSandboxClient,
     provider::ProviderSandboxRequest,
@@ -143,6 +146,54 @@ impl HostedBackend for AgentSandboxBackend {
         timing.completed("runtime_binding");
         Ok(handle)
     }
+    async fn challenge_retirement_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        receiver: &crate::receiver_failure::RetirementReceiver,
+    ) -> Result<bool> {
+        let binding = self
+            .client
+            .retirement_receiver(handle, request, home)
+            .await?;
+        if RetirementPod::try_from(&binding)? != receiver.pod {
+            return Err(AdapterError::Rejected("retirement receiver changed".into()));
+        }
+        let unavailable = self
+            .transport
+            .challenge_retirement_receiver(handle, &binding, &receiver.owner)
+            .await?;
+        if self
+            .client
+            .retirement_receiver(handle, request, home)
+            .await?
+            != binding
+        {
+            return Err(AdapterError::Rejected("retirement receiver changed".into()));
+        }
+        Ok(unavailable)
+    }
+    async fn retire_unreachable(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        receiver: &RetirementPod,
+    ) -> Result<()> {
+        self.client
+            .retire_verified(handle, request, home, Some(receiver))
+            .await?;
+        self.forget_assignment(handle);
+        self.transport.retire(handle).await
+    }
+    async fn verify_retired(
+        &self,
+        handle: &RuntimeHandle,
+        home: &HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.client.verify_retired(handle, home).await
+    }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> Result<()> {
         self.teardown(handle).await
     }
@@ -266,9 +317,20 @@ impl HostedBackend for AgentSandboxBackend {
         // object before exposing a current Running observation.
         timed(
             Stage::NativeIdentity,
-            self.refreshed_adoption_observation(handle, request),
+            self.refreshed_adoption_observation(handle, request, None),
         )
         .await
+    }
+    async fn adopt_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeObservation>> {
+        if !home.request.policy.is_native_vct() {
+            return self.adopt(handle, request).await;
+        }
+        self.adopt_persisted_home(handle, request, home).await
     }
     async fn inspect_native_runtime(
         &self,
@@ -344,6 +406,28 @@ impl HostedBackend for AgentSandboxBackend {
         self.transport.exchange(handle, request).await
     }
 
+    fn exchange_admitted<'a>(
+        &'a self,
+        handle: &'a RuntimeHandle,
+        request: OwnedWork<RequestFrame>,
+        policy: &IngressOwnershipPolicy,
+    ) -> std::result::Result<AdmittedOperation<'a, ResponseFrame>, AdmittedError> {
+        if !request.belongs_to(policy) {
+            return Err(AdmissionRefusal::InvalidPlan {
+                phase: "native exchange request ownership",
+            }
+            .into());
+        }
+        if matches!(&*request, RequestFrame::RuntimeStatus(_)) {
+            // Status must retain exchange_bound_status's assignment and Pod
+            // checks. Its native reads do not yet have admitted ports.
+            return Err(AdmittedError::Unsupported(
+                "native status validation requires admitted reads",
+            ));
+        }
+        self.transport.exchange_admitted(handle, request, policy)
+    }
+
     async fn export_agent_history(
         &self,
         handle: &RuntimeHandle,
@@ -404,3 +488,7 @@ mod history_tests;
 #[cfg(test)]
 #[path = "runtime_routing_tests.rs"]
 mod routing_tests;
+
+#[cfg(test)]
+#[path = "agent_sandbox_backend_ingress_tests.rs"]
+mod ingress_tests;

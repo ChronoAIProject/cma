@@ -1,10 +1,94 @@
 use async_trait::async_trait;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ids::{AgentId, SandboxId};
 use crate::sandbox::{Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, Worktree};
 use crate::seconds_from_rfc3339;
 
-use super::{Page, PageRequest, SandboxStoreError};
+use super::{AgentWorkClaimError, Page, PageRequest, SandboxStoreError};
+
+/// Advisory discovery for runtime-dependent background steps. A directed
+/// probe remains discoverable even when its Sandbox is hidden in ordinary work.
+#[derive(Clone, Copy, Default)]
+pub enum StartupWorkFilter<'a> {
+    #[default]
+    All,
+    Exclude(&'a BTreeSet<SandboxId>),
+    Probe(&'a SandboxId),
+}
+
+impl StartupWorkFilter<'_> {
+    pub const STEPS: [AgentWorkStep; 6] = [
+        AgentWorkStep::InstallSkill,
+        AgentWorkStep::AddWorktree,
+        AgentWorkStep::MaterializeHome,
+        AgentWorkStep::OpenConversation,
+        AgentWorkStep::PublishReady,
+        AgentWorkStep::PublishConnection,
+    ];
+
+    pub fn can_hold(agent: &Agent) -> bool {
+        // An unreconciled lease or cleanup debt can represent an effect that
+        // has already started. Keep these and explicit controls eligible.
+        Self::STEPS.contains(&agent.work.step)
+            && agent.work.lease.is_none()
+            && agent.work.cleanup_debt.is_empty()
+    }
+
+    pub fn includes(self, agent: &Agent) -> bool {
+        match self {
+            Self::All => true,
+            Self::Exclude(sandboxes) => {
+                !sandboxes.contains(&agent.sandbox_id) || !Self::can_hold(agent)
+            }
+            Self::Probe(sandbox_id) => &agent.sandbox_id == sandbox_id && Self::can_hold(agent),
+        }
+    }
+}
+
+/// Identifies the pending task associated with a local acquisition refusal.
+#[derive(Clone, PartialEq, Eq)]
+pub struct PendingAgentWork {
+    pub step: AgentWorkStep,
+    pub status: AgentStatus,
+    pub ready_at: String,
+    pub attempts: u32,
+    pub next_fence: u64,
+    pub control_revision: Option<u64>,
+}
+
+impl PendingAgentWork {
+    pub fn from_agent(agent: &Agent) -> Option<Self> {
+        let work = &agent.work;
+        work.step.is_pending().then(|| Self {
+            step: work.step,
+            status: agent.status,
+            ready_at: work.ready_at.clone(),
+            attempts: work.attempts,
+            next_fence: work.next_fence,
+            control_revision: (!AgentWorkStep::RECEIVER_PACED.contains(&work.step))
+                .then_some(agent.revision),
+        })
+    }
+}
+
+/// Advisory filters applied to current work before the discovery result limit.
+#[derive(Clone, Copy)]
+pub struct AgentWorkDiscovery<'a> {
+    pub receiver_holds: &'a BTreeSet<AgentId>,
+    pub startup: StartupWorkFilter<'a>,
+    pub acquisition_cooldowns: Option<&'a BTreeMap<AgentId, PendingAgentWork>>,
+}
+
+impl<'a> AgentWorkDiscovery<'a> {
+    pub fn new(receiver_holds: &'a BTreeSet<AgentId>, startup: StartupWorkFilter<'a>) -> Self {
+        Self {
+            receiver_holds,
+            startup,
+            acquisition_cooldowns: None,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct VersionedWorktree {
@@ -227,6 +311,29 @@ pub struct AgentCreateAdmission {
     pub machine_included: Option<bool>,
 }
 
+/// Compare-and-set proof for the parents observed while rebuilding a publication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentWorkPublicationParents {
+    pub sandbox_revision: u64,
+    pub workspace_revision: u64,
+    pub worktree_revision: u64,
+    pub lineage: AgentWorkPublicationLineage,
+}
+
+/// A preflight rejection carries the exact versions that demonstrated invalid lineage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentWorkPublicationLineage {
+    Authorized,
+    Rejected { workspace_foreign: bool },
+}
+
+/// Publication disposition before authorizing a fresh mutation body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentWorkPublication {
+    Published,
+    KnownAborted,
+}
+
 /// Durable agent work discovery, lease fencing, and atomic publication.
 #[async_trait]
 pub trait AgentWorkerStore: Send + Sync {
@@ -258,6 +365,17 @@ pub trait AgentWorkerStore: Send + Sync {
         _observed: AgentRetryObservation,
     ) -> Result<(), SandboxStoreError> {
         self.commit_agent_work(mutation).await
+    }
+
+    /// A classified store may positively report that an attempt never committed.
+    /// The default propagates ordinary errors without authorizing a rebuild.
+    async fn try_publish_agent_work(
+        &self,
+        mutation: AgentWorkMutation,
+        _parents: AgentWorkPublicationParents,
+    ) -> Result<AgentWorkPublication, SandboxStoreError> {
+        self.commit_agent_work(mutation).await?;
+        Ok(AgentWorkPublication::Published)
     }
 
     /// Publish a metadata-only retry after verifying the supplied marker in the
@@ -308,6 +426,31 @@ pub trait AgentWorkerStore: Send + Sync {
         &self,
         now: &str,
         limit: u16,
+    ) -> Result<Vec<AgentId>, SandboxStoreError> {
+        self.due_agent_work_with_cleanup_holds(now, limit, &Default::default())
+            .await
+    }
+
+    /// Apply local receiver holds to the current work step before counting the result limit.
+    async fn due_agent_work_with_cleanup_holds(
+        &self,
+        now: &str,
+        limit: u16,
+        holds: &BTreeSet<AgentId>,
+    ) -> Result<Vec<AgentId>, SandboxStoreError> {
+        self.due_agent_work_filtered(
+            now,
+            limit,
+            AgentWorkDiscovery::new(holds, StartupWorkFilter::All),
+        )
+        .await
+    }
+
+    async fn due_agent_work_filtered(
+        &self,
+        now: &str,
+        limit: u16,
+        filter: AgentWorkDiscovery<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError>;
 
     async fn claim_agent_work(
@@ -318,6 +461,40 @@ pub trait AgentWorkerStore: Send + Sync {
         lease_expires_at: String,
     ) -> Result<Option<Agent>, SandboxStoreError>;
 
+    async fn claim_agent_work_observed(
+        &self,
+        id: &AgentId,
+        holder: &str,
+        now: String,
+        lease_expires_at: String,
+    ) -> Result<Option<Agent>, AgentWorkClaimError> {
+        self.claim_agent_work(id, holder, now, lease_expires_at)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Publish a skill result under the captured parent environment. Unsupported
+    /// stores must refuse rather than discard the parent authority.
+    async fn commit_agent_skill_result(
+        &self,
+        _mutation: AgentWorkMutation,
+        _guard: super::AgentSkillResultGuard,
+    ) -> Result<(), SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "skill-result parent fencing is unsupported",
+        ))
+    }
+
     async fn commit_agent_work(&self, mutation: AgentWorkMutation)
         -> Result<(), SandboxStoreError>;
+
+    /// Publish an original startup or connection result with the parent
+    /// revisions observed while proving its native attachment.
+    async fn commit_agent_connection_work(
+        &self,
+        mutation: AgentWorkMutation,
+        _parents: AgentWorkPublicationParents,
+    ) -> Result<(), SandboxStoreError> {
+        self.commit_agent_work(mutation).await
+    }
 }

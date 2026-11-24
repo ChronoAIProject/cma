@@ -36,8 +36,12 @@ fn keep_log_callsite_registry_shared() {
 }
 
 fn registry(provider_url: &str) -> ProviderRegistry {
+    registry_for(provider_url, "cma_codex")
+}
+
+fn registry_for(provider_url: &str, slug: &str) -> ProviderRegistry {
     ProviderRegistry::parse(&format!(
-        r#"[{{"slug":"cma_codex","base_url":"{provider_url}","kind":"responses_http","paths":{{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{{binding_id}}","conversation":"/api/v1/cmaeg/bindings/{{binding_id}}/conversations/{{conversation_id}}","responses":"/api/v2/responses"}},"max_inflight":8}}]"#
+        r#"[{{"slug":"{slug}","base_url":"{provider_url}","kind":"responses_http","paths":{{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{{binding_id}}","conversation":"/api/v1/cmaeg/bindings/{{binding_id}}/conversations/{{conversation_id}}","responses":"/api/v2/responses"}},"max_inflight":8}}]"#
     ))
     .unwrap()
 }
@@ -106,11 +110,16 @@ fn management_state(
 async fn serve_app(
     state: ManagementState,
 ) -> (String, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
+    serve_router(router_with_state(state)).await
+}
+async fn serve_router(
+    router: axum::Router,
+) -> (String, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (shutdown, signal) = oneshot::channel();
     let task = tokio::spawn(async move {
-        serve(listener, router_with_state(state))
+        serve(listener, router)
             .with_graceful_shutdown(async move {
                 let _ = signal.await;
             })
@@ -206,6 +215,9 @@ mod index_hooks;
 #[path = "management/creation.rs"]
 mod creation;
 
+#[path = "management/recovery.rs"]
+mod recovery;
+
 #[path = "management/reconciliation.rs"]
 mod reconciliation;
 
@@ -231,6 +243,9 @@ mod write_gate;
 
 #[path = "management/routing.rs"]
 mod routing;
+
+#[path = "management/retained_origins.rs"]
+mod retained_origins;
 
 #[tokio::test]
 async fn channel_endpoints_use_the_advertised_base_in_both_rollout_phases() {

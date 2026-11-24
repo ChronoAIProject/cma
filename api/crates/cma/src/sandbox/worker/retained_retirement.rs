@@ -1,14 +1,61 @@
 //! A retained CRD must be deleted before paused Agents can settle retirement.
-use layer2_core::sandbox::{RuntimeBinding, Sandbox};
+use std::time::SystemTime;
+
+use layer2_core::sandbox::{RuntimeBinding, Sandbox, SandboxStoreError};
 use layer3_adapter::{AdapterError, RuntimeHandle};
 
-use super::SandboxWorker;
+use super::{
+    support::{adapter_failure, WorkerFailure},
+    SandboxWorker,
+};
 
 impl SandboxWorker {
     pub(super) async fn remove_stopped_native_runtime(
         &self,
         sandbox: &mut Sandbox,
-    ) -> layer3_adapter::Result<()> {
+        now: SystemTime,
+    ) -> Result<Option<WorkerFailure>, SandboxStoreError> {
+        let binding = match self.stopped_native_runtime(sandbox).await {
+            Ok(Some(binding)) => binding,
+            Ok(None) => return Ok(None),
+            Err(error) => return Ok(Some(adapter_failure(error))),
+        };
+        if let Some(failure) = self.prepare_retirement_cleanup(sandbox, now).await? {
+            return Ok(Some(failure));
+        }
+        let result = async {
+            if let Some(home) = &sandbox.lifecycle.home {
+                self.dependencies.adapter.verify_retained_home_route(
+                    &RuntimeHandle::new(&binding.runtime_id),
+                    &home.request,
+                )?;
+            }
+            self.dependencies
+                .adapter
+                .teardown_retained_runtime(&RuntimeHandle::new(&binding.runtime_id))
+                .await
+        }
+        .await;
+        if let Err(error) = result {
+            return Ok(Some(adapter_failure(error)));
+        }
+        sandbox.runtime = None;
+        sandbox.lifecycle.suspended_runtime = None;
+        Ok(None)
+    }
+
+    async fn stopped_native_runtime(
+        &self,
+        sandbox: &Sandbox,
+    ) -> layer3_adapter::Result<Option<RuntimeBinding>> {
+        let defer_unproved_runtime = self
+            .config
+            .retirement_finalizer
+            .as_ref()
+            .is_some_and(|finalizer| finalizer.admission_enabled())
+            && super::super::native_retirement_finalizer::NativeRetirementFinalizer::applies(
+                sandbox,
+            );
         let binding = if let Some(binding) = sandbox.lifecycle.suspended_runtime.as_deref() {
             Some(binding)
         } else if let Some(binding) = sandbox.runtime.as_ref().filter(|binding| {
@@ -20,15 +67,22 @@ impl SandboxWorker {
                 .iter()
                 .find(|runtime| runtime.handle.as_str() == binding.runtime_id);
             let removable = match observed {
-                None => true,
+                None => !defer_unproved_runtime,
                 Some(runtime) if runtime.sandbox_id == sandbox.id.as_str() => {
                     matches!(
                         runtime.lifecycle.state.as_str(),
                         "suspended" | "terminating"
                     ) || (runtime.lifecycle.is_running()
-                        && self
+                        && match self
                             .uncredentialed_native_runtime_is_idle(sandbox, binding)
-                            .await?)
+                            .await
+                        {
+                            Ok(idle) => idle,
+                            // The finalizer repeats actual failed control and
+                            // retains the binding until aggregate settlement.
+                            Err(_) if defer_unproved_runtime => false,
+                            Err(error) => return Err(error),
+                        })
                 }
                 Some(_) => false,
             };
@@ -36,21 +90,7 @@ impl SandboxWorker {
         } else {
             None
         };
-        if let Some(binding) = binding {
-            if let Some(home) = &sandbox.lifecycle.home {
-                self.dependencies.adapter.verify_retained_home_route(
-                    &RuntimeHandle::new(&binding.runtime_id),
-                    &home.request,
-                )?;
-            }
-            self.dependencies
-                .adapter
-                .teardown_retained_runtime(&RuntimeHandle::new(&binding.runtime_id))
-                .await?;
-            sandbox.runtime = None;
-            sandbox.lifecycle.suspended_runtime = None;
-        }
-        Ok(())
+        Ok(binding.cloned())
     }
 
     async fn uncredentialed_native_runtime_is_idle(

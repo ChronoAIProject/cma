@@ -10,7 +10,7 @@
     "cargo_root": "cma",
     "broad_copy": "cargo-production",
     "component": "api",
-    "dockerfile_sha256": "ff13243a584180c6a45a6b4d9c904996b7f3f464fe9521ca1f0e63b43fd6b670",
+    "dockerfile_sha256": "6b623e34d3052c6063599a1a69cea34801a896ac6badbcc0c1cca313859107f0",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",
@@ -35,7 +35,7 @@
     "cargo_root": "cmaeg",
     "broad_copy": "cargo-production",
     "component": "cmaeg",
-    "dockerfile_sha256": "447244c68728c34a31bd6d2913d2d7ae1912e90186ad37ae81a8eb739472c51b",
+    "dockerfile_sha256": "b2b2b43c37ba1d70967d51f8649e8d1d952c0b5cedf2c686e00623443d699341",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",
@@ -62,7 +62,7 @@
     "cargo_root": "layer4-runtime",
     "broad_copy": "cargo-production",
     "component": "runtime",
-    "dockerfile_sha256": "50787f114d5a1644431c077a63acd55ca2db4133d322b4eb4e5e9f13a4547e92",
+    "dockerfile_sha256": "792760afb0d70247150abd4e17ccba972f70bcf095cf4d9b969cbbeafb293265",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",
@@ -85,12 +85,12 @@
     ],
     "build_args": {
       "RUNTIME_DESKTOP": "1",
-      "OMARCHY_CMA_BASE": "runtime"
+      "OMARCHY_CMA_BASE": "runtime-tools"
     },
     "cargo_root": "layer4-runtime",
     "broad_copy": "cargo-production",
     "component": "runtime-omarchy",
-    "dockerfile_sha256": "50787f114d5a1644431c077a63acd55ca2db4133d322b4eb4e5e9f13a4547e92",
+    "dockerfile_sha256": "792760afb0d70247150abd4e17ccba972f70bcf095cf4d9b969cbbeafb293265",
     "broad_copy_exclusions": [
       "tests/**",
       "benches/**",
@@ -116,7 +116,7 @@
     "cargo_root": null,
     "broad_copy": "vite-production",
     "component": "web",
-    "dockerfile_sha256": "b4d3b956110eea75f69fd10a197656699de511ffd94470dfe08daeee430953d9",
+    "dockerfile_sha256": "fe2655cb56817c79d81597fa9df71f0b7f86e7c53486f12e1ba91501192141ca",
     "broad_copy_exclusions": [
       "e2e/**",
       "**/tests/**",

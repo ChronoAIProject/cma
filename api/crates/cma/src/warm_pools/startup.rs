@@ -5,41 +5,131 @@ use super::{
 };
 use layer3_adapter::agent_sandbox::NativePoolControl;
 use std::time::Duration;
+use tokio::sync::watch;
 
-const STARTUP_WARMUP_LIMIT: Duration = Duration::from_secs(120);
+use crate::startup::Admission;
+
+// Outlast the release settle window plus drain, scheduling and image pull:
+// with 120 s each, a promotion onto a full node pool always gave up exactly
+// when older capacity first became eligible to drain, so every runtime
+// promotion restarted the Agent Manager once. The 240 s total leaves time for
+// socket bind and sandbox initialization inside the default 300 s startup probe.
+const STARTUP_WARMUP_LIMIT: Duration = Duration::from_secs(super::RELEASE_SETTLE.as_secs() + 120);
 
 impl NativeWarmPools {
     /// Release preparation should prewarm this plan before the Recreate rollout.
     /// This bounded guard never serves allocations before readiness and does not
     /// imply that the old API remains available during a Recreate deployment.
+    ///
+    /// Only the default runtime plan gates startup. The shared desktop pool
+    /// merely shortens machine startup, which still works cold, and a new
+    /// machine image's first pull alone can outlast this guard; the supervisor
+    /// fills that pool in the background.
+    #[cfg(test)]
     pub async fn await_default_ready(&self) -> Result<(), WarmPoolError> {
+        self.await_default_ready_until(None).await
+    }
+
+    pub(crate) async fn await_default_ready_until(
+        &self,
+        admission: Option<&Admission>,
+    ) -> Result<(), WarmPoolError> {
+        if let Some(admission) = admission {
+            let (settled, retiring) = watch::channel(false);
+            let stopping = || admission.is_draining() || *retiring.borrow();
+            let (result, ()) = tokio::join!(
+                async {
+                    let result = self.await_default_plan_ready(Some(admission)).await;
+                    settled.send_replace(true);
+                    result
+                },
+                async {
+                    // Each admitted retirement must settle before either startup
+                    // or shutdown continues, even if readiness wins the race.
+                    while !stopping() {
+                        self.retire_during_startup(&stopping).await;
+                        tokio::select! {
+                            () = crate::shutdown::signalled(retiring.clone()) => break,
+                            () = admission.stopping() => break,
+                            () = tokio::time::sleep(Duration::from_secs(5)) => (),
+                        }
+                    }
+                },
+            );
+            return result;
+        }
+        // The supervisor that retires superseded pools starts only after this
+        // gate, yet on a full node pool the new default schedules only once
+        // their spare capacity drains. Retire superseded targets while waiting,
+        // so a starting pod frees the room it needs.
+        let drain = async {
+            loop {
+                self.retire_during_startup(&|| false).await;
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        };
+        tokio::select! {
+            result = self.await_default_plan_ready(None) => result,
+            _ = drain => unreachable!("superseded pool draining never completes"),
+        }
+    }
+
+    async fn retire_during_startup(&self, stopping: &impl Fn() -> bool) {
+        if self.retire_superseded(stopping).await.is_err() {
+            tracing::warn!("superseded native pool retirement during startup will retry");
+        }
+    }
+
+    /// Claims only retiring or superseded targets, never a current plan: the
+    /// generic reconciler's unbound path would configure a freshly inserted
+    /// default at zero replicas and empty a pool that release preparation
+    /// prewarmed, which `step` deliberately adopts instead.
+    async fn retire_superseded(&self, stopping: &impl Fn() -> bool) -> Result<(), WarmPoolError> {
+        let Some(provider) = self.adapter.native_pools() else {
+            return Ok(());
+        };
+        for target in self.store.list().await? {
+            if stopping() {
+                break;
+            }
+            if target.retired || (!target.retiring && self.current_plan(&target)?) {
+                continue;
+            }
+            // Plans are immutable and retirement only advances, so a claimed
+            // superseded target is still superseded. A target an earlier pod
+            // marked retiring and deferred is resumed, not skipped.
+            if let Some(claimed) = self.store.claim_retirement(&target.id).await? {
+                self.retire_claimed(provider, claimed).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn await_default_plan_ready(
+        &self,
+        admission: Option<&Admission>,
+    ) -> Result<(), WarmPoolError> {
         let provider = self
             .adapter
             .native_pools()
             .ok_or(WarmPoolError::Unavailable)?;
-        let mut images = vec![&self.image];
-        if let Some((image, _)) = &self.machine {
-            images.push(image);
-        }
-        for image in images {
-            let plan = provider
-                .plan(&NativePoolSpec {
-                    image: image.clone(),
-                    cpu_millis: self.default_capacity.cpu_millis,
-                    memory_mib: self.default_capacity.memory_mib,
-                    home: self.home.clone().ok_or(WarmPoolError::Unavailable)?,
-                })
-                .map_err(|_| WarmPoolError::Unavailable)?;
-            await_ready_with_fencing(
-                self.store.as_ref(),
-                provider,
-                &plan,
-                STARTUP_WARMUP_LIMIT,
-                self.target_fencing,
-            )
-            .await?;
-        }
-        Ok(())
+        let plan = provider
+            .plan(&NativePoolSpec {
+                image: self.released_images().agent,
+                cpu_millis: self.default_capacity.cpu_millis,
+                memory_mib: self.default_capacity.memory_mib,
+                home: self.home.clone().ok_or(WarmPoolError::Unavailable)?,
+            })
+            .map_err(|_| WarmPoolError::Unavailable)?;
+        await_ready_with_fencing(
+            self.store.as_ref(),
+            provider,
+            &plan,
+            STARTUP_WARMUP_LIMIT,
+            self.target_fencing,
+            admission,
+        )
+        .await
     }
 }
 
@@ -50,7 +140,7 @@ pub(super) async fn await_ready(
     plan: &NativePoolConfiguration,
     limit: Duration,
 ) -> Result<(), WarmPoolError> {
-    await_ready_with_fencing(store, provider, plan, limit, false).await
+    await_ready_with_fencing(store, provider, plan, limit, false, None).await
 }
 
 async fn await_ready_with_fencing(
@@ -59,20 +149,43 @@ async fn await_ready_with_fencing(
     plan: &NativePoolConfiguration,
     limit: Duration,
     target_fencing: bool,
+    admission: Option<&Admission>,
 ) -> Result<(), WarmPoolError> {
-    tokio::time::timeout(limit, async {
+    let deadline = tokio::time::Instant::now() + limit;
+    let readiness = async {
         loop {
+            if admission.is_some_and(Admission::is_draining) {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(WarmPoolError::Unavailable);
+            }
             match step(store, provider, plan, target_fencing).await {
                 Ok(true) => return Ok(()),
                 Ok(false) => {}
                 Err(WarmPoolError::Conflict) => return Err(WarmPoolError::Conflict),
                 Err(_) => tracing::warn!("default native pool startup readiness will retry"),
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            let retry = (tokio::time::Instant::now() + Duration::from_secs(1)).min(deadline);
+            if let Some(admission) = admission {
+                tokio::select! {
+                    () = admission.stopping() => return Ok(()),
+                    () = tokio::time::sleep_until(retry) => (),
+                }
+            } else {
+                tokio::time::sleep_until(retry).await;
+            }
         }
-    })
-    .await
-    .map_err(|_| WarmPoolError::Unavailable)?
+    };
+    if admission.is_some() {
+        // Once a step claims a target, its provider and publication deadlines
+        // govern that attempt. The warmup limit bounds admission to new steps.
+        readiness.await
+    } else {
+        tokio::time::timeout_at(deadline, readiness)
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?
+    }
 }
 
 async fn step(

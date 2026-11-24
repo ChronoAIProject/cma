@@ -68,6 +68,7 @@ async fn owned_control_challenges_then_renews_then_confirms_before_effect() {
     );
     assert_eq!(authority.renewals.load(Ordering::SeqCst), 1);
     assert!(authority.failure.get().is_none());
+    assert_eq!(authority.confirmed_bindings.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -363,6 +364,7 @@ async fn failed_exchange(
     .is_err());
     let listener = server.await.unwrap();
     assert!(!authority.is_current());
+    assert!(authority.confirmed_bindings.lock().unwrap().is_empty());
     assert!(authority.failure_before_revocation.load(Ordering::SeqCst));
     let failure = *authority.failure.get().unwrap();
     assert!(
@@ -452,3 +454,6 @@ async fn deadline_after_response_headers_retains_the_http_status() {
     );
     assert!(authority.failure_before_revocation.load(Ordering::SeqCst));
 }
+
+#[path = "provider_ownership_retirement_tests.rs"]
+mod retirement;

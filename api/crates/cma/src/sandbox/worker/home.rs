@@ -51,7 +51,8 @@ impl SandboxWorker {
                         crate::sandbox::runtime_mapping::sandbox_spec(
                             sandbox,
                             &self.config.deployment_id,
-                        ),
+                        )
+                        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?,
                     );
                     match crate::sandbox::home_native::reserve(
                         self.dependencies.adapter.as_ref(),
@@ -82,7 +83,13 @@ impl SandboxWorker {
         sandbox: &mut Sandbox,
         now: SystemTime,
     ) -> Result<Option<WorkerFailure>, SandboxStoreError> {
-        while let Some(home) = sandbox.lifecycle.home.as_deref() {
+        loop {
+            if let Some(failure) = self.prepare_retirement_cleanup(sandbox, now).await? {
+                return Ok(Some(failure));
+            }
+            let Some(home) = sandbox.lifecycle.home.as_deref() else {
+                return Ok(None);
+            };
             let next = match crate::sandbox::home_native::next_cleanup(
                 self.dependencies.adapter.as_ref(),
                 home,
@@ -95,7 +102,6 @@ impl SandboxWorker {
             };
             self.save_home(sandbox, next, now).await?;
         }
-        Ok(None)
     }
 
     async fn save_home(

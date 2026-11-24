@@ -48,6 +48,14 @@ class CompatibilityTests(unittest.TestCase):
     def tasks(self, source, components=GROUP):
         return {key: [{'mode': 'publish', 'reservation': {'source': source}}] for key in components}
 
+    def test_selector_selects_the_whole_group_for_its_contract_evidence(self):
+        # A transition needs every member selected at or after it. The shared
+        # selector keeps its own copy of these names; they must stay equal.
+        from ci_tracks.publication_inputs import CONTRACT_FILES, CONTRACT_IMAGES
+        from staging_cd_versions import DEPLOYABLES
+        self.assertEqual(CONTRACT_FILES, {VERSION_FILE, RECIPE})
+        self.assertEqual(CONTRACT_IMAGES, {DEPLOYABLES[key] for key in GROUP})
+
     def test_ordinary_source_and_packaging_changes_are_independent(self):
         policy = self.policy()
         self.assertFalse(policy.transition(self.current))

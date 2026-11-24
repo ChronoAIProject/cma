@@ -41,11 +41,13 @@ mod bounded_fixtures;
 mod bounded_message_tests;
 mod bounded_read_proof_tests;
 mod bounded_receipt_tests;
+mod cancel_wake_tests;
 mod fleet_activation_tests;
 mod legacy_session_ceilings_tests;
 mod operator_stop_execution_tests;
 mod ownership_tests;
 mod session_ceilings_tests;
+mod stale_turn_tests;
 mod supervision_tests;
 
 struct Authority(Mutex<Result<Caller, CommandAuthorizationError>>);
@@ -439,6 +441,9 @@ async fn replaced_control_turn_has_typed_refusal_before_runtime_or_lifecycle_wor
 mod binding_execution;
 
 mod operation_lookup_tests;
+
+#[path = "runtime_loss_budget_tests.rs"]
+mod runtime_loss_budget;
 
 #[path = "budget_execution_tests.rs"]
 mod budget_execution;

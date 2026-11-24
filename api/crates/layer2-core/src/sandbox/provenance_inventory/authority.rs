@@ -70,6 +70,12 @@ impl InventoryAuthority {
     }
 }
 
+#[tracing::instrument(
+    level = "debug",
+    target = "cma.agent_inventory",
+    name = "authorize",
+    skip_all
+)]
 pub(super) fn authorize_candidates(
     authority: &InventoryAuthority,
     query: &AgentListQuery,
@@ -125,6 +131,7 @@ pub(super) fn authorize_candidates(
         decision.require(READ_CAPABILITY)?;
         result.push(AuthorizedResource {
             binding: None,
+            caller: authority.caller.clone(),
             snapshot: snapshot.resource.clone(),
             decision,
         });

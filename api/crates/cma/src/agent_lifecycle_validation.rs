@@ -1,4 +1,4 @@
-use crate::store::LifecycleBehavior;
+use crate::store::{LifecycleBehavior, LifecycleLease};
 use layer1_public::rest::{
     AgentLifecycleCreateRequest, AgentLifecyclePermissions, AgentLifecycleProfile,
     AgentLifecycleProvisioningError,
@@ -9,9 +9,19 @@ use layer2_core::profiles::{
 use layer2_core::sandbox::{AgentServiceError, SandboxServiceError, WorkspaceServiceError};
 use url::Url;
 
+pub(super) fn initial_title(request: &AgentLifecycleCreateRequest) -> Option<String> {
+    match request.title_mode {
+        Some(layer1_public::rest::AgentLifecycleTitleMode::Automatic) => None,
+        Some(layer1_public::rest::AgentLifecycleTitleMode::Named) | None => {
+            Some(request.name.clone())
+        }
+    }
+}
+
 pub(super) fn validate_request(
     request: &AgentLifecycleCreateRequest,
 ) -> Result<(), AgentLifecycleProvisioningError> {
+    request.validate_template()?;
     if request.name.trim() != request.name
         || request.name.is_empty()
         || request.name.len() > 80
@@ -302,9 +312,14 @@ pub(super) fn first_message(request: &AgentLifecycleCreateRequest) -> String {
 pub(super) fn sandbox_error(error: SandboxServiceError) -> AgentLifecycleProvisioningError {
     match error {
         SandboxServiceError::Forbidden => AgentLifecycleProvisioningError::Forbidden,
+        SandboxServiceError::SandboxLimitReached { limit, live } => {
+            AgentLifecycleProvisioningError::SandboxLimitReached {
+                limit,
+                live: u64::from(live),
+            }
+        }
         SandboxServiceError::NameConflict
         | SandboxServiceError::SandboxOriginConflict
-        | SandboxServiceError::SandboxLimitReached { .. }
         | SandboxServiceError::NotFound => {
             AgentLifecycleProvisioningError::Conflict(error.to_string())
         }
@@ -409,23 +424,28 @@ pub(super) async fn create_sandbox(
     caller: &layer2_core::Caller,
     profile: layer2_core::profiles::SandboxProfileRef,
     agent_name: &str,
-    operation_id: &str,
+    lease: &LifecycleLease,
 ) -> Result<layer2_core::sandbox::Sandbox, SandboxServiceError> {
     let mut request = layer2_core::sandbox::CreateSandbox {
         profile,
-        name: Some(sandbox_name(agent_name, operation_id)),
+        name: Some(sandbox_name(agent_name, &lease.id)),
         confirmed_digest: None,
         origin: layer2_core::sandbox::SandboxOrigin::Lifecycle {
-            operation_id: operation_id.into(),
+            operation_id: lease.id.clone(),
         },
     };
-    match service.create_for_lifecycle(caller, request.clone()).await {
+    match service
+        .create_for_lifecycle_with_lease(caller, request.clone(), &lease.token)
+        .await
+    {
         // A pre-update worker may have committed the old name, then lost the
         // response before persisting its child ID. Replay still verifies the
         // exact owner, operation, profile and historical name in the service.
         Err(SandboxServiceError::SandboxOriginConflict) => {
             request.name = Some(legacy_sandbox_name(agent_name));
-            service.create_for_lifecycle(caller, request).await
+            service
+                .create_for_lifecycle_with_lease(caller, request, &lease.token)
+                .await
         }
         result => result,
     }

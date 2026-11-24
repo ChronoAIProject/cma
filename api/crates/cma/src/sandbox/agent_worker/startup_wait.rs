@@ -1,7 +1,9 @@
 //! Wait for real parent readiness before resolving the reserved Worktree base.
-use super::support::{claimed_fence, validate_lineage, WorkerFailure};
+use super::support::{
+    claimed_fence, same_publication_claim, validate_lineage, PublicationParents, WorkerFailure,
+};
 use super::*;
-use layer2_core::sandbox::store::{AgentWorkMutation, VersionedWorktree};
+use layer2_core::sandbox::store::{AgentWorkMutation, AgentWorkPublication, VersionedWorktree};
 use layer2_core::sandbox::{Sandbox, SandboxStatus, Workspace, WorkspaceStatus, Worktree};
 
 impl AgentWorker {
@@ -42,18 +44,14 @@ impl AgentWorker {
             let changed = readiness.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
-            let current = self.dependencies.store.get_agent(&agent.id).await?;
-            if current.as_ref().is_none_or(|current| {
-                current.revision != agent.revision
-                    || current.work.lease != agent.work.lease
-                    || current.work.step != AgentWorkStep::WaitForWorkspace
-                    || current.requested_stop_reason.is_some()
-            }) {
-                // A Stop or a newer claim owns the next action.
+            let at = now + started.elapsed();
+            let Some(current) = self.dependencies.store.get_agent(&agent.id).await? else {
+                return Ok(());
+            };
+            if !same_publication_claim(&agent, &current, &self.config.holder, at) {
                 return Ok(());
             }
-            let at = now + started.elapsed();
-            let (parent, workspace, _) = self.unstarted_lineage(&agent).await?;
+            let (parent, workspace, worktree) = self.unstarted_lineage(&current).await?;
             if matches!(
                 parent.status,
                 SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
@@ -62,27 +60,39 @@ impl AgentWorker {
                 WorkspaceStatus::Failed | WorkspaceStatus::Removing | WorkspaceStatus::Removed
             ) {
                 return self
-                    .handle_failure(
-                        agent,
+                    .handle_failure_with_parents(
+                        current,
                         WorkerFailure::terminal(
                             "agent_parent_failed",
                             "The Sandbox or Workspace could not finish preparing.",
                         ),
                         at,
+                        Some(PublicationParents {
+                            sandbox: parent,
+                            workspace,
+                            worktree,
+                        }),
                     )
                     .await;
             }
-            if parent.status == SandboxStatus::Active
+            let ready = parent.status == SandboxStatus::Active
                 && parent.credential.delivered
                 && parent.lifecycle.operation.is_none()
                 && parent.lifecycle.checkpoint_capture.is_none()
-                && workspace.status == WorkspaceStatus::Ready
-            {
-                return self.bind_workspace(agent, at).await;
+                && workspace.status == WorkspaceStatus::Ready;
+            let parents = PublicationParents {
+                sandbox: parent,
+                workspace,
+                worktree,
+            };
+            if ready {
+                return self.bind_workspace(current, parents, at).await;
             }
             let remaining = budget.saturating_sub(started.elapsed());
             if remaining.is_zero() {
-                return self.defer_workspace(agent, at).await;
+                // The bounded observation already paced this expected wait. Keep
+                // it due so committed parent readiness can wake it.
+                return self.defer_workspace(current, parents, at, false).await;
             }
             tokio::select! {
                 _ = &mut changed => {},
@@ -94,67 +104,60 @@ impl AgentWorker {
 
     async fn defer_workspace(
         &self,
-        mut agent: Agent,
+        agent: Agent,
+        parents: PublicationParents,
         now: SystemTime,
+        publication_aborted: bool,
     ) -> Result<(), SandboxStoreError> {
-        let expected = agent.revision;
-        let fence = claimed_fence(&agent, &self.config.holder)?;
-        let stamp = rfc3339_at(now);
-        // The bounded observation already paced this expected wait. Leave it
-        // due so committed parent readiness can wake it without another delay.
-        // Discovery and claims still check durable due time, lease and lineage.
-        agent
-            .work
-            .retry(&self.config.holder, fence, stamp.clone())
-            .map_err(|_| SandboxStoreError::Conflict)?;
-        agent.updated_at = stamp.clone();
-        agent.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
-        self.dependencies
-            .store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: expected,
-                holder: self.config.holder.clone(),
-                fence,
-                agent,
-                worktree: None,
-                appended_at: stamp,
-                sandbox_event: None,
-                agent_logs: Vec::new(),
-            })
-            .await
+        self.publish_lifecycle_work(
+            agent,
+            Some(parents),
+            now,
+            |mut agent, at, parents| async move {
+                let expected = agent.revision;
+                let fence = claimed_fence(&agent, &self.config.holder)?;
+                let stamp = rfc3339_at(at);
+                let due = if publication_aborted {
+                    // Repeated contention survives worker restarts without a hot loop.
+                    at + Duration::from_secs(1 << agent.work.attempts.min(4))
+                } else {
+                    at
+                };
+                agent
+                    .work
+                    .retry(&self.config.holder, fence, rfc3339_at(due))
+                    .map_err(|_| SandboxStoreError::Conflict)?;
+                agent.updated_at = stamp.clone();
+                agent.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
+                self.commit_lifecycle_publication(
+                    AgentWorkMutation {
+                        expected_agent_revision: expected,
+                        holder: self.config.holder.clone(),
+                        fence,
+                        agent,
+                        worktree: None,
+                        appended_at: stamp,
+                        sandbox_event: None,
+                        agent_logs: Vec::new(),
+                    },
+                    parents,
+                )
+                .await
+            },
+        )
+        .await
     }
 
-    async fn bind_workspace(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
-        let (parent, workspace, mut worktree) = self.unstarted_lineage(&agent).await?;
-        if matches!(
-            parent.status,
-            SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
-        ) || matches!(
-            workspace.status,
-            WorkspaceStatus::Failed | WorkspaceStatus::Removing | WorkspaceStatus::Removed
-        ) {
-            return self
-                .handle_failure(
-                    agent,
-                    WorkerFailure::terminal(
-                        "agent_parent_failed",
-                        "The Sandbox or Workspace could not finish preparing.",
-                    ),
-                    now,
-                )
-                .await;
-        }
-        if parent.status != SandboxStatus::Active
-            || !parent.credential.delivered
-            || parent.lifecycle.operation.is_some()
-            || parent.lifecycle.checkpoint_capture.is_some()
-            || workspace.status != WorkspaceStatus::Ready
-        {
-            return self.defer_workspace(agent, now).await;
-        }
-        let Some(commit) = workspace.resolved_commit else {
+    async fn bind_workspace(
+        &self,
+        agent: Agent,
+        parents: PublicationParents,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let Some(commit) = parents.workspace.resolved_commit.clone() else {
             return Err(SandboxStoreError::Conflict);
         };
+        let mut worktree = parents.worktree.clone();
         let expected_revision = worktree.revision;
         if !worktree.base_commit.is_empty() {
             return Err(SandboxStoreError::Conflict);
@@ -163,20 +166,39 @@ impl AgentWorker {
         worktree.revision = expected_revision
             .checked_add(1)
             .ok_or(SandboxStoreError::Conflict)?;
-        // The transaction repeats the parent readiness and exact commit checks,
-        // and write-fences both parent records before publishing AddWorktree.
-        self.progress(
-            agent,
-            AgentWorkStep::AddWorktree,
-            now,
-            None,
-            Vec::new(),
-            Some(VersionedWorktree {
-                expected_revision,
-                worktree,
-            }),
-            None,
-        )
-        .await
+        let worktree = VersionedWorktree {
+            expected_revision,
+            worktree,
+        };
+        let started = tokio::time::Instant::now();
+        let outcome = self
+            .try_publish_lifecycle_work(
+                agent.clone(),
+                Some(parents.clone()),
+                now,
+                |agent, at, parents| {
+                    let worktree = worktree.clone();
+                    async move {
+                        let mutation = self.progress_mutation(
+                            agent,
+                            AgentWorkStep::AddWorktree,
+                            at,
+                            None,
+                            Vec::new(),
+                            Some(worktree),
+                            None,
+                        )?;
+                        self.commit_lifecycle_publication(mutation, parents).await
+                    }
+                },
+            )
+            .await?;
+        match outcome {
+            AgentWorkPublication::Published => Ok(()),
+            AgentWorkPublication::KnownAborted => {
+                self.defer_workspace(agent, parents, now + started.elapsed(), true)
+                    .await
+            }
+        }
     }
 }

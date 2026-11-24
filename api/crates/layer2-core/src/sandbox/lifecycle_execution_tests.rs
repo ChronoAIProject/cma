@@ -1,4 +1,8 @@
 use super::lifecycle_test_support::{agent, checkpoint, sandbox, NOW};
+use super::store::{
+    validate_lifecycle_mutation, SandboxLifecycleAgentScope, SandboxLifecycleMutation,
+    SandboxMutationGuard,
+};
 use super::*;
 use layer3_adapter::{HomeVolumePolicy, HomeVolumeReceipt};
 
@@ -231,6 +235,7 @@ fn lifecycle_retry_keeps_the_exact_phase_and_increments_attempts() {
     claim(&mut value);
     let operation = value.lifecycle.operation.clone();
     let revision = value.revision;
+    let before = value.clone();
 
     value
         .retry_lifecycle(LEASE_END.into(), HOLDER, fence(&value), LATER.into())
@@ -241,6 +246,24 @@ fn lifecycle_retry_keeps_the_exact_phase_and_increments_attempts() {
     assert_eq!(value.work.attempts, 1);
     assert_eq!(value.work.ready_at, LEASE_END);
     assert_published(&value, revision);
+    let failure = TypedFailure {
+        class: "retryable_transient".into(),
+        detail: "temporary failure".into(),
+    };
+    let mut mutation = SandboxLifecycleMutation {
+        guard: SandboxMutationGuard::capture(&before),
+        sandbox: value,
+        agents: vec![],
+        agent_scope: SandboxLifecycleAgentScope::Touched,
+        appended_at: LATER.into(),
+        events: vec![SandboxEventKind::WorkStepFailed {
+            step: SandboxWorkStep::RunLifecycleOperation,
+            failure: failure.clone(),
+        }],
+    };
+    validate_lifecycle_mutation(&before, &[], &mutation).unwrap();
+    mutation.events = vec![SandboxEventKind::Failed { failure }];
+    assert!(validate_lifecycle_mutation(&before, &[], &mutation).is_err());
 }
 
 #[test]
@@ -252,6 +275,7 @@ fn lifecycle_failure_uses_the_phase_class_and_retains_both_checkpoints() {
         .unwrap();
     claim(&mut value);
     let expected_history = value.lifecycle.checkpoints.clone();
+    let before = value.clone();
 
     let failure = value
         .fail_lifecycle(
@@ -262,11 +286,40 @@ fn lifecycle_failure_uses_the_phase_class_and_retains_both_checkpoints() {
         )
         .unwrap();
     assert_eq!(failure.class, "restore_failed");
-    assert_eq!(value.failure, Some(failure));
+    assert_eq!(value.failure, Some(failure.clone()));
     assert_eq!(value.status, SandboxStatus::Failed);
     assert_eq!(value.lifecycle.checkpoints, expected_history);
     assert!(value.lifecycle.operation.is_none());
     assert_eq!(value.work.step, SandboxWorkStep::None);
+    let terminal = SandboxEventKind::Failed {
+        failure: failure.clone(),
+    };
+    let mut mutation = SandboxLifecycleMutation {
+        guard: SandboxMutationGuard::capture(&before),
+        sandbox: value,
+        agents: vec![],
+        agent_scope: SandboxLifecycleAgentScope::Touched,
+        appended_at: LATER.into(),
+        events: vec![terminal.clone()],
+    };
+    validate_lifecycle_mutation(&before, &[], &mutation).unwrap();
+    for events in [
+        vec![],
+        vec![terminal.clone(), terminal],
+        vec![SandboxEventKind::WorkStepFailed {
+            step: SandboxWorkStep::RunLifecycleOperation,
+            failure,
+        }],
+        vec![SandboxEventKind::Failed {
+            failure: TypedFailure {
+                class: "wrong".into(),
+                detail: "wrong failure".into(),
+            },
+        }],
+    ] {
+        mutation.events = events;
+        assert!(validate_lifecycle_mutation(&before, &[], &mutation).is_err());
+    }
 }
 
 #[test]

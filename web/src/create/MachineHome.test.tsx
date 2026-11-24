@@ -1,3 +1,4 @@
+import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createClient } from '@cma/client';
@@ -42,6 +43,7 @@ function fixture(refusal?: { code: string; detail: string }) {
   vi.stubGlobal('fetch', transport);
   const client = {
     ...createRestWebClient(createClient({ fetch: transport })),
+    readSandboxCapacity: async () => AVAILABLE_CAPACITY,
     taskExperience: taskExperience('owner'),
   };
   return { client, writes };

@@ -52,6 +52,10 @@ impl AgentLifecycleProvisioner for Lifecycle {
         _: &str,
     ) -> Result<AgentLifecycleCreateReceipt, AgentLifecycleProvisioningError> {
         match self.0.as_str() {
+            "quota" => Err(AgentLifecycleProvisioningError::SandboxLimitReached {
+                limit: 10,
+                live: 10,
+            }),
             "desktop_unsupported" => Err(AgentLifecycleProvisioningError::DesktopUnsupported(
                 "This deployment has no verified desktop runtime.".into(),
             )),
@@ -82,6 +86,7 @@ impl AgentLifecycleOperationReader for Lifecycle {
             _ => {}
         }
         Ok(AgentLifecycleOperationView {
+            failure: None,
             callback_url: None,
             id: "operation-contract".into(),
             status: "waiting_for_connection".into(),
@@ -96,6 +101,7 @@ impl AgentLifecycleOperationReader for Lifecycle {
                 occurred_at: "2026-10-13T00:00:00Z".into(),
             }],
             connection: Some(AgentLifecycleConnectionRequired {
+                repository_access: None,
                 services: vec!["api-github".into()],
                 target: serde_json::json!({"type":"sandbox_profile","profile":{"id":"internal-sandbox","revision":1}}),
             }),

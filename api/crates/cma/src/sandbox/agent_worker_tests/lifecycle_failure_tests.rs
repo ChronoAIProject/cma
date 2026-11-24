@@ -6,8 +6,10 @@ use layer2_core::agent_ownership::{
 };
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer3_adapter::owner_protocol::{ReceiverRevocation, TransportAuthority};
+#[path = "acquisition_backoff_tests.rs"]
+mod acquisition_backoff;
 #[path = "lifecycle_failure_store.rs"]
-mod fixture;
+pub(super) mod fixture;
 
 fn runner(
     h: &Harness,
@@ -28,8 +30,14 @@ fn runner(
 }
 
 async fn owner() -> (Arc<MemoryOwnershipStore>, Arc<OwnershipCoordinator>) {
+    owner_with_pacing(false).await
+}
+
+async fn owner_with_pacing(
+    enabled: bool,
+) -> (Arc<MemoryOwnershipStore>, Arc<OwnershipCoordinator>) {
     let store = Arc::new(MemoryOwnershipStore::default());
-    let coordinator = OwnershipCoordinator::register(
+    let coordinator = OwnershipCoordinator::register_with_cleanup_pacing(
         store.clone(),
         Member {
             instance_id: "fixture-owner".into(),
@@ -40,6 +48,7 @@ async fn owner() -> (Arc<MemoryOwnershipStore>, Arc<OwnershipCoordinator>) {
             owned_agents: 0,
             max_owned_agents: 64,
         },
+        enabled,
     )
     .await
     .unwrap();
@@ -78,7 +87,14 @@ async fn acquisition_stale_and_unavailable_keep_conflict_without_claiming() {
             worker.run_one(&agent.id, h.now).await,
             Err(SandboxStoreError::Conflict)
         );
-        assert!(store.calls.lock().unwrap().is_empty());
+        {
+            let calls = store.calls.lock().unwrap();
+            assert_eq!(
+                calls.get("get_agent").copied().unwrap_or(0),
+                if stale { 2 } else { 0 }
+            );
+            assert_eq!(calls.len(), usize::from(stale));
+        }
         assert_eq!(h.stored(&agent.id).await, agent);
     }
 }
@@ -186,12 +202,12 @@ async fn claim_failure_keeps_original_error_and_has_no_effects() {
 
 #[tokio::test]
 async fn post_work_and_continuation_read_failures_keep_inner_origin() {
-    for ownership in [false, true] {
+    for ownership in [None, Some(false), Some(true)] {
         let h = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
         let agent = h.admit("observed-read", vec![]).await;
         let store = fixture::Store::new(h.store.clone());
-        let coordinator = if ownership {
-            Some(owner().await.1)
+        let coordinator = if let Some(enabled) = ownership {
+            Some(owner_with_pacing(enabled).await.1)
         } else {
             None
         };
@@ -210,7 +226,7 @@ async fn post_work_and_continuation_read_failures_keep_inner_origin() {
             .unwrap_err();
         assert_eq!(
             failure.observation.origin,
-            if ownership {
+            if ownership.is_some() {
                 Origin::PostWorkRead
             } else {
                 Origin::ContinuationRead
@@ -218,7 +234,7 @@ async fn post_work_and_continuation_read_failures_keep_inner_origin() {
         );
         assert_eq!(
             failure.observation.continuation_index,
-            if ownership { 0 } else { 1 }
+            if ownership.is_some() { 0 } else { 1 }
         );
         assert_eq!(
             failure.into_compatibility(),
@@ -334,4 +350,98 @@ async fn waiting_retry_publication_and_claim_loss_remain_successful_observed_res
         attempt.terminated(false).attempt_id,
         retry.terminated(false).attempt_id
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn slow_observations_do_not_consume_the_healthy_discovery_budget() {
+    let h = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let (_, owner) = owner_with_pacing(true).await;
+    let store = fixture::Store::new(h.store.clone());
+    let worker = runner(&h, store.clone(), Some(owner.clone()));
+    let healthy = h.admit("healthy-control", vec![]).await;
+    let mut owned = Vec::new();
+    for key in ["failed-first", "failed-second", "failed-third"] {
+        let a = h.admit(key, vec![]).await;
+        let auth = owner.acquire(&a.id).await.unwrap().unwrap();
+        auth.register_receiver(Arc::new(Receiver)).unwrap();
+        assert!(owner.handoff_background(&auth).await.is_err());
+        store.delayed_observations.lock().unwrap().push(a.id);
+        owned.push(auth);
+    }
+    tokio::time::advance(std::time::Duration::from_millis(3301)).await;
+    for auth in &owned {
+        assert!(owner.handoff_background(auth).await.is_err());
+    }
+    let due = crate::worker_supervision::discover(
+        None,
+        worker.due_work(h.now, 200),
+        SandboxStoreError::Unavailable("discovery deadline".into()),
+    )
+    .await;
+    assert!(
+        due.as_ref().is_ok_and(|ids| ids.contains(&healthy.id)),
+        "healthy work was lost: {due:?}"
+    );
+    assert!(!store.calls.lock().unwrap().contains_key("get_agent"));
+}
+
+#[tokio::test]
+async fn paced_prefix_does_not_consume_the_discovery_limit() {
+    let h = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    h.admit("first-candidate", vec![]).await;
+    h.admit("second-candidate", vec![]).await;
+    let (_, owner) = owner_with_pacing(true).await;
+    let worker = runner(
+        &h,
+        fixture::Store::new(h.store.clone()),
+        Some(owner.clone()),
+    );
+    let ids = worker.due_work(h.now, 2).await.unwrap();
+    assert_eq!(ids.len(), 2);
+    assert_eq!(
+        worker.due_work(h.now, 1).await.unwrap(),
+        vec![ids[0].clone()]
+    );
+    let auth = owner.acquire(&ids[0]).await.unwrap().unwrap();
+    auth.register_receiver(Arc::new(Receiver)).unwrap();
+    assert!(owner.handoff_background(&auth).await.is_err());
+    assert_eq!(
+        worker.due_work(h.now, 1).await.unwrap(),
+        vec![ids[1].clone()]
+    );
+}
+
+#[tokio::test]
+async fn single_attempt_diagnostics_preserve_claim_and_exhausted_publication_conflicts() {
+    for (method, origin, failures) in [
+        ("claim_agent_work", Origin::Claim, 1),
+        ("commit_agent_work", Origin::Execute, 8),
+    ] {
+        let h = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+        let agent = h.admit("diagnostic-attempt", vec![]).await;
+        let store = fixture::Store::new(h.store.clone());
+        // Exhaust the existing publication budget; diagnostics must not restart the worker.
+        for call in 1..=failures {
+            store.fail(method, call, SandboxStoreError::Conflict);
+        }
+        let requests = h.backend.requests().await;
+        let worker = runner(&h, store.clone(), None);
+        let failure = worker
+            .run_one_diagnostic(&agent.id, h.now)
+            .await
+            .unwrap_err();
+        assert_eq!(failure.observation.origin, origin);
+        assert_eq!(failure.observation.cause_class, CauseClass::StoreConflict);
+        assert_eq!(failure.into_compatibility(), SandboxStoreError::Conflict);
+        assert_eq!(store.calls.lock().unwrap().get(method), Some(&failures));
+        assert_eq!(
+            store.calls.lock().unwrap().get("claim_agent_work"),
+            Some(&1)
+        );
+        assert_eq!(h.backend.requests().await, requests);
+        assert_eq!(
+            h.stored(&agent.id).await.work.lease.is_some(),
+            origin == Origin::Execute
+        );
+    }
 }

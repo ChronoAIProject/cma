@@ -95,8 +95,7 @@ for (const mode of ['unrelated', 'pending-history', 'own-sandbox'] as const) {
       const panelNode = await panel.elementHandle();
       if (mode === 'unrelated')
         await panel.getByRole('button', { name: 'Take control', exact: true }).click();
-      await page.getByRole('button', { name: 'Filter', exact: true }).click();
-      await page.getByRole('button', { name: 'Manage environments', exact: true }).click();
+      await page.getByRole('button', { name: 'Environments', exact: true }).click();
       const before = requests.length;
       await page.getByRole('button', { name: `Options for ${name}`, exact: true }).click();
       await page.getByRole('menuitem', { name: 'Pause', exact: true }).click();

@@ -3,6 +3,10 @@ use super::*;
 
 pub(in crate::sandbox::agent_worker) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     match error {
+        AdapterError::AccessRevoked => WorkerFailure::terminal(
+            "agent_access_revoked",
+            "current runtime authority was revoked",
+        ),
         AdapterError::InputAuthorityUnavailable(detail)
         | AdapterError::PromptNotWritten(detail)
         | AdapterError::Unavailable(detail) => {
@@ -35,6 +39,9 @@ pub(in crate::sandbox::agent_worker) fn adapter_failure(error: AdapterError) -> 
         AdapterError::AtCapacity(detail) => WorkerFailure::terminal("agent_resource_quota", detail),
         AdapterError::Rejected(detail) | AdapterError::OperationIdentityConflict(detail) => {
             WorkerFailure::terminal("agent_runtime_rejected", detail)
+        }
+        error @ AdapterError::DesktopFailed => {
+            WorkerFailure::terminal("agent_runtime_rejected", error.to_string())
         }
         AdapterError::Unsupported(detail) => {
             WorkerFailure::terminal("agent_runtime_unsupported", detail)
@@ -119,6 +126,24 @@ mod tests {
                 assert!(failure.typed().detail.starts_with(capacity.code()));
             }
         }
+    }
+
+    #[test]
+    fn access_revocation_preserves_terminal_diagnostics_and_retry_policy() {
+        let failure = adapter_failure(AdapterError::AccessRevoked.context("open conversation"));
+        assert_eq!(failure.typed().class, "agent_access_revoked");
+        assert_eq!(
+            failure.typed().detail,
+            "current runtime authority was revoked"
+        );
+        assert!(!failure.retryable);
+        assert_eq!(failure.retry_kind, WorkRetryFailure::ExternalAction);
+
+        let ordinary = adapter_failure(AdapterError::Unavailable("network".into()));
+        assert_eq!(ordinary.typed().class, "agent_runtime_unavailable");
+        assert_eq!(ordinary.typed().detail, "network");
+        assert!(ordinary.retryable);
+        assert_eq!(ordinary.retry_kind, WorkRetryFailure::Transient);
     }
 
     #[test]

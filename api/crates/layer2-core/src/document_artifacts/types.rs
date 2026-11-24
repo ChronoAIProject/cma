@@ -16,6 +16,14 @@ pub(super) const REVOCATION_RECEIPT_BYTES: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum DocumentError {
+    #[error("account deletion is in progress")]
+    AccountDeletionInProgress,
+    #[error("share recipient is unavailable")]
+    ShareRecipientUnavailable,
+    #[error("Choose a CMA user with a valid recipient identifier")]
+    InvalidShareRecipient,
+    #[error("Recipient lookup is temporarily unavailable. Try again.")]
+    RecipientDirectoryUnavailable,
     #[error("Document request is invalid")]
     Invalid,
     #[error("Document is unavailable to this caller")]
@@ -44,6 +52,12 @@ pub enum DocumentAccess {
     Owner,
     Read,
     Comment,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DocumentShareRecipient {
+    pub subject: crate::SubjectId,
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,12 +256,41 @@ pub trait DocumentStore: Send + Sync {
     async fn get(&self, id: &str) -> Result<Option<StoredDocument>, DocumentError>;
     /// Insert exactly once; false means the deterministic identity already exists.
     async fn insert(&self, record: &StoredDocument) -> Result<bool, DocumentError>;
+    /// Publish a new Document with its reserved source on stores that track publication.
+    /// False asks the caller to resolve the response from the persisted creation.
+    async fn insert_source(
+        &self,
+        record: &StoredDocument,
+        _source: &super::DocumentSourceReservation,
+    ) -> Result<bool, DocumentError> {
+        self.insert(record).await
+    }
     /// Replace only the same owner/id at the exact revision; never upsert.
     async fn compare_exchange(
         &self,
         expected_revision: u64,
         record: &StoredDocument,
     ) -> Result<bool, DocumentError>;
+    /// Publish a Markdown edit with its reserved source and exact operation receipt.
+    /// False asks the caller to reload the aggregate and check its durable receipt.
+    async fn compare_exchange_source(
+        &self,
+        expected_revision: u64,
+        record: &StoredDocument,
+        _source: &super::DocumentSourceReservation,
+        _receipt_key: &str,
+    ) -> Result<bool, DocumentError> {
+        self.compare_exchange(expected_revision, record).await
+    }
+    /// Persist a grant while checking the recipient at the same atomic boundary.
+    async fn compare_exchange_grant(
+        &self,
+        expected_revision: u64,
+        record: &StoredDocument,
+        _recipient: &str,
+    ) -> Result<bool, DocumentError> {
+        self.compare_exchange(expected_revision, record).await
+    }
     /// Owner or explicit recipient grants only; links never make a document searchable.
     /// Return ordered limit+1 matching rows after the cursor.
     async fn list(

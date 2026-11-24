@@ -102,7 +102,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               }
             }
@@ -158,7 +158,7 @@
                 "at": "2026-09-16T00:00:00Z",
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               }
             }
@@ -287,7 +287,7 @@
               "threadId": "agt_fixture",
               "runId": "4",
               "code": "agent_log_capacity_exceeded",
-              "message": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export.",
+              "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it.",
               "cma:retainedOutput": {
                 "available": true
               },
@@ -336,7 +336,7 @@
           "background": false,
           "error": {
             "code": "agent_log_capacity_exceeded",
-            "message": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+            "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
           },
           "incomplete_details": null,
           "instructions": null,
@@ -497,7 +497,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               },
               "response_binding": null
@@ -640,7 +640,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               },
               "response_binding": null
@@ -752,7 +752,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "This Agent turn failed."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               }
             }
@@ -808,7 +808,7 @@
                 "at": "2026-09-16T00:00:00Z",
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "This Agent turn failed."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               }
             }
@@ -930,7 +930,7 @@
               "threadId": "agt_fixture",
               "runId": "4",
               "code": "agent_log_capacity_exceeded",
-              "message": "This Agent turn failed.",
+              "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it.",
               "cma:retainedOutput": {
                 "available": true
               },
@@ -979,7 +979,7 @@
           "background": false,
           "error": {
             "code": "agent_log_capacity_exceeded",
-            "message": "This Agent turn failed."
+            "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
           },
           "incomplete_details": null,
           "instructions": null,
@@ -1128,7 +1128,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "This Agent turn failed."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               },
               "response_binding": null
@@ -1259,7 +1259,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "This Agent turn failed."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               },
               "response_binding": null
@@ -1376,7 +1376,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "Durable Agent history reached its lifetime budget. Retained output and runtime identity are preserved. This Agent cannot continue under the current limits; inspect capacity before explicit recovery or replacement."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               }
             }
@@ -1429,7 +1429,7 @@
                 "at": "2026-09-16T00:00:00Z",
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "Durable Agent history reached its lifetime budget. Retained output and runtime identity are preserved. This Agent cannot continue under the current limits; inspect capacity before explicit recovery or replacement."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               }
             }
@@ -1558,7 +1558,7 @@
               "threadId": "agt_fixture",
               "runId": "4",
               "code": "agent_log_capacity_exceeded",
-              "message": "Durable Agent history reached its lifetime budget. Retained output and runtime identity are preserved. This Agent cannot continue under the current limits; inspect capacity before explicit recovery or replacement.",
+              "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it.",
               "timestamp": "2026-09-16T00:00:00Z"
             }
           }
@@ -1601,7 +1601,7 @@
           "background": false,
           "error": {
             "code": "agent_log_capacity_exceeded",
-            "message": "Durable Agent history reached its lifetime budget. Retained output and runtime identity are preserved. This Agent cannot continue under the current limits; inspect capacity before explicit recovery or replacement."
+            "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
           },
           "incomplete_details": null,
           "instructions": null,
@@ -1759,7 +1759,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "Durable Agent history reached its lifetime budget. Retained output and runtime identity are preserved. This Agent cannot continue under the current limits; inspect capacity before explicit recovery or replacement."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               },
               "response_binding": null
@@ -1902,7 +1902,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "Durable Agent history reached its lifetime budget. Retained output and runtime identity are preserved. This Agent cannot continue under the current limits; inspect capacity before explicit recovery or replacement."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               },
               "response_binding": null
@@ -2019,7 +2019,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_turn_failed",
-                  "detail": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
                 }
               }
             }
@@ -2072,7 +2072,7 @@
                 "at": "2026-09-16T00:00:00Z",
                 "failure": {
                   "class": "agent_turn_failed",
-                  "detail": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
                 }
               }
             }
@@ -2201,7 +2201,7 @@
               "threadId": "agt_fixture",
               "runId": "4",
               "code": "agent_turn_failed",
-              "message": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export.",
+              "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.",
               "timestamp": "2026-09-16T00:00:00Z"
             }
           }
@@ -2244,7 +2244,7 @@
           "background": false,
           "error": {
             "code": "agent_turn_failed",
-            "message": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+            "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
           },
           "incomplete_details": null,
           "instructions": null,
@@ -2402,7 +2402,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_turn_failed",
-                  "detail": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
                 }
               },
               "response_binding": null
@@ -2545,7 +2545,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_turn_failed",
-                  "detail": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
                 }
               },
               "response_binding": null
@@ -2696,7 +2696,7 @@
                 "background": false,
                 "error": {
                   "code": "agent_log_capacity_exceeded",
-                  "message": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+                  "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 },
                 "incomplete_details": null,
                 "instructions": null,
@@ -2910,7 +2910,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               },
               "response_binding": null
@@ -3060,7 +3060,7 @@
                 "background": false,
                 "error": {
                   "code": "agent_log_capacity_exceeded",
-                  "message": "This Agent turn failed."
+                  "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 },
                 "incomplete_details": null,
                 "instructions": null,
@@ -3262,7 +3262,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "This Agent turn failed."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               },
               "response_binding": null
@@ -3409,7 +3409,7 @@
                 "background": false,
                 "error": {
                   "code": "agent_log_capacity_exceeded",
-                  "message": "Durable Agent history reached its lifetime budget. Retained output and runtime identity are preserved. This Agent cannot continue under the current limits; inspect capacity before explicit recovery or replacement."
+                  "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 },
                 "incomplete_details": null,
                 "instructions": null,
@@ -3620,7 +3620,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_log_capacity_exceeded",
-                  "detail": "Durable Agent history reached its lifetime budget. Retained output and runtime identity are preserved. This Agent cannot continue under the current limits; inspect capacity before explicit recovery or replacement."
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
                 }
               },
               "response_binding": null
@@ -3767,7 +3767,7 @@
                 "background": false,
                 "error": {
                   "code": "agent_turn_failed",
-                  "message": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+                  "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
                 },
                 "incomplete_details": null,
                 "instructions": null,
@@ -3978,7 +3978,7 @@
                 "turn_sequence": 4,
                 "failure": {
                   "class": "agent_turn_failed",
-                  "detail": "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export."
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
                 }
               },
               "response_binding": null

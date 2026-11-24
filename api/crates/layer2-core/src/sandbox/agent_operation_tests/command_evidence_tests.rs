@@ -40,6 +40,59 @@ async fn end(store: std::sync::Arc<InMemorySandboxStore>, agent: &Agent, reason:
 }
 
 #[tokio::test]
+async fn task_acceptance_survives_turn_completion_without_the_required_output() {
+    use crate::sandbox::{answer_deliverables::DeliverableResource, task_acceptance::*};
+    let (store, agent, parent) = fixture(AgentStatus::Ready).await;
+    let mut command = AgentCommand::message("Prepare the report");
+    let AgentCommand::Message { input, .. } = &mut command else {
+        unreachable!()
+    };
+    input.task_acceptance = Some(TaskAcceptanceIntent {
+        version: 1,
+        action: TaskAcceptanceAction::Declare {
+            requirements: vec![TaskRequirement {
+                id: "report".into(),
+                required: true,
+                evidence: TaskRequirementEvidence::Deliverable {
+                    resource: DeliverableResource::LiveFile {
+                        path: "out/report.csv".into(),
+                    },
+                },
+            }],
+        },
+    });
+    let admitted = admit(&store, &agent, &parent, "task", command).await;
+    let work = claimed(&store, &agent).await;
+    let (sender, inputs) = recording_sender(Ok(()));
+    let service = AgentOperationService::new(
+        store.clone(),
+        TestRuntimeRegistry::new(full_capabilities(), sender),
+    );
+    service
+        .execute_claimed_command(&owner(), &work)
+        .await
+        .unwrap();
+    end(store.clone(), &agent, TurnStopReason::EndTurn).await;
+    let retained = store.get_agent(&agent.id).await.unwrap().unwrap();
+    assert_eq!(retained.status, AgentStatus::Ready);
+    let acceptance = retained.conversation.observations.task_acceptance.unwrap();
+    assert_eq!(acceptance.task_id, admitted.receipt.envelope.command_id);
+    assert_eq!(
+        acceptance.verdict,
+        TaskAcceptanceVerdict::NeedsAttention(TaskAcceptanceReason::RequiredDeliverablesMissing)
+    );
+    assert_eq!(
+        store
+            .reconcile_command(&acceptance.task_id)
+            .await
+            .unwrap()
+            .status,
+        AgentResponseStatus::Completed
+    );
+    assert_eq!(inputs.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn a_restart_reconstructs_delivery_then_turn_completion_without_changing_admission() {
     for reason in [TurnStopReason::EndTurn, TurnStopReason::Cancelled] {
         let (store, agent, parent) = fixture(AgentStatus::Ready).await;
@@ -353,7 +406,7 @@ async fn runtime_retirement_preserves_uncertain_writes_when_it_interrupts_the_tu
         let current = store.get_agent(&agent.id).await.unwrap().unwrap();
         let now = crate::now_rfc3339();
         let (retired, kinds) =
-            crate::sandbox::runtime_recovery_agents::recover_agent(&parent, &current, &now)
+            crate::sandbox::runtime_recovery_agents::recover_agent(&parent, &current, &now, false)
                 .unwrap();
         let mut log = store.agent_log(&agent.id, 0, 50).await.unwrap();
         for kind in kinds {

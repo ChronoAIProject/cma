@@ -69,9 +69,9 @@ impl CustomDelivery {
                 gate,
                 channel,
                 event,
-                "cmaeg.response.message",
-                data,
+                ("cmaeg.response.message", data),
                 streamed,
+                None,
             )
             .await;
         IntentReceipt {
@@ -133,15 +133,19 @@ impl CustomDelivery {
         channel: &ResolvedChannel,
         event: &EventRefPayload,
         outcome: &TurnOutcome,
+        answer_response_id: Option<&str>,
     ) -> Option<DeliveryOutcome> {
-        let (kind, data) = terminal(event, outcome)?;
+        let body = terminal(event, outcome)?;
+        let answer_response_id = answer_response_id.filter(|_| {
+            matches!(outcome, TurnOutcome::Completed { final_text: Some(text) } if !text.trim().is_empty())
+        });
         let mut observation = crate::telemetry::operations::Operation::new(
             crate::telemetry::names::DELIVERY_DURATION,
             crate::telemetry::names::PLATFORM,
             "custom",
         );
         let delivered = self
-            .webhook(&Ungated, channel, event, kind, data, false)
+            .webhook(&Ungated, channel, event, body, false, answer_response_id)
             .await;
         observation.finish(delivered.kind());
         tracing::info!(
@@ -168,9 +172,9 @@ impl CustomDelivery {
         gate: &dyn SendGate,
         channel: &ResolvedChannel,
         event: &EventRefPayload,
-        kind: &str,
-        data: Value,
+        (kind, data): (&str, Value),
         streamed: bool,
+        answer_response_id: Option<&str>,
     ) -> DeliveryOutcome {
         let envelope = custom::result(&self.public_origin, event, kind, data);
         let mut result = if streamed {
@@ -224,7 +228,8 @@ impl CustomDelivery {
                             hmac_key_id: String::new(),
                         },
                         None,
-                    ),
+                    )
+                    .with_answer_response(answer_response_id),
                 )
                 .await;
             result = if attempted

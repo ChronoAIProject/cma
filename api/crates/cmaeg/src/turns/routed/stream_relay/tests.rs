@@ -114,6 +114,7 @@ async fn stream_requires_exact_live_pending_checkpoint_and_effect() {
         final_text: Some("answer".into()),
     };
     let checkpoint = DeliveryCheckpoint {
+        execution_attribution: None,
         trace_contract: false,
         response_id: "resp_1".into(),
         cursor: 5,

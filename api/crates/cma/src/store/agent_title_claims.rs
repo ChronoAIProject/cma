@@ -139,7 +139,10 @@ async fn apply_claim(
     {
         return Ok(ClaimApply::Settled(None));
     }
-    if state.effect.unknown() {
+    // An unresolved provider effect is never redispatched. Until its
+    // prompt-derived fallback is stored, it may take a fallback-only claim.
+    let unknown = state.effect.unknown();
+    if unknown && state.stored.is_some() {
         return Ok(ClaimApply::Settled(None));
     }
     let accepted = state.effect.accepted().is_some();
@@ -154,8 +157,8 @@ async fn apply_claim(
     if !accepted && !state.retry.eligible(now) {
         return Ok(ClaimApply::Settled(None));
     }
-    let exhausted =
-        !accepted && state.retry.attempts >= layer2_core::sandbox::AGENT_TITLE_MAX_ATTEMPTS;
+    let exhausted = !accepted
+        && (unknown || state.retry.attempts >= layer2_core::sandbox::AGENT_TITLE_MAX_ATTEMPTS);
     let attempts = state.retry.attempts + u32::from(!exhausted && !accepted);
     let mode = if exhausted {
         AgentTitleClaimMode::FallbackOnly

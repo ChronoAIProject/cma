@@ -5,7 +5,7 @@ import { expect, it, vi } from 'vitest';
 import { CmaClientProvider } from '../api/context';
 import { agentClient } from '../test/agent';
 import { SessionSettings } from './SessionSettings';
-import { AgentSettingsError, agentSettingsClient } from '../api/rest/agentSettings';
+import { AgentSettingsError } from '../api/rest/agentSettings';
 
 const defaults = {
   model: 'gpt-6',
@@ -76,7 +76,7 @@ it('loads actual settings and retains the same update body and key after an unce
   await chooseEffort(user, 'Medium');
   expect(within(card()).getByText('Medium', { selector: 'p' })).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Apply settings' }));
-  await screen.findByText('Lost response');
+  await screen.findByText('The update outcome is unconfirmed. Retry the same request to check it.');
   await openCard(user);
   expect(model()).toBeDisabled();
   expect(slider()).toHaveAttribute('aria-disabled', 'true');
@@ -111,27 +111,29 @@ it('does not offer an apply operation while a turn is active', async () => {
   expect(update).not.toHaveBeenCalled();
 });
 
-it('routes settings updates to Agent Manager with command identity and validates the response', async () => {
-  const fetch = vi
-    .spyOn(globalThis, 'fetch')
-    .mockResolvedValue(new Response(JSON.stringify(defaults), { status: 200 }));
-  const client = agentSettingsClient();
-  await expect(
-    client.updateAgentSettings!('agent-one', defaults, { idempotencyKey: 'fixed-key' }),
-  ).resolves.toEqual(defaults);
-  expect(fetch).toHaveBeenCalledWith(
-    '/api/agent-manager/v1/agents/agent-one/settings',
-    expect.objectContaining({
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'fixed-key' },
-      body: JSON.stringify(defaults),
-    }),
+it('closes the checked model choice without editing the confirmed settings', async () => {
+  const user = userEvent.setup();
+  const update = vi.fn().mockResolvedValue(defaults);
+  render(
+    draw(
+      agentClient({
+        readAgentModels: catalog,
+        readAgentSettings: async () => ({ ...defaults, reasoning_effort: 'medium' }),
+        updateAgentSettings: update,
+      }),
+    ),
   );
-  fetch.mockResolvedValue(
-    new Response(JSON.stringify({ ...defaults, permission_mode: 'unknown' }), { status: 200 }),
-  );
-  await expect(client.readAgentSettings!('agent-one')).rejects.toThrow('invalid Agent settings');
-  fetch.mockRestore();
+  await expandSettings();
+  await chooseEffort(user, 'High');
+  await user.click(screen.getByRole('button', { name: 'Apply settings' }));
+  await screen.findByText('Settings applied to this Agent.');
+  await openCard(user);
+  await chooseOptionValue(user, model(), defaults.model);
+  expect(model()).toHaveAttribute('aria-expanded', 'false');
+  expect(slider()).toHaveAttribute('aria-valuetext', 'High');
+  expect(screen.getByRole('status').textContent).toBe('Settings applied to this Agent.');
+  expect(screen.queryByRole('button', { name: 'Apply settings' })).not.toBeInTheDocument();
+  expect(update).toHaveBeenCalledTimes(1);
 });
 
 it('allows correction after a definitive rejection without replaying its command key', async () => {
@@ -154,7 +156,7 @@ it('allows correction after a definitive rejection without replaying its command
   await chooseOptionValue(user, model(), 'invalid');
   expect(chip()).toHaveTextContent('Retired model High');
   await user.click(screen.getByRole('button', { name: 'Apply settings' }));
-  await screen.findByText('Invalid model');
+  await screen.findByText('The update was rejected. Check your changes, then try again.');
   await openCard(user);
   expect(model()).toBeEnabled();
   await chooseOptionValue(user, model(), 'gpt-6-updated');
@@ -226,39 +228,45 @@ it('loads the scoped model catalog, preserves an unavailable current model, and 
   expect(chip()).toHaveTextContent('Available model High');
 });
 
-it('validates scoped Chrono model responses and preserves same-origin authentication', async () => {
-  const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-    new Response(
-      JSON.stringify({ models: [{ id: 'available', label: 'Available', available: true }] }),
-      {
-        status: 200,
-      },
+it('distinguishes look-alike model labels and applies the selected catalog ID', async () => {
+  const user = userEvent.setup();
+  const saved = { ...defaults, model: 'gpt-6-astra' };
+  const selected = { ...defaults, model: 'gpt-5.6-sol-preview' };
+  const update = vi.fn().mockResolvedValue(selected);
+  render(
+    draw(
+      agentClient({
+        readAgentModels: async () => [
+          { id: 'gpt-5.6-sol-preview', label: 'GPT-5.6 (Sol)', available: true },
+          { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', available: true },
+          { id: 'gpt-6-astra', label: 'GPT-6 (Astra)', available: true },
+          { id: 'gpt-6-astra-preview', label: 'GPT-6 Astra', available: true },
+          { id: 'gpt-6', label: 'GPT-6', available: true },
+        ],
+        readAgentSettings: async () => saved,
+        updateAgentSettings: update,
+      }),
     ),
   );
-  try {
-    const client = agentSettingsClient();
-    await expect(client.readAgentModels!('agent/one')).resolves.toEqual([
-      { id: 'available', label: 'Available', available: true },
-    ]);
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/v1/agents/agent%2Fone/models',
-      expect.objectContaining({ credentials: 'same-origin', cache: 'no-store' }),
-    );
-    fetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          models: [
-            { id: 'duplicate', label: 'First', available: true },
-            { id: 'duplicate', label: 'Second', available: true },
-          ],
-        }),
-        { status: 200 },
-      ),
-    );
-    await expect(client.readAgentModels!('agent-one')).rejects.toThrow('invalid model catalog');
-  } finally {
-    fetch.mockRestore();
-  }
+  await expandSettings();
+  await openCard(user);
+  expect(chip()).toHaveTextContent('GPT-6 (Astra) · gpt-6-astra High');
+  await user.click(model());
+  expect(
+    screen.getByRole('menuitemradio', { name: 'GPT-6 (Astra) · gpt-6-astra' }),
+  ).toHaveAttribute('aria-checked', 'true');
+  expect(
+    screen.getByRole('menuitemradio', { name: 'GPT-6 Astra · gpt-6-astra-preview' }),
+  ).toBeVisible();
+  expect(screen.getByRole('menuitemradio', { name: 'GPT-5.6 Sol · gpt-5.6-sol' })).toBeVisible();
+  expect(screen.getByRole('menuitemradio', { name: 'GPT-6' })).toBeVisible();
+  await user.click(
+    screen.getByRole('menuitemradio', { name: 'GPT-5.6 (Sol) · gpt-5.6-sol-preview' }),
+  );
+  expect(chip()).toHaveTextContent('GPT-5.6 (Sol) · gpt-5.6-sol-preview High');
+  await user.click(screen.getByRole('button', { name: 'Apply settings' }));
+  await screen.findByText('Settings applied to this Agent.');
+  expect(update.mock.calls[0]?.[1]).toEqual(selected);
 });
 
 it('keeps retained runtime models disabled while applying reasoning changes to the saved model', async () => {
@@ -293,27 +301,6 @@ it('keeps retained runtime models disabled while applying reasoning changes to t
   await user.click(screen.getByRole('button', { name: 'Apply settings' }));
   await screen.findByText('Settings applied to this Agent.');
   expect(update.mock.calls[0]?.[1]).toEqual({ ...defaults, reasoning_effort: 'medium' });
-});
-
-it('treats a missing model capability as unavailable and rejects a malformed flag', async () => {
-  const fetch = vi.spyOn(globalThis, 'fetch');
-  try {
-    const client = agentSettingsClient();
-    fetch.mockResolvedValue(
-      new Response(JSON.stringify({ models: [{ id: 'gpt-6', label: 'GPT-6' }] })),
-    );
-    await expect(client.readAgentModels!('agent-one')).resolves.toEqual([
-      { id: 'gpt-6', label: 'GPT-6', available: false },
-    ]);
-    fetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({ models: [{ id: 'gpt-6', label: 'GPT-6', available: 'true' }] }),
-      ),
-    );
-    await expect(client.readAgentModels!('agent-one')).rejects.toThrow('invalid model catalog');
-  } finally {
-    fetch.mockRestore();
-  }
 });
 
 it('refreshes capability after a turn and preserves reasoning edits when a model draft becomes unavailable', async () => {
@@ -506,11 +493,12 @@ it('offers a retry when the settings themselves cannot be read', async () => {
       }),
     ),
   );
-  expect(await screen.findByRole('alert')).toHaveTextContent('Settings unavailable');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Current settings could not be read.');
   expect(
     screen.queryByRole('button', { name: /^Model and reasoning effort/ }),
   ).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Retry settings' }));
+  await screen.findByRole('button', { name: /^Agent settings:/ }, { timeout: 2500 });
   await expandSettings();
   expect(
     await screen.findByRole('button', { name: /^Model and reasoning effort/ }),

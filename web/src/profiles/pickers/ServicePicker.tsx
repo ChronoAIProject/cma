@@ -1,6 +1,7 @@
 import { Presence } from '../../ui/Presence';
 import { useEffect, useId, useState } from 'react';
-import { Button } from '../../ui/Button';
+import { CatalogFailureNotice } from '../CatalogFailureNotice';
+import { catalogFailure, type CatalogFailure } from '../catalogFailure';
 import { Input } from '../../ui/Input';
 import { IconSearchOutline16 } from '../../ui/icons';
 import type { ServiceCatalogClient, ServiceCatalogEntry } from '../client';
@@ -26,23 +27,30 @@ export function ServicePicker({
   const searchId = useId();
   const helpId = useId();
   const [query, setQuery] = useState('');
+  const searchTerm = query.trim().toLocaleLowerCase();
   const [reload, setReload] = useState(0);
   const [state, setState] = useState<{
+    catalog: ServiceCatalogClient | undefined;
     entries: readonly ServiceCatalogEntry[];
     loading: boolean;
-    error?: string;
-  }>({ entries: [], loading: catalog !== undefined });
+    error?: CatalogFailure;
+  }>({ catalog, entries: [], loading: catalog !== undefined });
+  if (state.catalog !== catalog) {
+    setState({ catalog, entries: [], loading: catalog !== undefined });
+    setQuery('');
+  }
+  const unavailable = catalog === undefined || state.loading || state.error !== undefined;
   useEffect(() => {
     if (catalog === undefined) return;
     const request = new AbortController();
     void catalog
       .listServices({ signal: request.signal })
       .then((entries) => {
-        if (!request.signal.aborted) setState({ entries, loading: false });
+        if (!request.signal.aborted) setState({ catalog, entries, loading: false });
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!request.signal.aborted)
-          setState({ entries: [], loading: false, error: 'Services could not be loaded.' });
+          setState({ catalog, entries: [], loading: false, error: catalogFailure(error) });
       });
     return () => request.abort();
   }, [catalog, reload]);
@@ -59,7 +67,7 @@ export function ServicePicker({
         value={query}
         icon={<IconSearchOutline16 />}
         aria-describedby={helpId}
-        disabled={disabled || catalog === undefined}
+        disabled={disabled || unavailable}
         onChange={(event) => setQuery(event.target.value)}
       />
       <ul className="profile-service-list" aria-label="Services">
@@ -69,6 +77,7 @@ export function ServicePicker({
             name: entry.id,
             description: entry.reason,
             catalogId: undefined,
+            detailUrl: undefined,
           })),
           ...state.entries.filter((entry) => !fixed.some((item) => item.id === entry.id)),
           ...value
@@ -77,19 +86,24 @@ export function ServicePicker({
                 !state.entries.some((entry) => entry.id === id) &&
                 !fixed.some((entry) => entry.id === id),
             )
-            .map((id) => ({ id, name: 'Service unavailable', catalogId: undefined })),
+            .map((id) => ({
+              id,
+              name: 'Service unavailable',
+              catalogId: undefined,
+              detailUrl: undefined,
+            })),
         ]
           .filter(
             (entry) => fixed.some((item) => item.id === entry.id) || !isCodexConnection(entry.id),
           )
-          .filter((entry) => entry.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+          .filter((entry) => entry.name.toLocaleLowerCase().includes(searchTerm))
           .map((entry) => (
             <li key={entry.id}>
               <label>
                 <input
                   type="checkbox"
                   checked={value.includes(entry.id) || fixed.some((item) => item.id === entry.id)}
-                  disabled={disabled || fixed.some((item) => item.id === entry.id)}
+                  disabled={disabled || unavailable || fixed.some((item) => item.id === entry.id)}
                   onChange={(event) =>
                     onChange(
                       event.target.checked
@@ -108,6 +122,7 @@ export function ServicePicker({
                     id={entry.id}
                     name={entry.name}
                     catalogId={entry.catalogId}
+                    detailUrl={entry.detailUrl}
                   />{' '}
                   {'description' in entry && entry.description !== undefined ? (
                     <small> {entry.description}</small>
@@ -122,23 +137,19 @@ export function ServicePicker({
           <p role="status">The service catalogue is unavailable.</p>
         ) : state.loading ? (
           <p role="status">Loading services</p>
-        ) : state.error !== undefined ? null : state.entries.length === 0 && fixed.length === 0 ? (
+        ) : state.error !== undefined ? null : state.entries.length === 0 ? (
           <p>No services available</p>
         ) : null}
         <Presence>
           {catalog === undefined ? null : state.loading ? null : state.error !== undefined ? (
-            <div role="alert">
-              <p>{state.error}</p>
-              <Button
-                type="button"
-                onClick={() => {
-                  setState((previous) => ({ ...previous, loading: true, error: undefined }));
-                  setReload((version) => version + 1);
-                }}
-              >
-                Try again
-              </Button>
-            </div>
+            <CatalogFailureNotice
+              failure={state.error}
+              disabled={disabled}
+              onRetry={() => {
+                setState({ catalog, entries: [], loading: true });
+                setReload((version) => version + 1);
+              }}
+            />
           ) : null}
         </Presence>
       </>

@@ -39,6 +39,7 @@ export function workspaceFixture(agentStatus: AgentStatus = 'ready'): WorkspaceD
         profile: { id: 'agp_default', revision: 4 },
         title: 'Agent one',
         updatedAt: '2026-09-06T00:05:00Z',
+        taskActivityAt: '2026-09-06T00:05:00Z',
       },
     ],
   };
@@ -73,4 +74,53 @@ export function navigationFixture(
   agentStatus: AgentStatus = 'ready',
 ): readonly NavigationSandbox[] {
   return [{ sandbox: sandboxFixture(sandboxStatus), workspaces: [workspaceFixture(agentStatus)] }];
+}
+
+export function parkedRuntimeUpdateFixture(): SandboxDetail {
+  const sandbox = sandboxFixture('rotating');
+  return {
+    ...sandbox,
+    lifecycle: {
+      ...sandbox.lifecycle!,
+      operation: {
+        purpose: 'image_rotation',
+        phase: 'conversation_reopen',
+        startedAt: '2026-11-19T00:00:00Z',
+      },
+    },
+    runtimeUpdate: {
+      currentVersion: 'image-before',
+      latestVersion: 'image-after',
+      targetVersion: 'image-after',
+      updateAvailable: true,
+      state: 'failed',
+      canUpdate: true,
+      failure: { code: 'runtime_unavailable', message: 'The runtime could not be reopened.' },
+      schedule: { timezone: 'Asia/Singapore', localTime: '02:00' },
+      preservesHome: true,
+    },
+  };
+}
+
+export function parkedRuntimeResultFixture(
+  purpose: 'image_rotation' | 'revive' = 'image_rotation',
+): SandboxDetail {
+  const base = parkedRuntimeUpdateFixture();
+  return {
+    ...base,
+    status: purpose === 'revive' ? 'reviving' : 'rotating',
+    runtimeUpdate: undefined,
+    lifecycle: {
+      ...base.lifecycle!,
+      operation: { ...base.lifecycle!.operation!, purpose },
+      result: {
+        state: 'failed',
+        code: 'runtime_update_parked',
+        operationId: 'update-operation',
+        startedAt: base.lifecycle!.operation!.startedAt,
+        continuing: false,
+        actions: ['observe'],
+      },
+    },
+  };
 }

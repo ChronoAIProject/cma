@@ -4,14 +4,18 @@ use crate::agent_sandbox::PodBinding;
 use std::sync::Mutex as StdMutex;
 use tokio::sync::{watch, OwnedMutexGuard};
 
+#[path = "native_http_pool/telemetry.rs"]
+pub(super) mod telemetry;
+use telemetry::{Gauge, Outcome, Refusal};
+
 pub(super) const MAX_HTTP_SESSIONS: usize =
     crate::agent_sandbox::RuntimeCapacityConfig::NATIVE_HTTP_SESSION_LIMIT;
 pub(super) const HTTP_IDLE_TTL: Duration = Duration::from_secs(60);
 
-/// Receiver negotiations cannot queue behind a long application response body.
-/// Both lanes share the same state, identity fences and total session budget.
+/// Separate connections share the same state, identity fences and session budget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum NativeHttpLane {
+    CloseAgent,
     Control,
     Ownership,
 }
@@ -36,6 +40,9 @@ pub(super) struct NativeHttpSlot {
     cancelled: watch::Sender<bool>,
     idle_timer: StdMutex<Option<AbortOnDrop>>,
     last_used: StdMutex<std::time::Instant>,
+    telemetry: Arc<telemetry::Pool>,
+    _slot: telemetry::Guard,
+    cached: StdMutex<Option<telemetry::Guard>>,
 }
 
 impl NativeHttpSlot {
@@ -66,6 +73,7 @@ impl NativeHttpSlot {
 impl Drop for NativeHttpSlot {
     fn drop(&mut self) {
         self.cancel();
+        self.cached.lock().unwrap().take();
     }
 }
 
@@ -73,6 +81,7 @@ impl Drop for NativeHttpSlot {
 /// Cancellation or any error drops this guard and aborts its owning exec task.
 pub(super) struct NativeLease {
     pub connection: Option<NativeConnection>,
+    _busy: Option<telemetry::Guard>,
     pub slot: Arc<NativeHttpSlot>,
     handle: RuntimeHandle,
     state: Arc<Mutex<TransportState>>,
@@ -112,6 +121,9 @@ impl NativeLease {
             return Err(retired());
         }
         *self.checkout = self.connection.take();
+        self._busy.take();
+        *self.slot.cached.lock().unwrap() =
+            Some(self.slot.telemetry.guard(Gauge::CachedConnections));
         *self.slot.last_used.lock().unwrap() = std::time::Instant::now();
         let weak_state = Arc::downgrade(&self.state);
         let weak_slot = Arc::downgrade(&self.slot);
@@ -181,6 +193,15 @@ impl ProviderHostedControlTransport {
         let expected = endpoint.native_identity().ok_or_else(retired)?;
         let key = (handle.clone(), lane);
         let mut state = self.state.lock().await;
+        let telemetry = state
+            .native_http_telemetry
+            .get_or_insert_with(|| {
+                telemetry::Pool::metrics(
+                    matches!(self.client, RuntimeDiscovery::AgentSandbox(_)),
+                    self.runtime_capacity.config().native_http_session_reserve,
+                )
+            })
+            .clone();
         if identity(&state, handle) != *expected {
             return Err(retired());
         }
@@ -235,7 +256,8 @@ impl ProviderHostedControlTransport {
             &key,
             class,
             self.runtime_capacity.config().native_http_session_reserve,
-        )?;
+        )
+        .inspect_err(|_| telemetry.refused(lane, class, Refusal::Reserve))?;
         if let Some(slot) = state.native_http.get(&key) {
             if slot.identity == *expected && slot.binding == *binding {
                 return Ok(slot.clone());
@@ -257,6 +279,7 @@ impl ProviderHostedControlTransport {
             if let Some(idle) = idle {
                 state.native_http.remove(&idle);
             } else {
+                telemetry.refused(lane, class, Refusal::Exhausted);
                 return Err(
                     crate::agent_sandbox::RuntimeCapacityFailure::native_http_sessions(class)
                         .into(),
@@ -271,6 +294,9 @@ impl ProviderHostedControlTransport {
             cancelled: watch::channel(false).0,
             idle_timer: StdMutex::new(None),
             last_used: StdMutex::new(std::time::Instant::now()),
+            _slot: telemetry.guard(Gauge::Slots),
+            telemetry,
+            cached: StdMutex::new(None),
         });
         state.native_http.insert(key, slot.clone());
         Ok(slot)
@@ -282,12 +308,15 @@ impl ProviderHostedControlTransport {
         slot: Arc<NativeHttpSlot>,
     ) -> crate::Result<NativeLease> {
         let waiting = std::time::Instant::now();
+        let mut observation = slot.telemetry.waiting(slot.lane);
         let mut checkout = crate::binding_diagnostics::measure(
             crate::binding_diagnostics::Stage::TransportWait,
             slot.connection.clone().lock_owned(),
             |_| crate::binding_diagnostics::Outcome::Complete,
         )
         .await;
+        slot.cached.lock().unwrap().take();
+        let busy = observation.acquired();
         let wait_ms = u64::try_from(waiting.elapsed().as_millis()).unwrap_or(u64::MAX);
         slot.idle_timer.lock().unwrap().take();
         let lease = NativeLease {
@@ -296,12 +325,21 @@ impl ProviderHostedControlTransport {
             handle: endpoint.native_binding().ok_or_else(retired)?.0.clone(),
             state: self.state.clone(),
             checkout,
+            _busy: Some(busy),
         };
-        lease.current().await?;
+        lease
+            .current()
+            .await
+            .inspect_err(|_| observation.finish(Outcome::Retired))?;
         let reused_connection = lease
             .connection
             .as_ref()
             .is_some_and(|connection| !connection.sender.is_closed());
+        observation.finish(if reused_connection {
+            Outcome::Reused
+        } else {
+            Outcome::Fresh
+        });
         // Retain only bounded identity/timing metadata, never requests, headers,
         // tokens or runtime responses. Suppress uncontended sub-millisecond reuse.
         if wait_ms > 0 || !reused_connection {
@@ -414,6 +452,27 @@ fn identity(state: &TransportState, handle: &RuntimeHandle) -> NativeRuntimeIden
         sandbox_id: bound.map(|binding| binding.sandbox_id.clone()),
         request_sha256: bound.and_then(|binding| binding.request_sha256.clone()),
     }
+}
+
+/// Independent state for one revoke after the original link state is gone.
+/// It carries only the endpoint's captured identity, so the slot identity
+/// check and the Pod open fences still bind the request to that incarnation.
+pub(super) fn revoke_state(endpoint: &RuntimeEndpoint) -> Option<TransportState> {
+    let (handle, _) = endpoint.native_binding()?;
+    let captured = endpoint.native_identity()?;
+    let mut state = TransportState::default();
+    state.runtime_epochs.insert(handle.clone(), captured.epoch);
+    if let Some(sandbox_id) = &captured.sandbox_id {
+        state.bindings.insert(
+            handle.clone(),
+            BoundRuntime {
+                sandbox_id: sandbox_id.clone(),
+                request_sha256: captured.request_sha256.clone(),
+                store: None,
+            },
+        );
+    }
+    (identity(&state, handle) == *captured).then_some(state)
 }
 
 pub(super) fn retired() -> AdapterError {

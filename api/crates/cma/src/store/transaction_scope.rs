@@ -6,6 +6,7 @@ use mongodb::{
     error::{Error, TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT},
     Client, ClientSession,
 };
+use tracing::instrument::WithSubscriber;
 
 const ATTEMPTS: usize = 5;
 const COMMIT_ATTEMPTS: usize = 5;
@@ -61,7 +62,7 @@ pub(super) fn into_domain(error: ErrorKind) -> MetricsError {
 
 // Context borrows share the session borrow's lifetime; retries cannot retain
 // cursors or mutable observations from an earlier attempt.
-pub(super) async fn run<T, C: Sync, F>(
+pub(super) async fn run<T: Send + 'static, C: Sync, F>(
     client: &Client,
     context: C,
     mut body: F,
@@ -76,10 +77,21 @@ where
             .await
             .map_err(super::usage_reports::unavailable)?;
         let result = match session.start_transaction().await {
-            Ok(()) => body(&context, &mut session).await,
+            Ok(()) => match super::transaction_barrier::open(&mut session).await {
+                Ok(()) => body(&context, &mut session).await,
+                Err(error) => Err(mongo(error)),
+            },
             Err(error) => Err(mongo(error)),
         };
-        match finish(&mut session, result).await {
+        // The driver changes transaction state before sending commit/abort.
+        // Own that terminal operation so caller cancellation cannot strand a
+        // server transaction that session drop would no longer abort.
+        let finished = tokio::spawn(
+            async move { finish(&mut session, result).await }.with_current_subscriber(),
+        )
+        .await
+        .map_err(super::usage_reports::unavailable)?;
+        match finished {
             Ok(value) => return Ok(value),
             Err(error) if error.retryable() && attempt + 1 < ATTEMPTS => {}
             Err(error) => return Err(into_domain(error)),
@@ -106,7 +118,7 @@ impl Transaction for ClientSession {
 pub(super) async fn finish<T>(session: &mut impl Transaction, result: Result<T>) -> Result<T> {
     if result.is_err() {
         // Best effort: neither an abort failure nor its timeout replaces the
-        // body error. Cancellation still relies on the driver's drop.
+        // body error. Cancellation during the body relies on the driver's drop.
         match tokio::time::timeout(ABORT_DEADLINE, session.abort()).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => tracing::warn!(%error, "reporting transaction abort unconfirmed"),

@@ -25,6 +25,9 @@ use sha2::{Digest, Sha256};
 use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VERSION};
 
 mod admission;
+pub(super) mod canary_admission;
+pub(crate) mod canary_key;
+pub(crate) use canary_admission::CanaryProfiles;
 #[cfg(test)]
 mod operator_stop_tests;
 pub(crate) use admission::LifecycleCreateError;
@@ -112,13 +115,21 @@ pub(crate) struct LifecycleRecord {
     pub key: String,
     pub fingerprint: Binary,
     pub input: LifecycleInput,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canary_admission: Option<canary_admission::CanaryAdmission>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canary_manifest_digest: Option<String>,
     pub status: String,
     pub phase: String,
     pub events: Vec<LifecycleEvent>,
     #[serde(default)]
     pub sandbox_id: Option<String>,
     pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_commit: Option<String>,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<layer1_public::rest::AgentLifecycleFailure>,
     #[serde(default)]
     pub connection: Option<AgentLifecycleConnectionRequired>,
     pub lease_expires_at: Option<DateTime>,
@@ -187,6 +198,7 @@ impl MongoAgentLifecycleStore {
             )
             .await
             .map_err(driver)?;
+        canary_admission::ensure_admission_indexes(&operations).await?;
         Ok(Self {
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
@@ -199,6 +211,9 @@ impl MongoAgentLifecycleStore {
         key: &str,
         input: LifecycleInput,
     ) -> Result<CreateResult, LifecycleCreateError> {
+        if canary_key::is_reserved(key) {
+            return Err(StoreError::Malformed("reserved lifecycle key".into()).into());
+        }
         let bytes = serde_json::to_vec(&input.request)
             .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
         let fingerprint = Binary {
@@ -228,12 +243,16 @@ impl MongoAgentLifecycleStore {
             key: key.to_owned(),
             fingerprint,
             input,
+            canary_admission: None,
+            canary_manifest_digest: None,
             status: "queued".into(),
             phase: "queued".into(),
             events: Vec::new(),
             sandbox_id: None,
             agent_id: None,
+            repository_commit: None,
             error: None,
+            failure: None,
             connection: None,
             lease_expires_at: None,
             lease_token: None,
@@ -378,6 +397,7 @@ impl LifecycleRecord {
             phase: self.phase.clone(),
             agent_id: self.agent_id.clone(),
             error: self.error.clone(),
+            failure: self.failure.clone(),
             connection: self.connection.clone(),
             events: self
                 .events

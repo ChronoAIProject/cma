@@ -1,4 +1,5 @@
 //! Agent Manager's exact schema authority. Legacy names retain existing data IDs.
+use super::retained_consents;
 use layer2_core::StoreError;
 use mongodb::{
     bson::{doc, Document},
@@ -7,7 +8,11 @@ use mongodb::{
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) mod replicas;
 pub(crate) const COLLECTIONS: &[&str] = &[
+    "account_deletions",
+    "account_deletion_events",
+    retained_consents::COLLECTION,
     super::budget::COLLECTION,
+    super::agent_observation::COLLECTION,
     super::sandbox_metric_bindings::COLLECTION,
     super::sandbox_metric_rollups::COLLECTION,
     super::sandbox_usage_rollups::COLLECTION,
@@ -129,7 +134,11 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "provider_binding_preparations",
     "provider_tool_opens",
     "provider_tool_relays",
+    "resource_execution_effects_v1",
+    "resource_execution_grants_v1",
+    "resource_execution_records_v1",
     "resource_policies",
+    "resource_revocation_operations_v1",
     "resource_share_commands",
     "resource_shares",
     "sandbox_admissions",
@@ -142,11 +151,18 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "sandbox_events",
     super::sandbox_usage::STATES,
     super::sandbox_usage::EVENTS,
+    super::sandbox_usage_export::CAPTURES,
+    super::sandbox_usage_export::EVIDENCE,
+    super::sandbox_usage_export::OUTBOX,
+    super::sandbox_usage_export::STREAMS,
+    super::sandbox_usage_export::INVENTORY,
     "sandbox_profile_revisions",
     "sandbox_profiles",
     "sandbox_retained_availability",
     "sandbox_sessions",
     "sandboxes",
+    super::home_backups::SCHEDULES_COLLECTION,
+    super::home_backups::BACKUPS_COLLECTION,
     "service_connection_handoffs",
     "trigger_definition_revisions",
     "trigger_definitions",
@@ -163,7 +179,24 @@ pub(crate) const COLLECTIONS: &[&str] = &[
 ];
 // These derived stores are activated separately. Existing credentials must
 // still start while the feature is disabled; partial grants remain invalid.
-pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[super::allocation_buckets::COLLECTION];
+pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
+    retained_consents::COLLECTION,
+    super::sandbox_usage_export::CAPTURES,
+    super::sandbox_usage_export::EVIDENCE,
+    super::sandbox_usage_export::OUTBOX,
+    super::sandbox_usage_export::STREAMS,
+    super::sandbox_usage_export::INVENTORY,
+    super::home_backups::SCHEDULES_COLLECTION,
+    super::home_backups::BACKUPS_COLLECTION,
+    super::allocation_buckets::COLLECTION,
+    super::agent_observation::COLLECTION,
+    // Resource execution reads its activation record on ordinary share and
+    // revocation paths; credentials issued before it still start.
+    "resource_execution_effects_v1",
+    "resource_execution_grants_v1",
+    "resource_execution_records_v1",
+    "resource_revocation_operations_v1",
+];
 const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
 const MIGRATION_ACTIONS: &[&str] = &["find", "insert", "update", "createCollection"];
 // Existing AM stores initialize their own indexes and schemas at startup.
@@ -203,6 +236,7 @@ fn role_with_index_operation(
 ) -> Document {
     let mut grants: Vec<_> = COLLECTIONS
         .iter()
+        .filter(|name| **name != retained_consents::COLLECTION)
         .filter(|name| include_optional || !OPTIONAL_COLLECTIONS.contains(name))
         .map(|name| {
             let mut actions = ACTIONS.to_vec();
@@ -219,6 +253,11 @@ fn role_with_index_operation(
         grants.push(
             doc! {"resource":{"db":database,"collection":MIGRATION_COLLECTION},"actions":MIGRATION_ACTIONS},
         );
+    }
+    if include_optional {
+        // Detached legal receipts have no account or Sandbox selector. Their
+        // writer can create the namespace and append receipts only.
+        grants.push(doc! {"resource":{"db":database,"collection":retained_consents::COLLECTION},"actions":retained_consents::ACTIONS});
     }
     grants.push(doc! {"resource":{"db":database,"collection":""},"actions":["listCollections"]});
     doc! {"createRole":"cma_am_runtime","privileges":grants,"roles":[]}
@@ -287,6 +326,8 @@ fn validate_index_role(
                 action == "listCollections"
             } else if collection == super::provenance_progress::COLLECTION {
                 super::provenance_progress::ACTIONS.contains(&action)
+            } else if collection == retained_consents::COLLECTION {
+                retained_consents::ACTIONS.contains(&action)
             } else if migration_ledger && collection == MIGRATION_COLLECTION {
                 MIGRATION_ACTIONS.contains(&action)
             } else if metadata_collections.contains(&collection)
@@ -315,8 +356,19 @@ fn validate_index_role(
     {
         return Err(denied());
     }
+    if grants
+        .get(retained_consents::COLLECTION)
+        .is_some_and(|actions| {
+            !retained_consents::ACTIONS
+                .iter()
+                .all(|action| actions.contains(*action))
+        })
+    {
+        return Err(denied());
+    }
     if !COLLECTIONS.iter().all(|name| {
-        (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
+        *name == retained_consents::COLLECTION
+            || (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
             || ACTIONS
                 .iter()
                 .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
@@ -431,3 +483,17 @@ mod segments;
 mod shared_schema_contract;
 #[cfg(test)]
 mod tests;
+
+/// Required only by the enabled read service; installation remains additive.
+pub(crate) async fn verify_observation(database: &Database) -> Result<(), StoreError> {
+    let status = database
+        .run_command(doc! {"connectionStatus": 1, "showPrivileges": true})
+        .await
+        .map_err(|_| StoreError::Unavailable("cannot verify observation grants".into()))?;
+    validate_observation_grants(&status, database.name())
+}
+fn validate_observation_grants(status: &Document, database: &str) -> Result<(), StoreError> {
+    let role = doc! {"privileges": [{"resource": {"db": database, "collection": super::agent_observation::COLLECTION}, "actions": ACTIONS}]};
+    cma_service_auth::mongodb_authority::verify_shared_schema(status, database, &role)
+        .map_err(|error| StoreError::Unavailable(error.into()))
+}

@@ -6,9 +6,10 @@ import subprocess
 import tarfile
 from pathlib import Path
 
+import ci_retry
 from ci_tracks.deployable_manifest import validate_names
 from eg_schema import labels as schema_labels
-from staging_cd_common import require
+from staging_cd_common import Refusal, require
 from staging_cd_canary_process import run as canary_run
 from staging_cd_publication_diagnostics import ImageCommandRefusal
 from staging_cd_receipts import IDENTITY_LABEL, canonical, sha256, validate_identity
@@ -16,12 +17,13 @@ from staging_cd_reservations import validate_reservation
 from staging_cd_versions import DEPLOYABLES
 from staging_cd_build_progress import summarize
 from staging_cd_contract import from_source, labels as contract_labels, verify_labels
+from os_refresh_key import SnapshotPinError, refresh_key
 
 ALLOWED_ARGUMENTS = {"RUNTIME_DESKTOP", "OMARCHY_CMA_BASE", "CHRONO_WEB_REPLICA_RECOVERY_ENABLED"}
 PROCESS_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")
 
 
-def command(args, *, cwd=None, env=None, data=None, timeout=3600, progress=None):
+def command(args, *, cwd=None, env=None, data=None, timeout=3600, progress=None, dockerfile=None):
     child = {key: value for key, value in os.environ.items() if key in PROCESS_KEYS}
     if env:
         child.update(env)
@@ -31,9 +33,11 @@ def command(args, *, cwd=None, env=None, data=None, timeout=3600, progress=None)
     result = subprocess.run(args, cwd=cwd, env=child, input=data, capture_output=True,
                             timeout=timeout, check=False)
     if progress is not None:
-        progress.update(summarize(result.stderr))
+        progress.update(summarize(result.stderr, dockerfile=dockerfile))
     if result.returncode != 0:
-        raise ImageCommandRefusal(args, result.stderr)
+        # The cause marks transport failures, so only a caller's explicit retry
+        # policy can repeat this command; the refusal itself stays fixed text.
+        raise ImageCommandRefusal(args, result.stderr) from ci_retry.cli_cause(result.stderr)
     return result.stdout
 
 
@@ -63,8 +67,14 @@ def recipe(source, component):
 def identity(reservation, source):
     validate_reservation(reservation)
     value = recipe(source, reservation["component"])
+    try:
+        os_refresh = refresh_key(reservation["component"], (source / value["dockerfile"]).read_text(), reservation["source"])
+    except SnapshotPinError as error:
+        raise Refusal("Runtime Dockerfile must declare exactly one ARG DEBIAN_SNAPSHOT=YYYYMMDDTHHMMSSZ pin") from error
     arguments = dict(value["build_args"], CHRONO_BUILD=reservation["version"], CHRONO_BUILD_SHA=reservation["source"],
-                     OS_SECURITY_REFRESH=reservation["source"])
+                     OS_SECURITY_REFRESH=os_refresh)
+    if reservation["component"] in {"runtime", "runtime-omarchy"}:
+        arguments["SOURCE_DATE_EPOCH"] = "0"
     inputs = {"tree": reservation["tree"], "dockerfile": hashlib.sha256((source / value["dockerfile"]).read_bytes()).hexdigest(),
               "context": ".", "target": value["target"], "platform": "linux/amd64", "arguments": arguments}
     compatibility = from_source(reservation["component"], reservation["source"], source)
@@ -94,8 +104,11 @@ def build(root, reservation, directory, runner=command, *, source=None, cache=No
         snapshot(root, reservation["source"], source, runner)
     release, value, arguments = identity(reservation, source)
     archive = directory / "image.oci.tar"
+    exporter = "type=oci,dest=" + str(archive)
+    if reservation["component"] in {"runtime", "runtime-omarchy"}:
+        exporter += ",rewrite-timestamp=true"
     args = ["docker", "buildx", "build", "--progress=rawjson", "--platform", "linux/amd64", "--provenance=false", "--sbom=false",
-            "--file", str(source / value["dockerfile"]), "--output", "type=oci,dest=" + str(archive),
+            "--file", str(source / value["dockerfile"]), "--output", exporter,
             "--label", IDENTITY_LABEL + "=" + canonical(release),
             "--label", "org.opencontainers.image.source=https://github.com/ChronoAIProject/cma",
             "--label", "org.opencontainers.image.revision=" + release["source"],
@@ -110,7 +123,8 @@ def build(root, reservation, directory, runner=command, *, source=None, cache=No
         args += ["--build-arg", name + "=" + argument]
     if cache is not None:
         args += cache.build_options()
-    options = {"progress": progress} if progress is not None and runner is command else {}
+    # The recipe's Dockerfile binds which test stages may name failing tests.
+    options = {"progress": progress, "dockerfile": value["dockerfile"]} if progress is not None and runner is command else {}
     if cache is not None:
         options["env"] = cache.build_environment()
     runner([*args, str(source)], timeout=14400, **options)

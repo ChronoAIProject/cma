@@ -1,19 +1,32 @@
 """Component-scoped GHA layers and bounded Cargo mounts for fresh builders."""
-import hashlib
-import datetime
 import importlib.util
 import json
 import os
 import shutil
 import subprocess
 import tarfile
+import tempfile
+import uuid
 from pathlib import Path
 
+from staging_cd_build import snapshot
+from staging_cd_build_cargo_keys import identity
 from staging_cd_common import require
 from staging_cd_cache_context import context
+from staging_cd_cargo_artifact import MAX_BUNDLE_BYTES, MAX_EXPANDED_BYTES
+from staging_cd_reservations import validate_reservation
 
-SCOPES = {"am": "cma-am", "eg": "cma-eg", "web": "cma-web",
+SCOPES = {"am": "cma-cd-am", "eg": "cma-cd-eg", "web": "cma-cd-web",
           "runtime": "cma-runtime", "runtime-omarchy": "cma-runtime-omarchy"}
+# The CI image builds export cma-am, cma-eg, cma-web, runtime and
+# runtime-omarchy (ci-images.yml, ci-omarchy.yml). Keep each publisher's
+# export in its own scope and only read the other's. CD builds from a
+# git-archive snapshot whose file modes differ from CI's checkout, so a shared
+# scope made each writer replace the other's index and cost the next build its
+# dependency stages (cargo-chef install and cook, 5-10 min for AM).
+CI_SCOPES = frozenset({"cma-am", "cma-eg", "cma-web", "runtime", "runtime-omarchy"})
+EXTRA_IMPORTS = {"am": ("cma-am",), "eg": ("cma-eg",), "web": ("cma-web",),
+                 "runtime": ("runtime",), "runtime-omarchy": ("cma-runtime", "runtime")}
 RUNTIME_KEYS = ("ACTIONS_RUNTIME_TOKEN", "ACTIONS_RESULTS_URL")
 
 
@@ -30,30 +43,14 @@ def layer_options(env, component):
     # GitHub authorizes cache entries by ref. A PR can restore the protected
     # branch's entries but cannot write that ref's namespace. Never use a
     # registry exporter or copy a PR artifact into the development namespace.
-    cache = "type=gha,version=2,scope=" + SCOPES[component] + ",timeout=2m"
-    args = ["--cache-from", cache]
+    def cache(scope):
+        return "type=gha,version=2,scope=" + scope + ",timeout=2m"
+    args = []
+    for scope in (SCOPES[component], *EXTRA_IMPORTS.get(component, ())):
+        args.extend(("--cache-from", cache(scope)))
     if env.get("GITHUB_EVENT_NAME") == "push" and env.get("GITHUB_REF") == "refs/heads/develop":
-        args += ["--cache-to", cache + ",mode=max,ignore-error=true"]
+        args += ["--cache-to", cache(SCOPES[component]) + ",mode=max,ignore-error=true"]
     return args
-
-
-def identity(root, component):
-    manifest = json.loads((root / ".github/scripts/deployables.json").read_text())
-    from staging_cd_versions import DEPLOYABLES
-    recipe = manifest[DEPLOYABLES[component]]
-    paths = [root / recipe["dockerfile"], root / ".dockerignore", root / "api/Cargo.lock",
-             root / "api/rust-toolchain.toml", root / "api/Cargo.toml"]
-    paths += sorted((root / "api/crates").glob("*/Cargo.toml"))
-    paths += sorted((root / "api/.cargo").rglob("*"))
-    source_inputs = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
-                     for p in paths if p.is_file()}
-    tools = [Path(__file__), Path(__file__).with_name("api-cargo-cache.py")]
-    payload = {"format": 2, "component": component, "platform": "linux/amd64",
-               "profile": "release", "recipe": recipe,
-               "refresh_day": datetime.datetime.now(datetime.timezone.utc).date().isoformat(),
-               "inputs": source_inputs,
-               "tools": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in tools}}
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 class BuildCache:
@@ -65,25 +62,44 @@ class BuildCache:
         require(not self.root.is_symlink(), "Build cache root is invalid")
         self.root.mkdir(mode=0o700, exist_ok=True)
         self.accepted, self.pending = self.root / "accepted", self.root / "pending"
-        self.compatibility = identity(source, component)
-        self.restored = False
+        self.key = identity(source, component) if component in ("am", "eg") else None
+        self.namespace = uuid.uuid4().hex
+        self.restore_result = "miss"
+        self.export_reason = None
+        self.export_headroom = None
 
     def restore(self):
-        if self.component not in ("am", "eg") or not self.accepted.exists():
+        self.restore_result = "miss"
+        self.namespace = uuid.uuid4().hex
+        if self.key is None or not self.accepted.exists():
             return False
         try:
             require(self.accepted.is_dir() and not self.accepted.is_symlink(),
                     "Build cache accepted root is invalid")
             tool = bridge()
-            tool.validate_bundle(self.accepted, self.compatibility)
-            tool.transfer("inject", self.accepted)
-            self.restored = True
+            manifest = tool.validate_bundle(self.accepted, self.key.prefix, family=self.key.family,
+                                            max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
+            exact = manifest["prefix"] == self.key.prefix
+            # A different graph must let Cargo resolve and verify its own registry.
+            tool.transfer("inject" if exact else "inject-target", self.accepted, namespace=self.namespace,
+                          timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES)
+            self.restore_result = "hit" if exact else "partial"
         except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError):
-            self.restored = False
-        return self.restored
+            # Extraction can fail after writing some files. Abandon that namespace.
+            self.namespace = uuid.uuid4().hex
+            return False
+        return True
 
     def build_options(self):
-        return layer_options(self.env, self.component) if self.build_environment() else []
+        args = layer_options(self.env, self.component) if self.build_environment() else []
+        if self.key is not None:
+            args += ["--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + self.namespace]
+        return args
+
+    def exports_layers(self):
+        # True exactly when build_options() asks BuildKit to write this scope's
+        # layers. Every other build only imports them, so no save is expected.
+        return bool(self.build_environment()) and "--cache-to" in layer_options(self.env, self.component)
 
     def build_environment(self):
         # Buildx's cache client needs these; build steps, registry transport and
@@ -93,32 +109,85 @@ class BuildCache:
         return {key: self.env[key] for key in RUNTIME_KEYS}
 
     def export_mounts(self):
-        if self.component not in ("am", "eg") or self.restored:
+        # Refresh after exact hits too. Restoring the first bundle of the day all
+        # day long made each build recompile everything merged since that seed.
+        self.export_reason = None
+        self.export_headroom = None
+        if self.key is None:
             return False
         require(not self.pending.exists(), "Cargo cache export must be fresh")
         try:
             tool = bridge()
-            tool.transfer("extract", self.pending)
-            tool.seal(self.pending, self.compatibility)
+            tool.transfer("extract", self.pending, namespace=self.namespace,
+                          timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES)
+            tool.seal(self.pending, self.key.prefix, family=self.key.family,
+                      max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
+            size = sum((self.pending / name).lstat().st_size for name in ("registry.tar.gz", "target.tar.gz"))
+            self.export_headroom = "low" if size > HEADROOM_WARNING * MAX_BUNDLE_BYTES else "ok"
             if self.accepted.exists():
                 require(not self.accepted.is_symlink(), "Build cache accepted root is invalid")
                 shutil.rmtree(self.accepted)
             self.pending.rename(self.accepted)
             return True
-        except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError):
+        except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError) as error:
+            self.export_reason = withheld_reason(error)
             return False
         finally:
             if self.pending.exists() and not self.pending.is_symlink():
                 shutil.rmtree(self.pending)
 
 
+# Fixed vocabulary only: exception text, paths and sizes never reach the log.
+WITHHELD_REASONS = (("compressed cache exceeds", "oversize-compressed"),
+                    ("expanded cache exceeds", "oversize-expanded"),
+                    ("empty mount", "empty"))
+
+
+def withheld_reason(error):
+    if isinstance(error, subprocess.SubprocessError):
+        return "transfer-failed"
+    if isinstance(error, ValueError):
+        text = str(error)
+        for marker, reason in WITHHELD_REASONS:
+            if marker in text:
+                return reason
+    return "invalid"
+
+
+# BuildKit restores and extracts take about 60-70 s per GiB-sized bundle; a timed
+# out restore silently becomes a cold build, so leave room for 2x growth.
+TRANSFER_SECONDS = 360
+# Warn while there is still room, before a growing bundle starts being withheld.
+HEADROOM_WARNING = 0.75
+
+
+def lookup_key(root, component, env):
+    # The release controller can publish a reserved source older than its checkout.
+    # One Actions restore seeds the first build. Each later build validates its own family.
+    tasks = json.loads(env["CD_TASKS"])
+    require(isinstance(tasks, list) and tasks, "Cargo cache publication tasks are missing")
+    for task in tasks:
+        require(isinstance(task, dict) and task.get("component") == component
+                and task.get("mode") in ("publish", "resume"), "Cargo cache task differs")
+        if task["mode"] == "publish":
+            reservation = validate_reservation(task.get("reservation"))
+            require(reservation["component"] == component, "Cargo cache reservation differs")
+            if reservation["source"] != env["GITHUB_SHA"]:
+                with tempfile.TemporaryDirectory(dir=env["RUNNER_TEMP"]) as directory:
+                    source = Path(directory) / "source"
+                    snapshot(root, reservation["source"], source)
+                    return identity(source, component)
+            break
+    return identity(root, component)
+
+
 def prepare(root, env):
     context(env)
     component = env["CD_COMPONENT"]
     require(component in ("am", "eg"), "Cargo caching is limited to Rust services")
-    prefix = f"cma-cd-cargo-v2-{component}-{identity(root, component)}-"
+    key = lookup_key(root, component, env)
     return {"directory": str(Path(env["RUNNER_TEMP"]) / "cma-build-cache/accepted"),
-            "prefix": prefix, "key": prefix + env["GITHUB_RUN_ID"] + "-" + env["GITHUB_RUN_ATTEMPT"]}
+            "prefix": key.prefix, "family": key.family, "key": key.archive_key(env)}
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ export function BrowserControl({
   active,
   running = false,
   admissionAllowed = false,
+  observationMessage,
   children,
 }: {
   readonly client: AgentBrowserControlClient;
@@ -45,6 +46,7 @@ export function BrowserControl({
   readonly active: boolean;
   readonly running?: boolean;
   readonly admissionAllowed?: boolean;
+  readonly observationMessage?: string;
   readonly children: ReactNode;
 }) {
   const binding = useMemo(
@@ -304,7 +306,7 @@ export function BrowserControl({
                 ? 'Another client is controlling'
                 : running
                   ? 'Agent is in control · Working in Browser'
-                  : 'Agent paused · Desktop is idle';
+                  : 'Agent has browser control.';
   return (
     <>
       <div className="agent-browser__control">
@@ -313,7 +315,10 @@ export function BrowserControl({
             className={`workspace-control-dot${running && !owned ? ' workspace-control-dot--running' : ''}`}
             aria-hidden="true"
           />
-          {label}
+          {observationMessage ? <span>{observationMessage}</span> : null}
+          {!observationMessage || view.phase !== 'ready' || view.value?.state !== 'agent' ? (
+            <span>{label}</span>
+          ) : null}
         </p>
         {view.phase === 'ready' && view.value?.state === 'agent' ? (
           <Button

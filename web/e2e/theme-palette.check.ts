@@ -2,6 +2,9 @@ import { test, expect, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { LocalUsageMetrics } from './usage-metrics.fixture';
 import { expectReadableText } from './themeContrast';
+import { registerTopographicFlowCases } from './topographic-flow.cases';
+
+registerTopographicFlowCases();
 
 async function settle(page: Page, width: number) {
   await expect
@@ -52,7 +55,7 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(send).toHaveCSS('color', 'rgb(11, 11, 12)');
       await expect(page.locator('.task-home__composer')).toHaveCSS(
         'background-color',
-        theme === 'light' ? 'rgb(250, 250, 250)' : 'rgb(19, 19, 21)',
+        theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(20, 20, 22)',
       );
       await expect(page.locator('.console__surface')).toHaveCSS(
         'background-color',
@@ -76,22 +79,23 @@ for (const theme of ['light', 'dark'] as const) {
       const filters = nav.getByRole('group', { name: 'Navigation filters' });
       await expect(filters.getByRole('button', { name: 'Navigation scope' })).toBeVisible();
       await expect(filters.getByRole('button', { name: 'Agent status filter' })).toBeVisible();
-      const manage = filters.getByRole('button', { name: 'Manage environments' });
-      await manage.focus();
+      const mode = nav.getByRole('group', { name: 'Navigation view' });
+      const environments = mode.getByRole('button', { name: 'Environments', exact: true });
+      const tasks = mode.getByRole('button', { name: 'Tasks', exact: true });
+      await environments.focus();
       await expectReadableText(filters);
       await page.screenshot({ path: info.outputPath(`tasks-panel-${theme}-${width}.png`) });
       await page.keyboard.press('Enter');
-      const back = nav.getByRole('button', { name: 'Back to tasks' });
-      await expect(back).toBeFocused();
+      await expect(environments).toBeFocused();
+      await expect(environments).toHaveAttribute('aria-pressed', 'true');
       await expect(filters).toBeHidden();
       await expect(filter).toHaveAttribute('aria-expanded', 'false');
-      await expect(back).toHaveCSS(
-        'box-shadow',
-        `rgb(${theme === 'light' ? '77, 124, 15' : '200, 245, 66'}) 0px 0px 0px 2px inset`,
-      );
+      await expect(environments).not.toHaveCSS('box-shadow', 'none');
       await page.screenshot({ path: info.outputPath(`environments-${theme}-${width}.png`) });
+      await page.keyboard.press('Shift+Tab');
+      await expect(tasks).toBeFocused();
       await page.keyboard.press('Enter');
-      await expect(nav.getByText('Tasks', { exact: true })).toBeVisible();
+      await expect(tasks).toHaveAttribute('aria-pressed', 'true');
       const account = page.getByRole('button', { name: /Account menu for/ });
       await account.click();
       const menu = page.getByRole('menu', { name: 'Account' });

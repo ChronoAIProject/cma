@@ -6,6 +6,7 @@ use tokio::{sync::broadcast::error::RecvError, time::Instant};
 
 impl Following {
     pub(super) async fn wait_for_change(&mut self) -> Result<(), Error> {
+        let mut observed = None;
         // Buffered live data resumes immediately after its durable predecessor.
         if !self.initial_gap
             && self.discarded_fragments == 0
@@ -18,18 +19,23 @@ impl Following {
             loop {
                 let deadline = self.authorization.revalidation_deadline();
                 let allow_live = self.held.is_none();
+                let shared = self.observation.is_some();
                 tokio::select! {
                     biased;
                     _ = async {
                         if let Some(deadline) = deadline { tokio::time::sleep_until(deadline).await; }
                         else { pending::<()>().await; }
                     } => { stream_telemetry::agent_wake(AgentWake::Authorization); break; }
-                    _ = tokio::time::sleep_until(self.fallback_due) => {
+                    _ = tokio::time::sleep_until(self.fallback_due), if self.observation.is_none() => {
                         self.fallback_due = Instant::now() + self.state.fallback_poll;
                         stream_telemetry::agent_wake(AgentWake::Fallback);
                         break;
                     }
                     received = async {
+                        match &mut self.observation { Some(observation) => observation.changed().await, None => pending().await }
+                    } => { observed = Some(received?); break; }
+                    received = async {
+                        if shared { return pending().await; }
                         match &mut self.heads { Some(heads) => heads.recv().await, None => pending().await }
                     } => {
                         if received.is_err() { self.heads = None; continue; }
@@ -52,19 +58,26 @@ impl Following {
             }
         }
         let poll = Poll::new(Kind::AgentEventsV2);
-        let result = self.refresh_tail().await;
+        let result = self.refresh_tail(observed).await;
         if result.is_ok() {
             poll.complete(!self.pending.is_empty());
         }
         result
     }
 
-    async fn refresh_tail(&mut self) -> Result<(), Error> {
-        let current = self
-            .state
-            .reads
-            .current_event_stream_header(&self.authorization)
-            .await?;
+    async fn refresh_tail(
+        &mut self,
+        observed: Option<layer2_core::sandbox::AgentEventStreamHeader>,
+    ) -> Result<(), Error> {
+        let current = match observed {
+            Some(value) => value,
+            None => {
+                self.state
+                    .reads
+                    .current_event_stream_header(&self.authorization)
+                    .await?
+            }
+        };
         if cursor::incarnation(&current) != self.identity {
             return Err(Error::Incarnation);
         }

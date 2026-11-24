@@ -88,6 +88,113 @@ class VersionLabelContractTests(unittest.TestCase):
                     redirect_stdout(io.StringIO()):
                 self.assertEqual(version_label.main(), 1)
 
+    def test_release_pr_bypasses_upgrade_only_at_current_develop_to_main_identity(self):
+        self.pull['base']['ref'] = 'main'
+        self.pull['head']['ref'] = 'develop'
+        self.event['pull_request'] = copy.deepcopy(self.pull)
+        code, output = self.check([], self.pull)
+        self.assertEqual(code, 0)
+        self.assertIn('not applicable', output)
+        for side, field, value in [('base', 'ref', 'develop'), ('head', 'ref', 'feature'),
+                                   ('head', 'sha', 'c' * 40), ('base', 'sha', 'd' * 40),
+                                   ('head', 'repo', {'full_name': 'fork/repository'})]:
+            current = copy.deepcopy(self.pull)
+            current[side][field] = value
+            with self.subTest(side=side, field=field):
+                self.assertEqual(self.check([], current)[0], 1)
+        self.assertEqual(self.check([], dict(self.pull, state='closed'))[0], 1)
+
+    def queue(self, current, comparison=None, *, event=None, images=()):
+        """Run the label check for develop merge-queue entry pr-7 with live PR responses."""
+        group = {'base_sha': 'c' * 40, 'head_sha': 'd' * 40, 'base_ref': 'refs/heads/develop',
+                 'head_ref': 'refs/heads/gh-readonly-queue/develop/pr-7-' + 'c' * 40}
+        payload = event or {'action': 'checks_requested', 'repository': {'full_name': self.repository},
+                            'merge_group': group}
+        self.event_path.write_text(json.dumps(payload))
+        contained = {'status': 'ahead', 'ahead_by': 1, 'behind_by': 0}
+        responses = [current, contained if comparison is None else comparison]
+        results = [subprocess.CompletedProcess([], 0, json.dumps(value), '') for value in responses]
+        output = io.StringIO()
+        environment = dict(self.environment, GITHUB_EVENT_NAME='merge_group', DEPLOYABLES=json.dumps(list(images)))
+        with patch.dict(os.environ, environment), \
+                patch.object(version_label.subprocess, 'run', side_effect=results) as request, \
+                redirect_stdout(output):
+            code = version_label.main()
+        return code, output.getvalue(), [call.args[0][2] for call in request.call_args_list]
+
+    def test_merge_group_requires_the_queued_prs_live_label(self):
+        for images in [(), ('cma-web',)]:
+            for level in ['major', 'minor', 'patch']:
+                current = dict(self.pull, labels=[{'name': 'type:bug'}, {'name': f'version-upgrade:{level}'}])
+                with self.subTest(images=images, level=level):
+                    code, output, paths = self.queue(current, images=images)
+                    self.assertEqual(code, 0)
+                    self.assertIn('Queued PR: #7', output)
+                    self.assertIn(f'Version policy: {level}', output)
+                    self.assertEqual(paths, [f'repos/{self.repository}/pulls/7',
+                                             f'repos/{self.repository}/compare/{"b" * 40}...{"d" * 40}'])
+        for labels in [[], [{'name': 'version-upgrade:unsupported'}],
+                       [{'name': 'version-upgrade:major'}, {'name': 'version-upgrade:minor'}]]:
+            with self.subTest(labels=labels):
+                code, output, _ = self.queue(dict(self.pull, labels=labels))
+                self.assertEqual(code, 1)
+                self.assertIn('::error::Version label check failed:', output)
+                self.assertNotIn('Version policy:', output)
+
+    def test_merge_group_label_must_belong_to_the_open_develop_pr_inside_the_group(self):
+        current = dict(self.pull, labels=[{'name': 'version-upgrade:patch'}])
+        for changes in [{'state': 'closed'}, {'number': 8}, {'labels': None},
+                        {'base': dict(self.pull['base'], ref='main')},
+                        {'base': dict(self.pull['base'], repo={'full_name': 'another/repository'})},
+                        {'head': dict(self.pull['head'], sha='bad')}]:
+            with self.subTest(changes=changes):
+                self.assertEqual(self.queue(dict(current, **changes))[0], 1)
+        # A head pushed after queueing, or a squash/rebase group, is not contained.
+        for comparison in [{'status': 'diverged', 'ahead_by': 1, 'behind_by': 1},
+                           {'status': 'behind', 'ahead_by': 0, 'behind_by': 2}, {}]:
+            with self.subTest(comparison=comparison):
+                code, output, paths = self.queue(current, comparison)
+                self.assertEqual(code, 1)
+                self.assertEqual(len(paths), 2)
+                self.assertNotIn('Version policy:', output)
+
+    def test_merge_group_identity_is_checked_before_any_live_read(self):
+        group = {'base_sha': 'c' * 40, 'head_sha': 'd' * 40, 'base_ref': 'refs/heads/develop',
+                 'head_ref': 'refs/heads/gh-readonly-queue/develop/pr-7-' + 'c' * 40}
+        valid = {'action': 'checks_requested', 'repository': {'full_name': self.repository}, 'merge_group': group}
+        current = dict(self.pull, labels=[{'name': 'version-upgrade:patch'}])
+        cases = [dict(valid, action='destroyed'), dict(valid, repository={'full_name': 'other/repository'})]
+        for field, value in [('base_ref', 'refs/heads/main'), ('head_sha', 'c' * 40), ('head_sha', '0' * 40),
+                             ('base_sha', 'short'), ('head_ref', 'refs/heads/gh-readonly-queue/main/pr-7-' + 'c' * 40),
+                             ('head_ref', 'gh-readonly-queue/develop/pr-7-' + 'c' * 40),
+                             ('head_ref', 'refs/heads/gh-readonly-queue/develop/pr-0-' + 'c' * 40),
+                             ('head_ref', 'refs/heads/gh-readonly-queue/develop/pr-7'), ('head_ref', None)]:
+            cases.append(dict(valid, merge_group=dict(group, **{field: value})))
+        for event in cases:
+            with self.subTest(event=event):
+                code, output, paths = self.queue(current, event=event)
+                self.assertEqual((code, paths), (1, []))
+                self.assertIn('::error::Version label check failed:', output)
+
+    def test_push_policy_bypass_requires_valid_event_and_successful_selector(self):
+        push = {'repository': {'full_name': self.repository}, 'ref': 'refs/heads/develop',
+                'before': 'a' * 40, 'after': 'b' * 40, 'deleted': False}
+        self.event_path.write_text(json.dumps(push))
+        environment = dict(self.environment, GITHUB_EVENT_NAME='push', DEPLOYABLES='[]')
+        for changes, expected in [({}, 0), ({'SELECTOR_RESULT': 'failure'}, 1),
+                                   ({'SELECTOR_RESULT': 'skipped'}, 1), ({'DEPLOYABLES': 'null'}, 1),
+                                   ({'DEPLOYABLES': '["unknown"]'}, 1), ({'GITHUB_EVENT_NAME': 'schedule'}, 1),
+                                   ({'GITHUB_REPOSITORY': 'other/repository'}, 1)]:
+            with self.subTest(changes=changes), patch.dict(os.environ, dict(environment, **changes)), \
+                    patch.object(version_label.subprocess, 'run') as request, redirect_stdout(io.StringIO()):
+                self.assertEqual(version_label.main(), expected)
+                request.assert_not_called()
+        for field, value in [('ref', 'refs/heads/main'), ('deleted', True), ('after', '0' * 40),
+                              ('before', 'bad'), ('repository', None)]:
+            self.event_path.write_text(json.dumps(dict(push, **{field: value})))
+            with patch.dict(os.environ, environment), redirect_stdout(io.StringIO()):
+                self.assertEqual(version_label.main(), 1)
+
 
 if __name__ == '__main__':
     unittest.main()

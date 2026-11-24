@@ -25,31 +25,12 @@ pub(super) async fn configure(store: &MongoSandboxStore, ceilings: AdmissionCeil
     )
     .await
     .unwrap();
-    let row = store
-        .budget_settings
-        .find_one(doc! {"_id": "platform"})
-        .await
-        .unwrap()
-        .unwrap();
-    let state = crate::store::admission_ceilings::from_document(&row).unwrap();
-    let next = state
-        .changed(
-            state.revision,
-            &SubjectId::new("operator"),
-            "configure retained-home capacity",
-            ceilings,
-            100,
-        )
-        .unwrap()
-        .unwrap();
-    store
-        .budget_settings
-        .update_one(
-            doc! {"_id": "platform"},
-            doc! {"$set": {"admission_ceilings": mongodb::bson::serialize_to_bson(&next).unwrap()}},
-        )
-        .await
-        .unwrap();
+    crate::store::settings_barrier::test_support::set_ceilings(
+        &store.client,
+        &store.sandboxes.namespace().db,
+        ceilings,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -248,7 +229,7 @@ async fn unreadable_ceilings_close_only_fresh_home_admission() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn unset_home_ceiling_adds_zero_mongo_commands_and_uses_no_capacity_fence() {
+async fn unset_home_ceiling_still_fences_settings_without_counting_global_capacity() {
     use mongodb::event::{command::CommandEvent, EventHandler};
     use mongodb::options::ClientOptions;
     let trace = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -304,6 +285,23 @@ async fn unset_home_ceiling_adds_zero_mongo_commands_and_uses_no_capacity_fence(
         1,
         "only the inherited per-owner count runs"
     );
-    eprintln!("retained_homes unset commands={} extra_commands=0 settings_reads=1 owner_counts=1 capacity_fences=0", unset.len());
+    assert_eq!(
+        unset
+            .iter()
+            .filter(|(_, command)| command.get_str("update").ok() == Some("platform_settings"))
+            .count(),
+        1
+    );
+    let settings = store
+        .budget_settings
+        .find_one(doc! {"_id": "platform"})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(settings.get_i64("admission_policy_fence").unwrap(), 2);
+    assert_eq!(settings.get_i64("revision").unwrap(), 0);
     client.database(&name).drop().await.unwrap();
 }
+
+#[path = "cutoff_mongo_tests.rs"]
+mod cutoff;

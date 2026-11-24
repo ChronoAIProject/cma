@@ -28,6 +28,10 @@ class PolicyTests(unittest.TestCase):
         for name in (*policy.CONTENT_FILES, "image-content-manifest.json"):
             (scripts / name).parent.mkdir(parents=True, exist_ok=True)
             (scripts / name).write_bytes((Path(__file__).parent / name).read_bytes())
+        for relative, pins in policy.package_evidence_pins().values():
+            if pins is not None:
+                catalog = Path(__file__).parent / relative.name
+                (self.root / relative).write_bytes(catalog.read_bytes())
 
     def freeze(self):
         self.manifest_path = self.bundle / "SOURCE-MANIFEST.json"
@@ -126,6 +130,34 @@ class PolicyTests(unittest.TestCase):
         packet.write_text('{}')
         with self.assertRaises(policy.PolicyRefusal):
             self.check()
+
+    def test_active_package_evidence_must_match_its_pin_and_be_tracked(self):
+        catalog = self.root / policy.PACKAGE_EVIDENCE
+        data = b'{"fixture":"reviewed package evidence"}'
+        catalog.write_bytes(data)
+        pins = (hashlib.sha256(data).hexdigest(), "b" * 64)
+        with patch.object(policy, "APPROVED_PACKAGE_EVIDENCE", pins):
+            self.check()
+            paths = [p.relative_to(self.root) for p in self.root.rglob("*") if p.is_file() and p != catalog]
+            with self.assertRaisesRegex(policy.PolicyRefusal, "must be tracked"):
+                policy.validate(self.root, paths, self.digest)
+            catalog.write_bytes(b'{"fixture":"different bytes"}')
+            with self.assertRaisesRegex(policy.PolicyRefusal, "differs from the pinned review"):
+                self.check()
+
+    def test_staging_components_load_only_their_reviewed_evidence(self):
+        default = self.root / policy.PACKAGE_EVIDENCE
+        omarchy = self.root / policy.OMARCHY_PACKAGE_EVIDENCE
+        default.write_bytes(b'{"fixture":"runtime"}')
+        omarchy.write_bytes(b'{"fixture":"runtime-omarchy"}')
+        with patch.object(policy, "APPROVED_PACKAGE_EVIDENCE", (policy.sha256(default), "a" * 64)), \
+             patch.object(policy, "APPROVED_OMARCHY_PACKAGE_EVIDENCE", (policy.sha256(omarchy), "b" * 64)):
+            self.assertEqual(policy.load_package_evidence(self.root, "runtime")[0], default.read_bytes())
+            self.assertEqual(policy.load_package_evidence(self.root, "runtime-omarchy")[0], omarchy.read_bytes())
+            self.check()
+            omarchy.write_bytes(default.read_bytes())
+            with self.assertRaisesRegex(policy.PolicyRefusal, "differs from the pinned review"):
+                self.check()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,108 @@
+[
+  {
+    "template": {
+      "id": "research",
+      "version": 1,
+      "fields": {
+        "topic": "  合成 research [label]\nsecond line  "
+      }
+    },
+    "message": "Research 合成 research [label]\nsecond line and summarize the key findings, with links to sources."
+  },
+  {
+    "template": {
+      "id": "spreadsheet",
+      "version": 1,
+      "fields": {
+        "link": " https://example.com/synthetic.csv "
+      }
+    },
+    "message": "Analyze the spreadsheet at https://example.com/synthetic.csv and point out trends, outliers and what to do next."
+  },
+  {
+    "template": {
+      "id": "document",
+      "version": 1,
+      "fields": {
+        "type": " report ",
+        "subject": " synthetic data ",
+        "audience": " readers "
+      }
+    },
+    "message": "Write a report about synthetic data for readers."
+  },
+  {
+    "template": {
+      "id": "website",
+      "version": 1,
+      "fields": {
+        "project": " synthetic project "
+      }
+    },
+    "message": "Build a one-page website for synthetic project and share a preview link."
+  },
+  {
+    "template": {
+      "id": "code",
+      "version": 1,
+      "fields": {
+        "language": " Python ",
+        "behavior": " prints [1, 2, 3] "
+      }
+    },
+    "message": "Write a Python script that prints [1, 2, 3]."
+  },
+  {
+    "template": {
+      "id": "research",
+      "version": 2,
+      "fields": {
+        "topic": "Compare three established methods for testing AI agent browser reliability. Cite public sources and provide a concise table."
+      }
+    },
+    "message": "Research the following topic:\n\nCompare three established methods for testing AI agent browser reliability. Cite public sources and provide a concise table.\n\nSummarize the key findings, with links to sources."
+  },
+  {
+    "template": {
+      "id": "research",
+      "version": 2,
+      "fields": {
+        "topic": "  研究 [1, 2] and API contracts?  "
+      }
+    },
+    "message": "Research the following topic:\n\n研究 [1, 2] and API contracts?\n\nSummarize the key findings, with links to sources."
+  },
+  {
+    "template": {
+      "id": "code",
+      "version": 2,
+      "fields": {
+        "language": " JavaScript ",
+        "behavior": "Create a small accessible form on a new branch."
+      }
+    },
+    "message": "Write a JavaScript script for the following task:\n\nCreate a small accessible form on a new branch."
+  },
+  {
+    "template": {
+      "id": "code",
+      "version": 2,
+      "fields": {
+        "language": "Python",
+        "behavior": "Print [1, 2, 3]"
+      }
+    },
+    "message": "Write a Python script for the following task:\n\nPrint [1, 2, 3]."
+  },
+  {
+    "template": {
+      "id": "code",
+      "version": 2,
+      "fields": {
+        "language": "TypeScript",
+        "behavior": "保留大小写和标点。"
+      }
+    },
+    "message": "Write a TypeScript script for the following task:\n\n保留大小写和标点。"
+  }
+]

@@ -4,7 +4,7 @@ import subprocess
 
 from staging_cd_common import require
 from staging_cd_compatibility import GROUP, ContractPolicy
-from staging_cd_component_admission import groups
+from staging_cd_component_admission import groups, transition_anchor
 from staging_cd_github import GitHub
 from staging_cd_receipts import canonical
 from staging_cd_resolve import output
@@ -15,8 +15,10 @@ from staging_cd_targets import TARGETS
 
 def routes(matrix, get_policy):
     tasks = groups(matrix)
-    coupled = False
-    if GROUP & tasks.keys():
+    # An outstanding transition can outlive every selected source that
+    # introduced it. Keep its receipts together through admission.
+    coupled = transition_anchor(matrix) is not None
+    if not coupled and GROUP & tasks.keys():
         try:
             policy = get_policy()
             sources = {task.get("receipt", task.get("reservation"))["source"]
@@ -48,7 +50,7 @@ def main():
         output(env, "publications", canonical({e["component"]: e["tasks"] for e in matrix["include"]}))
         output(env, "batches", canonical(batches))
         return True
-    return run_private(operation, None)
+    return run_private(operation, None, subject="component-routes")
 
 
 if __name__ == "__main__":

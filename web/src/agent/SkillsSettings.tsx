@@ -4,38 +4,52 @@ import { useEffect, useRef, useState } from 'react';
 import { useCmaClient, useProfileViewsClient } from '../api/context';
 import type { AgentSkillsView } from '../api/client';
 import { AgentSkillsError } from '../api/rest/agentSkills';
-import type { SkillCatalogEntry } from '../profiles/client';
+import { catalogFailure } from '../profiles/catalogFailure';
+import { useSkillCatalog } from './useSkillCatalog';
 import { isSkillVersion } from '../profiles/validation';
 import { Button } from '../ui/Button';
-import { IconChevronRightOutline14 } from '../ui/icons';
+import { IconChevronRightOutline14, IconWarningOutline16 } from '../ui/icons';
 import { Input } from '../ui/Input';
 import { Picker } from '../ui/Picker';
 import './SkillsSettings.css';
 
-export function SkillsSettings({
+interface SkillsSettingsProps {
+  readonly catalogOpen?: boolean;
+  readonly onClose?: () => void;
+  readonly agentId: string;
+  readonly viewerId?: string;
+  readonly active: boolean;
+  readonly busy: boolean;
+}
+
+export function SkillsSettings(props: SkillsSettingsProps) {
+  return <SkillsSettingsForm key={JSON.stringify([props.viewerId, props.agentId])} {...props} />;
+}
+
+function SkillsSettingsForm({
   agentId,
   active,
   busy,
-}: {
-  readonly agentId: string;
-  readonly active: boolean;
-  readonly busy: boolean;
-}) {
+  catalogOpen = false,
+  onClose,
+}: SkillsSettingsProps) {
   const client = useCmaClient();
   const catalog = useProfileViewsClient()?.authoring;
   const [saved, setSaved] = useState<AgentSkillsView>();
-  const [error, setError] = useState<string>();
+  const [statusError, setStatusError] = useState<string>();
   const [reload, setReload] = useState(0);
-  const [query, setQuery] = useState('');
-  const [cursor, setCursor] = useState<string>();
-  const [catalogReload, setCatalogReload] = useState(0);
-  const [entries, setEntries] = useState<readonly SkillCatalogEntry[]>([]);
-  const [next, setNext] = useState<string>();
-  const [catalogLoading, setCatalogLoading] = useState(true);
-  const [catalogError, setCatalogError] = useState<string>();
+  const catalogState = useSkillCatalog(catalog, active);
+  const { entries, query, next } = catalogState;
+  const catalogLoading = catalogState.phase === 'loading';
+  const catalogError =
+    catalogState.phase === 'failed' ? catalogFailure(catalogState.failure) : undefined;
   const [versions, setVersions] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
-  const [intent, setIntent] = useState<{ id: string; version: string; key: string }>();
+  const [installation, setInstallation] = useState<{
+    intent?: { id: string; version: string; key: string };
+    error?: string;
+  }>({});
+  const { intent, error: installError } = installation;
   const mutation = useRef<AbortController | undefined>(undefined);
   useEffect(() => () => mutation.current?.abort(), []);
   useEffect(() => {
@@ -46,23 +60,23 @@ export function SkillsSettings({
         const value = await client.readAgentSkills!(agentId, { signal: signal });
         if (signal.aborted) return;
         setSaved(value);
-        setError(undefined);
-        setIntent((current) =>
-          current &&
+        setStatusError(undefined);
+        setInstallation((current) =>
+          current.intent &&
           value.items.some(
             (item) =>
-              item.id === current.id &&
-              item.version === current.version &&
+              item.id === current.intent?.id &&
+              item.version === current.intent.version &&
               item.status !== 'failed',
           )
-            ? undefined
+            ? {}
             : current,
         );
         failures = 0;
         if (value.pending) return { next: 1000, cooldown: 1000 };
       } catch (cause) {
         if (!signal.aborted)
-          setError(
+          setStatusError(
             cause instanceof Error
               ? cause.message
               : 'Skill installation status could not be loaded.',
@@ -72,41 +86,9 @@ export function SkillsSettings({
     });
     return () => observer.dispose();
   }, [active, agentId, busy, client, reload]);
-  useEffect(() => {
-    if (!active || !catalog) return;
-    const request = new AbortController();
-    const timer = setTimeout(() => {
-      void catalog
-        .searchSkills(query, { cursor, signal: request.signal })
-        .then((page) => {
-          if (request.signal.aborted) return;
-          if (page.next !== undefined && page.next === cursor)
-            throw new Error('Skill catalog page did not advance.');
-          setEntries((previous) =>
-            cursor === undefined
-              ? page.items
-              : [
-                  ...previous,
-                  ...page.items.filter((item) => !previous.some((entry) => entry.id === item.id)),
-                ],
-          );
-          setNext(page.next);
-          setCatalogError(undefined);
-        })
-        .catch(() => {
-          if (!request.signal.aborted) setCatalogError('Ornn skills could not be loaded.');
-        })
-        .finally(() => {
-          if (!request.signal.aborted) setCatalogLoading(false);
-        });
-    }, 200);
-    return () => {
-      request.abort();
-      clearTimeout(timer);
-    };
-  }, [active, catalog, query, cursor, catalogReload]);
   const install = async (id: string, version: string) => {
     if (
+      !active ||
       mutation.current ||
       busy ||
       saved?.pending ||
@@ -114,12 +96,18 @@ export function SkillsSettings({
       !client.installAgentSkill
     )
       return;
+    if (
+      !intent &&
+      (!catalogState.selectable ||
+        !isSkillVersion(version) ||
+        !entries.some((entry) => entry.id === id && entry.versions.includes(version)))
+    )
+      return;
     const retained = intent ?? { id, version, key: crypto.randomUUID() };
     const request = new AbortController();
     mutation.current = request;
-    setIntent(retained);
+    setInstallation({ intent: retained });
     setSending(true);
-    setError(undefined);
     try {
       const result = await client.installAgentSkill(
         agentId,
@@ -128,20 +116,22 @@ export function SkillsSettings({
       );
       if (request.signal.aborted) return;
       setSaved(result);
-      setIntent(undefined);
+      setInstallation({});
       setReload((value) => value + 1);
     } catch (cause) {
       if (!request.signal.aborted) {
-        if (
-          cause instanceof AgentSkillsError &&
-          [400, 401, 403, 404, 409, 422].includes(cause.status)
-        )
-          setIntent(undefined);
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : 'Installation could not be confirmed. Retry the same request.',
-        );
+        setInstallation((current) => ({
+          intent:
+            cause instanceof AgentSkillsError &&
+            [400, 401, 403, 404, 409, 422].includes(cause.status)
+              ? undefined
+              : current.intent,
+          error: current.intent
+            ? cause instanceof Error
+              ? cause.message
+              : 'Installation could not be confirmed. Retry the same request.'
+            : undefined,
+        }));
       }
     } finally {
       if (!request.signal.aborted) setSending(false);
@@ -149,6 +139,9 @@ export function SkillsSettings({
     }
   };
   const disabled =
+    !active ||
+    !catalogState.selectable ||
+    statusError !== undefined ||
     busy ||
     sending ||
     intent !== undefined ||
@@ -189,7 +182,7 @@ export function SkillsSettings({
         ) : (
           <p>No additional skills installed.</p>
         )
-      ) : client.readAgentSkills ? (
+      ) : statusError ? null : client.readAgentSkills ? (
         <p role="status">Loading Agent skills…</p>
       ) : (
         <p>Skill installation is unavailable from this connection.</p>
@@ -203,9 +196,9 @@ export function SkillsSettings({
       {busy ? (
         <p>Skills can be installed when the Agent is ready and its current turn has finished.</p>
       ) : null}
-      {error ? (
+      {statusError ? (
         <div className="agent-skills__failure" role="alert">
-          <p>{error}</p>
+          <p>{statusError}</p>
           <button
             type="button"
             className="agent-details__link"
@@ -216,6 +209,7 @@ export function SkillsSettings({
           </button>
         </div>
       ) : null}
+      {installError ? <p role="alert">{installError}</p> : null}
       {intent && !sending ? (
         <button
           type="button"
@@ -226,12 +220,7 @@ export function SkillsSettings({
           Retry installation
         </button>
       ) : null}
-      {/*
-       * The catalogue is management detail, so it waits behind a closed
-       * disclosure; it still loads while the panel is open because installed
-       * rows borrow its names.
-       */}
-      <details className="agent-skills__add">
+      <details className="agent-skills__add" open={catalogOpen || undefined}>
         <summary>
           Add skills
           <span aria-hidden="true">
@@ -244,14 +233,46 @@ export function SkillsSettings({
             id={`agent-skill-search-${agentId}`}
             aria-label="Search available Ornn skills"
             value={query}
-            disabled={!catalog}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setCursor(undefined);
-              setEntries([]);
-              setCatalogLoading(true);
-            }}
+            disabled={!catalogState.searchEnabled}
+            onChange={(event) => catalogState.search(event.target.value)}
           />
+          {!catalog ? (
+            <p>The Ornn catalog is unavailable from this connection.</p>
+          ) : catalogLoading ? (
+            <p role="status">Loading available skills…</p>
+          ) : catalogError ? (
+            <div className="agent-skills__catalog-failure" role="alert">
+              <span aria-hidden="true">
+                <IconWarningOutline16 size={24} />
+              </span>
+              <h3>Couldn’t load the skills catalog</h3>
+              <p>{catalogError.message}</p>
+              <div className="agent-skills__catalog-diagnostics">
+                {catalogError.status === undefined ? null : (
+                  <p>HTTP status: {catalogError.status}</p>
+                )}
+                {catalogError.code === undefined ? null : <p>Code: {catalogError.code}</p>}
+                {catalogError.requestId === undefined ? null : (
+                  <p>Request ID: {catalogError.requestId}</p>
+                )}
+              </div>
+              {catalogState.waiting ? (
+                <p role="status">Waiting before another catalog request is allowed.</p>
+              ) : null}
+              {catalogError.retry ? (
+                <Button
+                  variant="primary"
+                  disabled={catalogState.waiting}
+                  onClick={catalogState.retry}
+                >
+                  {catalogState.cursor === undefined ? 'Retry Ornn catalog' : 'Retry skill page'}
+                </Button>
+              ) : null}
+              {onClose ? <Button onClick={onClose}>Cancel</Button> : null}
+            </div>
+          ) : entries.length === 0 ? (
+            <p>No matching Ornn skills.</p>
+          ) : null}
           <ul
             className="agent-skills__entries"
             aria-label="Available Ornn skills"
@@ -260,7 +281,10 @@ export function SkillsSettings({
             {entries.map((entry) => {
               const available = entry.versions.filter(isSkillVersion);
               const existing = saved?.items.find((item) => item.id === entry.id);
-              const version = existing?.version ?? versions[entry.id] ?? available[0] ?? '';
+              const selected = versions[entry.id];
+              const version =
+                existing?.version ??
+                (selected && available.includes(selected) ? selected : (available[0] ?? ''));
               const description =
                 existing?.status === 'failed'
                   ? 'This installation failed. This Agent cannot retry or replace this skill.'
@@ -312,36 +336,12 @@ export function SkillsSettings({
               );
             })}
           </ul>
-          {!catalog ? (
-            <p>The Ornn catalog is unavailable from this connection.</p>
-          ) : catalogLoading ? (
-            <p role="status">Loading available skills…</p>
-          ) : catalogError ? (
-            <div className="agent-skills__failure" role="alert">
-              <p>{catalogError}</p>
-              <button
-                type="button"
-                className="agent-details__link"
-                onClick={() => {
-                  setCatalogLoading(true);
-                  setCatalogReload((value) => value + 1);
-                }}
-              >
-                Retry Ornn catalog
-              </button>
-            </div>
-          ) : entries.length === 0 ? (
-            <p>No matching Ornn skills.</p>
-          ) : null}
           {next ? (
             <button
               type="button"
               className="agent-details__link"
-              disabled={catalogLoading}
-              onClick={() => {
-                setCursor(next);
-                setCatalogLoading(true);
-              }}
+              disabled={catalogState.phase !== 'ready'}
+              onClick={catalogState.more}
             >
               More Ornn skills
             </button>

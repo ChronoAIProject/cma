@@ -9,6 +9,7 @@ use layer2_core::{budget::RequestBudget, sandbox::store::AgentStore};
 mod budget;
 #[path = "census_test_support.rs"]
 mod support;
+pub(in crate::store) use support::prepare_source;
 
 #[path = "census_counter_tests.rs"]
 mod counters;
@@ -52,6 +53,70 @@ async fn full_capture_restores_real_access_request_consent_and_excludes_identity
         .await
         .unwrap();
     support::roundtrip(fixture, expected).await;
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn populated_observer_epochs_stay_in_place_and_outside_sandbox_capture_and_restore() {
+    let (client, name, ordinary, record) =
+        crate::store::agent_access_requests::tests::approved_fixture().await;
+    let agent = ordinary
+        .get_agent(&record.requester.agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let database = client.database(&name);
+    let (temp, store, request, bytes) =
+        support::prepare_source(client, database.clone(), agent.sandbox_id.as_str()).await;
+    let collection = crate::store::agent_observation::COLLECTION;
+    // Even the captured Agent's live lease is independent of Sandbox ownership.
+    // Expired watermarks also remain present without blocking capture.
+    for (id, expires) in [
+        (
+            agent.id.as_str(),
+            mongodb::bson::DateTime::now().timestamp_millis() + 15_000,
+        ),
+        ("agt_unrelated_expired", 0),
+    ] {
+        database
+            .collection::<Document>(collection)
+            .insert_one(doc! {
+                "_id": id, "document_schema_version": 1_i64,
+                "created_at": &agent.created_at, "instance_id": "read-owner",
+                "epoch": 7_i64, "expires_at": mongodb::bson::DateTime::from_millis(expires),
+                "next_refresh_at": mongodb::bson::DateTime::from_millis(expires), "round": "",
+            })
+            .await
+            .unwrap();
+    }
+    let epochs = support::inventory(&database, &[collection]).await;
+    store.admit(&request, &bytes).await.unwrap();
+    let custody = Custody::default();
+    let receipt = export::publish(&store, &request, &bytes, &custody, None)
+        .await
+        .unwrap();
+    let manifest = verify::load(&custody, &receipt, &request, &bytes)
+        .await
+        .unwrap();
+    let archived = manifest
+        .database
+        .iter()
+        .find(|row| row.collection == collection)
+        .unwrap();
+    assert_eq!(archived.documents, 0);
+    assert_eq!(archived.bytes, 0);
+    assert!(archived.objects.is_empty());
+    let restore = temp.0.join("restore");
+    verify::restore(&custody, &receipt, &request, &bytes, &restore)
+        .await
+        .unwrap();
+    assert!(
+        std::fs::read(restore.join("database").join(format!("{collection}.bson")))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(support::inventory(&database, &[collection]).await, epochs);
+    database.drop().await.unwrap();
 }
 
 #[tokio::test]

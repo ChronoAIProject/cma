@@ -72,13 +72,27 @@ impl App {
     }
     /// [`App::standard`] whose delivery engine reports to `observer`.
     pub async fn observed(ack_ms: u32, observer: Arc<dyn ActivityObserver>) -> Self {
+        Self::observed_with(
+            ack_ms,
+            DeliveryConfig::default(),
+            FakeProviderConfig::default(),
+            observer,
+        )
+        .await
+    }
+    pub async fn observed_with(
+        ack_ms: u32,
+        config: DeliveryConfig,
+        provider_config: FakeProviderConfig,
+        observer: Arc<dyn ActivityObserver>,
+    ) -> Self {
         Self::build(
             "telegram",
             (false, false),
             vec![],
             ack_ms,
-            DeliveryConfig::default(),
-            FakeProviderConfig::default(),
+            config,
+            provider_config,
             observer,
         )
         .await
@@ -200,7 +214,7 @@ impl App {
             native_lark_conversation_history: None,
             discord_conversation_history: None,
             complete_replies_enabled: false,
-            commonmark_relay_enabled: false,
+            commonmark_relay: Default::default(),
             whatsapp_templates_enabled: false,
             discord_interactions_enabled: false,
             native_discord_media_controls_enabled: false,
@@ -290,6 +304,7 @@ impl App {
             .send(DeliveryCommand::StreamOutcome {
                 turn: self.turn.clone(),
                 outcome,
+                answer_response_id: None,
             })
             .await
             .unwrap();

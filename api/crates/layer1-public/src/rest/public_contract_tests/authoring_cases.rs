@@ -40,7 +40,8 @@ impl ProfileAuthoringSource for Source {
         self.check()?;
         assert_eq!(
             credential.map(AuthoringCredential::value),
-            (self.mode == "credential_owner").then_some("test-request-authority")
+            (self.mode == "credential_owner" || self.mode == "credential_sandbox_owner")
+                .then_some("test-request-authority")
         );
         assert_eq!(owner.as_str(), "contract-owner");
         if self.mode == "empty" {
@@ -78,7 +79,8 @@ impl ProfileAuthoringSource for Source {
         self.check()?;
         assert_eq!(
             credential.map(AuthoringCredential::value),
-            (self.mode == "credential_owner").then_some("test-request-authority")
+            (self.mode == "credential_owner" || self.mode == "credential_sandbox_owner")
+                .then_some("test-request-authority")
         );
         assert_eq!(owner.as_str(), "contract-owner");
         if query.cursor.as_deref() == Some("invalid") {
@@ -157,6 +159,8 @@ pub(super) fn scenario(name: &str) -> Option<Scenario> {
     assert!(matches!(
         mode,
         "owner"
+            | "sandbox_owner"
+            | "credential_sandbox_owner"
             | "anonymous"
             | "forbidden"
             | "unavailable"
@@ -179,7 +183,7 @@ pub(super) fn scenario(name: &str) -> Option<Scenario> {
         },
         Arc::new(Source { mode: mode.into() }),
     );
-    let mut router = super::super::profile_authoring_router(service);
+    let mut router = super::super::profile_authoring_router(service, None);
     if mode.starts_with("credential_") {
         router = router.layer(axum::Extension(crate::DelegatedCredential::new(
             "test-request-authority".into(),
@@ -190,6 +194,8 @@ pub(super) fn scenario(name: &str) -> Option<Scenario> {
         subject: (!mode.ends_with("anonymous")).then_some("contract-owner"),
         authorization: Authorization::new(if mode.ends_with("forbidden") {
             vec![]
+        } else if mode.ends_with("sandbox_owner") {
+            vec![Capability::UseOwnSandboxes]
         } else {
             vec![Capability::ManageOwnProfiles]
         }),

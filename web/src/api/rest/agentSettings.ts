@@ -1,10 +1,21 @@
 import { agentPreferencesClient } from './agentPreferences';
+import {
+  agentUpdateHeaders,
+  agentUpdateProblem,
+  type AgentUpdateReason,
+} from './agentUpdateProblem';
 import { ApiError, ProtocolError, retryAfterMilliseconds } from '@cma/client';
 import type { AgentSettingsView, CmaWebClient } from '../client';
 
 export class AgentSettingsError extends ApiError {
-  constructor(message: string, status: number, retryAfterMs?: number) {
-    super(status, message, undefined, undefined, retryAfterMs);
+  constructor(
+    message: string,
+    status: number,
+    retryAfterMs?: number,
+    code?: string,
+    reason?: AgentUpdateReason,
+  ) {
+    super(status, message, code, undefined, retryAfterMs, { settings_update_reason: reason });
   }
 }
 
@@ -15,15 +26,13 @@ async function settingsRequest(id: string, init: RequestInit): Promise<AgentSett
     ...init,
   });
   if (!response.ok) {
-    const problem = (await response.json().catch(() => ({}))) as { detail?: unknown };
+    const problem = await agentUpdateProblem(response);
     throw new AgentSettingsError(
-      typeof problem.detail === 'string'
-        ? problem.detail
-        : response.status === 409
-          ? 'Wait for this Agent to finish its current turn before changing settings.'
-          : `Agent settings are unavailable (${String(response.status)}).`,
+      'Agent settings could not be loaded or updated.',
       response.status,
       retryAfterMilliseconds(response),
+      problem.code,
+      problem.reason,
     );
   }
   const value = (await response.json()) as AgentSettingsView;
@@ -86,7 +95,7 @@ export function agentSettingsClient(): Pick<
       settingsRequest(id, {
         method: 'PATCH',
         signal: options.signal,
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': options.idempotencyKey },
+        headers: agentUpdateHeaders(options.idempotencyKey),
         body: JSON.stringify({
           model: settings.model,
           reasoning_effort: settings.reasoning_effort,

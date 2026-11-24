@@ -360,3 +360,115 @@ async fn incomplete_discovery_never_releases_holds_or_authorizes_orphan_cleanup(
     assert_eq!(store.keys("authority"), ["start", "sbx_001", "sbx_001"]);
     assert!(reconciler.binding_holds.contains(held.id.as_str()));
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_independent_recovery_lock_consumes_the_reserved_binding_deadline() {
+    use super::opportunity_tests::{bindings, reserve};
+
+    let (store, reconciler) = setup(1, Duration::ZERO).await;
+    let verifier = Arc::new(Verify {
+        calls: Mutex::default(),
+        refuse: None,
+    });
+    let service = Arc::new(
+        SandboxRuntimeUpdateService::new(store.clone(), "fixture-image".into())
+            .with_unpublished_recovery(verifier.clone()),
+    );
+    let reconciler = reconciler
+        .with_failed_runtime_recovery(service)
+        .with_runtime_loss_bounded_proof(true);
+    reserve(&reconciler, 0, "deadline").await;
+    bindings(&reconciler, 1).await;
+    let guard = reconciler.recovery_schedule.lock().await;
+    let release = async {
+        tokio::time::sleep(Duration::from_secs(25)).await;
+        drop(guard);
+    };
+    let started = Instant::now();
+    let (_, result) = tokio::join!(release, reconciler.run_due(SystemTime::now()));
+    assert!(!result.unwrap());
+    assert_eq!(started.elapsed(), Duration::from_secs(25));
+    assert!(store.keys("get").is_empty());
+    assert!(store.keys("pause").is_empty());
+    assert!(reconciler.binding_holds.contains("sbx_000"));
+    assert!(reconciler
+        .progress
+        .lock()
+        .await
+        .as_ref()
+        .unwrap()
+        .sweep
+        .binding_cursor
+        .is_none());
+
+    // The independent turn keeps its existing priority. The following binding
+    // opportunity sees the original held item exactly once.
+    assert!(!reconciler.run_due(SystemTime::now()).await.unwrap());
+    assert!(store.keys("get").is_empty());
+    assert!(!reconciler.run_due(SystemTime::now()).await.unwrap());
+    assert_eq!(store.keys("get"), ["sbx_000"]);
+    assert!(verifier.calls.lock().unwrap().is_empty());
+}
+
+/// Toggleable platform spend hint for the recovery lane (#1757).
+struct SpendStop(std::sync::atomic::AtomicBool);
+
+#[async_trait::async_trait]
+impl crate::sandbox::reconciliation::platform::PlatformSpendSweep for SpendStop {
+    async fn evaluate_platform_spend(
+        &self,
+        _: u64,
+    ) -> Result<Option<bool>, layer2_core::budget::BudgetError> {
+        Ok(Some(self.0.load(std::sync::atomic::Ordering::SeqCst)))
+    }
+}
+
+// A failed platform pause must not be reopened as Active by automatic
+// recovery while SpendStop holds. The candidate keeps its eligibility and
+// recovers exactly as before once the stop lifts (#1757, decision 26).
+#[tokio::test(start_paused = true)]
+async fn spend_stop_defers_automatic_unpublished_recovery_until_it_lifts() {
+    let (store, reconciler, verifier) = recovery_setup(1, None).await;
+    let stop = Arc::new(SpendStop(std::sync::atomic::AtomicBool::new(true)));
+    let reconciler = reconciler.with_platform_spend(stop.clone());
+    let id = sandbox(0).id;
+    let before = store.inner.get_sandbox(&id).await.unwrap().unwrap();
+    let stopped_at = SystemTime::now();
+    // One ordinary sweep turn, then the recovery turn, which is deferred.
+    for _ in 0..2 {
+        assert!(reconciler.run_due(stopped_at).await.unwrap());
+    }
+    assert!(verifier.calls.lock().unwrap().is_empty());
+    assert!(store.keys("recovery_admit").is_empty());
+    let held = store.inner.get_sandbox(&id).await.unwrap().unwrap();
+    assert_eq!(held.status, SandboxStatus::Failed);
+    assert!(held.unpublished_recovery_candidate());
+    assert!(!held.lifecycle.unpublished_recovery_attempted);
+    assert_eq!(
+        held.lifecycle.unpublished_recovery,
+        before.lifecycle.unpublished_recovery
+    );
+
+    // After the lift the same lane resumes: discovery, then one proof. This
+    // fixture lists Failed rows as maintenance candidates (Mongo does not), so
+    // a further sweep turn would hold the candidate's binding; skip those
+    // sweep turns to observe only the recovery turns of `run_due`.
+    stop.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    let lifted_at = stopped_at + Duration::from_secs(16);
+    for _ in 0..2 {
+        assert!(!reconciler.recovery_schedule.lock().await.take_turn());
+        assert!(!reconciler.run_due(lifted_at).await.unwrap());
+    }
+    assert_eq!(*verifier.calls.lock().unwrap(), std::slice::from_ref(&id));
+    assert_eq!(store.keys("recovery_admit").len(), 1);
+    assert!(
+        store
+            .inner
+            .get_sandbox(&id)
+            .await
+            .unwrap()
+            .unwrap()
+            .lifecycle
+            .unpublished_recovery_attempted
+    );
+}

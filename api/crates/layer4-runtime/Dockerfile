@@ -1,5 +1,70 @@
-# syntax=docker/dockerfile:1
-ARG OMARCHY_CMA_BASE=runtime
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+ARG SOURCE_DATE_EPOCH=0
+ARG OMARCHY_CMA_BASE=runtime-tools
+# Every Debian stage derives from debian-snapshot, which replaces the base
+# image's live deb.debian.org sources with snapshot.debian.org at this one
+# timestamp for trixie, trixie-updates and trixie-security. The same source
+# therefore installs the same OS packages and rebuilds the OpenSSL CLI from
+# the same Debian source. The snapshot's signed indexes are still verified
+# against the archive keyring; only Valid-Until is waived, since an archived
+# index outlives it by design.
+#
+# Security updates arrive only by bumping this value, deliberately:
+#  1. Choose a time after the wanted archive state. Each archive serves its
+#     latest snapshot at or before that time, so the time must already have
+#     passed and snapshot.debian.org must list the debian and debian-security
+#     snapshots it selects.
+#  2. Rebuild linux/amd64. Exact version pins (chromium in install-os.sh,
+#     BUBBLEWRAP_*) fail the build until they move with the snapshot. Diff
+#     every Debian stage's dpkg status and the rebuilt binaries against the
+#     previous build to list what moved.
+#  3. A bump changes this file, so rebind its sha256 wherever it is pinned:
+#     every build_inputs of .github/scripts/image-package-evidence.json and
+#     image-omarchy-package-evidence.json, and dockerfile_sha256 in
+#     deployables.json. Rebind each catalog row whose package or derived
+#     output moved, from the signed indexes.
+#  4. Land it only with an independent review of both catalogs, which sets
+#     APPROVED_PACKAGE_EVIDENCE and APPROVED_OMARCHY_PACKAGE_EVIDENCE.
+ARG DEBIAN_SNAPSHOT=20261123T154646Z
+# The Omarchy stages install Arch packages exactly as the Arch Linux Archive
+# indexed core, extra and multilib on this one date, so the same source
+# installs the same packages and rebuilds the OpenSSL CLI, wlroots, Aquamarine
+# and Hyprland with the same toolchain. They read every Arch and Omarchy
+# package only from the OMARCHY_PACKAGES_IMAGE bundle below, mounted as
+# file:// pacman repositories, so a cold build contacts no package server.
+# pacman still verifies every package signature against the keyrings the build
+# installs. The image keeps Omarchy's stable pacman.conf and mirrorlist for the
+# sandbox's own installs.
+#
+# Arch updates arrive only by bumping this value, deliberately:
+#  1. Choose a date whose following day the archive already lists, so the
+#     chosen day's tree is complete; a published tree does not change.
+#  2. Resolve every Omarchy install step offline against that date's
+#     databases and regenerate .github/scripts/omarchy-packages.lock.json
+#     with omarchy-package-bundle.py lock. The archive keeps the first upload
+#     of each file name, so compare each resolved package's served size and
+#     date with the index and list re-released packages with --reissued.
+#     Re-pin Omarchy's own packages only to files its stable repository then
+#     serves. Record the earliest expiry of every key that signed a resolved
+#     package: a date stops building once one expires, because pacman checks
+#     expiry against the build's clock. For 2026/10/22 the first is packager
+#     subkey A85E811EB4CA2E08 at 2026-12-31T09:34:44Z.
+#  3. Land the lock, dispatch omarchy-package-bundle.yml on develop with the
+#     date, and pin the digest it prints in OMARCHY_PACKAGES_IMAGE.
+#  4. Rebuild linux/amd64. Exact version checks (openssl in
+#     build-arch-openssl-cli.sh, wlroots0.20 and aquamarine in
+#     build-graphics.sh, hyprland in build-hyprland.sh, the pip wheel in
+#     normalize-omarchy.py) fail the build until they move with the date. Diff
+#     /usr/share/cma-omarchy/packages.txt and package-sha256.txt against the
+#     previous build to list what moved.
+#  5. Rebind this file's sha256 as for DEBIAN_SNAPSHOT, and each Omarchy
+#     catalog row whose package or derived output moved, from the signed
+#     packages.
+#  6. Land it only with an independent review of both catalogs, which sets
+#     APPROVED_PACKAGE_EVIDENCE and APPROVED_OMARCHY_PACKAGE_EVIDENCE.
+ARG ARCH_SNAPSHOT=2026/10/22
+# The bundle omarchy-package-bundle.yml built from that lock for ARCH_SNAPSHOT.
+ARG OMARCHY_PACKAGES_IMAGE=ghcr.io/chronoaiproject/cma-omarchy-packages@sha256:7bb92b39ed0b56a97f9a071e854b90cb1327ab1cacde931edc3fb907ceb550e6
 # CMA_MODEL_PROXY_PLACEHOLDER is supplied only in managed Agent launch plans,
 # not in the Sandbox environment, so existing runtime identities stay stable.
 # The sandbox provider schedules this image and starts the kernel-neutral Layer
@@ -17,10 +82,31 @@ RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,
     cargo build --jobs 2 --release --locked --bin layer4-runtime \
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
+# The base image carries only debian.sources; any other apt source is refused
+# so no stage can resolve a package from a live mirror. Plain HTTP serves the
+# image before ca-certificates exists; apt still verifies the signed indexes.
+# A failed index download fails the build instead of silently resolving a
+# smaller package set.
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS debian-snapshot
+ARG DEBIAN_SNAPSHOT
+RUN set -eu; \
+    printf '%s\n' "${DEBIAN_SNAPSHOT}" | grep -Eqx '[0-9]{8}T[0-9]{6}Z'; \
+    test ! -e /etc/apt/sources.list; \
+    test "$(ls -A /etc/apt/sources.list.d)" = debian.sources; \
+    archive=http://snapshot.debian.org/archive; \
+    keyring=/usr/share/keyrings/debian-archive-keyring.pgp; \
+    printf '%s\n' \
+        'Types: deb' "URIs: ${archive}/debian/${DEBIAN_SNAPSHOT}" 'Suites: trixie trixie-updates' \
+        'Components: main' "Signed-By: ${keyring}" 'Check-Valid-Until: no' '' \
+        'Types: deb' "URIs: ${archive}/debian-security/${DEBIAN_SNAPSHOT}" 'Suites: trixie-security' \
+        'Components: main' "Signed-By: ${keyring}" 'Check-Valid-Until: no' \
+        > /etc/apt/sources.list.d/debian.sources; \
+    printf '%s\n' 'Acquire::Retries "5";' 'APT::Update::Error-Mode "any";' \
+        > /etc/apt/apt.conf.d/80cma-debian-snapshot
 # Build the upstream GitHub release with patched Go and indirect modules.
 # The toolchain includes the CVE-2026-111943 crypto/x509 fix.
 # No CLI source or transport code is patched.
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS github-build
+FROM debian-snapshot AS github-build
 ARG TARGETARCH
 ARG GH_VERSION=2.100.0
 ARG GH_SOURCE_COMMIT=45437bc7eeeb3359bbfddd1742f79de7652fd3e2
@@ -67,7 +153,8 @@ RUN --mount=type=cache,id=cma-gh-modules,target=/root/go/pkg/mod,sharing=locked 
 # baseline and hardening. Configure the already-present gVisor loopback
 # idempotently and use upstream contained descriptor resolution only when
 # openat2 is absent; guarded filesystem and network policies remain enforced.
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS bubblewrap-build
+FROM debian-snapshot AS bubblewrap-build
+ARG DEBIAN_SNAPSHOT
 ARG BUBBLEWRAP_VERSION=0.12.0
 ARG BUBBLEWRAP_DEBIAN_VERSION=0.12.0-1~deb13u1
 ARG BUBBLEWRAP_SOURCE_SHA256=9760d007363e3abba7c747489910f9f82d9fca53ba3bd3282e396fa3c97a3314
@@ -82,7 +169,7 @@ WORKDIR /build
 COPY .github/scripts/bubblewrap-loopback.patch .github/scripts/bubblewrap-loopback-test.c \
     .github/scripts/bubblewrap-openat2.patch .github/scripts/bubblewrap-openat2-test.c /build/
 RUN set -eux; \
-    base=https://security.debian.org/debian-security/pool/updates/main/b/bubblewrap; \
+    base="https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/pool/updates/main/b/bubblewrap"; \
     curl -fsSL -o source.tar.xz "${base}/bubblewrap_${BUBBLEWRAP_VERSION}.orig.tar.xz"; \
     curl -fsSL -o debian.tar.xz "${base}/bubblewrap_${BUBBLEWRAP_DEBIAN_VERSION}.debian.tar.xz"; \
     curl -fsSL -o source.dsc "${base}/bubblewrap_${BUBBLEWRAP_DEBIAN_VERSION}.dsc"; \
@@ -124,8 +211,29 @@ RUN set -eux; \
     install -m 0755 _build/bwrap /out/bwrap; \
     printf '%s\n' "${BUBBLEWRAP_DEBIAN_VERSION}" > /out/debian-version; \
     test "$(/out/bwrap --version)" = "bubblewrap ${BUBBLEWRAP_VERSION}"
+
+FROM debian-snapshot AS openssl-cli-build
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential dpkg-dev libzstd-dev patch perl zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+ARG OS_SECURITY_REFRESH=local
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/build-debian-openssl-cli.sh,target=/tmp/build-cli.sh,readonly --mount=type=bind,source=api/crates/layer4-runtime/image/verify-openssl-cli-hardening.sh,target=/tmp/verify-cli.sh,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/openssl-remove-benchmarks.patch,target=/tmp/openssl.patch,readonly \
+    --mount=type=tmpfs,target=/build,size=4294967296 \
+    test -n "${OS_SECURITY_REFRESH}" && sh /tmp/build-cli.sh /build /out /tmp/openssl.patch /tmp/verify-cli.sh
+
 # The NyxID CLI is published as a *-unknown-linux-gnu binary.
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime
+FROM debian-snapshot AS runtime-system
+ARG RUNTIME_DESKTOP=0
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/install-os.sh,target=/tmp/install-os.sh,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-machine-id.py,target=/tmp/normalize-machine-id.py,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-binutils-notices.py,target=/tmp/normalize-binutils-notices.py,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/remove-vendor-examples.py,target=/tmp/remove-vendor-examples.py,readonly \
+    --mount=type=bind,from=openssl-cli-build,source=/out,target=/tmp/cma-openssl,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/install-debian-openssl-cli.sh,target=/tmp/install-openssl-cli.sh,readonly \
+    sh /tmp/install-os.sh install \
+    && groupadd --gid 10001 cma \
+    && useradd --no-log-init --create-home --uid 10001 --gid 10001 --shell /bin/bash cma
+FROM runtime-system AS runtime-tools
 ARG NYXID_CLI_VERSION=v0.10.0
 ARG CODEX_VERSION=0.147.0
 ARG CODEX_NATIVE_SHA256_AMD64=cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40
@@ -137,7 +245,7 @@ ARG DESKTOP_CODEX_NATIVE_SHA256_ARM64=b32ece31af06440da980b733fb8fefdd1f19343959
 ARG DESKTOP_CODEX_LAUNCHER_SHA256=61b0194f3bb6534439c8d26a3ed57d0805f84b884588b761795323eeb92fcf70
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
-ARG CODEX_ACP_SHA256=8f0c023269496f9ad21aa2958491772fefe65011b9aebaf674c67d2aaa9fbcf4
+ARG CODEX_ACP_SHA256=ddb625f66a5a14d94df3512a525c4a674a359e564602c09085769c8b61e2bca1
 # Node is downloaded from upstream and verified against digests recorded here.
 # Both Codex packages are JavaScript launchers for pinned native/runtime code.
 ARG NODE_VERSION=24.19.0
@@ -145,46 +253,6 @@ ARG NODE_SHA256_AMD64=14b342e71204f811bde6153be8e04b62aef63c236fef92b55f9c83154b
 ARG NODE_SHA256_ARM64=01443c1e1a29e531ccad5a46fefa6df490d2189c49f7955904aecdbb0fe86fdc
 ARG TARGETARCH
 ARG RUNTIME_DESKTOP=0
-# The root filesystem is read-only in production and the runtime user is not
-# privileged. User-space installers therefore write under /home/cma. Python
-# and the archive tools are present for those installers; git prepares CMA
-# workspaces; bubblewrap is the distro path Codex expects on restricted hosts.
-# Repository harnesses call ps (procps) and jq by name, so every variant ships
-# them; the build fails here if either command is missing.
-RUN apt-get update \
-    && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends \
-        bash \
-        bubblewrap \
-        ca-certificates \
-        chromium=156.0.8078.79-1~deb13u1 \
-        chromium-common=156.0.8078.79-1~deb13u1 \
-        chromium-sandbox=156.0.8078.79-1~deb13u1 \
-        curl \
-        build-essential \
-        git \
-        gzip \
-        jq \
-        libdbus-1-3 \
-        libgmp-dev \
-        libgssapi-krb5-2 \
-        libicu76 \
-        libssl3t64 \
-        libunwind8 \
-        ncurses-term \
-        procps \
-        python3 \
-        ripgrep \
-        tar \
-        unzip \
-        xz-utils \
-        zlib1g \
-        zstd \
-    && if [ "${RUNTIME_DESKTOP}" = "1" ]; then apt-get install -y --no-install-recommends chromium dbus-x11 fonts-liberation novnc scrot wmctrl x11vnc x11-xserver-utils x11-utils xdotool xvfb websockify xfce4-session xfce4-panel xfdesktop4 xfwm4 xfce4-settings xfce4-appfinder gvfs thunar xfce4-terminal adwaita-icon-theme librsvg2-common; else test "${RUNTIME_DESKTOP}" = "0"; fi \
-    && git --version \
-    && ps --version \
-    && jq --version \
-    && rm -rf /var/lib/apt/lists/*
 RUN set -eux; \
     case "${TARGETARCH}" in \
       amd64) arch="x64"; want="${NODE_SHA256_AMD64}" ;; \
@@ -206,50 +274,18 @@ ARG BRACE_EXPANSION_VERSION=5.0.12
 ARG IP_ADDRESS_VERSION=10.3.1
 ARG TAR_VERSION=7.5.21
 ARG UNDICI_VERSION=6.29.1
-RUN set -eux; \
-    npm install -g "npm@${NPM_VERSION}"; \
-    bundled=/usr/local/lib/node_modules/npm/node_modules; \
-    npm install --no-save --prefix /tmp/npmfix \
-        "brace-expansion@${BRACE_EXPANSION_VERSION}" \
-        "ip-address@${IP_ADDRESS_VERSION}" \
-        "tar@${TAR_VERSION}" \
-        "undici@${UNDICI_VERSION}"; \
-    for package in brace-expansion ip-address tar undici; do \
-      rm -rf "$bundled/$package"; \
-      cp -a "/tmp/npmfix/node_modules/$package" "$bundled/$package"; \
-    done; \
-    test "$(node -p "require('/usr/local/lib/node_modules/npm/node_modules/tar/package.json').version")" = "${TAR_VERSION}"; \
-    test "$(node -p "require('/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json').version")" = "${BRACE_EXPANSION_VERSION}"; \
-    test "$(node -p "require('/usr/local/lib/node_modules/npm/node_modules/undici/package.json').version")" = "${UNDICI_VERSION}"; \
-    rm -rf /tmp/npmfix; \
-    npm cache clean --force; \
-    npm --version
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/npm,target=/tmp/cma-image-inputs/npm,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/install-npm.sh,target=/tmp/install-npm.sh,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/remove-vendor-examples.py,target=/tmp/remove-vendor-examples.py,readonly \
+    sh /tmp/install-npm.sh \
+    && python3 -B /tmp/remove-vendor-examples.py npm
 # Install only the supported provider and its ACP bridge. Their package
 # metadata, launcher, bridge source, and architecture-specific native binary
 # are all checked against the reviewed pinned artifacts.
-RUN set -eux; \
-    if [ "${RUNTIME_DESKTOP}" = "1" ]; then \
-      CODEX_VERSION="${DESKTOP_CODEX_VERSION}"; \
-      CODEX_NATIVE_SHA256_AMD64="${DESKTOP_CODEX_NATIVE_SHA256_AMD64}"; \
-      CODEX_NATIVE_SHA256_ARM64="${DESKTOP_CODEX_NATIVE_SHA256_ARM64}"; \
-      CODEX_LAUNCHER_SHA256="${DESKTOP_CODEX_LAUNCHER_SHA256}"; \
-      mkdir -p /etc/codex; \
-      printf '[features]\ncomputer_use = true\n' > /etc/codex/config.toml; \
-    fi; \
-    npm install -g "@openai/codex@${CODEX_VERSION}" \
-        "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}"; \
-    npm cache clean --force; \
-    test "$(node -p "require('/usr/local/lib/node_modules/@openai/codex/package.json').version")" = "${CODEX_VERSION}"; \
-    test "$(node -p "require('/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/package.json').version")" = "${CODEX_ACP_VERSION}"; \
-    test "$(codex --version)" = "codex-cli ${CODEX_VERSION}"; \
-    echo "${CODEX_LAUNCHER_SHA256}  /usr/local/lib/node_modules/@openai/codex/bin/codex.js" | sha256sum -c -; \
-    echo "${CODEX_ACP_UPSTREAM_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c -; \
-    case "${TARGETARCH}" in \
-      amd64) native="/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"; want="${CODEX_NATIVE_SHA256_AMD64}" ;; \
-      arm64) native="/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex"; want="${CODEX_NATIVE_SHA256_ARM64}" ;; \
-      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac; \
-    echo "${want}  ${native}" | sha256sum -c -
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/provider,target=/tmp/cma-image-inputs/provider,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/desktop-provider,target=/tmp/cma-image-inputs/desktop-provider,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/install-provider.sh,target=/tmp/install-provider.sh,readonly \
+    sh /tmp/install-provider.sh
 # ACP's dependency can retain an older CLI. Always execute the verified global
 # CLI selected above; this does not alter persisted Agent launch requests.
 ENV CODEX_PATH=/usr/local/bin/codex
@@ -286,9 +322,8 @@ ARG ORNN_SKILL_ARCHIVE_SHA256=a5788101f78d364e14b57bfc2fa1755702833b239b280ed6ce
 # The pinned NyxID skill has two reviewed internal aliases. Fresh-volume
 # initialization accepts only regular files/directories, so materialize
 # these aliases in the immutable public seed while retaining the image home.
-RUN set -eux; \
-    groupadd --gid 10001 cma; \
-    useradd --create-home --uid 10001 --gid 10001 --shell /bin/bash cma; \
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/prepare-skill-docs.py,target=/tmp/prepare-skill-docs.py,readonly \
+    set -eux; \
     install -d -o 10001 -g 10001 \
         /home/cma/.cma/agents \
         /home/cma/.cma/provider/codex \
@@ -306,6 +341,7 @@ RUN set -eux; \
     echo "${ORNN_SKILL_ARCHIVE_SHA256}  /tmp/ornn-source.tar.gz" | sha256sum -c -; \
     tar xzf /tmp/ornn-source.tar.gz -C /tmp/baseline-skills --strip-components=2 \
         "Ornn-${ORNN_SKILL_COMMIT}/skills/ornn-agent-manual-cli"; \
+    python3 -B /tmp/prepare-skill-docs.py /tmp/baseline-skills; \
     cp -a /tmp/baseline-skills/nyxid /home/cma/.codex/skills/nyxid; \
     cp -a /tmp/baseline-skills/ornn-agent-manual-cli \
         /home/cma/.codex/skills/ornn-agent-manual-cli; \
@@ -320,23 +356,12 @@ RUN set -eux; \
     test "$(readlink /home/cma/.codex/skills/nyxid/POST_INSTALL.md)" = "references/post-install.md"; \
     test "$(readlink /home/cma/.codex/skills/nyxid/tools)" = "scripts"; \
     cp -aL /home/cma /usr/share/cma-runtime-home; \
+    channel_docs=.codex/skills/nyxid/references/channels.md; \
+    cmp "/home/cma/$channel_docs" "/usr/share/cma-runtime-home/$channel_docs"; \
     test -z "$(find /usr/share/cma-runtime-home ! -type d ! -type f -print -quit)"; \
     chown -R root:root /usr/share/cma-runtime-home; \
     chmod -R a+rX,go-w /usr/share/cma-runtime-home; \
     rm -rf /tmp/baseline-skills /tmp/nyxid-source.tar.gz /tmp/ornn-source.tar.gz
-
-COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
-COPY --chmod=755 api/crates/layer4-runtime/src/browser/command.cjs /usr/local/bin/cma-browser
-
-# A Machine Included Sandbox starts this rootless desktop session from the
-# supervisor.  noVNC is bound to loopback; CMA must relay it through the
-# authenticated control plane before a browser can reach the screen.
-COPY api/crates/layer4-runtime/src/desktop-browser.py /usr/local/bin/cma-desktop-browser
-COPY --chmod=0755 api/crates/layer4-runtime/src/desktop-session.sh /usr/local/bin/cma-desktop-session
-COPY api/crates/layer4-runtime/src/desktop/ /usr/share/cma-desktop/
-# Retained XFCE homes may still reference the original wallpaper asset.
-RUN test -s /usr/share/cma-desktop/wallpaper.png
-COPY api/crates/layer4-runtime/src/desktop/chromium.desktop /usr/share/applications/chromium.desktop
 
 # Native SandboxTemplates use this same image as a non-root init container:
 # --initialize-home-tree /mnt/cma-home seeds home/cma and creates home/.codex;
@@ -360,26 +385,59 @@ RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma
     && node /tmp/cma-codex-source/open_completion.cjs \
     && node /tmp/cma-codex-source/deferred_session_metadata.cjs \
     && node /tmp/cma-codex-source/session_open_overlap.cjs \
+    && node /tmp/cma-codex-source/prompt_output_identity.cjs \
     && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
-    && test -x /usr/local/bin/codex-acp \
+    && test -x /usr/local/bin/codex-acp
+
+
+# A single final payload changes with the supervisor and its browser/desktop assets.
+FROM runtime-tools AS runtime-application-inputs
+COPY --from=build /out/layer4-runtime /payload/usr/local/bin/layer4-runtime
+COPY --chmod=755 api/crates/layer4-runtime/src/browser/command.cjs /payload/usr/local/bin/cma-browser
+COPY api/crates/layer4-runtime/src/desktop-browser.py /payload/usr/local/bin/cma-desktop-browser
+COPY --chmod=0755 api/crates/layer4-runtime/src/desktop-session.sh /payload/usr/local/bin/cma-desktop-session
+COPY api/crates/layer4-runtime/src/desktop/ /payload/usr/share/cma-desktop/
+COPY api/crates/layer4-runtime/src/desktop/chromium.desktop /payload/usr/share/applications/chromium.desktop
+
+# Tests run against the whole current application payload without entering the tool layer.
+FROM runtime-application-inputs AS runtime-qualification
+RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma-codex-source,readonly \
+    --mount=type=bind,source=api/crates/layer3-adapter/src/runtime_control_relay.py,target=/tmp/runtime_control_relay.py,readonly \
+    cp -a /payload/. / \
     && export CMA_CODEX_TEST_NATIVE_BINARY=/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex \
     && export CMA_CODEX_TEST_NATIVE_SHA256="${CODEX_NATIVE_SHA256_AMD64}" \
     && if [ "${RUNTIME_DESKTOP}" = "1" ]; then export CMA_CODEX_TEST_NATIVE_SHA256="${DESKTOP_CODEX_NATIVE_SHA256_AMD64}"; fi \
     && node --test /tmp/cma-codex-source/session_open_overlap.test.cjs /tmp/cma-codex-source/native_process_identity.test.cjs /tmp/cma-codex-source/deferred_metadata_runtime.test.cjs /tmp/cma-codex-source/deferred_session_metadata.test.cjs \
+    && node --test /tmp/cma-codex-source/prompt_output_buffer.test.cjs /tmp/cma-codex-source/prompt_output_identity.test.cjs \
     && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs /tmp/cma-codex-source/runtime_observations.test.cjs /tmp/cma-codex-source/required_access_tool.test.cjs /tmp/cma-codex-source/session_commands.test.cjs /tmp/cma-codex-source/agent_instructions.test.cjs /tmp/cma-codex-source/retained_context.test.cjs /tmp/cma-codex-source/endpoint_migration.test.cjs /tmp/cma-codex-source/turn_steering.test.cjs /tmp/cma-codex-source/open_completion.test.cjs /tmp/cma-codex-source/open_completion_native.test.cjs /tmp/cma-codex-source/recovery_rejoin_native.test.cjs \
     && python3 /tmp/cma-codex-source/recovery_test.py \
     && python3 /tmp/cma-codex-source/recovery_desktop_test.py \
     && node --test /tmp/cma-codex-source/recovery_native.test.cjs \
-    && test ! -e /tmp/cma-checkpoints
+    && test ! -e /tmp/cma-checkpoints \
+    && mkdir /out && printf 'qualified\n' > /out/qualification
 
-# Refresh the final filesystem after expensive dependency layers are cached.
-# CI and release builds vary this value so cached OS packages cannot hide a
-# newly published security update from the image scan.
+FROM runtime-tools AS runtime-tool-payload
+RUN mkdir -p /payload/usr/share /payload/usr /payload/etc \
+    && cp -a /usr/local /payload/usr/ \
+    && cp -a /usr/share/cma-runtime-home /payload/usr/share/ \
+    && cp -a /home /payload/ \
+    && if [ -d /etc/codex ]; then cp -a /etc/codex /payload/etc/; fi \
+    && find /payload -exec touch -h -d '@0' '{}' +
+
+FROM runtime-system AS runtime-refreshed
+# Refresh OS files independently of the pinned tool payload; unchanged tool
+# bytes remain reusable even when the OS branch is rebuilt. CI and release
+# builds vary this value, so this branch and the OpenSSL CLI rebuild never come
+# from a cached layer; they re-resolve the same DEBIAN_SNAPSHOT and reproduce
+# the same bytes. Security updates arrive only by bumping DEBIAN_SNAPSHOT.
 ARG OS_SECURITY_REFRESH=local
-RUN test -n "${OS_SECURITY_REFRESH}" \
-    && apt-get update \
-    && apt-get upgrade -y \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/install-os.sh,target=/tmp/install-os.sh,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-machine-id.py,target=/tmp/normalize-machine-id.py,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-binutils-notices.py,target=/tmp/normalize-binutils-notices.py,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/remove-vendor-examples.py,target=/tmp/remove-vendor-examples.py,readonly \
+    --mount=type=bind,from=openssl-cli-build,source=/out,target=/tmp/cma-openssl,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/install-debian-openssl-cli.sh,target=/tmp/install-openssl-cli.sh,readonly \
+    sh /tmp/install-os.sh refresh
 
 # Apply after the last security refresh so apt cannot overwrite the fix. A
 # newer Debian package requires reviewing and repinning its source first.
@@ -392,27 +450,29 @@ RUN --mount=type=bind,from=bubblewrap-build,source=/out,target=/tmp/cma-bwrap,re
 
 # Login shells keep the Sandbox Profile PATH even with a distinct Agent home.
 # Match the pinned Debian stanza exactly so base-file drift fails the build.
-RUN node <<'NODE'
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const profile = fs.readFileSync('/etc/profile', 'utf8');
-const defaults = [
-  'if [ "$(id -u)" -eq 0 ]; then',
-  '  PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"',
-  'else',
-  '  PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games"',
-  'fi',
-  'export PATH',
-].join('\n');
-assert.equal(profile.split(defaults).length, 2, 'unexpected Debian login PATH defaults');
-const fallback = [
-  'if [ -z "${PATH:-}" ]; then',
-  ...defaults.split('\n').slice(0, -1).map((line) => `  ${line.replace('$(id -u)', '$(/usr/bin/id -u)')}`),
-  'fi',
-  'export PATH',
-].join('\n');
-fs.writeFileSync('/etc/profile', profile.replace(defaults, fallback));
-NODE
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/login-path.py,target=/tmp/login-path.py,readonly \
+    python3 /tmp/login-path.py \
+    && rm -rf /var/log/apt/* /var/log/dpkg.log /var/log/alternatives.log /var/cache/ldconfig/aux-cache
+
+FROM runtime-application-inputs AS runtime-application
+RUN --mount=type=bind,from=runtime-qualification,source=/out/qualification,target=/tmp/qualification,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-keyrings.py,target=/tmp/assert-no-private-keyrings.py,readonly \
+    test "$(cat /tmp/qualification)" = qualified \
+    && test -s /payload/usr/share/cma-desktop/wallpaper.png \
+    && python3 -B /tmp/assert-no-private-keyrings.py /payload \
+    && find /payload -exec touch -h -d '@0' '{}' +
+
+FROM runtime-refreshed AS runtime
+COPY --chmod=0755 api/crates/layer4-runtime/image/initialize-machine-id.py /usr/local/libexec/cma/initialize-sandbox
+COPY --link --from=runtime-tool-payload /payload/ /
+# Validate the base and the application payload separately; the final copy
+# assembles only checked files and keeps application edits in the last layer.
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-keyrings.py,target=/tmp/assert-no-private-keyrings.py,readonly \
+    install -d -o 10001 -g 10001 /var/lib/cma-runtime /var/lib/cma-transfer \
+    && ln -sfn /dev/shm/cma-machine-id/machine-id /etc/machine-id \
+    && python3 -B /tmp/assert-no-private-keyrings.py
+ENV CODEX_PATH=/usr/local/bin/codex
+
 
 # Owner attachment uploads are admitted only when the supervisor proves the
 # complete /home mount. Files and immutable upload receipts live beneath
@@ -444,35 +504,60 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.runtime-bootstrap="1" \
       dev.chrono.cma.home-layout="2"
 
-# Cache checksum-pinned desktop dependencies separately from verified CMA tools.
+COPY --link --from=runtime-application /payload/ /
 FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
-FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy-dependencies
+FROM ${OMARCHY_PACKAGES_IMAGE} AS omarchy-packages
+FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy-bootstrap
+ARG ARCH_SNAPSHOT
+COPY api/crates/layer4-runtime/image/build-omarchy-base.sh api/crates/layer4-runtime/image/normalize-omarchy.py api/crates/layer4-runtime/image/normalize-machine-id.py api/crates/layer4-runtime/image/assert-no-private-keyrings.py api/crates/layer4-runtime/image/build-arch-openssl-cli.sh api/crates/layer4-runtime/image/install-arch-openssl-cli.sh api/crates/layer4-runtime/image/openssl-remove-benchmarks.patch api/crates/layer4-runtime/image/verify-openssl-cli-hardening.sh /tmp/
+RUN --mount=type=bind,from=omarchy-packages,source=/bundle,target=/run/cma-omarchy-packages,readonly bash /tmp/build-omarchy-base.sh /payload "${ARCH_SNAPSHOT}"
+FROM scratch AS omarchy-base
+COPY --link --from=omarchy-bootstrap /payload/ /
+FROM omarchy-base AS omarchy-dependencies
+ARG ARCH_SNAPSHOT
 COPY api/crates/layer4-runtime/src/omarchy/install.sh /tmp/install-omarchy.sh
+COPY api/crates/layer4-runtime/image/normalize-omarchy.py /tmp/normalize-omarchy.py
+COPY api/crates/layer4-runtime/image/normalize-machine-id.py api/crates/layer4-runtime/image/install-arch-openssl-cli.sh /tmp/
+COPY api/crates/layer4-runtime/image/assert-no-private-keyrings.py /tmp/assert-no-private-keyrings.py
 COPY api/crates/layer4-runtime/src/omarchy/secure-tools.sh /tmp/secure-omarchy-tools.sh
+COPY api/crates/layer4-runtime/src/omarchy/remove-google-account.patch /tmp/remove-google-account.patch
 COPY api/crates/layer4-runtime/src/omarchy/build-graphics.sh api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch /tmp/
 COPY api/crates/layer4-runtime/src/omarchy/build-hyprland.sh api/crates/layer4-runtime/src/omarchy/shm-allocator.hpp api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch /tmp/
-RUN bash /tmp/install-omarchy.sh && rm /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
+RUN --mount=type=bind,from=omarchy-bootstrap,source=/arch-openssl-cli,target=/run/cma-openssl-cli,readonly --mount=type=bind,from=omarchy-packages,source=/bundle,target=/run/cma-omarchy-packages,readonly bash /tmp/install-omarchy.sh "${ARCH_SNAPSHOT}" && sh /tmp/install-arch-openssl-cli.sh /run/cma-openssl-cli / && python -B /tmp/normalize-machine-id.py && python -B /tmp/assert-no-private-keyrings.py && rm /tmp/install-arch-openssl-cli.sh /tmp/assert-no-private-keyrings.py /tmp/normalize-machine-id.py /tmp/normalize-omarchy.py /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
+FROM omarchy-cma AS omarchy-tool-payload
+USER 0
+RUN mkdir -p /payload/usr/share /payload/usr/local /payload/etc \
+    && cp -a /usr/local/bin /usr/local/lib /payload/usr/local/ \
+    && rm -f /payload/usr/local/bin/layer4-runtime /payload/usr/local/bin/cma-browser \
+        /payload/usr/local/bin/cma-desktop-browser /payload/usr/local/bin/cma-desktop-session \
+    && cp -a /usr/share/cma-runtime-home /payload/usr/share/ \
+    && cp -a /etc/codex /payload/etc/ \
+    && find /payload -exec touch -h -d '@0' '{}' +
+FROM runtime-application AS omarchy-application
+COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/initialize-keyring.py /payload/usr/local/libexec/cma/initialize-sandbox
+COPY api/crates/layer4-runtime/src/omarchy/pacman-user.conf /payload/usr/share/cma-omarchy/pacman-user.conf
+COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/pacman-user.sh /payload/usr/local/bin/pacman
+RUN ln -s pacman /payload/usr/local/bin/pacman-key && ln -s pacman /payload/usr/local/bin/pacman-conf
+COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/session.sh /payload/usr/local/bin/cma-desktop-session
+COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/inner-session.sh /payload/usr/local/bin/cma-omarchy-inner-session
+COPY api/crates/layer4-runtime/src/omarchy/hyprland.lua /payload/usr/share/cma-omarchy/hyprland.lua
+COPY api/crates/layer4-runtime/src/omarchy/graphics-device.py /payload/usr/share/cma-omarchy/graphics-device.py
+COPY api/crates/layer4-runtime/src/omarchy/chromium.desktop /payload/usr/share/applications/chromium.desktop
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-keyrings.py,target=/tmp/assert-no-private-keyrings.py,readonly \
+    python3 -B /tmp/assert-no-private-keyrings.py /payload \
+    && find /payload -exec touch -h -d '@0' '{}' +
 FROM omarchy-dependencies AS omarchy
-COPY --from=omarchy-cma /usr/local/bin/ /usr/local/bin/
-# Toolchain donor stays pinned; the supervisor must match this source revision.
-COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
-COPY --chmod=755 api/crates/layer4-runtime/src/browser/command.cjs /usr/local/bin/cma-browser
-COPY --from=omarchy-cma /usr/local/lib/ /usr/local/lib/
-COPY --from=omarchy-cma /etc/codex/ /etc/codex/
-COPY --from=omarchy-cma /usr/share/cma-runtime-home/ /usr/share/cma-runtime-home/
-COPY --from=omarchy-cma /usr/share/cma-desktop/ /usr/share/cma-desktop/
-COPY api/crates/layer4-runtime/src/desktop-browser.py /usr/local/bin/cma-desktop-browser
-COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/session.sh /usr/local/bin/cma-desktop-session
-COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/inner-session.sh /usr/local/bin/cma-omarchy-inner-session
-COPY api/crates/layer4-runtime/src/omarchy/hyprland.lua /usr/share/cma-omarchy/hyprland.lua
-COPY api/crates/layer4-runtime/src/omarchy/graphics-device.py /usr/share/cma-omarchy/graphics-device.py
-COPY api/crates/layer4-runtime/src/omarchy/chromium.desktop /usr/share/applications/chromium.desktop
-RUN groupadd --gid 10001 cma \
-    && useradd --create-home --uid 10001 --gid 10001 --shell /bin/bash cma \
+COPY --link --from=omarchy-tool-payload /payload/ /
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/assert-no-private-keyrings.py,target=/tmp/assert-no-private-keyrings.py,readonly \
+    groupadd --gid 10001 cma \
+    && useradd --no-log-init --create-home --uid 10001 --gid 10001 --shell /bin/bash cma \
     && cp -a /usr/share/cma-runtime-home/. /home/cma/ \
+    && channel_docs=.codex/skills/nyxid/references/channels.md \
+    && python -B -c 'import sys; from pathlib import Path; sys.exit(Path(sys.argv[1]).read_bytes() != Path(sys.argv[2]).read_bytes())' "/home/cma/$channel_docs" "/usr/share/cma-runtime-home/$channel_docs" \
     && mkdir -p /var/lib/cma-runtime /var/lib/cma-transfer \
     && chown -R 10001:10001 /home/cma /var/lib/cma-runtime /var/lib/cma-transfer \
-    && codex --version && node --version && nyxid --version && gh --version
+    && codex --version && node --version && nyxid --version && gh --version \
+    && python -B /tmp/assert-no-private-keyrings.py
 WORKDIR /home/cma
 USER 10001:10001
 ENV HOME=/home/cma CHRONO_RUNTIME_GENERATION=1 CHRONO_RUNTIME_HOME_IDENTITY="" \
@@ -491,6 +576,8 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.runtime-bootstrap="1" dev.chrono.cma.home-layout="2" \
       dev.chrono.cma.desktop-environment="omarchy-4.0.6" \
       dev.chrono.cma.omarchy-revision="237f1b4071a0bff2296c6d740ba2b9fd695ebfa0"
+
+COPY --link --from=omarchy-application /payload/ /
 
 FROM runtime AS default-runtime
 ARG CHRONO_BUILD_SHA=local-unpinned

@@ -20,11 +20,17 @@ use utoipa::ToSchema;
 #[serde(deny_unknown_fields)]
 pub struct AgentLifecycleCreateRequest {
     pub name: String,
+    /// Omission retains the named-title behavior of existing clients and requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_mode: Option<AgentLifecycleTitleMode>,
     /// Exact initial task, at most 262144 UTF-8 bytes and not whitespace-only.
     /// Replaces the readiness prompt after preparation; omission retains setup.
     /// Repository tasks prepare an immutable source checkout in a new Sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_message: Option<String>,
+    /// Versioned recommended task inputs, verified before lifecycle admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<AgentLifecycleTaskTemplate>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub desktop: bool,
     /// Provision a desktop-capable Linux runtime for this Agent.
@@ -47,6 +53,39 @@ pub struct AgentLifecycleCreateRequest {
     pub repository: Option<AgentLifecycleRepository>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<AgentLifecycleProfile>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentLifecycleTitleMode {
+    Automatic,
+    Named,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentLifecycleTaskTemplate {
+    pub id: String,
+    pub version: u32,
+    /// Exact required field set for the selected template; unknown fields are refused.
+    pub fields: std::collections::BTreeMap<String, String>,
+}
+
+impl AgentLifecycleCreateRequest {
+    pub fn validate_template(&self) -> Result<(), AgentLifecycleProvisioningError> {
+        use layer2_core::sandbox::task_template::{compile_task_template, TaskTemplateError};
+        let Some(template) = &self.template else {
+            return Ok(());
+        };
+        let compiled = compile_task_template(&template.id, template.version, &template.fields)
+            .map_err(AgentLifecycleProvisioningError::Template)?;
+        if self.initial_message.as_deref() != Some(compiled.as_str()) {
+            return Err(AgentLifecycleProvisioningError::Template(
+                TaskTemplateError::new("task_template_message_mismatch", Some("initial_message")),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -119,6 +158,20 @@ pub struct AgentLifecycleEventView {
 pub struct AgentLifecycleConnectionRequired {
     pub services: Vec<String>,
     pub target: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_access: Option<RepositoryAccessRefusal>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RepositoryAccessRefusal {
+    VerificationUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum AgentLifecycleFailure {
+    SandboxLimitReached { limit: u16, live: u64 },
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -134,6 +187,8 @@ pub struct AgentLifecycleOperationView {
     pub callback_url: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<AgentLifecycleFailure>,
     pub events: Vec<AgentLifecycleEventView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<AgentLifecycleConnectionRequired>,
@@ -185,6 +240,10 @@ pub trait AgentLifecycleOperationReader: Send + Sync {
 
 #[derive(Debug, Error)]
 pub enum AgentLifecycleProvisioningError {
+    #[error("The selected task template has invalid inputs.")]
+    Template(layer2_core::sandbox::task_template::TaskTemplateError),
+    #[error("sandbox limit reached: {live} of {limit}")]
+    SandboxLimitReached { limit: u16, live: u64 },
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
     #[error("desktop is unavailable: {0}")]
@@ -197,12 +256,19 @@ pub enum AgentLifecycleProvisioningError {
     SignInRequired,
     #[error("the selected Image Manager image is not accessible to this account")]
     ImageAccessDenied,
+    #[error("new custom image selections are unavailable")]
+    ImageSelectionUnsupported,
     #[error("invalid Agent lifecycle request: {0}")]
     Invalid(String),
     #[error("the selected services need to be connected before provisioning")]
     ConnectionRequired {
         services: Vec<String>,
         connection_target: Value,
+    },
+    #[error("GitHub repository access could not be verified")]
+    RepositoryAccessRequired {
+        connection_target: Value,
+        reason: RepositoryAccessRefusal,
     },
     #[error("Agent lifecycle request conflicts with existing state: {0}")]
     Conflict(String),
@@ -212,6 +278,24 @@ impl IntoResponse for AgentLifecycleProvisioningError {
     fn into_response(self) -> Response {
         let (status, slug, code, detail) = match &self {
             Self::AdmissionPaused => return super::admission_problem::paused(),
+            Self::Template(error) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "task-template-invalid",
+                error.code,
+                self.to_string(),
+            ),
+            Self::SandboxLimitReached { limit, live } => {
+                let status = StatusCode::TOO_MANY_REQUESTS;
+                let mut body = super::problem_document(
+                    status,
+                    "resource-limit-reached",
+                    "The owner has reached the live resource limit.",
+                    "sandbox_limit_reached",
+                );
+                body["limit"] = (*limit).into();
+                body["live"] = (*live).into();
+                return super::problem_response(status, body);
+            }
             Self::DesktopUnsupported(_) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "agent-manager-desktop-unsupported",
@@ -242,6 +326,12 @@ impl IntoResponse for AgentLifecycleProvisioningError {
                 "permission_denied",
                 self.to_string(),
             ),
+            Self::ImageSelectionUnsupported => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "agent-manager-image-selection-unsupported",
+                "image_selection_unsupported",
+                self.to_string(),
+            ),
             Self::Invalid(_) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "agent-manager-invalid-request",
@@ -254,6 +344,12 @@ impl IntoResponse for AgentLifecycleProvisioningError {
                 "connection_required",
                 self.to_string(),
             ),
+            Self::RepositoryAccessRequired { .. } => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent-manager-repository-verification-unavailable",
+                "repository_verification_unavailable",
+                self.to_string(),
+            ),
             Self::Conflict(_) => (
                 StatusCode::CONFLICT,
                 "agent-manager-conflict",
@@ -262,6 +358,11 @@ impl IntoResponse for AgentLifecycleProvisioningError {
             ),
         };
         let mut body = super::problem_document(status, slug, &detail, code);
+        if let Self::Template(error) = &self {
+            if let Some(field) = error.field {
+                body["field"] = serde_json::json!(field);
+            }
+        }
         if let Self::ConnectionRequired {
             services,
             connection_target,

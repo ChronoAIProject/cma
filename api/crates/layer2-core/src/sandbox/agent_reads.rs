@@ -15,6 +15,7 @@ use super::{
 };
 
 pub struct AgentReadService {
+    observation: Option<Arc<super::agent_observation::AgentObservationService>>,
     store: Arc<dyn AgentReadStore>,
     sessions: Option<Arc<dyn super::store::SandboxSessionStore>>,
     resources: Arc<dyn SandboxResourceReader>,
@@ -26,6 +27,10 @@ pub struct AgentReadService {
 mod authorized;
 #[path = "agent_reads/composition.rs"]
 mod composition;
+#[path = "agent_reads/observation.rs"]
+mod observation;
+#[path = "agent_reads/privacy_export.rs"]
+pub mod privacy_export;
 #[path = "agent_reads/recovery.rs"]
 mod recovery;
 #[path = "agent_reads/transcript_pages.rs"]
@@ -49,11 +54,18 @@ pub use source::{AgentSourceReadError, AgentSourceReading, SharedAgentOrigin};
 #[path = "agent_reads/visibility.rs"]
 mod visibility;
 pub use visibility::AgentVisibleLogEntry;
+#[path = "agent_reads/legacy_snapshot.rs"]
+mod legacy_snapshot;
 #[path = "agent_reads/sessions.rs"]
 mod sessions;
 #[path = "agent_reads/stream.rs"]
 mod stream;
 pub use stream::{AgentEventStreamAuthorization, AgentEventStreamSnapshot};
+#[path = "agent_reads/cursor.rs"]
+mod cursor;
+pub use cursor::AgentHistoryCursor;
+#[path = "agent_reads/output_memo.rs"]
+mod output_memo;
 #[path = "agent_reads/response.rs"]
 mod response;
 pub use response::indexed::AgentOutputObservation;
@@ -88,6 +100,15 @@ impl AgentReadService {
             .list_owned_agents(&caller.subject, query, page)
             .await
             .map_err(store_error)?;
+        if let Some(access) = &self.access {
+            if access
+                .personal_agent_page(caller, query, page, &result)
+                .await
+                .map_err(authorized::access_error)?
+            {
+                return Ok(result);
+            }
+        }
         self.validate_page(caller, query, page, &result).await?;
         Ok(result)
     }

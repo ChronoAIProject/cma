@@ -101,10 +101,7 @@ fn sandbox_only_events(
             .failure
             .clone()
             .ok_or_else(|| invalid("failed lifecycle has no failure"))?;
-        return Ok(vec![SandboxEventKind::WorkStepFailed {
-            step: SandboxWorkStep::RunLifecycleOperation,
-            failure,
-        }]);
+        return Ok(vec![SandboxEventKind::Failed { failure }]);
     }
     if next.work.attempts == current.work.attempts.saturating_add(1) {
         return match mutation.events.as_slice() {

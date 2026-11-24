@@ -9,6 +9,8 @@ real-model-suggestion-samples = []
 
 [dependencies]
 cma-allocator-qualification = { path = "../cma-allocator-qualification" }
+cma-am-auth = { path = "../cma-am-auth" }
+cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }
 async-trait = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
@@ -41,14 +43,19 @@ url = { workspace = true }
 thiserror = { workspace = true }
 tower-http = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
+# Bounded-age HTTP connection serving (startup only; axum::serve otherwise).
+hyper = { workspace = true, features = ["server", "http1", "http2"] }
+hyper-util = { workspace = true, features = ["server-auto", "service", "http1", "http2"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 # For its CSPRNG-backed v4 generator, which is what session cookies, OAuth
 # state and PKCE verifiers are drawn from. Already a workspace dependency.
 uuid = { workspace = true }
 zeroize = { workspace = true }
+serde_json_canonicalizer = "=0.3.2"
 
 [dev-dependencies]
+jsonschema = { version = "0.33.0", default-features = false }
 tracing-subscriber = { workspace = true, features = ["json"] }
 http-body-util = { workspace = true }
 kube = { workspace = true }
@@ -58,5 +65,5 @@ layer2-core = { workspace = true, features = ["test-support"] }
 # Holds PTY receipt, output, and disconnect boundaries so socket races are
 # proved without sleeps or scheduler assumptions.
 layer1-public = { workspace = true, features = ["test-support"] }
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["io-std", "test-util"] }
 tokio-tungstenite = { workspace = true }

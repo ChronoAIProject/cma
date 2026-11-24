@@ -109,7 +109,6 @@ impl SandboxWorker {
             return self.retry_failure(sandbox, failure, now).await;
         }
         let expected_revision = sandbox.revision;
-        let step = sandbox.work.step;
         let fence = self.claimed_fence(&sandbox)?;
         let event_at = rfc3339_at(now);
         sandbox
@@ -130,10 +129,7 @@ impl SandboxWorker {
             expected_revision,
             sandbox,
             event_at,
-            SandboxEventKind::WorkStepFailed {
-                step,
-                failure: typed,
-            },
+            SandboxEventKind::Failed { failure: typed },
         )
         .await
     }
@@ -288,6 +284,7 @@ pub(super) struct WorkerFailure {
     retry_kind: WorkRetryFailure,
     pub(super) native_claim_pending: bool,
     pub(super) startup_hold: bool,
+    pub(super) reopen_refusal: Option<Box<layer2_core::sandbox::store::ReopenRefusalFence>>,
 }
 
 impl WorkerFailure {
@@ -324,13 +321,14 @@ impl WorkerFailure {
         Self::new("service_not_granted", service, false)
     }
 
-    fn new(class: &'static str, detail: &str, retryable: bool) -> Self {
+    pub(super) fn new(class: &'static str, detail: &str, retryable: bool) -> Self {
         Self {
             class,
             detail: safe_detail(detail),
             retryable,
             native_claim_pending: false,
             startup_hold: false,
+            reopen_refusal: None,
             retry_kind: if retryable {
                 WorkRetryFailure::Transient
             } else {
@@ -360,6 +358,9 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     let external = matches!(&error, AdapterError::Unavailable(detail)
         if crate::sandbox::work_retry::replaced_runtime(detail));
     match error {
+        AdapterError::AccessRevoked => {
+            WorkerFailure::terminal_security("current runtime authority was revoked")
+        }
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
         | AdapterError::Unavailable(_) => WorkerFailure::retryable(
@@ -388,6 +389,7 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
             WorkerFailure::resource_quota("requested sandbox capacity is unavailable")
         }
         AdapterError::Rejected(_)
+        | AdapterError::DesktopFailed
         | AdapterError::SkillUpgradeRefused(_)
         | AdapterError::OperationIdentityConflict(_)
         | AdapterError::Unsupported(_) => {
@@ -421,6 +423,10 @@ pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
 
 pub(super) fn dependency_failure(error: SandboxDependencyError) -> WorkerFailure {
     match error {
+        SandboxDependencyError::AgentsStopping => {
+            WorkerFailure::retryable("lifecycle dependency unavailable")
+                .with_retry_kind(WorkRetryFailure::Waiting)
+        }
         SandboxDependencyError::Transient(detail) => WorkerFailure::retryable(
             "lifecycle dependency unavailable",
         )

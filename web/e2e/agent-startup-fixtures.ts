@@ -164,6 +164,15 @@ export class LocalStartup {
         );
       }
       switch (url.pathname.replace(this.agent.id, 'agt_contract')) {
+        case '/api/v1/ui/image-manager-retirement':
+          return reply(false);
+        case '/api/v1/agents/agt_contract/preferences':
+          return reply({
+            revision: 0,
+            system_prompt: '',
+            prompt_pending: false,
+            prompt_supported: false,
+          });
         case '/api/v2/ui/task-experience':
         case '/api/v1/agents/agt_contract/suggestions':
           return reply({ code: 'not_found', detail: 'Optional capability unavailable.' }, 404);
@@ -227,7 +236,14 @@ export class LocalStartup {
             policy_revision: 1,
           });
         case '/api/v1/profile-authoring/services':
-          return reply([{ id: 'api-github', catalog_id: 'catalog-github', name: 'GitHub' }]);
+          return reply([
+            {
+              id: 'api-github',
+              catalog_id: 'catalog-github',
+              name: 'GitHub',
+              detail_url: 'https://catalog.example.test/services/catalog-github',
+            },
+          ]);
         case '/api/v1/profile-authoring/skills':
           return reply({
             items: [{ id: url.searchParams.get('q'), name: 'TypeScript', versions: ['1.2'] }],
@@ -253,6 +269,15 @@ export class LocalStartup {
           });
         case '/api/v1/sandboxes':
           return reply({ items: [this.sandbox] });
+        case '/api/v1/sandboxes/capacity':
+          return reply({
+            resource: 'sandbox',
+            limit: 10,
+            live: this.sandbox.status === 'retired' ? 0 : 1,
+            available: this.sandbox.status === 'retired' ? 10 : 9,
+            counts_by_status: this.sandbox.status === 'retired' ? {} : { [this.sandbox.status]: 1 },
+            observed_at: localTime,
+          });
         case '/api/v1/sandboxes/sbx_route':
           return reply(this.sandbox);
         case '/api/v1/sandboxes/sbx_route/workspaces':

@@ -6,7 +6,7 @@ use layer2_core::sandbox::store::{
     SandboxLifecycleMutation, SandboxMutationGuard, SandboxStore, SandboxStoreError,
     MAX_SANDBOX_LIFECYCLE_AGENTS,
 };
-use layer2_core::sandbox::{Agent, Sandbox, SandboxEventKind, SandboxWorkStep};
+use layer2_core::sandbox::{Agent, Sandbox, SandboxEventKind, SandboxStatus, SandboxWorkStep};
 
 use super::super::support::WorkerFailure;
 use super::super::SandboxWorker;
@@ -182,16 +182,43 @@ impl SandboxWorker {
             )
             .map_err(model_error)?
         };
+        let event = if sandbox.status != next.status && next.status == SandboxStatus::Failed {
+            SandboxEventKind::Failed {
+                failure: recorded_failure,
+            }
+        } else {
+            SandboxEventKind::WorkStepFailed {
+                step: SandboxWorkStep::RunLifecycleOperation,
+                failure: recorded_failure,
+            }
+        };
+        if let Some(refusal) = failure.reopen_refusal {
+            if !self.reopen_output_refusal_enabled(&sandbox) {
+                return Err(SandboxStoreError::Conflict);
+            }
+            return self
+                .dependencies
+                .store
+                .park_sandbox_reopen_refusal(
+                    SandboxLifecycleMutation {
+                        guard: SandboxMutationGuard::capture(&sandbox),
+                        sandbox: next,
+                        agents: Vec::new(),
+                        agent_scope: SandboxLifecycleAgentScope::Touched,
+                        appended_at: stamp,
+                        events: vec![event],
+                    },
+                    *refusal,
+                )
+                .await;
+        }
         self.commit_lifecycle_phase(
             &sandbox,
             next,
             Vec::new(),
             SandboxLifecycleAgentScope::Touched,
             stamp,
-            vec![SandboxEventKind::WorkStepFailed {
-                step: SandboxWorkStep::RunLifecycleOperation,
-                failure: recorded_failure,
-            }],
+            vec![event],
         )
         .await?;
         if let Some(telemetry) = telemetry {
@@ -251,6 +278,6 @@ pub(super) fn replacement_runtime_version(sandbox: &Sandbox, deployed: &str) -> 
                 .as_ref()
                 .map(|binding| binding.runtime_version.clone())
         })
-        .or_else(|| sandbox.profile.content.runtime_image.clone())
+        .or_else(|| sandbox.effective_custom_runtime_image().map(str::to_owned))
         .unwrap_or_else(|| deployed.to_owned())
 }

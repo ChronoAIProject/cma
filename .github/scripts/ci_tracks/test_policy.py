@@ -75,6 +75,22 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(result['eg'])
         self.assertIn('new', result['am_packages'])
 
+    def test_journey_probe_is_owned_only_where_present(self):
+        name = 'cma-journey-probe'
+        self.assertNotIn(name, self.graph.owned['am'])
+
+        data = metadata(self.root)
+        directory = self.root / 'api/crates' / name
+        data['packages'].append({'id': name, 'name': name, 'manifest_path': str(directory / 'Cargo.toml'),
+                                 'dependencies': []})
+        data['workspace_members'].append(name)
+        head = Workspace(data, self.root)
+        result = select([f'api/crates/{name}/src/main.rs'], head)
+        self.assertTrue(result['am'])
+        self.assertFalse(result['eg'])
+        self.assertIn(name, result['am_packages'])
+        self.assertNotIn(name, head.production['cma'])
+
     def test_rust_commands_preserve_lock_and_partition(self):
         for action in ['lint', 'build', 'doc']:
             argv = command(action, ['cma', 'cma-service-auth'])
@@ -87,6 +103,14 @@ class PolicyTests(unittest.TestCase):
             argv = command('tests', ['cmaeg'], shard)
             self.assertIn(f'count:{shard}/3', argv)
             self.assertIn('package(=cmaeg)', argv[argv.index('-E') + 1])
+        allocator = "package(=cma) and binary(=allocator_cli) and test(=actual_api_allocator_completes_without_configuration)"
+        for names in (["cma"], ["*"]):
+            for shard in (1, 2, 3):
+                argv = command('tests', names, shard)
+                selection = argv[argv.index('-E') + 1]
+                self.assertEqual(selection.count(allocator), 1)
+                self.assertIn("and not (binary(=media_image_peak) or binary(=turn_metrics) or (" + allocator + "))", selection)
+                self.assertNotIn("not binary(=allocator_cli)", selection)
         for invalid in ['[]', 'null', '["--workspace"]', '[1]']:
             with self.assertRaises(ValueError):
                 packages(invalid)

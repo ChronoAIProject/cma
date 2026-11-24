@@ -7,7 +7,7 @@ pub const OUTPUT_PAGE_POINTS: usize = 32;
 pub const OUTPUT_PAGE_BYTES: usize = 4 * 1024 * 1024;
 
 /// Scalar facts only. Payloads are obtained from their original source points.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub struct AgentOutputTurn {
     pub facts: AgentLogTurnFacts,
     pub legacy_model_known: bool,
@@ -16,7 +16,7 @@ pub struct AgentOutputTurn {
     pub prewrite_sequence: Option<u64>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub struct AgentOutputMetadata {
     pub agent_id: AgentId,
     pub through: u64,

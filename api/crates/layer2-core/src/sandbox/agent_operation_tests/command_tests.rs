@@ -100,6 +100,7 @@ async fn unsupported_attachment_does_not_admit_partial_text() {
     let (store, service, agent, inputs) = setup(AgentStatus::Ready).await;
     let command = AgentCommand::Steer {
         input: AgentInput {
+            task_acceptance: None,
             content: vec![
                 AgentContent::Text {
                     text: "Inspect the attachment".into(),

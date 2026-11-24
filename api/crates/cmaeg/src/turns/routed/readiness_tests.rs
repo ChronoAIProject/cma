@@ -424,3 +424,73 @@ async fn incomplete_or_contradictory_readiness_is_unknown_and_never_reposted() {
         assert_eq!(setup.port.prepares.load(Ordering::SeqCst), 1, "{fault}");
     }
 }
+
+#[tokio::test]
+async fn nyxid_pre_admission_validation_refusal_is_terminal_and_never_reposted() {
+    // NyxID refuses an unsupported notification (for example a Discord
+    // deletion on an older replica) with this body before accepting it.
+    let refusal = json!({"error":"validation_error","error_code":1008,
+        "message":"Request validation failed"});
+    for fault in [
+        "none",
+        "error",
+        "error_code",
+        "message",
+        "header",
+        "content_type",
+        "malformed",
+        "status",
+    ] {
+        let setup = Setup::new(supported()).await;
+        let http = HttpServer::start().await;
+        {
+            let mut memory = http.memory.lock().unwrap();
+            let config = &mut memory.config;
+            config.post_status = if fault == "status" { 409 } else { 400 };
+            config.post_error_content_type = if fault == "content_type" {
+                "text/plain"
+            } else {
+                "application/json"
+            }
+            .into();
+            config.post_error_response_id = fault == "header";
+            let mut body = refusal.clone();
+            match fault {
+                "error" => body["error"] = "bad_request".into(),
+                "error_code" => body["error_code"] = 1009.into(),
+                "message" => {
+                    body.as_object_mut().unwrap().remove("message");
+                }
+                _ => {}
+            }
+            config.post_error_body = Some(if fault == "malformed" {
+                "{".into()
+            } else {
+                body.to_string()
+            });
+        }
+        let dispatcher = port(&setup, &http).dispatcher();
+        let result = dispatcher
+            .dispatch(&setup.plan.identity, &setup.target().id, "first")
+            .await
+            .unwrap();
+        if fault == "none" {
+            assert!(
+                matches!(&result, DispatchOutcome::Terminal(Phase::Refused { code })
+                    if code == "provider_validation_refused"),
+                "a documented pre-admission refusal releases the queue head"
+            );
+            assert!(matches!(
+                dispatcher
+                    .dispatch(&setup.plan.identity, &setup.target().id, "again")
+                    .await
+                    .unwrap(),
+                DispatchOutcome::Terminal(_)
+            ));
+        } else {
+            assert!(matches!(result, DispatchOutcome::Unknown), "{fault}");
+            assert_eq!(stored(&setup).await.phase, Phase::Unknown, "{fault}");
+        }
+        assert_eq!(http.seen().len(), 1, "no transport boundary retries");
+    }
+}

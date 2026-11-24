@@ -9,6 +9,8 @@ import {
 import { writeFile } from 'node:fs/promises';
 import { bindOpeningBuild } from './agent-open-binding';
 
+const firstTextSendEnabled = process.env.CMA_OPEN_FIRST_TEXT_SEND === '1';
+
 for (const mode of [
   'cold',
   'list',
@@ -20,6 +22,7 @@ for (const mode of [
 ] as const) {
   test(`LOCAL Agent opening ${mode}`, async ({ page, baseURL }, info) => {
     const fixture = new LocalAgentV2();
+    let openingCheckFinished = false;
     const observed = new PerformanceObserver(page);
     const recordBinding = await bindOpeningBuild(page);
     try {
@@ -74,6 +77,8 @@ for (const mode of [
           (mode === 'slow-connections' && path === '/auth/connections/check');
         await new Promise((resolve) => setTimeout(resolve, slow ? 2000 : 100));
         await route.fallback();
+        if (mode === 'slow-connections' && path === '/auth/connections/check')
+          openingCheckFinished = true;
       });
       if (mode === 'list' || mode === 'hover' || mode === 'retained') {
         if (mode === 'retained') {
@@ -114,6 +119,8 @@ for (const mode of [
       observed.mark('meaningfulPaint');
       await input.fill('Unsent opening measurement');
       await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
+      if (firstTextSendEnabled && mode === 'slow-connections')
+        expect(openingCheckFinished).toBe(false);
       observed.mark('inputReady');
       await expect(page.getByText('Previous recorded answer', { exact: true })).toBeVisible();
       observed.mark('content');
@@ -161,7 +168,7 @@ for (const mode of [
       expect(fixture.boundary.unexpected).toEqual([]);
       expect(observed.errors).toEqual([]);
       const timings = await agentOpeningTimings(page);
-      if (mode === 'slow-connections') {
+      if (mode === 'slow-connections' && !firstTextSendEnabled) {
         // Connection verification fences Send; it must not hold completed content.
         expect(timings.content).toBeLessThan(timings.inputReady!);
         expect(timings.historyComplete).toBeLessThan(timings.inputReady!);
@@ -206,3 +213,63 @@ for (const mode of [
     }
   });
 }
+
+test('LOCAL first text Send waits for its action check and the server receipt', async ({
+  page,
+  baseURL,
+}) => {
+  test.skip(!firstTextSendEnabled, 'Requires the compiled first Send intent switch');
+  const fixture = new LocalAgentV2();
+  fixture.holdInput = true;
+  const checks: (() => void)[] = [];
+  try {
+    await fixture.route(page, baseURL!);
+    await page.route('**/api/v2/ui/task-experience', (route) =>
+      route.fulfill({ status: 404, json: { code: 'not_found' } }),
+    );
+    await page.route('**/auth/connections/check', async (route) => {
+      await new Promise<void>((resolve) => checks.push(resolve));
+      await route.fallback();
+    });
+    await page.goto('/agents/agt_contract', { waitUntil: 'domcontentloaded' });
+    const draft = page.getByRole('textbox', { name: 'Message', exact: true });
+    const send = page.getByRole('button', { name: 'Send message', exact: true });
+    const message = 'First ordinary message from the local draft';
+    await draft.fill(message);
+    await expect.poll(() => checks.length).toBe(1);
+    await expect(send).toBeEnabled();
+    await send.dblclick();
+    await expect(page.getByRole('button', { name: 'Cancel send' })).toBeVisible();
+    await expect.poll(() => checks.length).toBe(2);
+    await expect(draft).toHaveValue(message);
+    expect(fixture.writes).toEqual([]);
+    await expect(page.getByText('Sending…', { exact: true })).toHaveCount(0);
+
+    const passive = page.waitForResponse(
+      (response) => new URL(response.url()).pathname === '/auth/connections/check',
+    );
+    checks[0]!();
+    await passive;
+    await expect(page.getByText('Checking connections before sending…')).toBeVisible();
+    expect(fixture.writes).toEqual([]);
+    checks[1]!();
+    await expect.poll(() => fixture.writes.length).toBe(1);
+    expect(fixture.writes[0]).toMatchObject({
+      path: '/api/v2/agents/agt_contract/responses',
+      body: { input: message, stream: true },
+    });
+    expect(fixture.writes[0]?.key).toBeTruthy();
+    await expect(page.getByText('Sending…', { exact: true })).toBeVisible();
+    await expect(page.getByText('Sent', { exact: true })).toHaveCount(0);
+    fixture.acceptInput();
+    await expect(page.getByText('Sent', { exact: true })).toHaveCount(1);
+    await expect(draft).toHaveValue('');
+    expect(fixture.writes).toHaveLength(1);
+    expect(fixture.boundary.writes).toEqual([]);
+    expect(fixture.boundary.unexpected).toEqual([]);
+    expect(fixture.errors).toEqual([]);
+  } finally {
+    for (const release of checks) release();
+    await fixture.close(page);
+  }
+});

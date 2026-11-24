@@ -9,6 +9,7 @@ use axum::http::HeaderMap;
 use layer2_core::{Authorization, Capability, StoreError, SubjectId};
 use tokio::sync::RwLock;
 
+pub(crate) mod account_standing;
 pub mod actor_links;
 mod agent_keys;
 pub mod bearer;
@@ -34,6 +35,7 @@ mod identity_lifetime;
 mod identity_observations;
 mod identity_retry;
 mod identity_throttle;
+pub(crate) use identity_throttle::RetryAfter as ProviderRetryAfter;
 #[allow(dead_code, reason = "the aggregate-neutral issuer is consumed by #809")]
 pub mod keys;
 mod middleware;
@@ -55,6 +57,7 @@ pub(crate) mod registration;
 pub(crate) mod relay;
 mod resource_request;
 mod sandbox_prerequisite;
+pub(crate) mod service_authorization;
 pub(crate) mod service_portal;
 mod session_routes;
 mod signup_options;
@@ -68,6 +71,7 @@ mod verification_diagnostics;
 mod verification_error;
 mod worker_credentials;
 
+pub(crate) use flow::account_router;
 pub use flow::router;
 pub use middleware::attach_subject;
 pub use records::SignInRecords;
@@ -128,16 +132,22 @@ impl std::fmt::Debug for AuthMode {
 }
 
 pub struct AuthState {
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+    account_deletion_enabled: bool,
+    privacy_export_enabled: bool,
     platform_settings: Option<Arc<layer2_core::PlatformSettingsService>>,
     bot_father_username: Option<String>,
     agent_key_service_id: Option<String>,
     oauth_api_resource: Option<String>,
     resource_request_enabled: bool,
     silent_sign_in_enabled: bool,
+    pub(super) legal_terms: Option<layer2_core::legal_consent::LegalTerms>,
     browser_session_join_enabled: bool,
+    service_authorization: Option<Arc<dyn service_authorization::GrantAuthority>>,
     #[cfg(test)]
     preference_clock: fn() -> SystemTime,
     identity_proxy: Option<nyxid_proxy::jwt::Verifier>,
+    proxy_replay_principal_enabled: bool,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     pub(super) mode: AuthMode,
     /// Browser-facing NyxID origin used for registration handoffs.
@@ -153,7 +163,7 @@ pub struct AuthState {
     pub(in crate::auth) signup_options_cache: signup_options::SignupOptionsCache,
     pub(super) store: Arc<dyn AuthStore>,
     pub(super) records: Option<SignInRecords>,
-    spend: Option<Arc<dyn layer2_core::budget::PlatformSpendLedger>>,
+    spend: Option<Arc<dyn registration::RegistrationPolicy>>,
     registration_capacity: Option<Arc<dyn registration::RegistrationCapacity>>,
 }
 
@@ -206,6 +216,9 @@ impl AuthState {
             AuthMode::Trusted { .. } => vec![],
         };
         Arc::new(Self {
+            standing: Arc::new(layer2_core::account_deletion::AvailableAccounts),
+            account_deletion_enabled: false,
+            privacy_export_enabled: false,
             platform_settings: None,
             bot_father_username: None,
             bindings: None,
@@ -213,10 +226,13 @@ impl AuthState {
             oauth_api_resource: None,
             resource_request_enabled: false,
             silent_sign_in_enabled: false,
+            legal_terms: None,
             browser_session_join_enabled: false,
+            service_authorization: None,
             #[cfg(test)]
             preference_clock: SystemTime::now,
             identity_proxy: None,
+            proxy_replay_principal_enabled: false,
             mode,
             nyxid_public_url,
             browser_origins,
@@ -293,8 +309,11 @@ impl AuthState {
         &self,
         headers: &HeaderMap,
     ) -> Result<Option<RequestAuth>, StoreError> {
-        if self.identity_proxy.is_some() && headers.contains_key(nyxid_proxy::HEADER) {
-            return self.proxy_request(headers).await;
+        if headers.contains_key(nyxid_proxy::HEADER) {
+            if self.identity_proxy.is_some() {
+                return self.proxy_request(headers).await;
+            }
+            nyxid_proxy::note_disabled();
         }
         if let Some(token) = bearer::bearer_token(headers) {
             if agent_keys::is_agent_key(&token) {

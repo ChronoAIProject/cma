@@ -14,9 +14,13 @@ mod authority;
 mod desktop;
 mod desktop_native;
 mod environment;
+mod environment_workers;
 mod integrated_tests;
 mod machine_policy;
+mod receipt_output;
 mod recovery;
+mod repository_connection_tests;
+mod repository_marker;
 mod restart;
 mod store_retry;
 mod subprocess;
@@ -165,7 +169,7 @@ async fn router_with_support(
         store.clone(),
         layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         profiles,
-        ImageManagerResolver::new("http://127.0.0.1:1".into()).unwrap(),
+        ImageManagerResolver::new("http://127.0.0.1:1".into(), false).unwrap(),
         ProfileCapacityBounds {
             min_cpu_millis: 100,
             max_cpu_millis: 8000,

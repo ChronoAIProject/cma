@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assertAgentShellPath, assertCheckpointHoldReceipt, assertPublicHomeSeed, checks as legacyChecks, diagnosticStages, installedCodexVersion, installRequest, localToolRunner, runtimeToolVersions, sha256, waitForWriterProgress } from './runtime-image-probe.mjs';
-import { campaign, checks, combineProofs, pins, safeFailureStage, source, validateEvidence, validateImage } from './runtime-image-evidence.mjs';
+import { campaign, checks, combineProofs, pins, profilePins, safeFailureStage, source, validateEvidence, validateImage } from './runtime-image-evidence.mjs';
 import { assignmentDigest, assertAssignmentReceipt, assignRuntime, assertRuntimeStatus, assertInstallReceipt, assertInstallReplay, bootstrapChecks, bootstrapStages, statusRequest, waitingEnvironment } from './runtime-bootstrap-probe.mjs';
 
 const commit = 'c'.repeat(40);
@@ -451,4 +451,69 @@ test('campaign pins the execution ID and refuses either probe, incomplete restar
       if (!failure) assert.equal(calls.filter((args) => args[0] === 'exec').length, 2);
     } finally { rmSync(directory, { recursive: true }); }
   }
+});
+
+test('Omarchy profile uses only the desktop Codex pins and CI Omarchy probes; the default profile is unchanged', () => {
+  const dockerfile = readFileSync(new URL('../../api/crates/layer4-runtime/Dockerfile', import.meta.url), 'utf8');
+  const desktop = profilePins(dockerfile, 'omarchy');
+  assert.deepEqual(profilePins(dockerfile), expected);
+  for (const key of ['CODEX_ACP_VERSION', 'CODEX_ACP_SHA256', 'GH_VERSION']) assert.equal(desktop[key], expected[key]);
+  for (const key of ['CODEX_VERSION', 'CODEX_NATIVE_SHA256_AMD64', 'CODEX_LAUNCHER_SHA256']) {
+    assert.equal(desktop[key], dockerfile.match(new RegExp(`^ARG DESKTOP_${key}=(\\S+)$`, 'm'))[1]);
+    assert.notEqual(desktop[key], expected[key]);
+  }
+  assert.throws(() => profilePins(dockerfile, 'desktop'));
+  const desktopProof = { checks: legacyChecks, artifacts: { ...proof.artifacts, launcher: desktop.CODEX_LAUNCHER_SHA256,
+    native: desktop.CODEX_NATIVE_SHA256_AMD64, codexVersion: `codex-cli ${desktop.CODEX_VERSION}` } };
+  for (const profile of ['default', 'omarchy', 'omarchy-wrong-pins', 'omarchy-gpgdir']) {
+    const omarchy = profile.startsWith('omarchy');
+    const directory = mkdtempSync(join(tmpdir(), 'cma-runtime-evidence-profile-'));
+    const calls = [];
+    let name, created, prepared;
+    const command = (args) => {
+      calls.push(args);
+      if (args[0] === 'image') return JSON.stringify([image]);
+      if (args[0] === 'volume' && args[1] === 'create') { name = args.at(-1); return name; }
+      if (args[0] === 'create') {
+        created = args;
+        const probe = args.find((value) => value.endsWith('target=/opt/runtime-image-probe.mjs,readonly'));
+        prepared = probe.slice('type=bind,source='.length, probe.indexOf(',target='));
+        assert.equal(readFileSync(prepared, 'utf8').includes("from './omarchy-codex-aliases.mjs'"), omarchy);
+        return 'a'.repeat(64);
+      }
+      if (args[0] === 'start') return name;
+      if (args[0] === 'exec' && args.includes('/opt/runtime-image-probe.mjs')) {
+        return JSON.stringify(omarchy && profile !== 'omarchy-wrong-pins' ? desktopProof : { ...proof, checks: legacyChecks });
+      }
+      if (args[0] === 'exec' && args.includes('/opt/runtime-bootstrap-probe.mjs')) return JSON.stringify({ checks: bootstrapChecks, runtime: proof.artifacts.runtime });
+      if (args[0] === 'exec' && args.includes('/usr/local/bin/pacman-conf')) {
+        assert.deepEqual(args.slice(1, 4), ['--user', '0', name]);
+        return profile === 'omarchy-gpgdir' ? '/home/cma/.gnupg\n' : '/etc/pacman.d/gnupg\n';
+      }
+      if (args[0] === 'exec') { assert.ok(omarchy); return ''; }
+      if (args[0] === 'ps' || (args[0] === 'volume' && args[1] === 'ls')) return '';
+      throw Error('unexpected Docker operation');
+    };
+    const output = join(directory, 'evidence.json');
+    try {
+      const run = () => campaign('runtime:test', commit, output, command, profile.split('-')[0] === 'omarchy' ? 'omarchy' : 'default');
+      if (profile === 'default' || profile === 'omarchy') run(); else assert.throws(run);
+      const evidence = JSON.parse(readFileSync(output, 'utf8'));
+      assert.equal(evidence.result, ['default', 'omarchy'].includes(profile) ? 'pass' : 'fail');
+      assert.equal(evidence.schema, 'cma-runtime-image-v2');
+      const extras = ['omarchy-codex-aliases.mjs', 'omarchy-keyring-probe.py', 'omarchy-chromium-config-probe.py'];
+      for (const file of extras) assert.equal(created.some((value) => value.endsWith(`target=/opt/${file},readonly`)), omarchy);
+      const execs = calls.filter((args) => args[0] === 'exec').map((args) => args.at(-1));
+      assert.deepEqual(execs, profile === 'default'
+        ? ['/opt/runtime-image-probe.mjs', '/opt/runtime-bootstrap-probe.mjs']
+        : profile === 'omarchy-gpgdir'
+          ? ['/opt/runtime-image-probe.mjs', '/opt/omarchy-keyring-probe.py', 'GPGDir']
+          : profile === 'omarchy-wrong-pins'
+            ? ['/opt/runtime-image-probe.mjs', '/opt/omarchy-keyring-probe.py', 'GPGDir']
+            : ['/opt/runtime-image-probe.mjs', '/opt/omarchy-keyring-probe.py', 'GPGDir', '/opt/runtime-bootstrap-probe.mjs', '/opt/omarchy-chromium-config-probe.py']);
+      if (omarchy) assert.equal(existsSync(prepared), false);
+      else assert.equal(prepared, new URL('./runtime-image-probe.mjs', import.meta.url).pathname);
+    } finally { rmSync(directory, { recursive: true }); }
+  }
+  assert.throws(() => campaign('runtime:test', commit, join(tmpdir(), 'unused.json'), () => { throw Error('no Docker'); }, 'desktop'));
 });

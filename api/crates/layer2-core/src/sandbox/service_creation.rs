@@ -1,8 +1,8 @@
 use crate::profiles::{
-    MarketplaceLocator, ModelAccess, ProfileVisibility, SandboxProfileRevision,
-    SandboxProfileSnapshot,
+    MarketplaceLocator, ModelAccess, ProfileVisibility, SandboxProfileContent,
+    SandboxProfileRevision, SandboxProfileSnapshot,
 };
-use crate::{now_rfc3339, Caller, Capability, SandboxId, SubjectId};
+use crate::{now_rfc3339, Caller, Capability, SandboxId, ServiceId, SubjectId};
 
 use super::service::{
     policy_error, profile_error, require, store_error, CreateSandbox, SandboxPolicy,
@@ -14,6 +14,7 @@ use super::service_trust::{
 };
 use super::store::{
     SandboxAdmission, SandboxAdmissionName, SandboxAdmissionReplay, SandboxAdmissionResult,
+    SandboxLimitClass,
 };
 use super::{
     Sandbox, SandboxCredentialState, SandboxLimits, SandboxOrigin, SandboxSignInState,
@@ -25,13 +26,57 @@ struct ResolvedProfile {
     revision: SandboxProfileRevision,
 }
 
+struct AdmissionAuthority<'a> {
+    limit: u16,
+    class: SandboxLimitClass,
+    lifecycle_lease: Option<&'a str>,
+}
+
 impl SandboxService {
+    /// Check the same owner credential and service prerequisites as fresh
+    /// lifecycle admission without reserving a Sandbox.
+    pub async fn check_lifecycle_creation_connections(
+        &self,
+        caller: &Caller,
+        profile: &SandboxProfileContent,
+    ) -> Result<(), SandboxServiceError> {
+        require(caller, Capability::UseOwnSandboxes)?;
+        require(caller, Capability::CreateSandbox)?;
+        let policy = self
+            .policy
+            .current_sandbox_policy()
+            .await
+            .map_err(policy_error)?;
+        let reaches = profile.credential_services(&policy.baseline_services);
+        self.check_creation_connections(caller, profile, &reaches)
+            .await
+    }
+
     /// Trusted lifecycle worker admission. Replay precedes current capacity and
     /// dependency checks so a lost response cannot allocate a second Sandbox.
     pub async fn create_for_lifecycle(
         &self,
         caller: &Caller,
         request: CreateSandbox,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        self.admit_lifecycle(caller, request, None).await
+    }
+
+    /// Trusted admission using the initiating lifecycle worker's claim.
+    pub async fn create_for_lifecycle_with_lease(
+        &self,
+        caller: &Caller,
+        request: CreateSandbox,
+        lease: &str,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        self.admit_lifecycle(caller, request, Some(lease)).await
+    }
+
+    async fn admit_lifecycle(
+        &self,
+        caller: &Caller,
+        request: CreateSandbox,
+        lifecycle_lease: Option<&str>,
     ) -> Result<Sandbox, SandboxServiceError> {
         require(caller, Capability::UseOwnSandboxes)?;
         require(caller, Capability::CreateSandbox)?;
@@ -58,7 +103,11 @@ impl SandboxService {
             caller,
             request,
             profile,
-            policy.max_sandboxes_per_owner,
+            AdmissionAuthority {
+                limit: policy.max_sandboxes_per_owner,
+                class: SandboxLimitClass::Owner,
+                lifecycle_lease,
+            },
             policy,
         )
         .await
@@ -84,7 +133,11 @@ impl SandboxService {
             caller,
             request,
             profile,
-            policy.max_sandboxes_per_owner,
+            AdmissionAuthority {
+                limit: policy.max_sandboxes_per_owner,
+                class: SandboxLimitClass::Owner,
+                lifecycle_lease: None,
+            },
             policy,
         )
         .await
@@ -117,12 +170,25 @@ impl SandboxService {
             .await
             .map_err(policy_error)?;
         let profile = self.read_profile(&caller.subject, &request, true).await?;
-        let limit = match authority {
-            Capability::CreateSandbox => policy.max_sandboxes_per_owner,
-            Capability::LaunchTriggers => policy.max_sandboxes_per_visitor,
+        let (limit, limit_class) = match authority {
+            Capability::CreateSandbox => (policy.max_sandboxes_per_owner, SandboxLimitClass::Owner),
+            Capability::LaunchTriggers => {
+                (policy.max_sandboxes_per_visitor, SandboxLimitClass::Visitor)
+            }
             _ => unreachable!("launch authority was validated"),
         };
-        self.admit(caller, request, profile, limit, policy).await
+        self.admit(
+            caller,
+            request,
+            profile,
+            AdmissionAuthority {
+                limit,
+                class: limit_class,
+                lifecycle_lease: None,
+            },
+            policy,
+        )
+        .await
     }
 
     async fn read_profile(
@@ -161,10 +227,20 @@ impl SandboxService {
             request.confirmed_digest.as_deref(),
         )
         .await?;
-        Ok(ResolvedProfile {
-            name: profile.name,
-            revision,
-        })
+        let name = if frozen
+            && profile.owner.as_str() == crate::DELETED_ACCOUNT_SUBJECT
+            && profile.visibility == ProfileVisibility::Private
+            && profile.retired_at.is_some()
+            && profile.name.is_empty()
+            && profile.description.is_empty()
+        {
+            // Retained catalogue metadata has no author-supplied display name.
+            // The admission transaction still verifies the frozen Launch pin.
+            "Sandbox".into()
+        } else {
+            profile.name
+        };
+        Ok(ResolvedProfile { name, revision })
     }
 
     async fn require_trust(
@@ -195,26 +271,16 @@ impl SandboxService {
         Ok(())
     }
 
-    async fn admit(
+    async fn check_creation_connections(
         &self,
         caller: &Caller,
-        request: CreateSandbox,
-        profile: ResolvedProfile,
-        limit: u16,
-        policy: SandboxPolicy,
-    ) -> Result<Sandbox, SandboxServiceError> {
-        let name = requested_name(request.name, &profile.name)?;
-        let reaches = profile
-            .revision
-            .content
-            .credential_services(&policy.baseline_services);
+        profile: &SandboxProfileContent,
+        reaches: &[ServiceId],
+    ) -> Result<(), SandboxServiceError> {
         self.credentials
             .check_services(
                 &caller.subject,
-                &profile
-                    .revision
-                    .content
-                    .connection_services_for_grants(&reaches),
+                &profile.connection_services_for_grants(reaches),
             )
             .await
             .map_err(|error| match error {
@@ -227,7 +293,24 @@ impl SandboxService {
                 super::SandboxCredentialPrerequisiteError::Unavailable(detail) => {
                     SandboxServiceError::Unavailable(detail)
                 }
-            })?;
+            })
+    }
+
+    async fn admit(
+        &self,
+        caller: &Caller,
+        request: CreateSandbox,
+        profile: ResolvedProfile,
+        authority: AdmissionAuthority<'_>,
+        policy: SandboxPolicy,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        let name = requested_name(request.name, &profile.name)?;
+        let reaches = profile
+            .revision
+            .content
+            .credential_services(&policy.baseline_services);
+        self.check_creation_connections(caller, &profile.revision.content, &reaches)
+            .await?;
         let now = now_rfc3339();
         let sign_in = match profile.revision.content.model_access {
             ModelAccess::ChronoaiManaged => SandboxSignInState::NotRequired,
@@ -274,9 +357,15 @@ impl SandboxService {
         sandbox
             .validate()
             .map_err(|error| SandboxServiceError::Corrupt(error.to_string()))?;
+        let mut admission =
+            SandboxAdmission::new(sandbox, name, authority.limit, now).map_err(store_error)?;
+        admission.limit_class = authority.class;
+        if let Some(token) = authority.lifecycle_lease {
+            admission = admission.with_lifecycle_lease(token);
+        }
         let result = self
             .store
-            .admit_sandbox(SandboxAdmission::new(sandbox, name, limit, now).map_err(store_error)?)
+            .admit_catalogue_sandbox(admission)
             .await
             .map_err(store_error)?;
         match result {

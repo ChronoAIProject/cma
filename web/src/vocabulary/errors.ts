@@ -1,5 +1,6 @@
 import { ApiError, ProtocolError, TransportError } from '@cma/client';
 import { CredentialAccountError, credentialSetupMessage } from '../auth/credentialSetup';
+import { visitorAllowanceGuidanceEnabled } from '../public/visitorAllowanceFeature';
 
 export const refusalSentences = {
   sandbox_credential_setup_required: credentialSetupMessage,
@@ -19,7 +20,7 @@ export const refusalSentences = {
   idempotency_in_flight:
     'CMA is still processing this request. Your choices are saved; check again in a moment.',
   idempotency_recovery_required:
-    'CMA is checking the result of this request. Your choices are saved; check again in a moment.',
+    'This request needs review. Your choices are saved. Contact your CMA administrator to check its result.',
   idempotency_key_reused:
     'This request has different saved choices. Start over to use the new choices.',
   invalid_launch_cursor: 'Progress could not be updated. Check again in a moment.',
@@ -38,8 +39,31 @@ export const refusalSentences = {
   trigger_reference_not_public: 'The software for this page is not shared. Contact its publisher.',
 } as const;
 
+export function settledAllowanceReset(error: unknown): Date | undefined {
+  if (
+    !(error instanceof ApiError) ||
+    error.status !== 429 ||
+    error.code !== 'resource_quota' ||
+    error.extensions.resource !== 'visitor_launches' ||
+    typeof error.extensions.reset_at !== 'string'
+  )
+    return undefined;
+  const resetAt = new Date(error.extensions.reset_at);
+  return Number.isNaN(resetAt.getTime()) ? undefined : resetAt;
+}
+
 export function refusalSentence(error: unknown): string {
   if (error instanceof CredentialAccountError) return error.message;
+  const resetAt = visitorAllowanceGuidanceEnabled() ? settledAllowanceReset(error) : undefined;
+  if (resetAt !== undefined) {
+    const resetTime = new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(resetAt);
+    return `You have used your daily allowance for starting agents. Try again after ${resetTime}.`;
+  }
   if (
     error instanceof ApiError &&
     error.code !== undefined &&
@@ -50,6 +74,8 @@ export function refusalSentence(error: unknown): string {
 }
 
 export function failureRemediation(code: string): string {
+  if (visitorAllowanceGuidanceEnabled() && code === 'sandbox_limit_reached')
+    return 'Your sandbox allowance is full. Delete a sandbox you no longer need, wait for deletion to complete, then start again.';
   switch (code) {
     case 'first_message_failed':
       return 'Your first message could not be sent. Open the agent to check its conversation before sending it again.';
@@ -79,6 +105,8 @@ function statusSentence(status: number): string | undefined {
  * lost connection becomes a plain sentence that says what to do next.
  */
 export function readableError(error: unknown, fallback: string): string {
+  if (typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError')
+    return 'The request was interrupted. Check the current status and try again.';
   if (
     error instanceof TransportError ||
     (error instanceof TypeError && /fetch|network|load failed/i.test(error.message))

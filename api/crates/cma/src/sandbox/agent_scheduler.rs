@@ -6,11 +6,11 @@ use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{SandboxStoreError, MAX_PAGE_SIZE};
 use layer2_core::AgentId;
-use tokio::sync::{watch, Notify};
+use tokio::sync::{watch, Mutex as AsyncMutex, Notify};
 use tokio::task::{Id, JoinError, JoinHandle, JoinSet};
-use tokio::time::MissedTickBehavior;
+use tokio::time::{Instant, MissedTickBehavior};
 
-use super::agent_worker::AgentWorker;
+use super::agent_worker::{AgentWorker, ConnectionSweep};
 use super::lifecycle_failure::{
     LifecycleAttempt, LifecycleTaskFailure, Origin, Phase, DISCOVERY_DEADLINE,
 };
@@ -31,12 +31,22 @@ pub(crate) struct AgentScheduler {
     admitted: Arc<Notify>,
     parent_ready: Arc<Notify>,
     event_driven_reconciliation: bool,
+    resume_reconciliation: bool,
 }
 
 #[async_trait::async_trait]
 trait AgentScheduleWork: Send + Sync {
+    fn next_startup_probe(&self) -> Option<Instant> {
+        None
+    }
+
     async fn due(&self, now: SystemTime, limit: u16) -> Result<Vec<AgentId>, SandboxStoreError>;
     async fn reconcile(&self, now: SystemTime) -> Result<usize, SandboxStoreError>;
+    async fn reconcile_slice(
+        &self,
+        now: SystemTime,
+        sweep: &mut ConnectionSweep,
+    ) -> Result<bool, SandboxStoreError>;
     async fn run_one(
         &self,
         id: &AgentId,
@@ -47,6 +57,10 @@ trait AgentScheduleWork: Send + Sync {
 
 #[async_trait::async_trait]
 impl AgentScheduleWork for AgentWorker {
+    fn next_startup_probe(&self) -> Option<Instant> {
+        AgentWorker::next_startup_probe(self)
+    }
+
     async fn due(&self, now: SystemTime, limit: u16) -> Result<Vec<AgentId>, SandboxStoreError> {
         layer2_core::diagnostic_context::DiagnosticContext::background("scheduler")
             .scope(self.due_work(now, limit))
@@ -55,6 +69,14 @@ impl AgentScheduleWork for AgentWorker {
 
     async fn reconcile(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
         self.reconcile_connections(now).await
+    }
+
+    async fn reconcile_slice(
+        &self,
+        now: SystemTime,
+        sweep: &mut ConnectionSweep,
+    ) -> Result<bool, SandboxStoreError> {
+        self.reconcile_connection_slice(now, sweep).await
     }
 
     async fn run_one(
@@ -80,6 +102,7 @@ impl AgentScheduler {
             admitted,
             parent_ready: Arc::new(Notify::new()),
             event_driven_reconciliation: false,
+            resume_reconciliation: false,
         }
     }
 
@@ -90,6 +113,11 @@ impl AgentScheduler {
     ) -> Self {
         self.parent_ready = parent_ready;
         self.event_driven_reconciliation = enabled;
+        self
+    }
+
+    pub(crate) fn with_resumable_reconciliation(mut self, enabled: bool) -> Self {
+        self.resume_reconciliation = enabled;
         self
     }
 
@@ -111,7 +139,10 @@ impl AgentScheduler {
         let admitted = self.admitted;
         let parent_ready = self.parent_ready;
         let event_driven_reconciliation = self.event_driven_reconciliation;
-        let work = ScheduledWork::new(self.worker, self.concurrency, self.budget);
+        let mut work = ScheduledWork::new(self.worker, self.concurrency, self.budget);
+        if self.resume_reconciliation {
+            work.reconciliation_sweep = Some(Arc::new(AsyncMutex::default()));
+        }
         crate::worker_supervision::spawn(
             work,
             activity,
@@ -143,6 +174,7 @@ impl AgentScheduler {
                         if *shutdown.borrow() {
                             break;
                         }
+                        let startup_probe = work.worker.next_startup_probe();
                         tokio::select! {
                             changed = shutdown.changed() => {
                                 if changed.is_err() || *shutdown.borrow() {
@@ -161,9 +193,14 @@ impl AgentScheduler {
                             _ = parent_ready.notified(), if event_driven_reconciliation => {
                                 work.reconcile();
                             }
+                            // Resume at the shared budget's next admission time,
+                            // even when event-driven discovery has no new wake.
+                            _ = tokio::time::sleep_until(work.reconciliation.next_run_at()),
+                                if work.reconciliation_pending && !work.reconciling => work.reconcile(),
                             // Keep one coalesced hint through a full queue, full capacity,
                             // or an in-progress discovery that may predate the admission.
                             _ = admitted.notified(), if work.can_discover() => work.discover(),
+                            _ = startup_probe_wake(startup_probe), if startup_probe.is_some() && work.can_discover() => work.discover(),
                         }
                         if !*shutdown.borrow() {
                             work.fill_slots();
@@ -194,6 +231,12 @@ impl AgentScheduler {
     }
 }
 
+async fn startup_probe_wake(deadline: Option<Instant>) {
+    if let Some(deadline) = deadline {
+        tokio::time::sleep_until(deadline).await;
+    }
+}
+
 enum TaskKind {
     Due,
     Reconcile,
@@ -203,6 +246,7 @@ enum TaskKind {
 enum TaskOutput {
     Due(Vec<AgentId>),
     Completed(usize),
+    Reconciled(bool),
 }
 
 type TaskResult = Result<TaskOutput, LifecycleTaskFailure>;
@@ -229,6 +273,8 @@ impl TaskMetadata {
 struct ScheduledWork {
     activity: Option<crate::worker_supervision::Activity>,
     reconciliation: crate::background::BackgroundWork,
+    reconciliation_sweep: Option<Arc<AsyncMutex<ConnectionSweep>>>,
+    reconciliation_pending: bool,
     worker: Arc<dyn AgentScheduleWork>,
     concurrency: usize,
     tasks: JoinSet<TaskResult>,
@@ -253,6 +299,8 @@ impl ScheduledWork {
                 Duration::from_secs(30),
                 SWEEP_INTERVAL,
             ),
+            reconciliation_sweep: None,
+            reconciliation_pending: false,
             worker,
             concurrency,
             tasks: JoinSet::new(),
@@ -275,10 +323,23 @@ impl ScheduledWork {
         if !self.reconciling {
             let worker = Arc::clone(&self.worker);
             let reconciliation = self.reconciliation.clone();
+            let sweep = self.reconciliation_sweep.clone();
+            self.reconciliation_pending = sweep.is_some();
             let activity = self.activity.clone();
             let metadata = TaskMetadata::new(TaskKind::Reconcile);
             let attempt = metadata.attempt.clone();
             let task = self.tasks.spawn(async move {
+                if let Some(sweep) = sweep {
+                    return reconciliation
+                        .run_resumable(|| async {
+                            let _phase = activity.map(|activity| activity.reconciliation());
+                            let mut sweep = sweep.lock().await;
+                            worker.reconcile_slice(SystemTime::now(), &mut sweep).await
+                        })
+                        .await
+                        .map(|completed| TaskOutput::Reconciled(completed == Some(true)))
+                        .map_err(|error| attempt.store(Origin::Reconciliation, error));
+                }
                 reconciliation
                     .run(|| async {
                         let _phase = activity.map(|activity| activity.reconciliation());
@@ -367,6 +428,9 @@ impl ScheduledWork {
             None => {}
         }
         match result {
+            Ok((_, Ok(TaskOutput::Reconciled(complete)))) => {
+                self.reconciliation_pending = !complete;
+            }
             Ok((_, Ok(TaskOutput::Due(ids)))) => {
                 self.queued = ids
                     .into_iter()

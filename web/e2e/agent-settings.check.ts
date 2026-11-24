@@ -1,4 +1,7 @@
-import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { capture } from './agent-settings-layout.fixture';
+import './agent-settings-lifecycle.cases';
+import './agent-settings-recovery.cases';
 import { LocalStartup } from './agent-startup-fixtures';
 
 test('LOCAL composer settings and message feedback remain usable across screen sizes and reload', async ({
@@ -18,6 +21,21 @@ test('LOCAL composer settings and message feedback remain usable across screen s
   );
   await page.route('**/api/v1/agents/agt_contract/messages/*/feedback', (route) => {
     const id = decodeURIComponent(new URL(route.request().url()).pathname.split('/').at(-2)!);
+    if (route.request().method() === 'GET')
+      return route.fulfill({
+        json: {
+          viewer_id: 'local-owner',
+          agent_id: 'agt_contract',
+          message_id: id,
+          vote: votes.get(id) ?? null,
+          version: 2,
+          reasons: [],
+          comment: '',
+          updated_at: null,
+          request_id: null,
+        },
+      });
+    expect(route.request().method()).toBe('PUT');
     const { vote } = route.request().postDataJSON() as { vote: 'up' | 'down' | null };
     if (vote === null) votes.delete(id);
     else votes.set(id, vote);
@@ -65,16 +83,17 @@ test('LOCAL composer settings and message feedback remain usable across screen s
     'GPT-6 High',
   );
   const reply = page.getByRole('article', { name: 'Chrono Agent' });
-  await expect(reply.getByText('21 Oct 2026, 00:31 SGT')).toBeVisible();
+  await expect(reply.locator('time')).toHaveAttribute('datetime', '2026-10-20T16:31:00Z');
+  await expect(reply.locator('time')).toBeVisible();
+  await expect(reply.locator('time')).not.toContainText('SGT');
   await page.getByRole('textbox', { name: 'Message' }).fill('Preserve my unsent draft');
   const actions = reply.getByRole('group', { name: 'Message actions' });
-  await expect
-    .poll(() => actions.evaluate((element) => getComputedStyle(element).opacity))
-    .toBe('0');
+  await page.mouse.move(0, 0);
+  await expect(actions).toHaveCSS('opacity', '1');
+  await expect(reply.locator('time')).toHaveCSS('opacity', '0');
   await reply.hover();
-  await expect
-    .poll(() => actions.evaluate((element) => getComputedStyle(element).opacity))
-    .toBe('1');
+  await expect(actions).toHaveCSS('opacity', '1');
+  await expect(reply.locator('time')).toHaveCSS('opacity', '1');
   await reply.getByRole('button', { name: 'Helpful' }).click();
   await expect(reply.getByRole('button', { name: 'Helpful' })).toHaveAttribute(
     'aria-pressed',
@@ -89,6 +108,10 @@ test('LOCAL composer settings and message feedback remain usable across screen s
     'aria-pressed',
     'true',
   );
+  await page
+    .getByRole('dialog', { name: 'Reasons for improvement' })
+    .getByRole('button', { name: 'Close', exact: true })
+    .click();
   for (const width of [1440, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 });
     await expect(
@@ -117,6 +140,7 @@ test('LOCAL composer settings and message feedback remain usable across screen s
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(reply.locator('time')).toHaveCSS('transition-duration', '0s');
   expect(await actions.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe(
     '0s',
   );
@@ -130,227 +154,76 @@ test('LOCAL composer settings and message feedback remain usable across screen s
   expect(boundary.errors).toEqual([]);
 });
 
-async function capture(
-  page: Page,
-  info: TestInfo,
-  state: string,
-  surface: Locator = page.getByRole('dialog'),
-) {
-  for (const width of [1440, 390, 320]) {
-    await page.setViewportSize({ width, height: 900 });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
-      true,
-    );
-    await expect
-      .poll(() =>
-        surface.evaluate((dialog) => {
-          const bounds = dialog.getBoundingClientRect();
-          return (
-            bounds.left >= 0 &&
-            bounds.right <= innerWidth + 1 &&
-            dialog.scrollWidth <= dialog.clientWidth + 1
-          );
-        }),
-      )
-      .toBe(true);
-    await page.screenshot({
-      path: info.outputPath(`${state}-${width}.png`),
-      fullPage: true,
-      animations: 'disabled',
-    });
-  }
-}
-for (const target of ['new', 'contextual'] as const) {
-  test(`LOCAL ${target} task creation preserves repository or inherited context and recovers the same command after reload`, async ({
-    page,
-    baseURL,
-  }, info) => {
-    const boundary = new LocalStartup();
-    await boundary.route(page, baseURL!);
-    await page.route('**/api/v2/ui/task-experience', (route) =>
-      route.fulfill({
-        json: {
-          object: 'cma.ui.task_experience',
-          schema_version: 1,
-          account_id: 'local-owner',
-          capabilities: {
-            task_home_admission: true,
-            desktop_enable: false,
-            suggested_followup_admission: false,
-            browser_takeover: false,
-            replay_presentation: false,
-          },
-        },
-      }),
-    );
-    const writes: { body: unknown; key?: string }[] = [];
-    let ready = false;
-    await page.route('**/api/agent-manager/v1/agents', async (route) => {
-      writes.push({
-        body: route.request().postDataJSON(),
-        key: route.request().headers()['idempotency-key'],
-      });
-      if (writes.length === 1) return route.abort('connectionfailed');
-      return route.fulfill({ json: { id: 'lifecycle-browser', status: 'queued' }, status: 202 });
-    });
-    await page.route('**/api/agent-manager/v1/agent-lifecycle/lifecycle-browser', (route) =>
-      route.fulfill({
-        json: {
-          id: 'lifecycle-browser',
-          status: ready ? 'succeeded' : 'running',
-          phase: 'workspace_runtime',
-          agent_id: ready ? 'agt_contract' : undefined,
-          events: [
-            {
-              sequence: 1,
-              phase: 'sandbox_ready',
-              status: 'ready',
-              message: 'Sandbox ready',
-              occurred_at: '2026-10-13T00:00:00Z',
-            },
-          ],
-        },
-      }),
-    );
-    const open = async () => {
-      await page.goto('/sandboxes/sbx_route');
-      if (target === 'contextual') {
-        await page
-          .locator('.sandbox-page')
-          .getByRole('button', { name: 'More actions', exact: true })
-          .click();
-        await page.getByRole('menuitem', { name: 'New agent', exact: true }).click();
-      } else {
-        await page
-          .locator('.sidebar')
-          .getByRole('button', { name: 'New agent', exact: true })
-          .click();
-        await expect(page.getByLabel('Agent location')).toHaveCount(0);
-      }
-    };
-    await open();
-    const dialog =
-      target === 'new'
-        ? page.locator('.task-home')
-        : page.getByRole('dialog', { name: 'New task', exact: true });
-    await expect(dialog.getByLabel('Your task')).toBeVisible();
-    await expect(dialog.getByRole('radiogroup')).toHaveCount(0);
-    await expect(dialog.getByText('Where it works', { exact: true })).toHaveCount(0);
-    await dialog
-      .getByLabel('Your task')
-      .fill('  Inspect the selected source\nKeep this exact task.  ');
-    if (target === 'new') {
-      await dialog.getByRole('button', { name: 'Add git repo' }).click();
-      const repository = page.getByRole('dialog', { name: 'Add git repo' });
-      await repository.getByLabel('GitHub repository').fill('org/research.git/');
-      await repository.getByLabel('Repository ref').fill('proof/fixed');
-      await repository.getByRole('button', { name: 'Add repo', exact: true }).click();
-    } else {
-      await expect(dialog.getByLabel('GitHub repository')).toHaveCount(0);
-      await expect(dialog.getByText(/Repository context is inherited/)).toBeVisible();
-    }
-    await capture(page, info, `${target}-creation`, dialog);
-    await dialog.getByRole('button', { name: 'Start task', exact: true }).click();
-    await expect(
-      dialog.getByRole('button', { name: 'Recover original task', exact: true }),
-    ).toBeEnabled();
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await open();
-    await expect(dialog.getByLabel('Your task')).toHaveValue(
-      '  Inspect the selected source\nKeep this exact task.  ',
-    );
-    await dialog.getByRole('button', { name: 'Recover original task', exact: true }).click();
-    await expect(
-      dialog.getByText(
-        target === 'contextual'
-          ? 'Preparing your Agent…'
-          : 'Preparing a cloud computer for your Agent…',
-        { exact: true },
-      ),
-    ).toBeVisible();
-    await expect(page).not.toHaveURL(/\/agents\/agt_contract$/);
-    expect(writes).toHaveLength(2);
-    expect(writes[1]).toEqual(writes[0]);
-    expect(writes[0]?.key).toBeTruthy();
-    expect(writes[0]?.body).toEqual({
-      name: 'New task',
-      initial_message: '  Inspect the selected source\nKeep this exact task.  ',
-      ...(target === 'new'
-        ? { repository: { url: 'https://github.com/org/research', ref: 'proof/fixed' } }
-        : { sandbox_id: 'sbx_route' }),
-    });
-    ready = true;
-    await expect(page).toHaveURL(/\/agents\/agt_contract$/);
-    expect(boundary.writes).toEqual([]);
-    expect(boundary.unexpected).toEqual([]);
-    expect(boundary.errors).toEqual([]);
-  });
-}
-
-test('LOCAL access approval survives reload and OAuth readiness still waits for durable runtime success', async ({
+test('LOCAL choosing the checked model preserves reasoning effort through a settings refresh', async ({
   page,
   baseURL,
-}, info) => {
+}) => {
   const boundary = new LocalStartup();
   await boundary.route(page, baseURL!);
-  let status = 'pending';
-  const access = () => ({
-    id: 'access-browser',
-    agent_id: 'agt_contract',
-    status,
-    services: ['api-github'],
-    reason: 'Clone the repository and prepare a pull request.',
-    ...(status === 'connecting'
-      ? { connection: { target: { type: 'agent_access_request', id: 'access-browser' } } }
-      : {}),
+  await page.route('**/api/v1/agents/agt_contract/models', (route) =>
+    route.fulfill({
+      json: {
+        models: [
+          { id: 'gpt-6', label: 'GPT-6', available: true },
+          { id: 'fast', label: 'Fast model', available: true },
+        ],
+      },
+    }),
+  );
+  const settings = {
+    model: 'gpt-6',
+    reasoning_effort: 'high',
+    permission_mode: 'autonomous',
+  };
+  let reads = 0;
+  let refreshRequested = false;
+  let releaseRefresh!: () => void;
+  const refresh = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
   });
-  await page.route('**/api/agent-manager/v1/agents/agt_contract/access-requests', (route) =>
-    route.fulfill({ json: { items: [access()] } }),
-  );
-  const decisions: { key?: string; body: unknown }[] = [];
-  await page.route(
-    '**/api/agent-manager/v1/agents/agt_contract/access-requests/access-browser/approve',
-    (route) => {
-      decisions.push({
-        key: route.request().headers()['idempotency-key'],
-        body: route.request().postDataJSON(),
-      });
-      if (decisions.length === 1) return route.abort('connectionfailed');
-      status = 'connecting';
-      return route.fulfill({ json: access() });
-    },
-  );
+  await page.route('**/api/agent-manager/v1/agents/agt_contract/settings', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    if (refreshRequested) {
+      reads += 1;
+      await refresh;
+      return route.fulfill({ json: { ...settings, permission_mode: 'guarded' } });
+    }
+    return route.fulfill({ json: settings });
+  });
   await page.goto('/agents/agt_contract');
-  const dialog = page.getByRole('dialog', { name: 'Agent key access' });
-  await expect(dialog).toHaveCount(1);
-  await expect(dialog).toBeVisible();
-  await expect(
-    dialog.getByRole('checkbox', { name: 'chrono-llm-public Required', exact: true }),
-  ).toBeDisabled();
-  await expect(
-    dialog.getByRole('checkbox', { name: 'ornn-api Required', exact: true }),
-  ).toBeChecked();
-  await capture(page, info, 'access-request');
-  await dialog.getByRole('button', { name: 'Approve', exact: true }).click();
-  await expect(dialog.getByRole('button', { name: 'Retry access decision' })).toBeVisible();
-  await page.reload();
-  await dialog.getByRole('button', { name: 'Retry access decision' }).click();
-  await expect(dialog.getByText(/Verifying the updated Agent key/)).toBeVisible();
-  expect(decisions).toHaveLength(2);
-  expect(decisions[1]).toEqual(decisions[0]);
-  expect(decisions[0]?.key).toBeTruthy();
-  expect(decisions[0]?.body).toMatchObject({
-    services: expect.arrayContaining(['chrono-llm-public', 'ornn-api', 'api-github']),
-  });
-  await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'Review access request' }).click();
-  await expect(dialog.getByText(/Verifying the updated Agent key/)).toBeVisible();
-  expect(decisions).toHaveLength(2);
-  status = 'succeeded';
-  await expect(dialog).toHaveCount(0);
+  const composer = page.getByRole('form', { name: 'Message Agent' });
+  await composer.getByRole('button', { name: /^Agent settings:/ }).click();
+  const chip = composer.getByRole('button', { name: /^Model and reasoning effort/ });
+  await expect(chip).toHaveText('GPT-6 High');
+  await chip.click();
+  const card = page.getByRole('dialog', { name: 'Model and reasoning effort' });
+  const model = card.getByRole('button', { name: 'Model', exact: true });
+  const effort = card.getByRole('slider', { name: 'Reasoning effort' });
+  const menu = page.getByRole('menu', { name: 'Model', exact: true });
+  await model.click();
+  const selected = menu.getByRole('menuitemradio', { name: 'GPT-6', exact: true });
+  await expect(selected).toHaveAttribute('aria-checked', 'true');
+  try {
+    refreshRequested = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect.poll(() => reads).toBe(1);
+    await selected.click();
+    await expect(model).toHaveAttribute('aria-expanded', 'false');
+  } finally {
+    releaseRefresh();
+  }
+  const apply = composer.getByRole('button', { name: 'Apply settings' });
+  await expect(composer.getByRole('button', { name: 'Permission mode' })).toHaveText('Guarded');
+  await expect(chip).toHaveText('GPT-6 High');
+  await expect(apply).toHaveCount(0);
+  await model.click();
+  await menu.getByRole('menuitemradio', { name: 'Fast model', exact: true }).click();
+  await expect(chip).toHaveText('Fast model High');
+  await effort.press('ArrowLeft');
+  await expect(chip).toHaveText('Fast model Medium');
+  await expect(apply).toBeEnabled();
   expect(boundary.writes).toEqual([]);
   expect(boundary.unexpected).toEqual([]);
-  expect(boundary.errors).toEqual([]);
 });
 
 test('LOCAL composer settings apply only after a confirmed runtime response and replay an uncertain command', async ({
@@ -484,8 +357,7 @@ test('LOCAL composer and Details use model and skill catalogs in responsive cont
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/agents/agt_contract');
-  await page.getByRole('button', { name: 'More Agent actions' }).click();
-  await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
+  await page.getByRole('button', { name: 'Show Agent details' }).click();
   const details = page.getByRole('complementary', { name: 'Agent details' });
   const composer = page.getByRole('form', { name: 'Message Agent' });
   await expect(details.getByRole('button', { name: 'Model', exact: true })).toHaveCount(0);
@@ -565,6 +437,8 @@ test('LOCAL composer and Details use model and skill catalogs in responsive cont
     .getByRole('button', { name: /Options for/ })
     .click();
   await page.getByRole('menuitem', { name: 'Stop', exact: true }).click();
+  expect(stops).toBe(0);
+  await page.getByRole('button', { name: 'Stop Agent', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Stopping Agent' })).toBeVisible();
   await expect(page.getByText('Accepted', { exact: true })).toBeVisible();
   expect(stops).toBe(1);
@@ -575,3 +449,52 @@ test('LOCAL composer and Details use model and skill catalogs in responsive cont
   expect(boundary.unexpected).toEqual([]);
   expect(boundary.errors).toEqual([]);
 });
+
+for (const colorScheme of ['dark', 'light'] as const) {
+  test(`LOCAL prompt action explains unsupported runtime before opening an editor in ${colorScheme}`, async ({
+    page,
+    baseURL,
+  }, info) => {
+    const boundary = new LocalStartup();
+    await boundary.route(page, baseURL!);
+    await page.emulateMedia({ colorScheme });
+    await page.addInitScript((theme) => localStorage.setItem('cma:appearance', theme), colorScheme);
+    let supported = false;
+    let reads = 0;
+    const writes: string[] = [];
+    await page.route('**/api/v1/agents/agt_contract/preferences', (route) => {
+      if (route.request().method() !== 'GET') {
+        writes.push(route.request().method());
+        return route.abort();
+      }
+      reads += 1;
+      return route.fulfill({
+        json: {
+          revision: 0,
+          system_prompt: 'Synthetic instructions',
+          prompt_pending: false,
+          prompt_supported: supported,
+        },
+      });
+    });
+    await page.goto('/agents/agt_contract');
+    const more = page.getByRole('button', { name: 'More Agent actions', exact: true });
+    await more.click();
+    const prompt = page.getByRole('menuitem', { name: /^Update system prompt/ });
+    await expect(prompt).toContainText('This runtime does not support system prompt updates.');
+    await expect(prompt).toHaveAttribute('aria-disabled', 'true');
+    await prompt.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog', { name: 'Update system prompt' })).toHaveCount(0);
+    expect(reads).toBe(1);
+    expect(writes).toEqual([]);
+    await capture(page, info, `prompt-unsupported-${colorScheme}`, page.getByRole('menu'));
+    await page.keyboard.press('Escape');
+    supported = true;
+    await more.click();
+    await expect(prompt).toHaveAttribute('aria-disabled', 'false');
+    await prompt.click();
+    await expect(page.getByRole('textbox', { name: 'Agent system prompt' })).toBeEditable();
+    expect(writes).toEqual([]);
+  });
+}

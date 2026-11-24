@@ -49,44 +49,47 @@ const EXISTING_EVIDENCE: &[(&str, &str)] = &[
 ];
 
 pub struct MongoRegistrationCapacityStore {
+    initial_settings: super::settings_defaults::InitialSettings,
     client: Client,
     database: Database,
     admissions: Collection<Document>,
     settings: Collection<Document>,
-    activated: AtomicBool,
+    activated: std::sync::Arc<AtomicBool>,
 }
 
 impl MongoRegistrationCapacityStore {
-    /// The first open gate establishes the cohort boundary once. Later gate
-    /// closure retains tracking, so new sign-ins cannot become existing consumers.
+    pub(crate) fn activation_observation(&self) -> std::sync::Arc<AtomicBool> {
+        self.activated.clone()
+    }
+
+    #[cfg(test)]
     pub(crate) async fn open(
         client: &Client,
         database: &str,
         writes_enabled: bool,
+    ) -> Result<Self, StoreError> {
+        Self::open_with_defaults(client, database, writes_enabled, Default::default()).await
+    }
+
+    /// Activation establishes the cohort boundary once and survives gate closure.
+    pub(crate) async fn open_with_defaults(
+        client: &Client,
+        database: &str,
+        writes_enabled: bool,
+        initial_settings: super::settings_defaults::InitialSettings,
     ) -> Result<Self, StoreError> {
         let database = client.database(database);
         require_transaction_topology(&database).await?;
         schema::initialize_collections(&database, &[ADMISSIONS, SETTINGS]).await?;
         let admissions: Collection<Document> = majority_collection(&database, ADMISSIONS);
         if writes_enabled {
-            let now = layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339())
-                .and_then(|now| i64::try_from(now).ok())
-                .ok_or_else(|| unavailable("registration activation clock is unavailable"))?;
-            match admissions
-                .update_one(
-                    capacity_key(),
-                    doc! {"$setOnInsert": {
-                        "document_schema_version":DOCUMENT_SCHEMA_VERSION,
-                        "count":0_i64,"activated_at":now,
-                    }},
-                )
-                .upsert(true)
-                .await
-            {
-                Ok(_) => {}
-                Err(error) if is_duplicate_key(&error) => {}
-                Err(error) => return Err(unavailable(&format!("activate registration: {error}"))),
-            }
+            activation::activate(
+                client,
+                &admissions,
+                &majority_collection(&database, SETTINGS),
+                initial_settings,
+            )
+            .await?;
         }
         let marker = admissions
             .find_one(capacity_key())
@@ -96,11 +99,12 @@ impl MongoRegistrationCapacityStore {
             registration_count(marker)?;
         }
         Ok(Self {
+            initial_settings,
             client: client.clone(),
             settings: majority_collection(&database, SETTINGS),
             database,
             admissions,
-            activated: AtomicBool::new(marker.is_some()),
+            activated: std::sync::Arc::new(AtomicBool::new(marker.is_some())),
         })
     }
 
@@ -168,7 +172,27 @@ impl MongoRegistrationCapacityStore {
         {
             return Ok(true);
         }
-        let limit = self.limit(Some(&mut *session)).await?;
+        let protected =
+            super::settings_barrier::acquire(&self.settings, self.initial_settings, session)
+                .await
+                .map_err(|error| match error {
+                    super::settings_barrier::Error::Driver(error) => AttemptError::Driver(error),
+                    super::settings_barrier::Error::Unreadable => AttemptError::Unreadable,
+                })?;
+        let limit = super::admission_ceilings::from_document(protected.document())
+            .map_err(|_| AttemptError::Unreadable)?
+            .ceilings
+            .registrations;
+        let active = activation::read(&self.admissions, Some(&mut *session))
+            .await
+            .map_err(|error| match error {
+                activation::Error::Driver(error) => AttemptError::Driver(error),
+                activation::Error::Unreadable(_) => AttemptError::Unreadable,
+            })?;
+        if !active {
+            return Ok(limit.is_none());
+        }
+        self.activated.store(true, Ordering::Relaxed);
         // The counter is O(1) and lives in the fence itself. Every successful
         // first registration, including unlimited admission, increments it.
         let mut filter = capacity_key();
@@ -209,19 +233,6 @@ impl MongoRegistrationCapacityStore {
 
 #[async_trait::async_trait]
 impl RegistrationCapacity for MongoRegistrationCapacityStore {
-    async fn tracking_active(&self) -> Result<bool, StoreError> {
-        if self.activated.load(Ordering::Relaxed) {
-            return Ok(true);
-        }
-        let active = activation::read(&self.admissions, None)
-            .await
-            .map_err(activation::Error::into_store_error)?;
-        if active {
-            self.activated.store(true, Ordering::Relaxed);
-        }
-        Ok(active)
-    }
-
     async fn existing_subject(&self, subject: &SubjectId) -> Result<bool, StoreError> {
         self.known_subject(subject, None)
             .await
@@ -229,17 +240,6 @@ impl RegistrationCapacity for MongoRegistrationCapacityStore {
     }
 
     async fn admit(&self, subject: &SubjectId) -> Result<bool, StoreError> {
-        if !self.tracking_active().await? {
-            // No cohort rows are written before activation. A retained ceiling
-            // without its activation fence cannot safely admit new registrations.
-            return match self.limit(None).await {
-                Ok(None) => Ok(true),
-                Ok(Some(_)) | Err(AttemptError::Unreadable) => Ok(false),
-                Err(AttemptError::Driver(error)) => {
-                    Err(unavailable(&format!("read registration ceiling: {error}")))
-                }
-            };
-        }
         for attempt in 0..ATTEMPTS {
             super::contention::backoff(attempt).await;
             let mut session =
@@ -324,7 +324,6 @@ impl RegistrationCapacity for MongoRegistrationCapacityStore {
     ) -> Result<bool, StoreError> {
         match limit {
             Err(()) => Ok(false),
-            Ok(None) if !self.tracking_active().await? => Ok(true),
             _ => self.admit(subject).await,
         }
     }
@@ -364,14 +363,16 @@ fn read_count(document: &Document) -> Result<u64, StoreError> {
 pub(crate) async fn is_public(
     admissions: &Collection<Document>,
     owner: &SubjectId,
-    session: &mut ClientSession,
+    session: Option<&mut ClientSession>,
 ) -> Result<bool, mongodb::error::Error> {
-    admissions
+    let query = admissions
         .find_one(registration_key(owner))
-        .projection(doc! {"_id":1})
-        .session(session)
-        .await
-        .map(|row| row.is_some())
+        .projection(doc! {"_id":1});
+    let receipt = match session {
+        Some(session) => query.session(session).await?,
+        None => query.await?,
+    };
+    Ok(receipt.is_some())
 }
 
 fn unavailable(message: &str) -> StoreError {

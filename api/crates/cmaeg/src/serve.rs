@@ -12,9 +12,9 @@ use crate::{
 /// Compose CMAEG from `config` and run it until a process termination signal arrives.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn serve(
-    config: Config,
+    mut config: Config,
     complete_replies: bool,
-    commonmark_relay: bool,
+    commonmark_relay: crate::config::CommonmarkRelay,
     native_media: bool,
     relay_text_edits: bool,
     native_discord_edits: bool,
@@ -36,6 +36,7 @@ pub(crate) async fn serve(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let replicas = crate::replicas::config::Config::from_env()?;
     config.console.validate_replica_mode(replicas.enabled)?;
+    let http_listener = listener::Http::prepare(&mut config).await?;
     let discord_media_edits = config.native_discord_media_card_edits_enabled && discord_card_edits;
     let discord_media_replacements =
         config.native_discord_media_card_replacements_enabled && discord_media_edits;
@@ -65,10 +66,10 @@ pub(crate) async fn serve(
         config.channel_cache.clone(),
         observers.index.clone(),
     );
-    observers.activity = Arc::new(crate::activity::ObservedActivity::new(
-        state.activity.clone(),
-        observers.activity.clone(),
-    ));
+    if config.turns.provider_execution_attribution_enabled {
+        state.activity = Arc::new((*state.activity).clone().with_execution_attribution(true));
+    }
+    activity::configure(&mut state, &mut observers).await?;
     let telegram = Arc::new(telegram::TelegramClient::production(
         config.delivery.reply_timeout,
     )?);
@@ -98,16 +99,9 @@ pub(crate) async fn serve(
         config.listen.port(),
         &config.management.public_url,
     );
-    let replica_runtime = if replicas.enabled {
-        Some(
-            crate::replicas::runtime::Runtime::start(&config, &state, drain_control.clone())
-                .await?,
-        )
-    } else {
-        crate::replicas::runtime::Runtime::verify_legacy(&state, &config.management.public_url)
-            .await?;
-        None
-    };
+    let replica_runtime = http_listener
+        .start_replicas(replicas.enabled, &config, &state, &drain_control)
+        .await?;
     let (scheduler, outcomes) = delivery::router::ShardedScheduler::channel(256);
     let delivery: std::sync::Arc<dyn delivery::router::DeliverySink> = Arc::new(scheduler);
     let registry = delivery::sync::SyncRegistry::default();
@@ -185,7 +179,7 @@ pub(crate) async fn serve(
         .with_discord_voice_decoder(media.as_ref().and_then(|service| service.voice_decoder()))
         .with_native_whatsapp_config(&config)
         .with_complete_replies(complete_replies)
-        .with_commonmark_relay(commonmark_relay)
+        .with_commonmark_platforms(commonmark_relay)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
         .with_discord_reactions(config.native_discord_reactions_enabled)
@@ -289,7 +283,7 @@ pub(crate) async fn serve(
             .transpose()?
             .map(Arc::new),
         complete_replies_enabled: complete_replies,
-        commonmark_relay_enabled: commonmark_relay,
+        commonmark_relay,
         routed_replies: routed
             .as_ref()
             .map(|composition| composition.tool_replies.clone()),
@@ -384,12 +378,12 @@ pub(crate) async fn serve(
         runner
     };
     let _connection_worker = connections.start_completion_worker(completion_launcher);
-    let listener = tokio::net::TcpListener::bind(config.listen).await?;
+    let (listener, ephemeral) = http_listener.bind(config.listen).await?;
     let github_initialization = config
         .github_enabled
         .then(|| crate::github::Initialization::start(state.clone(), ingress.clone()));
     let ingress = ingress.with_receipt_observer(Arc::new(connections.clone()));
-    let _metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
+    let metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
     let replica_routes = routed
         .as_ref()
         .map(|composition| composition.replica_routes.clone())
@@ -420,6 +414,7 @@ pub(crate) async fn serve(
             .map(|runtime| runtime.partitions.membership()),
     )
     .map_err(|_| std::io::Error::other("native Discord runtime configuration is invalid"))?;
+    listener::announce(&listener, metrics.address(), ephemeral)?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
 
     let (shutdown_started, shutdown_signal) = oneshot::channel();
@@ -489,8 +484,13 @@ pub(crate) async fn serve(
     Ok(())
 }
 
+#[path = "serve_listener.rs"]
+mod listener;
 #[path = "serve_shutdown.rs"]
 mod shutdown;
+
+#[path = "serve_activity.rs"]
+mod activity;
 
 #[path = "serve_record_client.rs"]
 mod record_client_impl;

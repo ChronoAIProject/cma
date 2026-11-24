@@ -125,6 +125,39 @@ impl HostedAccessToolBinding {
         ));
         serde_json::to_value(server).expect("typed MCP HTTP descriptor serializes")
     }
+
+    pub(super) fn acp_server_plan(&self) -> crate::Result<crate::ingress_budget::AllocationPlan> {
+        super::acp::ingress::identity::http_descriptor_plan(
+            self.endpoint.len(),
+            Some(self.credential.expose().len()),
+        )
+    }
+
+    pub(super) fn clone_admitted(
+        &self,
+        policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> Result<crate::ingress_budget::SharedOwned<Self>, crate::ingress_budget::AdmissionRefusal>
+    {
+        use crate::ingress_budget::{sizing, AllocationPlan, IngressClass};
+        // Derived Clone copies each String at its length. All other fields are
+        // inline; the shared payload and custody headers have separate space.
+        let plan = AllocationPlan::checked(
+            "installed access binding snapshot",
+            &[
+                self.endpoint.len(),
+                self.credential.expose().len(),
+                self.runtime.0.len(),
+                self.agent.0.len(),
+                self.request_sha256.len(),
+                self.retained_conversation.as_ref().map_or(0, String::len),
+                self.prepared_conversation.as_ref().map_or(0, String::len),
+                sizing::shared_owner_bytes::<Self>(),
+            ],
+        )?;
+        Ok(policy
+            .admit(IngressClass::Data, plan)?
+            .initialize(|| self.clone()))
+    }
 }
 
 /// Resolve an access-request capability from current Agent/runtime authority.
@@ -145,6 +178,41 @@ pub trait HostedAccessToolSource: Send + Sync {
         binding: &HostedAccessToolBinding,
         conversation: &str,
     ) -> crate::Result<()>;
+
+    /// The source admits its future, working copies and returned binding before
+    /// allocation. Unsupported producers refuse before invoking legacy work.
+    fn prepare_transport_admitted<'a>(
+        &'a self,
+        _binding: &'a HostedAccessToolBinding,
+        _origin: &'a str,
+        _conversation: &'a str,
+        _operation_sequence: u64,
+        _policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> Result<
+        crate::ingress_budget::AdmittedOperation<'a, HostedAccessToolBinding>,
+        crate::ingress_budget::AdmittedError,
+    > {
+        Err(crate::ingress_budget::AdmittedError::Unsupported(
+            "retained tool transport source has no admitted preparation",
+        ))
+    }
+
+    /// Confirmation preserves the existing authority and durable intent checks;
+    /// its result or failure must retain all source allocation custody.
+    fn confirm_transport_admitted<'a>(
+        &'a self,
+        _binding: &'a HostedAccessToolBinding,
+        _conversation: &'a str,
+        _operation_sequence: u64,
+        _policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> Result<
+        crate::ingress_budget::AdmittedOperation<'a, ()>,
+        crate::ingress_budget::AdmittedError,
+    > {
+        Err(crate::ingress_budget::AdmittedError::Unsupported(
+            "retained tool transport source has no admitted confirmation",
+        ))
+    }
 
     /// Resolve only a durable, fenced idle maintenance intent. A requested URL
     /// alone never grants authority to replace a retained tool connection.

@@ -11,6 +11,8 @@ mod receiver_fairness;
 struct DelayedStore {
     inner: Arc<MemoryOwnershipStore>,
     delay: Duration,
+    heartbeat_delay_ms: AtomicUsize,
+    unavailable_heartbeats: AtomicUsize,
     calls: Mutex<BTreeMap<String, Vec<Instant>>>,
 }
 
@@ -19,6 +21,8 @@ impl DelayedStore {
         Arc::new(Self {
             inner: Arc::new(MemoryOwnershipStore::default()),
             delay,
+            heartbeat_delay_ms: AtomicUsize::new(20),
+            unavailable_heartbeats: AtomicUsize::new(0),
             calls: Mutex::default(),
         })
     }
@@ -39,8 +43,21 @@ impl OwnershipStore for DelayedStore {
         self.inner.register(member).await
     }
     async fn heartbeat(&self, id: &str, draining: bool) -> Result<Membership, OwnershipError> {
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(
+            self.heartbeat_delay_ms.load(Ordering::Relaxed) as u64,
+        ))
+        .await;
         self.record("membership");
+        // Fail before the member row changes, as a refused store call would.
+        if self
+            .unavailable_heartbeats
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(OwnershipError::Unavailable("heartbeat refused".into()));
+        }
         self.inner.heartbeat(id, draining).await
     }
     async fn membership(&self) -> Result<Membership, OwnershipError> {
@@ -60,7 +77,12 @@ impl OwnershipStore for DelayedStore {
         self.inner.acquire(id, instance).await
     }
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError> {
-        tokio::time::sleep(self.delay).await;
+        let delay = if token.agent_id.as_str() == "healthy" {
+            Duration::from_millis(20)
+        } else {
+            self.delay
+        };
+        tokio::time::sleep(delay).await;
         self.record(token.agent_id.as_str());
         self.inner.renew(token).await
     }
@@ -143,7 +165,7 @@ async fn stalled_housekeeping_does_not_delay_member_or_owner_renewals_at_capacit
 }
 
 #[tokio::test(start_paused = true)]
-async fn stalled_owner_store_fails_closed_without_waiting_for_housekeeping() {
+async fn stalled_owner_store_cancels_only_its_agent_without_waiting_for_housekeeping() {
     let store = DelayedStore::new(Duration::from_secs(10));
     let coordinator = coordinator(store.clone()).await;
     let owner = coordinator
@@ -152,13 +174,28 @@ async fn stalled_owner_store_fails_closed_without_waiting_for_housekeeping() {
         .unwrap()
         .unwrap();
     let started = Instant::now();
-    let result = run(coordinator.clone(), |_| std::future::pending()).await;
-    let failure = result.unwrap_err();
-    assert_eq!(failure.phase, "ownership_maintenance");
-    assert!(matches!(failure.error, OwnershipError::Unavailable(_)));
+    let healthy = coordinator
+        .acquire(&AgentId("healthy".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let running = tokio::spawn(run(coordinator.clone(), |_| std::future::pending()));
+    tokio::time::timeout(Duration::from_secs(6), owner.revoked())
+        .await
+        .unwrap();
     assert!(started.elapsed() < Duration::from_secs(6));
-    assert!(!coordinator.is_ready());
+    assert!(
+        healthy.is_current(),
+        "isolated renewal cancelled the supervised healthy peer"
+    );
+    assert!(coordinator.is_ready());
+    assert!(!*coordinator.failure_signal().borrow());
     assert!(!owner.is_current());
+    assert!(owner.receiver_cancelled());
+    assert!(owner
+        .run(async { panic!("cancelled owner executed") })
+        .await
+        .is_err());
     assert_eq!(
         store
             .inner
@@ -169,6 +206,16 @@ async fn stalled_owner_store_fails_closed_without_waiting_for_housekeeping() {
             .token,
         owner.token
     );
+    tokio::time::sleep(Duration::from_secs(20)).await;
+    healthy
+        .run(store.check(&healthy.token))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!owner.is_current());
+    assert!(!running.is_finished());
+    coordinator.stop_admission();
+    running.await.unwrap().unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -200,22 +247,66 @@ async fn receiver_failure_retains_its_phase_and_original_error() {
     assert!(logs.contains("phase=\"receiver_housekeeping\""), "{logs}");
     assert!(logs.contains("error_kind=\"unavailable\""), "{logs}");
     assert!(
-        logs.contains("receiver revocation was not acknowledged"),
+        !logs.contains("receiver revocation was not acknowledged"),
         "{logs}"
     );
     assert!(logs.contains("during_drain=false"), "{logs}");
 }
 
 #[tokio::test(start_paused = true)]
+async fn transient_member_heartbeat_outage_keeps_owners_until_membership_ends() {
+    // Ticks at 3, 6, 9 and 12 s precede the 15 s established membership.
+    // Three skips are survived when the 12 s heartbeat succeeds; after a
+    // fourth, the next tick falls at the lease end and always fails.
+    for unavailable in [3, 4] {
+        let store = DelayedStore::new(Duration::from_millis(25));
+        store
+            .unavailable_heartbeats
+            .store(unavailable, Ordering::SeqCst);
+        let coordinator = coordinator(store.clone()).await;
+        let owner = coordinator
+            .acquire(&AgentId("agent".into()))
+            .await
+            .unwrap()
+            .unwrap();
+        let started = Instant::now();
+        let running = tokio::spawn(run(coordinator.clone(), |_| std::future::pending()));
+        if unavailable == 3 {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            assert!(coordinator.is_ready());
+            assert!(!*coordinator.failure_signal().borrow());
+            assert!(owner.is_current());
+            owner.run(store.check(&owner.token)).await.unwrap().unwrap();
+            assert!(!running.is_finished());
+            coordinator.stop_admission();
+            running.await.unwrap().unwrap();
+        } else {
+            let failure = running.await.unwrap().unwrap_err();
+            assert_eq!(started.elapsed(), Duration::from_secs(15));
+            assert_eq!(failure.phase, "ownership_maintenance");
+            assert_eq!(failure.error, OwnershipError::Stale);
+            assert!(*coordinator.failure_signal().borrow());
+            assert!(!coordinator.is_ready());
+            assert!(!owner.is_current());
+        }
+        assert_eq!(store.unavailable_heartbeats.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn renewal_error_is_reported_after_its_failure_signal_started_drain() {
-    let store = DelayedStore::new(Duration::from_secs(10));
+    let store = DelayedStore::new(Duration::from_millis(25));
+    store.heartbeat_delay_ms.store(10_000, Ordering::Relaxed);
     let coordinator = coordinator(store).await;
     let owner = coordinator
         .acquire(&AgentId("agent".into()))
         .await
         .unwrap()
         .unwrap();
+    // Each stalled heartbeat skips its tick; membership then ends on schedule.
+    let started = Instant::now();
     let result = run(coordinator.clone(), |_| std::future::pending()).await;
+    assert_eq!(started.elapsed(), Duration::from_secs(15));
     assert!(*coordinator.failure_signal().borrow());
     assert!(!owner.is_current());
     // Reproduce startup's failure observer stopping admission before spawn
@@ -224,9 +315,9 @@ async fn renewal_error_is_reported_after_its_failure_signal_started_drain() {
     let logs = finish_with_logs(&coordinator, result).await;
     assert_eq!(logs.lines().count(), 1, "{logs}");
     assert!(logs.contains("phase=\"ownership_maintenance\""), "{logs}");
-    assert!(logs.contains("error_kind=\"unavailable\""), "{logs}");
+    assert!(logs.contains("error_kind=\"stale\""), "{logs}");
     assert!(
-        logs.contains("ownership operation exceeded its deadline"),
+        !logs.contains("ownership operation exceeded its deadline"),
         "{logs}"
     );
     assert!(logs.contains("during_drain=true"), "{logs}");

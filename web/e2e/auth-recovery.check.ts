@@ -2,8 +2,70 @@ import { test, expect } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import { ReplicaFixture } from './replica-recovery.fixture';
 import { binding } from './agent-v2.fixture';
+import { LocalStartup } from './agent-startup-fixtures';
 
 const enabled = process.env.CMA_RECOVERY_ENABLED === 'true';
+for (const resource of ['sandbox', 'workspace'] as const) {
+  test(`LOCAL protected ${resource} access recheck recovers without writes with recovery flag ${enabled}`, async ({
+    page,
+    baseURL,
+  }) => {
+    const fixture = new LocalStartup();
+    fixture.sandbox = { ...fixture.sandbox, status: 'credential_rotating' };
+    fixture.workspace = { ...fixture.workspace, status: 'ready' };
+    const routePath = resource === 'sandbox' ? '/sandboxes/sbx_route' : '/workspaces/wks_route';
+    let unavailable = false;
+    let refusals = 0;
+    await fixture.route(page, baseURL!);
+    await page.route('**/api/v1/resource-access/workspace/wks_route', (route) =>
+      route.fulfill({
+        json: {
+          capabilities: ['view_details'],
+          owner: { kind: 'person', is_current_person: true },
+          revalidate_at: null,
+          policy_revision: 1,
+        },
+      }),
+    );
+    await page.route(`**/api/v1${routePath}`, async (route) => {
+      if (!unavailable) return route.fallback();
+      refusals++;
+      return route.fulfill({
+        status: 503,
+        headers: { 'retry-after': '3', 'cache-control': 'no-store' },
+        contentType: 'application/problem+json',
+        body: JSON.stringify({
+          type: 'https://spec.chrono-ai.fun/cma/1.0/problems/identity-unavailable',
+          title: 'Identity service temporarily unavailable',
+          status: 503,
+          detail: 'The identity service is temporarily unavailable. Please retry shortly.',
+          code: 'identity_unavailable',
+          retryable: true,
+        }),
+      });
+    });
+    await page.goto(routePath);
+    await expect(page.locator('main h1')).toHaveText(fixture[resource].name);
+    unavailable = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect.poll(() => refusals, { timeout: 10_000 }).toBeGreaterThan(0);
+    expect(fixture.writes).toEqual([]);
+    const recoveredName = `Freshly verified ${resource}`;
+    if (resource === 'sandbox') fixture.sandbox = { ...fixture.sandbox, name: recoveredName };
+    else fixture.workspace = { ...fixture.workspace, name: recoveredName };
+    unavailable = false;
+    await page
+      .getByRole('button', {
+        name: `Check ${resource === 'sandbox' ? 'Sandbox' : 'Workspace'} access`,
+      })
+      .click();
+    await expect(page.locator('main h1')).toHaveText(recoveredName, { timeout: 10_000 });
+    expect(fixture.writes).toEqual([]);
+    expect(fixture.errors).toEqual([]);
+    expect(fixture.unexpected).toEqual([]);
+  });
+}
+
 for (const action of ['send', 'cancel'] as const) {
   for (const phase of ['before-submit', 'confirmation'] as const) {
     test(`LOCAL typed auth outage ${action} ${phase} automatic ${enabled}`, async ({
@@ -11,6 +73,8 @@ for (const action of ['send', 'cancel'] as const) {
       baseURL,
     }, info) => {
       const fixture = new ReplicaFixture();
+      if (!enabled && action === 'send' && phase === 'confirmation')
+        fixture.revealInputReceipt = false;
       if (action === 'cancel') fixture.append({ type: 'turn_started', turn_sequence: 1 }, binding);
       let failedAt = 0;
       let faultPosts = -1;
@@ -66,9 +130,12 @@ for (const action of ['send', 'cancel'] as const) {
           ).toBeVisible();
           expect(fixture.writes.length).toBe(faultPosts);
           faultActive = false;
-          if (phase === 'confirmation')
-            await page.getByRole('button', { name: 'Recover pending request' }).click();
-          else {
+          if (phase === 'confirmation') {
+            const recover = page.getByRole('button', { name: 'Recover pending request' });
+            await expect(recover).toBeEnabled();
+            fixture.revealInputReceipt = true;
+            await recover.click();
+          } else {
             if (action === 'send')
               await expect(page.locator('.message--user')).toContainText('Not sent');
             await submit();
@@ -89,7 +156,15 @@ for (const action of ['send', 'cancel'] as const) {
         const recoveredAt = performance.now();
         if (enabled) expect(recoveredAt - failedAt).toBeGreaterThanOrEqual(1000);
         expect(recoveredAt - failedAt).toBeLessThan(10_000);
-        expect(fixture.writes).toHaveLength(!enabled && phase === 'confirmation' ? 2 : 1);
+        expect(fixture.writes).toHaveLength(
+          !enabled && phase === 'confirmation' && action === 'cancel' ? 2 : 1,
+        );
+        if (!enabled && action === 'send' && phase === 'confirmation') {
+          expect(fixture.receiptReads.at(-1)).toMatchObject({
+            key: fixture.writes[0]!.key,
+            body: fixture.writes[0]!.body,
+          });
+        }
         expect(fixture.effects.size).toBe(1);
         if (action === 'cancel') {
           fixture.append({ type: 'turn_cancelled', turn_sequence: 1 });

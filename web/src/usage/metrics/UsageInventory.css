@@ -48,11 +48,6 @@
   margin-block: 4px 8px;
   overflow-wrap: anywhere;
 }
-.usage-inventory-partial {
-  display: inline-block;
-  color: var(--dsw-alias-state-warn-label);
-  font: var(--dsw-font-xs-13);
-}
 .usage-inventory-measured {
   margin-top: 12px;
   padding-top: 12px;

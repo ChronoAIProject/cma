@@ -6,6 +6,8 @@ use layer2_core::sandbox::{AgentLogKind, AgentMessageAssembly, AgentStatus, Agen
 use super::*;
 use crate::store::sandbox_maintenance::mongo_integration_tests::{database, fixture};
 
+#[path = "checkpoint_abort_tests.rs"]
+mod aborted;
 #[path = "checkpoint_anchor_tests.rs"]
 mod anchor;
 #[path = "checkpoint_coalesce_tests.rs"]
@@ -396,3 +398,6 @@ async fn checkpoint_bounds_corruption_and_history_seal_fail_closed() {
     assert_eq!(store.get_agent(&current.id).await.unwrap(), Some(current));
     client.database(&name).drop().await.unwrap();
 }
+
+#[path = "typed_fence_tests.rs"]
+mod typed_fence;

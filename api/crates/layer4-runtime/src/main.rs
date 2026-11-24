@@ -23,6 +23,7 @@ mod git;
 mod github_proxy;
 mod history;
 mod home_initializer;
+mod home_restore_inspection;
 mod install;
 mod install_state;
 mod install_state_validation;
@@ -93,7 +94,23 @@ async fn main() {
 }
 
 async fn run() -> Result<(), String> {
-    let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    run_arguments(std::env::args_os().skip(1).collect()).await
+}
+
+#[cfg(test)]
+thread_local! { static TRAP_SERVING_STARTUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+async fn run_arguments(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
+    if arguments
+        .first()
+        .is_some_and(|arg| arg == "--inspect-restored-home")
+    {
+        return home_restore_inspection::run(&arguments[1..]);
+    }
+    #[cfg(target_os = "linux")]
+    if arguments.len() == 1 && arguments[0] == desktop_process::guardian::COMMAND {
+        return desktop_process::guardian::run().await;
+    }
     if arguments
         .first()
         .is_some_and(|arg| arg == "--cutover-ledger-v1")
@@ -193,6 +210,27 @@ async fn run() -> Result<(), String> {
             return Err("unknown runtime command".into());
         }
     }
+    #[cfg(test)]
+    if TRAP_SERVING_STARTUP.get() {
+        return Err("serving_startup_trapped".into());
+    }
+    // Native pools invoke this binary directly. Initialize image-specific
+    // identity or trust before advertising readiness, never while seeding a reusable home.
+    let initializer = std::path::Path::new("/usr/local/libexec/cma/initialize-sandbox");
+    if initializer
+        .try_exists()
+        .map_err(|_| "inspect runtime image initializer")?
+    {
+        let status = tokio::process::Command::new(initializer)
+            .env_clear()
+            .status()
+            .await
+            .map_err(|_| "start runtime image initializer")?;
+        if !status.success() {
+            return Err("runtime image initialization failed".into());
+        }
+        tracing::info!("runtime image initialization completed");
+    }
     if qualification {
         publication_qualification::arm();
     }
@@ -217,7 +255,7 @@ async fn run() -> Result<(), String> {
         .await
         .map_err(|error| format!("bind runtime supervisor at {bind}: {error}"))?;
     tracing::info!(%bind, "runtime supervisor listening");
-    let mut router = link::router(supervisor);
+    let mut router = link::router(supervisor.clone());
     if let Some(auth) = control_auth {
         router = router.layer(axum::middleware::from_fn_with_state(
             auth,
@@ -233,7 +271,10 @@ async fn run() -> Result<(), String> {
         }
     });
     axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            supervisor.shutdown_desktop().await;
+        })
         .await
         .map_err(|error| format!("serve runtime supervisor: {error}"))
 }

@@ -1,4 +1,4 @@
-use super::{profile, wire::*};
+use super::{profile, wire::*, EffectAdmission};
 use crate::{auth::provider_http::read_json, config::GatewayConfig};
 use layer2_core::bots::*;
 use reqwest::{Client, Method, Response, Url};
@@ -120,6 +120,7 @@ impl GatewayClient {
             reply: reply(&bot.request.reply),
         })
     }
+    #[cfg(test)]
     pub async fn create(
         &self,
         token: &str,
@@ -127,12 +128,26 @@ impl GatewayClient {
         secrets: &BotSecrets,
         username: Option<String>,
     ) -> Result<BotChannelObservation, BotError> {
+        self.create_with_admission(token, bot, secrets, username, None)
+            .await
+    }
+    pub(super) async fn create_with_admission(
+        &self,
+        token: &str,
+        bot: &Bot,
+        secrets: &BotSecrets,
+        username: Option<String>,
+        admission: Option<&EffectAdmission>,
+    ) -> Result<BotChannelObservation, BotError> {
         let key = route_key(bot, &bot.resources.credentials)?;
         let body = Create {
             policy: self.policy(bot, key, vec![], username, true)?,
             record_id: &bot.record_id,
             credentials: credentials(secrets),
         };
+        if let Some(admission) = admission {
+            admission.check(bot)?;
+        }
         let response = self
             .request(
                 token,
@@ -189,6 +204,7 @@ impl GatewayClient {
             .map(|c| self.observation(bot, c))
             .transpose()
     }
+    #[cfg(test)]
     pub async fn configure(
         &self,
         token: &str,
@@ -197,6 +213,20 @@ impl GatewayClient {
         keys: &BotCredentialSet,
         secrets: Option<&BotSecrets>,
         enabled: bool,
+    ) -> Result<BotChannelObservation, BotError> {
+        self.configure_with_admission(token, bot, current, keys, secrets, enabled, None)
+            .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn configure_with_admission(
+        &self,
+        token: &str,
+        bot: &Bot,
+        current: &BotChannelObservation,
+        keys: &BotCredentialSet,
+        secrets: Option<&BotSecrets>,
+        enabled: bool,
+        admission: Option<&EffectAdmission>,
     ) -> Result<BotChannelObservation, BotError> {
         let channel = self.read(token, bot).await?.ok_or(BotError::Unavailable)?;
         let username = channel
@@ -220,6 +250,9 @@ impl GatewayClient {
             expected_version: current.channel.version,
             credentials: secrets.map(credentials),
         };
+        if let Some(admission) = admission {
+            admission.check(bot)?;
+        }
         let response = self
             .request(
                 token,
@@ -260,9 +293,22 @@ impl GatewayClient {
         bot: Option<&Bot>,
         current: &BotChannelObservation,
     ) -> Result<(), BotError> {
+        self.delete_with_bot_admitted(token, bot, current, None)
+            .await
+    }
+    pub(super) async fn delete_with_bot_admitted(
+        &self,
+        token: &str,
+        bot: Option<&Bot>,
+        current: &BotChannelObservation,
+        admission: Option<&EffectAdmission>,
+    ) -> Result<(), BotError> {
         let mut url = self.url("channels", Some(&current.channel.channel_id))?;
         url.query_pairs_mut()
             .append_pair("expected_version", &current.channel.version.to_string());
+        if let (Some(bot), Some(admission)) = (bot, admission) {
+            admission.check(bot)?;
+        }
         let response = if let Some(bot) = bot {
             self.request::<()>(token, bot, Method::DELETE, url, None)
                 .await?

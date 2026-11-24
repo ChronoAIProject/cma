@@ -7,9 +7,32 @@ export class LocalQueuedCancellation {
   loseReceipt = false;
   conflict = false;
   revision = 7;
+  private input?: string;
   private retained?: { key: string; body: string; result: unknown };
 
   constructor(private readonly started: string) {}
+
+  admit(input: unknown) {
+    if (this.enabled && typeof input === 'string') this.input = input;
+  }
+
+  items() {
+    if (!this.enabled || this.input === undefined || this.retained) return [];
+    return [
+      {
+        response: {
+          ...commandStatus(this.started),
+          status: 'queued',
+          turn_sequence: null,
+          observed_cursor: null,
+          delivery: null,
+        },
+        command_revision: this.revision,
+        text: this.input,
+        editable: true,
+      },
+    ];
+  }
 
   handle(
     method: string,

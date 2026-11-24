@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "provider_failure_http.rs"]
+mod provider_failure;
+
 struct BindingStore {
     inner: Arc<InMemorySandboxStore>,
     bind_after_response_reads: usize,

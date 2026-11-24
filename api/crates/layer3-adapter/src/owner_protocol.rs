@@ -14,7 +14,32 @@ pub use evidence::{FirstOwnershipFailure, OwnershipEvidence, OwnershipReceiver};
 #[async_trait::async_trait]
 pub trait ReceiverRevocation: Send + Sync {
     fn identity(&self) -> String;
+    fn sandbox_id(&self) -> Option<&str> {
+        None
+    }
     async fn revoke(&self) -> crate::Result<()>;
+    /// Compatibility can satisfy one cleanup obligation only when the owner
+    /// has closed confirmation admission and this receiver could not install it.
+    async fn settle(
+        &self,
+        _custody: ReceiverConfirmationCustody,
+    ) -> crate::Result<ReceiverCleanup> {
+        self.revoke().await?;
+        Ok(ReceiverCleanup::Acknowledged)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiverConfirmationCustody {
+    NeverSent,
+    ReceiverObserved,
+    PossiblyDelivered,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiverCleanup {
+    Acknowledged,
+    NoReceiver,
 }
 
 #[async_trait::async_trait]
@@ -25,6 +50,13 @@ pub trait TransportAuthority: Send + Sync {
     fn owner(&self) -> TransportOwner;
     fn is_current(&self) -> bool;
     fn register_receiver(&self, receiver: Arc<dyn ReceiverRevocation>) -> crate::Result<()>;
+    /// A successful challenge response contradicts a receiver-less image proof.
+    fn receiver_observed(&self, _identity: &str) {}
+    /// Record custody before dispatch, even if confirmation is then cancelled
+    /// or its reply is lost. A retired authority must refuse this transition.
+    fn begin_receiver_confirmation(&self, identity: &str) -> crate::Result<()>;
+    /// Advisory observation only, after an exact-owner confirmation succeeds.
+    fn receiver_confirmed(&self, _identity: &str) {}
     async fn check(&self) -> crate::Result<()>;
     async fn check_for_phase(&self, _phase: OwnershipPhase) -> crate::Result<()> {
         self.check().await

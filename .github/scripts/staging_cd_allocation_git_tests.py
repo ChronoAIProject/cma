@@ -1,26 +1,48 @@
-"""Real insert-only Git pushes settle once and preserve every burned prefix."""
+"""Real insert-only Git pushes settle once and preserve every burned version."""
 import json
 import subprocess
 import unittest
+from unittest.mock import Mock
 
 import staging_cd_git_tests as fixtures
 from staging_cd_allocate import allocate_queue
 from staging_cd_allocation_io import AllocationIO
-from staging_cd_allocation_snapshot import AllocationSnapshot, SnapshotAPI
+from staging_cd_allocation_snapshot import AllocationConflict, AllocationSnapshot, SnapshotAPI
 from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
 from staging_cd_reservations import next_reservation, pending_name
+from staging_cd_resolve import ObsoleteSource, verify
+from staging_cd_versions import DEPLOYABLES
+
+LANES = sorted(DEPLOYABLES)
 
 
 class AllocationGitTests(unittest.TestCase):
     def setUp(self):
+        self.calls, self.ambiguous = [], False
+        self.fresh()
+
+    def fresh(self):
         self.fixture = fixtures.GitPublicationTests()
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
-        self.calls, self.ambiguous = [], False
         self.fixture.api.request = self.request
         self.store = AllocationSnapshot(self.fixture.api, "fixture", self.fixture.work,
                                         AllocationIO(self.runner))
+        return self.fixture
+
+    def successor(self, component):
+        """Reserve a predecessor, then plan its successor for a newer develop merge."""
+        f = self.fresh()
+        first = next_reservation(component, f.source, f.tree, 42, "patch", 1, 1, [], [])
+        f.publisher.insert(first)
+        newer = f.git("commit-tree", f.tree, "-p", f.source, data="Second merge\n")
+        f.git("push", str(f.remote), newer + ":refs/heads/develop")
+        self.store.load()
+        later = next_reservation(component, newer, f.tree, 43, "patch", 2, 1, [], [first])
+        self.store.insert(later)
+        f.publisher.sleep = lambda _seconds: None
+        return f, first, later
 
     def request(self, path, **_kwargs):
         if path.startswith("git/ref/tags/"):
@@ -57,11 +79,82 @@ class AllocationGitTests(unittest.TestCase):
         self.store.commit()
         self.assertEqual(self.fixture.publisher.list(), values)
         pushes = [args for args in self.calls if args[1] == "push"]
-        self.assertEqual(len(pushes), 2)
+        self.assertEqual(len(pushes), 1)
+        self.assertIn("--atomic", pushes[0])
         for push in pushes:
-            self.assertEqual(len([arg for arg in push if ":refs/tags/" in arg]), 1)
+            # Two reservations and their claims; a started predecessor keeps its outcome.
+            self.assertEqual(len([arg for arg in push if ":refs/tags/" in arg]), 4)
+            self.assertFalse(any("cma-allocation-outcome/" in arg for arg in push))
             self.assertNotIn("--force", push)
         self.assertEqual(self.store.list(), values)
+
+    def test_different_bumps_cannot_claim_the_same_predecessor(self):
+        patch = self.plan_two()[0]
+        other = AllocationSnapshot(self.fixture.api, "fixture", self.fixture.work, AllocationIO(self.runner))
+        other.load()
+        other.insert(dict(patch, run_id=11, bump="minor", version="0.11.0"))
+        self.store.commit()
+        with self.assertRaises(AllocationConflict):
+            other.commit()
+        self.assertEqual(self.fixture.publisher.list(), self.store.planned)
+        self.assertEqual(other.list(), [])
+
+    def test_overlapping_finalizers_need_a_lane_lock_failure_and_a_late_older_final_never_deploys(self):
+        for component in LANES:
+            with self.subTest(component=component):
+                f, first, next_version = self.successor(component)
+                old_receipt = f.receipt(first)
+                new_receipt = f.receipt(next_version)
+                runner = f.publisher.runner
+                def finish_out_of_order(args, **kwargs):
+                    # Only finalizers overlapping despite the lane lock can interleave like this.
+                    if args[1] == "push" and args[-1].endswith(":refs/tags/" + old_receipt["tag"]):
+                        self.store.commit()
+                        self.assertTrue(f.publisher.finalize(new_receipt, lambda *_: True))
+                    return runner(args, **kwargs)
+                f.publisher.runner = finish_out_of_order
+                # The late push lands, but cleanup sees the higher final and fails finalization.
+                with self.assertRaisesRegex(Refusal, "superseded"):
+                    f.publisher.finalize(old_receipt, lambda *_: True)
+                tags = f.api.tags(component)
+                self.assertCountEqual([tag["receipt"] for tag in tags], [old_receipt, new_receipt])
+                self.assertEqual(f.publisher.list(), [first])
+                f.api.require_current_versions({component: new_receipt})
+                with self.assertRaisesRegex(Refusal, "superseded"):
+                    f.api.require_current_versions({component: old_receipt})
+                registry = Mock()
+                registry.exists.return_value = True
+                registry.manifest.return_value = (old_receipt["digest"], {})
+                with self.assertRaises(ObsoleteSource):
+                    verify(old_receipt, tags, registry, f.api.history(), automatic=True)
+
+    def test_started_final_in_every_lane_survives_a_successor_allocation_and_keeps_its_cleanup(self):
+        for component in LANES:
+            for during_push in (True, False):
+                with self.subTest(component=component, during_push=during_push):
+                    f, first, successor = self.successor(component)
+                    old_receipt = f.receipt(first)
+                    runner = f.publisher.runner
+                    def allocate_during_push(args, **kwargs):
+                        if args[1] == "push" and args[-1].endswith(":refs/tags/" + old_receipt["tag"]):
+                            self.store.commit()
+                        return runner(args, **kwargs)
+                    if during_push:
+                        f.publisher.runner = allocate_during_push
+                    self.assertTrue(f.publisher.finalize(old_receipt, lambda *_: True))
+                    if not during_push:
+                        # Allocation never contests the outcome, so it needs no replan.
+                        self.store.commit()
+                    self.assertEqual(self.store.list(), [first, successor])
+                    self.assertEqual([tag["receipt"] for tag in f.api.tags(component)], [old_receipt])
+                    self.assertEqual(f.publisher.list(component), [successor])
+                    # Only the successor's final, never its pending reservation, withholds the old release.
+                    f.api.require_current_versions({component: old_receipt})
+                    f.publisher.runner = runner
+                    self.assertTrue(f.publisher.finalize(f.receipt(successor), lambda *_: True))
+                    self.assertEqual(f.publisher.list(component), [])
+                    with self.assertRaisesRegex(Refusal, "superseded"):
+                        f.api.require_current_versions({component: old_receipt})
 
     def test_first_collision_after_snapshot_stops_without_retry(self):
         values = self.plan_two()
@@ -73,25 +166,25 @@ class AllocationGitTests(unittest.TestCase):
         self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 1)
         self.assertNotIn(pending_name(values[1]), [pending_name(value) for value in self.fixture.publisher.list()])
 
-    def test_later_collision_keeps_verified_prefix_burned_without_repeating_it(self):
+    def test_later_collision_rejects_entire_batch_without_partial_reservations(self):
         values = self.plan_two()
         collision = dict(values[1], run_id=20)
         self.fixture.publisher.insert(collision)
         with self.assertRaisesRegex(Refusal, "readback differs"):
             self.store.commit()
-        self.assertEqual(self.fixture.publisher.list(), [values[0], collision])
-        self.assertEqual(self.store.list(), [values[0]])
-        self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 2)
+        self.assertEqual(self.fixture.publisher.list(), [collision])
+        self.assertEqual(self.store.list(), [])
+        self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 1)
         with self.assertRaisesRegex(Refusal, "already attempted"):
             self.store.commit()
-        self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 2)
+        self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 1)
 
     def test_lost_success_response_settles_exact_objects_without_repeating_push(self):
         values = self.plan_two()
         self.ambiguous = True
         self.store.commit()
         self.assertEqual(self.fixture.publisher.list(), values)
-        self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 2)
+        self.assertEqual(len([args for args in self.calls if args[1] == "push"]), 1)
 
     def test_overlapping_finalizer_resumes_or_skips_without_new_reservation(self):
         f = self.fixture
@@ -117,7 +210,7 @@ class AllocationGitTests(unittest.TestCase):
         self.assertEqual(self.store.planned, [])
         self.assertEqual(f.publisher.list(), [])
         self.assertFalse(any(call[1] == "push" for call in self.calls))
-        full = [call for call in self.calls if call[1] == "ls-remote" and len(call) == 5]
+        full = [call for call in self.calls if call[1] == "ls-remote" and "refs/tags/*" in call]
         self.assertEqual(len(full), 1)
 
     def test_missing_pending_and_final_is_uncertain(self):

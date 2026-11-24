@@ -1,6 +1,7 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { LocalAgentV2, binding, cursor } from './agent-v2.fixture';
+import { LocalSandboxFilters } from './sandbox-status-filter.fixture';
 
 /** The collapsed sidebar's width: none on a phone (§9), the 56px rail elsewhere. */
 const rail = (viewport: number) => (viewport < 640 ? 0 : 56);
@@ -110,9 +111,21 @@ for (const width of [390, 360, 320]) {
           exact: true,
         });
         const attach = page.getByRole('button', { name: 'Attach files', exact: true });
+        const stop = page.getByRole('button', { name: 'Stop response', exact: true });
         await expect(field).toBeEnabled();
         await settleShell(page, width, rail(width));
+        await page.evaluate(() => document.fonts.ready.then(() => undefined));
+        if (running) {
+          await expect(send).toHaveCount(0);
+          await expect(stop).toBeEnabled();
+          await insideViewport(stop);
+          expect((await stop.boundingBox())!.width).toBeGreaterThanOrEqual(44);
+          expect((await stop.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+        }
+        const stopBox = running ? await stop.boundingBox() : null;
         await field.fill('Keep this draft while resizing the full shell.');
+        await expect(send).toBeEnabled();
+        await expect(stop).toHaveCount(0);
         // Steering is offered only while a turn runs.
         const steering = page.getByRole('button', { name: /^Steering mode/ });
         await expect(steering).toHaveCount(running ? 1 : 0);
@@ -125,27 +138,30 @@ for (const width of [390, 360, 320]) {
           expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
         }
         if (running) {
-          const stop = page.getByRole('button', { name: 'Stop response', exact: true });
-          await expect(stop).toBeEnabled();
-          await insideViewport(stop);
-          expect((await stop.boundingBox())!.width).toBeGreaterThanOrEqual(44);
-          expect((await send.boundingBox())!.y).toBe((await stop.boundingBox())!.y);
+          expect(await send.boundingBox()).toEqual(stopBox);
         }
         const form = page.getByRole('form', { name: 'Message Agent' });
         const box = (await page.locator('.agent-composer__box').boundingBox())!;
-        for (const control of [
-          form.getByRole('button', { name: /^Agent settings:/ }),
-          form.getByRole('button', { name: 'Context usage', exact: true }),
-        ]) {
-          await insideViewport(control);
-          // Every control sits inside the composer box, with no row below it.
-          const bounds = (await control.boundingBox())!;
-          expect(bounds.y).toBeGreaterThanOrEqual(box.y);
-          expect(bounds.y + bounds.height).toBeLessThanOrEqual(box.y + box.height);
-          expect(bounds.height).toBeGreaterThanOrEqual(44);
-        }
-        await page.getByRole('button', { name: 'More Agent actions' }).click();
-        await page.getByRole('menuitem', { name: 'Show Agent details' }).click();
+        const settings = form.getByRole('button', { name: /^Agent settings:/ });
+        await insideViewport(settings);
+        await expect(settings).toHaveAccessibleDescription(
+          'Context: 0. Latest provider observation for one context window. ' +
+            'Total tokens: 0 (0 input · 0 output). ' +
+            'Provider-reported input and output accumulated for this Agent. ' +
+            'Input includes any cache reads. Cache breakdown and billed usage are unavailable here.',
+        );
+        await expect(form.getByRole('button', { name: 'Context usage', exact: true })).toHaveCount(
+          0,
+        );
+        // The settings summary includes context usage and stays inside the box.
+        const bounds = (await settings.boundingBox())!;
+        expect(bounds.y).toBeGreaterThanOrEqual(box.y);
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(box.y + box.height);
+        expect(bounds.height).toBeGreaterThanOrEqual(44);
+        await page.getByRole('button', { name: 'Show Agent details', exact: true }).click();
+        await expect(
+          page.getByRole('button', { name: 'Close Agent details', exact: true }),
+        ).toBeVisible();
         await page.getByRole('button', { name: 'Close Agent details', exact: true }).click();
         await expect(field).toHaveValue('Keep this draft while resizing the full shell.');
         await settleShell(page, width, rail(width));
@@ -165,6 +181,98 @@ for (const width of [390, 360, 320]) {
   }
 }
 
+test('LOCAL expanded navigation fits its rail and still scrolls vertically', async ({
+  page,
+  baseURL,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 640 });
+  const fixture = new LocalSandboxFilters();
+  const { boundary } = fixture;
+  const task = boundary.workspace.agents[0]!;
+  const taskTitle = 'Task '.repeat(30).trim();
+  const sandboxName = 'Sandbox '.repeat(25).trim();
+  boundary.workspace = {
+    ...boundary.workspace,
+    agents: [
+      task,
+      ...Array.from({ length: 24 }, (_, index) => ({
+        ...task,
+        id: `agt_rail_${index}`,
+        worktree_id: `wkt_rail_${index}`,
+        title: `${taskTitle} ${index}`,
+      })),
+    ],
+  };
+  fixture.sandboxes.push(
+    ...Array.from({ length: 24 }, (_, index) => ({
+      ...fixture.sandboxes[0]!,
+      id: `sbx_rail_${index}`,
+      name: `${sandboxName} ${index}`,
+      status: 'active' as const,
+    })),
+  );
+  await fixture.route(page, baseURL!);
+  await routePolicy(page);
+  await page.route(
+    /\/api\/v1\/(?:build-info|agents\/agt_rail_\d+(?:\/(?:channel-usage|provenance))?)$/,
+    (route) => route.fulfill({ status: 404, json: { code: 'not_found' } }),
+  );
+  await page.goto('/agents/agt_contract');
+  const account = page.getByRole('button', { name: /account menu/i });
+  await account.click();
+  await page
+    .getByRole('group', { name: 'Appearance' })
+    .getByRole('menuitemradio', { name: 'Light', exact: true })
+    .click();
+  await page
+    .getByRole('group', { name: 'System text size' })
+    .getByRole('menuitemradio', { name: 'Medium', exact: true })
+    .click();
+  await page.keyboard.press('Escape');
+  const list = page.locator('.manager-navigation__list');
+  const expectRailFits = async () => {
+    await expect.poll(() => list.evaluate((node) => node.scrollWidth - node.clientWidth)).toBe(0);
+    expect(
+      await list.evaluate((node) => {
+        node.scrollTop = 80;
+        const position = node.scrollTop;
+        node.scrollTop = 0;
+        return position;
+      }),
+    ).toBeGreaterThan(0);
+  };
+  const expectTruncation = async (id: string) => {
+    const label = list.locator(`[data-node-id="${id}"] .tree-row__name`);
+    await expect(label).toBeVisible();
+    await expect(label).toHaveCSS('text-overflow', 'ellipsis');
+    expect(await label.evaluate((node) => node.scrollWidth - node.clientWidth)).toBeGreaterThan(0);
+  };
+  const mode = page.getByRole('group', { name: 'Navigation view' });
+  const tasks = mode.getByRole('button', { name: 'Tasks', exact: true });
+  const environments = mode.getByRole('button', { name: 'Environments', exact: true });
+  await expect(tasks).toHaveAttribute('aria-pressed', 'true');
+  await expectTruncation('agent:agt_rail_0');
+  await expectRailFits();
+  await environments.click();
+  const changing = page.getByRole('region', { name: 'Changing sandboxes' });
+  const collapse = changing.getByRole('button', { name: 'Collapse Changing sandboxes' });
+  await expect(collapse).toBeVisible();
+  await expectTruncation('sandbox:sbx_rail_0');
+  await expectRailFits();
+  await collapse.click();
+  await expect(changing.getByRole('tree')).toHaveCount(0);
+  await expectRailFits();
+  await tasks.click();
+  await expectRailFits();
+  await environments.click();
+  await changing.getByRole('button', { name: 'Expand Changing sandboxes' }).click();
+  await expect(changing.getByRole('tree')).toBeVisible();
+  await expectRailFits();
+  expect(fixture.writes).toEqual([]);
+  expect(boundary.unexpected).toEqual([]);
+  expect(boundary.errors).toEqual([]);
+});
+
 test('LOCAL shell resize preserves draft, desktop navigation width and manual collapse', async ({
   page,
   baseURL,
@@ -176,7 +284,9 @@ test('LOCAL shell resize preserves draft, desktop navigation width and manual co
   await page.goto('/agents/agt_contract');
   const input = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(input).toBeEnabled();
-  await page.getByRole('button', { name: 'Back to conversation' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Show Agent computer', exact: true }),
+  ).toHaveAttribute('aria-expanded', 'false');
   await input.fill('Keep this draft while resizing the full shell.');
   await settleShell(page, 1440, 264);
   const handle = (await page.getByRole('separator', { name: 'Resize navigation' }).boundingBox())!;
@@ -221,7 +331,7 @@ for (const authenticated of [false, true]) {
     await page.goto('/');
     if (authenticated) {
       await expect(
-        page.getByRole('heading', { name: 'What should your Agent work on?' }),
+        page.getByRole('heading', { name: /^Good (morning|afternoon|evening)\.$/ }),
       ).toBeVisible();
       await expect(
         page
@@ -256,7 +366,7 @@ for (const authenticated of [false, true]) {
       ).toBeVisible();
       await page.getByRole('link', { name: 'CMA home' }).click();
       await expect(
-        page.getByRole('heading', { name: 'What should your Agent work on?' }),
+        page.getByRole('heading', { name: /^Good (morning|afternoon|evening)\.$/ }),
       ).toBeVisible();
       await expect(page.getByLabel('Your task')).toHaveValue(
         'Retain this Home draft across screen sizes.',
@@ -295,7 +405,9 @@ test('LOCAL system text scales user and Agent content together without changing 
     );
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/agents/agt_contract');
-    await page.getByRole('button', { name: 'Back to conversation' }).click();
+    await expect(
+      page.getByRole('button', { name: 'Show Agent computer', exact: true }),
+    ).toHaveAttribute('aria-expanded', 'false');
     await settleShell(page, 1440, 264);
     await expect(page.locator('.agent-content h2')).toHaveText('Example');
     await expect(

@@ -1,5 +1,6 @@
 """Synthetic remote with immutable refs and observable allocation boundaries."""
 import collections
+import fnmatch
 import hashlib
 import json
 import subprocess
@@ -24,6 +25,8 @@ class AllocationServer(GitHub):
         self.latency, self.active, self.peak = latency, 0, 0
         self.lock = threading.Lock()
         self.collision = self.ambiguous = self.corrupt_readback = False
+        # (returncode, stdout, stderr) of a push the server answers without writing.
+        self.rejection = None
         pending = []
         for index, source in enumerate(self.sources[:-1] if reserved else []):
             for component in components:
@@ -76,14 +79,18 @@ class AllocationServer(GitHub):
         self.commands.append(args)
         if args[1] == "ls-remote":
             self.delay()
-            output = "".join(oid + "\trefs/tags/" + name + "\n" for name, oid in self.refs.items()
-                             if len(args) == 5 or "refs/tags/" + name in args[5:])
+            refs = {"refs/heads/develop": self.history().head,
+                    **{"refs/tags/" + name: oid for name, oid in self.refs.items()}}
+            output = "".join(oid + "\t" + ref + "\n" for ref, oid in refs.items()
+                             if any(fnmatch.fnmatchcase(ref, pattern) for pattern in args[4:]))
         elif args[1] == "mktag":
             output = self.object(json.loads(kwargs["input"].split("\n\n", 1)[1])) + "\n"
         else:
             assert args[1] == "push" and "--force" not in args
             self.delay()
             updates = [arg.split(":refs/tags/", 1) for arg in args if ":refs/tags/" in arg]
+            if self.rejection is not None:
+                return subprocess.CompletedProcess(args, *self.rejection)
             if self.collision or any(name in self.refs for _oid, name in updates):
                 return subprocess.CompletedProcess(args, 1, "", "")
             self.refs.update({name: oid for oid, name in updates})

@@ -6,6 +6,8 @@ SIGTERM only to ACP Node, allowing native app-server's stdin EOF shutdown. It
 never signals a native process or process group, nor invokes lifecycle APIs.
 """
 BRIDGES = {
+    "ddb625f66a5a14d94df3512a525c4a674a359e564602c09085769c8b61e2bca1",
+    "e26bce27dbdcf4d665e081b4a81762542795e2af6453da2a2f050fab5110f484",
     "8f0c023269496f9ad21aa2958491772fefe65011b9aebaf674c67d2aaa9fbcf4",
     "fc9f74358c6ce5aeda4ac164c1daf83c513fb0f18df4b75f3d20bd0816fc6fa7",
     "113762e08aaa46cbea8ec3710e334024d13f1cc026a1c264130d5e642e0748c4",
@@ -27,11 +29,13 @@ LAUNCHER_NATIVES = {
 }
 BRIDGE_PATH = "/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js"
 RELAY_SOURCE = "e595835b6314ff0770fdf97817d6920295ea384a5ac3bfdd0476b90c81b79a4f"
-DESKTOP_SOURCE = "6910bdac6a24cc971f95bc0d2d10f19635a225e6a9f04b333d3555b4cec7ed7e"
+DESKTOP_SOURCE = "e7eab92f35acef315b47e8cddec219006e3dda409834836a5bcf2eab3ab0aa00"
 # Retained Openbox/XFCE/Omarchy homes coexist with newly admitted desktop Machines.
-OMARCHY_DESKTOP_SOURCE = "7b290d8bcf9d95de46c43d069d8b1e73def32f55cfc2ede3e04b7720bc6e439e"
+OMARCHY_DESKTOP_SOURCE = "4544b0e5e66adfebc4da6d13a42e79c51133c72488fc8be5d41bf4e64e8948a3"
 DESKTOP_SOURCES = {
     DESKTOP_SOURCE, OMARCHY_DESKTOP_SOURCE,
+    "6910bdac6a24cc971f95bc0d2d10f19635a225e6a9f04b333d3555b4cec7ed7e",
+    "7b290d8bcf9d95de46c43d069d8b1e73def32f55cfc2ede3e04b7720bc6e439e",
     "c03e804c28de395c7501001f390346f2c2ad29349eab2e17cf9929e7902bcf99",
     "b2b88eaf39c2bf6e6018e2a6185d5461cbaabe1f66fa76562c898c24914af609",
     "3127c5d454316efaf7e147665f871825aae2eda00cea250d2f89fd18f351263d",

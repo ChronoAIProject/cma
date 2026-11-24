@@ -39,7 +39,7 @@ impl Store {
         if self.hold_agent_until_sandbox {
             if method == "create_agent_profile" && !after {
                 self.sandbox_published.notified().await;
-            } else if method == "publish_sandbox_profile" && after {
+            } else if method == "ensure_initial_sandbox_profile" && after {
                 self.sandbox_published.notify_one();
             }
         }
@@ -76,6 +76,7 @@ delegate!(AgentProfileStore {
     fn create_agent_profile(profile: AgentProfile) -> ();
     fn agent_profile(id: &AgentProfileId) -> Option<AgentProfile>;
     fn save_agent_draft(expected: u64, profile: AgentProfile) -> ();
+    fn ensure_initial_agent_profile(profile: &AgentProfile, at: String) -> AgentProfileRevision;
     fn publish_agent_profile(id: &AgentProfileId, expected: u64, at: String) -> AgentProfileRevision;
     fn agent_profile_revision(id: &AgentProfileId, revision: u32) -> Option<AgentProfileRevision>;
     fn list_agent_profile_revisions(id: &AgentProfileId, page: &ProfilePageRequest) -> ProfilePage<AgentProfileRevision>;
@@ -87,6 +88,7 @@ delegate!(WorkspaceProfileStore {
     fn create_workspace_profile(profile: WorkspaceProfile) -> ();
     fn workspace_profile(id: &WorkspaceProfileId) -> Option<WorkspaceProfile>;
     fn save_workspace_draft(expected: u64, profile: WorkspaceProfile) -> ();
+    fn ensure_initial_workspace_profile(profile: &WorkspaceProfile, at: String) -> WorkspaceProfileRevision;
     fn publish_workspace_profile(id: &WorkspaceProfileId, expected: u64, at: String) -> WorkspaceProfileRevision;
     fn workspace_profile_revision(id: &WorkspaceProfileId, revision: u32) -> Option<WorkspaceProfileRevision>;
     fn list_workspace_profile_revisions(id: &WorkspaceProfileId, page: &ProfilePageRequest) -> ProfilePage<WorkspaceProfileRevision>;
@@ -98,6 +100,7 @@ delegate!(SandboxProfileStore {
     fn create_sandbox_profile(profile: SandboxProfile) -> ();
     fn sandbox_profile(id: &SandboxProfileId) -> Option<SandboxProfile>;
     fn save_sandbox_draft(expected: u64, profile: SandboxProfile) -> ();
+    fn ensure_initial_sandbox_profile(profile: &SandboxProfile, at: String, bounds: ProfileCapacityBounds, scanner: &dyn PublicValueScanner) -> SandboxProfileRevision;
     fn publish_sandbox_profile(id: &SandboxProfileId, expected: u64, at: String, bounds: ProfileCapacityBounds, scanner: &dyn PublicValueScanner) -> SandboxProfileRevision;
     fn sandbox_profile_revision(id: &SandboxProfileId, revision: u32) -> Option<SandboxProfileRevision>;
     fn list_sandbox_profile_revisions(id: &SandboxProfileId, page: &ProfilePageRequest) -> ProfilePage<SandboxProfileRevision>;

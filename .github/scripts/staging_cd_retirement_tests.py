@@ -11,6 +11,7 @@ from deployables import components, name, registry
 from staging_cd_build import recipe
 import staging_cd_build_tests
 from staging_cd_common import Refusal
+from image_scanner_policy import MANIFEST_SHA256
 from staging_cd_receipts import annotation, parse_annotation, published_receipt
 from staging_cd_receipts_tests import fixture_identity, fixture_receipt, fixture_tag
 from staging_cd_reservations import (
@@ -52,16 +53,19 @@ class RetirementTests(unittest.TestCase):
             self.assertEqual(validate_reservation(reservation), reservation)
             self.assertEqual(pending_name(reservation), image + '/pending/v0.10.1')
             with self.assertRaises(Refusal):
-                published_receipt(receipt['identity'], receipt['digest'], receipt['archive'], receipt['scan']['counts'])
+                published_receipt(receipt['identity'], receipt['digest'], receipt['archive'], receipt['scan']['counts'], scanner_identity=("1.0.4", MANIFEST_SHA256))
             with self.assertRaises(Refusal):
                 next_reservation(component, 'a' * 40, 'b' * 40, 42, 'patch', 1, 1, [], [])
             with self.assertRaises(Refusal):
                 plan_version(component, 'patch', [fixture_tag(receipt)], 'a' * 40)
             api, runner, verify = Mock(), Mock(), Mock()
             store = Reservations(api, 'fixture', Path('.'), runner)
-            for operation in (lambda: store.insert(reservation), lambda: store.finalize(receipt, verify),
-                              lambda: store.remove_after_publication(receipt)):
-                with self.assertRaises(Refusal):
+            for operation, reason in (
+                (lambda: store.insert(reservation), "Retired images cannot reserve versions"),
+                (lambda: store.finalize(receipt, verify), "Retired image tags must remain unchanged"),
+                (lambda: store.remove_after_publication(receipt, "a" * 40), "Retired image tags must remain unchanged"),
+            ):
+                with self.subTest(component=component, reason=reason), self.assertRaisesRegex(Refusal, reason):
                     operation()
             api.assert_not_called()
             self.assertEqual(api.mock_calls, [])

@@ -21,6 +21,9 @@ mod resume_read_tests;
 #[path = "native_runtime_render_read_tests.rs"]
 mod runtime_render_read_tests;
 
+#[path = "runtime_retirement_finality_tests.rs"]
+mod retirement_finality_tests;
+
 #[path = "metric_identity_tests.rs"]
 mod metrics_identity;
 

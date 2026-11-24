@@ -12,7 +12,7 @@ struct RenewalFailure {
 pub(super) fn spawn(manager: &Arc<AgentManager>) {
     let weak = Arc::downgrade(manager);
     let coordinator = manager.coordinator.clone();
-    // Start during composition: dependency startup may exceed a lease.
+    // Start at activation, when membership is first registered.
     tokio::spawn(async move {
         let result = run(coordinator.clone(), move |candidates| {
             let weak = weak.clone();
@@ -39,8 +39,8 @@ async fn finish(coordinator: &OwnershipCoordinator, result: Result<(), RenewalFa
         };
         tracing::error!(
             phase = failure.phase,
+            scope = "process",
             error_kind,
-            error = %failure.error,
             during_drain,
             "Agent Manager lost membership or ownership; restarting is required"
         );

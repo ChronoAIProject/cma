@@ -11,9 +11,9 @@
  * a single line in main.tsx, which is what the seam was for.
  */
 
-import type { AuthProvider, AuthState, Capability, SignInOptions } from './types';
+import type { AuthProvider, AuthState, Capability, LegalTerms, SignInOptions } from './types';
 import { isCapability } from './types';
-import { parseRoute, routePath } from '../routing/routes';
+import { canonicalReturnRoute, classifyReturnTarget } from './returnTarget';
 import { authHttpRetry, authTransportRetry } from './retryMetadata';
 import { MAX_LOGIN_URL_BYTES, retryAfterMilliseconds } from '@cma/client';
 import { retainFatherDraftForSignIn } from '../bots/fatherDraft';
@@ -41,12 +41,6 @@ const LOGOUT_ENDPOINT = '/auth/logout';
  */
 const SILENT_ATTEMPT_KEY = 'cma.auth.silent-attempt';
 
-/** The longest return target the control plane accepts. */
-const RETURN_TARGET_MAX_LENGTH = 256;
-
-/** A path segment the control plane accepts in a return target. */
-const RETURN_TARGET_SEGMENT = /^[A-Za-z0-9._~-]+$/;
-
 /** What the control plane reports for the current cookie. */
 interface IdentityResponse {
   authenticated?: unknown;
@@ -57,6 +51,31 @@ interface IdentityResponse {
   capabilities?: unknown;
   visitor?: unknown;
   silent_sign_in?: unknown;
+  service_authorization?: unknown;
+  privacy_export?: unknown;
+  legal_terms?: unknown;
+}
+
+/** Published terms, or none when the field is absent or not exactly usable. */
+export function legalTermsFrom(raw: unknown): LegalTerms | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const { version, terms_url: termsUrl, privacy_url: privacyUrl } = raw as Record<string, unknown>;
+  if (typeof version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(version)) return undefined;
+  if (!isHttpsUrl(termsUrl) || !isHttpsUrl(privacyUrl)) return undefined;
+  return { version, termsUrl, privacyUrl };
+}
+
+function withLegalTerms(legalTerms: LegalTerms | undefined): { legalTerms?: LegalTerms } {
+  return legalTerms === undefined ? {} : { legalTerms };
+}
+
+function isHttpsUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -96,16 +115,10 @@ export function handleFor(subject: string, displayName?: string, email?: string)
 function loginTarget(returnTo?: string, options?: SignInOptions): URL {
   const target = new URL(LOGIN_ENDPOINT, window.location.origin);
   if (returnTo !== undefined) {
-    const path = returnTo.split('?')[0] ?? '';
-    const route = parseRoute(path);
-    if (
-      route.kind === 'not_found' ||
-      routePath(route) !== path ||
-      path.length > RETURN_TARGET_MAX_LENGTH ||
-      !returnQueryAllowed(returnTo)
-    )
+    const destination = classifyReturnTarget(returnTo);
+    if (destination.kind === 'reject')
       throw new Error('The sign-in destination is not a CMA page.');
-    target.searchParams.set('return_to', returnTo);
+    target.searchParams.set('return_to', destination.target);
   }
   if (options?.screen === 'register') target.searchParams.set('screen', 'register');
   return target;
@@ -135,18 +148,9 @@ export function silentReturnTarget(location: {
   readonly hash: string;
 }): string | undefined {
   const { pathname } = location;
-  if (location.hash !== '' || !returnQueryAllowed(pathname + location.search)) return undefined;
-  if (pathname.length > RETURN_TARGET_MAX_LENGTH) return undefined;
-  const segments = pathname.split('/').slice(1);
-  if (
-    pathname !== '/' &&
-    segments.some(
-      (segment) => segment === '.' || segment === '..' || !RETURN_TARGET_SEGMENT.test(segment),
-    )
-  )
-    return undefined;
-  const route = parseRoute(pathname);
-  if (routePath(route) !== pathname) return undefined;
+  if (location.hash !== '') return undefined;
+  const route = canonicalReturnRoute(pathname + location.search);
+  if (route === undefined) return undefined;
   switch (route.kind) {
     case 'home':
     case 'agent_manager':
@@ -170,35 +174,6 @@ export function silentReturnTarget(location: {
     default:
       return undefined;
   }
-}
-
-/** Only UI-defined query state is restored; unknown redirect/authority parameters fail closed. */
-function returnQueryAllowed(value: string): boolean {
-  if (
-    Array.from(value).some(
-      (character) =>
-        character.charCodeAt(0) <= 32 ||
-        character.charCodeAt(0) >= 127 ||
-        character === '#' ||
-        character === '\\',
-    )
-  )
-    return false;
-  const split = value.indexOf('?');
-  const path = split < 0 ? value : value.slice(0, split);
-  const query = split < 0 ? undefined : value.slice(split + 1);
-  if (query === undefined) return true;
-  const keys = new Set<string>();
-  for (const [key] of new URLSearchParams(query)) {
-    if (keys.has(key)) return false;
-    keys.add(key);
-    if (
-      !(path === '/bots/new' && key === 'setup') &&
-      !(path?.startsWith('/sandboxes/') && key === 'tab')
-    )
-      return false;
-  }
-  return true;
 }
 
 /** Storage can refuse access outright; read that as "do not try". */
@@ -244,16 +219,20 @@ export function createNyxidAuthProvider(): AuthProvider {
       }
 
       if (response.status === 401 || response.status === 403) {
+        let legalTerms: LegalTerms | undefined;
         try {
           const anonymous = (await response.json()) as IdentityResponse;
           silentSignInOffered =
             response.status === 401 &&
             anonymous?.authenticated === false &&
             anonymous.silent_sign_in === true;
+          legalTerms = legalTermsFrom(anonymous?.legal_terms);
         } catch {
           silentSignInOffered = false;
         }
-        return { status: 'anonymous' };
+        return legalTerms === undefined
+          ? { status: 'anonymous' }
+          : { status: 'anonymous', legalTerms };
       }
       if (!response.ok) {
         const problem = (await response.json().catch(() => undefined)) as
@@ -313,6 +292,9 @@ export function createNyxidAuthProvider(): AuthProvider {
           avatarUrl: optionalText(body.avatar_url),
           capabilities: capabilitiesFrom(body.capabilities),
           visitor: body.visitor === true,
+          ...(body.service_authorization === true ? { serviceAuthorization: true } : {}),
+          ...(body.privacy_export === true ? { privacyExport: true } : {}),
+          ...withLegalTerms(legalTermsFrom(body.legal_terms)),
         },
       };
     },

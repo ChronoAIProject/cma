@@ -3,8 +3,8 @@ import { statusLabel } from './status';
 
 it.each([
   ['active', 'Live'],
-  ['provisioning', 'Starting'],
-  ['installing', 'Starting'],
+  ['provisioning', 'Provisioning'],
+  ['installing', 'Installing'],
   ['reviving', 'Resuming'],
   ['rotating', 'Updating runtime'],
   ['credential_rotating', 'Updating access'],
@@ -13,6 +13,9 @@ it.each([
   ['retiring', 'Deleting'],
   ['retired', 'Deleted'],
   ['ready', 'Ready'],
+  ['preparing', 'Starting'],
+  ['creating', 'Starting'],
+  ['starting', 'Starting'],
   ['working', 'Working'],
   ['stopped', 'Stopped'],
   ['failed', 'Needs attention'],

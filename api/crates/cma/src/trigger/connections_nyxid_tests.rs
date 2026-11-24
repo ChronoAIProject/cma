@@ -18,6 +18,11 @@ use serde_json::{json, Value};
 use super::connections_nyxid::{NyxidServiceConnectionBroker, VisitorCredentialSource};
 use crate::auth::persistence::SecretValue;
 
+#[path = "connections_nyxid_tests/deadline.rs"]
+mod deadline;
+#[path = "connections_nyxid_tests/github.rs"]
+mod github;
+
 const VISITOR_TOKEN: &str = "visitor-access-secret";
 const PROVIDER_EXPIRES_AT: &str = "2026-09-05T12:15:00.731Z";
 const CANONICAL_EXPIRES_AT: &str = "2026-09-05T12:15:00Z";
@@ -729,6 +734,12 @@ async fn credential_metadata_failures_never_look_like_satisfied_connections() {
             json!({"id":"github-row","slug":"api-github","is_active":true,"status":"active","connected":true}),
         ),
     ] {
+        let before = provider.state.credential_reads.lock().unwrap().len();
+        let expected_reads = if reply.status == StatusCode::TOO_MANY_REQUESTS {
+            2
+        } else {
+            1
+        };
         provider
             .state
             .credential_replies
@@ -747,7 +758,13 @@ async fn credential_metadata_failures_never_look_like_satisfied_connections() {
             ServiceConnectionError::Unavailable(_) | ServiceConnectionError::Malformed(_)
         ));
         assert!(!error.to_string().contains("private provider"));
+        assert_eq!(
+            provider.state.credential_reads.lock().unwrap().len(),
+            before + expected_reads,
+            "only an explicit provider throttle may repeat the credential read"
+        );
     }
+    let before_denied = provider.state.credential_reads.lock().unwrap().len();
     provider.state.set_services_reply(Reply::json(json!({ "services": [
         {"id":"github-row","slug":"api-github","is_active":true,"credential_source":{"type":"org","allowed":false}}
     ] })));
@@ -761,7 +778,7 @@ async fn credential_metadata_failures_never_look_like_satisfied_connections() {
     assert_eq!(requirements[0].state, ServiceRequirementState::Unknown);
     assert_eq!(
         provider.state.credential_reads.lock().unwrap().len(),
-        4,
+        before_denied,
         "denied organization credentials must not be probed"
     );
 }

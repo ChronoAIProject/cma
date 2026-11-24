@@ -2,9 +2,11 @@
 
 import json
 import os
+from pathlib import Path
 import re
 import sys
 
+from ci_events import full_ci_required
 from version_label import deployables
 
 EXPECTED = {
@@ -13,10 +15,13 @@ EXPECTED = {
     "eg": {"rust-test-build", "eg", "eg-images", "runtime-images", "omarchy"},
     "web": {"web", "web-images"},
 }
+RUNTIME = {"runtime-images", "omarchy"}
 
 
-def evaluate(track, needs):
+def evaluate(track, needs, *, full=False, split=False):
     expected = EXPECTED[track]
+    if split and track == "eg":
+        expected = expected - RUNTIME
     if set(needs) != expected | {"changes"}:
         raise ValueError("missing or unexpected gate dependency")
     changes = needs["changes"]
@@ -31,6 +36,8 @@ def evaluate(track, needs):
         raise ValueError("invalid test track schema")
     if tracks != {key: value == "true" for key, value in booleans.items()}:
         raise ValueError("inconsistent test track outputs")
+    if full and not all(tracks.values()):
+        raise ValueError("full CI event requires every product track")
     deployables(json.loads(outputs.get("deployables", "null")))
     for rust_track in ("am", "eg"):
         packages = json.loads(outputs.get(rust_track + "_packages", "null"))
@@ -43,6 +50,21 @@ def evaluate(track, needs):
     selected = outputs.get(track)
     if selected not in {"true", "false"} or (track == "repo" and selected != "true"):
         raise ValueError("invalid track selection")
+    if split:
+        # The Agent Manager workflow owns the runtime checks for either Rust
+        # product. An EG-only change still needs both runtime images to pass.
+        required = expected if selected == "true" else set()
+        if track == "am" and tracks["eg"]:
+            required = required | RUNTIME
+        failed = {
+            job: needs[job].get("result", "missing")
+            for job in expected
+            if needs[job].get("result") != ("success" if job in required else "skipped")
+        }
+        if failed:
+            raise ValueError("product children did not reach their expected state: " +
+                             json.dumps(failed, sort_keys=True))
+        return "passed" if required else "skipped-by-path"
     if selected == "false":
         # The archive can succeed for the other Rust product; this track's
         # own jobs must actually be skipped, rather than failing then hidden.
@@ -59,8 +81,13 @@ def evaluate(track, needs):
 
 def main():
     try:
-        result = evaluate(sys.argv[1], json.loads(os.environ["NEEDS"]))
-    except (IndexError, KeyError, TypeError, ValueError) as error:
+        event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+        full = full_ci_required(event, os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REPOSITORY'])
+        if sys.argv[2:] not in ([], ["--split"]):
+            raise ValueError("invalid gate options")
+        result = evaluate(sys.argv[1], json.loads(os.environ["NEEDS"]), full=full,
+                          split=sys.argv[2:] == ["--split"])
+    except (IndexError, KeyError, OSError, TypeError, ValueError) as error:
         print(f"::error::Track gate failed: {error}")
         return 1
     print(result)

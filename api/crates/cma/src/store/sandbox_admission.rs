@@ -5,8 +5,8 @@ use std::time::Duration;
 use futures_util::TryStreamExt;
 use layer2_core::ids::SubjectId;
 use layer2_core::sandbox::store::{
-    allocated_sandbox_name, SandboxAdmission, SandboxAdmissionName, SandboxAdmissionReplay,
-    SandboxAdmissionResult, SandboxAdmissionStore, SandboxStoreError,
+    SandboxAdmission, SandboxAdmissionReplay, SandboxAdmissionResult, SandboxAdmissionStore,
+    SandboxLimitClass, SandboxStoreError,
 };
 use layer2_core::sandbox::{Sandbox, SandboxEvent, SandboxEventKind, SandboxOrigin};
 use mongodb::bson::{doc, Bson};
@@ -15,7 +15,11 @@ use super::sandbox_events::{event_document, read_event};
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::sandboxes::{admitted_sandbox_document, read_sandbox, read_sandbox_admission_replay};
 
+mod canary;
+mod catalogue;
 mod global;
+mod names;
+mod public_owner;
 mod retry;
 
 const REPLAY_CANDIDATE_LIMIT: i64 = 2;
@@ -75,6 +79,15 @@ impl SandboxAdmissionStore for MongoSandboxStore {
         self.sandbox_admitted.notify_one();
         Ok(result)
     }
+
+    async fn admit_catalogue_sandbox(
+        &self,
+        admission: SandboxAdmission,
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
+        let result = self.commit_catalogue_sandbox_admission(admission).await?;
+        self.sandbox_admitted.notify_one();
+        Ok(result)
+    }
 }
 
 fn admission_retry_delay(attempt: usize) -> Duration {
@@ -88,6 +101,8 @@ async fn apply<F>(
     session: &mut mongodb::ClientSession,
     observe: &F,
     wait_for_prepared_lease: bool,
+    retrying: bool,
+    catalogue: bool,
 ) -> Result<AdmissionReceipt, AdmissionError>
 where
     F: Fn() -> String + Sync,
@@ -117,8 +132,66 @@ where
                 AdmissionError::Driver(error)
             }
         })?;
+    let database = store.client.database(&store.sandboxes.namespace().db);
     if let Some(sandbox) = replay_in_transaction(store, admission, session).await? {
         return Ok(AdmissionReceipt::Existing(sandbox));
+    }
+    if super::account_deletions::erasing_in_session(&database, &admission.sandbox.owner, session)
+        .await
+        .map_err(AdmissionError::Driver)?
+    {
+        return Err(AdmissionError::Domain(
+            SandboxStoreError::AccountDeletionInProgress,
+        ));
+    }
+    let canary_lease = canary::verify(&database, admission, session).await?;
+    if catalogue {
+        catalogue::admit(&database, &admission.sandbox, session).await?;
+    }
+    if retrying
+        && admission.admission_cause() == layer2_core::admission::AdmissionCause::Fresh
+        && super::launch_home_capacity::precheck_fresh_home(
+            &store.budget_settings,
+            &store.sandbox_admissions,
+            &store.sandboxes,
+            store.global_sandbox_limit,
+            &admission.sandbox.owner,
+            session,
+        )
+        .await
+        .map_err(AdmissionError::Driver)?
+        .is_some()
+    {
+        return Err(AdmissionError::Domain(
+            SandboxStoreError::GlobalCapacityReached,
+        ));
+    }
+    let protected =
+        super::settings_barrier::acquire(&store.budget_settings, store.initial_settings, session)
+            .await
+            .map_err(|error| match error {
+                super::settings_barrier::Error::Driver(error) if is_duplicate_key(&error) => {
+                    AdmissionError::Retry(error)
+                }
+                super::settings_barrier::Error::Driver(error) => AdmissionError::Driver(error),
+                super::settings_barrier::Error::Unreadable => AdmissionError::Domain(
+                    SandboxStoreError::Budget(layer2_core::budget::BudgetError::Unavailable),
+                ),
+            })?;
+    let mut live_limit = admission.live_limit.min(
+        admission
+            .limit_class
+            .current_limit(protected.settings())
+            .map_err(AdmissionError::Domain)?,
+    );
+    if admission.limit_class == SandboxLimitClass::Owner {
+        live_limit = live_limit.min(
+            store
+                .public_owner_sandbox_limit(&admission.sandbox.owner, Some(&mut *session))
+                .await
+                .map_err(AdmissionError::Driver)?
+                .unwrap_or(live_limit),
+        );
     }
     let live = store
         .sandboxes
@@ -126,23 +199,29 @@ where
         .session(&mut *session)
         .await
         .map_err(AdmissionError::Driver)?;
-    if live >= u64::from(admission.live_limit) {
+    if live >= u64::from(live_limit) {
         return Err(AdmissionError::Domain(SandboxStoreError::LimitReached {
-            limit: admission.live_limit,
+            limit: live_limit,
             live: u16::try_from(live).unwrap_or(u16::MAX),
         }));
     }
-    let ceilings = super::budget::require_open_with_ceilings(
-        store,
+    let ceilings = super::budget::require_open_protected(
+        &store.budget_settings,
+        &store.model_budget,
+        &protected,
         super::budget::now_seconds(),
         admission.admission_cause(),
+        store.platform_counter_shards,
         session,
     )
     .await?;
     global::admit(store, admission, &ceilings, session).await?;
     let mut sandbox = admission.sandbox.clone();
-    sandbox.name = choose_name(store, session, owner, &admission.name).await?;
-    let prepared_outcome = if admission.binding.is_none() {
+    sandbox.name = names::choose_name(store, session, owner, &admission.name).await?;
+    let prepared_outcome = if let Some(lease) = canary_lease {
+        canary::bind(&database, &lease, &sandbox.id, session).await?;
+        "miss_runtime_canary_cold_only"
+    } else if admission.binding.is_none() {
         use super::native_prepared::ClaimOutcome;
         // The transaction snapshot already exists. Observe now, so a health
         // completion visible in this snapshot cannot postdate our lease clock.
@@ -286,7 +365,10 @@ fn admission_filter(admission: &SandboxAdmission) -> Option<mongodb::bson::Docum
     origin_filter(admission.sandbox.owner.as_str(), &admission.sandbox.origin)
 }
 
-fn origin_filter(owner: &str, origin: &SandboxOrigin) -> Option<mongodb::bson::Document> {
+pub(super) fn origin_filter(
+    owner: &str,
+    origin: &SandboxOrigin,
+) -> Option<mongodb::bson::Document> {
     let (kind, id) = origin.replay_key()?;
     let (query_field, record_field) = match origin {
         SandboxOrigin::Trigger { .. } => ("origin_launch_id", "record.origin.launch_id"),
@@ -325,52 +407,6 @@ fn classify_replay_record(
     } else {
         Err(SandboxStoreError::SandboxOriginConflict)
     }
-}
-
-async fn choose_name(
-    store: &MongoSandboxStore,
-    session: &mut mongodb::ClientSession,
-    owner: &str,
-    requested: &SandboxAdmissionName,
-) -> Result<String, AdmissionError> {
-    match requested {
-        SandboxAdmissionName::Exact(name) => {
-            if name_exists(store, session, owner, name).await? {
-                Err(AdmissionError::Domain(SandboxStoreError::Duplicate))
-            } else {
-                Ok(name.clone())
-            }
-        }
-        SandboxAdmissionName::Allocate(base) => {
-            for number in 1_u64.. {
-                let candidate = suffixed(base, number);
-                if !name_exists(store, session, owner, &candidate).await? {
-                    return Ok(candidate);
-                }
-            }
-            unreachable!("the numeric sandbox-name suffix space is unbounded")
-        }
-    }
-}
-
-async fn name_exists(
-    store: &MongoSandboxStore,
-    session: &mut mongodb::ClientSession,
-    owner: &str,
-    name: &str,
-) -> Result<bool, AdmissionError> {
-    store
-        .sandboxes
-        .find_one(doc! { "owner": owner, "name": name, "retired_at": Bson::Null })
-        .projection(doc! { "_id": 1 })
-        .session(session)
-        .await
-        .map(|row| row.is_some())
-        .map_err(AdmissionError::Driver)
-}
-
-fn suffixed(base: &str, number: u64) -> String {
-    allocated_sandbox_name(base, number).expect("admission names are validated before allocation")
 }
 
 fn classify_insert(error: mongodb::error::Error) -> AdmissionError {

@@ -6,19 +6,20 @@ CMAEG Operations (maintainer guidance). CMA's implemented public interfaces are
 listed in CMA Public APIs (maintainer guidance); exact schemas come from each
 service's `GET /openapi.json`.
 
-Start with the public [integration guide](CMAEG_Integration.md), hosted at
-<https://gateway.example.com/event-gateway/docs>. It covers creator applications,
-event sources, Agent tools and downstream providers. The globally auto-connected
-NyxID service is **Agent Event Gateway** (`cmaeg`); its REST proxy is
-`https://gateway.example.com/api/v1/proxy/s/cmaeg`, already mapped to `/v1`.
+Start with the public [integration guide](CMAEG_Integration.md) for creator
+applications, event sources, Agent tools and downstream providers. The globally
+auto-connected NyxID service is **Agent Event Gateway** (`cmaeg`). Its REST proxy
+path on your NyxID API origin is `/api/v1/proxy/s/cmaeg`, already mapped to `/v1`.
 
 ## Ownership and topology
 
 CMAEG is a separate event gateway. It verifies event sources, selects a channel
 and partition, invokes the configured provider, and delivers explicit replies.
 CMA owns Sandboxes, Workspaces, Agents, conversations and provider turns. CMA's
-Bot management coordinates a user's existing NyxID Bot with the gateway and CMA
-provider. NyxID owns identities, selected service access and external Bot routes.
+consumer management associates a ready Event Gateway connection with inline Agent
+settings and the CMA provider. NyxID owns identities, selected service access and
+external Bot routes. The diagram's Profile management reference describes retained
+configuration compatibility.
 
 Every admitted message, command and interaction reaches the configured provider
 through the same turn interface. The gateway does not interpret an agent's
@@ -69,12 +70,18 @@ the gateway. It contains `schema_version`, `metadata`, `model`, `permission`,
 selection, reasoning effort, service scope, action mode, instructions, skills,
 tool references, and the environment request.
 
-CMA's **Agent Profile** remains the narrower configuration for one Agent.
-Workspace Profiles specify workspace location and setup; Sandbox Profiles specify
-capacity, model access and environment-wide services and setup. CMA's Event
-Worker Profile library composes published revisions of these three into one
-complete immutable worker revision. Bots select a revision and retain its full
-snapshot. Saving another revision does not update an existing Bot implicitly.
+CMA creates new consumers from a ready Event Gateway connection and inline Agent
+settings. The consumer retains its configuration snapshot. The public setup flow
+does not require an Event Worker Profile library or a published Profile revision.
+
+Saved Agent, Workspace, Sandbox, and Event Worker Profile definitions remain
+readable for existing consumers and recovery of historical creation requests.
+In those records, an Agent Profile contains Agent settings, a Workspace Profile
+contains workspace location and setup, and a Sandbox Profile contains capacity,
+model access, services, and environment setup. Historical Event Worker Profile
+revisions compose those settings into a complete immutable snapshot. Existing
+consumers retain their selected snapshot; later saved revisions do not update
+them implicitly. CMA's Profile authoring pages are retired.
 
 The original v1 `AgentProfileSnapshot` SDK and OpenAPI names remain compatibility
 aliases. JSON still uses the `profile` field, `schema_version: 1`, and the same
@@ -85,13 +92,17 @@ that a provider can execute every requested capability.
 
 ## Integration sequence
 
-1. Authenticate to CMA as the owner. Create an Event Worker Profile from published
-   CMA configuration, then select its exact revision when creating a Bot. Existing
-   clients may continue selecting the three CMA profile revisions directly.
-2. CMA's durable Bot operation establishes the dedicated Bot credentials and
-   gateway channel. Channel management uses the authenticated creator, an exact
-   request identity and a complete profile snapshot. Its response contains the
-   provider binding, supported level, endpoints and field-level decisions.
+1. In CMA, the owner opens **Event Gateway**, selects **Channels**, then uses
+   **New channel** to configure a producer, Agent destination, and access and
+   reply policy. Accounts that have a **Consumers** tab can also create a
+   consumer from a ready connection. Available connection types depend on the
+   gateway's enabled capabilities. [Channel setup](CMAEG_Integration.md#create-a-channel-in-cma) ·
+   [Consumer setup](CMAEG_Integration.md#create-a-cma-consumer)
+2. CMA's durable consumer creation operation uses the selected connection,
+   dedicated Agent credentials, an exact request identity, and the complete
+   worker configuration. The API still calls this configuration `profile`.
+   Channel management uses the authenticated creator; its response contains the
+   provider binding, supported level, endpoints, and field-level decisions.
 3. CMAEG asks the provider to prepare the binding through
    `PUT /api/v1/cmaeg/bindings/{binding_id}`. The provider validates ownership,
    credential scope, digest, supported fields and environment bounds, and retains

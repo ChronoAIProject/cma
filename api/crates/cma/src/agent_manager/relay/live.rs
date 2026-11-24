@@ -20,6 +20,17 @@ struct Frame {
     head_changed: bool,
 }
 
+tokio::task_local! {
+    static READ_ADMISSION: AgentId;
+}
+
+pub(crate) async fn admitted_observation<F: std::future::Future>(
+    id: AgentId,
+    future: F,
+) -> F::Output {
+    READ_ADMISSION.scope(id, future).await
+}
+
 struct LiveSource(Arc<Relay>);
 
 impl AgentLiveSource for LiveSource {
@@ -27,6 +38,20 @@ impl AgentLiveSource for LiveSource {
         self.try_subscribe(id).ok().flatten()
     }
     fn try_subscribe(&self, id: &AgentId) -> Result<Option<AgentLiveSubscription>, AgentLiveError> {
+        // Read custody already admitted this response through the relay. Its
+        // body retains that one observer permit; the local hint lane adds none.
+        if let Ok(admitted) = READ_ADMISSION.try_with(Clone::clone) {
+            if &admitted != id
+                || layer2_core::sandbox::agent_observation::observation_agent().as_ref() != Some(id)
+            {
+                return Err(AgentLiveError::Unavailable);
+            }
+            return Ok(self
+                .0
+                .updates
+                .upgrade()
+                .map(|updates| updates.subscribe_local(id).with_lag_limit(200)));
+        }
         let permit = self
             .0
             .acquire(capacity::Class::Observer)
@@ -110,12 +135,12 @@ impl Relay {
         let uri: Uri = format!("{PREFIX}/live/{}", destination.token.agent_id)
             .parse()
             .map_err(|_| ())?;
-        let proof = self.authentication.sign(
+        let headers = self.authentication.signed_headers(
             &self.coordinator.instance_id,
             &destination.token,
             &Method::GET,
             &uri,
-            &HeaderMap::new(),
+            HeaderMap::new(),
             &[],
         )?;
         let url = format!(
@@ -125,7 +150,7 @@ impl Relay {
         );
         let response = tokio::time::timeout(
             LIVE_ADMISSION_DEADLINE,
-            self.client.get(url).header(PROOF, proof).send(),
+            self.client.get(url).headers(headers).send(),
         )
         .await
         .map_err(|_| ())?

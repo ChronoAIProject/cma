@@ -33,7 +33,10 @@ impl Workers {
                 ("workspaces", true),
                 ("sandbox_reconciliation", true),
                 ("agent_capacity_recovery", true),
+                ("agent_stale_turn_reconciliation", false),
                 ("native_warm_pools", false),
+                #[cfg(test)]
+                ("home_backup_expiry", false),
             ]
             .into_iter()
             .map(|(name, required)| Activity::new(name, required))
@@ -69,6 +72,34 @@ struct State {
     #[cfg(test)]
     fault: Option<service_fault_tests::Fault>,
 }
+
+impl State {
+    fn update(
+        &mut self,
+        status: &'static str,
+        phase: &'static str,
+        waiting: &'static str,
+        wake: Option<Instant>,
+    ) {
+        if self.status != status {
+            tracing::info!(
+                worker = self.name,
+                status,
+                "worker supervision state changed"
+            );
+        }
+        self.status = status;
+        metrics::gauge!("cma_worker_execution_available", "worker" => self.name)
+            .set(f64::from(status == "running"));
+        if self.phase != phase || self.waiting != waiting {
+            self.phase = phase;
+            self.phase_started = Instant::now();
+        }
+        self.waiting = waiting;
+        self.expected_wake = wake;
+    }
+}
+
 #[derive(Serialize)]
 pub(crate) struct Snapshot {
     pub(crate) worker: &'static str,
@@ -112,38 +143,28 @@ impl Activity {
         waiting: &'static str,
         wake: Option<Instant>,
     ) {
+        self.0.lock().unwrap().update(status, phase, waiting, wake);
+    }
+    fn begin_attempt(&self) {
         let mut state = self.0.lock().unwrap();
-        if state.status != status {
-            tracing::info!(
-                worker = state.name,
-                status,
-                "worker supervision state changed"
-            );
-        }
-        state.status = status;
-        metrics::gauge!("cma_worker_execution_available", "worker" => state.name)
-            .set(f64::from(status == "running"));
-        if state.phase != phase || state.waiting != waiting {
-            state.phase = phase;
-            state.phase_started = Instant::now();
-        }
-        state.waiting = waiting;
-        state.expected_wake = wake;
+        let now = Instant::now();
+        state.observed_turn = false;
+        state.last_activity = None;
+        // A scheduler can suspend before registering its first bounded wait.
+        state.update("starting", "starting", "startup", Some(now));
+        state.phase_started = now;
     }
     /// Called only by the actual scheduler, before its next bounded select.
     pub(crate) fn waiting(&self, interval: Duration, reason: &'static str) {
-        let status = if self.0.lock().unwrap().observed_turn {
+        let mut state = self.0.lock().unwrap();
+        let now = Instant::now();
+        let status = if state.observed_turn {
             "running"
         } else {
             "starting"
         };
-        self.update(
-            status,
-            "scheduling",
-            reason,
-            Some(Instant::now() + interval),
-        );
-        self.0.lock().unwrap().last_activity = Some(Instant::now());
+        state.update(status, "scheduling", reason, Some(now + interval));
+        state.last_activity = Some(now);
     }
     /// Evidence that the recovered loop has actually driven its select/work
     /// path once. Merely constructing a replacement future is not recovery.
@@ -256,7 +277,7 @@ where
             if *shutdown.borrow() || shutdown.has_changed().is_err() {
                 break;
             }
-            activity.0.lock().unwrap().observed_turn = false;
+            activity.begin_attempt();
             let mut watch = tokio::time::interval(WATCH_INTERVAL);
             watch.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             // The unwind/cancellation boundary excludes owned state. Dropping
@@ -330,5 +351,7 @@ pub(crate) fn stall_next_poll(activity: &Activity) {
 
 #[cfg(test)]
 mod service_fault_tests;
+#[cfg(test)]
+pub(crate) use service_fault_tests::startup_recovery_with_owned_completion;
 #[cfg(test)]
 mod tests;

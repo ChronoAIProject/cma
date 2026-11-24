@@ -21,6 +21,8 @@ const MAX_AGENT_SLOTS: usize = 16;
 
 #[path = "supervisor_agent.rs"]
 mod agent;
+#[path = "supervisor_agent_process.rs"]
+mod agent_process;
 #[path = "supervisor_agent_recovery.rs"]
 mod agent_recovery;
 #[path = "supervisor_agent_resources.rs"]
@@ -89,14 +91,27 @@ pub(crate) struct Supervisor {
     writer_boundary: SupervisorBoundary,
     http: reqwest::Client,
     // Dropping the supervisor terminates the isolated desktop session.
-    desktop_process: Option<crate::desktop_process::DesktopProcess>,
+    desktop_process: Option<crate::desktop_process::DesktopSession>,
 }
 
 impl Supervisor {
-    pub(crate) fn desktop_websocket_token(&self) -> Option<&str> {
+    pub(crate) fn desktop_generation(
+        &self,
+    ) -> Option<
+        std::result::Result<
+            crate::desktop_process::DesktopGeneration,
+            crate::desktop_process::DesktopUnavailable,
+        >,
+    > {
         self.desktop_process
             .as_ref()
-            .map(crate::desktop_process::DesktopProcess::websocket_token)
+            .map(crate::desktop_process::DesktopSession::generation)
+    }
+
+    pub(crate) async fn shutdown_desktop(&self) {
+        if let Some(desktop) = &self.desktop_process {
+            desktop.shutdown().await;
+        }
     }
 
     pub(crate) async fn dispatch(&self, request: RequestFrame) -> ResponseFrame {

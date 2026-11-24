@@ -116,7 +116,7 @@ mod custom_http_webhook_tests;
 #[cfg(test)]
 mod delivery_crash_tests;
 #[cfg(test)]
-mod delivery_tests;
+pub(crate) mod delivery_tests;
 #[cfg(test)]
 mod destination_tests;
 #[cfg(test)]
@@ -140,11 +140,13 @@ mod builder_tests;
 #[cfg(test)]
 mod executor_activity_tests;
 #[cfg(test)]
-mod executor_tests;
+pub(crate) mod executor_tests;
 #[cfg(test)]
 mod expiry_tests;
 #[cfg(test)]
 mod oversized_frame_tests;
+#[cfg(test)]
+mod preparation_activity_tests;
 #[cfg(test)]
 mod projection_store_tests;
 #[cfg(test)]
@@ -199,3 +201,4 @@ mod compatibility_execution_tests;
 
 #[cfg(test)]
 mod compatibility_mongo_tests;
+mod execution_activity;

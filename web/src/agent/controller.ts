@@ -4,7 +4,7 @@ import {
   useHistoryRetry,
   retainCurrentMetadata,
 } from './historyPublication';
-import { controlBaselineReady } from './controlReadiness';
+import { controlBaselineReady, responseControlAvailability } from './controlReadiness';
 import { observeRead } from './transport/readObserver';
 import { retrySchedule } from './transport/readRetry';
 import { useAgentTitle } from './useAgentTitle';
@@ -18,7 +18,6 @@ export { loadAgent, type ReadyAgent } from './loadAgent';
 import type { CmaWebClient } from '../api/client';
 import { CommandKeys } from '../api/client';
 import type { AgentLiveEvent } from '../api/types';
-import { currentAgentStatus } from './status';
 import { useSandboxInput } from './sandboxInput';
 import { ConversationHydration } from './transport/hydration';
 import { useRetainedAgentState } from './retainedState';
@@ -28,7 +27,7 @@ import { useAgentActions } from './actions';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { useControlStatus } from './transport/controlStatus';
 import { useQueuedInputs } from './transport/queuedInputsStatus';
-import { presentAgent, presentRetainedInputs } from './presentation';
+import { usePresentedAgent, usePresentedRetainedInputs } from './presentation';
 import { useAgentSummary } from './useAgentSummary';
 import type { AgentCommand, AgentController, AgentControllerOptions } from './controllerTypes';
 export type { AgentCommand, AgentController } from './controllerTypes';
@@ -422,11 +421,12 @@ export function useAgentController(
     onIdentityChange,
     options,
   });
-  const displayedStatus =
-    state.status === 'ready'
-      ? currentAgentStatus(state.detail, state.conversation, summary)
-      : undefined;
-  const legacy = client.agentTransport?.legacySession(agentId, options.viewerId);
+  const presented = usePresentedAgent(state, summary);
+  const legacy = client.agentTransport?.legacySession(
+    suspended ? undefined : agentId,
+    options.viewerId,
+  );
+  const retainedInputs = usePresentedRetainedInputs(v2, legacy, pending, onIdentityChange);
   const controlNotice = useControlStatus(v2, onIdentityChange);
   const queuedInputs = useQueuedInputs(
     v2,
@@ -443,17 +443,18 @@ export function useAgentController(
       strict,
     );
   return {
-    ...presentRetainedInputs(v2, legacy),
+    ...retainedInputs,
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
     controlNotice,
     controlBaselineReady: controlReady,
+    responseControls: responseControlAvailability(state, agentId, suspended),
     controlsUnavailable:
       suspended ||
       (v2 !== undefined &&
         state.status === 'ready' &&
         state.conversation.responseBinding === undefined),
     recoverPending: v2 === undefined && legacy === undefined ? undefined : recoverPending,
-    state: presentAgent(state, displayedStatus),
+    state: presented,
     inputAvailability: suspended
       ? {
           allowed: false,

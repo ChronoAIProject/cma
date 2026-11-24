@@ -11,30 +11,76 @@ else:
     from deployable_manifest import CURRENT
     from uncertainty import REASONS
 
-SCHEMA = 'cma-selection-cache-v2'
+SCHEMA = 'cma-selection-cache-v3'
 FIELDS = {'base', 'head', 'repo', 'am', 'eg', 'web', 'reasons', 'affected', 'am_packages',
           'eg_packages', 'test_tracks', 'deployables', 'changed_path_count'}
 IMAGES = frozenset(CURRENT)
+# The staging producer runs batch_selection. These scripts serve the CI
+# entrypoints and cannot change a staging comparison or its input map.
+CI_ONLY_SCRIPTS = frozenset({'ci_events.py', 'version_label.py'})
 
 
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':')).encode()
 
 
+def workflow_producer(data, job):
+    # Keep YAML scalar values and tags intact. In particular, "on" and "true"
+    # would both become the same Python key with a YAML 1.1 object loader.
+    import yaml
+
+    def fields(node):
+        if not isinstance(node, yaml.MappingNode):
+            raise ValueError('invalid selector producer mapping')
+        items = {}
+        for key, value in node.value:
+            if not isinstance(key, yaml.ScalarNode) or key.value == '<<' or key.value in items:
+                raise ValueError('ambiguous selector producer mapping')
+            items[key.value] = (key, value)
+        return items
+
+    document = yaml.compose(data, Loader=yaml.SafeLoader)
+    top = fields(document)
+    top.pop('concurrency', None)
+    if 'jobs' not in top:
+        raise ValueError('missing selector producer jobs')
+    jobs_key, jobs = top['jobs']
+    entries = fields(jobs)
+    if job not in entries:
+        raise ValueError('missing selector producer job')
+    key, producer = entries[job]
+    settings = fields(producer)
+    settings.pop('concurrency', None)
+    selected = yaml.MappingNode(producer.tag, list(settings.values()))
+    # A producer depending on another job can consume its outputs. In that
+    # case keep the full job graph in the key, including upstream steps.
+    if 'needs' not in settings:
+        top['jobs'] = (jobs_key, yaml.MappingNode(jobs.tag, [(key, selected)]))
+    return yaml.serialize(yaml.MappingNode(document.tag, list(top.values())), canonical=True).encode()
+
+
 def fingerprint(root):
     # A policy refresh must miss before a historical decision or input map
     # is loaded, even when a tracked manifest was omitted from its archive.
-    paths = sorted((root / '.github/scripts/ci_tracks').glob('*.py'))
+    paths = sorted(
+        path for path in (root / '.github/scripts/ci_tracks').glob('*.py')
+        if path.name not in CI_ONLY_SCRIPTS and not path.name.startswith('test_')
+    )
     paths += [root / '.github/scripts/ci_tracks/requirements.txt',
               root / 'api/rust-toolchain.toml', root / '.github/scripts/deployables.json',
-              root / '.github/workflows/staging-cd.yml', root / '.github/workflows/ci.yml',
-              root / '.github/scripts/staging_cd_queue.py',
+              root / '.github/scripts/staging_cd_comparisons.py', root / '.github/scripts/staging_cd_admission.py',
               root / '.github/scripts/staging_cd_selection_cache.py']
+    workflows = {root / '.github/workflows/staging-cd.yml': 'plan',
+                 root / '.github/workflows/ci.yml': 'changes'}
+    paths.extend(workflows)
     digest = hashlib.sha256(canonical([SCHEMA, *sys.version_info[:3]]))
     for path in paths:
         if path.is_symlink() or not path.is_file():
             raise ValueError('invalid selector fingerprint input')
-        digest.update(path.relative_to(root).as_posix().encode() + b'\0' + path.read_bytes() + b'\0')
+        data = path.read_bytes()
+        if path in workflows:
+            data = workflow_producer(data, workflows[path])
+        digest.update(path.relative_to(root).as_posix().encode() + b'\0' + data + b'\0')
     return digest.hexdigest()
 
 

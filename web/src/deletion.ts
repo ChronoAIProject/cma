@@ -1,9 +1,15 @@
+import { DeletionBlocked } from './agent/stopDeletion';
 import type { CmaWebClient } from './api/client';
-import type { AgentEvent, Failure, SandboxEvent } from './api/types';
+import type { AgentEvent, AgentStatus, Failure, SandboxEvent } from './api/types';
+import { agentDeletionReason, type AgentDeletionPermissions } from './agent/deletionEligibility';
+export type { AgentDeletionPermissions } from './agent/deletionEligibility';
 import type { TreeAction } from './shell/Tree';
 import type { ProvisioningStep } from './sandbox/progress';
 import { readSandboxHistory } from './sandbox/eventHistory';
-import { sandboxRetirementDuringRevive } from './sandbox/lifecycle';
+import {
+  sandboxDeletionReason,
+  sandboxHasParkedRuntimeUpdate,
+} from './sandbox/deletionEligibility';
 
 export type DeleteAction = Extract<
   TreeAction,
@@ -13,10 +19,27 @@ export interface DeletionRequest {
   readonly action: DeleteAction;
   readonly key: string;
   readonly accepted: boolean;
+  readonly deleteSent?: boolean;
+  readonly stop?: {
+    readonly key: string;
+    readonly phase: 'requested' | 'accepted' | 'blocked';
+    readonly sandboxId: string;
+    readonly workspaceId: string;
+    readonly worktreeId: string;
+  };
 }
 export interface DeletionObservation {
   readonly name: string;
+  readonly sandboxId?: string;
   readonly complete: boolean;
+  readonly inProgress?: boolean;
+  readonly stopsRuntimeUpdate?: boolean;
+  readonly agent?: {
+    readonly status: AgentStatus;
+    readonly workspaceId: string;
+    readonly worktreeId: string;
+  };
+  readonly stopsAgent?: boolean;
   readonly blocked?: string;
   readonly failure?: Failure;
   readonly steps: readonly ProvisioningStep[];
@@ -55,14 +78,22 @@ export async function observeDeletion(
   accepted: boolean,
   previous: readonly SandboxEvent[] = [],
   previousAgentEvents: readonly AgentEvent[] = [],
+  authority?: {
+    readonly viewerId: string;
+    readonly permissions: AgentDeletionPermissions;
+    readonly stopBeforeDelete?: boolean;
+  },
 ): Promise<DeletionObservation> {
   if (action.kind === 'delete_sandbox') {
     const sandbox = await client.readSandbox(action.sandboxId, { signal });
     if (sandbox.id !== action.sandboxId)
       throw new Error('Deletion status referred to another Sandbox.');
     const complete = sandbox.status === 'retired';
+    const inProgress = sandbox.status === 'retiring';
     const events =
-      accepted || complete ? await readSandboxHistory(client, sandbox.id, signal, previous) : [];
+      accepted || complete || inProgress
+        ? await readSandboxHistory(client, sandbox.id, signal, previous)
+        : [];
     const completed = new Set(
       events
         .filter((event) => event.kind.type === 'work_step_completed')
@@ -89,15 +120,13 @@ export async function observeDeletion(
       name: sandbox.name,
       observedAt: new Date().toISOString(),
       complete,
+      inProgress,
+      stopsRuntimeUpdate: sandboxHasParkedRuntimeUpdate(sandbox),
       events,
       failure,
-      blocked:
-        sandbox.lifecycle?.checkpoint !== undefined ||
-        (sandbox.lifecycle?.operation !== undefined && !sandboxRetirementDuringRevive(sandbox))
-          ? 'Wait for the current Sandbox operation to finish before deleting it.'
-          : undefined,
+      blocked: sandboxDeletionReason(sandbox),
       steps: [
-        step('Stop Agents', stopped, accepted),
+        step('Stop Agents', stopped, accepted || inProgress),
         step('Remove Sandbox runtime', removed, revoked),
         step('Deletion confirmed', complete, removed),
       ],
@@ -139,7 +168,31 @@ export async function observeDeletion(
   }
   const agent = await client.readAgent(action.agentId, { signal });
   if (agent.id !== action.agentId || agent.worktree.agentId !== agent.id)
-    throw new Error('Deletion status referred to another Agent or Worktree.');
+    throw new DeletionBlocked('Deletion status referred to another Agent or Worktree.');
+  const stopsAgent = !['stopped', 'failed', 'deleted'].includes(agent.status);
+  let blocked = stopsAgent
+    ? 'Stop this Agent before deleting it and its Worktree.'
+    : agent.sandbox.status === 'paused'
+      ? 'Resume the Sandbox before deleting this Agent.'
+      : undefined;
+  if (authority) {
+    signal.throwIfAborted();
+    const parent = await client.readSandbox(agent.sandbox.id, { signal });
+    if (
+      parent.id !== agent.sandbox.id ||
+      agent.worktree.sandboxId !== parent.id ||
+      agent.worktree.workspaceId !== agent.workspace.id
+    )
+      throw new DeletionBlocked('Deletion status referred to another parent or Worktree.');
+    signal.throwIfAborted();
+    blocked = agentDeletionReason(
+      agent.status,
+      authority.permissions,
+      parent,
+      authority.viewerId,
+      authority.stopBeforeDelete,
+    );
+  }
   const complete = agent.status === 'deleted' && agent.worktree.status === 'removed';
   const agentEvents = [...previousAgentEvents];
   if (accepted || complete) {
@@ -174,6 +227,9 @@ export async function observeDeletion(
         ),
     );
   return {
+    sandboxId: agent.sandbox.id,
+    agent: { status: agent.status, workspaceId: agent.workspace.id, worktreeId: agent.worktree.id },
+    stopsAgent,
     name: agent.title?.trim() || 'Untitled agent',
     observedAt: new Date().toISOString(),
     complete,
@@ -183,11 +239,7 @@ export async function observeDeletion(
       latestFailure !== undefined && !complete && !completed.has(latestFailure.kind.step)
         ? (latestFailure.kind.failure as Failure)
         : undefined,
-    blocked: !['stopped', 'failed', 'deleted'].includes(agent.status)
-      ? 'Stop this Agent before deleting it and its Worktree.'
-      : agent.sandbox.status === 'paused'
-        ? 'Resume the Sandbox before deleting this Agent.'
-        : undefined,
+    blocked,
     steps: [
       step('Confirm Agent stopped', closed, accepted),
       step('Remove Agent files', homeRemoved, closed),

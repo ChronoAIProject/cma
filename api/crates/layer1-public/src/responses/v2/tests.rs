@@ -5,6 +5,8 @@ use serde_json::json;
 mod page_tests;
 #[path = "replay_tests.rs"]
 mod replay_tests;
+#[path = "shared_tests.rs"]
+mod shared_tests;
 #[path = "submission_tests.rs"]
 mod submission_tests;
 
@@ -151,6 +153,32 @@ async fn fixture_with_events(
     reader: Option<Arc<dyn layer2_core::sandbox::store::AgentResponseLogStore>>,
     paged_events: bool,
 ) -> Fixture {
+    fixture_mode(reader, paged_events, false).await
+}
+async fn fixture_mode(
+    reader: Option<Arc<dyn layer2_core::sandbox::store::AgentResponseLogStore>>,
+    paged_events: bool,
+    shared: bool,
+) -> Fixture {
+    fixture_with_events_and_standing(
+        reader,
+        paged_events,
+        shared,
+        Arc::new(layer2_core::account_deletion::AvailableAccounts),
+    )
+    .await
+}
+pub(crate) async fn fixture_with_standing(
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+) -> Fixture {
+    fixture_with_events_and_standing(None, false, false, standing).await
+}
+async fn fixture_with_events_and_standing(
+    reader: Option<Arc<dyn layer2_core::sandbox::store::AgentResponseLogStore>>,
+    paged_events: bool,
+    shared: bool,
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+) -> Fixture {
     let (state, store) = fixtures::conversation_fixture().await;
     fixtures::insert_agent(
         &store,
@@ -159,21 +187,47 @@ async fn fixture_with_events(
     )
     .await;
     let authority = Arc::new(Authority);
-    let access = Arc::new(ResourceAccessService::new(store.clone(), authority.clone()));
+    let access = Arc::new(
+        ResourceAccessService::new(store.clone(), authority.clone())
+            .with_account_standing(standing),
+    );
     let commands = AgentCommandService::new(store.clone(), access.clone(), authority);
     let reads = state
         .reads
         .with_resource_access(access.clone())
         .with_response_logs(reader);
-    Fixture {
-        router: super::router(
-            super::ResponsesV2State::new(
-                crate::agent_page::AgentPageOrigin::test(),
-                commands,
-                reads,
-            )
+    let (reads, custody) = if shared {
+        let agent = store
+            .get_agent(&AgentId("agt_fixture".into()))
+            .await
+            .unwrap()
+            .unwrap();
+        let (reads, custody, _) = shared_tests::install(reads, store.clone(), &agent);
+        (reads, Some(custody))
+    } else {
+        (reads, None)
+    };
+    let router = super::router(
+        super::ResponsesV2State::new(crate::agent_page::AgentPageOrigin::test(), commands, reads)
             .with_paged_events(paged_events),
-        ),
+    );
+    let router = match custody {
+        Some(custody) => router.layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let custody = custody.clone();
+                async move {
+                    layer2_core::sandbox::agent_observation::observation_scope(
+                        custody,
+                        next.run(request),
+                    )
+                    .await
+                }
+            },
+        )),
+        None => router,
+    };
+    Fixture {
+        router,
         store,
         access,
     }

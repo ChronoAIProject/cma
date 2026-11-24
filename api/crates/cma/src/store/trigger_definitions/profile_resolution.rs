@@ -117,6 +117,41 @@ pub(super) async fn authorize(
     )
     .await?;
 
+    let database = store
+        .profiles
+        .client
+        .database(&store.profiles.sandbox_profiles.namespace().db);
+    if !super::super::profile_pin_admission::sandbox(
+        &database,
+        sandbox_revision.profile_id.as_str(),
+        sandbox_revision.revision,
+        Some(&sandbox_revision.digest),
+        session,
+    )
+    .await
+    .map_err(TransactionProfileError::Driver)?
+        || !super::super::profile_pin_admission::workspace(
+            &database,
+            workspace_revision.profile_id.as_str(),
+            workspace_revision.revision,
+            Some(&workspace_revision.digest),
+            session,
+        )
+        .await
+        .map_err(TransactionProfileError::Driver)?
+        || !super::super::profile_pin_admission::agent(
+            &database,
+            agent_revision.profile_id.as_str(),
+            agent_revision.revision,
+            Some(&agent_revision.digest),
+            session,
+        )
+        .await
+        .map_err(TransactionProfileError::Driver)?
+    {
+        return Err(transaction_unavailable("target profile"));
+    }
+
     Ok(ResolvedTriggerProfiles {
         sandbox: sandbox_revision,
         sandbox_workspaces,
@@ -376,6 +411,7 @@ async fn fence(
         "owner": profile_owner,
         "retired_at": Bson::Null,
         "record.retired_at": Bson::Null,
+        "account_erasure_fenced": { "$ne": true },
     };
     if allow_owned_inline {
         filter.insert("visibility", doc! { "$in": ["public", "private"] });
@@ -408,8 +444,7 @@ fn require_public(
     allow_owned_inline: bool,
 ) -> Result<(), TransactionProfileError> {
     if retired_at.is_some()
-        || (visibility == ProfileVisibility::Private
-            && (!allow_owned_inline || trigger_owner != profile_owner))
+        || (visibility == ProfileVisibility::Private && trigger_owner != profile_owner)
     {
         return Err(transaction_unavailable(field));
     }

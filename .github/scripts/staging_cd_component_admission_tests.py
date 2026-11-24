@@ -1,9 +1,11 @@
 """Qualified peers deploy without weakening scan, source or group authority."""
 import contextlib
+import fnmatch
 import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -19,6 +21,8 @@ import staging_cd_invoke_tests
 from staging_cd_receipts import canonical
 from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt, fixture_tag
 from staging_cd_set import verify_set
+from staging_cd_versions import DEPLOYABLES
+from staging_cd_watermark import require_current_versions
 import staging_cd_set_report as report
 
 
@@ -45,7 +49,7 @@ class ComponentAdmissionTests(unittest.TestCase):
     def unavailable(self, *keys):
         self.api.tags.side_effect = lambda key: [] if key in keys else [fixture_tag(self.receipts[key])]
 
-    def execute(self, value):
+    def execute(self, value, *, check=None, expected=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env = staging_cd_invoke_tests.InvokeTests().environment(root)
@@ -60,10 +64,58 @@ class ComponentAdmissionTests(unittest.TestCase):
                 fixture_result(path)
                 return 0
             runner = Mock(side_effect=run)
-            self.assertEqual(deploy(env, Mock(), lambda _: script, runner), 0)
+            with patch("staging_cd_invoke.require_current_versions", side_effect=check) as guard:
+                self.assertEqual(deploy(env, Mock(), lambda _: script, runner), 0)
+                guard.assert_called_once()
             runner.assert_called_once()
-            self.assertEqual(set(observed[0]['components']), set(value['receipts']))
+            self.assertEqual(set(observed[0]['components']), expected or set(value['receipts']))
             return observed[0]
+
+    def advertisement(self, *names):
+        refs = ['refs/tags/' + receipt['tag'] for receipt in self.receipts.values()]
+        refs += ['refs/tags/' + name for name in names]
+
+        def runner(args, **_kwargs):
+            lines = ['1' * 40 + '\t' + ref for ref in refs if any(fnmatch.fnmatchcase(ref, p) for p in args)]
+            return subprocess.CompletedProcess(args, 0, '\n'.join(lines), '')
+        return lambda receipts: require_current_versions(receipts, runner=runner)
+
+    def test_every_lane_with_a_pending_successor_deploys_but_a_higher_final_is_withheld(self):
+        keys, apps = sorted(DEPLOYABLES), ['am', 'eg', 'web']
+        successors = [DEPLOYABLES[key] + '/pending/v0.10.2' for key in keys]
+        pending = self.advertisement(*successors)
+        self.api.require_current_versions.side_effect = pending
+        value, failures = self.admit(keys)
+        self.assertEqual((set(value['receipts']), failures), (set(keys), {}))
+        value, _ = self.admit(apps)
+        self.assertEqual(verify_set(value, self.api, self.registry, automatic=True), value)
+        self.execute(value, check=pending)
+        for key in keys:
+            with self.subTest(component=key):
+                final = self.advertisement(*successors, DEPLOYABLES[key] + '/v0.10.2')
+                self.api.require_current_versions.side_effect = final
+                narrowed, failures = self.admit(keys)
+                self.assertEqual(set(narrowed['receipts']), set(keys) - {key})
+                self.assertEqual(failures, {key: 'superseded-source'})
+                if key in apps:
+                    # A final arriving after admission withholds its lane under the lock and at launch.
+                    current = set(apps) - {key}
+                    self.assertEqual(set(verify_set(value, self.api, self.registry, automatic=True)['receipts']),
+                                     current)
+                    self.execute(value, check=final, expected=current)
+
+    def test_new_pending_version_withholds_only_its_component(self):
+        from staging_cd_watermark import SUPERSEDED
+        def current(receipts):
+            if "eg" in receipts:
+                raise Refusal(SUPERSEDED)
+        self.api.require_current_versions.side_effect = current
+        value, failures = automatic_admission(self.matrix(["web", "eg"]), self.api, self.registry)
+        self.assertEqual(set(value["receipts"]), {"web"})
+        self.assertEqual(failures, {"eg": "superseded-source"})
+        with self.assertRaisesRegex(Refusal, "superseded"):
+            verify_set({"schema": value["schema"], "receipts": {"eg": self.receipts["eg"]}},
+                       self.api, self.registry, automatic=True)
 
     def test_web_publication_success_runtime_scan_failure_deploys_only_web(self):
         self.receipts['runtime']['scan']['complete'] = False
@@ -171,7 +223,7 @@ class ComponentAdmissionTests(unittest.TestCase):
         self.assertEqual(set(value['receipts']), {'eg'})
         self.assertEqual(failures, {'web': 'publication-unqualified'})
 
-    def test_superseded_component_is_withheld_and_post_lock_verification_still_refuses(self):
+    def test_superseded_component_is_withheld_before_and_after_lock(self):
         old = self.matrix(['web', 'eg'])
         value, _ = self.admit(['web', 'eg'])
         later = fixture_receipt(previous='0.10.1', version='0.10.2', source='f' * 40)
@@ -180,8 +232,7 @@ class ComponentAdmissionTests(unittest.TestCase):
         narrowed, failures = automatic_admission(old, self.api, self.registry, policy=self.policy)
         self.assertEqual(set(narrowed['receipts']), {'eg'})
         self.assertEqual(failures, {'web': 'superseded-source'})
-        with self.assertRaises(Refusal):
-            verify_set(value, self.api, self.registry, automatic=True)
+        self.assertEqual(verify_set(value, self.api, self.registry, automatic=True), narrowed)
 
     def test_admission_artifact_binds_attempt_complete_coverage_and_digests(self):
         self.unavailable('runtime')

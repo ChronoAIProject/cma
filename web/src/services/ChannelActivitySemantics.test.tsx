@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, it } from 'vitest';
 import { ChannelActivityView } from './ChannelActivity';
 import { ChannelActivityPreview } from './ChannelActivityPreview';
@@ -52,7 +52,8 @@ it('updates event facts in place and retains a generic label for old receipts', 
     />,
   );
   expect(screen.getByText('Message edited · discord')).toBeVisible();
-  expect(screen.getByText('Alex ·', { exact: false })).toBeVisible();
+  expect(screen.getByText('Participant ·', { exact: false })).toBeVisible();
+  fireEvent.click(screen.getByText('Event details'));
   expect(document.querySelector('time[datetime="2026-10-27T07:59:00Z"]')).toBeVisible();
   expect(screen.queryByText(/Message deleted/)).not.toBeInTheDocument();
   rerender(
@@ -70,4 +71,64 @@ it('shows reaction changes using the same receipt layout', () => {
     />,
   );
   expect(screen.getByText('Reaction updated · discord')).toBeVisible();
+});
+
+const actorId = 'ou_synthetic_sender_sentinel';
+const names = [undefined, '', '   ', '合成表示名', 'x'.repeat(1024), '<b>sender</b>', actorId];
+const sources = [
+  { type: 'native_lark', platform: 'lark' },
+  { type: 'nyxid_relay', platform: 'lark', route_id: 'fixture-route' },
+  { type: 'nyxid_relay', platform: 'feishu', route_id: 'fixture-route' },
+  { type: 'discord', bot_id: '123' },
+];
+
+it.each(sources)('hides upstream identity in both views for $type/$platform', (source) => {
+  const { rerender, container } = render(<></>);
+  for (const display_name of names) {
+    const event = {
+      ...receipt,
+      kind: 'message',
+      source,
+      actor: { id: actorId, display_name, kind: 'human' },
+    };
+    rerender(
+      <>
+        <ChannelActivityPreview feed={feed(event)} />
+        <ChannelActivityView feed={feed(event)} />
+      </>,
+    );
+    expect(screen.getByText('Participant')).toBeVisible();
+    expect(screen.getByText('Participant ·', { exact: false })).toBeVisible();
+    expect(
+      screen.getAllByText(`Message received · ${source.platform ?? source.type}`),
+    ).toHaveLength(2);
+    expect(screen.getByText(receipt.event_id)).toBeVisible();
+    expect(container.innerHTML).not.toContain(actorId);
+    if (display_name?.trim()) {
+      expect(container.textContent).not.toContain(display_name);
+      expect(container.innerHTML).not.toContain(display_name);
+    }
+  }
+});
+
+it.each([
+  ['bot', 'Bot'],
+  ['system', 'System'],
+  ['unknown', 'Actor not reported'],
+  ['service', 'Actor not reported'],
+  [undefined, 'Actor not reported'],
+])('uses a fixed label for actor kind %s', (kind, label) => {
+  const event = {
+    ...receipt,
+    actor: { id: actorId, display_name: actorId, kind },
+  } as ChannelActivityEvent;
+  const { container } = render(
+    <>
+      <ChannelActivityPreview feed={feed(event)} />
+      <ChannelActivityView feed={feed(event)} />
+    </>,
+  );
+  expect(screen.getByText(label!)).toBeVisible();
+  expect(screen.getByText(`${label} ·`, { exact: false })).toBeVisible();
+  expect(container.innerHTML).not.toContain(actorId);
 });

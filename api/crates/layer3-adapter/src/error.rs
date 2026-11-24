@@ -28,11 +28,16 @@ pub enum AdapterError {
     InputAuthorityUnavailable(String),
     #[error("runtime unavailable: {0}")]
     Unavailable(String),
+    #[error("the desktop has stopped recovering")]
+    DesktopFailed,
     /// A create readiness observation; it does not prove runtime loss or permit replacement.
     #[error("native claim is not ready: {0}")]
     NativeClaimNotReady(crate::agent_sandbox::NativeClaimGuardReason),
     #[error("runtime rejected request: {0}")]
     Rejected(String),
+    /// Current authority no longer permits the operation.
+    #[error("current access authority was revoked")]
+    AccessRevoked,
     #[error("skill upgrade refused: {0}")]
     SkillUpgradeRefused(crate::AgentSkillUpgradeRefusal),
     #[error("runtime rejected conflicting operation identity: {0}")]
@@ -57,27 +62,30 @@ impl AdapterError {
     /// Add diagnostic context without changing the failure category.
     #[must_use]
     pub fn context(self, context: &str) -> Self {
+        self.context_formatted(format_args!("{context}"))
+    }
+
+    pub(crate) fn context_formatted(self, detail: std::fmt::Arguments<'_>) -> Self {
+        use crate::ingress_budget::diagnostic::context;
         match self {
-            Self::PromptNotWritten(message) => {
-                Self::PromptNotWritten(format!("{context}: {message}"))
-            }
+            Self::PromptNotWritten(message) => context(Self::PromptNotWritten, message, detail),
             Self::InputAuthorityUnavailable(message) => {
-                Self::InputAuthorityUnavailable(format!("{context}: {message}"))
+                context(Self::InputAuthorityUnavailable, message, detail)
             }
-            Self::Unavailable(message) => Self::Unavailable(format!("{context}: {message}")),
+            Self::Unavailable(message) => context(Self::Unavailable, message, detail),
+            Self::DesktopFailed => Self::DesktopFailed,
             held @ Self::RuntimeStartupHold(_) => held,
             guarded @ Self::NativeClaimNotReady(_) => guarded,
-            Self::Rejected(message) => Self::Rejected(format!("{context}: {message}")),
+            Self::Rejected(message) => context(Self::Rejected, message, detail),
+            Self::AccessRevoked => Self::AccessRevoked,
             refusal @ Self::SkillUpgradeRefused(_) => refusal,
             Self::OperationIdentityConflict(message) => {
-                Self::OperationIdentityConflict(format!("{context}: {message}"))
+                context(Self::OperationIdentityConflict, message, detail)
             }
-            Self::RuntimeLedgerHold(message) => {
-                Self::RuntimeLedgerHold(format!("{context}: {message}"))
-            }
+            Self::RuntimeLedgerHold(message) => context(Self::RuntimeLedgerHold, message, detail),
             capacity @ Self::RuntimeCapacity(_) => capacity,
-            Self::AtCapacity(message) => Self::AtCapacity(format!("{context}: {message}")),
-            Self::Unsupported(message) => Self::Unsupported(format!("{context}: {message}")),
+            Self::AtCapacity(message) => context(Self::AtCapacity, message, detail),
+            Self::Unsupported(message) => context(Self::Unsupported, message, detail),
             mismatch @ Self::RuntimeContractMismatch(_) => mismatch,
         }
     }
@@ -89,8 +97,25 @@ impl AdapterError {
     }
 
     pub(crate) fn unexpected_reply(operation: &str) -> Self {
-        Self::Rejected(format!(
-            "runtime returned a reply for a different operation while handling {operation}"
-        ))
+        crate::ingress_budget::diagnostic::make_preserving_category(
+            Self::Rejected,
+            format_args!(
+                "runtime returned a reply for a different operation while handling {operation}"
+            ),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AdapterError;
+
+    #[test]
+    fn access_revoked_keeps_its_type_after_diagnostic_context() {
+        let error = AdapterError::AccessRevoked
+            .context("credential issuance")
+            .context("current authority");
+        assert_eq!(error, AdapterError::AccessRevoked);
+        assert!(!error.is_runtime_loss());
     }
 }

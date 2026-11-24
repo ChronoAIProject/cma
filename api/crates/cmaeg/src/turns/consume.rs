@@ -1,4 +1,5 @@
 use super::{
+    execution_receipt::{self, ExecutionReceiptVerifier},
     outcomes::{DeliveryCommand, TurnOutcome},
     projection::Projection,
 };
@@ -20,28 +21,39 @@ pub(super) async fn consume(
     provider: &str,
     delivery: &dyn DeliverySink,
     activity: &dyn super::observer::ActivityObserver,
+    execution_verifier: Option<&dyn ExecutionReceiptVerifier>,
     admitted: &mut Option<oneshot::Sender<LaunchOutcome>>,
 ) -> Result<&'static str, &'static str> {
+    // No provider acceptance observed yet.
     let mut acceptance_pending = true;
+    // The acceptance signal can still arrive. A stream that ends without one
+    // closes it, while any terminal answer it sent remains queued as an event.
+    let mut acceptance_open = true;
+    let mut accepted_response = None;
     let mut projection = Projection::default();
     let mut trace = None;
     loop {
         tokio::select! {
             biased;
-            accepted = &mut stream.accepted, if acceptance_pending => {
+            accepted = &mut stream.accepted, if acceptance_open => {
+                acceptance_open = false;
+                // Drain the events: an ended stream is lost only if it never
+                // delivered a terminal answer.
+                let Ok(accepted) = accepted else { continue };
                 acceptance_pending = false;
-                let accepted = accepted.map_err(|_| "stream_lost")?;
                 adopt_trace(&stream, &turn, &mut trace);
                 metrics::histogram!(crate::telemetry::names::PROVIDER_ACCEPT,
                     crate::telemetry::names::PROVIDER => provider.to_owned())
                     .record(accepted.at.saturating_duration_since(stream.request_started).as_secs_f64());
                 tracing::info!(metric="cmaeg_provider_accept_seconds",duration_seconds=accepted.at.saturating_duration_since(stream.request_started).as_secs_f64(),"provider accepted turn");
                 if let Some(sender) = admitted.take() {let _ = sender.send(LaunchOutcome::Accepted {response_id:accepted.response_id.clone()});}
-                send(delivery,&turn,TurnOutcome::Accepted {response_id:accepted.response_id,thread_reply:accepted.thread_reply}).await?;
+                accepted_response = Some(accepted.response_id.clone());
+                send(delivery,&turn,TurnOutcome::Accepted {response_id:accepted.response_id,thread_reply:accepted.thread_reply}, None).await?;
             }
-            event = stream.events.recv() => {
-                let Some(event) = event else {return Err("stream_lost");};
+            observed = stream.events.recv_observed() => {
+                let Some(observed) = observed else {return Err("stream_lost");};
                 adopt_trace(&stream, &turn, &mut trace);
+                let event = observed.event;
                 if let crate::providers::ResponsesEvent::Created {
                     response_id, native_agent_id: Some(agent_id), ..
                 } = &event {
@@ -53,13 +65,36 @@ pub(super) async fn consume(
                     activity.checkpoint(&turn.channel.definition.record_id,
                         &turn.activity.event_id, change).await;
                 }
+                let execution = execution_receipt::observe(
+                    execution_verifier, &turn, provider, accepted_response.as_deref(), &event,
+                );
                 if let Some(outcome) = projection.event(event)? {
                     let terminal = outcome.terminal();
                     let kind = outcome.kind();
+                    let answer_response_id = if observed.bound_to_accepted
+                        && matches!(outcome, TurnOutcome::MessageCommitted { .. } | TurnOutcome::Completed { .. })
+                    {
+                        accepted_response.clone()
+                    } else {
+                        None
+                    };
+                    let delivery = send(delivery,&turn,outcome, answer_response_id).await;
                     if terminal && acceptance_pending {
-                        refuse(admitted,ProblemCode::ProviderUnavailable,"provider stream ended before acceptance");
+                        // The provider answered without a response identity.
+                        // Once delivery holds that answer the event is handled:
+                        // refusing it would invite the source to redeliver an
+                        // event whose answer the user already has.
+                        if delivery.is_ok() {
+                            if let Some(sender) = admitted.take() {let _ = sender.send(LaunchOutcome::Deferred);}
+                        } else {
+                            refuse(admitted,ProblemCode::ProviderUnavailable,"provider stream ended before acceptance");
+                        }
                     }
-                    send(delivery,&turn,outcome).await?;
+                    if let Some(change) = execution {
+                        activity.checkpoint(&turn.channel.definition.record_id,
+                            &turn.activity.event_id, change).await;
+                    }
+                    delivery?;
                     if terminal {
                         if let Some(trace) = trace {trace.finish(Outcome::Streamed);}
                         return Ok(kind);
@@ -82,15 +117,17 @@ fn adopt_trace(stream: &TurnStream, turn: &LaunchRequest, trace: &mut Option<Bou
         *trace = Some(operation);
     }
 }
-pub(super) async fn send(
+async fn send(
     delivery: &dyn DeliverySink,
     turn: &Arc<LaunchRequest>,
     outcome: TurnOutcome,
+    answer_response_id: Option<String>,
 ) -> Result<(), &'static str> {
     delivery
         .submit(DeliveryCommand::StreamOutcome {
             turn: turn.clone(),
             outcome,
+            answer_response_id,
         })
         .await
         .map_err(|_| "delivery_unavailable")

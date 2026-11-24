@@ -10,17 +10,23 @@ export function sameAgent(detail: AgentDetail, summary: AgentSummary): boolean {
   );
 }
 
+export function currentAgentSnapshot(
+  detail: AgentDetail,
+  summary?: AgentSummary,
+): AgentDetail | AgentSummary {
+  return summary !== undefined &&
+    sameAgent(detail, summary) &&
+    Date.parse(summary.updatedAt) > Date.parse(detail.updatedAt)
+    ? summary
+    : detail;
+}
+
 export function currentAgentStatus(
   detail: AgentDetail,
   conversation: ConversationState,
   summary?: AgentSummary,
 ): AgentStatus {
-  const snapshot =
-    summary !== undefined &&
-    sameAgent(detail, summary) &&
-    Date.parse(summary.updatedAt) > Date.parse(detail.updatedAt)
-      ? summary
-      : detail;
+  const snapshot = currentAgentSnapshot(detail, summary);
   // Historical status frames must not override a newer resource snapshot.
   return conversation.agentStatus !== undefined &&
     conversation.agentStatusAt !== undefined &&

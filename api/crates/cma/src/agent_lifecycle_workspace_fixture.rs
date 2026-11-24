@@ -45,12 +45,49 @@ pub(super) fn facade(
     profiles: Arc<crate::store::MongoProfileStore>,
     operations: Arc<MongoAgentLifecycleStore>,
 ) -> Arc<InlineAgentLifecycle> {
+    facade_with_limit(
+        store,
+        profiles,
+        operations,
+        SandboxPolicy::default().max_sandboxes_per_owner,
+        FixedSandboxCredentialPrerequisite::SetupRequired,
+    )
+}
+
+pub(super) fn facade_with_limit(
+    store: Arc<InMemorySandboxStore>,
+    profiles: Arc<crate::store::MongoProfileStore>,
+    operations: Arc<MongoAgentLifecycleStore>,
+    limit: u16,
+    credentials: impl layer2_core::sandbox::SandboxCredentialPrerequisite + 'static,
+) -> Arc<InlineAgentLifecycle> {
+    facade_with_resolver(
+        store,
+        profiles,
+        operations,
+        limit,
+        credentials,
+        ImageManagerResolver::new("http://127.0.0.1:1".into(), false).unwrap(),
+    )
+}
+
+pub(super) fn facade_with_resolver(
+    store: Arc<InMemorySandboxStore>,
+    profiles: Arc<crate::store::MongoProfileStore>,
+    operations: Arc<MongoAgentLifecycleStore>,
+    limit: u16,
+    credentials: impl layer2_core::sandbox::SandboxCredentialPrerequisite + 'static,
+    resolver: Arc<dyn ImageResolver>,
+) -> Arc<InlineAgentLifecycle> {
     InlineAgentLifecycle::new(
         SandboxService::new(
             store.clone(),
             profiles.clone(),
-            SandboxPolicy::default(),
-            Arc::new(FixedSandboxCredentialPrerequisite::SetupRequired),
+            SandboxPolicy {
+                max_sandboxes_per_owner: limit,
+                ..SandboxPolicy::default()
+            },
+            Arc::new(credentials),
         ),
         WorkspaceService::new(store.clone(), profiles.clone()),
         AgentService::new(
@@ -62,7 +99,7 @@ pub(super) fn facade(
         store,
         layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         profiles,
-        ImageManagerResolver::new("http://127.0.0.1:1".into()).unwrap(),
+        resolver,
         ProfileCapacityBounds {
             min_cpu_millis: 100,
             max_cpu_millis: 8000,
@@ -173,4 +210,13 @@ pub(in crate::agent_lifecycle) async fn seed(store: &InMemorySandboxStore) -> Wo
     };
     store.create_workspace(workspace.clone()).await.unwrap();
     workspace
+}
+
+pub(super) fn task_policy() -> Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy> {
+    Arc::new(
+        serde_json::from_value(json!({
+            "mode":"accounts", "accounts":["owner"], "capabilities":["task_home_admission"]
+        }))
+        .unwrap(),
+    )
 }

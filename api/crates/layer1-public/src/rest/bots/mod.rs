@@ -206,10 +206,19 @@ fn view(result: Result<Bot, BotError>, status: StatusCode) -> Response {
 }
 fn problem(error: BotError) -> Response {
     let (status, code) = match &error {
+        BotError::AccountDeletionInProgress => {
+            return super::account_deletion_problem(
+                layer2_core::account_deletion::AccountDeletionError::InProgress,
+            )
+        }
         BotError::Forbidden => (StatusCode::FORBIDDEN, "bot_forbidden"),
         BotError::NotFound => (StatusCode::NOT_FOUND, "bot_not_found"),
         BotError::Conflict => (StatusCode::CONFLICT, "bot_conflict"),
         BotError::Invalid(_) => (StatusCode::BAD_REQUEST, "invalid_bot"),
+        BotError::ImageSelectionUnsupported => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "bot_image_selection_unsupported",
+        ),
         BotError::ConnectionRequired { .. } => {
             (StatusCode::UNPROCESSABLE_ENTITY, "connection_required")
         }

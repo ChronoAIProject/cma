@@ -1,6 +1,6 @@
 //! NyxID service-connection adapter for Trigger Launch requirements.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use futures_util::StreamExt as _;
@@ -11,13 +11,16 @@ use layer2_core::trigger_domain::{
 use layer2_core::{ServiceId, StoreError, SubjectId};
 use reqwest::{Client, RequestBuilder, Response, StatusCode, Url};
 use serde::Deserialize;
+use tokio::time::{timeout_at, Instant};
 
 use crate::auth::{persistence::SecretValue, AuthState};
 
 mod catalog;
 mod composition;
 mod credentials;
+mod github;
 mod protocol;
+mod read_retry;
 mod response;
 
 use protocol::{
@@ -33,6 +36,9 @@ use response::decode;
     reason = "exported for the production Trigger composition introduced by #824"
 )]
 pub(crate) use composition::CmaServiceConnectionBroker;
+pub(crate) use github::{
+    GitHubConnections, GitHubRepositoryNeed, GitHubScopeCheck, GITHUB_SERVICE,
+};
 
 const CONNECT_LINKS_PATH: &str = "/api/v1/connect-links";
 const USER_SERVICES_PATH: &str = "/api/v1/user-services";
@@ -41,6 +47,7 @@ const USER_SERVICES_MAX_ROWS: usize = 1_000;
 const PROVIDER_UNAVAILABLE: &str = "NyxID request failed";
 const PROVIDER_MALFORMED: &str = "NyxID response was not usable";
 const CREDENTIAL_UNAVAILABLE: &str = "visitor credential lookup failed";
+const PROVIDER_HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[async_trait]
 pub(crate) trait VisitorCredentialSource: Send + Sync {
@@ -111,6 +118,7 @@ impl NyxidServiceConnectionBroker {
     async fn user_services(
         &self,
         credential: &SecretValue,
+        deadline: Option<Instant>,
     ) -> Result<Vec<UserServiceRow>, ServiceConnectionError> {
         let response = self
             .send(
@@ -118,6 +126,7 @@ impl NyxidServiceConnectionBroker {
                     .get(self.endpoint(USER_SERVICES_PATH))
                     .bearer_auth(credential.expose()),
                 false,
+                deadline,
             )
             .await?;
         let listing = decode(response).await?;
@@ -132,11 +141,15 @@ impl NyxidServiceConnectionBroker {
         &self,
         request: RequestBuilder,
         missing_is_not_found: bool,
+        deadline: Option<Instant>,
     ) -> Result<Response, ServiceConnectionError> {
-        let response = request
-            .send()
-            .await
-            .map_err(|_| unavailable(PROVIDER_UNAVAILABLE))?;
+        let response = match deadline {
+            Some(deadline) => read_retry::send_until(request, deadline).await?,
+            None => request
+                .send()
+                .await
+                .map_err(|_| unavailable(PROVIDER_UNAVAILABLE))?,
+        };
         let status = response.status();
         if status.is_success() {
             return Ok(response);
@@ -177,7 +190,7 @@ impl NyxidServiceConnectionBroker {
         let Some(connected) = connected.filter(ConnectedService::is_valid) else {
             return Ok(BrokerHandoffState::Failed);
         };
-        let rows = self.user_services(credential).await?;
+        let rows = self.user_services(credential, None).await?;
         let mut matches = rows.iter().filter(|row| row.id == connected.id);
         let active = matches
             .next()
@@ -185,7 +198,7 @@ impl NyxidServiceConnectionBroker {
             .is_some_and(UserServiceRow::is_usable);
         if active && matches.next().is_none() {
             if self
-                .credential_requirement(credential, &connected.id, &connected.slug)
+                .credential_requirement(credential, &connected.id, &connected.slug, None)
                 .await?
                 != ServiceRequirementState::Satisfied
             {
@@ -249,44 +262,57 @@ impl ServiceConnectionBroker for NyxidServiceConnectionBroker {
         if services.is_empty() {
             return Ok(Vec::new());
         }
+        // Credential resolution may be settling an admitted token rotation.
+        // Let it finish and charge that time against the original read budget.
+        let deadline = Instant::now() + PROVIDER_HTTP_TIMEOUT;
         let credential = self.credential(owner).await?;
-        let rows = self.user_services(&credential).await?;
-        let mut requirements = services
-            .iter()
-            .map(|service| ServiceRequirement {
-                service: service.clone(),
-                state: requirement_state(service, &rows),
-            })
-            .collect::<Vec<_>>();
-        let checks = requirements
-            .iter()
-            .enumerate()
-            .filter_map(|(index, requirement)| {
-                if requirement.state != ServiceRequirementState::Satisfied {
-                    return None;
-                }
-                let row = selected_service(&requirement.service, &rows)?;
-                Some((index, row.id.clone(), row.slug.clone()))
-            })
-            .collect::<Vec<_>>();
-        let verified = futures_util::stream::iter(checks)
-            .map(|(index, id, slug)| {
-                let credential = &credential;
-                async move {
-                    Ok::<_, ServiceConnectionError>((
-                        index,
-                        self.credential_requirement(credential, &id, &slug).await?,
-                    ))
-                }
-            })
-            .buffer_unordered(4)
-            .collect::<Vec<_>>()
-            .await;
-        for result in verified {
-            let (index, state) = result?;
-            requirements[index].state = state;
+        if Instant::now() >= deadline {
+            return Err(unavailable(PROVIDER_UNAVAILABLE));
         }
-        Ok(requirements)
+        // The listing, parallel detail and readiness checks, and their bodies
+        // all share the remaining time.
+        timeout_at(deadline, async {
+            let rows = self.user_services(&credential, Some(deadline)).await?;
+            let mut requirements = services
+                .iter()
+                .map(|service| ServiceRequirement {
+                    service: service.clone(),
+                    state: requirement_state(service, &rows),
+                })
+                .collect::<Vec<_>>();
+            let checks = requirements
+                .iter()
+                .enumerate()
+                .filter_map(|(index, requirement)| {
+                    if requirement.state != ServiceRequirementState::Satisfied {
+                        return None;
+                    }
+                    let row = selected_service(&requirement.service, &rows)?;
+                    Some((index, row.id.clone(), row.slug.clone()))
+                })
+                .collect::<Vec<_>>();
+            let verified = futures_util::stream::iter(checks)
+                .map(|(index, id, slug)| {
+                    let credential = &credential;
+                    async move {
+                        Ok::<_, ServiceConnectionError>((
+                            index,
+                            self.credential_requirement(credential, &id, &slug, Some(deadline))
+                                .await?,
+                        ))
+                    }
+                })
+                .buffer_unordered(4)
+                .collect::<Vec<_>>()
+                .await;
+            for result in verified {
+                let (index, state) = result?;
+                requirements[index].state = state;
+            }
+            Ok(requirements)
+        })
+        .await
+        .map_err(|_| unavailable(PROVIDER_UNAVAILABLE))?
     }
 
     async fn create_handoff(
@@ -310,6 +336,7 @@ impl ServiceConnectionBroker for NyxidServiceConnectionBroker {
                         callback_url: self.callback_url(),
                     }),
                 false,
+                None,
             )
             .await?;
         self.created_handoff(decode(response).await?)
@@ -327,6 +354,7 @@ impl ServiceConnectionBroker for NyxidServiceConnectionBroker {
             .send(
                 self.http.get(endpoint).bearer_auth(credential.expose()),
                 true,
+                None,
             )
             .await?;
         let link: ConnectLinkResponse = decode(response).await?;

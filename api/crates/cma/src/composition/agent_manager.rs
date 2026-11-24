@@ -1,4 +1,5 @@
 use super::*;
+use axum::Router;
 
 pub(super) async fn register(
     config: &Config,
@@ -6,15 +7,21 @@ pub(super) async fn register(
     live_agents: &Arc<LiveAgentRegistry>,
 ) -> Result<Option<Arc<crate::agent_manager::AgentManager>>, String> {
     match &config.agent_manager_replicas {
-        Some(settings) => Ok(Some(
-            crate::agent_manager::AgentManager::register(
+        Some(settings) => {
+            let manager = crate::agent_manager::AgentManager::register(
                 stores.sandbox_model.clone(),
                 live_agents.clone(),
                 settings.relay_address.clone(),
                 settings.max_owned_agents,
+                config.features.ownership_cleanup_pacing,
+                config.features.batch_ownership_renewal,
             )
-            .await?,
-        )),
+            .await?;
+            if config.features.receiver_housekeeping_containment {
+                manager.enable_receiver_containment();
+            }
+            Ok(Some(manager))
+        }
         None => Ok(None),
     }
 }
@@ -47,8 +54,25 @@ pub(super) fn relay(
     relay.install_public_access(crate::agent_manager::relay::PublicAccess::new(
         auth, reads, access, adapter,
     ))?;
+    if config.features.agent_settings_owner_relay {
+        relay.enable_settings_owner_routing();
+    }
+    if config.features.agent_file_write_handoff {
+        relay.enable_file_write_handoff();
+    }
     relay.install_controls(stores.clone(), controls);
     relay.install_reopen(lifecycle.reopen_worker.clone(), stores);
     updates.install_live_source(relay.live_source());
     Ok(Some(relay))
+}
+
+pub(super) fn internal_router(
+    relay: &Option<Arc<crate::agent_manager::relay::Relay>>,
+    manager: &Option<Arc<crate::agent_manager::AgentManager>>,
+    router: Router,
+) -> Router {
+    match (relay, manager) {
+        (Some(relay), Some(manager)) => relay.internal_router(router, manager.clone()),
+        _ => router,
+    }
 }

@@ -16,6 +16,8 @@ use super::{
     },
 };
 
+mod personal_batch;
+
 #[async_trait::async_trait]
 impl AgentProvenanceInventoryStore for MongoSandboxStore {
     async fn scan_agent_provenance_inventory(
@@ -25,6 +27,11 @@ impl AgentProvenanceInventoryStore for MongoSandboxStore {
         page: &PageRequest,
     ) -> Result<Vec<AgentChannelUsageSnapshot>, SandboxStoreError> {
         PageRequest::new(page.limit, page.cursor.clone())?;
+        if self.resource_list_batch_reads {
+            if let ResourceOwner::Person { subject } = scope {
+                return personal_batch::read(self, subject, query, page).await;
+            }
+        }
         for _ in 0..TRANSACTION_ATTEMPTS {
             let mut session = self
                 .client
@@ -122,30 +129,7 @@ async fn scan(
             }
         }
         ResourceOwner::Person { subject } => {
-            let mut filter = doc! {"owner":subject.as_str()};
-            if let Some(id) = &query.sandbox_id {
-                filter.insert("sandbox_id", id.as_str());
-            }
-            if let Some(id) = &query.workspace_id {
-                filter.insert("workspace_id", id.as_str());
-            }
-            if let Some(status) = query.status {
-                filter.insert(
-                    "status",
-                    record_bson(&status).map_err(|_| ResourceAccessStoreError::Corrupt)?,
-                );
-            }
-            if let Some(cursor) = &page.cursor {
-                filter.insert("_id", doc! {"$gt":cursor});
-            }
-            let pipeline = vec![
-                doc! {"$match":filter},
-                doc! {"$lookup":{"from":RESOURCE_POLICIES,"localField":"sandbox_id","foreignField":"_id","as":"inventory_policy"}},
-                doc! {"$match":{"$or":[{"inventory_policy":{"$size":0}}, {"inventory_policy":{"$elemMatch":{"owner_kind":"person","owner_subject":subject.as_str()}}}]}},
-                doc! {"$sort":{"_id":1}},
-                doc! {"$limit":i64::from(page.limit)+1},
-                doc! {"$unset":"inventory_policy"},
-            ];
+            let pipeline = personal_selection(subject, query, page)?;
             let mut cursor = store
                 .agents
                 .aggregate(pipeline)
@@ -224,4 +208,35 @@ async fn read_statuses(
             .ok_or(ResourceAccessStoreError::Corrupt)?;
     }
     Ok(())
+}
+
+fn personal_selection(
+    subject: &layer2_core::SubjectId,
+    query: &AgentListQuery,
+    page: &PageRequest,
+) -> Result<Vec<mongodb::bson::Document>, ReadError> {
+    let mut filter = doc! {"owner":subject.as_str()};
+    if let Some(id) = &query.sandbox_id {
+        filter.insert("sandbox_id", id.as_str());
+    }
+    if let Some(id) = &query.workspace_id {
+        filter.insert("workspace_id", id.as_str());
+    }
+    if let Some(status) = query.status {
+        filter.insert(
+            "status",
+            record_bson(&status).map_err(|_| ResourceAccessStoreError::Corrupt)?,
+        );
+    }
+    if let Some(cursor) = &page.cursor {
+        filter.insert("_id", doc! {"$gt":cursor});
+    }
+    Ok(vec![
+        doc! {"$match":filter},
+        doc! {"$lookup":{"from":RESOURCE_POLICIES,"localField":"sandbox_id","foreignField":"_id","as":"inventory_policy"}},
+        doc! {"$match":{"$or":[{"inventory_policy":{"$size":0}}, {"inventory_policy":{"$elemMatch":{"owner_kind":"person","owner_subject":subject.as_str()}}}]}},
+        doc! {"$sort":{"_id":1}},
+        doc! {"$limit":i64::from(page.limit)+1},
+        doc! {"$unset":"inventory_policy"},
+    ])
 }

@@ -36,6 +36,7 @@ mod rotation;
 pub(in crate::store) mod schema;
 mod tools;
 pub(crate) use custody::MongoBindingCredentials;
+pub(in crate::store) use retry::BindingTransactionError;
 pub(crate) use tools::MongoProviderToolSource;
 mod documents;
 use documents::*;
@@ -49,6 +50,8 @@ mod ceiling_tests;
 mod existing_tests;
 #[cfg(test)]
 mod mongo_tests;
+#[cfg(test)]
+pub(super) use mongo_tests::insert_retained_binding_fixture;
 #[cfg(test)]
 mod operator_stop_tests;
 #[cfg(test)]

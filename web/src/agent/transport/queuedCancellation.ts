@@ -41,7 +41,7 @@ export async function cancelQueuedMessage(
 export async function recoverQueuedCancellation(session: AgentV2Session, signal: AbortSignal) {
   await session.authorize(signal);
   const intent = session.journal.queuedCancellation.read();
-  if (intent?.commandId === null) await send(session, intent, signal);
+  if (intent?.commandId === null) return send(session, intent, signal);
 }
 
 async function send(
@@ -70,4 +70,5 @@ async function send(
   }
   await session.authorize(signal);
   session.journal.queuedCancellation.accepted(intent.key, result.cancellation.receipt.command_id);
+  return result.response;
 }

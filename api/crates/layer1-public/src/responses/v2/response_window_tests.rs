@@ -6,6 +6,7 @@ pub(super) fn window(
     end: usize,
 ) -> AgentEventStreamSnapshot {
     AgentEventStreamSnapshot {
+        source_generation: None,
         id: full.id.clone(),
         created_at: full.created_at.clone(),
         model: full.model.clone(),

@@ -15,6 +15,7 @@ export function useTaskExperience(client: CmaWebClient, accountId?: string) {
   const [result, setResult] = useState<{
     scope: object;
     capabilities: TaskExperienceCapabilities;
+    confirmed: boolean;
   }>();
   useEffect(() => {
     let request: AbortController | undefined;
@@ -27,7 +28,7 @@ export function useTaskExperience(client: CmaWebClient, accountId?: string) {
         return;
       }
       if (!accountId || !client.taskExperience) {
-        setResult({ scope, capabilities: disabled });
+        setResult({ scope, capabilities: disabled, confirmed: false });
         return;
       }
       void client.taskExperience.read({ signal: current.signal }).then(
@@ -36,10 +37,12 @@ export function useTaskExperience(client: CmaWebClient, accountId?: string) {
             setResult({
               scope,
               capabilities: value.account_id === accountId ? value.capabilities : disabled,
+              confirmed: value.account_id === accountId,
             });
         },
         () => {
-          if (!current.signal.aborted) setResult({ scope, capabilities: disabled });
+          if (!current.signal.aborted)
+            setResult({ scope, capabilities: disabled, confirmed: false });
         },
       );
     };
@@ -65,7 +68,11 @@ export function useTaskExperience(client: CmaWebClient, accountId?: string) {
   }, [scope, client, accountId]);
   const current = result?.scope === scope ? result : undefined;
   return useMemo(
-    () => ({ ...(current?.capabilities ?? disabled), settled: current !== undefined }),
+    () => ({
+      ...(current?.capabilities ?? disabled),
+      settled: current !== undefined,
+      confirmed: current?.confirmed === true,
+    }),
     [current],
   );
 }

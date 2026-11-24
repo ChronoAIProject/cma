@@ -1,5 +1,24 @@
 <!-- openapi-operations:start -->
 
+### Account deletion
+
+| Operation | Behavior |
+|---|---|
+| `GET /api/v1/account/deletion` | Read the authenticated owner's deletion status, including when new requests are disabled. |
+| `POST /api/v1/account/deletion` | Request deletion with explicit confirmation and `Idempotency-Key`; return 202 with a durable receipt. Replays remain available when new requests are disabled. |
+
+### Legal consent
+
+The deployment operator publishes at most one current version of its terms and
+privacy notice. Without one, both operations answer 404 `legal_terms_not_configured`.
+
+| Operation | Behavior |
+|---|---|
+| `GET /api/v1/account/legal-consent` | Read the current terms version, its document URLs and when the verified human owner accepted that version (`null` until accepted). |
+| `PUT /api/v1/account/legal-consent` | Accept the exact current `version`; a repeat keeps the original acceptance time, and any other version is refused with 409 `legal_terms_version_mismatch`. An owner without a recorded browser sign-in gets 409 `legal_consent_sign_in_required` and must sign in again. |
+| `GET /api/v1/account/privacy-export` | Page through the verified personal owner's Agent export inventory when account export is enabled. |
+| `GET /api/v1/account/privacy-export/agents/{id}/transcript` | Deliver a bounded, verified retained-conversation page with a SHA-256 manifest and source-bound continuation. |
+
 ### Event Worker Profiles
 
 These owner-scoped resources compose three published CMA profile revisions into
@@ -56,6 +75,8 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/resource-shares/{kind}/{id}/{share_id}` | - | - | 200 ResourceShareView |
 | `PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}` | UpdateShareBody; key | - | 200 ShareReceiptView |
 | `DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}` | -; key | expected_revision* | 200 ShareReceiptView |
+| `POST /api/v1/resource-revocations` | RevocationBody; key | - | 202 RevocationStatusView |
+| `GET /api/v1/resource-revocations/{operation_id}` | - | kind*, id* | 200 RevocationStatusView |
 | `POST /api/v1/cmaeg/worker-credentials/classify` | WorkerCredentialDigest | Gateway service bearer only | 200 WorkerCredentialClassificationView; 400/401/403/503 ProblemDocument |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}` | PutBindingRequest | - | 200 BindingView; 400/401/403/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}` | - | - | 200 BindingView; 401/403/404/409/503 ProblemDocument |
@@ -103,6 +124,7 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/admin/admission` | - | - | 200 AdmissionReadView |
 | `POST /api/v1/admin/admission/stop` | AdmissionChangeRequest | - | 200 AdmissionView |
 | `PUT /api/v1/admin/admission/ceilings` | ReplaceCeilingsRequest | - | 200 CeilingsStateView |
+| `POST /api/v1/admin/admission/pending-homes/reconcile` | ReconcilePendingHomesRequest | - | 200 PendingHomesReconciliationView |
 | `POST /api/v1/admin/admission/resume` | AdmissionChangeRequest | - | 200 AdmissionView |
 | `GET /api/v1/admin/settings` | - | - | 200 SettingsView |
 | `GET /api/v1/admin/spend` | ConfigurePlatform; no write gate | - | 200 SpendView; 401 not_authenticated; 403 forbidden (not-an-operator); 503 platform_spend_unavailable. An absent service precedes the capability check. |
@@ -472,6 +494,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `GET /api/v1/agui/capabilities` | - | - | 200 JSON |
 | `GET /api/v1/agui/events` | - | thread_id*, starting_after, after, follow | 200 SSE |
 | `POST /api/v1/agui/run` | RunRequest | - | 200 SSE |
+| `POST /api/v1/agui/run/receipt` | RunRequest / required Idempotency-Key | - | 200 InputReceipt or null |
 
 ### Trigger launches
 
@@ -509,6 +532,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `GET /api/v2` | - | - | 200 JSON capabilities |
 | `POST /api/v2/responses` | CreateV2ResponseRequest | - | 200 SSE |
 | `POST /api/v2/agents/{agent_id}/responses` | CreateV2ResponseRequest | - | 200 SSE |
+| `POST /api/v2/agents/{agent_id}/responses/receipt` | CreateV2ResponseRequest / required Idempotency-Key | - | 200 V2CommandStatus or null |
 | `GET /api/v2/responses/{response_id}` | - | - | 200 V2ResponseObject |
 | `GET /api/v2/responses/{response_id}/events` | - | starting_after | 200 SSE |
 | `GET /api/v2/responses/{response_id}/output` | - | after | 200 JSON output page |
@@ -639,6 +663,7 @@ volume; CMA does not expose a Sandbox snapshot archive endpoint.
 | `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables` | - | - | 200 AnswerDeliverablesView |
 | `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}` | - | `verify` (default false) | 200 AnswerDeliverableReadingView |
 | `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download` | - | - | 200 opaque attachment; 409 changed bytes |
+| `POST /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation` | TaskDeliveryConfirmation | - | 200 TaskAcceptanceView |
 
 Selectors are `{kind:"agent_artifact",id}`, `{kind:"document",id,revision}` or
 `{kind:"live_file",path}`. The descriptor validates the resource's own access and
@@ -691,6 +716,7 @@ conversation, and listing does not download file bodies. See
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
 | `GET /api/v1/sandboxes` | - | organization, shared, status, cursor, limit | 200 AccessibleSandboxPageView |
+| `GET /api/v1/sandboxes/capacity` | Observe authenticated owner Sandbox quota. |
 | `POST /api/v1/sandboxes` | CreateSandboxRequest; key | - | 201 SandboxView |
 | `GET /api/v1/sandboxes/{id}` | - | - | 200 AccessibleSandboxDetailView |
 | `DELETE /api/v1/sandboxes/{id}` | -; key | - | 202 SandboxView |
@@ -715,7 +741,9 @@ states, refusal categories, atomic admission and rollback qualification.
 `runtime-update` accepts `{ "target_version": "<exact image reference>" }`
 with `Idempotency-Key` from the Sandbox owner. Use the owner detail's
 `runtime_update.latest_version`, or its retained `target_version` when retrying a
-failed update. HTTP 202 records the request; follow `runtime_update.state` on
+failed update. A failed update stalled at reopening conversations whose retained
+target is no longer the latest is recovered onto the latest runtime instead.
+HTTP 202 records the request; follow `runtime_update.state` on
 Sandbox reads until completion. Busy Agents defer the update until idle, and
 eligible managed Sandboxes retain their original home and conversations. Stale
 or conflicting targets return 409; replay an uncertain request with its original
@@ -726,7 +754,8 @@ Operators with `ControlAnySandbox` can queue the same update across owners using
 operator endpoint does not require an idempotency key: retrying the same pending
 target leaves the request unchanged. It validates the configured latest target
 or an already pinned retry target and audits the actual operator, Sandbox owner,
-and target. Queueing does not interrupt current work; the existing idle checks
+and admitted target. After a stalled reopen is recovered onto the latest runtime,
+its former target returns 409. Queueing does not interrupt current work; the existing idle checks
 and transaction fencing retain the original PVC and conversation identities.
 Operator Sandbox detail exposes `runtime_update` with the pinned target, current
 state, and completion or failure metadata. The owner endpoint still hides
@@ -853,6 +882,7 @@ Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_
 | `GET /api/v1/documents/{id}/source` | Read current or specific source revision. |
 | `GET /api/v1/documents/{id}/revisions` | Page immutable source revision metadata. |
 | `GET /api/v1/documents/{id}/shares` | Owner direct recipient inventory. |
+| `GET /api/v1/documents/{id}/share-recipients` | Owner search for eligible direct recipients. |
 | `PUT /api/v1/documents/{id}/shares/{subject}` | Grant/update read or comment access. |
 | `DELETE /api/v1/documents/{id}/shares/{subject}` | Revoke direct recipient access. |
 | `GET /api/v1/documents/{id}/share-links` | Owner link metadata, never secrets. |

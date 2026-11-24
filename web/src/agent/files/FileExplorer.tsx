@@ -1,3 +1,7 @@
+import { useFileNavigation } from './useFileNavigation';
+import { FileRoots } from './FilePaths';
+import { absoluteFilePath } from './filePath';
+import { homeFilePath } from '../fileChanges';
 import { ChangedFiles } from './ChangedFiles';
 import type { FileChange } from '../fileChanges';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -12,11 +16,10 @@ import {
 } from '../../api/agentFiles';
 import { Alert } from '../../ui/Alert';
 import { Button } from '../../ui/Button';
-import { FileCreateForm } from './FileCreateForm';
+import { FileCreateForm, fileNameIssue } from './FileCreateForm';
 import { FileExplorerFrame, FileLocation } from './FileExplorerFrame';
-import { IconFolderOpen16 } from '../../ui/icons';
 import { FileToolbar } from './FileToolbar';
-import { FileTree } from './FileTree';
+import { FileRail } from './FileRail';
 import { FilePreview, textContent } from './FilePreview';
 import './AgentFiles.css';
 
@@ -29,7 +32,7 @@ export function FileExplorer({
   panel = false,
   embedded = false,
   active = true,
-  initialDirectory = '',
+  initialDirectory: suppliedDirectory,
   changes,
 }: {
   readonly initialDirectory?: string;
@@ -43,22 +46,32 @@ export function FileExplorer({
   readonly onClose: () => void;
   readonly onAccessChanged?: () => void;
 }) {
+  const knownDirectory =
+    suppliedDirectory === undefined
+      ? undefined
+      : homeFilePath(absoluteFilePath(suppliedDirectory) ?? '');
+  const initialDirectory = knownDirectory ?? '';
   const [directories, setDirectories] = useState<ReadonlyMap<string, readonly AgentFileEntry[]>>(
     new Map(),
   );
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [loading, setLoading] = useState<ReadonlySet<string>>(new Set([initialDirectory]));
   const [hidden, setHidden] = useState(false);
-  const initialRoot = useRef(initialDirectory);
-  const [rootPath, setRootPath] = useState(initialDirectory);
-  const [directory, setDirectory] = useState(initialDirectory);
+  const { initialRoot, rootPath, directory, setRootPath, setDirectory, touch } =
+    useFileNavigation(initialDirectory);
   const [selected, setSelected] = useState<AgentFileEntry>();
   const [content, setContent] = useState<AgentFileContent>();
   const [draft, setDraft] = useState<string>();
   const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [denied, setDenied] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setErrorState] = useState<string>();
+  // A later successful listing of the failed folder clears its alert (#2268).
+  const listingFailure = useRef<string | undefined>(undefined);
+  const setError = useCallback((message?: string) => {
+    listingFailure.current = undefined;
+    setErrorState(message);
+  }, []);
   const [notice, setNotice] = useState<string>();
   const [create, setCreate] = useState<'file' | 'directory'>();
   const [name, setName] = useState('');
@@ -99,7 +112,7 @@ export function FileExplorer({
         onAccessChanged?.();
       }
     },
-    [onAccessChanged],
+    [onAccessChanged, setError],
   );
   const load = useCallback(
     async (path: string, signal: AbortSignal) => {
@@ -107,9 +120,15 @@ export function FileExplorer({
       setLoading((value) => new Set([...value, path]));
       try {
         const entries = await client.list(agentId, path, { signal });
-        if (!signal.aborted) setDirectories((value) => new Map(value).set(path, entries));
+        if (!signal.aborted) {
+          setDirectories((value) => new Map(value).set(path, entries));
+          if (listingFailure.current === path) setError(undefined);
+        }
       } catch (cause) {
-        if (!signal.aborted) failure(cause);
+        if (!signal.aborted) {
+          failure(cause);
+          listingFailure.current = path;
+        }
       } finally {
         if (!signal.aborted)
           setLoading((value) => {
@@ -119,20 +138,20 @@ export function FileExplorer({
           });
       }
     },
-    [agentId, client, failure],
+    [agentId, client, failure, setError],
   );
   useEffect(() => {
     if (!active) return;
     const request = new AbortController();
     lifetime.current = request;
     queueMicrotask(() => {
-      if (!request.signal.aborted) void load(initialRoot.current, request.signal);
+      if (!request.signal.aborted) void load(initialRoot, request.signal);
     });
     return () => {
       request.abort();
       readRequest.current?.abort();
     };
-  }, [load, active]);
+  }, [load, active, initialRoot]);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(undefined), 4000);
@@ -141,6 +160,7 @@ export function FileExplorer({
 
   const guardDraft = (action: () => void) => {
     if (mutation.current) return;
+    touch();
     if (dirty) setConfirm({ text: 'Discard the unsaved changes to this file?', action });
     else action();
   };
@@ -263,16 +283,10 @@ export function FileExplorer({
     });
   };
   const createFile = () => {
-    if (
-      blocked ||
-      !create ||
-      !name.trim() ||
-      /[/\\]/.test(name) ||
-      [...name].some((character) => character.charCodeAt(0) < 32) ||
-      name === '.' ||
-      name === '..'
-    ) {
-      setError('Enter a file or folder name without path separators.');
+    if (blocked || !create) return;
+    const issue = fileNameIssue(name);
+    if (issue) {
+      setError(issue);
       return;
     }
     const path = (directory ? `${directory}/` : '') + name;
@@ -291,6 +305,7 @@ export function FileExplorer({
   };
   const uploadFiles = (files: readonly File[]) => {
     if (blocked || !files.length) return;
+    touch();
     void run(async (signal) => {
       for (const file of files) {
         if (signal.aborted) return;
@@ -324,6 +339,7 @@ export function FileExplorer({
       busy={busy}
       onClose={() => guardDraft(onClose)}
     >
+      <FileRoots directory={knownDirectory} />
       <ChangedFiles
         changes={changes}
         directory={initialDirectory}
@@ -422,46 +438,33 @@ export function FileExplorer({
           uploadFiles(Array.from(event.dataTransfer.files));
         }}
       >
-        <nav className="agent-files__rail" aria-label="File explorer">
-          <button
-            type="button"
-            className="agent-files__row"
-            disabled={busy || denied}
-            onClick={() => {
-              setRootPath('');
-              setDirectory('');
-              if (lifetime.current && !directories.has('')) void load('', lifetime.current.signal);
-            }}
-            aria-current={directory === '' ? 'true' : undefined}
-          >
-            <IconFolderOpen16 />
-            <span>/home/</span>
-          </button>
-          {loading.has(rootPath) ? <p role="status">Loading files…</p> : null}
-          <FileTree
-            rootPath={rootPath}
-            changes={changes}
-            directories={directories}
-            expanded={expanded}
-            hidden={hidden}
-            selected={selected?.path}
-            loading={loading}
-            disabled={busy || denied}
-            onFile={(file) => guardDraft(() => void openFile(file))}
-            onDirectory={(path) => {
-              setDirectory(path);
-              setExpanded((value) => {
-                const next = new Set(value);
-                if (next.has(path)) next.delete(path);
-                else next.add(path);
-                return next;
-              });
-              const signal = lifetime.current?.signal;
-              if (!directories.has(path) && signal) void load(path, signal);
-            }}
-          />
-          {!loading.has('') && directories.get('')?.length === 0 ? <p>No files yet.</p> : null}
-        </nav>
+        <FileRail
+          rootPath={rootPath}
+          directory={directory}
+          directories={directories}
+          loading={loading}
+          expanded={expanded}
+          changes={changes}
+          hidden={hidden}
+          selected={selected?.path}
+          disabled={busy || denied}
+          onRoot={() => {
+            setRootPath('');
+            if (lifetime.current && !directories.has('')) void load('', lifetime.current.signal);
+          }}
+          onFile={(file) => guardDraft(() => void openFile(file))}
+          onDirectory={(path) => {
+            setDirectory(path);
+            setExpanded((value) => {
+              const next = new Set(value);
+              if (next.has(path)) next.delete(path);
+              else next.add(path);
+              return next;
+            });
+            const signal = lifetime.current?.signal;
+            if (!directories.has(path) && signal) void load(path, signal);
+          }}
+        />
         <FilePreview
           file={selected}
           content={content}

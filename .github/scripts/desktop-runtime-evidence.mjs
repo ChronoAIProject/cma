@@ -43,6 +43,7 @@ try {
     ['.github/scripts/desktop-browser-input.py', '/opt/desktop-browser-input.py'],
     ['.github/scripts/desktop-browser-page.cjs', '/opt/desktop-browser-page.cjs'],
     ['.github/scripts/desktop-vnc-probe.py', '/opt/desktop-vnc-probe.py'],
+    ['.github/scripts/desktop_ownership_probe.py', '/opt/desktop_ownership_probe.py'],
     ['.github/scripts/desktop-lifecycle-probe.py', '/opt/desktop-lifecycle-probe.py'],
     ['.github/scripts/desktop-shell-probe.py', '/opt/desktop-shell-probe.py'],
     ['api/crates/layer3-adapter/src/codex', '/opt/codex-fixtures'],

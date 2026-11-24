@@ -1,7 +1,13 @@
+import { selectAgentAction } from '../shell/agentActionDispatch';
 import type { AgentDetail, AgentStatus } from '../api/types';
 import { routePath, type AppRoute } from '../routing/routes';
-import { agentActions } from '../shell/treeActions';
-import type { TreePermissions } from '../shell/Tree';
+import {
+  agentActions,
+  OPEN_RUNTIME_UPDATE,
+  OPEN_SANDBOX_TO_RESUME,
+  type AgentActionContext,
+} from '../shell/treeActions';
+import type { TreeAction, TreePermissions } from '../shell/Tree';
 import type { MenuEntry } from '../ui/Menu';
 import type { Crumb } from '../ui/PageHeader';
 
@@ -17,11 +23,10 @@ import type { Crumb } from '../ui/PageHeader';
 export function agentHeaderMenu(
   status: AgentStatus,
   permissions: TreePermissions | undefined,
-  runtimeAvailable: boolean,
-  busy: boolean,
+  context: AgentActionContext,
 ): MenuEntry[] {
   if (permissions === undefined) return [];
-  const rows = agentActions(status, permissions, runtimeAvailable).map(
+  const rows = agentActions(status, permissions, context).map(
     (action): MenuEntry & { readonly danger?: boolean } => ({
       id: action.id,
       label:
@@ -32,8 +37,12 @@ export function agentHeaderMenu(
             : action.label,
       icon: action.icon,
       danger: action.danger,
-      disabled: action.disabled === true || busy,
-      reason: busy ? 'Another action is still being confirmed.' : action.reason,
+      disabled: action.disabled === true || context.busy,
+      reason:
+        context.busy && action.id.startsWith('export_')
+          ? 'Another action is still being confirmed.'
+          : action.reason,
+      href: action.route ? routePath(action.route) : undefined,
     }),
   );
   const safe = rows.filter((row) => row.danger !== true);
@@ -41,6 +50,21 @@ export function agentHeaderMenu(
   return safe.length > 0 && destructive.length > 0
     ? [...safe, { type: 'separator', id: 'before-destructive' }, ...destructive]
     : [...safe, ...destructive];
+}
+
+export function agentHeaderActionHandler(
+  agentId: string,
+  readOnly: boolean,
+  onAction: ((action: TreeAction) => void) | undefined,
+  onOpenSandbox: () => void,
+  parentSandboxId?: string,
+) {
+  return readOnly
+    ? undefined
+    : (id: string) => {
+        if (id === OPEN_SANDBOX_TO_RESUME || id === OPEN_RUNTIME_UPDATE) onOpenSandbox();
+        else selectAgentAction(id, agentId, onAction, parentSandboxId);
+      };
 }
 
 /** Where an owner's Agent lives, ending at the Agent itself. */

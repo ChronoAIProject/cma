@@ -22,11 +22,15 @@ use crate::AuthenticatedCaller;
 use super::{problem_document, problem_response};
 
 mod activity;
-pub(crate) use activity::{__path_activity, activity, ActivityPageView, ActivityView};
+pub(crate) use activity::{
+    __path_activity, __path_activity_actors, activity, activity_actors, ActivityActorView,
+    ActivityPageView, ActivityView,
+};
 
 pub(super) mod admission;
 pub(super) mod auto_pause;
 pub(super) mod ceilings;
+mod pending_homes;
 pub(super) mod profiles;
 pub(super) mod runtime_update;
 pub(super) mod sandboxes;
@@ -119,7 +123,7 @@ impl AdminState {
 /// Compose every route beneath the deliberately isolated admin path segment.
 pub fn router(state: AdminState) -> Router {
     Router::new()
-        .merge(settings::routes())
+        .merge(settings::routes(state.settings.clone()))
         .merge(spend::routes())
         .merge(admission::routes())
         .merge(auto_pause::routes())
@@ -130,7 +134,13 @@ pub fn router(state: AdminState) -> Router {
         .merge(warm_pools::routes())
         .route("/api/v1/admin/runtime-inventory", get(runtime_inventory))
         .route("/api/v1/admin/activity", get(activity))
+        .route("/api/v1/admin/activity/actors", get(activity_actors))
         .with_state(Arc::new(state))
+}
+
+/// Platform settings with their usual caller, revision and write checks.
+pub fn platform_settings_router(settings: Arc<layer2_core::PlatformSettingsService>) -> Router {
+    settings::routes(settings)
 }
 
 pub(super) struct NotAnOperator;
