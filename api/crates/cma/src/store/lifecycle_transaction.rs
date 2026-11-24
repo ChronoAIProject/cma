@@ -415,21 +415,26 @@ async fn advance_sandbox(
     next: &Sandbox,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
+    let mut filter = doc! {
+        "_id": current.id.as_str(),
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "channel_reuse_cleanup_execution": { "$exists": false },
+        "revision": signed(current.revision, "sandbox lifecycle revision")
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+    };
+    if current.admitted_retained_runtime_transition().is_some() {
+        // A retained transition must hold its original, unexpired claim even
+        // when renewable work is disabled on this worker.
+        let claim = crate::store::work_claim_authority::sandbox_claim(current)
+            .map_err(ApplyError::Domain)?;
+        filter = doc! {"$and":[filter, claim]};
+    }
     let advanced = store
         .sandboxes
         .update_one(
             crate::store::work_schema::query(
-                crate::store::work_publication::sandbox(
-                    doc! {
-                        "_id": current.id.as_str(),
-                        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                        "channel_reuse_cleanup_execution": { "$exists": false },
-                        "revision": signed(current.revision, "sandbox lifecycle revision")
-                            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                    },
-                    current.id.as_str(),
-                )
-                .map_err(ApplyError::Domain)?,
+                crate::store::work_publication::sandbox(filter, current.id.as_str())
+                    .map_err(ApplyError::Domain)?,
             ),
             crate::store::work_lease_update::replacement(
                 sandbox_replacement_fields(next).map_err(ApplyError::Domain)?,

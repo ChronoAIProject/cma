@@ -13,6 +13,7 @@ mod checkpoint_retry;
 mod conversations;
 mod home_recovery;
 mod pause;
+mod publish_active;
 mod queue;
 mod reopen_output;
 mod reopen_owned;

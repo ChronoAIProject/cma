@@ -16,6 +16,8 @@ mod acp_turn;
 mod adapter;
 mod agent_sandbox_backend;
 mod backend;
+mod retained_startup_policy;
+pub use retained_startup_policy::HostedRetainedStartupPolicy;
 mod capacity_recovery;
 pub use capacity_recovery::CapacityRecoveryNativeTransport;
 mod channel_tools;

@@ -1,7 +1,55 @@
 {
   "version": 1,
-  "openapi_operations": 326,
+  "openapi_operations": 331,
   "operations": {
+    "PUT /api/v1/admin/retained-runtime-policy": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/retained_runtime_transition.rs# Compare-and-set the independent retained admission policy under platform authority.",
+      "required_problems": [
+        "not_authenticated",
+        "runtime_canary_closed",
+        "runtime_canary_conflict",
+        "runtime_canary_forbidden",
+        "runtime_canary_invalid",
+        "runtime_canary_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/retained-runtime-preview": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/retained_runtime_transition.rs# Observe the exact stopped predecessor for an otherwise eligible retained home.",
+      "required_problems": [
+        "not_authenticated",
+        "runtime_canary_closed",
+        "runtime_canary_conflict",
+        "runtime_canary_forbidden",
+        "runtime_canary_invalid",
+        "runtime_canary_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/retained-runtime-grants": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/retained_runtime_transition.rs# Freeze the approved predecessor, owner, release and startup policy revision.",
+      "required_problems": [
+        "not_authenticated",
+        "runtime_canary_closed",
+        "runtime_canary_conflict",
+        "runtime_canary_forbidden",
+        "runtime_canary_invalid",
+        "runtime_canary_unavailable"
+      ]
+    },
+    "POST /api/v1/retained-runtime-redemptions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/retained_runtime_transition.rs# Consume an exact scoped grant as its authorized owner and replay the durable receipt.",
+      "required_problems": [
+        "not_authenticated",
+        "runtime_canary_closed",
+        "runtime_canary_conflict",
+        "runtime_canary_forbidden",
+        "runtime_canary_invalid",
+        "runtime_canary_unavailable"
+      ]
+    },
     "PUT /api/v1/admin/runtime-canary-policy": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/runtime_canary.rs# Compare-and-set of admission policy by a platform operator.",
@@ -4325,6 +4373,17 @@
         "instance_service_unavailable",
         "not_authenticated",
         "organization_authority_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/retained-runtime-grants/abort": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/retained_runtime_transition.rs# Abort a matching scoped grant while provider dispatch has no reservation.",
+      "required_problems": [
+        "not_authenticated",
+        "runtime_canary_conflict",
+        "runtime_canary_forbidden",
+        "runtime_canary_invalid",
+        "runtime_canary_unavailable"
       ]
     },
     "POST /api/v1/usage/metrics/initial/reports": {

@@ -210,18 +210,48 @@ impl WriteScope {
         native: bool,
         catalog: &Catalog,
     ) -> Result<Self, String> {
-        let enabled = match lookup("CHRONO_RUNTIME_CANARY_WRITE_ENABLED")?.as_deref() {
+        Self::from_lookup_keys(
+            lookup,
+            native,
+            catalog,
+            "CHRONO_RUNTIME_CANARY_WRITE_ENABLED",
+            "CHRONO_RUNTIME_CANARY_OWNERS",
+        )
+    }
+
+    pub(super) fn retained_from_lookup(
+        lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+        native: bool,
+        catalog: &Catalog,
+    ) -> Result<Self, String> {
+        Self::from_lookup_keys(
+            lookup,
+            native,
+            catalog,
+            "CHRONO_RETAINED_RUNTIME_TRANSITIONS_ENABLED",
+            "CHRONO_RETAINED_RUNTIME_TRANSITION_OWNERS",
+        )
+    }
+
+    fn from_lookup_keys(
+        lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+        native: bool,
+        catalog: &Catalog,
+        enabled_key: &str,
+        owners_key: &str,
+    ) -> Result<Self, String> {
+        let enabled = match lookup(enabled_key)?.as_deref() {
             None | Some("false") => false,
             Some("true") => true,
-            _ => return Err("CHRONO_RUNTIME_CANARY_WRITE_ENABLED must be true or false".into()),
+            _ => return Err(format!("{enabled_key} must be true or false")),
         };
-        let owners = match lookup("CHRONO_RUNTIME_CANARY_OWNERS")? {
+        let owners = match lookup(owners_key)? {
             None => BTreeSet::new(),
             Some(value) if value.len() <= 4096 => {
                 serde_json::from_str::<BTreeSet<layer2_core::SubjectId>>(&value)
-                    .map_err(|_| "CHRONO_RUNTIME_CANARY_OWNERS must be a JSON list".to_string())?
+                    .map_err(|_| format!("{owners_key} must be a JSON list"))?
             }
-            Some(_) => return Err("CHRONO_RUNTIME_CANARY_OWNERS exceeds its byte limit".into()),
+            Some(_) => return Err(format!("{owners_key} exceeds its byte limit")),
         };
         if owners.len() > MAX_RELEASES
             || owners.iter().any(|owner| {
@@ -232,7 +262,7 @@ impl WriteScope {
                     || text.chars().any(char::is_control)
             })
         {
-            return Err("CHRONO_RUNTIME_CANARY_OWNERS is invalid".into());
+            return Err(format!("{owners_key} is invalid"));
         }
         if enabled && (!native || catalog.len() == 0 || owners.is_empty()) {
             return Err(

@@ -314,6 +314,9 @@ impl HostedBackend for RuntimeBackends {
             .verify_suspended(handle, request)
             .await
     }
+    fn retained_startup_policy(&self) -> Option<&dyn crate::hosted::HostedRetainedStartupPolicy> {
+        Some(self)
+    }
     async fn resume(
         &self,
         handle: &RuntimeHandle,
@@ -482,3 +485,6 @@ impl HostedBackend for RuntimeBackends {
 #[cfg(test)]
 #[path = "runtime_routing_backend_ingress_tests.rs"]
 mod ingress_tests;
+
+#[path = "retained_startup_policy_routing.rs"]
+mod retained_policy;

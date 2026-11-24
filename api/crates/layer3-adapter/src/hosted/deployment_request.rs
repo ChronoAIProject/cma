@@ -85,3 +85,20 @@ impl ProviderSandboxRequest {
         Ok(successor)
     }
 }
+
+pub(super) fn apply_retained_journal_policy(
+    spec: &crate::SandboxSpec,
+    env: &mut std::collections::BTreeMap<String, String>,
+) -> crate::Result<()> {
+    if let Some(journal_recovery) = spec.retained_journal_recovery {
+        if spec.home_volume.as_ref().is_none_or(|home| {
+            !home.request.policy.is_native_vct() || home.receipt.native_authority.is_none()
+        }) {
+            return Err(crate::AdapterError::Rejected(
+                "retained startup policy requires an original home attachment".into(),
+            ));
+        }
+        env.insert(JOURNAL_RECOVERY.into(), journal_recovery.to_string());
+    }
+    Ok(())
+}
