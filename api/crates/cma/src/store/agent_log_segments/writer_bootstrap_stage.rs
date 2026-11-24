@@ -252,11 +252,7 @@ async fn write_batch(
     {
         return Err(SandboxStoreError::Conflict.into());
     }
-    if operation
-        .key
-        .starts_with(writer_admission::PENDING_WORKER_PREFIX)
-        && !crate::store::work_publication::agent::fence_parent(store, current, session).await?
-    {
+    if !crate::store::work_publication::agent::fence_parent(store, current, session).await? {
         return Err(SandboxStoreError::Conflict.into());
     }
     let renewed = permit.renew(&database, DateTime::now(), session).await?;

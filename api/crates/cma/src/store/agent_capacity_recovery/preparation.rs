@@ -95,6 +95,10 @@ pub(super) async fn prepare(
         {
             return Ok(None);
         }
+        if !crate::store::work_publication::agent::fence_parent(store, &agent, &mut session).await?
+        {
+            return Err(layer2_core::sandbox::store::SandboxStoreError::Conflict.into());
+        }
         let admission = writer_admission::admit(
             &database,
             &agent,
