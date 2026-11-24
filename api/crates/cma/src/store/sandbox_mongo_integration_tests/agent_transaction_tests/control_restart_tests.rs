@@ -9,6 +9,8 @@ use layer3_adapter::{
 };
 use std::time::{Duration, SystemTime};
 
+mod cancellation;
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn owner_restart_admission_reserves_one_slot_and_replays_after_supersession() {
@@ -134,6 +136,23 @@ async fn owner_restart_admission_respects_the_shared_creation_capacity() {
         .await
         .unwrap();
     source.sandbox_revision = parent.revision;
+    let mut workspace = store
+        .get_workspace(&stopped.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    // The fixture inserted wt-1 directly, without advancing the allocator.
+    workspace.next_worktree_number = 2;
+    workspace.revision += 1;
+    store
+        .workspaces
+        .update_one(
+            doc! {"_id": workspace.id.as_str()},
+            doc! {"$set": crate::store::workspaces::workspace_replacement_fields(&workspace).unwrap()},
+        )
+        .await
+        .unwrap();
+    source.workspace_revision = workspace.revision;
     let fresh_creation = AgentAdmission {
         binding: None,
         created_by: None,
@@ -149,6 +168,27 @@ async fn owner_restart_admission_respects_the_shared_creation_capacity() {
         creation_key: "competing-creation".into(),
         event_at: TWO_MINUTES.into(),
     };
+
+    // Validate ordinary creation in the same initial state, then roll it back
+    // before racing the two admissions for the remaining slot.
+    let mut session = client.start_session().await.unwrap();
+    let mut scope =
+        crate::store::agent_log_segments::transaction_scope::TransactionScope::start(&mut session)
+            .await
+            .unwrap();
+    let control = crate::store::agent_log_segments::admission::apply(
+        &store,
+        &fresh_creation,
+        false,
+        None,
+        &mut scope,
+    )
+    .await;
+    assert!(matches!(
+        control,
+        Ok(crate::store::agent_admission_records::AdmissionReceipt::Created(_))
+    ));
+    scope.release().abort_transaction().await.unwrap();
 
     let (restarted, created) = tokio::join!(
         store.schedule_agent_restart(request(&stopped, &source, "restart", [3; 32])),
@@ -183,8 +223,7 @@ async fn owner_restart_admission_respects_the_shared_creation_capacity() {
             );
         }
         (restarted, created) => panic!(
-            "expected exactly one live slot reservation, restart {restarted:?}, create success {}",
-            created.is_ok()
+            "expected exactly one live slot reservation, restart {restarted:?}, create: {created:?}"
         ),
     }
     assert_eq!(
@@ -275,6 +314,22 @@ async fn owner_restart_dispatch_is_durable_and_cannot_be_retargeted() {
         panic!("exact successor Open must own cleanup coverage");
     };
     assert_eq!(pending.operation_id, dispatch.open.operation_id);
+    assert_eq!(
+        store
+            .schedule_agent_stop(AgentStopRequest {
+                target: AgentControlTarget::from(&armed),
+                reason: AgentStopReason::Owner,
+                requested_at: dispatch.dispatched_at.clone(),
+            })
+            .await,
+        Err(AgentControlStoreError::WorkConflict {
+            step: AgentWorkStep::RestartConversation,
+        })
+    );
+    assert_eq!(
+        store.get_agent(&armed.id).await.unwrap(),
+        Some(armed.clone())
+    );
     assert!(armed.work.receipts.iter().all(|receipt| !matches!(
         receipt.step,
         AgentWorkStep::OpenConversation | AgentWorkStep::CloseProcess

@@ -66,6 +66,7 @@ mod agent_worktree_recovery;
 mod dependency_diagnostics;
 mod message_feedback;
 mod message_feedback_reasons;
+mod owner_agent_restart;
 mod suggestion_shapes;
 mod suggestions;
 pub use agent_channel_usage::agent_channel_usage_router;

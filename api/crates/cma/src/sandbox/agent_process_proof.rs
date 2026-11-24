@@ -105,3 +105,43 @@ fn matching_receipts(
     }
     Some((open, closed, close_request))
 }
+
+pub(crate) struct RestartObservation {
+    pub adapter: std::sync::Arc<dyn SandboxAdapter>,
+    pub deployment_id: String,
+}
+
+#[async_trait::async_trait]
+impl layer2_core::sandbox::AgentRestartObservation for RestartObservation {
+    async fn prove_closed(
+        &self,
+        agent: &Agent,
+        sandbox: &Sandbox,
+        workspace: &Workspace,
+        worktree: &Worktree,
+    ) -> Result<AgentRestartSource, layer2_core::sandbox::AgentServiceError> {
+        use layer2_core::sandbox::AgentServiceError;
+        let runtime = crate::sandbox::runtime_attachment::adopt_bound_runtime(
+            self.adapter.as_ref(),
+            sandbox,
+            &self.deployment_id,
+        )
+        .await
+        .map_err(|error| AgentServiceError::Unavailable(error.to_string()))?;
+        prove_closed(
+            self.adapter.as_ref(),
+            agent,
+            sandbox,
+            workspace,
+            worktree,
+            &runtime,
+        )
+        .await
+        .map_err(|error| match error {
+            AdapterError::Rejected(_) | AdapterError::Unsupported(_) => {
+                AgentServiceError::ControlConflict
+            }
+            other => AgentServiceError::Unavailable(other.to_string()),
+        })
+    }
+}

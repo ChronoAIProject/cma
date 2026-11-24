@@ -297,7 +297,7 @@ impl AgentWorker {
         Ok(request)
     }
 
-    pub(super) fn attach(
+    pub(in crate::sandbox::agent_worker) fn attach(
         &self,
         agent: &Agent,
         conversation_id: String,

@@ -169,6 +169,7 @@ use super::trigger_openapi_shapes::*;
         super::agent_provenance_inventory::list,
         super::agents::delete_agent,
         super::agent_worktree_recovery::recover_worktree,
+        super::owner_agent_restart::restart,
         super::agent_operate::input,
         super::agent_operate::steer,
         super::agent_operate::interrupt,

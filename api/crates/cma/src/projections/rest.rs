@@ -13,6 +13,10 @@ impl AgentProjectionServices {
             Arc::clone(&self.operations),
             operation_records,
         );
+        let agent_routes = match &self.owner_agent_restart {
+            Some(service) => agent_routes.with_owner_agent_restart(service.clone()),
+            None => agent_routes,
+        };
         let agent_routes = match &self.message_feedback {
             Some(store) => agent_routes.with_message_feedback(store.clone()),
             None => agent_routes,

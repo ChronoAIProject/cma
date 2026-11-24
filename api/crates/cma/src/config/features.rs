@@ -119,6 +119,7 @@ pub(crate) struct FeatureFlags {
     pub reopen_output_refusal_enabled: bool,
     pub cleanup_continuation_enabled: bool,
     pub owner_stop_settlement_enabled: bool,
+    pub owner_agent_restart_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
     pub context_diagnostics: bool,
@@ -256,6 +257,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_AGENT_CLEANUP_CONTINUATION_ENABLED",
             )?,
+            owner_agent_restart_enabled: flag(lookup, "CHRONO_OWNER_AGENT_RESTART_ENABLED")?,
             owner_stop_settlement_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_OWNER_STOP_SETTLEMENT_ENABLED",

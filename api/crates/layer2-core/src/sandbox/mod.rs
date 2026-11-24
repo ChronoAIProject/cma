@@ -69,6 +69,7 @@ mod agent_work;
 mod agent_worktree_recovery;
 pub mod answer_deliverables;
 mod owner_agent_restart;
+pub use agent_service::{AgentRestartObservation, AgentRestartService};
 pub mod work_retry;
 pub use agent_worktree_recovery::{
     plan_agent_worktree_recovery, AgentWorktreeRecovery, AgentWorktreeRecoveryContext,

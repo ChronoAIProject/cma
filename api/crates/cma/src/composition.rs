@@ -130,6 +130,19 @@ impl ControlPlaneComposition {
         .with_resource_access(resource_access.clone())
         .with_response_logs(stores.sandbox_model.response_log_reader())
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
+        let projections = if config.features.owner_agent_restart_enabled
+            && config.features.owner_stop_settlement_enabled
+        {
+            projections.with_owner_agent_restart(layer2_core::sandbox::AgentRestartService::new(
+                stores.sandbox_model.clone(),
+                Arc::new(crate::sandbox::agent_process_proof::RestartObservation {
+                    adapter: adapter.clone(),
+                    deployment_id: config.deployment_id.clone(),
+                }),
+            ))
+        } else {
+            projections
+        };
         let (projections, observations) =
             observation::prepare(config, &stores, &agent_manager, projections).await?;
         let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(

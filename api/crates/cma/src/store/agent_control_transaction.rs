@@ -20,6 +20,7 @@ use super::sandbox_mongo::{
 
 const CONTROL_ATTEMPTS: usize = 8;
 pub(super) mod restart;
+mod restart_cancel;
 pub(super) mod restart_dispatch;
 mod restart_receipt;
 mod segmented;
@@ -79,6 +80,11 @@ async fn schedule_control(
         .await
         .map_err(unavailable)?
         .ok_or(AgentControlStoreError::NotFound)?;
+    if operation.request.target().expected_status == layer2_core::sandbox::AgentStatus::Starting
+        && row.contains_key(restart::ACTIVE_RESTART_FIELD)
+    {
+        return Box::pin(restart_cancel::schedule(store, &operation)).await;
+    }
     if super::agent_log_segments::read_format(&row)
         .map_err(store_error)?
         .is_some()

@@ -66,6 +66,8 @@ pub enum AgentControlStoreError {
     StopReasonConflict,
     #[error("agent changed while the control operation was requested")]
     Conflict,
+    #[error("an exact native Agent Close observation is required")]
+    RestartEvidenceRequired,
     #[error("agent worktree recovery is not eligible")]
     WorktreeRecoveryConflict,
     #[error("agent limit reached: {live} of {limit}")]

@@ -6,7 +6,7 @@ use super::{
 use layer2_core::sandbox::AgentStopReason;
 use layer3_adapter::{AgentCloseRequest, AgentProcessAction, AgentSlot};
 
-pub(super) const FIELD: &str = "control_restart_predecessor_v1";
+pub(in crate::store) const FIELD: &str = "control_restart_predecessor_v1";
 
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -18,11 +18,14 @@ struct RestartPredecessor {
     restart_incarnation: u64,
     close_operation_id: String,
     close_request_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stopped_at: Option<String>,
     stop: ControlReceipt,
 }
 
 pub(super) fn encode_predecessor(
     stop: &ControlReceipt,
+    stopped_at: &str,
     acceptance: &layer2_core::sandbox::store::AgentRestartAcceptance,
 ) -> Result<Document, AgentControlStoreError> {
     let predecessor = RestartPredecessor {
@@ -37,6 +40,7 @@ pub(super) fn encode_predecessor(
         restart_incarnation: acceptance.next_incarnation,
         close_operation_id: acceptance.source.predecessor_close.operation_id.clone(),
         close_request_sha256: acceptance.source.predecessor_close.request_sha256.clone(),
+        stopped_at: Some(stopped_at.to_owned()),
         stop: stop.clone(),
     };
     Ok(mongodb::bson::doc! {
@@ -61,6 +65,27 @@ pub(super) fn matches_acceptance(
         && predecessor.close_operation_id == acceptance.source.predecessor_close.operation_id
         && predecessor.close_request_sha256 == acceptance.source.predecessor_close.request_sha256
         && predecessor.stop.operation_id == acceptance.predecessor_stop_operation
+        && predecessor.stopped_at.as_deref().is_none_or(|at| {
+            use layer2_core::seconds_from_rfc3339;
+            seconds_from_rfc3339(at)
+                .zip(seconds_from_rfc3339(
+                    &acceptance.source.predecessor_close.completed_at,
+                ))
+                .zip(seconds_from_rfc3339(&acceptance.accepted_at))
+                .is_some_and(|((stopped, closed), accepted)| {
+                    closed <= stopped && stopped <= accepted
+                })
+        })
+}
+
+pub(in crate::store) fn restore_owner_stop(
+    row: &Document,
+) -> Result<(String, mongodb::bson::Bson), AgentControlStoreError> {
+    let invalid = || corrupt("stored Agent restart predecessor cannot restore the owner Stop");
+    let predecessor = row.get_document(FIELD).map_err(|_| invalid())?;
+    let stopped_at = predecessor.get_str("stopped_at").map_err(|_| invalid())?;
+    let receipt = predecessor.get("stop").cloned().ok_or_else(invalid)?;
+    Ok((stopped_at.to_owned(), receipt))
 }
 
 pub(super) fn validate_predecessor(

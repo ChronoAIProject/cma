@@ -1,6 +1,6 @@
 //! Sandbox lifecycle orchestration below the public API boundary.
 
-mod agent_process_proof;
+pub(crate) mod agent_process_proof;
 mod agent_scheduler;
 mod agent_skills;
 mod agent_worker;

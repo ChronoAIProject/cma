@@ -17,6 +17,7 @@ const CONTROL_OPERATION_PREFIX: &str = "ctl_";
 
 #[path = "agent_restart_control_predecessor.rs"]
 mod restart;
+pub(super) use restart::{restore_owner_stop, FIELD as RESTART_PREDECESSOR_FIELD};
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
@@ -112,6 +113,14 @@ impl ControlOperation {
         Ok(update)
     }
 
+    pub(super) fn delete_after_restart_cancellation(&self) -> Self {
+        let mut operation = self.clone();
+        if let ControlRequest::Delete(request) = &mut operation.request {
+            request.target.expected_status = AgentStatus::Stopped;
+        }
+        operation
+    }
+
     pub(super) fn was_recorded(&self, receipts: &StoredControlReceipts, scheduled: &Agent) -> bool {
         let receipt = match &self.request {
             ControlRequest::Stop(_) => receipts.stop.as_ref(),
@@ -155,6 +164,7 @@ pub(super) fn matches_restart_predecessor(
 
 pub(super) fn consume_restart_predecessor(
     receipts: &StoredControlReceipts,
+    stopped_at: &str,
     acceptance: &layer2_core::sandbox::store::AgentRestartAcceptance,
 ) -> Result<Document, AgentControlStoreError> {
     let stop = receipts
@@ -173,7 +183,7 @@ pub(super) fn consume_restart_predecessor(
     {
         return Err(AgentControlStoreError::Conflict);
     }
-    restart::encode_predecessor(stop, acceptance)
+    restart::encode_predecessor(stop, stopped_at, acceptance)
 }
 
 pub(super) fn read_control_receipts(

@@ -8,6 +8,7 @@ use layer2_core::sandbox::store::{
     AgentWorkClaimError, AgentWorkDiscovery, AgentWorkMutation, AgentWorkerStore, Page,
     PageRequest, SandboxStoreError, StartupWorkFilter, MAX_PAGE_SIZE,
 };
+use layer2_core::sandbox::Agent;
 use mongodb::bson::{doc, Bson};
 use std::time::Duration;
 

@@ -49,6 +49,10 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
         )
         .route("/api/v1/agents/{id}", get(read).delete(delete_agent))
         .route(
+            "/api/v1/agents/{id}/restart",
+            post(super::owner_agent_restart::restart),
+        )
+        .route(
             "/api/v1/agents/{id}/suggestions",
             get(super::suggestions::read),
         )

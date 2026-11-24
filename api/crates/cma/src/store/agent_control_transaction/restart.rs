@@ -103,6 +103,11 @@ async fn apply(
         return Ok((acceptance, None, false));
     }
 
+    if request.observed_process.is_none() {
+        return Err(ApplyError::Domain(
+            AgentControlStoreError::RestartEvidenceRequired,
+        ));
+    }
     let (next, acceptance) = plan(&current, request).map_err(ApplyError::Domain)?;
     scope
         .fence_ordinary_work(store)
@@ -153,8 +158,14 @@ async fn apply(
             .map_err(AgentControlStoreError::Corrupt)
             .map_err(ApplyError::Domain)?,
     );
+    let stopped_at = current
+        .agent
+        .stopped_at
+        .as_deref()
+        .ok_or(ApplyError::Domain(AgentControlStoreError::Conflict))?;
     fields.extend(
-        consume_restart_predecessor(&current.receipts, &acceptance).map_err(ApplyError::Domain)?,
+        consume_restart_predecessor(&current.receipts, stopped_at, &acceptance)
+            .map_err(ApplyError::Domain)?,
     );
     crate::store::agent_conversation_store::carry_checkpoint_fields(
         row,
