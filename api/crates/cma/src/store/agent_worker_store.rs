@@ -5,8 +5,8 @@ use layer2_core::sandbox::store::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryOutcome,
     AgentConnectionRecoveryRequest, AgentStore, AgentWorkClaimDetail as ClaimDetail,
-    AgentWorkClaimError, AgentWorkMutation, AgentWorkerStore, Page, PageRequest, SandboxStoreError,
-    StartupWorkFilter, MAX_PAGE_SIZE,
+    AgentWorkClaimError, AgentWorkDiscovery, AgentWorkMutation, AgentWorkerStore, Page,
+    PageRequest, SandboxStoreError, StartupWorkFilter, MAX_PAGE_SIZE,
 };
 use mongodb::bson::{doc, Bson};
 use std::time::Duration;
@@ -265,13 +265,13 @@ impl AgentWorkerStore for MongoSandboxStore {
         &self,
         now: &str,
         limit: u16,
-        holds: &std::collections::BTreeSet<AgentId>,
-        startup: StartupWorkFilter<'_>,
+        filter: AgentWorkDiscovery<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
-        let unrestricted = matches!(startup, StartupWorkFilter::All);
+        let unrestricted = matches!(filter.startup, StartupWorkFilter::All)
+            && filter.acquisition_cooldowns.is_none();
         if unrestricted
             && self
                 .empty_discovery
@@ -288,7 +288,7 @@ impl AgentWorkerStore for MongoSandboxStore {
             let ids = if self.ownership_retry_hints_active() {
                 tokio::time::timeout(
                     std::time::Duration::from_secs(2),
-                    self.due_owned_agent_work(now, limit, holds, startup),
+                    self.due_owned_agent_work(now, limit, filter),
                 )
                 .await
                 .map_err(|_| {
@@ -297,8 +297,7 @@ impl AgentWorkerStore for MongoSandboxStore {
                     )
                 })??
             } else {
-                self.due_owned_agent_work(now, limit, holds, startup)
-                    .await?
+                self.due_owned_agent_work(now, limit, filter).await?
             };
             if unrestricted {
                 self.empty_discovery
@@ -310,7 +309,7 @@ impl AgentWorkerStore for MongoSandboxStore {
         let mut cursor = self
             .agents
             .aggregate(super::agent_failure_pacing::discovery::filtered_pipeline(
-                self, now, limit, holds, startup,
+                self, now, limit, filter,
             ))
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
