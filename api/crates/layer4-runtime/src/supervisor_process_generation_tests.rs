@@ -329,7 +329,7 @@ async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
     let operation = crate::mutation_journal::Operation::close_agent(&frame.request);
     supervisor
         .mutations
-        .admit(7, &[operation.clone()])
+        .admit(7, std::slice::from_ref(&operation))
         .await
         .unwrap();
     assert!(matches!(
