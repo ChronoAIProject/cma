@@ -34,42 +34,63 @@ pub(super) async fn fence(
             }
         }
     };
-    for (collection, id, revision, owner) in [
+    let binding_workspace = agent.work.step == AgentWorkStep::WaitForWorkspace
+        && mutation.agent.work.step == AgentWorkStep::AddWorktree
+        && parents.lineage == AgentWorkPublicationLineage::Authorized;
+    for (collection, id, revision, owner, refresh) in [
         (
             &store.sandboxes,
             agent.sandbox_id.as_str(),
             parents.sandbox_revision,
             owner.clone(),
+            binding_workspace,
         ),
         (
             &store.workspaces,
             agent.workspace_id.as_str(),
             parents.workspace_revision,
             workspace_owner,
+            binding_workspace,
         ),
         (
             &store.worktrees,
             agent.worktree_id.as_str(),
             parents.worktree_revision,
             owner,
+            false,
         ),
     ] {
+        let revision = signed(revision, "publication parent revision")
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
+        let mut filter = doc! {
+            "_id": id, "owner": owner,
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "revision": revision,
+            "channel_reuse_cleanup_execution": { "$exists": false },
+            "owned_workspace_cleanup_admission_v1": { "$exists": false },
+        };
         let result = scope
             .update_one(
                 collection,
-                doc! {
-                    "_id": id, "owner": owner,
-                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                    "revision": signed(revision, "publication parent revision")
-                        .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                    "channel_reuse_cleanup_execution": { "$exists": false },
-                    "owned_workspace_cleanup_admission_v1": { "$exists": false },
-                },
+                filter.clone(),
                 doc! { "$inc": { "runtime_writer_claim_fence": 1_i64 } },
             )
             .await
             .map_err(ApplyError::Driver)?;
         if result.matched_count != 1 {
+            if refresh {
+                // Only a newer revision under the same other guards permits a
+                // rebuild. The worker must still revalidate parent compatibility.
+                filter.insert("revision", doc! { "$gt": revision });
+                if scope
+                    .find_projected(collection, filter, doc! { "_id": 1 })
+                    .await
+                    .map_err(ApplyError::Driver)?
+                    .is_some()
+                {
+                    return Err(ApplyError::StaleProposal);
+                }
+            }
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
     }
