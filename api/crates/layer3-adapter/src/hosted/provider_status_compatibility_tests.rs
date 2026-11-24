@@ -27,6 +27,7 @@ async fn status_accept_extension_keeps_retained_runtime_request_and_response_com
         crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
         crate::wire::AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE,
         crate::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
+        crate::wire::GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE,
     )));
     let frame: RequestFrame =
         serde_json::from_str(received.split_once("\r\n\r\n").unwrap().1).unwrap();

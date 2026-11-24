@@ -84,6 +84,7 @@ impl ProviderHostedControlTransport {
                             crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
                             crate::wire::AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE,
                             crate::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
+                            crate::wire::GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE,
                         ),
                     )
                     .json(request);
@@ -199,6 +200,7 @@ fn request_capacity_class(request: &RequestFrame) -> RuntimeWorkloadClass {
         | RequestFrame::CheckpointForTeardown(_)
         | RequestFrame::ResumeCheckpointWriters(_)
         | RequestFrame::Restore(_)
-        | RequestFrame::Credential(_) => RuntimeWorkloadClass::Control,
+        | RequestFrame::Credential(_)
+        | RequestFrame::CredentialForReceiver { .. } => RuntimeWorkloadClass::Control,
     }
 }

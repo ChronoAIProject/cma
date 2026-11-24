@@ -464,6 +464,7 @@ async fn status_capability_opt_in_is_present_on_new_and_reused_native_http() {
         !status.agent_resource_preparation,
         "retained runtime did not advertise support"
     );
+    assert!(!status.exact_github_credential_route);
     let requests = fixture.state.requests.lock().unwrap().clone();
     assert_eq!(requests.len(), 2);
     for received in requests {
@@ -473,6 +474,7 @@ async fn status_capability_opt_in_is_present_on_new_and_reused_native_http() {
             crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
             crate::wire::AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE,
             crate::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
+            crate::wire::GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE,
         )));
     }
     assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 1);

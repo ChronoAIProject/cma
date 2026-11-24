@@ -153,6 +153,7 @@ fn agent(parent: &Workspace, worktree: &Worktree, id: &str) -> Agent {
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),

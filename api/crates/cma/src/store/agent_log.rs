@@ -1,6 +1,7 @@
 //! Gap-free Mongo log for agent conversation and tool events.
 
 use crate::store::agent_log_telemetry::ScanCaller;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{AgentLogStore, SandboxStoreError};
 use layer2_core::sandbox::{AgentLogEntry, AgentLogKind};
@@ -252,16 +253,16 @@ impl AgentLogStore for MongoSandboxStore {
             {
                 Ok(entry) => entry,
                 Err(TransactionLogError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(TransactionLogError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(TransactionLogError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             };

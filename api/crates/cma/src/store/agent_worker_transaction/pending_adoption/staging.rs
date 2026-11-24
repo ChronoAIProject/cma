@@ -2,6 +2,7 @@
 use super::super::super::sandbox_mongo::start_transaction;
 use super::*;
 use crate::store::agent_log_segments::{writer_admission, writer_bootstrap, writer_gate::slots};
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::bson::DateTime;
 
 pub(in crate::store::agent_worker_transaction) async fn prepare(
@@ -20,12 +21,12 @@ pub(in crate::store::agent_worker_transaction) async fn prepare(
     let (admission, permit, fresh) = match result {
         Ok(Some(result)) => result,
         Ok(None) => {
-            session.abort_transaction().await.map_err(driver)?;
+            session.abort_guarded().await.map_err(driver)?;
             cohort(Stage::Blocked, Outcome::KnownAbort);
             return Ok(None);
         }
         Err(error) => {
-            if let Err(abort) = session.abort_transaction().await {
+            if let Err(abort) = session.abort_guarded().await {
                 tracing::debug!(error_kind = ?abort.kind, "Aborting pending publication staging failed");
             }
             return Err(domain(error));

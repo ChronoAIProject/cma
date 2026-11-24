@@ -57,7 +57,9 @@ for (const theme of ['light', 'dark']) {
       const recover = page.getByRole('button', { name: 'Recover request', exact: true });
       await expect(recover).toBeEnabled();
       await expect(field).toHaveValue('Keep this editable draft');
-      await expect(page.getByRole('status').filter({ hasText: /^Thinking$/ })).toBeVisible();
+      await expect(
+        page.getByRole('status').filter({ hasText: /^Waiting for a response$/ }),
+      ).toBeVisible();
       fixture.queued.conflict = true;
       await page.reload();
       await expect(recover).toBeEnabled();
@@ -72,7 +74,9 @@ for (const theme of ['light', 'dark']) {
         page.getByRole('article', { name: 'Queued message 1', exact: true }),
       ).toHaveCount(0);
       await expect(recover).toHaveCount(0);
-      await expect(page.getByRole('status').filter({ hasText: /^Thinking$/ })).toBeVisible();
+      await expect(
+        page.getByRole('status').filter({ hasText: /^Waiting for a response$/ }),
+      ).toBeVisible();
       const writes = fixture.writes.filter((write) => write.path.endsWith('/queued-cancellation'));
       expect(writes).toHaveLength(3);
       expect(writes[1]).toEqual(writes[0]);

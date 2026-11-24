@@ -14,6 +14,7 @@ pub(super) fn immutable_agent_fields_changed(current: &Agent, next: &Agent) -> b
             != next.conversation.managed_guidance_revision
         || current.conversation.preferences != next.conversation.preferences
         || current.conversation.settings != next.conversation.settings
+        || current.conversation.turn_timeout != next.conversation.turn_timeout
         || current.capabilities != next.capabilities
         || current.title != next.title
         || current.created_at != next.created_at
