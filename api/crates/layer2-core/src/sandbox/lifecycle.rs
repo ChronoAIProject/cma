@@ -488,14 +488,6 @@ fn paused_notice_is_invalid(notice: Option<&str>) -> bool {
     })
 }
 
-fn validate_writer_token(authority: &SandboxLifecycleAuthority) -> Result<(), SandboxModelError> {
-    let expected = authority.expected_writer_resume_token();
-    if authority.writer_resume_token.as_deref() != Some(expected.as_str()) {
-        return Err(invalid_lifecycle());
-    }
-    Ok(())
-}
-
 const fn invalid_lifecycle() -> SandboxModelError {
     SandboxModelError::invalid_value("sandbox.lifecycle")
 }
