@@ -10,7 +10,7 @@ use crate::ingress::{
 };
 use cmaeg_core::{
     activity::{Activity, ActivityKind, ActorKind, ConversationKind, SourceKind},
-    channel::Source,
+    channel::{Platform, Source},
     cloudevent::CloudEvent,
 };
 use serde_json::{json, Value};
@@ -18,16 +18,36 @@ use std::collections::BTreeSet;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 const MAX_MEMBERS: usize = 50;
-const EVENT_TYPE: &str = "telegram.group_members_joined";
+pub(crate) const EVENT_TYPE: &str = "telegram.group_members_joined";
 
 pub(crate) fn is_member_join(activity: &Activity) -> bool {
-    matches!(activity.source, SourceKind::Telegram { .. })
-        && matches!(&activity.kind, ActivityKind::Event { ce, .. } if ce.r#type == EVENT_TYPE)
+    matches!(
+        activity.source,
+        SourceKind::Telegram { .. }
+            | SourceKind::NyxidRelay {
+                platform: Platform::Telegram,
+                ..
+            }
+    ) && matches!(&activity.kind, ActivityKind::Event { ce, .. } if ce.r#type == EVENT_TYPE)
 }
 
 pub(crate) fn group_opted_in(source: &Source, group_id: &str) -> bool {
-    matches!(source, Source::Telegram { message_events: true, member_join_chat_ids, .. }
+    matches!(source,
+        Source::Telegram { message_events: true, member_join_chat_ids, .. }
+        | Source::NyxidRelay { platform: Platform::Telegram, member_join_chat_ids, .. }
         if member_join_chat_ids.iter().any(|id| id == group_id))
+}
+
+pub(crate) fn relay_messaging_source(source: &Source) -> Source {
+    let mut source = source.clone();
+    if let Source::NyxidRelay {
+        member_join_chat_ids,
+        ..
+    } = &mut source
+    {
+        member_join_chat_ids.clear();
+    }
+    source
 }
 
 pub(crate) fn requested(raw: &Value) -> bool {
