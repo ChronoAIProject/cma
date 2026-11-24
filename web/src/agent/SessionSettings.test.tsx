@@ -203,6 +203,47 @@ it('loads the scoped model catalog, preserves an unavailable current model, and 
   expect(chip()).toHaveTextContent('Available model High');
 });
 
+it('distinguishes look-alike model labels and applies the selected catalog ID', async () => {
+  const user = userEvent.setup();
+  const saved = { ...defaults, model: 'gpt-6-astra' };
+  const selected = { ...defaults, model: 'gpt-5.6-sol-preview' };
+  const update = vi.fn().mockResolvedValue(selected);
+  render(
+    draw(
+      agentClient({
+        readAgentModels: async () => [
+          { id: 'gpt-5.6-sol-preview', label: 'GPT-5.6 (Sol)', available: true },
+          { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', available: true },
+          { id: 'gpt-6-astra', label: 'GPT-6 (Astra)', available: true },
+          { id: 'gpt-6-astra-preview', label: 'GPT-6 Astra', available: true },
+          { id: 'gpt-6', label: 'GPT-6', available: true },
+        ],
+        readAgentSettings: async () => saved,
+        updateAgentSettings: update,
+      }),
+    ),
+  );
+  await expandSettings();
+  await openCard(user);
+  expect(chip()).toHaveTextContent('GPT-6 (Astra) · gpt-6-astra High');
+  await user.click(model());
+  expect(
+    screen.getByRole('menuitemradio', { name: 'GPT-6 (Astra) · gpt-6-astra' }),
+  ).toHaveAttribute('aria-checked', 'true');
+  expect(
+    screen.getByRole('menuitemradio', { name: 'GPT-6 Astra · gpt-6-astra-preview' }),
+  ).toBeVisible();
+  expect(screen.getByRole('menuitemradio', { name: 'GPT-5.6 Sol · gpt-5.6-sol' })).toBeVisible();
+  expect(screen.getByRole('menuitemradio', { name: 'GPT-6' })).toBeVisible();
+  await user.click(
+    screen.getByRole('menuitemradio', { name: 'GPT-5.6 (Sol) · gpt-5.6-sol-preview' }),
+  );
+  expect(chip()).toHaveTextContent('GPT-5.6 (Sol) · gpt-5.6-sol-preview High');
+  await user.click(screen.getByRole('button', { name: 'Apply settings' }));
+  await screen.findByText('Settings applied to this Agent.');
+  expect(update.mock.calls[0]?.[1]).toEqual(selected);
+});
+
 it('keeps retained runtime models disabled while applying reasoning changes to the saved model', async () => {
   const user = userEvent.setup();
   const update = vi.fn().mockResolvedValue({ ...defaults, reasoning_effort: 'medium' });
