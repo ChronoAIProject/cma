@@ -67,6 +67,7 @@ impl AgentSandboxClient {
         let prior = RuntimeUpgradeProof::from_member(&member, origin)?;
         let policy = admission.map(|admission| RetainedStartupPolicyProof {
             operation_id: admission.operation_id.into(),
+            predecessor_resource_version: admission.predecessor_resource_version.into(),
             journal_recovery: admission.journal_recovery,
         });
         // A replay proves both exact requests and the original complete home graph.

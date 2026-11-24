@@ -85,11 +85,19 @@ async fn retained_policy_upgrade_replays_an_exact_lost_ack_after_version_advance
             admission.operation_id
         );
         assert_eq!(proof["retained_policy"]["journal_recovery"], true);
+        assert_eq!(
+            proof["retained_policy"]["predecessor_resource_version"],
+            version
+        );
         row["metadata"]["resourceVersion"] = json!("42");
         state.calls.clear();
     }
     dispatch(&fixture, &admission).await.unwrap();
     fixture.no_writes();
+    admission.predecessor_resource_version = "42";
+    assert!(dispatch(&fixture, &admission).await.is_err());
+    fixture.no_writes();
+    admission.predecessor_resource_version = &version;
     admission.operation_id = "different-operation";
     assert!(dispatch(&fixture, &admission).await.is_err());
     fixture.no_writes();

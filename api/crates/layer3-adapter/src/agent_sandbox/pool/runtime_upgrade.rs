@@ -10,6 +10,7 @@ pub(crate) const UPGRADE_ANNOTATION: &str = "cma/native-runtime-upgrade";
 #[serde(deny_unknown_fields)]
 pub(crate) struct RetainedStartupPolicyProof {
     pub operation_id: String,
+    pub predecessor_resource_version: String,
     pub journal_recovery: bool,
 }
 
@@ -103,6 +104,7 @@ impl RuntimeUpgradeProof {
                 || policy.operation_id.len() > 128
                 || policy.operation_id.trim() != policy.operation_id
                 || policy.operation_id.chars().any(char::is_control)
+                || policy.predecessor_resource_version.is_empty()
         }) || !origin.claim.request.home.policy.is_native_vct()
             || self.origin_sha256 != provider_request_digest(origin)?
             || self.previous_generation < origin.claim.request.runtime_generation
