@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import { downloadAgentHistory } from './historyExport';
+import { readRetainedHistory } from './readRetainedHistory';
 
 export function useHistoryExport(client: CmaWebClient, viewerId: string, enabled: boolean) {
   const active = useRef<AbortController | undefined>(undefined);
@@ -26,22 +27,15 @@ export function useHistoryExport(client: CmaWebClient, viewerId: string, enabled
     setResult({ scope, pending: true });
     try {
       const source = retained
-        ? await client.readAgentTranscript(agentId, {
-            signal: operation.signal,
-            cache: 'no-store',
-            maxPages: 256,
-            maxBytes: 16 * 1024 * 1024,
-          })
+        ? await readRetainedHistory(client, agentId, operation.signal)
         : await client.exportAgentHistory(agentId, { signal: operation.signal });
       if (operation.signal.aborted) return;
-      if (!(source instanceof Blob) && source.agentId !== agentId)
-        throw new Error('The retained conversation did not match this Agent. Please retry.');
       downloadAgentHistory(agentId, source);
       if (!(source instanceof Blob))
         setResult({
           scope,
           pending: true,
-          notice: `Retained conversation exported through sequence ${source.throughSeq}. The file includes recorded messages and turn outcomes, with coverage details. Raw runtime and tool records are not included.`,
+          notice: `Exported recorded messages, tool activity and turn outcomes through sequence ${source.transcript.throughSeq}.`,
         });
     } catch (failure) {
       if (!operation.signal.aborted)

@@ -290,6 +290,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       const page = await sdk.agents.events(id, {
         after: options?.cursor,
         signal: options?.signal,
+        ...(options?.cache === undefined ? {} : { cache: options.cache }),
         toolOutput: true,
       });
       return {
