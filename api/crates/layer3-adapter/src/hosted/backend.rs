@@ -1,22 +1,12 @@
 use tokio::sync::mpsc;
 
+use super::RuntimeRecoveryCommand;
 use crate::provider::ProviderSandboxRequest;
 use crate::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame};
 use crate::{
     AgentHomePlan, AgentHomeRequest, AgentLaunch, AgentOpenRequest, ConversationChannel,
     ConversationUpdate, Result, RuntimeHandle, RuntimeObservation,
 };
-
-/// Trusted provider-rendered maintenance command; never user-supplied exec.
-/// The lifecycle adapter supplies authority for inspection or admitted recovery.
-/// Configuration belongs on stdin, not in Kubernetes command arguments.
-/// Fields are crate-private to keep command construction inside the adapter.
-#[doc(hidden)]
-pub struct RuntimeRecoveryCommand {
-    pub(crate) program: String,
-    pub(crate) args: Vec<String>,
-    pub(crate) input: Vec<u8>,
-}
 
 /// Kernel-specific settings used while opening its ACP conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
