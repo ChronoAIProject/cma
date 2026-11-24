@@ -5,9 +5,11 @@ edition.workspace = true
 publish = false
 
 [features]
+qualification-hooks = ["dep:cma-qualification", "layer1-public/qualification-hooks"]
 real-model-suggestion-samples = []
 
 [dependencies]
+cma-qualification = { path = "../cma-qualification", optional = true }
 cma-allocator-qualification = { path = "../cma-allocator-qualification" }
 cma-am-auth = { path = "../cma-am-auth" }
 cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }

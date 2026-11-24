@@ -48,6 +48,13 @@ impl OwnershipCoordinator {
             return Ok(());
         }
         let renewal = tokio::time::timeout(Duration::from_millis(STORE_DEADLINE_MS), async {
+            #[cfg(feature = "qualification-hooks")]
+            if let Some(hook) = self.qualification_renewal.get() {
+                let window = super::qualification::RenewalWindow { started, now_ms };
+                if let Some(outcome) = hook.renew_selected(authority, window).await {
+                    return outcome;
+                }
+            }
             if self.contains_failures() {
                 authority.renew_store_owned().await
             } else {
