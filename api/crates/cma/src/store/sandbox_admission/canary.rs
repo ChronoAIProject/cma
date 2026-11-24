@@ -65,7 +65,14 @@ fn verify_canary(
     {
         return Err(refused());
     }
-    row.lease().map_err(|_| refused())
+    let token = admission.lifecycle_lease().ok_or_else(refused)?;
+    if row.lease_token.as_deref() != Some(token) {
+        return Err(refused());
+    }
+    Ok(LifecycleLease {
+        id: row.id.clone(),
+        token: token.to_owned(),
+    })
 }
 
 async fn verify_ordinary_pin(
@@ -116,7 +123,9 @@ async fn verify_ordinary_pin(
 fn ordinary_lifecycle_pin(sandbox: &Sandbox, record: &LifecycleRecord, image: &str) -> bool {
     if record.owner != sandbox.owner.as_str()
         || record.input.resolved_image.as_deref() != Some(image)
-        || !(record.input.request.machine_included || record.input.request.image.is_some())
+        || !(record.input.request.machine_included
+            || record.input.request.image.is_some()
+            || (record.input.request.desktop && record.input.request.initial_message.is_some()))
     {
         return false;
     }

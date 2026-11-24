@@ -114,7 +114,51 @@ async fn canary_profile_requires_its_exact_owner_revision_and_lifecycle_origin()
         ));
     }
 
-    let exact = admission_for(sandbox.clone());
+    let stale = record.lease().unwrap();
+    db.collection::<mongodb::bson::Document>("agent_lifecycle_operations")
+        .update_one(
+            doc! {"_id": &id},
+            doc! {"$set": {
+                "lease_expires_at": mongodb::bson::DateTime::from_millis(0),
+            }},
+        )
+        .await
+        .unwrap();
+    let peer_client = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let peer_operations = MongoAgentLifecycleStore::open(&peer_client.database(&database_name))
+        .await
+        .unwrap();
+    let current = peer_operations
+        .claim(&id)
+        .await
+        .unwrap()
+        .unwrap()
+        .lease()
+        .unwrap();
+    assert_ne!(stale.token, current.token);
+    assert!(matches!(
+        admission_store
+            .admit_sandbox(admission_for(sandbox.clone()).with_lifecycle_lease(&stale.token))
+            .await,
+        Err(SandboxStoreError::SandboxOriginConflict)
+    ));
+    assert_eq!(
+        operation_store
+            .read_for_owner(&sandbox.owner, &id)
+            .await
+            .unwrap()
+            .unwrap()
+            .sandbox_id,
+        None
+    );
+    assert!(admission_store
+        .get_sandbox(&sandbox.id)
+        .await
+        .unwrap()
+        .is_none());
+    let exact = admission_for(sandbox.clone()).with_lifecycle_lease(&current.token);
     let SandboxAdmissionResult::Created(first) =
         admission_store.admit_sandbox(exact.clone()).await.unwrap()
     else {
@@ -123,8 +167,10 @@ async fn canary_profile_requires_its_exact_owner_revision_and_lifecycle_origin()
     let replay_store = MongoSandboxStore::open(&client, &database_name)
         .await
         .unwrap();
-    let SandboxAdmissionResult::Existing(replayed) =
-        replay_store.admit_sandbox(exact.clone()).await.unwrap()
+    let SandboxAdmissionResult::Existing(replayed) = replay_store
+        .admit_sandbox(exact.clone().with_lifecycle_lease(&stale.token))
+        .await
+        .unwrap()
     else {
         panic!("expected exact replay");
     };

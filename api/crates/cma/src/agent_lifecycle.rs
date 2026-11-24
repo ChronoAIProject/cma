@@ -233,7 +233,7 @@ impl InlineAgentLifecycle {
                 caller,
                 sandbox_profile.clone(),
                 &request.name,
-                &lease.id,
+                &lease,
             )
             .await;
             tracing::info!(
