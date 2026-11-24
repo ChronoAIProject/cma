@@ -44,6 +44,7 @@ import { ProfileAuthoring } from './profile-authoring/index.js';
 import { ResourceAccess } from './resource-access.js';
 import { ResourceRevocations } from './resource-revocations.js';
 import { AgentEventsV2 } from './agent-events-v2/index.js';
+import { RuntimeCanaries } from './runtime-canaries.js';
 
 /** A configured client for the public CMA resource and discovery APIs. */
 export class Cma {
@@ -75,6 +76,7 @@ export class Cma {
   readonly workspaces: Workspaces;
   readonly worktrees: Worktrees;
   readonly admin: Administration;
+  readonly runtimeCanaries: RuntimeCanaries;
   readonly profileAuthoring: ProfileAuthoring;
   readonly triggerAuthoring: TriggerAuthoring;
   readonly triggers: TriggerAuthoring;
@@ -123,6 +125,7 @@ export class Cma {
     this.workspaces = new Workspaces(this.#config);
     this.worktrees = new Worktrees(this.#config);
     this.admin = new Administration(this.#config);
+    this.runtimeCanaries = new RuntimeCanaries(this.#config);
     this.profileAuthoring = new ProfileAuthoring(this.#config);
     this.triggerAuthoring = new TriggerAuthoring(this.#config);
     this.triggers = this.triggerAuthoring;

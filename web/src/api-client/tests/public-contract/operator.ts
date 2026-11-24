@@ -48,6 +48,14 @@ export const operatorDispatch: Record<string, Dispatch> = {
     client.admin.retireProfile(param('kind') as ProfileKind, param('id')),
   'GET /api/v1/admin/runtime-binding-holds': ({ client }) => client.admin.bindingHolds(),
   'GET /api/v1/admin/runtime-inventory': ({ client }) => client.admin.readRuntimeInventory(),
+  'PUT /api/v1/admin/runtime-canary-policy': ({ client, body }) =>
+    client.runtimeCanaries.configure(body),
+  'POST /api/v1/admin/runtime-canary-grants': ({ client, body }) =>
+    client.runtimeCanaries.grant(body),
+  'POST /api/v1/admin/runtime-canary-grants/revoke': ({ client, body }) =>
+    client.runtimeCanaries.revoke(body),
+  'POST /api/v1/runtime-canary-redemptions': ({ client, body, command }) =>
+    client.runtimeCanaries.redeem(body, command),
   'GET /api/v1/admin/warm-pools': ({ client }) => client.admin.listWarmPools(),
   'POST /api/v1/admin/warm-pools': ({ client, body, command }) =>
     client.admin.configureWarmPool(body, command),
