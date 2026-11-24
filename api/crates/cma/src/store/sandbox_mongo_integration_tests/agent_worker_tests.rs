@@ -35,6 +35,46 @@ fn connection_recovery_request(agent: &Agent) -> AgentConnectionRecoveryRequest 
     }
 }
 
+async fn connection_recovery_participant(
+    uri: &str,
+    name: &str,
+    agent: &Agent,
+    eligible_reads: Arc<tokio::sync::Barrier>,
+) -> MongoSandboxStore {
+    use std::sync::atomic::AtomicBool;
+
+    let namespace = format!("{name}.agents");
+    let id = agent.id.to_string();
+    let revision = i64::try_from(agent.revision).unwrap();
+    let armed = Arc::new(AtomicBool::new(false));
+    let gate = armed.clone();
+    let mut options = ClientOptions::parse(uri).await.unwrap();
+    options.command_event_handler = Some(EventHandler::async_callback(move |event| {
+        let wait = matches!(event, CommandEvent::Succeeded(event) if event.command_name == "find"
+            && event.reply.get_document("cursor").is_ok_and(|cursor| {
+                cursor.get_str("ns").ok() == Some(namespace.as_str())
+                    && cursor.get_array("firstBatch").is_ok_and(|rows| {
+                        rows.first().and_then(Bson::as_document).is_some_and(|row| {
+                            row.get_str("_id").ok() == Some(id.as_str())
+                                && row.get_i64("revision").ok() == Some(revision)
+                        })
+                    })
+            })
+            && gate.swap(false, Ordering::SeqCst));
+        let eligible_reads = eligible_reads.clone();
+        Box::pin(async move {
+            if wait {
+                eligible_reads.wait().await;
+            }
+        })
+    }));
+    let store = MongoSandboxStore::open(&Client::with_options(options).unwrap(), name)
+        .await
+        .unwrap();
+    armed.store(true, Ordering::SeqCst);
+    store
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn live_connection_scan_and_recovery_cas_are_complete_and_idempotent() {
@@ -66,11 +106,28 @@ async fn live_connection_scan_and_recovery_cas_are_complete_and_idempotent() {
 
     let request = connection_recovery_request(&working);
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
-    let maintenance_client = Client::with_uri_str(uri).await.unwrap();
+    let maintenance_client = Client::with_uri_str(&uri).await.unwrap();
     let sandboxes = maintenance_client
         .database(&name)
         .collection::<Document>("sandboxes");
     let parent_key = doc! {"_id": working.sandbox_id.as_str()};
+    let missing_parent_key = doc! {"_id": ready.sandbox_id.as_str()};
+    assert_eq!(
+        sandboxes
+            .delete_one(missing_parent_key)
+            .await
+            .unwrap()
+            .deleted_count,
+        1
+    );
+    assert_eq!(
+        store
+            .schedule_agent_connection_recovery(connection_recovery_request(&ready))
+            .await
+            .unwrap(),
+        AgentConnectionRecoveryOutcome::Superseded
+    );
+    assert_eq!(store.get_agent(&ready.id).await.unwrap(), Some(ready));
     sandboxes
         .update_one(
             parent_key.clone(),
@@ -103,9 +160,32 @@ async fn live_connection_scan_and_recovery_cas_are_complete_and_idempotent() {
         .write_concern(mongodb::options::WriteConcern::majority())
         .await
         .unwrap();
-    let left = store.schedule_agent_connection_recovery(request.clone());
-    let right = store.schedule_agent_connection_recovery(request.clone());
-    let (left, right) = tokio::join!(left, right);
+    let counter = "agent_work_publication_fence";
+    let before = sandboxes
+        .find_one(parent_key.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let before = before.get_i64(counter).unwrap();
+    let eligible_reads = Arc::new(tokio::sync::Barrier::new(2));
+    let (left, right) = tokio::join!(
+        connection_recovery_participant(&uri, &name, &working, eligible_reads.clone()),
+        connection_recovery_participant(&uri, &name, &working, eligible_reads),
+    );
+    let (left, right) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::join!(
+            left.schedule_agent_connection_recovery(request.clone()),
+            right.schedule_agent_connection_recovery(request.clone()),
+        )
+    })
+    .await
+    .expect("both participants must read the eligible Agent before scheduling");
+    let after = sandboxes
+        .find_one(parent_key.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.get_i64(counter).unwrap(), before + 1);
     let outcomes = [left.unwrap(), right.unwrap()];
     assert_eq!(
         outcomes

@@ -148,7 +148,11 @@ async fn update(
             match crate::store::work_publication::agent::fence_parent(store, current, &mut session)
                 .await
             {
-                Ok(_) => {}
+                Ok(true) => {}
+                Ok(false) => {
+                    let _ = session.abort_transaction().await;
+                    return Err(SandboxStoreError::Conflict);
+                }
                 Err(error) => {
                     let _ = session.abort_transaction().await;
                     match error {
@@ -183,6 +187,10 @@ async fn update(
             .session(&mut session)
             .await
         {
+            Ok(result) if result.matched_count == 0 && maintenance_parent.is_some() => {
+                session.abort_transaction().await.map_err(driver)?;
+                return Ok(result);
+            }
             Ok(result) => result,
             Err(error) if native_retirement_action::retryable_body_error(&error) => {
                 let _ = session.abort_transaction().await;
