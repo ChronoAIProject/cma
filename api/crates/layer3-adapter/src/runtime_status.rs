@@ -51,6 +51,9 @@ pub struct RuntimeStatus {
     /// One ordered request can acknowledge both fenced Agent resource operations.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub agent_resource_preparation: bool,
+    /// The identified supervisor can install a generation-bound GitHub route.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exact_github_credential_route: bool,
     pub sandbox_id: String,
     pub generation: u64,
     pub home_identity: String,
@@ -112,6 +115,7 @@ mod compatibility_tests {
         assert!(!status.agent_skill_upgrade);
         assert!(!status.agent_browser);
         assert!(!status.agent_resource_preparation);
+        assert!(!status.exact_github_credential_route);
         assert_eq!(serde_json::to_value(status).unwrap(), original);
     }
 

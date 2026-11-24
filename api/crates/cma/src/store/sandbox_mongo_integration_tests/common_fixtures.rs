@@ -115,6 +115,7 @@ pub(super) fn retired_sandbox(id: &str) -> Sandbox {
 pub(super) fn credential(sandbox_id: &str, plaintext: &str) -> CredentialMaterial {
     CredentialMaterial {
         source: Default::default(),
+        github_route: None,
         sandbox_id: SandboxId(sandbox_id.into()),
         owner: SubjectId("owner".into()),
         authority: SandboxCredentialAuthority {
