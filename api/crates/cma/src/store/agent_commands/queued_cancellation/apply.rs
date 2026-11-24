@@ -15,7 +15,7 @@ pub(in crate::store) async fn apply(
     store: &MongoSandboxStore,
     request: &QueuedCancellationReservation,
     session: &mut ClientSession,
-) -> Result<QueuedCancellationOutcome, ApplyError> {
+) -> Result<(QueuedCancellationOutcome, bool), ApplyError> {
     let existing = store
         .agent_commands
         .find_one(
@@ -40,7 +40,7 @@ pub(in crate::store) async fn apply(
             Ok::<_, CommandLedgerError>((record, binding))
         })
         .transpose()?;
-    let (agent, parent) = fences::current(store, request, session).await?;
+    let (agent, parent, held) = fences::current(store, request, session).await?;
     if let Some((record, binding)) = retained {
         let response = store
             .agent_commands
@@ -52,8 +52,13 @@ pub(in crate::store) async fn apply(
             .transpose()?
             .ok_or(CommandLedgerError::Corrupt)?;
         let result = request.replay(record, Some(binding), response)?;
-        fences::resources(store, &agent, &parent, session).await?;
-        return Ok(QueuedCancellationOutcome::Applied(Box::new(result)));
+        if !held {
+            fences::resources(store, &agent, &parent, session).await?;
+        }
+        return Ok((QueuedCancellationOutcome::Applied(Box::new(result)), held));
+    }
+    if held {
+        return Err(CommandLedgerError::Conflict.into());
     }
     let mut response = store
         .agent_commands
@@ -70,7 +75,7 @@ pub(in crate::store) async fn apply(
         // dispatch. The source revision can never return to the old intent.
         fences::source(store, &response, session).await?;
         fences::resources(store, &agent, &parent, session).await?;
-        return Ok(QueuedCancellationOutcome::NotAdmitted);
+        return Ok((QueuedCancellationOutcome::NotAdmitted, false));
     }
     let document = store
         .agent_command_orders
@@ -120,7 +125,7 @@ pub(in crate::store) async fn apply(
         .insert_one(document)
         .session(session)
         .await?;
-    Ok(QueuedCancellationOutcome::Applied(Box::new(result)))
+    Ok((QueuedCancellationOutcome::Applied(Box::new(result)), false))
 }
 
 fn binding(document: &Document) -> Result<Option<QueuedCancellationBinding>, CommandLedgerError> {

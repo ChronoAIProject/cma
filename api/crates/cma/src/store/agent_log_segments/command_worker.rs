@@ -44,14 +44,14 @@ pub(in crate::store) async fn cancel(
     request: &QueuedCancellationReservation,
     scope: &mut TransactionScope<'_>,
 ) -> Result<(QueuedCancellationOutcome, Option<terminal::Receipt>), ApplyError> {
-    let result = Box::pin(commands::queued_cancellation::apply::apply(
+    let (result, held_replay) = Box::pin(commands::queued_cancellation::apply::apply(
         store,
         request,
         scope.session(),
     ))
     .await?;
     let receipt = match &result {
-        QueuedCancellationOutcome::Applied(result) => {
+        QueuedCancellationOutcome::Applied(result) if !held_replay => {
             let mut receipt = Box::pin(terminal::project(
                 store,
                 &result.response,
@@ -67,7 +67,7 @@ pub(in crate::store) async fn cancel(
             }
             receipt
         }
-        QueuedCancellationOutcome::NotAdmitted => None,
+        _ => None,
     };
     Ok((result, receipt))
 }

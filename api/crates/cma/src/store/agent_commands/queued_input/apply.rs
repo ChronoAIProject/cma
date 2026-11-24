@@ -35,7 +35,7 @@ pub(super) async fn apply(
             Ok::<_, CommandLedgerError>((record, binding))
         })
         .transpose()?;
-    let (agent, parent) = fences::current(store, &request.cancellation, session).await?;
+    let (agent, parent, held) = fences::current(store, &request.cancellation, session).await?;
     if let Some((record, binding)) = retained {
         let response = store
             .agent_commands
@@ -47,8 +47,13 @@ pub(super) async fn apply(
             .transpose()?
             .ok_or(CommandLedgerError::Corrupt)?;
         let result = request.replay(record, Some(binding), response)?;
-        fences::resources(store, &agent, &parent, session).await?;
+        if !held {
+            fences::resources(store, &agent, &parent, session).await?;
+        }
         return Ok(QueuedInputOutcome::Applied(Box::new(result)));
+    }
+    if held {
+        return Err(CommandLedgerError::Conflict.into());
     }
     let mut response = store
         .agent_commands

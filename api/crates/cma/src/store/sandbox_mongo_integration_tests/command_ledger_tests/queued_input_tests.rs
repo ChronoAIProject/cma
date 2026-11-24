@@ -29,6 +29,62 @@ fn applied(value: QueuedInputOutcome) -> AdmittedQueuedInput {
         other => panic!("expected edit, got {other:?}"),
     }
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn held_sandbox_refuses_fresh_queued_edit_and_replays_without_writes() {
+    use super::queued_cancellation_tests::set_test_hold;
+
+    let (client, name) = database("queued_input_hold").await;
+    let (store, agent, parent, request, source) = queued(&name, &client).await;
+    let replica = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let held = set_test_hold(&store, &parent, true).await;
+    assert_eq!(
+        replica.edit_queued_input(request.clone()).await,
+        Err(CommandLedgerError::Conflict)
+    );
+    assert_eq!(
+        store
+            .get_admitted_command(&source.scope(), &source.key_sha256)
+            .await
+            .unwrap(),
+        Some(source)
+    );
+    assert_eq!(
+        store.agent_commands.count_documents(doc! {}).await.unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .sandboxes
+            .find_one(doc! {"_id": parent.id.as_str()})
+            .await
+            .unwrap(),
+        Some(held)
+    );
+
+    set_test_hold(&store, &parent, false).await;
+    let edited = store.edit_queued_input(request.clone()).await.unwrap();
+    let held = set_test_hold(&store, &parent, true).await;
+    let agent_key = doc! {"_id": agent.id.as_str()};
+    let before = store.agents.find_one(agent_key.clone()).await.unwrap();
+    assert_eq!(replica.edit_queued_input(request).await.unwrap(), edited);
+    assert_eq!(store.agents.find_one(agent_key).await.unwrap(), before);
+    assert_eq!(
+        store
+            .sandboxes
+            .find_one(doc! {"_id": parent.id.as_str()})
+            .await
+            .unwrap(),
+        Some(held)
+    );
+    assert_eq!(
+        store.agent_commands.count_documents(doc! {}).await.unwrap(),
+        2
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn queued_input_mongo_replicas_recover_one_revision_and_dispatch_only_revised_text() {

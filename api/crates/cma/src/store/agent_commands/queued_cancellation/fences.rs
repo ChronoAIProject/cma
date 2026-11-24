@@ -7,13 +7,14 @@ use mongodb::{bson::doc, ClientSession};
 
 use super::super::ApplyError;
 use crate::store::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
+use crate::store::work_claim_authority::{without_ledger_maintenance, LEDGER_MAINTENANCE_FIELD};
 use crate::store::{agents::read_agent, sandboxes::read_sandbox};
 
 pub(in crate::store::agent_commands) async fn current(
     store: &MongoSandboxStore,
     request: &QueuedCancellationReservation,
     session: &mut ClientSession,
-) -> Result<(Agent, Sandbox), ApplyError> {
+) -> Result<(Agent, Sandbox, bool), ApplyError> {
     store
         .bindings
         .conversation_authority(request.command.binding.as_ref(), session)
@@ -28,16 +29,13 @@ pub(in crate::store::agent_commands) async fn current(
         .transpose()
         .map_err(|_| CommandLedgerError::Corrupt)?
         .ok_or(CommandLedgerError::NotFound)?;
-    let parent = store
+    let parent_row = store
         .sandboxes
         .find_one(doc! {"_id": agent.sandbox_id.as_str()})
         .session(&mut *session)
         .await?
-        .as_ref()
-        .map(read_sandbox)
-        .transpose()
-        .map_err(|_| CommandLedgerError::Corrupt)?
         .ok_or(CommandLedgerError::NotFound)?;
+    let parent = read_sandbox(&parent_row).map_err(|_| CommandLedgerError::Corrupt)?;
     request.validate_current(&agent, &parent)?;
     let policy = store
         .resource_policies
@@ -49,7 +47,11 @@ pub(in crate::store::agent_commands) async fn current(
         .transpose()
         .map_err(|_| CommandLedgerError::Corrupt)?;
     validate_command_reservation_policy(&request.command, &parent, policy.as_ref())?;
-    Ok((agent, parent))
+    Ok((
+        agent,
+        parent,
+        parent_row.contains_key(LEDGER_MAINTENANCE_FIELD),
+    ))
 }
 
 pub(in crate::store::agent_commands) async fn resources(
@@ -60,25 +62,37 @@ pub(in crate::store::agent_commands) async fn resources(
 ) -> Result<(), ApplyError> {
     // Both supported Agent envelopes were decoded in this same transaction.
     // The Sandbox retains its own format; adoption must not disable cancellation.
-    for (collection, id, revision, created_at, versions) in [
+    let agent_revision =
+        signed(agent.revision, "Agent revision").map_err(|_| CommandLedgerError::Corrupt)?;
+    let parent_revision =
+        signed(parent.revision, "Sandbox revision").map_err(|_| CommandLedgerError::Corrupt)?;
+    for (collection, filter) in [
         (
             &store.agents,
-            agent.id.as_str(),
-            agent.revision,
-            &agent.created_at,
-            vec![1_i64, 2_i64],
+            doc! {
+                "_id": agent.id.as_str(),
+                "document_schema_version": {"$in": [1_i64, 2_i64]},
+                "revision": agent_revision,
+                "record.created_at": &agent.created_at,
+            },
         ),
         (
             &store.sandboxes,
-            parent.id.as_str(),
-            parent.revision,
-            &parent.created_at,
-            vec![DOCUMENT_SCHEMA_VERSION],
+            without_ledger_maintenance(doc! {
+                "_id": parent.id.as_str(),
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "revision": parent_revision,
+                "record.created_at": &parent.created_at,
+            }),
         ),
     ] {
-        let revision =
-            signed(revision, "resource revision").map_err(|_| CommandLedgerError::Corrupt)?;
-        let changed = collection.update_one(doc! {"_id": id, "document_schema_version": {"$in":versions}, "revision": revision, "record.created_at": created_at}, doc! {"$inc": {"agent_command_admission_fence": 1_i64}}).session(&mut *session).await?;
+        let changed = collection
+            .update_one(
+                filter,
+                doc! {"$inc": {"agent_command_admission_fence": 1_i64}},
+            )
+            .session(&mut *session)
+            .await?;
         if changed.matched_count != 1 {
             return Err(CommandLedgerError::Conflict.into());
         }
