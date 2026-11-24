@@ -317,6 +317,7 @@ async fn competing_consents_settle_once_and_flag_rollback_keeps_only_exact_repla
 
 async fn save_failed_revival(store: &MongoSandboxStore, id: &SandboxId) {
     let mut bound = store.get_sandbox(id).await.unwrap().unwrap();
+    let observed_at = bound.updated_at.clone();
     // Present the already installed synthetic replacement at its restore phase.
     // The actual terminal state and event go through the ordinary claimed save.
     let mut replacement = *bound.lifecycle.suspended_runtime.take().unwrap();
@@ -337,7 +338,7 @@ async fn save_failed_revival(store: &MongoSandboxStore, id: &SandboxId) {
         .claim_sandbox_work(
             id,
             "fixture-worker",
-            AT.into(),
+            observed_at.clone(),
             crate::store::sandbox_mongo_integration_tests::work_lease_deadline(),
         )
         .await
@@ -350,7 +351,7 @@ async fn save_failed_revival(store: &MongoSandboxStore, id: &SandboxId) {
             "synthetic failed installation".into(),
             &lease.holder,
             lease.fence,
-            AT.into(),
+            observed_at.clone(),
         )
         .unwrap();
     store
@@ -359,7 +360,7 @@ async fn save_failed_revival(store: &MongoSandboxStore, id: &SandboxId) {
             sandbox: failed,
             agents: Vec::new(),
             agent_scope: SandboxLifecycleAgentScope::Touched,
-            appended_at: AT.into(),
+            appended_at: observed_at,
             events: vec![SandboxEventKind::Failed { failure }],
         })
         .await

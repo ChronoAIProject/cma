@@ -16,11 +16,13 @@ pub(in crate::store) async fn prepare_source(
         .unwrap()
         .unwrap();
     let mut parent = read_sandbox(&source).unwrap();
-    parent.status = SandboxStatus::Retiring;
-    parent.work.step = SandboxWorkStep::StopAgents;
-    parent.work.lease = None;
-    parent.lifecycle.operation = None;
-    parent.lifecycle.home_recovery = None;
+    if parent.status == SandboxStatus::Reviving {
+        parent.begin_retirement(layer2_core::now_rfc3339()).unwrap();
+    } else {
+        parent.status = SandboxStatus::Retiring;
+        parent.work.step = SandboxWorkStep::StopAgents;
+        parent.work.lease = None;
+    }
     let mut home = SandboxHome::reserve(
         &parent.id,
         HomeVolumePolicy {
