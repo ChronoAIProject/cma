@@ -6,30 +6,7 @@ use crate::{
     RetainedStartupPolicyUpgrade,
 };
 use kube::api::{Patch, PatchParams};
-use serde::{Deserialize, Serialize};
 use serde_json::json;
-
-/// Provider evidence to freeze with a retained transition's domain admission.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RetainedStartupPolicyPredecessor {
-    pub uid: String,
-    pub resource_version: String,
-    pub request_sha256: String,
-    pub home_identity: String,
-    pub image: String,
-    pub generation: u64,
-    pub journal_recovery: bool,
-}
-
-/// Exact intent frozen by the retained-home admission transaction.
-pub struct RetainedStartupPolicyUpgrade<'a> {
-    pub operation_id: &'a str,
-    pub predecessor: &'a RetainedStartupPolicyPredecessor,
-    pub target_image: &'a str,
-    pub successor_generation: u64,
-    pub journal_recovery: bool,
-}
 
 impl AgentSandboxClient {
     /// Observe the exact stopped member and original home without admitting work.
