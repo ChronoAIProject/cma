@@ -16,9 +16,9 @@ export function sw04Cancel(observation) {
   check(isHash(commandHash) && isHash(responseHash) && replay.commandHash === commandHash
     && replay.responseHash === responseHash, 'sw04_replay_identity_changed');
   check(durable?.commandHash === commandHash && durable.responseHash === responseHash
-    && durable.status === 'completed'
+    && durable.status === 'completed' && durable.holderHash === owner.processHash
     && Number.isSafeInteger(durable.runtimeGeneration) && durable.runtimeGeneration > 0,
-  'sw04_durable_outcome_invalid');
+    'sw04_durable_outcome_invalid');
   for (const effects of [effectsBeforeReplay, effectsAfterReplay]) {
     check(Array.isArray(effects), 'sw04_receiver_observation_missing', true);
     check(effects.length > 0, 'sw04_effect_missing');

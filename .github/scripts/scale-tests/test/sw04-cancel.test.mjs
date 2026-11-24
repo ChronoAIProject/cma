@@ -14,7 +14,8 @@ function observation() {
     schema: 'cma-sw04-cancel-v1', replicas: [owner.processHash, peer], owner,
     admission: { status: 202, processHash: peer, commandHash, responseHash },
     replay: { status: 202, processHash: owner.processHash, commandHash, responseHash },
-    durable: { commandHash, responseHash, status: 'completed', runtimeGeneration: 2 },
+    durable: { commandHash, responseHash, status: 'completed',
+      holderHash: owner.processHash, runtimeGeneration: 2 },
     effectsBeforeReplay: [{ ...effect }], effectsAfterReplay: [{ ...effect }],
   };
 }
@@ -25,10 +26,11 @@ test('SW04 reconciles the process, receipt and runtime observations in the fixtu
   const value = observation();
   value.unexpected = 'private diagnostic';
   const report = runSw04Fixture(`running 1 test\ntest module::name ... ${frame(value)}\nok\n`);
-  assert.equal(report.status, 'PASS');
+  assert.equal(report.status, 'NO_GO');
   assert.equal(report.track_status, 'INCOMPLETE');
   const [result] = report.scenarios;
   assert.equal(result.scenario, 'sw04_cancel');
+  assert.equal(result.status, 'PASS');
   assert.equal(result.evidence.commands, 1);
   assert.equal(result.evidence.effects, 1);
   assert.equal(result.evidence.additional_replay_effects, 0);
@@ -44,6 +46,7 @@ const failures = [
   ['receipt changed', (v) => v.replay.commandHash = hash('other-command'), 'sw04_replay_identity_changed'],
   ['different response on replay', (v) => v.replay.responseHash = hash('other-response'), 'sw04_replay_identity_changed'],
   ['missing terminal outcome', (v) => v.durable.status = 'in_progress', 'sw04_durable_outcome_invalid'],
+  ['wrong durable holder', (v) => v.durable.holderHash = v.admission.processHash, 'sw04_durable_outcome_invalid'],
   ['receiver absent', (v) => delete v.effectsBeforeReplay, 'sw04_receiver_observation_missing', 'BLOCKED'],
   ['missing effect', (v) => v.effectsBeforeReplay.pop(), 'sw04_effect_missing'],
   ['duplicate before replay', (v) => v.effectsBeforeReplay.push(v.effectsBeforeReplay[0]), 'sw04_effect_duplicate'],

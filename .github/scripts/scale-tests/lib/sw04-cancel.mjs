@@ -24,7 +24,7 @@ export function runSw04Fixture(log) {
   };
   try {
     const evidence = verifySw04Fixture(log);
-    return { ...report, status: 'PASS',
+    return { ...report, status: 'NO_GO',
       scenarios: [{ scenario: sw04Scenario, status: 'PASS', evidence_hash: evidence.evidence_hash, evidence }] };
   } catch (error) {
     const failure = safeFailure(error);

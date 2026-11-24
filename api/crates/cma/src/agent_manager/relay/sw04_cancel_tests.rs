@@ -256,6 +256,7 @@ async fn observe(
     assert_eq!(retained.receipt.envelope.command, AgentCommand::Interrupt);
     assert_eq!(retained.status, AgentResponseStatus::Completed);
     let dispatch = retained.work.dispatch.unwrap();
+    assert_eq!(dispatch.claim.holder, original.instance_id);
     let commands = database.collection::<Document>("agent_commands");
     let match_key = doc! {"agent_id": agent.as_str(), "key_sha256": retained.key_sha256};
     assert_eq!(
@@ -277,7 +278,8 @@ async fn observe(
         "replay": replay.evidence(),
         "durable": {"responseHash": hash(binding.get_str("response_id").unwrap()),
             "commandHash": hash(retained.receipt.envelope.command_id.as_str()),
-            "status": retained.status, "runtimeGeneration": dispatch.runtime_generation},
+            "status": retained.status, "holderHash": hash(&dispatch.claim.holder),
+            "runtimeGeneration": dispatch.runtime_generation},
         "effectsBeforeReplay": before,
         "effectsAfterReplay": after,
     });

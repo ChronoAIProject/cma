@@ -25,8 +25,9 @@ try {
     check(options['--observations'], 'sw04_observations_path_missing', true);
     const report = runSw04Fixture(await readFile(options['--observations'], 'utf8'));
     await saveReport(output, report);
-    console.log(`${report.status === 'PASS' ? 'DONE' : 'BLOCKED'}: SW04 Cancel ${report.status}; evidence=${output}`);
-    process.exitCode = report.status === 'PASS' ? 0 : 2;
+    const [result] = report.scenarios;
+    console.log(`${result.status === 'PASS' ? 'DONE' : 'BLOCKED'}: SW04 Cancel ${result.status}; evidence=${output}`);
+    process.exitCode = result.status === 'PASS' ? 0 : 2;
   } else {
     check(selections.includes(scenario), 'invalid_scenario', true);
     check(!options['--observations'], 'unexpected_observations_path', true);
