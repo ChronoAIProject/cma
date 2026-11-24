@@ -63,3 +63,35 @@ async fn protected_admission_requires_current_authority_and_supported_receiver()
         Err(DesktopError::RuntimeUnavailable)
     ));
 }
+
+#[tokio::test]
+async fn desktop_work_refuses_inactive_sandboxes_before_receiver_challenge() {
+    let caller = Caller::new(
+        SubjectId("owner".into()),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    let id = AgentId("agt_test".into());
+    for status in [
+        SandboxStatus::Active,
+        SandboxStatus::Paused,
+        SandboxStatus::Failed,
+        SandboxStatus::Retiring,
+        SandboxStatus::Retired,
+    ] {
+        let service = desktop_fixture(true, false, status, true, AgentStatus::Ready)
+            .await
+            .with_admission(DesktopAdmission::Protected);
+        let result = service
+            .open_authorized(&caller, &id, Arc::new(CurrentAuthority))
+            .await;
+        if status == SandboxStatus::Active {
+            // This fixture's receiver challenge reports unsupported.
+            assert!(matches!(result, Err(DesktopError::RuntimeUnavailable)));
+        } else {
+            assert!(
+                matches!(result, Err(DesktopError::Unavailable)),
+                "{status:?} must be refused before reaching the receiver",
+            );
+        }
+    }
+}
