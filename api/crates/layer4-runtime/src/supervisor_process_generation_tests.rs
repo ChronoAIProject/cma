@@ -365,6 +365,39 @@ async fn check_owner_stop_close_proof(started_successor: bool) {
     assert!(pending_authority.is_file());
     std::fs::remove_file(pending_authority).unwrap();
 
+    let predecessor_close =
+        crate::mutation_journal::Operation::close_agent(&fence.predecessor.close);
+    let authority_path =
+        crate::mutation_authority::Record::new(&fixture.config, 2, &predecessor_close)
+            .inventory_name(&fixture.config);
+    let valid = std::fs::read(&authority_path).unwrap();
+    let mut record: serde_json::Value = serde_json::from_slice(&valid).unwrap();
+    record["sandbox_id"] = serde_json::json!("sbx_foreign");
+    let corrupt = serde_json::to_vec(&record).unwrap();
+    std::fs::write(&authority_path, &corrupt).unwrap();
+    let authority_snapshot = || {
+        std::fs::read_dir(authority_path.parent().unwrap())
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (entry.file_name(), std::fs::read(entry.path()).unwrap())
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let snapshot = authority_snapshot();
+    for proof_request in [request.clone(), fence_request.clone()] {
+        assert_eq!(
+            failure(supervisor.dispatch(proof_request).await),
+            "mutation_authority_corrupt"
+        );
+        assert_eq!(authority_snapshot(), snapshot);
+    }
+    std::fs::write(&authority_path, valid).unwrap();
+    assert_eq!(
+        supervisor.dispatch(request.clone()).await,
+        ResponseFrame::ProveAgentProcessClosed(fence.predecessor.clone())
+    );
+
     let mut wrong_boot = fence.clone();
     wrong_boot.predecessor.runtime.boot_id = "replaced-runtime".into();
     assert_eq!(

@@ -18,26 +18,17 @@ pub(super) struct AuthorityFile {
     pub record: Record,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum TemporaryFiles {
+    Remove,
+    Preserve,
+    Refuse,
+}
+
 pub(super) fn scan(
     state_root: &Path,
     budget: &mut crate::mutation_recovery::ScanBudget,
-    preserve_temporary: bool,
-) -> Result<Vec<AuthorityFile>> {
-    scan_records(state_root, budget, preserve_temporary, false)
-}
-
-pub(super) fn scan_for_proof(
-    state_root: &Path,
-    budget: &mut crate::mutation_recovery::ScanBudget,
-) -> Result<Vec<AuthorityFile>> {
-    scan_records(state_root, budget, true, true)
-}
-
-fn scan_records(
-    state_root: &Path,
-    budget: &mut crate::mutation_recovery::ScanBudget,
-    preserve_temporary: bool,
-    require_settled: bool,
+    temporary: TemporaryFiles,
 ) -> Result<Vec<AuthorityFile>> {
     let directory = state_root.join(DIRECTORY);
     match std::fs::symlink_metadata(&directory) {
@@ -56,23 +47,24 @@ fn scan_records(
             .into_string()
             .map_err(|_| corrupt("mutation authority filename is not UTF-8"))?;
         let path = entry.path();
-        if preserve_temporary {
+        if !matches!(temporary, TemporaryFiles::Remove) {
             budget.entry()?;
         }
         if temporary_name(&name) {
-            if require_settled {
-                return Err(RuntimeError::unavailable(
-                    "agent_process_authority_unsettled",
-                    "Agent process proof is unavailable while authority publication is pending",
-                ));
+            match temporary {
+                TemporaryFiles::Remove => {
+                    crate::fs_durability::remove_file(&path).map_err(|error| {
+                        io_error("remove incomplete mutation authority record", error)
+                    })?
+                }
+                TemporaryFiles::Preserve => {}
+                TemporaryFiles::Refuse => {
+                    return Err(RuntimeError::unavailable(
+                        "agent_process_authority_unsettled",
+                        "Agent process proof is unavailable while authority publication is pending",
+                    ));
+                }
             }
-            // Unpublished authority is never evidence. Recovery inspection keeps
-            // it intact, including when a later record proves ambiguous.
-            if preserve_temporary {
-                continue;
-            }
-            crate::fs_durability::remove_file(&path)
-                .map_err(|error| io_error("remove incomplete mutation authority record", error))?;
             continue;
         }
         if !canonical_name(&name) {
@@ -80,7 +72,7 @@ fn scan_records(
                 "mutation authority directory contains an unknown file",
             ));
         }
-        if !preserve_temporary {
+        if matches!(temporary, TemporaryFiles::Remove) {
             budget.entry()?;
         }
         files.push(AuthorityFile {
