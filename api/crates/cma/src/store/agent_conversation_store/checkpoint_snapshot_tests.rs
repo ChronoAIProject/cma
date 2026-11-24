@@ -71,7 +71,7 @@ fn metadata_only_command_counts_match_real_quiet_and_text_transactions() {
                     && line.contains(&format!("category=\"{category}\""))
             })
             .unwrap();
-        assert!(sum.ends_with(" 4"), "{sum}");
+        assert!(sum.ends_with(" 5"), "{sum}");
     }
     assert!(!text.contains("private"));
     assert!(!text.contains("sbx_metadata_counter"));
