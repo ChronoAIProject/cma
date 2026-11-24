@@ -3,6 +3,7 @@ use layer2_core::{
     sandbox::{Sandbox, SandboxCredentialAuthority},
     SandboxId, ServiceId, SubjectId,
 };
+use layer3_adapter::{CredentialFrame, RuntimeCredential};
 use std::time::SystemTime;
 
 #[derive(Debug, Clone)]
@@ -16,6 +17,15 @@ pub(crate) struct CredentialMaterial {
 }
 
 impl CredentialMaterial {
+    pub(crate) fn into_runtime_frame(self, operation_id: String) -> CredentialFrame {
+        CredentialFrame {
+            operation_id,
+            value: RuntimeCredential::new(self.value.expose()),
+            custody_generation: Some(self.authority.generation),
+            github_route: self.github_route,
+        }
+    }
+
     pub(crate) fn matches_connection(&self, sandbox: &Sandbox) -> bool {
         let expected = sandbox
             .credential

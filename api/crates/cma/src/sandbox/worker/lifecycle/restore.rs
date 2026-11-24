@@ -6,9 +6,7 @@ use layer2_core::sandbox::{
     Agent, AgentStatus, RuntimeBinding, Sandbox, SandboxEventKind, SandboxLifecycleOperation,
     SandboxStatus,
 };
-use layer3_adapter::{
-    CredentialFrame, RestoreBootstrapRequest, RuntimeCredential, RuntimeProvisionRequest,
-};
+use layer3_adapter::{RestoreBootstrapRequest, RuntimeProvisionRequest};
 
 use super::super::support::{
     adapter_failure, credential_failure, credential_rotation_at, material_matches, runtime,
@@ -312,12 +310,7 @@ impl SandboxWorker {
                     .await
             }
         };
-        let frame = CredentialFrame {
-            operation_id: operation_id(&sandbox, "deliver_credential")?,
-            value: RuntimeCredential::new(material.value.expose()),
-            custody_generation: Some(authority.generation),
-            github_route: material.github_route.clone(),
-        };
+        let frame = material.into_runtime_frame(operation_id(&sandbox, "deliver_credential")?);
         if let Err(error) = self
             .dependencies
             .adapter
