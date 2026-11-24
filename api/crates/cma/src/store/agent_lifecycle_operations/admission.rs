@@ -2,6 +2,7 @@
 //! single-document insert. Recovery never repeats this admission check.
 
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::SandboxStoreError;
 
 #[derive(Debug, thiserror::Error)]
@@ -77,7 +78,7 @@ impl MongoAgentLifecycleStore {
             .await
             .map_err(driver)?;
             if !linked {
-                session.abort_transaction().await.map_err(driver)?;
+                session.abort_guarded().await.map_err(driver)?;
                 return Err(StoreError::Unavailable(
                     "creation submission fence is no longer held".into(),
                 )

@@ -1,7 +1,119 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 
 use super::work_tests::{claim_request, live_request};
 use super::*;
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn sandbox_maintenance_refuses_command_claims_and_renewal() {
+    let (client, name) = database("held_command_claim").await;
+    let (store, agent, parent) = fixture(&name, &client).await;
+    let store = Arc::new(store);
+    let execution = Arc::new(LocalReadiness::default());
+    let worker = AgentCommandWorker::new(store.clone(), execution.clone(), "held".into()).unwrap();
+    let admitted = record(
+        store
+            .reserve_command(live_request(&agent, &parent, "held"))
+            .await
+            .unwrap(),
+    );
+    let replica = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let parents = replica
+        .database(&name)
+        .collection::<mongodb::bson::Document>("sandboxes");
+    let filter = doc! { "_id": parent.id.as_str() };
+    let now = layer2_core::now_rfc3339();
+    let before = snapshot(&store).await;
+    for hold in [
+        doc! { "phase": "requested" }.into(),
+        mongodb::bson::Bson::Null,
+    ] {
+        parents
+            .update_one(
+                filter.clone(),
+                doc! { "$set": { "ledger_maintenance": hold } },
+            )
+            .write_concern(mongodb::options::WriteConcern::majority())
+            .await
+            .unwrap();
+        let held_parent = parents.find_one(filter.clone()).await.unwrap().unwrap();
+        assert_eq!(
+            store
+                .claim_next_command(claim_request(&agent, "held", &now))
+                .await,
+            Err(CommandLedgerError::StaleClaim)
+        );
+        assert_eq!(
+            worker.run_one(&admitted.receipt.envelope.command_id).await,
+            Err(CommandLedgerError::StaleClaim)
+        );
+        assert_eq!(execution.preparations.load(Ordering::Relaxed), 0);
+        assert!(execution.attempts.lock().unwrap().is_empty());
+        assert_eq!(snapshot(&store).await, before);
+        assert_eq!(
+            parents.find_one(filter.clone()).await.unwrap(),
+            Some(held_parent)
+        );
+    }
+    parents
+        .update_one(
+            filter.clone(),
+            doc! { "$unset": { "ledger_maintenance": "" } },
+        )
+        .await
+        .unwrap();
+    let acquired = observe(&store, &agent, "unheld", &admitted).await.unwrap();
+    let lease = acquired.work.lease.unwrap();
+    let now = layer2_core::now_rfc3339();
+    let expiry =
+        layer2_core::rfc3339_at(std::time::SystemTime::now() + std::time::Duration::from_secs(45));
+    let before = snapshot(&store).await;
+    for hold in [
+        doc! { "phase": "requested" }.into(),
+        mongodb::bson::Bson::Null,
+    ] {
+        parents
+            .update_one(
+                filter.clone(),
+                doc! { "$set": { "ledger_maintenance": hold } },
+            )
+            .write_concern(mongodb::options::WriteConcern::majority())
+            .await
+            .unwrap();
+        let held_parent = parents.find_one(filter.clone()).await.unwrap().unwrap();
+        assert_eq!(
+            store
+                .renew_command_claim(&lease.claim, now.clone(), expiry.clone())
+                .await,
+            Err(CommandLedgerError::StaleClaim)
+        );
+        assert_eq!(snapshot(&store).await, before);
+        assert_eq!(
+            parents.find_one(filter.clone()).await.unwrap(),
+            Some(held_parent)
+        );
+    }
+    parents
+        .update_one(filter, doc! { "$unset": { "ledger_maintenance": "" } })
+        .await
+        .unwrap();
+    store
+        .renew_command_claim(&lease.claim, now, expiry.clone())
+        .await
+        .unwrap();
+    let renewed = store
+        .get_command(&lease.claim.command_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(renewed.work.lease.unwrap().expires_at, expiry);
+    client.database(&name).drop().await.unwrap();
+}
 
 async fn snapshot(store: &MongoSandboxStore) -> Vec<Vec<mongodb::bson::Document>> {
     let mut result = Vec::new();
@@ -38,8 +150,10 @@ async fn observe(
 
 // These adapters model different local readiness results only. Attempts are
 // counted without deduplication; no runtime or provider authority is simulated.
+#[derive(Default)]
 struct LocalReadiness {
     unavailable: Option<AgentCommandId>,
+    preparations: AtomicUsize,
     attempts: Mutex<Vec<AdmittedAgentCommand>>,
 }
 
@@ -56,6 +170,7 @@ impl AgentCommandExecution for LocalReadiness {
         &self,
         _: &AdmittedAgentCommand,
     ) -> Result<(), CommandPreparationError> {
+        self.preparations.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt {
@@ -82,7 +197,7 @@ async fn later_local_readiness_cannot_claim_or_mutate_an_unchecked_fifo_command(
     );
     let nonowner = Arc::new(LocalReadiness {
         unavailable: Some(first.receipt.envelope.command_id.clone()),
-        attempts: Mutex::new(Vec::new()),
+        ..LocalReadiness::default()
     });
     let before = snapshot(&one).await;
     let worker = AgentCommandWorker::new(two, nonowner.clone(), "nonowner".into()).unwrap();
@@ -95,10 +210,7 @@ async fn later_local_readiness_cannot_claim_or_mutate_an_unchecked_fifo_command(
     assert!(nonowner.attempts.lock().unwrap().is_empty());
     assert_eq!(snapshot(&one).await, before);
 
-    let owner = Arc::new(LocalReadiness {
-        unavailable: None,
-        attempts: Mutex::new(Vec::new()),
-    });
+    let owner = Arc::new(LocalReadiness::default());
     let one = Arc::new(one);
     AgentCommandWorker::new(one.clone(), owner.clone(), "owner".into())
         .unwrap()
