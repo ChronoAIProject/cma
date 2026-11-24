@@ -129,6 +129,8 @@ async fn measured_preview_keeps_one_snapshot_across_concurrent_dispute_and_get_m
         .capture(&observation_at("owner-b", 1, 30_000, 20.0))
         .await;
     let added = writer.capture(&unread).await;
+    // MongoDB waits for the blocked getMore when disabling the failpoint.
+    let snapshot_pending = !in_progress.is_finished();
     admin_db
         .run_command(doc! {"configureFailPoint": "failCommand", "mode": "off"})
         .await
@@ -136,7 +138,7 @@ async fn measured_preview_keeps_one_snapshot_across_concurrent_dispute_and_get_m
     barrier.unwrap();
     assert_eq!(disputed.unwrap(), Capture::Disputed);
     assert_eq!(added.unwrap(), Capture::Inserted);
-    assert!(!in_progress.is_finished());
+    assert!(snapshot_pending);
     let before = in_progress.await.unwrap().unwrap();
     let intervals = before["intervals"].as_array().unwrap();
     assert_eq!(intervals.len(), 2);
