@@ -157,6 +157,10 @@ pub enum Source {
         /// Optional exact NyxID connection for embedded Lark/Feishu resources.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_resources: Option<LarkResourceBinding>,
+        /// Exact Telegram relay groups opted into one event per human membership update.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schema(max_items = 16)]
+        member_join_chat_ids: Vec<String>,
         /// Explicit write authority; independent of resource reads.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_message_effects: Option<Box<LarkMessageEffectsBinding>>,
