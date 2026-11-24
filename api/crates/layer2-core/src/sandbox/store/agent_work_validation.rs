@@ -1,4 +1,4 @@
-use super::agent_work_identity::immutable_agent_fields_changed;
+use super::agent_work_identity::{immutable_agent_fields_changed, validate_agent_delta};
 use crate::sandbox::{
     Agent, AgentStatus, AgentStopReason, AgentWorkStep, Sandbox, SandboxStatus, SandboxWorkStep,
     Worktree,
@@ -410,83 +410,6 @@ fn advance_ready_at(
         }
         (_, _, Some(_)) => Err(SandboxStoreError::Conflict),
         _ => Ok(mutation.appended_at.clone()),
-    }
-}
-
-fn validate_agent_delta(
-    current: &Agent,
-    next: &Agent,
-    mutation: &AgentWorkMutation,
-    kind: PublicationKind,
-) -> Result<(), SandboxStoreError> {
-    let identity_changed = current.conversation.conversation_id
-        != next.conversation.conversation_id
-        || current.conversation.runtime_generation != next.conversation.runtime_generation;
-    let opened = kind == PublicationKind::Advance
-        && current.work.step == AgentWorkStep::OpenConversation
-        && current.conversation.conversation_id.is_none()
-        && current.conversation.runtime_generation.is_none()
-        && next.conversation.conversation_id.is_some()
-        && next.conversation.runtime_generation == Some(1);
-    let conversation_unchanged =
-        super::agent_work_identity::first_message_matches(current, next, mutation, kind)?
-            && current.conversation.active_turn == next.conversation.active_turn
-            && current.conversation.operation == next.conversation.operation
-            && current.conversation.queued_messages == next.conversation.queued_messages
-            && (!identity_changed || opened);
-    if !conversation_unchanged {
-        return Err(SandboxStoreError::Conflict);
-    }
-    let unchanged = current.status == next.status
-        && current.failure == next.failure
-        && current.ready_at == next.ready_at
-        && current.stopped_at == next.stopped_at
-        && current.requested_stop_reason == next.requested_stop_reason
-        && current.stop_reason == next.stop_reason
-        && current.deleted_at == next.deleted_at;
-    let exact = match kind {
-        PublicationKind::Intent
-        | PublicationKind::StartupNotice
-        | PublicationKind::Retry
-        | PublicationKind::Advance => unchanged,
-        PublicationKind::Ready => {
-            current.failure == next.failure
-                && next.ready_at.as_deref() == Some(&mutation.appended_at)
-                && current.stopped_at == next.stopped_at
-                && current.requested_stop_reason == next.requested_stop_reason
-                && current.stop_reason == next.stop_reason
-                && current.deleted_at == next.deleted_at
-        }
-        PublicationKind::StartupFailure => {
-            current.failure.is_none()
-                && next.failure.is_some()
-                && current.ready_at == next.ready_at
-                && current.stopped_at == next.stopped_at
-                && current.requested_stop_reason == next.requested_stop_reason
-                && current.stop_reason == next.stop_reason
-                && current.deleted_at == next.deleted_at
-        }
-        PublicationKind::Stop => {
-            current.failure == next.failure
-                && current.ready_at == next.ready_at
-                && next.stopped_at.as_deref() == Some(&mutation.appended_at)
-                && next.requested_stop_reason.is_none()
-                && next.stop_reason.as_ref() == current.requested_stop_reason.as_ref()
-                && current.deleted_at == next.deleted_at
-        }
-        PublicationKind::Delete => {
-            current.failure == next.failure
-                && current.ready_at == next.ready_at
-                && current.stopped_at == next.stopped_at
-                && current.requested_stop_reason == next.requested_stop_reason
-                && current.stop_reason == next.stop_reason
-                && next.deleted_at.as_deref() == Some(&mutation.appended_at)
-        }
-    };
-    if exact {
-        Ok(())
-    } else {
-        Err(SandboxStoreError::Conflict)
     }
 }
 

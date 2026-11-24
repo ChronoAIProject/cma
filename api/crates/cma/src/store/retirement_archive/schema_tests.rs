@@ -102,7 +102,7 @@ async fn frozen_pre_capture_census_requires_new_evidence_namespaces_to_be_empty(
         old.database
             .retain(|row| collections.contains(&row.collection.as_str()));
         assert!(matches_current(&old, current.clone()).unwrap());
-        for name in manifest_collections()
+        for &name in manifest_collections()
             .iter()
             .filter(|name| !collections.contains(name))
         {
@@ -110,7 +110,7 @@ async fn frozen_pre_capture_census_requires_new_evidence_namespaces_to_be_empty(
             pending
                 .database
                 .iter_mut()
-                .find(|row| row.collection == *name)
+                .find(|row| row.collection == name)
                 .unwrap()
                 .documents = 1;
             assert!(!matches_current(&old, pending).unwrap());
@@ -147,7 +147,7 @@ async fn exact_current_and_legacy_censuses_refuse_unknown_duplicate_and_missing_
     mismatched.schema_sha256 = schema_sha256();
     assert!(validate_manifest_census(&mismatched).is_err());
     assert!(matches_current(&old, current.clone()).unwrap());
-    for name in crate::store::retirement_archive::manifest_collections()
+    for &name in crate::store::retirement_archive::manifest_collections()
         .iter()
         .filter(|name| !legacy::COLLECTIONS.contains(name))
     {
@@ -156,7 +156,7 @@ async fn exact_current_and_legacy_censuses_refuse_unknown_duplicate_and_missing_
             let extra = changed
                 .database
                 .iter_mut()
-                .find(|r| r.collection == *name)
+                .find(|r| r.collection == name)
                 .unwrap();
             match mode {
                 0 => extra.documents = 1,

@@ -50,6 +50,7 @@ mod rate_limit;
 mod read_telemetry;
 mod readiness_diagnostics;
 mod retirement_archive;
+mod runtime_pointer;
 mod sandbox;
 mod sandbox_metrics;
 mod sandbox_usage_export;
@@ -224,6 +225,16 @@ async fn run() {
                 eprintln!("{message}");
                 std::process::exit(2);
             }
+        }
+        return;
+    }
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--runtime-pointer")
+    {
+        if let Err(error) = runtime_pointer::operator::command(&arguments).await {
+            eprintln!("{error}");
+            std::process::exit(2);
         }
         return;
     }

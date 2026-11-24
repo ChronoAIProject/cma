@@ -72,9 +72,11 @@ impl SandboxWorker {
         if sandbox.runtime.is_some() && sandbox.lifecycle.home.is_none() {
             return Ok(None);
         }
+        let mut release_retries = 0;
         loop {
             let mut timing = super::provision_timing::ProvisionTiming::new();
             let phase = home_phase(sandbox.lifecycle.home.as_deref());
+            let mut release_fence = None;
             let next = match crate::sandbox::home::next_home(
                 self.dependencies.adapter.as_ref(),
                 &sandbox.id,
@@ -84,12 +86,22 @@ impl SandboxWorker {
             .await
             {
                 Ok(Some(home)) if sandbox.lifecycle.home.is_none() => {
-                    // Ordinary reservations fence the captured release. A
-                    // canary's verified image already comes from its receipt.
-                    let released = if canary_image.is_none() {
-                        self.config.release()
+                    // A canary's pin comes from its verified receipt. An
+                    // ordinary lifecycle may already own a released image.
+                    let (admitted, released) = if canary_image.is_some() {
+                        (None, None)
                     } else {
-                        None
+                        let admitted = self
+                            .dependencies
+                            .store
+                            .admitted_runtime_release(sandbox)
+                            .await?;
+                        let released = if admitted.is_none() {
+                            self.config.release()
+                        } else {
+                            None
+                        };
+                        (admitted, released)
                     };
                     let mut request = RuntimeProvisionRequest::new(
                         sandbox.lifecycle.runtime_generation_high_water.max(1),
@@ -100,7 +112,7 @@ impl SandboxWorker {
                         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?,
                     );
                     request.native_canary_image = canary_image.clone();
-                    request.released = released.clone();
+                    request.released = admitted.or_else(|| released.clone());
                     let reserved = crate::sandbox::home_native::reserve(
                         self.dependencies.adapter.as_ref(),
                         &request,
@@ -113,13 +125,23 @@ impl SandboxWorker {
                                 .require_current(released)
                                 .map(|()| home)
                                 .map_err(|stale| {
+                                    tracing::info!(
+                                        sandbox_id = %sandbox.id,
+                                        revision = released.revision,
+                                        "home reservation retried after the released runtime changed"
+                                    );
                                     layer3_adapter::AdapterError::Unavailable(stale.to_string())
                                 }),
                             _ => Ok(home),
                         }
                     });
                     match reserved {
-                        Ok(home) => home,
+                        Ok(home) => {
+                            if request.spec.runtime_image.is_none() {
+                                release_fence = released;
+                            }
+                            home
+                        }
                         Err(error) => return Ok(Some(adapter_failure(error))),
                     }
                 }
@@ -131,7 +153,20 @@ impl SandboxWorker {
                 Err(error) => return Ok(Some(adapter_failure(error))),
             };
             timing.completed(phase);
-            self.save_home(sandbox, next, now).await?;
+            if !self
+                .save_home(sandbox, next, now, release_fence.as_ref())
+                .await?
+            {
+                release_retries += 1;
+                if release_retries == 4 {
+                    return Ok(Some(adapter_failure(
+                        layer3_adapter::AdapterError::Unavailable(
+                            layer3_adapter::StaleReleasedRuntime.to_string(),
+                        ),
+                    )));
+                }
+                continue;
+            }
             timing.completed("home_persist");
         }
     }
@@ -158,7 +193,7 @@ impl SandboxWorker {
                 Ok(None) => return Ok(None),
                 Err(error) => return Ok(Some(adapter_failure(error))),
             };
-            self.save_home(sandbox, next, now).await?;
+            self.save_home(sandbox, next, now, None).await?;
         }
     }
 
@@ -167,22 +202,37 @@ impl SandboxWorker {
         sandbox: &mut Sandbox,
         home: layer2_core::sandbox::SandboxHome,
         now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
+        release: Option<&layer3_adapter::ReleasedRuntime>,
+    ) -> Result<bool, SandboxStoreError> {
         for _ in 0..4 {
             let expected = sandbox.revision;
             let mut updated = sandbox.clone();
             updated.lifecycle.home = Some(Box::new(home.clone()));
             updated.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
             updated.updated_at = updated.updated_at.max(rfc3339_at(now));
-            match self
-                .dependencies
-                .store
-                .save_sandbox(expected, updated.clone())
-                .await
-            {
+            let saved = match release {
+                Some(release) => {
+                    self.dependencies
+                        .store
+                        .save_sandbox_against_release(
+                            expected,
+                            updated.clone(),
+                            release,
+                            layer2_core::released_runtime::ReleasedLane::Agent,
+                        )
+                        .await
+                }
+                None => {
+                    self.dependencies
+                        .store
+                        .save_sandbox(expected, updated.clone())
+                        .await
+                }
+            };
+            match saved {
                 Ok(()) => {
                     *sandbox = updated;
-                    return Ok(());
+                    return Ok(true);
                 }
                 Err(SandboxStoreError::Conflict) => {
                     let current = self
@@ -206,6 +256,24 @@ impl SandboxWorker {
                         return Err(SandboxStoreError::Conflict);
                     }
                     *sandbox = current;
+                    if let (Some(source), Some(release)) = (&self.config.released, release) {
+                        // The transaction can see a promotion before this replica's
+                        // cache. Replan the uncommitted home before creating a Claim.
+                        source.refresh_after_stale().await;
+                        let refreshed = source.snapshot();
+                        if refreshed.agent != release.agent
+                            || refreshed.lane_revisions.map(|value| value.agent)
+                                != release.lane_revisions.map(|value| value.agent)
+                        {
+                            tracing::info!(
+                                sandbox_id = %sandbox.id,
+                                captured_revision = release.revision,
+                                current_revision = refreshed.revision,
+                                "retrying home reservation after durable release changed"
+                            );
+                            return Ok(false);
+                        }
+                    }
                 }
                 Err(error) => return Err(error),
             }

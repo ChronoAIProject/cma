@@ -1,4 +1,6 @@
-use super::super::schema::{LEGACY_COLLECTIONS, LEGACY_SHA256};
+use super::super::schema::{
+    LEGACY_COLLECTIONS, LEGACY_SHA256, PRE_LEGAL_CONSENT_COLLECTIONS, PRE_LEGAL_CONSENT_SHA256,
+};
 use super::*;
 
 #[tokio::test]
@@ -94,6 +96,58 @@ async fn legacy_archive_readback_survives_upgrade_without_omitting_new_owned_dat
     verify::load(&custody, &receipt, &request, &bytes)
         .await
         .unwrap();
+    store.database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn populated_release_lanes_preserve_pre_pointer_archive_readback() {
+    let (_temp, store, request, bytes) = fixture().await;
+    store.admit(&request, &bytes).await.unwrap();
+    let custody = Custody::default();
+    let predecessor = export::build(&store, &request, &bytes, &custody, None)
+        .await
+        .unwrap();
+    let release_collections = [
+        crate::store::released_runtimes::COLLECTION,
+        crate::store::released_runtimes::TRANSITIONS_COLLECTION,
+    ];
+    for name in release_collections {
+        store
+            .database
+            .collection::<Document>(name)
+            .insert_one(doc! {"_id":"deployment-release"})
+            .await
+            .unwrap();
+    }
+    let written = export::publish(&store, &request, &bytes, &custody, None)
+        .await
+        .unwrap();
+    let current = verify::load(&custody, &written, &request, &bytes)
+        .await
+        .unwrap();
+    // These are the preceding reader's exact schema and namespace checks.
+    assert_eq!(current.schema_sha256, PRE_LEGAL_CONSENT_SHA256);
+    assert_eq!(
+        current
+            .database
+            .iter()
+            .map(|row| row.collection.as_str())
+            .collect::<Vec<_>>(),
+        PRE_LEGAL_CONSENT_COLLECTIONS,
+    );
+    assert!(super::super::matches_current(&predecessor, current).unwrap());
+    for name in release_collections {
+        assert_eq!(
+            store
+                .database
+                .collection::<Document>(name)
+                .count_documents(doc! {})
+                .await
+                .unwrap(),
+            1,
+        );
+    }
     store.database.drop().await.unwrap();
 }
 

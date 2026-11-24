@@ -29,6 +29,7 @@ pub(crate) mod canary_key;
 pub(crate) use canary_admission::CanaryProfiles;
 #[cfg(test)]
 mod operator_stop_tests;
+pub(super) mod released;
 pub(crate) use admission::LifecycleCreateError;
 
 pub(crate) const COLLECTION: &str = "agent_lifecycle_operations";
@@ -118,6 +119,9 @@ pub(crate) struct LifecycleRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creation_fence: Option<layer2_core::sandbox::store::CreationFence>,
     pub input: LifecycleInput,
+    /// Present when the operation's resolved image passed the durable lane fence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub released_lane: Option<layer2_core::released_runtime::ReleasedLane>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     canary_admission: Option<canary_admission::CanaryAdmission>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -173,6 +177,7 @@ pub(crate) struct MongoAgentLifecycleStore {
     pub(super) creation_writer_epoch: Option<String>,
     operations: Collection<LifecycleRecord>,
     admission_settings: Collection<mongodb::bson::Document>,
+    pub(super) released_lanes: Option<super::released_runtimes::MongoReleasedRuntimes>,
 }
 
 impl MongoAgentLifecycleStore {
@@ -216,6 +221,7 @@ impl MongoAgentLifecycleStore {
             creation_writer_epoch: None,
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
+            released_lanes: None,
         })
     }
 
@@ -223,57 +229,6 @@ impl MongoAgentLifecycleStore {
         self.operations
             .client()
             .database(&self.operations.namespace().db)
-    }
-
-    pub(crate) async fn create_with_submission(
-        &self,
-        owner: &SubjectId,
-        key: &str,
-        input: LifecycleInput,
-        submission: Option<layer1_public::rest::creation_outcomes::Submission>,
-    ) -> Result<CreateResult, LifecycleCreateError> {
-        use layer1_public::rest::creation_outcomes::is_covered_key;
-
-        if canary_key::is_reserved(key) {
-            return Err(StoreError::Malformed("reserved lifecycle key".into()).into());
-        }
-        let (creation_wire, creation_fence) = match submission {
-            Some(submission) => (
-                Some(CreationWire {
-                    deployment: submission.deployment,
-                    digest: submission.wire_digest,
-                }),
-                submission.fence,
-            ),
-            None => (None, None),
-        };
-        if is_covered_key(key) != creation_fence.is_some() {
-            return Err(StoreError::Malformed(
-                "creation submission fence missing or unsupported".into(),
-            )
-            .into());
-        }
-        if let Some(existing) = self
-            .operations
-            .find_one(doc! { "owner": owner.as_str(), "key": key })
-            .await
-            .map_err(driver)?
-        {
-            schema::require_current(existing.document_schema_version)?;
-            if !same_request(&existing.input.request, &input.request)? {
-                return Err(StoreError::RevisionConflict {
-                    expected: 0,
-                    actual: 1,
-                }
-                .into());
-            }
-            return Ok(CreateResult::Existing(Box::new(existing)));
-        }
-        let id = uuid::Uuid::new_v4().simple().to_string();
-        let mut record = LifecycleRecord::for_admission(id, owner, key, input)?;
-        record.creation_wire = creation_wire;
-        record.creation_fence = creation_fence;
-        self.finish_create(record).await
     }
 
     /// Claim queued work or an expired worker, including legacy records whose

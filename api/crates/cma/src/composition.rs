@@ -28,7 +28,7 @@ use crate::{
     profile_policy::profile_route_policy,
     projections::{AdapterAgentHistoryExporter, AdapterSandboxResources, AgentProjectionServices},
     sandbox::{
-        runtime_capabilities, LiveAgentRegistry, LiveSandboxPolicy, PlatformTitleEndpoint,
+        runtime_capabilities, LiveAgentRegistry, PlatformTitleEndpoint,
         SandboxLifecycleComposition, SandboxLifecycleDependencies,
     },
     store::{DefaultProfileSpec, MongoStores},
@@ -57,10 +57,7 @@ impl ControlPlaneComposition {
         let profile_scanner = Arc::clone(&profile_policy.public_value_scanner);
         profiles::seed_profiles(&stores, config, &profile_policy).await?;
         let settings = profiles::platform_settings(config, &stores, &activity);
-        let sandbox_policy = Arc::new(LiveSandboxPolicy::new(
-            Arc::clone(&settings),
-            config.baseline_services.clone(),
-        ));
+        let sandbox_policy = profiles::live_policy(config, &settings);
         let subscriptions =
             crate::connections::CodexSubscriptions::new(stores.codex_subscriptions.clone());
         let access_tools = credentials::agent_access_tools(config, &stores, standing.clone())?;
@@ -193,7 +190,7 @@ impl ControlPlaneComposition {
         let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone())
             .with_detail_timings(config.features.sandbox_detail_timings)
             .with_resource_access(resource_access.clone());
-        let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
+        let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone())?;
         let native_warm_pools = runtime.warm_pools;
         let admin = runtime_inventory::admin_state(
             config.features,
@@ -502,6 +499,7 @@ impl ControlPlaneComposition {
             sandbox_control_scheduler,
             sandbox_lifecycle,
             native_warm_pools,
+            runtime_pointer: runtime.pointer,
             native_prepared: adapters.preparation,
             agent_access_worker: agent_access.worker,
         })

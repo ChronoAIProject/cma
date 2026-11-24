@@ -4,8 +4,8 @@ use super::{
     NativePoolHomeOrigin, Result,
 };
 use crate::{
-    provider::PersistentHomeVolumes, HomeVolumeAttachment, HomeVolumePolicy, HomeVolumeReceipt,
-    HomeVolumeRequest, HomeVolumeScope, HomeVolumeStore,
+    provider::PersistentHomeVolumes, AdapterError, HomeVolumeAttachment, HomeVolumePolicy,
+    HomeVolumeReceipt, HomeVolumeRequest, HomeVolumeScope, HomeVolumeStore,
 };
 use kube::Client;
 
@@ -152,7 +152,7 @@ impl HomeVolumeStore for NativeHomeVolumes {
             .as_deref()
             .ok_or_else(|| rejected("native home authority missing"))?;
         if self.pools.recover_known_native_vct(origin).await?.as_ref() != Some(home) {
-            return Err(rejected("native home identity changed or disappeared"));
+            return Err(rejected(AdapterError::NATIVE_HOME_IDENTITY_REFUSAL));
         }
         Ok(())
     }

@@ -22,20 +22,7 @@ impl NativeWarmPools {
         replicas: u32,
         machine: bool,
     ) -> Result<(), WarmPoolError> {
-        let provider = self
-            .adapter
-            .native_pools()
-            .ok_or(WarmPoolError::Unavailable)?;
-        let home = self.home.clone().ok_or(WarmPoolError::Unavailable)?;
-        let plan = provider
-            .plan(&NativePoolSpec {
-                cold_canary: false,
-                image: image.clone(),
-                cpu_millis: self.default_capacity.cpu_millis,
-                memory_mib: self.default_capacity.memory_mib,
-                home,
-            })
-            .map_err(|_| WarmPoolError::Invalid)?;
+        let plan = self.default_plan(image)?;
         let targets = self.store.list().await?;
         // An operator may already have configured this exact immutable plan
         // under another idempotency key. Reuse that durable target instead of
@@ -71,6 +58,89 @@ impl NativeWarmPools {
         // Concurrent starters derive the same id; the store keeps one insert.
         let target = self.store.insert(target).await?;
         self.store.activate(&target.id).await
+    }
+
+    fn default_plan(&self, image: &RuntimeImage) -> Result<NativePoolConfiguration, WarmPoolError> {
+        let provider = self
+            .adapter
+            .native_pools()
+            .ok_or(WarmPoolError::Unavailable)?;
+        let home = self.home.clone().ok_or(WarmPoolError::Unavailable)?;
+        provider
+            .plan(&NativePoolSpec {
+                cold_canary: false,
+                image: image.clone(),
+                cpu_millis: self.default_capacity.cpu_millis,
+                memory_mib: self.default_capacity.memory_mib,
+                home,
+            })
+            .map_err(|_| WarmPoolError::Invalid)
+    }
+
+    pub(crate) async fn active_default_target(
+        &self,
+        image: &str,
+        machine: bool,
+    ) -> Result<PoolTarget, WarmPoolError> {
+        let plan = self.default_plan(&deployment_image(image.into()))?;
+        self.store
+            .list()
+            .await?
+            .into_iter()
+            .find(|target| {
+                target.machine == machine
+                    && target.plan == plan
+                    && !target.retiring
+                    && !target.retired
+            })
+            .ok_or(WarmPoolError::Conflict)
+    }
+
+    pub(crate) fn candidate_target(
+        &self,
+        image: &str,
+        active: &PoolTarget,
+    ) -> Result<PoolTarget, WarmPoolError> {
+        let plan = self.default_plan(&deployment_image(image.into()))?;
+        let mut target = default_target(
+            plan,
+            ConfigureWarmPoolBody {
+                cpu_millis: self.default_capacity.cpu_millis,
+                memory_mib: self.default_capacity.memory_mib,
+                target_replicas: active.target_replicas,
+            },
+        );
+        target.machine = active.machine;
+        if target.machine {
+            target.document_schema_version = 2;
+        }
+        Ok(target)
+    }
+
+    pub(crate) async fn candidate_inventory(
+        &self,
+        candidate: &PoolTarget,
+    ) -> Result<Option<NativePoolStatus>, WarmPoolError> {
+        let provider = self
+            .adapter
+            .native_pools()
+            .ok_or(WarmPoolError::Unavailable)?;
+        let inventory = tokio::time::timeout(Duration::from_secs(8), provider.inventory())
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?
+            .map_err(|_| WarmPoolError::Unavailable)?;
+        let mut exact = inventory
+            .into_iter()
+            .filter(|status| candidate.binding.as_ref() == Some(&status.binding));
+        let status = exact.next().filter(|status| {
+            status.observed
+                && status.desired_replicas == candidate.target_replicas
+                && status.ready_replicas >= candidate.target_replicas
+        });
+        if exact.next().is_some() {
+            return Err(WarmPoolError::Conflict);
+        }
+        Ok(status)
     }
 
     /// The new target copies the decision, so it outlives its source's
