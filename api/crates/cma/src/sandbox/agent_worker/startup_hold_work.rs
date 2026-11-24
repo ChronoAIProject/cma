@@ -1,7 +1,7 @@
 //! Start-up hold integration at the discovery and claim boundaries.
 use super::startup_holds::{Admission, Binding, ProbePermit};
 use super::*;
-use layer2_core::sandbox::store::{StartupWorkFilter, MAX_PAGE_SIZE};
+use layer2_core::sandbox::store::{AgentWorkDiscovery, StartupWorkFilter, MAX_PAGE_SIZE};
 use std::collections::BTreeSet;
 use tokio::time::Instant;
 
@@ -33,10 +33,14 @@ impl AgentWorker {
             return Err(SandboxStoreError::InvalidPage);
         }
         let store = &self.dependencies.store;
+        let cooldowns = self.acquisition_backoff.cooling(Instant::now());
+        let mut filter = AgentWorkDiscovery {
+            receiver_holds: cleanup,
+            startup: StartupWorkFilter::All,
+            acquisition_cooldowns: (!cooldowns.is_empty()).then_some(&cooldowns),
+        };
         let Some(holds) = self.startup_holds.as_ref().filter(|holds| holds.pending()) else {
-            return store
-                .due_agent_work_with_cleanup_holds(now, limit, cleanup)
-                .await;
+            return store.due_agent_work_filtered(now, limit, filter).await;
         };
         // These bounded, read-only checks also reopen discovery on a changed
         // binding when every sibling is currently excluded from the normal page.
@@ -60,10 +64,8 @@ impl AgentWorker {
         let discovery = holds.discovery(Instant::now(), limit);
         let mut ids = Vec::new();
         if let Some(sandbox) = &discovery.probe {
-            match store
-                .due_agent_work_filtered(now, 1, cleanup, StartupWorkFilter::Probe(sandbox))
-                .await
-            {
+            filter.startup = StartupWorkFilter::Probe(sandbox);
+            match store.due_agent_work_filtered(now, 1, filter).await {
                 Ok(probe_ids) => ids = probe_ids,
                 Err(_) => {
                     tracing::warn!(sandbox_id = %sandbox, "Agent startup probe discovery unavailable")
@@ -72,14 +74,14 @@ impl AgentWorker {
         }
         if ids.len() < usize::from(limit) {
             let remaining = limit - ids.len() as u16;
-            let filter = if discovery.excluded.is_empty() {
+            filter.startup = if discovery.excluded.is_empty() {
                 StartupWorkFilter::All
             } else {
                 StartupWorkFilter::Exclude(&discovery.excluded)
             };
             let probe = ids.first().cloned();
             let ordinary = store
-                .due_agent_work_filtered(now, remaining, cleanup, filter)
+                .due_agent_work_filtered(now, remaining, filter)
                 .await?;
             ids.extend(ordinary.into_iter().filter(|id| Some(id) != probe.as_ref()));
         }
