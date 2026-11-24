@@ -2,6 +2,87 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn held_queued_command_timeout_preserves_its_original_receipt() {
+    let (client, name) = database("hold_queued_timeout").await;
+    let (store, agent, parent) = fixture(&name, &client).await;
+    let admitted = record(
+        store
+            .reserve_command(live_request(&agent, &parent, "timeout"))
+            .await
+            .unwrap(),
+    );
+    let id = &admitted.receipt.envelope.command_id;
+    let filter = doc! { "_id": id.as_str() };
+    let command = store
+        .agent_commands
+        .find_one(filter.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let parent_filter = doc! { "_id": parent.id.as_str() };
+    store
+        .sandboxes
+        .update_one(
+            parent_filter.clone(),
+            doc! { "$set": { "ledger_maintenance": null } },
+        )
+        .await
+        .unwrap();
+    let held_parent = store
+        .sandboxes
+        .find_one(parent_filter.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        store
+            .reject_unclaimed_command(
+                id,
+                admitted.revision,
+                CommandFailureCode::QueueTimeout,
+                admitted.queue_deadline.clone()
+            )
+            .await,
+        Err(CommandLedgerError::StaleClaim)
+    );
+    assert_eq!(
+        store.agent_commands.find_one(filter).await.unwrap(),
+        Some(command)
+    );
+    assert_eq!(
+        store
+            .sandboxes
+            .find_one(parent_filter.clone())
+            .await
+            .unwrap(),
+        Some(held_parent)
+    );
+    store
+        .sandboxes
+        .update_one(
+            parent_filter,
+            doc! { "$unset": { "ledger_maintenance": "" } },
+        )
+        .await
+        .unwrap();
+    store
+        .reject_unclaimed_command(
+            id,
+            admitted.revision,
+            CommandFailureCode::QueueTimeout,
+            admitted.queue_deadline.clone(),
+        )
+        .await
+        .unwrap();
+    let refused = store.get_command(id).await.unwrap().unwrap();
+    assert_eq!(refused.status, AgentResponseStatus::Failed);
+    assert_eq!(refused.receipt, admitted.receipt);
+    assert_eq!(refused.revision, admitted.revision + 1);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn sandbox_maintenance_preserves_claimed_command_settlement() {
     let (client, name) = database("hold_command_settlement").await;
     let (store, agent, parent) = fixture(&name, &client).await;

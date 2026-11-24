@@ -25,6 +25,7 @@ pub(in crate::store) mod records;
 pub(in crate::store) mod reserve;
 mod retry;
 mod targeted_control;
+pub(in crate::store) mod unclaimed;
 pub(in crate::store) mod worker;
 pub(in crate::store) mod worker_apply;
 
@@ -33,6 +34,7 @@ pub(super) use records::document as command_document;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read as read_command;
 
+#[derive(Debug)]
 pub(super) enum ApplyError {
     Domain(CommandLedgerError),
     Driver(mongodb::error::Error),
