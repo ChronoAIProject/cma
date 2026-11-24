@@ -214,6 +214,37 @@ async fn composed_with_input_history(
         (store, agent)
     };
     let store = Arc::new(store);
+    let (execution, authority, sends) =
+        command_execution(&store, &agent, credentials, input.map(|(sender, _)| sender));
+    (store, agent, parent, execution, authority, sends)
+}
+
+pub(in crate::store) fn fixture_command_execution(
+    store: &Arc<MongoSandboxStore>,
+    agent: &Agent,
+) -> (
+    Arc<crate::commands::ResourceCommandExecution>,
+    Arc<AtomicUsize>,
+) {
+    let (execution, _, sends) = command_execution(
+        store,
+        agent,
+        Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+        None,
+    );
+    (execution, sends)
+}
+
+fn command_execution(
+    store: &Arc<MongoSandboxStore>,
+    agent: &Agent,
+    credentials: Arc<dyn SandboxCredentialPrerequisite>,
+    input: Option<ConversationInputSender>,
+) -> (
+    Arc<crate::commands::ResourceCommandExecution>,
+    Arc<Authority>,
+    Arc<AtomicUsize>,
+) {
     let caller = Caller::new(
         agent.owner.clone(),
         Authorization::new([Capability::UseOwnSandboxes]),
@@ -221,7 +252,6 @@ async fn composed_with_input_history(
     let authority = Arc::new(Authority(Mutex::new(Ok(caller))));
     let sends = Arc::new(AtomicUsize::new(0));
     let sent = sends.clone();
-    let input = input.map(|(sender, _)| sender);
     let runtime = Arc::new(Runtime(ConversationInputSender::spawn(4, move |message| {
         sent.fetch_add(1, Ordering::SeqCst);
         let input = input.clone();
@@ -259,7 +289,7 @@ async fn composed_with_input_history(
             .with_connections(credentials),
         context,
     });
-    (store, agent, parent, execution, authority, sends)
+    (execution, authority, sends)
 }
 
 #[tokio::test]

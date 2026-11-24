@@ -136,6 +136,12 @@ async fn claim_next(
     ordered.sort_by_key(AdmittedAgentCommand::queue_priority);
     let mut message_held = false;
     for mut command in ordered {
+        if agent
+            .as_ref()
+            .is_some_and(|agent| command.predates_owner_restart(agent))
+        {
+            continue;
+        }
         message_held |= command.holds_message_order(&request.now);
         if message_held
             && matches!(

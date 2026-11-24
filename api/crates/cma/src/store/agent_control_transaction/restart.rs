@@ -108,7 +108,27 @@ async fn apply(
             AgentControlStoreError::RestartEvidenceRequired,
         ));
     }
-    let (next, acceptance) = plan(&current, request).map_err(ApplyError::Domain)?;
+    let (mut next, acceptance) = plan(&current, request).map_err(ApplyError::Domain)?;
+    // New command reservations update the Agent in the same transaction as the
+    // lane order. The Agent CAS forces either admission to retry on overlap.
+    let command_order = scope
+        .find_one(
+            &store.agent_command_orders,
+            doc! {"_id": current.agent.id.as_str()},
+        )
+        .await
+        .map_err(ApplyError::Driver)?
+        .as_ref()
+        .map(|row| crate::store::agent_commands::lane_records::read(row, current.agent.id.as_str()))
+        .transpose()
+        .map_err(|error| ApplyError::Domain(AgentControlStoreError::Corrupt(error.to_string())))?
+        .map(|lane| lane.last_order);
+    if command_order < current.agent.work.pre_restart_command_order {
+        return Err(ApplyError::Domain(AgentControlStoreError::Corrupt(
+            "Agent command order regressed before restart".into(),
+        )));
+    }
+    next.work.pre_restart_command_order = command_order;
     scope
         .fence_ordinary_work(store)
         .await

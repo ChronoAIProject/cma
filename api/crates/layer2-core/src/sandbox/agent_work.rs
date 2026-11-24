@@ -87,6 +87,10 @@ impl AgentWorkStep {
         !matches!(self, Self::None)
     }
 
+    pub const fn fences_conversation_output(self) -> bool {
+        matches!(self, Self::RestartConversation | Self::RestartTeardown)
+    }
+
     pub const fn operation_name(self) -> &'static str {
         match self {
             Self::InstallSkill => "install_skill",
@@ -149,6 +153,9 @@ pub struct AgentWorkState {
     pub step: AgentWorkStep,
     pub ready_at: String,
     pub next_fence: u64,
+    /// Commands through this order were admitted before the latest owner restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_restart_command_order: Option<u64>,
     pub attempts: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease: Option<AgentWorkLease>,
@@ -171,6 +178,7 @@ impl AgentWorkState {
             step,
             ready_at,
             next_fence: 1,
+            pre_restart_command_order: None,
             attempts: 0,
             lease: None,
             receipts: Vec::new(),

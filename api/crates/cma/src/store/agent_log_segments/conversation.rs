@@ -52,12 +52,15 @@ pub(in crate::store) async fn apply(
         .await
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    let current = read_agent(&row).map_err(ApplyError::Domain)?;
+    if !matches!(source, PublicationSource::Checkpoint)
+        && current.work.step.fences_conversation_output()
+    {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
     if !matches!(source, PublicationSource::TurnPolicy) {
-        layer2_core::sandbox::turn_timeout::validate_ordinary_publication(
-            &read_agent(&row).map_err(ApplyError::Domain)?,
-            mutation,
-        )
-        .map_err(ApplyError::Domain)?;
+        layer2_core::sandbox::turn_timeout::validate_ordinary_publication(&current, mutation)
+            .map_err(ApplyError::Domain)?;
     }
     let exact_checkpoint = if matches!(
         source,

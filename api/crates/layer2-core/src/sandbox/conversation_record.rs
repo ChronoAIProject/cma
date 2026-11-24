@@ -65,6 +65,9 @@ impl DurableAgentUpdateRecorder {
                 Some(guard) => guard
                     .project(&persisted)
                     .map_err(|_| AgentConversationError::StaleGeneration)?,
+                None if persisted.work.step.fences_conversation_output() => {
+                    return Err(AgentConversationError::StaleGeneration);
+                }
                 None => persisted.clone(),
             };
             if current.conversation.runtime_generation != Some(runtime_generation) {
