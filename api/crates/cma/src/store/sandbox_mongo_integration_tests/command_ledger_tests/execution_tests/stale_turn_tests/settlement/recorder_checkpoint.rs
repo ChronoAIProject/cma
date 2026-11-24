@@ -159,6 +159,12 @@ async fn stale_turn_settlement_compares_the_acknowledged_acp_checkpoint() {
         .unwrap();
     assert_eq!(observed.output.as_ref(), Some(&source));
     assert!(observed.assembly.is_empty());
+    // Project the newly recorded Agent event before capturing the command
+    // revision. The mismatch assertions below only read that captured state.
+    assert_eq!(
+        reader.reconcile_command(id).await.unwrap().status,
+        AgentResponseStatus::InProgress
+    );
 
     let row = reader
         .agent_commands
@@ -230,9 +236,15 @@ async fn stale_turn_settlement_compares_the_acknowledged_acp_checkpoint() {
             matches!(prepare(seal), Err(SandboxStoreError::Conflict)),
             "{mismatch}"
         );
+        let command = reader
+            .agent_commands
+            .find_one(doc! {"_id": id.as_str()})
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            reader.reconcile_command(id).await.unwrap().status,
-            AgentResponseStatus::InProgress
+            crate::store::agent_commands::records::read(&command).unwrap(),
+            evidence.command
         );
         assert_eq!(
             reader.agent_log(&agent.id, 0, 100).await.unwrap(),
