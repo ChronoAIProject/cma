@@ -10,6 +10,71 @@ impl Supervisor {
         self.config.agent_process_restart_enabled
     }
 
+    pub(super) async fn prove_agent_process_closed(
+        &self,
+        proof: layer3_adapter::wire::AgentProcessCloseProof,
+    ) -> Result<layer3_adapter::wire::AgentProcessCloseProof> {
+        let incarnation = agent_validation::close(&proof.close)?;
+        let target = &proof.runtime;
+        if target.runtime.sandbox_id != self.config.sandbox_id
+            || target.runtime.generation != self.config.generation
+            || Some(&target.runtime.home_identity) != self.config.home_identity.as_ref()
+            || target.boot_id != self.boot_id
+        {
+            return Err(RuntimeError::rejected(
+                "agent_process_close_runtime_changed",
+                "the observed runtime changed before Agent Close verification",
+            ));
+        }
+        self.require_credentialed().await?;
+        let closed = Operation::close_agent(&proof.close);
+        let agent = proof.close.agent_id.as_str();
+        let open_id = AgentProcessAction::Open.operation_id(agent, incarnation);
+        let opened = self
+            .mutations
+            .find_process_proof_record(open_id, &closed)
+            .await?;
+        let exact_open = opened.is_some_and(|record| {
+            record.status() == Status::Completed
+                && record.operation().request_sha256 == proof.open_request_sha256
+                && matches!(record.operation().subject, Subject::OpenAgent { agent_id, cwd, home }
+                    if agent_id == agent && cwd == proof.worktree_path
+                        && std::path::Path::new(&home) == self.config.agent_home(agent))
+        });
+        let successor_open = match incarnation.checked_add(1) {
+            Some(next) => {
+                self.mutations.has_process_writer(agent, next).await?
+                    || self
+                        .mutations
+                        .find_process_proof_record(
+                            AgentProcessAction::Open.operation_id(agent, next),
+                            &closed,
+                        )
+                        .await?
+                        .is_some()
+            }
+            None => false,
+        };
+        let exact_close = self
+            .mutations
+            .find_process_proof_record(closed.operation_id.clone(), &closed)
+            .await?
+            .is_some_and(|record| {
+                record.status() == Status::Completed && record.operation() == closed
+            });
+        if !exact_open
+            || !exact_close
+            || successor_open
+            || self.agents.read().await.contains_key(&proof.close.agent_id)
+        {
+            return Err(RuntimeError::rejected(
+                "agent_process_close_unproved",
+                "the runtime could not prove this exact Agent process was closed",
+            ));
+        }
+        Ok(proof)
+    }
+
     pub(super) async fn authorize_process_open(
         &self,
         request: &FencedRequest<AgentLaunch>,

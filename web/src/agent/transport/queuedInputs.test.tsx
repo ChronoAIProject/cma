@@ -46,7 +46,7 @@ it('invalidates queued drafts on account change and refuses late receipt writes'
   expect(second.queuedInputs.read()).toEqual([]);
 });
 
-function queueHarness() {
+function queueHarness(sourceStatus: 'queued' | 'cancelled' = 'cancelled') {
   let rows = ['one', 'two', 'three'].map((id, index) => {
     const response = queuedObservation(`resp_${id}`).response;
     return {
@@ -75,7 +75,7 @@ function queueHarness() {
       return json({
         ...source,
         receipt: { ...source.receipt, command_id: commandId },
-        status: 'cancelled',
+        status: sourceStatus,
       });
     }
     const id = String(url).split('/').at(-2)!;
@@ -193,7 +193,7 @@ it('recovers a lost edit reply with the same key/body after reload while another
 });
 
 it('projects only matching saved edits and hides them while access is suspended', async () => {
-  const h = queueHarness();
+  const h = queueHarness('queued');
   h.session.journal.queuedInputs.retain({ ...intent('one'), commandId: 'foreign_command' });
   h.session.journal.queuedInputs.retain(intent('two'));
   h.session.journal.queuedInputs.retain({ ...intent('three'), action: 'remove', text: undefined });

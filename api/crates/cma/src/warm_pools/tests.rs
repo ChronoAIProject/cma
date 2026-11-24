@@ -493,3 +493,6 @@ mod retirement_tests;
 
 #[path = "startup_tests.rs"]
 mod startup_tests;
+
+#[path = "runtime_pointer_tests.rs"]
+pub(crate) mod runtime_pointer;

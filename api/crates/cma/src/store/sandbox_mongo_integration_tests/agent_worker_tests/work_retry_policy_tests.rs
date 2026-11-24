@@ -129,6 +129,7 @@ async fn retry_policy_mongo_sandbox_probe_is_pending_and_discovered_only_when_du
         store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision: current.revision,
                 sandbox: Box::new(next.clone()),
                 event_at: stamp(seconds),
