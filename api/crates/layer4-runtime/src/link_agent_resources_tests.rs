@@ -218,6 +218,7 @@ async fn selected_credential_can_only_be_installed_by_the_negotiated_receiver() 
             Some(&platform),
         )
         .unwrap();
+        std::fs::create_dir_all(&config.home).unwrap();
         cleanup.extend([
             config.home.clone(),
             config.state_root.clone(),
