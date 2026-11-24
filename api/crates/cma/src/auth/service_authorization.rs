@@ -13,7 +13,7 @@ use axum::{
     Json,
 };
 use layer2_core::{resource_access::CredentialSource, ServiceId, StoreError, SubjectId};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use super::{

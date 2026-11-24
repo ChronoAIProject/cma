@@ -296,6 +296,6 @@ pub fn digest(domain: &str, value: &str) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
-fn unavailable() -> StoreError {
+pub fn unavailable() -> StoreError {
     StoreError::Unavailable("actor link store is unavailable".into())
 }

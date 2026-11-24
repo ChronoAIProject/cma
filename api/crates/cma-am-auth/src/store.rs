@@ -158,8 +158,12 @@ pub trait AuthStore: Send + Sync {
             self.delete_browser_login(id).await
         }
     }
-    #[cfg(test)]
-    async fn put_browser_login(&self, login: BrowserLogin) -> Result<(), StoreError>;
+    #[cfg(feature = "test-support")]
+    async fn put_browser_login(&self, _login: BrowserLogin) -> Result<(), StoreError> {
+        Err(StoreError::Unavailable(
+            "browser login fixture is unavailable".into(),
+        ))
+    }
     async fn browser_login(&self, id: &SecretDigest) -> Result<Option<BrowserLogin>, StoreError>;
     /// Read browser custody and its subject in one store operation. Expired logins
     /// need no subject decoding: the caller must revoke them before authorizing.

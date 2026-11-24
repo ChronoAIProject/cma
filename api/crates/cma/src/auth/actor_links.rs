@@ -27,7 +27,6 @@ mod services;
 mod wakeups;
 pub(super) use browser::routes;
 pub use cma_am_auth::actor_links::*;
-use cma_am_auth::actor_links::{digest, opaque};
 
 impl AuthState {
     pub(crate) async fn owner_authority_for_grant(

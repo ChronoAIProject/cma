@@ -3,6 +3,7 @@ use super::super::persistence::SubjectAuthState;
 use super::*;
 use layer2_core::resource_access::{CallerContext, CredentialSource};
 use layer2_core::sandbox::agent_io::{AgentAuthorizationRevision, CommandAuthorizationError};
+use sha2::{Digest, Sha256};
 
 pub(crate) struct ProxyCustody {
     pub grant: ProxyGrant,
