@@ -536,9 +536,11 @@ class StagingWorkflowTest < Minitest::Test
     assert_includes signal['if'], "vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true'"
     assert_equal({ 'contents' => 'read', 'actions' => 'read' }, signal['permissions'])
     refute signal.key?('environment')
-    _, verify, retain, notify = signal['steps']
+    checkout, verify, retain, notify = signal['steps']
+    assert_equal 0, checkout['with']['fetch-depth']
     publishers.each do |name|
       assert_equal "$" + "{{ needs.release_#{name}.outputs.finalized }}", verify['env']["CD_FINALIZED_#{name.upcase}"]
+      assert_equal "$" + "{{ needs.release_#{name}.result }}", verify['env']["CD_PUBLISH_#{name.upcase}"]
     end
     assert_equal '${{ runner.temp }}/publication-signal.json', retain['with']['path']
     assert_equal 'error', retain['with']['if-no-files-found']

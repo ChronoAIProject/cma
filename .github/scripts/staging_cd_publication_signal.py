@@ -10,6 +10,7 @@ from staging_cd_component_admission import groups, transition_anchor
 from staging_cd_github import GitHub
 from staging_cd_receipts import canonical, sha256, validate_receipt
 from staging_cd_registry import Registry
+from staging_cd_release_tags import local_tag_reader
 from staging_cd_runtime import run_private
 from staging_cd_set import automatic_set, document
 from staging_cd_targets import TARGETS
@@ -38,8 +39,10 @@ def freeze(matrix, env, api, registry):
     tasks = groups(matrix)
     require(bool(tasks), "Publication signal is empty")
     for component in tasks:
-        key = "CD_FINALIZED_" + component.upper().replace("-", "_")
-        require(env.get(key) == "success", "A selected component did not finalize")
+        suffix = component.upper().replace("-", "_")
+        require(env.get("CD_PUBLISH_" + suffix) == "success"
+                and env.get("CD_FINALIZED_" + suffix) == "success",
+                "A selected component did not publish and finalize successfully")
     transition_anchor(matrix)
     normalized = {"include": [{"component": component, "tasks": canonical(entries)}
                               for component, entries in tasks.items()]}
@@ -78,8 +81,8 @@ def main():
         require(env["GITHUB_EVENT_NAME"] == "push", "Publication requires a develop push")
         path = Path(env["RUNNER_TEMP"]) / "publication-signal.json"
         if sys.argv[1:] == ["freeze"]:
-            value = freeze(document(env["CD_PUBLICATION_MATRIX"]), env,
-                           GitHub(env.get("GH_TOKEN")), Registry())
+            api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(Path.cwd()))
+            value = freeze(document(env["CD_PUBLICATION_MATRIX"]), env, api, Registry())
             with path.open("x") as output:
                 output.write(canonical(value) + "\n")
         elif sys.argv[1:] == ["send"]:

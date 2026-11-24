@@ -427,11 +427,17 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Verify complete finalized publication
         env:
           GH_TOKEN: ${{ github.token }}
           CD_PUBLICATION_MATRIX: ${{ needs.allocate.outputs.matrix }}
+          CD_PUBLISH_WEB: ${{ needs.release_web.result }}
+          CD_PUBLISH_AM: ${{ needs.release_am.result }}
+          CD_PUBLISH_EG: ${{ needs.release_eg.result }}
+          CD_PUBLISH_RUNTIME: ${{ needs.release_runtime.result }}
+          CD_PUBLISH_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.result }}
           CD_FINALIZED_WEB: ${{ needs.release_web.outputs.finalized }}
           CD_FINALIZED_AM: ${{ needs.release_am.outputs.finalized }}
           CD_FINALIZED_EG: ${{ needs.release_eg.outputs.finalized }}

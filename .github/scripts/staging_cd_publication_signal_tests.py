@@ -28,6 +28,8 @@ class SignalTests(unittest.TestCase):
         self.registry.manifest.return_value = ("sha256:" + "d" * 64, {})
         self.env = {"GITHUB_SHA": "a" * 40, "GITHUB_RUN_ID": "100", "GITHUB_RUN_ATTEMPT": "1"}
         self.env.update({f"CD_FINALIZED_{key.upper()}": "success" for key in self.receipts})
+        self.env.update({f"CD_PUBLISH_{key.upper()}": "success" for key in self.receipts})
+        self.env.update(CD_PUBLISH_AM="skipped", CD_FINALIZED_AM="")
         self.matrix = {"include": [{"component": key, "tasks": canonical([
             {"component": key, "mode": "resume", "receipt": value}])}
             for key, value in self.receipts.items()]}
@@ -48,11 +50,13 @@ class SignalTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             self.freeze()
 
-    def test_a_failed_selected_job_refuses_even_if_its_receipt_exists(self):
-        self.env["CD_FINALIZED_RUNTIME"] = "failure"
-        with self.assertRaisesRegex(Refusal, "did not finalize"):
-            self.freeze()
+    def test_failed_publication_or_finalization_refuses_even_when_the_receipt_exists(self):
+        for key in ("CD_PUBLISH_RUNTIME", "CD_FINALIZED_RUNTIME"):
+            with self.subTest(key=key), patch.dict(self.env, {key: "failure"}):
+                with self.assertRaisesRegex(Refusal, "did not publish and finalize"):
+                    self.freeze()
         self.api.tags.assert_not_called()
+        self.assertEqual(self.freeze()["receipts"], self.receipts)
 
     def test_digest_fields_extra_keys_empty_or_reordered_receipts_cannot_change(self):
         value = self.freeze()
@@ -104,8 +108,11 @@ class SignalTests(unittest.TestCase):
                        GITHUB_REF="refs/heads/develop", GITHUB_EVENT_NAME="push",
                        GITHUB_EVENT_PATH=str(event), CD_PUBLICATION_MATRIX=canonical(self.matrix))
             with patch.dict(os.environ, env, clear=True), patch.object(signal, "GitHub", return_value=self.api), \
-                    patch.object(signal, "Registry", return_value=self.registry), patch("sys.argv", ["signal", "freeze"]):
+                    patch.object(signal, "Registry", return_value=self.registry), patch("sys.argv", ["signal", "freeze"]), \
+                    patch.object(signal, "local_tag_reader", return_value=Mock()) as local_reader:
                 self.assertEqual(signal.main(), 0)
+                local_reader.assert_called_once_with(Path.cwd())
+                signal.GitHub.assert_called_once_with(None, local_tags=local_reader.return_value)
                 self.assertEqual(signal.main(), 1)  # Immutable local artifact.
             value = json.loads((root / "publication-signal.json").read_text())
             with patch.dict(os.environ, env, clear=True), patch("sys.argv", ["signal", "send"]), \
