@@ -1,11 +1,22 @@
 use utoipa::OpenApi;
-mod admin_schemas;
 pub mod agent_delegations;
 mod agent_manager;
 mod composition;
 mod identity;
 mod projections;
-use self::{admin_schemas::*, projections::*};
+use self::projections::*;
+use super::admin::profiles::{ProfilePageView, ProfileSummaryView};
+use super::admin::sandboxes::{
+    AgentSummaryView, SandboxDetailView, SandboxPageView, SandboxSummaryView, WorkspaceSummaryView,
+};
+use super::admin::settings::{
+    InactivitySettingsBody, MarketplaceSettingsBody, PatchRequest, PlatformDefaultsBody,
+    PlatformLimitsBody, PlatformSettingsBody, ProfileReferenceBody, ReplaceRequest, ResetRequest,
+    RetentionSettingsBody, SettingsView, TriggerSettingsBody, UsageReportingSettingsBody,
+};
+use super::admin::{
+    ActivityActorView, ActivityPageView, ActivityView, RuntimeEntryView, RuntimeInventoryView,
+};
 use super::agent_openapi_shapes::*;
 use super::agent_shared_shapes::*;
 use super::instances_openapi_shapes::{
