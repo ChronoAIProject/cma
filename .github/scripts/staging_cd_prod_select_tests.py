@@ -199,6 +199,20 @@ class EvidenceTests(unittest.TestCase):
         select.staging_verified({"web": WEB}, self.staging_runs(runs, artifacts), download)
         self.assertEqual([c.args[0]["id"] for c in download.call_args_list], [1, 2])
 
+    def test_automatic_retry_evidence_counts_for_its_own_lane_only(self):
+        runs = [run_view(30)]
+        artifacts = {30: [artifact(1, 30, name="staging-deployment-30-1-am-retry"),
+                          artifact(2, 30, name="staging-deployment-30-1-web"),
+                          artifact(3, 30, name="staging-deployment-30-1-web-retry")]}
+        download = Mock(return_value=evidence({"web": {"state": "controller-verified", "image": WEB}}))
+        self.assertEqual(select.staging_verified({"web": WEB}, self.staging_runs(runs, artifacts), download),
+                         {"web"})
+        # The AM retry archive is another component's lane and is never downloaded.
+        self.assertEqual([c.args[0]["id"] for c in download.call_args_list], [2])
+        self.assertEqual(select.evidence_lane("staging-deployment-30-1-runtime-omarchy-retry", 30),
+                         "runtime-omarchy")
+        self.assertEqual(select.evidence_lane("staging-deployment-30-1-am", 30), "am")
+
     def test_evidence_search_is_bounded(self):
         runs = [run_view(5000 - i) for i in range(select.MAX_RUN_LISTINGS + 1)]
         with self.assertRaises(Refusal):

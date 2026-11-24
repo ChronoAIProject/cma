@@ -192,6 +192,26 @@ impl SandboxWorker {
                 failure: recorded_failure,
             }
         };
+        if let Some(refusal) = failure.reopen_refusal {
+            if !self.reopen_output_refusal_enabled(&sandbox) {
+                return Err(SandboxStoreError::Conflict);
+            }
+            return self
+                .dependencies
+                .store
+                .park_sandbox_reopen_refusal(
+                    SandboxLifecycleMutation {
+                        guard: SandboxMutationGuard::capture(&sandbox),
+                        sandbox: next,
+                        agents: Vec::new(),
+                        agent_scope: SandboxLifecycleAgentScope::Touched,
+                        appended_at: stamp,
+                        events: vec![event],
+                    },
+                    *refusal,
+                )
+                .await;
+        }
         self.commit_lifecycle_phase(
             &sandbox,
             next,
