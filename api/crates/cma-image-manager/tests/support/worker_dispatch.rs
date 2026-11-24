@@ -72,6 +72,10 @@ impl Fixture {
     }
 
     async fn build(&self) -> Build {
+        self.build_with_content(None).await
+    }
+
+    async fn build_with_content(&self, dockerfile_content: Option<String>) -> Build {
         let image = self
             .dispatcher
             .create_image(
@@ -94,7 +98,7 @@ impl Fixture {
                     commit: "a".repeat(40),
                     dockerfile: "Dockerfile".into(),
                     context: ".".into(),
-                    dockerfile_content: None,
+                    dockerfile_content,
                 },
             )
             .await

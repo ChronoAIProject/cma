@@ -226,3 +226,156 @@ async fn rejection_refuses_changed_request_identity_without_losing_the_result() 
     }
     fixture.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires the authenticated image-manager Mongo contract fixture"]
+async fn rejection_matches_reordered_source_fields() {
+    let fixture = Fixture::new().await;
+    let builds = fixture.db.collection::<Document>(schema::BUILDS);
+    for content in [None, Some("FROM scratch\n".into())] {
+        let build = fixture.build_with_content(content).await;
+        let pending = fixture.submitting(true).await;
+        let original = &pending.claim.source;
+        let mut source = doc! {
+            "context": &original.context,
+            "dockerfile": &original.dockerfile,
+            "commit": &original.commit,
+            "repository": &original.repository,
+        };
+        if let Some(content) = &original.dockerfile_content {
+            source.insert("dockerfile_content", content);
+        }
+        builds
+            .update_one(doc! {"_id":&build.id}, doc! {"$set":{"source":source}})
+            .await
+            .unwrap();
+        let submission = pending.submission.clone();
+        pending.finish().await.1.unwrap();
+        let settled = fixture.observer.build("alice", &build.id).await.unwrap();
+        assert_eq!(settled.phase, BuildPhase::Failed);
+        assert_eq!(settled.error.as_deref(), Some("submission_rejected"));
+        assert_eq!(submission.submissions.load(Ordering::SeqCst), 1);
+    }
+    fixture.cleanup().await;
+}
+
+struct ContinuingExecutor {
+    queued: String,
+    running: String,
+    submissions: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl BuildExecutor for ContinuingExecutor {
+    async fn submit(&self, build: &Build) -> Result<()> {
+        assert_eq!(build.id, self.queued);
+        assert_eq!(self.submissions.fetch_add(1, Ordering::SeqCst), 0);
+        Err(Error::BuildRejected)
+    }
+
+    async fn observe(&self, build: &Build) -> Result<Option<Observation>> {
+        assert_eq!(build.id, self.running);
+        Ok(Some(Observation {
+            id: "running-provider-build".into(),
+            phase: BuildPhase::Succeeded,
+            digest: Some(format!("sha256:{}", "a".repeat(64))),
+        }))
+    }
+
+    async fn logs(&self, _: &Build) -> Result<serde_json::Value> {
+        unreachable!("the worker does not fetch logs")
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires the authenticated image-manager Mongo contract fixture"]
+async fn unsettled_rejection_leaves_other_builds_free_to_progress() {
+    let fixture = Fixture::new().await;
+    let builds = fixture.db.collection::<Document>(schema::BUILDS);
+    let held = fixture.build().await;
+    let pending = fixture.submitting(true).await;
+    let original = pending.claim.clone();
+    let submission = pending.submission.clone();
+    builds
+        .update_one(
+            doc! {"_id":&held.id},
+            doc! {"$set":{"source.dockerfile_content":"FROM scratch\n"}},
+        )
+        .await
+        .unwrap();
+    let changed = builds
+        .find_one(doc! {"_id": &held.id})
+        .await
+        .unwrap()
+        .unwrap();
+    let (mut worker, result) = pending.finish().await;
+    assert!(matches!(result, Err(Error::Conflict)), "{result:?}");
+
+    let running = fixture.build().await;
+    let claim = fixture.observer.claim_build().await.unwrap().unwrap();
+    assert_eq!(claim.id, running.id);
+    assert!(fixture
+        .observer
+        .observe_build(&claim, "running-provider-build", BuildPhase::Running, None)
+        .await
+        .unwrap());
+    let queued = fixture.build().await;
+    let continuing = Arc::new(ContinuingExecutor {
+        queued: queued.id.clone(),
+        running: running.id.clone(),
+        submissions: AtomicUsize::new(0),
+    });
+    let executor: Executor = continuing.clone();
+    assert!(matches!(
+        worker.tick(&fixture.dispatcher, &executor).await,
+        Err(Error::Conflict)
+    ));
+    assert_eq!(
+        fixture
+            .observer
+            .build("alice", &queued.id)
+            .await
+            .unwrap()
+            .phase,
+        BuildPhase::Failed
+    );
+    assert_eq!(
+        fixture
+            .observer
+            .build("alice", &running.id)
+            .await
+            .unwrap()
+            .phase,
+        BuildPhase::Succeeded
+    );
+    assert_eq!(
+        builds
+            .find_one(doc! {"_id": &held.id})
+            .await
+            .unwrap()
+            .unwrap(),
+        changed
+    );
+    assert_eq!(continuing.submissions.load(Ordering::SeqCst), 1);
+
+    builds
+        .replace_one(
+            doc! {"_id":&held.id},
+            mongodb::bson::serialize_to_document(&original).unwrap(),
+        )
+        .await
+        .unwrap();
+    worker.tick(&fixture.dispatcher, &executor).await.unwrap();
+    assert_eq!(
+        fixture
+            .observer
+            .build("alice", &held.id)
+            .await
+            .unwrap()
+            .phase,
+        BuildPhase::Failed
+    );
+    assert_eq!(submission.submissions.load(Ordering::SeqCst), 1);
+    assert_eq!(continuing.submissions.load(Ordering::SeqCst), 1);
+    fixture.cleanup().await;
+}
