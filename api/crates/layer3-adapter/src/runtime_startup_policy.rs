@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub const RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE: &str =
     "application/vnd.cma.runtime-startup-policy.v1+json";
+pub(crate) const MAX_RUNTIME_STARTUP_POLICY_STATUS_BYTES: usize = 32_768;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -16,7 +17,7 @@ pub struct RuntimeStartupPolicyObservation {
 impl RuntimeStartupPolicyObservation {
     /// Older Supervisors answer with ordinary status. Absence cannot prove that recovery is off.
     pub fn decode(bytes: &[u8], request: &RuntimeStatusRequest) -> Result<Option<Self>> {
-        if bytes.len() <= 32_768 {
+        if bytes.len() <= MAX_RUNTIME_STARTUP_POLICY_STATUS_BYTES {
             if let Ok(observation) = serde_json::from_slice::<Self>(bytes) {
                 observation.runtime.validate_for(request)?;
                 return Ok(Some(observation));

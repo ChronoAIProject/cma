@@ -49,6 +49,7 @@ struct State {
     restarted: AtomicBool,
     missing_incarnation: AtomicBool,
     hold_response: AtomicBool,
+    startup_policy: StdMutex<Option<bool>>,
     hold_next_pod_reply: AtomicBool,
     pod_reply_entered: tokio::sync::Notify,
     pod_reply_release: tokio::sync::Notify,
@@ -495,6 +496,9 @@ mod desktop_tests;
 
 #[path = "native_transport_cases.rs"]
 mod cases;
+
+#[path = "native_startup_policy_tests.rs"]
+mod startup_policy;
 
 #[path = "native_capacity_tests.rs"]
 mod capacity_tests;
