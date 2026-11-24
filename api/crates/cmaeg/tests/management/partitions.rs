@@ -35,6 +35,7 @@ async fn partition_inspection_is_owner_authorized_read_only_and_reports_deleted_
     assert_eq!(body["mapping"]["conversation_id"], expected.as_str());
     assert_eq!(body["mapping"]["agent_id"], "agt_deleted");
     assert_eq!(body["mapping"]["agent_status"], "deleted");
+    assert!(body["mapping"].get("profile_drift").is_none());
     assert_eq!(
         body["mapping"]["binding_id"],
         channel["provider"]["binding_id"]
@@ -51,6 +52,51 @@ async fn partition_inspection_is_owner_authorized_read_only_and_reports_deleted_
     assert_eq!(missing.status(), 400);
     stop.send(()).unwrap();
     task.await.unwrap();
+}
+
+#[tokio::test]
+async fn partition_drift_is_gated_and_supports_legacy_providers() {
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let client = Client::new();
+    let observed = json!({"system_prompt":"match","skills":"drift"});
+    for (enabled, supplied, expected) in [
+        (false, Some(observed.clone()), None),
+        (true, Some(observed.clone()), Some(observed)),
+        (
+            true,
+            None,
+            Some(json!({"system_prompt":"unknown","skills":"unknown"})),
+        ),
+    ] {
+        let provider = FakeProvider::start(FakeProviderConfig {
+            inspection_agent: Some(("agt_ready".into(), "ready".into())),
+            inspection_profile_drift: supplied,
+            ..Default::default()
+        })
+        .await;
+        let mut state = management_state(&provider, &cma, &nyxid, key_ring(1));
+        state.binding_profile_drift_enabled = enabled;
+        let (base, stop, task) = serve_app(state).await;
+        let channel = created(&client, &base).await;
+        let id = channel["channel_id"].as_str().unwrap();
+        let response = client
+            .get(format!(
+                "{base}/v1/channels/{id}/partition?partition_key=oracle"
+            ))
+            .bearer_auth("token-alice")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["mapping"].get("profile_drift"), expected.as_ref());
+        stop.send(()).unwrap();
+        task.await.unwrap();
+        provider.close().await;
+    }
+    cma.close().await;
+    nyxid.close().await;
 }
 
 #[tokio::test]

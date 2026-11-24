@@ -1,12 +1,16 @@
 use super::{BindingConversation, BindingError, BindingService, EXISTING_AGENT_CONVERSATION};
-use crate::sandbox::AgentStatus;
+use crate::sandbox::{AgentInstructionPolicy, AgentStatus};
 use crate::Caller;
+
+mod drift;
+pub use drift::{BindingProfileDrift, DriftState};
 
 pub struct BindingConversationInspection {
     pub conversation: BindingConversation,
     pub incarnation: u64,
     pub transport_conversation_id: String,
     pub agent_status: Option<AgentStatus>,
+    pub profile_drift: Option<BindingProfileDrift>,
 }
 
 impl BindingService {
@@ -15,6 +19,17 @@ impl BindingService {
         caller: &Caller,
         id: &str,
         conversation_id: &str,
+    ) -> Result<BindingConversationInspection, BindingError> {
+        self.inspect_conversation_with_profile_drift(caller, id, conversation_id, None)
+            .await
+    }
+
+    pub async fn inspect_conversation_with_profile_drift(
+        &self,
+        caller: &Caller,
+        id: &str,
+        conversation_id: &str,
+        instruction_policy: Option<&dyn AgentInstructionPolicy>,
     ) -> Result<BindingConversationInspection, BindingError> {
         if !super::model::valid_id(conversation_id, 8) {
             return Err(BindingError::InvalidRequest(
@@ -68,6 +83,8 @@ impl BindingService {
             incarnation,
             transport_conversation_id,
             conversation,
+            profile_drift: instruction_policy
+                .map(|policy| BindingProfileDrift::compare(&binding, agent.as_ref(), policy)),
             agent_status: agent.map(|agent| agent.status),
         })
     }

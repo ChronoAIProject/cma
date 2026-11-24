@@ -1,4 +1,50 @@
 use super::*;
+use axum::Extension;
+use layer2_core::sandbox::binding::{BindingProfileDrift, DriftState};
+use layer2_core::sandbox::AgentInstructionPolicy;
+
+#[derive(Clone)]
+pub(super) struct ProfileDriftPolicy(Arc<dyn AgentInstructionPolicy>);
+
+pub fn with_binding_profile_drift(
+    router: Router,
+    instruction_policy: Arc<dyn AgentInstructionPolicy>,
+) -> Router {
+    router.layer(Extension(ProfileDriftPolicy(instruction_policy)))
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum ProfileDriftState {
+    Match,
+    Drift,
+    Unknown,
+}
+
+impl From<DriftState> for ProfileDriftState {
+    fn from(value: DriftState) -> Self {
+        match value {
+            DriftState::Match => Self::Match,
+            DriftState::Drift => Self::Drift,
+            DriftState::Unknown => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Serialize, ToSchema)]
+struct ProfileDriftView {
+    system_prompt: ProfileDriftState,
+    skills: ProfileDriftState,
+}
+
+impl From<BindingProfileDrift> for ProfileDriftView {
+    fn from(value: BindingProfileDrift) -> Self {
+        Self {
+            system_prompt: value.system_prompt.into(),
+            skills: value.skills.into(),
+        }
+    }
+}
 
 #[derive(Serialize, ToSchema)]
 pub struct BindingConversationInspectionView {
@@ -9,6 +55,8 @@ pub struct BindingConversationInspectionView {
     pub agent_id: String,
     pub state: String,
     pub agent_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile_drift: Option<ProfileDriftView>,
 }
 
 #[utoipa::path(get, operation_id = "inspect_binding_conversation",
@@ -22,10 +70,18 @@ pub(super) async fn get(
     State(state): State<BindingRouteState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path((id, conversation)): Path<(String, String)>,
+    drift_policy: Option<Extension<ProfileDriftPolicy>>,
 ) -> Response {
     match state
         .service
-        .inspect_conversation(&caller, &id, &conversation)
+        .inspect_conversation_with_profile_drift(
+            &caller,
+            &id,
+            &conversation,
+            drift_policy
+                .as_ref()
+                .map(|Extension(policy)| policy.0.as_ref()),
+        )
         .await
     {
         Ok(value) => {
@@ -38,6 +94,7 @@ pub(super) async fn get(
                 agent_id: value.conversation.agent_id.to_string(),
                 state: view.state,
                 agent_status: value.agent_status.map(|status| status.name().into()),
+                profile_drift: value.profile_drift.map(Into::into),
             })
             .into_response()
         }
@@ -46,7 +103,10 @@ pub(super) async fn get(
 }
 
 #[derive(utoipa::OpenApi)]
-#[openapi(paths(get), components(schemas(BindingConversationInspectionView)))]
+#[openapi(
+    paths(get),
+    components(schemas(BindingConversationInspectionView, ProfileDriftView, ProfileDriftState))
+)]
 struct InspectionApiDoc;
 
 pub(crate) fn document() -> utoipa::openapi::OpenApi {

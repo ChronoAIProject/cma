@@ -117,7 +117,7 @@ async fn read(
             "provider credential unavailable".into(),
         ))
     })?;
-    let mapping = state
+    let mut mapping = state
         .providers
         .inspect_conversation(
             &consumer.provider.slug,
@@ -134,6 +134,9 @@ async fn read(
             actual: Some(current.record.version),
         });
     }
+    mapping.profile_drift = state
+        .binding_profile_drift_enabled
+        .then(|| mapping.profile_drift.unwrap_or_default());
     Ok(PartitionInspection {
         consumer_id: consumer.id.to_string(),
         transport_conversation_id: conversation.to_string(),

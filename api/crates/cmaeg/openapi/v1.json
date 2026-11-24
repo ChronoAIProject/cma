@@ -3270,6 +3270,16 @@
             "minimum": 0,
             "type": "integer"
           },
+          "profile_drift": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProfileDrift"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "state": {
             "type": "string"
           }
@@ -3901,6 +3911,14 @@
           "status"
         ],
         "type": "object"
+      },
+      "DriftState": {
+        "enum": [
+          "match",
+          "drift",
+          "unknown"
+        ],
+        "type": "string"
       },
       "EmptyEffectRequest": {
         "additionalProperties": false,
@@ -6623,6 +6641,21 @@
           "media_unavailable"
         ],
         "type": "string"
+      },
+      "ProfileDrift": {
+        "properties": {
+          "skills": {
+            "$ref": "#/components/schemas/DriftState"
+          },
+          "system_prompt": {
+            "$ref": "#/components/schemas/DriftState"
+          }
+        },
+        "required": [
+          "system_prompt",
+          "skills"
+        ],
+        "type": "object"
       },
       "ProfileMetadata": {
         "additionalProperties": false,

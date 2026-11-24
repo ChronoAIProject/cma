@@ -1,4 +1,112 @@
 use super::*;
+use crate::sandbox::{
+    AgentInstructionPolicy, AgentSkillInstallStatus, AgentSkillInstallation, ResolvedAgentSkill,
+};
+
+struct FixtureInstructions;
+
+impl AgentInstructionPolicy for FixtureInstructions {
+    fn owner_prompt(&self, agent: &Agent) -> String {
+        agent
+            .system_prompt()
+            .strip_prefix("Managed\n\n")
+            .unwrap()
+            .into()
+    }
+
+    fn compose(&self, _agent: &Agent, prompt: &str) -> String {
+        format!("Managed\n\n{prompt}")
+    }
+}
+
+#[tokio::test]
+async fn inspection_reports_confirmed_prompt_and_skill_drift() {
+    let fixture = fixture();
+    let mut requested = profile("Original instruction");
+    requested["context"]["skills"] = json!([{"source":"ornn","id":"example","version":"1"}]);
+    let binding = fixture.ready_with_profile(requested, None).await;
+    let conversation = resource_access::ready_conversation(&fixture, &binding).await;
+    let mut agent = fixture
+        .store
+        .get_agent(&conversation.agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let reference = binding.profile.agent.skills[0].clone();
+    let original = ResolvedAgentSkill {
+        source: reference.source,
+        id: reference.id.clone(),
+        name: None,
+        version: "1".into(),
+        archive_sha256: "a".repeat(64),
+    };
+    agent.work.resolved_skills = Some(vec![original.clone()]);
+    assert_eq!(
+        BindingProfileDrift::compare(&binding, Some(&agent), &FixtureInstructions),
+        BindingProfileDrift {
+            system_prompt: DriftState::Unknown,
+            skills: DriftState::Unknown,
+        }
+    );
+
+    agent.ready_at = Some(crate::now_rfc3339());
+    let mut settings = agent.settings();
+    settings.system_prompt =
+        Some(FixtureInstructions.compose(&agent, &binding.profile.agent.system_prompt));
+    agent.conversation.settings = Some(settings);
+    assert_eq!(
+        BindingProfileDrift::compare(&binding, Some(&agent), &FixtureInstructions),
+        BindingProfileDrift {
+            system_prompt: DriftState::Match,
+            skills: DriftState::Match
+        }
+    );
+
+    agent.conversation.settings.as_mut().unwrap().system_prompt = Some("Managed\n\nEdited".into());
+    let mut upgrade = AgentSkillInstallation::new(crate::profiles::SkillRef {
+        version: Some("2".into()),
+        ..reference
+    });
+    upgrade.previous = Some(original.clone());
+    agent.work.live_skills.push(upgrade.clone());
+    assert_eq!(
+        BindingProfileDrift::compare(&binding, Some(&agent), &FixtureInstructions),
+        BindingProfileDrift {
+            system_prompt: DriftState::Drift,
+            skills: DriftState::Match
+        }
+    );
+
+    upgrade.status = AgentSkillInstallStatus::Installed;
+    upgrade.material = Some(ResolvedAgentSkill {
+        version: "2".into(),
+        ..original
+    });
+    *agent.work.live_skills.last_mut().unwrap() = upgrade;
+    assert_eq!(
+        BindingProfileDrift::compare(&binding, Some(&agent), &FixtureInstructions),
+        BindingProfileDrift {
+            system_prompt: DriftState::Drift,
+            skills: DriftState::Drift
+        }
+    );
+    let foreign = Caller::new(
+        SubjectId::new("foreign"),
+        fixture.caller.authorization.clone(),
+    );
+    assert!(matches!(
+        fixture
+            .service
+            .inspect_conversation_with_profile_drift(
+                &foreign,
+                &binding.binding_id,
+                &conversation.conversation_id,
+                Some(&FixtureInstructions),
+            )
+            .await,
+        Err(BindingError::NotFound)
+    ));
+}
 
 #[tokio::test]
 async fn inspection_reports_the_retained_mapping_and_agent_lifecycle_without_rebinding() {

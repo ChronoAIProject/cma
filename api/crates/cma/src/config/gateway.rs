@@ -8,6 +8,7 @@ pub(crate) struct GatewayConfig {
     /// Writers stay off until both services and rollback readers are compatible.
     pub binding_preparation_enabled: bool,
     pub conversation_reset_enabled: bool,
+    pub binding_profile_drift_enabled: bool,
 }
 impl GatewayConfig {
     pub(super) fn from_lookup(
@@ -32,6 +33,13 @@ impl GatewayConfig {
                     )
                 }
             };
+        let binding_profile_drift_enabled = match lookup("CHRONO_BINDING_PROFILE_DRIFT_ENABLED")?
+            .as_deref()
+        {
+            None | Some("false") => false,
+            Some("true") => true,
+            _ => return Err("CHRONO_BINDING_PROFILE_DRIFT_ENABLED must be true or false".into()),
+        };
         let base = lookup("CHRONO_CMAEG_BASE_URL")?.filter(|s| !s.is_empty());
         let public = lookup("CHRONO_CMAEG_PUBLIC_URL")?.filter(|s| !s.is_empty());
         let public_api = lookup("CHRONO_CMAEG_PUBLIC_API_URL")?.filter(|s| !s.is_empty());
@@ -43,7 +51,8 @@ impl GatewayConfig {
                 if public_api.is_none()
                     && public_api_aliases.is_empty()
                     && !binding_preparation_enabled
-                    && !conversation_reset_enabled =>
+                    && !conversation_reset_enabled
+                    && !binding_profile_drift_enabled =>
             {
                 Ok(None)
             }
@@ -65,6 +74,7 @@ impl GatewayConfig {
                     public_api_aliases,
                     binding_preparation_enabled,
                     conversation_reset_enabled,
+                    binding_profile_drift_enabled,
                 }))
             }
             _ => Err(

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 pub(super) mod inspection;
+pub use inspection::with_binding_profile_drift;
 pub(super) mod reset;
 pub use reset::binding_conversation_reset_router;
 mod native_endpoints;
