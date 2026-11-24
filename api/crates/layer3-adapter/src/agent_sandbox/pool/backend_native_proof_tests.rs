@@ -63,6 +63,7 @@ impl HostedControlTransport for StatusTransport {
             agent_model_catalog: true,
             agent_browser: false,
             agent_resource_preparation: false,
+            exact_github_credential_route: false,
             sandbox_id: request.sandbox_id,
             generation: request.generation,
             home_identity: request.home_identity,

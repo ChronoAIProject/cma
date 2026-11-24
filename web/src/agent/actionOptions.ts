@@ -3,6 +3,7 @@ import type { CmaWebClient, CommandKeys } from '../api/client';
 import type { AgentLiveEvent } from '../api/types';
 import type { AgentCommand, AgentResourceState } from './controllerTypes';
 import type { AgentV2Session } from './transport/client';
+import type { SetActionError } from './actionError';
 
 export interface AgentActionOptions {
   readonly agentId?: string;
@@ -18,7 +19,7 @@ export interface AgentActionOptions {
   readonly keys: CommandKeys;
   readonly v2?: AgentV2Session;
   readonly setPending: Dispatch<SetStateAction<AgentCommand | undefined>>;
-  readonly setActionError: Dispatch<SetStateAction<string | undefined>>;
+  readonly setActionError: SetActionError;
   readonly setReplayRevision: Dispatch<SetStateAction<number>>;
   readonly setRequestRevision: Dispatch<SetStateAction<number>>;
   readonly applyLive: (event: AgentLiveEvent) => void;

@@ -78,6 +78,7 @@ impl HostedBackend for Files {
                     agent_model_catalog: false,
                     agent_browser: false,
                     agent_resource_preparation: false,
+                    exact_github_credential_route: false,
                     sandbox_id: identity.sandbox_id,
                     generation: identity.generation + u64::from(self.fault == 5),
                     home_identity: identity.home_identity,

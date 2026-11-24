@@ -1,6 +1,7 @@
 //! The platform spend read model over the period row (plain reads, no session,
 //! no settings fence), the evaluator, and the operator's cloud observations.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::time::{Duration, UNIX_EPOCH};
 
 use layer2_core::budget::{
@@ -253,10 +254,10 @@ impl MongoSandboxStore {
                     }
                 },
                 Err(Attempt::Retry) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                 }
                 Err(Attempt::Refused(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
             }

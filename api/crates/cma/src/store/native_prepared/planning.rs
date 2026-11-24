@@ -3,6 +3,7 @@ use crate::store::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, record_bson, start_transaction,
     CommitOutcome, MongoSandboxStore,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox::{SandboxStoreError, WarmSandbox, WarmSandboxState};
 use mongodb::bson::{doc, Bson};
@@ -48,12 +49,12 @@ impl MongoSandboxStore {
                 Err(PlanError::Driver(error))
                     if is_transient(&error) || is_duplicate_key(&error) =>
                 {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     tokio::task::yield_now().await;
                     continue;
                 }
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(match error {
                         PlanError::Domain(e) => e,
                         PlanError::Driver(e) => unavailable(e),

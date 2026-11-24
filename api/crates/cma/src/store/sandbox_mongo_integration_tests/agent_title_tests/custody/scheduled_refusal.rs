@@ -2,6 +2,7 @@ use super::*;
 use crate::sandbox::{scheduled_title_fixture, start_title_scheduler};
 use crate::store::request_limits::MongoRequestLimits;
 use axum::{extract::State, http::StatusCode, routing::post, Router};
+use futures_util::TryStreamExt;
 use layer2_core::sandbox::store::SandboxStore;
 use layer2_core::sandbox::{AGENT_TITLE_CLAIM_SECONDS, AGENT_TITLE_RETRY_SECONDS};
 use mongodb::bson::DateTime;
@@ -22,10 +23,38 @@ async fn refuse_title(State(refusal): State<Arc<Refusal>>) -> StatusCode {
     StatusCode::NOT_FOUND
 }
 
-async fn wait_until(time: DateTime) {
+async fn wait_until(store: &MongoSandboxStore, id: &AgentId, time: DateTime) {
     if let Ok(remaining) = time.to_system_time().duration_since(SystemTime::now()) {
         tokio::time::sleep(remaining).await;
     }
+    tokio::time::timeout(SCAN_INTERVAL, async {
+        loop {
+            let row = store
+                .agents
+                .aggregate([
+                    doc! {"$match": {"_id": id.as_str()}},
+                    doc! {"$project": {"now": "$$NOW"}},
+                ])
+                .await
+                .unwrap()
+                .try_next()
+                .await
+                .unwrap()
+                .unwrap();
+            let now = row.get_datetime("now").unwrap();
+            if *now >= time {
+                break;
+            }
+            tokio::time::sleep(
+                time.to_system_time()
+                    .duration_since(now.to_system_time())
+                    .unwrap(),
+            )
+            .await;
+        }
+    })
+    .await
+    .expect("Mongo must confirm the stored eligibility timestamp before starting the scheduler");
 }
 
 #[tokio::test]
@@ -90,7 +119,7 @@ async fn scheduled_permanent_404_persists_prompt_fallback_without_redispatch() {
     );
 
     // Use the stored timestamps so this exercises the real retry window.
-    wait_until(*expires_at).await;
+    wait_until(&second, &id, *expires_at).await;
     let page = PageRequest::new(20, None).unwrap();
     assert!(second
         .agent_title_candidates(&page)
@@ -99,7 +128,7 @@ async fn scheduled_permanent_404_persists_prompt_fallback_without_redispatch() {
         .items
         .is_empty());
     assert_eq!(second.agent_title(&id).await.unwrap(), None);
-    wait_until(*retry_at).await;
+    wait_until(&second, &id, *retry_at).await;
 
     // A replacement scheduler scans immediately, with only durable state from
     // the first scheduler. Bound publication to one normal scan interval.

@@ -56,6 +56,7 @@ mod agent_worker_store;
 mod agent_worker_transaction;
 pub(crate) mod stale_turns;
 pub(crate) mod transaction_barrier;
+pub(crate) mod turn_timeouts;
 #[cfg(test)]
 pub(crate) use agent_worker_transaction::adoption_probe;
 #[cfg(test)]
@@ -96,6 +97,7 @@ pub(crate) mod registration_capacity;
 mod retained_consents;
 mod segment_response;
 mod transaction_scope;
+pub(crate) mod transaction_terminal;
 pub(crate) use segment_response::emit as emit_response_reads;
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.

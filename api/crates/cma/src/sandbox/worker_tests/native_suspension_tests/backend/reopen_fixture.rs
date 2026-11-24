@@ -24,6 +24,11 @@ impl NativeBackend {
                 "fixture retained conversation rejected".into(),
             ));
         }
+        if self.fail_reopen_transiently.load(Ordering::SeqCst) {
+            return Err(AdapterError::Unavailable(
+                "fixture retained conversation temporarily unavailable".into(),
+            ));
+        }
         let cursors = self.reopen_output.cursors.lock().unwrap().clone();
         let (ack, mut acknowledgements) = mpsc::channel(1);
         for cursor in cursors {

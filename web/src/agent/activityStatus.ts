@@ -1,6 +1,7 @@
 import type { AgentSummary } from '../api/types';
 import type { ReadyAgent } from './loadAgent';
 import { currentAgentSnapshot, currentAgentStatus } from './status';
+import { currentExternalApproval } from './externalApproval';
 
 export const activityWords = {
   loading: 'Loading activity',
@@ -23,6 +24,7 @@ export function observedActivity(
   if (status !== 'ready' && status !== 'working' && status !== 'waiting_approval') return undefined;
   if (state.historyLoading) return 'loading';
   if (state.historyUnavailable) return 'unknown';
+  if (currentExternalApproval(conversation)) return 'waiting_approval';
   const runId = conversation.activeRunId ?? conversation.latestTurnId;
   if (runId === undefined) return undefined;
   const timing = conversation.turnTiming?.[runId];

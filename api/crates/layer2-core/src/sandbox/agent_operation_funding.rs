@@ -115,11 +115,25 @@ impl AgentOperationService {
                     "the model gateway did not admit the funded request".into(),
                 ))
             }
-            Err(FundingError::ReconciliationRequired) => ConversationSendOutcome::Ambiguous(
-                AdapterError::Unavailable(FundingError::ReconciliationRequired.to_string()),
-            ),
-            Err(error) => ConversationSendOutcome::PreWriteFailure(AdapterError::PromptNotWritten(
-                error.to_string(),
+            Err(error) => self.resolve_failed_funded_send(error.to_string()).await,
+        }
+    }
+
+    pub(in crate::sandbox) async fn resolve_failed_funded_send(
+        &self,
+        reason: String,
+    ) -> ConversationSendOutcome {
+        let outcome = match (&self.model_funding, &self.funded_message) {
+            (Some(funding), Some(message)) => funding.resolve_failed_dispatch(message).await,
+            _ => Err(FundingError::ReconciliationRequired),
+        };
+        match outcome {
+            Ok(Effect::Finished { .. }) => ConversationSendOutcome::WriteConfirmed,
+            Ok(Effect::NotStarted) => {
+                ConversationSendOutcome::PreWriteFailure(AdapterError::PromptNotWritten(reason))
+            }
+            Err(_) => ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(
+                FundingError::ReconciliationRequired.to_string(),
             )),
         }
     }

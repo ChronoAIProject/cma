@@ -2,7 +2,7 @@
 use super::{
     activity_indexes, activity_page_index, agent_log_segments, agent_log_source_keys,
     agent_owner_index, binding_indexes, collection_indexes, measured_custody, opening_index,
-    sandbox_usage_capture, Result,
+    sandbox_usage_capture, turn_policy_index, Result,
 };
 use mongodb::bson::{doc, Document};
 
@@ -13,6 +13,7 @@ pub(super) enum Step {
     LedgerCollection,
     AgentOpening,
     AgentOwnerPage,
+    TurnPolicyDue,
     AgentLogSegments,
     AgentLogSourceKeys,
     BindingIndexes,
@@ -21,7 +22,7 @@ pub(super) enum Step {
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 10] = [
+    pub(super) const ALL: [Self; 11] = [
         Self::MeasuredCustody,
         Self::SandboxUsageCapture,
         Self::Activity,
@@ -29,6 +30,7 @@ impl Step {
         Self::LedgerCollection,
         Self::AgentOpening,
         Self::AgentOwnerPage,
+        Self::TurnPolicyDue,
         Self::AgentLogSegments,
         Self::AgentLogSourceKeys,
         Self::BindingIndexes,
@@ -49,6 +51,7 @@ impl Step {
             Self::LedgerCollection => collection_indexes::ID,
             Self::AgentOpening => opening_index::ID,
             Self::AgentOwnerPage => agent_owner_index::ID,
+            Self::TurnPolicyDue => turn_policy_index::ID,
             Self::AgentLogSegments => agent_log_segments::ID,
             Self::AgentLogSourceKeys => agent_log_source_keys::ID,
         }
@@ -63,6 +66,7 @@ impl Step {
             Self::LedgerCollection => collection_indexes::checksum(),
             Self::AgentOpening => opening_index::checksum(),
             Self::AgentOwnerPage => agent_owner_index::checksum(),
+            Self::TurnPolicyDue => turn_policy_index::checksum(),
             Self::AgentLogSegments => agent_log_segments::checksum(),
             Self::AgentLogSourceKeys => agent_log_source_keys::checksum(),
         }
@@ -78,7 +82,10 @@ impl Step {
             Self::Activity => 2,
             Self::ActivityPage => 1,
             Self::LedgerCollection => 5,
-            Self::AgentOpening | Self::AgentOwnerPage | Self::AgentLogSourceKeys => 1,
+            Self::AgentOpening
+            | Self::AgentOwnerPage
+            | Self::AgentLogSourceKeys
+            | Self::TurnPolicyDue => 1,
             Self::AgentLogSegments => agent_log_segments::MAX_SCHEMA_STEPS,
         }
     }
@@ -90,7 +97,7 @@ impl Step {
             Self::Activity | Self::ActivityPage => &["activity"],
             Self::LedgerCollection => &collection_indexes::COLLECTIONS,
             Self::AgentOpening => &opening_index::COLLECTIONS,
-            Self::AgentOwnerPage => &["agents"],
+            Self::AgentOwnerPage | Self::TurnPolicyDue => &["agents"],
             Self::AgentLogSourceKeys => &["agent_log"],
             Self::AgentLogSegments => crate::store::agent_log_segments::COLLECTIONS,
         }
@@ -103,6 +110,7 @@ impl Step {
             | Self::LedgerCollection
             | Self::AgentOpening
             | Self::AgentOwnerPage
+            | Self::TurnPolicyDue
             | Self::AgentLogSourceKeys
             | Self::MeasuredCustody
             | Self::BindingIndexes => "created_indexes",
@@ -128,6 +136,11 @@ impl Step {
                 .collect()),
             Self::LedgerCollection => collection_indexes::inspect(database).await,
             Self::AgentOpening => opening_index::inspect(database).await,
+            Self::TurnPolicyDue => Ok(turn_policy_index::inspect(database)
+                .await?
+                .into_iter()
+                .map(|index| ("agents", index))
+                .collect()),
             Self::AgentOwnerPage => Ok(agent_owner_index::inspect(database)
                 .await?
                 .into_iter()
@@ -160,6 +173,9 @@ impl Step {
             }
             Self::LedgerCollection => collection_indexes::create(database, collection, index).await,
             Self::AgentOpening => opening_index::create(database, collection, index).await,
+            Self::TurnPolicyDue if collection == "agents" => {
+                turn_policy_index::create(database, index).await
+            }
             Self::AgentOwnerPage if collection == "agents" => {
                 agent_owner_index::create(database, index).await
             }

@@ -45,6 +45,109 @@ impl TargetBase {
         }
         Ok(target)
     }
+
+    pub(crate) fn join_github(
+        &self,
+        uri: &Uri,
+        route: &layer3_adapter::GithubCredentialRoute,
+    ) -> Result<url::Url> {
+        let prefix = self
+            .base_path
+            .strip_suffix("/s/api-github")
+            .ok_or_else(invalid)?;
+        self.join_selected(
+            uri,
+            format!("{prefix}/{}", route.catalog_id),
+            &route.service_id,
+        )
+    }
+
+    pub(crate) fn join_selected_platform(
+        &self,
+        uri: &Uri,
+        route: &layer3_adapter::GithubCredentialRoute,
+    ) -> Result<url::Url> {
+        if unsafe_path(uri.path()) {
+            return self.join(uri);
+        }
+        let path = uri.path().trim_start_matches('/');
+        let proxy_path = path
+            .strip_prefix("api/v1/proxy/")
+            .or_else(|| path.strip_prefix("proxy/"));
+        let Some(proxy_path) = proxy_path else {
+            if path.contains('%') {
+                return Err(unproved_service());
+            }
+            return self.join(uri);
+        };
+        let (named, path) = match proxy_path.strip_prefix("s/") {
+            Some(path) => (true, path),
+            None => (false, proxy_path),
+        };
+        let (selector, suffix) = path.split_once('/').unwrap_or((path, ""));
+        let (prefix, service_id) = if (named && selector == "api-github")
+            || (!named
+                && [route.catalog_id.as_str(), route.service_id.as_str()].contains(&selector))
+        {
+            (
+                format!("/api/v1/proxy/{}", route.catalog_id),
+                route.service_id.as_str(),
+            )
+        } else {
+            let mut services = route.other_services.iter().filter(|service| {
+                if named {
+                    service.slug == selector
+                } else {
+                    service.service_id == selector
+                        || service.catalog_id.as_deref() == Some(selector)
+                }
+            });
+            let service = services.next().ok_or_else(unproved_service)?;
+            if services.next().is_some() {
+                return Err(unproved_service());
+            }
+            let prefix = match &service.catalog_id {
+                Some(catalog) => format!("/api/v1/proxy/{catalog}"),
+                None => format!("/api/v1/proxy/s/{}", service.slug),
+            };
+            (prefix, service.service_id.as_str())
+        };
+        let mut endpoint = format!("/{suffix}");
+        if let Some(query) = uri.query() {
+            endpoint.push('?');
+            endpoint.push_str(query);
+        }
+        self.join_selected(
+            &endpoint.parse().map_err(|_| unproved_service())?,
+            format!("{}{prefix}", self.base_path),
+            service_id,
+        )
+    }
+
+    fn join_selected(&self, uri: &Uri, base_path: String, service_id: &str) -> Result<url::Url> {
+        let mut target = Self {
+            url: self.url.clone(),
+            base_path,
+        }
+        .join(uri)?;
+        if target.query_pairs().any(|(key, _)| key == "_nyxid_via") {
+            return Err(RuntimeError::rejected(
+                "proxy_github_selector_supplied",
+                "service connection selection is managed by the Sandbox",
+            ));
+        }
+        target
+            .query_pairs_mut()
+            .append_pair("_nyxid_via", service_id);
+        Ok(target)
+    }
+}
+
+fn unproved_service() -> RuntimeError {
+    RuntimeError::rejected(
+        "proxy_service_route_unproved",
+        "the scoped credential has no proved route for this platform service",
+    )
 }
 
 pub(crate) fn unsafe_path(path: &str) -> bool {
