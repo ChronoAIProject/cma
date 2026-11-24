@@ -1,10 +1,22 @@
 use super::*;
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use layer2_core::{OperationClaim, OperationReservation, OperationStore};
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
 impl Fixture {
     pub(super) async fn raw(&self, ingress: usize, key: &str, body: &str) -> reqwest::Response {
+        self.raw_with_headers(ingress, key, body, HeaderMap::new())
+            .await
+    }
+
+    async fn raw_with_headers(
+        &self,
+        ingress: usize,
+        key: &str,
+        body: &str,
+        headers: HeaderMap,
+    ) -> reqwest::Response {
         reqwest::Client::builder()
             .no_proxy()
             .timeout(Duration::from_secs(12))
@@ -23,6 +35,7 @@ impl Fixture {
                     if self.deleting { "" } else { "/stop" }
                 ),
             )
+            .headers(headers)
             .header("idempotency-key", key)
             .header("content-type", "application/json")
             .body(body.to_owned())
@@ -74,27 +87,115 @@ impl Fixture {
         target: &AgentId,
         key: &str,
     ) -> axum::response::Response {
+        self.restart_request_with_headers(identity, target, key, HeaderMap::new())
+            .await
+    }
+
+    async fn restart_request_with_headers(
+        &self,
+        identity: &str,
+        target: &AgentId,
+        key: &str,
+        headers: HeaderMap,
+    ) -> axum::response::Response {
+        let mut request = axum::http::Request::builder()
+            .method(if self.deleting {
+                Method::DELETE
+            } else {
+                Method::POST
+            })
+            .uri(format!(
+                "/api/v1/agents/{}{}",
+                target,
+                if self.deleting { "" } else { "/stop" }
+            ))
+            .header("idempotency-key", key)
+            .header("content-type", "application/json");
+        request.headers_mut().unwrap().extend(headers);
         self.restarted_routes(identity)
             .await
-            .oneshot(
-                axum::http::Request::builder()
-                    .method(if self.deleting {
-                        Method::DELETE
-                    } else {
-                        Method::POST
-                    })
-                    .uri(format!(
-                        "/api/v1/agents/{}{}",
-                        target,
-                        if self.deleting { "" } else { "/stop" }
-                    ))
-                    .header("idempotency-key", key)
-                    .header("content-type", "application/json")
-                    .body(axum::body::Body::from("{}"))
-                    .unwrap(),
-            )
+            .oneshot(request.body(axum::body::Body::from("{}")).unwrap())
             .await
             .unwrap()
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI disposable replica set; run serially"]
+async fn ordinary_stop_and_delete_replay_ignore_qualification_headers() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-cma-qualification-case",
+        HeaderValue::from_static("fixture-case"),
+    );
+    headers.insert(
+        "x-cma-qualification-actor",
+        HeaderValue::from_static("fixture-observer"),
+    );
+
+    for deleting in [false, true] {
+        let fixture = Fixture::new(deleting).await;
+        let key = uuid::Uuid::new_v4().to_string();
+        let operation = format!(
+            "agent:{}:{}",
+            if deleting { "delete" } else { "stop" },
+            fixture.agent.id
+        );
+        let claims = fixture
+            .admin
+            .database(&fixture.name)
+            .collection::<mongodb::bson::Document>("operation_claims");
+        let claim_key = doc! {"_id.operation": operation, "_id.key": &key};
+
+        let denied = fixture
+            .restart_request_with_headers("outsider", &fixture.agent.id, &key, headers.clone())
+            .await;
+        assert_eq!(denied.status(), StatusCode::NOT_FOUND);
+        assert!(fixture.control_receipt().await.is_none());
+        assert_eq!(
+            fixture.h.stored(&fixture.agent.id).await.revision,
+            fixture.agent.revision
+        );
+        assert_eq!(claims.count_documents(claim_key.clone()).await.unwrap(), 0);
+
+        let first = fixture
+            .raw_with_headers(1 - fixture.owner, &key, "{}", headers.clone())
+            .await;
+        assert_eq!(first.status(), StatusCode::ACCEPTED);
+        let accepted = first.bytes().await.unwrap();
+        assert!(accepted.is_empty());
+        let receipt = fixture
+            .control_receipt()
+            .await
+            .expect("durable scheduling receipt");
+        assert_eq!(
+            receipt.get_i64("scheduled_revision").unwrap() as u64,
+            fixture.agent.revision + 1
+        );
+
+        let replay = fixture
+            .raw_with_headers(fixture.owner, &key, "{}", headers.clone())
+            .await;
+        assert_eq!(replay.status(), StatusCode::ACCEPTED);
+        assert_eq!(replay.bytes().await.unwrap(), accepted);
+        assert_eq!(fixture.control_receipt().await, Some(receipt));
+        assert_eq!(
+            fixture.h.stored(&fixture.agent.id).await.revision,
+            fixture.agent.revision + 1
+        );
+        assert_eq!(claims.count_documents(claim_key.clone()).await.unwrap(), 1);
+        let claim = claims.find_one(claim_key).await.unwrap().unwrap();
+        assert_eq!(
+            claim
+                .get_document("_id")
+                .unwrap()
+                .get_str("subject")
+                .unwrap(),
+            "owner"
+        );
+        fixture.completed_response(&key, 202).await;
+        fixture.complete().await;
+        fixture.close().await;
     }
 }
 
