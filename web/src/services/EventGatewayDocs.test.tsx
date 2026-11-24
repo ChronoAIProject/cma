@@ -68,8 +68,8 @@ it('renders all three canonical documents with complete navigation and all revie
 }, 15_000);
 
 it('keeps every static diagram and reserved aspect ratio aligned with the backend source', () => {
-  const backend = resolve(process.cwd(), '../api/crates/cmaeg');
-  const manifest = readFileSync(resolve(backend, 'src/http/docs/diagrams.rs'), 'utf8');
+  const crates = resolve(process.cwd(), '../api/crates');
+  const manifest = readFileSync(resolve(crates, 'cmaeg-http/src/http/docs/diagrams.rs'), 'utf8');
   let diagramCount = 0;
   for (const document of GATEWAY_DOCUMENTS) {
     const diagrams = [...document.markdown.matchAll(/```mermaid\s*\n([\s\S]*?)\n```/g)];
@@ -77,7 +77,7 @@ it('keeps every static diagram and reserved aspect ratio aligned with the backen
       const name = `${document.id}-${index}`;
       const hash = createHash('sha256').update(match[1]!.trim()).digest('hex');
       expect(manifest).toMatch(new RegExp(`"${hash}",\\s*"${name}"`));
-      const svg = readFileSync(resolve(backend, `assets/docs/${name}.svg`), 'utf8');
+      const svg = readFileSync(resolve(crates, `cmaeg/assets/docs/${name}.svg`), 'utf8');
       const dimensions = /viewBox="([^"]+)"/
         .exec(svg)![1]!
         .split(/\s+/)
