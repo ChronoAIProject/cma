@@ -365,16 +365,12 @@ impl KeyIssuer {
     ) -> Result<Vec<&'a ServiceRow>, KeyIssuerError> {
         let mut resolved = Vec::with_capacity(wanted.len());
         for wanted_service in wanted {
-            let identifier = wanted_service.as_str();
-            let mut exact = rows.iter().filter(|row| row.id == identifier);
-            let selected = match exact.next() {
-                Some(row) if exact.next().is_none() => Some(row),
-                Some(_) => None,
-                None => rows
-                    .iter()
-                    .find(|row| row.slug.as_deref() == Some(identifier)),
-            };
-            let row = selected
+            let row = rows
+                .iter()
+                .find(|row| {
+                    row.id == wanted_service.0
+                        || row.slug.as_deref() == Some(wanted_service.as_str())
+                })
                 .filter(|row| row.is_active == Some(true))
                 .ok_or_else(|| KeyIssuerError::ServiceNotGranted(wanted_service.clone()))?;
             if !resolved
