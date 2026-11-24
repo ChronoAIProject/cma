@@ -15,7 +15,7 @@ use mongodb::{
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
@@ -57,11 +57,15 @@ fn frame(
 async fn output_frame_replay_measurement() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
     let mut options = ClientOptions::parse(uri).await.unwrap();
-    let commands = Arc::new(AtomicU64::new(0));
+    let commands = Arc::new(Mutex::new(Vec::new()));
     let observed = commands.clone();
     options.command_event_handler = Some(EventHandler::callback(move |event| {
-        if matches!(event, CommandEvent::Started(_)) {
-            observed.fetch_add(1, Ordering::Relaxed);
+        if let CommandEvent::Started(event) = event {
+            let command = match event.command.get_str(&event.command_name) {
+                Ok(collection) => format!("{} {collection}", event.command_name),
+                Err(_) => event.command_name,
+            };
+            observed.lock().unwrap().push(command);
         }
     }));
     let client = Client::with_options(options).unwrap();
@@ -129,7 +133,7 @@ async fn output_frame_replay_measurement() {
                         if let Some(deadline) = assembly.output_flush_deadline() {
                             tokio::time::sleep_until(deadline).await;
                         }
-                        let command_start = commands.load(Ordering::Relaxed);
+                        let command_start = commands.lock().unwrap().len();
                         let committed = recorder
                             .flush_output(&agent.id, 1, &mut assembly, NOW.into())
                             .await
@@ -138,7 +142,7 @@ async fn output_frame_replay_measurement() {
                         assert_eq!(committed, receipt.source);
                         receipt.acknowledge().await.unwrap();
                         acknowledged = acknowledgements.recv().await.unwrap().cursor;
-                        println!("FRAME_FLUSH enabled={enabled} rate={rate} cursor={acknowledged} commands={}", commands.load(Ordering::Relaxed) - command_start);
+                        println!("FRAME_FLUSH enabled={enabled} rate={rate} cursor={acknowledged} commands={}", commands.lock().unwrap().len() - command_start);
                     }
                     if receive.is_closed() && receive.is_empty() {
                         break;
@@ -150,14 +154,15 @@ async fn output_frame_replay_measurement() {
                     _ => unreachable!(),
                 };
                 let before = serde_json::to_value(&assembly).unwrap();
-                let command_start = commands.load(Ordering::Relaxed);
+                let command_start = commands.lock().unwrap().len();
                 let started = Instant::now();
                 let result = recorder
                     .record_output(&agent.id, 1, &mut assembly, update, NOW.into())
                     .await
                     .unwrap();
                 let elapsed = started.elapsed().as_secs_f64();
-                let count = commands.load(Ordering::Relaxed) - command_start;
+                let frame_commands = commands.lock().unwrap()[command_start..].to_vec();
+                let count = frame_commands.len() as u64;
                 let after = serde_json::to_value(&assembly).unwrap();
                 let category = if !result.outcome.appended.is_empty() {
                     0
@@ -170,7 +175,17 @@ async fn output_frame_replay_measurement() {
                     2
                 };
                 if category != 0 && (!enabled || category == 1) {
-                    assert_eq!(count, 4, "quiet/text frames require one snapshot read plus transaction read/write/commit");
+                    assert_eq!(
+                        frame_commands,
+                        [
+                            "find agents",
+                            "find agents",
+                            "update sandboxes",
+                            "update agents",
+                            "commitTransaction",
+                        ],
+                        "quiet/text frames require snapshot and transaction reads before the parent and Agent updates",
+                    );
                 }
                 counts[category] += 1;
                 command_totals[category] += count;

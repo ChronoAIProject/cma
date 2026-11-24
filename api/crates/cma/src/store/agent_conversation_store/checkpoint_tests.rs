@@ -14,6 +14,8 @@ mod anchor;
 mod coalesce;
 #[path = "checkpoint_failpoint_tests.rs"]
 mod failpoints;
+#[path = "checkpoint_maintenance_tests.rs"]
+mod maintenance;
 #[path = "checkpoint_measurement_tests.rs"]
 mod measurement;
 #[path = "checkpoint_recorder_tests.rs"]
