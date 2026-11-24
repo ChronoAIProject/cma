@@ -4,6 +4,9 @@ use crate::sandbox::store::{SandboxAdmission, SandboxAdmissionName, SandboxAdmis
 #[path = "command_bootstrap_retry_results_tests.rs"]
 mod retry_results;
 
+#[path = "queued_edit_retry_tests.rs"]
+mod queued_edits;
+
 #[path = "command_prepared_admission_tests.rs"]
 mod prepared;
 
