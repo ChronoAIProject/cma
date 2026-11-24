@@ -327,6 +327,7 @@ impl HostedControlTransport for Serving {
             agent_browser: false,
             agent_resource_preparation: false,
             agent_process_restart: false,
+            exact_github_credential_route: false,
             agent_processes: 0,
         }))
     }

@@ -245,3 +245,41 @@ async fn machine_claim_uses_prestarted_desktop_and_preserves_agent_spares() {
     assert!(records(&reopened).await.contains(&spare));
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn owner_selected_image_cannot_consume_a_managed_machine_member() {
+    let (client, name, store) = database().await;
+    let machine = machine_plan();
+    let store = store.with_machine_runtime_version(Some(machine.warm.runtime_version.clone()));
+    store
+        .reconcile_native_prepared_class(Some(&machine), 1, NOW, true)
+        .await
+        .unwrap();
+    let spare = ready_machine(&store).await;
+    let request = admission(&store, &machine, "owner", "explicit-machine-image").await;
+    let SandboxOrigin::Lifecycle { operation_id } = &request.sandbox.origin else {
+        panic!("expected a lifecycle admission");
+    };
+    // The profile and resolved digest match the pool. An explicit owner choice
+    // in a retained operation still prevents it from proving a managed admission.
+    let updated = client
+        .database(&name)
+        .collection::<Document>(crate::store::agent_lifecycle_operations::COLLECTION)
+        .update_one(
+            doc! { "_id": operation_id },
+            doc! { "$set": { "input.request.image": { "id": "owner-image" } } },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.modified_count, 1);
+
+    let SandboxAdmissionResult::Created(cold) = admit_at(&store, request, NOW).await.unwrap()
+    else {
+        panic!("expected a cold admission");
+    };
+    assert_ne!(cold.id, spare.payload.id);
+    assert!(cold.runtime.is_none());
+    assert!(records(&store).await.contains(&spare));
+    client.database(&name).drop().await.unwrap();
+}

@@ -79,7 +79,7 @@ export function ComposerSuggestionEditor({
         onClose={cancel}
         description={
           pending?.restoring
-            ? 'Add the expired message to your current draft? Your text and attachments will be kept. Nothing will be sent.'
+            ? 'Add this message to your current draft? Your text and attachments will be kept. Nothing will be sent.'
             : 'Choose how to add the suggestion. Your attachments stay in the composer.'
         }
         footer={

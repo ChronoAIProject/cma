@@ -1,7 +1,9 @@
 import { defineConfig } from '@playwright/test';
-import provenance from './provenance.config';
+import { join } from 'node:path';
+import setupConfig from './channel-setup.config';
 export default defineConfig({
-  ...provenance,
-  testMatch: 'wh-eg-authoring.check.ts',
+  ...setupConfig,
+  testMatch: ['wh-eg-authoring.check.ts'],
+  outputDir: join(setupConfig.outputDir!, 'authoring'),
   timeout: 60_000,
 });

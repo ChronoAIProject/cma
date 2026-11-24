@@ -114,6 +114,10 @@ pub(crate) struct LifecycleRecord {
     pub owner: String,
     pub key: String,
     pub fingerprint: Binary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_wire: Option<CreationWire>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_fence: Option<layer2_core::sandbox::store::CreationFence>,
     pub input: LifecycleInput,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     canary_admission: Option<canary_admission::CanaryAdmission>,
@@ -144,6 +148,13 @@ pub(crate) struct LifecycleRecord {
     pub document_schema_version: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CreationWire {
+    deployment: String,
+    digest: String,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum CreateResult {
     Created(String),
@@ -158,6 +169,7 @@ pub(crate) struct LifecycleLease {
 
 #[derive(Clone)]
 pub(crate) struct MongoAgentLifecycleStore {
+    pub(super) creation_writer_epoch: Option<String>,
     operations: Collection<LifecycleRecord>,
     admission_settings: Collection<mongodb::bson::Document>,
 }
@@ -200,19 +212,39 @@ impl MongoAgentLifecycleStore {
             .map_err(driver)?;
         canary_admission::ensure_admission_indexes(&operations).await?;
         Ok(Self {
+            creation_writer_epoch: None,
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
         })
     }
 
-    pub(crate) async fn create(
+    pub(crate) async fn create_with_submission(
         &self,
         owner: &SubjectId,
         key: &str,
         input: LifecycleInput,
+        submission: Option<layer1_public::rest::creation_outcomes::Submission>,
     ) -> Result<CreateResult, LifecycleCreateError> {
+        use layer1_public::rest::creation_outcomes::is_covered_key;
+
         if canary_key::is_reserved(key) {
             return Err(StoreError::Malformed("reserved lifecycle key".into()).into());
+        }
+        let (creation_wire, creation_fence) = match submission {
+            Some(submission) => (
+                Some(CreationWire {
+                    deployment: submission.deployment,
+                    digest: submission.wire_digest,
+                }),
+                submission.fence,
+            ),
+            None => (None, None),
+        };
+        if is_covered_key(key) != creation_fence.is_some() {
+            return Err(StoreError::Malformed(
+                "creation submission fence missing or unsupported".into(),
+            )
+            .into());
         }
         let bytes = serde_json::to_vec(&input.request)
             .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
@@ -242,6 +274,8 @@ impl MongoAgentLifecycleStore {
             owner: owner.to_string(),
             key: key.to_owned(),
             fingerprint,
+            creation_wire,
+            creation_fence,
             input,
             canary_admission: None,
             canary_manifest_digest: None,

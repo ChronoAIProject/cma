@@ -92,10 +92,16 @@ it('groups a fresh inventory result without fetching details and preserves task 
   expect(groups.find((group) => group.id === 'needs_attention')?.items).toEqual([base]);
   expect(groups.find((group) => group.id === 'changing')?.items).toEqual([]);
   expect(sandboxNavigation([base], (value) => value, 'failed').visible).toEqual([base]);
-  for (const taskStatus of ['completed', 'stopped', 'failed', 'working'] as const) {
+  for (const [taskStatus, presentedStatus, label] of [
+    ['completed', 'completed', 'Turn ended'],
+    ['stopped', 'stopped', 'Stopped'],
+    ['failed', 'failed', 'Failed'],
+    ['working', 'needs_attention', 'Needs attention'],
+  ] as const) {
     const agent = { ...workspaceFixture().agents[0]!, taskStatus };
     const task = taskPresentation(agent, base, 'fresh');
-    expect(task?.status).toBe(taskStatus === 'working' ? 'needs_attention' : taskStatus);
+    expect(task?.status).toBe(presentedStatus);
+    expect(task?.label).toBe(label);
     expect(task?.showRunningTime).toBe(false);
     expect(task?.parentNotice).toBe('Runtime update failed');
   }
