@@ -35,7 +35,12 @@ pub(super) async fn apply(
             Ok::<_, CommandLedgerError>((record, binding))
         })
         .transpose()?;
-    let (agent, parent, held) = fences::current(store, &request.cancellation, session).await?;
+    let Some((agent, parent, held)) =
+        fences::current_with_observation(store, &request.cancellation, retained.is_some(), session)
+            .await?
+    else {
+        return Ok(QueuedInputOutcome::StaleObservation);
+    };
     if let Some((record, binding)) = retained {
         let response = store
             .agent_commands
@@ -51,9 +56,6 @@ pub(super) async fn apply(
             fences::resources(store, &agent, &parent, session).await?;
         }
         return Ok(QueuedInputOutcome::Applied(Box::new(result)));
-    }
-    if held {
-        return Err(CommandLedgerError::Conflict.into());
     }
     let mut response = store
         .agent_commands

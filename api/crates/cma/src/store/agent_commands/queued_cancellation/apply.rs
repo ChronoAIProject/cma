@@ -40,7 +40,8 @@ pub(in crate::store) async fn apply(
             Ok::<_, CommandLedgerError>((record, binding))
         })
         .transpose()?;
-    let (agent, parent, held) = fences::current(store, request, session).await?;
+    let (agent, parent, held) =
+        fences::current(store, request, retained.is_some(), session).await?;
     if let Some((record, binding)) = retained {
         let response = store
             .agent_commands
@@ -56,9 +57,6 @@ pub(in crate::store) async fn apply(
             fences::resources(store, &agent, &parent, session).await?;
         }
         return Ok((QueuedCancellationOutcome::Applied(Box::new(result)), held));
-    }
-    if held {
-        return Err(CommandLedgerError::Conflict.into());
     }
     let mut response = store
         .agent_commands

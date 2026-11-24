@@ -13,12 +13,20 @@ use crate::store::{agents::read_agent, sandboxes::read_sandbox};
 pub(in crate::store::agent_commands) async fn current(
     store: &MongoSandboxStore,
     request: &QueuedCancellationReservation,
+    exact_replay: bool,
     session: &mut ClientSession,
 ) -> Result<(Agent, Sandbox, bool), ApplyError> {
-    store
-        .bindings
-        .conversation_authority(request.command.binding.as_ref(), session)
-        .await?;
+    current_with_observation(store, request, exact_replay, session)
+        .await?
+        .ok_or_else(|| CommandLedgerError::Conflict.into())
+}
+
+pub(in crate::store::agent_commands) async fn current_with_observation(
+    store: &MongoSandboxStore,
+    request: &QueuedCancellationReservation,
+    exact_replay: bool,
+    session: &mut ClientSession,
+) -> Result<Option<(Agent, Sandbox, bool)>, ApplyError> {
     let agent = store
         .agents
         .find_one(doc! {"_id": request.command.envelope.agent_id.as_str()})
@@ -36,7 +44,26 @@ pub(in crate::store::agent_commands) async fn current(
         .await?
         .ok_or(CommandLedgerError::NotFound)?;
     let parent = read_sandbox(&parent_row).map_err(|_| CommandLedgerError::Corrupt)?;
-    request.validate_current(&agent, &parent)?;
+    let held = parent_row.contains_key(LEDGER_MAINTENANCE_FIELD);
+    let proof = request.command.binding.as_ref();
+    if held {
+        if !exact_replay {
+            return Err(CommandLedgerError::Conflict.into());
+        }
+        store
+            .bindings
+            .conversation_authority_read_only(proof, session)
+            .await?;
+    } else {
+        store
+            .bindings
+            .conversation_authority(proof, session)
+            .await?;
+    }
+    request.validate_current_identity(&agent, &parent)?;
+    if !request.current_observation_matches(&agent, &parent) {
+        return Ok(None);
+    }
     let policy = store
         .resource_policies
         .find_one(doc! {"_id": parent.id.as_str()})
@@ -47,11 +74,7 @@ pub(in crate::store::agent_commands) async fn current(
         .transpose()
         .map_err(|_| CommandLedgerError::Corrupt)?;
     validate_command_reservation_policy(&request.command, &parent, policy.as_ref())?;
-    Ok((
-        agent,
-        parent,
-        parent_row.contains_key(LEDGER_MAINTENANCE_FIELD),
-    ))
+    Ok(Some((agent, parent, held)))
 }
 
 pub(in crate::store::agent_commands) async fn resources(

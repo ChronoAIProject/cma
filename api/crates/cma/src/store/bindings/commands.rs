@@ -95,6 +95,24 @@ impl BindingCollections {
         if result.matched_count != 1 {
             return Err(SandboxStoreError::Conflict.into());
         }
+        self.read_current_conversation(proof, session).await
+    }
+
+    pub(in crate::store) async fn conversation_authority_read_only(
+        &self,
+        proof: Option<&BindingConversationAuthority>,
+        session: &mut ClientSession,
+    ) -> Result<(), FenceError> {
+        let Some(proof) = proof else { return Ok(()) };
+        self.safety.require_associations()?;
+        self.read_current_conversation(proof, session).await
+    }
+
+    async fn read_current_conversation(
+        &self,
+        proof: &BindingConversationAuthority,
+        session: &mut ClientSession,
+    ) -> Result<(), FenceError> {
         let binding = self
             .records
             .find_one(doc! {"_id": &proof.binding.binding_id})
