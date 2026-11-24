@@ -146,6 +146,12 @@ async fn ordinary_stop_and_delete_replay_ignore_qualification_headers() {
             .database(&fixture.name)
             .collection::<mongodb::bson::Document>("operation_claims");
         let claim_key = doc! {"_id.operation": operation, "_id.key": &key};
+        let mut denied_key = claim_key.clone();
+        denied_key.insert("_id.subject", "outsider");
+        let mut owner_key = claim_key.clone();
+        owner_key.insert("_id.subject", "owner");
+        let mut header_actor_key = claim_key.clone();
+        header_actor_key.insert("_id.subject", "fixture-observer");
 
         let denied = fixture
             .restart_request_with_headers("outsider", &fixture.agent.id, &key, headers.clone())
@@ -156,7 +162,13 @@ async fn ordinary_stop_and_delete_replay_ignore_qualification_headers() {
             fixture.h.stored(&fixture.agent.id).await.revision,
             fixture.agent.revision
         );
-        assert_eq!(claims.count_documents(claim_key.clone()).await.unwrap(), 0);
+        // HTTP idempotency records the 404 for the outsider without scheduling work.
+        assert_eq!(claims.count_documents(claim_key.clone()).await.unwrap(), 1);
+        assert_eq!(claims.count_documents(owner_key.clone()).await.unwrap(), 0);
+        let denied_claim = claims.find_one(denied_key.clone()).await.unwrap().unwrap();
+        let denied_outcome: Value =
+            serde_json::from_slice(denied_claim.get_binary_generic("outcome").unwrap()).unwrap();
+        assert_eq!(denied_outcome["status"], 404);
 
         let first = fixture
             .raw_with_headers(1 - fixture.owner, &key, "{}", headers.clone())
@@ -183,15 +195,12 @@ async fn ordinary_stop_and_delete_replay_ignore_qualification_headers() {
             fixture.h.stored(&fixture.agent.id).await.revision,
             fixture.agent.revision + 1
         );
-        assert_eq!(claims.count_documents(claim_key.clone()).await.unwrap(), 1);
-        let claim = claims.find_one(claim_key).await.unwrap().unwrap();
+        assert_eq!(claims.count_documents(claim_key).await.unwrap(), 2);
+        assert_eq!(claims.count_documents(owner_key).await.unwrap(), 1);
+        assert_eq!(claims.count_documents(header_actor_key).await.unwrap(), 0);
         assert_eq!(
-            claim
-                .get_document("_id")
-                .unwrap()
-                .get_str("subject")
-                .unwrap(),
-            "owner"
+            claims.find_one(denied_key).await.unwrap(),
+            Some(denied_claim)
         );
         fixture.completed_response(&key, 202).await;
         fixture.complete().await;
