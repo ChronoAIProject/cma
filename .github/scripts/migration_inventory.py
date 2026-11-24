@@ -13,6 +13,7 @@ import subprocess
 
 
 ROOT = "api/crates/cma/src/"
+EXTERNAL_ROOTS = {"cma_am_reporting": "api/crates/cma-am-reporting/src/"}
 REGISTRIES = ("store::isolation", "store::isolation::replicas")
 # Separate operation roles and retained adapters are outside the runtime role.
 EXTRA_SYMBOLS = (
@@ -43,9 +44,36 @@ class Source:
             self.cache[path] = self.git("show", self.revision + ":" + path)
         return self.cache[path]
 
+    @staticmethod
+    def imports(source):
+        imports = {}
+        for use in re.finditer(r'\buse\s+([\w:]+)::(?:\{([^}]+)\}|(\w+))\s*;', source):
+            for name in (use[2] or use[3]).split(","):
+                name = name.strip()
+                if re.fullmatch(r'\w+', name):
+                    imports[name] = use[1] + "::" + name
+        return imports
+
     def module(self, name):
-        base = ROOT + name.replace("::", "/")
-        for path in (base + ".rs", base + "/mod.rs"):
+        crate, _, local = name.partition("::")
+        root = EXTERNAL_ROOTS.get(crate, ROOT)
+        if crate not in EXTERNAL_ROOTS:
+            local = name
+        if not local:
+            path = root + "lib.rs"
+            return path, self.read(path)
+
+        def candidates(module):
+            base = root + module.replace("::", "/")
+            return base + ".rs", base + "/mod.rs"
+
+        paths = candidates(local)
+        if crate in EXTERNAL_ROOTS:
+            first, separator, rest = local.partition("::")
+            exported = self.imports(self.read(root + "lib.rs")).get(first)
+            if exported:
+                paths += candidates(exported + separator + rest)
+        for path in paths:
             try:
                 return path, self.read(path)
             except subprocess.CalledProcessError:
@@ -62,24 +90,27 @@ class Source:
         if match:
             return match[1], {"path": path, "sha256": digest(source.encode()),
                               "symbol": symbol}
-        # Resolve explicit re-exports such as document_artifacts::{mongo,quota}.
-        exports = re.finditer(r'\buse\s+([\w:]+)::(?:\{([^}]+)\}|(\w+))\s*;', source)
-        for export in exports:
-            names = [part.strip() for part in (export[2] or export[3]).split(",")]
-            if name in names:
-                target = self.resolve(module, export[1] + "::" + name)
-                return self.constant(target, (*seen, symbol))
+        imports = self.imports(source)
+        if name in imports:
+            target = self.resolve(module, imports[name], imports)
+            return self.constant(target, (*seen, symbol))
         raise ValueError("unresolved collection constant: " + symbol)
 
     @staticmethod
-    def resolve(module, expression):
+    def resolve(module, expression, imports=None):
+        first, separator, rest = expression.partition("::")
+        if separator and imports and first in imports:
+            expression = imports[first] + separator + rest
         parts = expression.split("::")
         prefix = module.split("::")
+        crate_prefix = prefix[:1] if prefix[0] in EXTERNAL_ROOTS else []
+        if parts[0] in EXTERNAL_ROOTS:
+            return expression
         if parts[0] == "crate":
-            prefix, parts = [], parts[1:]
+            prefix, parts = crate_prefix.copy(), parts[1:]
         while parts and parts[0] in ("super", "self"):
             if parts.pop(0) == "super":
-                if not prefix:
+                if len(prefix) <= len(crate_prefix):
                     raise ValueError("collection path escapes crate")
                 prefix.pop()
         return "::".join(prefix + parts)
@@ -91,10 +122,7 @@ class Source:
         if not match:
             raise ValueError("unrecognized collection registry: " + path)
         body = re.sub(r"//[^\n]*", "", match[1])
-        imports = {
-            target.rsplit("::", 1)[-1]: target
-            for target in re.findall(r"^use ((?:crate|self|super)(?:::[A-Za-z_]\w*)+);", source, re.M)
-        }
+        imports = self.imports(source)
         rows = []
         for expression in filter(None, (part.strip() for part in body.split(","))):
             if re.fullmatch(r'"[a-z0-9_]+"', expression):
@@ -102,10 +130,7 @@ class Source:
                 definition = {"path": path, "sha256": digest(source.encode()),
                               "symbol": module + "::COLLECTIONS"}
             elif re.fullmatch(r"[A-Za-z_][\w:]*", expression):
-                first, separator, rest = expression.partition("::")
-                if separator and first in imports:
-                    expression = imports[first] + separator + rest
-                name, definition = self.constant(self.resolve(module, expression))
+                name, definition = self.constant(self.resolve(module, expression, imports))
             else:
                 raise ValueError("unrecognized collection expression: " + expression)
             rows.append((name, definition))
