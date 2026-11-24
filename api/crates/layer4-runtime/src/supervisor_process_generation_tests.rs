@@ -315,6 +315,7 @@ async fn check_owner_stop_close_proof(started_successor: bool) {
         predecessor: proof,
         successor_operation_id: successor.operation_id.clone(),
         authority_fence: 4,
+        successor_open_request_sha256: None,
     };
     let fence_request = RequestFrame::FenceAgentRestart(fence.clone());
     if started_successor {
