@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from runpy import run_path
 
@@ -22,10 +22,11 @@ OMARCHY = re.compile(rf"omarchy-layer-archive-v1-runtime-omarchy-deps-{HEX}")
 # Default-branch CodeQL builds these databases. Its automatic overlay reader
 # is the PR analysis; neither release nor develop CI restores this namespace.
 CODEQL_BASE = re.compile(r"(codeql-overlay-base-database-1-[a-f0-9]+-[a-z+_-]+-[0-9]+\.[0-9]+\.[0-9]+)-[a-f0-9]{40}-[0-9]+-[0-9]+")
+TRIVY = re.compile(r"(cache-trivy)-([0-9]{4}-[0-9]{2}-[0-9]{2})")
 AUXILIARY = (
     re.compile(rf"(cma-develop-selection-v2-{HEX})-[a-f0-9]{{40}}-[0-9]+-[0-9]+"),
     CODEQL_BASE,
-    re.compile(r"(cache-trivy)-[0-9]{4}-[0-9]{2}-[0-9]{2}"),
+    TRIVY,
 )
 
 
@@ -74,7 +75,7 @@ class Removal:
     successor: Entry | None = None
 
 
-def recovery_kind(action, today):
+def recovery_kind(action, today, policy):
     old, keep = action.entry, action.successor
     if (not keep or old.ref != DEVELOP or keep.ref != DEVELOP or old.id == keep.id
             or old.version != keep.version or not keep.size
@@ -85,6 +86,20 @@ def recovery_kind(action, today):
         # Default-branch CodeQL produces bases. Only best-effort PR overlays
         # download them, and a missing base falls back to full analysis.
         return "pr-overlay-base"
+    trivy, replacement = TRIVY.fullmatch(old.key), TRIVY.fullmatch(keep.key)
+    if trivy and replacement:
+        try:
+            old_day, keep_day = (date.fromisoformat(match[2]) for match in (trivy, replacement))
+        except ValueError:
+            return None
+        # Trivy restores from the daily key family and refreshes its database
+        # during the scan. Keep the same-day entry and require a later day.
+        if old_day < keep_day <= today:
+            return "superseded-trivy-database"
+    if OMARCHY.fullmatch(old.key) and old.key != policy.omarchy and keep.key == policy.omarchy:
+        # Omarchy restores by exact recipe and builds from pinned inputs on
+        # a cache miss. Retain the archive used by current develop.
+        return "superseded-omarchy-archive"
     cargo, replacement = CARGO.fullmatch(old.key), CARGO.fullmatch(keep.key)
     if cargo and replacement and cargo[1] == replacement[1] and old.created.astimezone(timezone.utc).date() < today:
         return "prior-day-v4-seed"

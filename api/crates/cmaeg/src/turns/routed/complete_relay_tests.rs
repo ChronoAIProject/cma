@@ -5,7 +5,7 @@ use crate::delivery::{
     custom::CustomDelivery,
     engine::DeliveryEngine,
     relay_client::{RelayClient, RelayTransport},
-    render::{RelayText, Renderer},
+    render::{LiteralText, Renderer},
 };
 use crate::net::exchange::{HttpReply, TransportError};
 use cmaeg_core::{activity::SourceKind, channel::Platform};
@@ -115,7 +115,7 @@ async fn complete_text_receipt_and_worker_loss_survive_engine_recreation_without
         message.validate().unwrap();
         let mut capabilities = crate::tools::Capabilities::relay(Platform::Lark);
         capabilities.buttons = "numbered_text".into();
-        let (parts, _) = RelayText.render(&message, &capabilities);
+        let (parts, _) = LiteralText.render(&message, &capabilities);
         assert!(parts.len() > 1);
         let expected = parts.into_iter().map(|part| part.text).collect::<String>();
         let effect = ReplayEffect::Reply(Box::new(message));

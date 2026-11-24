@@ -6,6 +6,8 @@ mod erasure;
 mod machine_pools;
 #[path = "../config_native_tests.rs"]
 mod native;
+#[path = "runtime_canary_tests.rs"]
+mod runtime_canaries;
 mod home_tests {
     include!("home_tests.rs");
 }

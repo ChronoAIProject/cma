@@ -59,6 +59,9 @@ pub(super) async fn save(
         .map_err(driver)?
         .ok_or(SandboxStoreError::Conflict)?;
     let current = read_agent(&current_row)?;
+    if current.conversation.turn_timeout != agent.conversation.turn_timeout {
+        return Err(SandboxStoreError::Conflict);
+    }
     let mut fields = agent_replacement_fields(&agent)?;
     super::super::agent_log_integrity::carry_integrity_for_revision(
         &current_row,

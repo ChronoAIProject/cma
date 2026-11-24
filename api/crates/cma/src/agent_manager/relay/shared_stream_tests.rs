@@ -21,6 +21,8 @@ use crate::store::{
 mod containment;
 #[path = "shared_stream_tests/fixture.rs"]
 mod fixture;
+#[path = "sw04_cancel_tests.rs"]
+mod sw04_cancel;
 use fixture::{seed, Replica};
 
 async fn acquire(replicas: &[Replica], id: &AgentId) -> (usize, Arc<Authority>) {

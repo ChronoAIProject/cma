@@ -109,6 +109,10 @@ pub enum SourceRequest {
         /// Admit native channel posts as non-human channel identities; requires message_events.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         channel_posts: bool,
+        /// Exact opted-in group IDs. Omit to retain the saved list; send an empty list to clear it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schema(max_items = 16)]
+        member_join_chat_ids: Option<Vec<String>>,
         bot_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bot_username: Option<String>,
@@ -157,6 +161,10 @@ pub enum SourceRequest {
         verify_raw_event: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_resources: Option<cmaeg_core::channel::LarkResourceBinding>,
+        /// Exact opted-in Telegram relay group IDs. Omit to retain them; send an empty list to clear them.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schema(max_items = 16)]
+        member_join_chat_ids: Option<Vec<String>>,
         /// Explicit write authority; independent of resource reads.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_message_effects: Option<Box<cmaeg_core::channel::LarkMessageEffectsBinding>>,
