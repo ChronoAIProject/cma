@@ -335,6 +335,7 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
         (AgentStatus::Working, AgentStatus::WaitingApproval),
         (AgentStatus::Working, AgentStatus::Paused),
         (AgentStatus::WaitingApproval, AgentStatus::Working),
+        (AgentStatus::WaitingApproval, AgentStatus::Ready),
         (AgentStatus::WaitingApproval, AgentStatus::Paused),
         (AgentStatus::Paused, AgentStatus::Ready),
         (AgentStatus::Stopped, AgentStatus::Deleted),

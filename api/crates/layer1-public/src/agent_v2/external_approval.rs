@@ -88,3 +88,6 @@ impl Preference {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod producer_tests;

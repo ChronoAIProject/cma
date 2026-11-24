@@ -35,12 +35,8 @@ pub(super) fn fold_update(
         ));
     }
     let (update, prompt_evidence) = prompt_evidence(update.borrow());
-    if current
-        .conversation
-        .turn_timeout
-        .as_ref()
-        .is_some_and(|timeout| timeout.blocks_dispatch())
-    {
+    let timeout = current.conversation.turn_timeout.as_ref();
+    if timeout.is_some_and(|timeout| timeout.blocks_dispatch()) {
         // Preserve the real source receipt in the recorder, but late output
         // cannot reopen a turn ended by service policy.
         return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));
@@ -465,32 +461,7 @@ pub(super) fn changed(
     appended_at: &str,
 ) -> Result<FoldedConversationUpdate, AgentConversationError> {
     if turn_closed {
-        if let Some(timeout) = agent
-            .conversation
-            .turn_timeout
-            .as_ref()
-            .filter(|timeout| timeout.is_open())
-        {
-            let superseded = timeout.supersede(timeout.revision()).map_err(|_| {
-                AgentConversationError::InvalidState("turn deadline settlement was refused")
-            })?;
-            let resolved = superseded.approval_events_since(timeout).map_err(|_| {
-                AgentConversationError::InvalidState("approval resolution was refused")
-            })?;
-            let position = logs
-                .iter()
-                .position(|kind| {
-                    matches!(
-                        kind,
-                        AgentLogKind::TurnCompleted { .. }
-                            | AgentLogKind::TurnFailed { .. }
-                            | AgentLogKind::TurnInterrupted { .. }
-                    )
-                })
-                .unwrap_or(logs.len());
-            logs.splice(position..position, resolved);
-            agent.conversation.turn_timeout = Some(superseded);
-        }
+        super::conversation_fold_support::settle_turn_policy(&mut agent, &mut logs)?;
     }
     if let Some(task) = agent.conversation.observations.task_acceptance.as_mut() {
         task.observe_execution(agent.conversation.active_turn, &logs);

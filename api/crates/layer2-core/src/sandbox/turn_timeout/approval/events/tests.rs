@@ -58,8 +58,8 @@ fn public_wait_is_opaque_stable_and_bound_to_its_original_turn() {
     assert!(approval_id.starts_with("external_"));
     assert_eq!(*turn_sequence, binding().turn_sequence);
     assert_eq!(*revision, waiting.revision());
-    assert_eq!(waiting_since, "1970-01-01T00:00:01Z");
-    assert_eq!(deadline_at, "1970-01-01T00:05:01Z");
+    assert_eq!(waiting_since, "1970-01-01T00:00:01.000Z");
+    assert_eq!(deadline_at, "1970-01-01T00:05:01.000Z");
     let json = serde_json::to_string(&events).unwrap();
     for private in [
         "private-operation",
@@ -89,6 +89,19 @@ fn public_wait_is_opaque_stable_and_bound_to_its_original_turn() {
         .unwrap();
     assert_ne!(views(&other_wait).unwrap()[0].id, *approval_id);
     assert!(other_wait.approval_events_since(&waiting).is_err());
+}
+
+#[test]
+fn public_wait_times_preserve_exact_canonical_milliseconds() {
+    for (ms, expected) in [
+        (1_000, "1970-01-01T00:00:01.000Z"),
+        (1_001, "1970-01-01T00:00:01.001Z"),
+        (1_120, "1970-01-01T00:00:01.120Z"),
+        (1_123, "1970-01-01T00:00:01.123Z"),
+        (-1, "1969-12-31T23:59:59.999Z"),
+    ] {
+        assert_eq!(timestamp(ms).unwrap(), expected);
+    }
 }
 
 #[test]

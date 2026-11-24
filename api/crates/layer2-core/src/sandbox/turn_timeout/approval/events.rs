@@ -126,9 +126,13 @@ fn views(policy: &TurnTimeout) -> Result<Vec<View>, TurnTimeoutError> {
 }
 
 fn timestamp(ms: i64) -> Result<String, TurnTimeoutError> {
+    let format = time::format_description::parse_borrowed::<2>(
+        "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z",
+    )
+    .map_err(|_| TurnTimeoutError::Invalid)?;
     time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(ms) * 1_000_000)
         .map_err(|_| TurnTimeoutError::Invalid)?
-        .format(&time::format_description::well_known::Rfc3339)
+        .format(&format)
         .map_err(|_| TurnTimeoutError::Invalid)
 }
 

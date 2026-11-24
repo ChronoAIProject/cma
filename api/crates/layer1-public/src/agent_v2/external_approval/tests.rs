@@ -92,6 +92,62 @@ fn shared_snapshot_and_sse_corpus_round_trips_through_the_actual_rich_envelopes(
 }
 
 #[tokio::test]
+async fn head_negotiates_current_viewer_policy_without_changing_its_metadata_shape() {
+    for buffered in [false, true] {
+        let f = fixture(true, false).await;
+        crate::agent_v2::head_tests::share(&f).await;
+        let path = format!("{EVENTS}/head");
+        for (subject, origin, requested, action) in [
+            ("owner-a", "https://identity.example.test", true, "review"),
+            ("reader", "https://identity.example.test", true, "none"),
+            ("owner-a", "", true, "none"),
+            ("owner-a", "https://identity.example.test", false, "none"),
+        ] {
+            let router = router(
+                f.state
+                    .clone()
+                    .with_single_fence_pages(buffered)
+                    .with_external_approval_review_origin(origin),
+            );
+            let mut request = request(Method::GET, &path, subject, None, None);
+            if requested {
+                request
+                    .headers_mut()
+                    .insert("prefer", PREFERENCE.parse().unwrap());
+            }
+            let response = router.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            if requested {
+                assert_eq!(response.headers()["preference-applied"], PREFERENCE);
+                assert_eq!(response.headers()["cma-external-approval-action"], action);
+                assert_eq!(
+                    response
+                        .headers()
+                        .get("cma-approval-review-origin")
+                        .map(|value| value.to_str().unwrap()),
+                    (!origin.is_empty()).then_some(origin)
+                );
+            } else {
+                for name in [
+                    "preference-applied",
+                    "cma-external-approval-action",
+                    "cma-approval-review-origin",
+                ] {
+                    assert!(!response.headers().contains_key(name));
+                }
+            }
+            let body: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+                    .unwrap();
+            assert_eq!(body["object"], "cma.agent.event_head");
+            assert_eq!(body["schema_version"], 1);
+            assert_eq!(body["active_turn"]["kind"]["type"], "turn_started");
+            assert!(!body.to_string().contains("approve_url"));
+        }
+    }
+}
+
+#[tokio::test]
 async fn external_wait_snapshot_and_sse_require_acknowledged_capability() {
     for buffered in [false, true] {
         let f = fixture(false, false).await;
@@ -114,11 +170,28 @@ async fn external_wait_snapshot_and_sse_require_acknowledged_capability() {
                 .oneshot(request(Method::GET, &path, "owner-a", None, None))
                 .await
                 .unwrap();
-            assert_eq!(refused.status(), StatusCode::CONFLICT);
-            assert!(!refused.headers().contains_key("preference-applied"));
+            let expected: Value =
+                serde_json::from_str(include_str!("capability_fixtures.json")).unwrap();
+            let expected = &expected["http_refusal"];
+            assert_eq!(
+                u64::from(refused.status().as_u16()),
+                expected["status"].as_u64().unwrap()
+            );
+            assert_eq!(
+                refused.headers()["content-type"],
+                expected["content_type"].as_str().unwrap()
+            );
+            for header in [
+                "preference-applied",
+                "cma-approval-review-origin",
+                "cma-external-approval-action",
+            ] {
+                assert!(!refused.headers().contains_key(header));
+            }
             let body = to_bytes(refused.into_body(), 1024 * 1024).await.unwrap();
-            assert!(
-                String::from_utf8_lossy(&body).contains("external_approval_capability_required")
+            assert_eq!(
+                serde_json::from_slice::<Value>(&body).unwrap(),
+                expected["body"]
             );
             let mut qualified = request(Method::GET, &path, "owner-a", None, None);
             qualified
@@ -192,8 +265,29 @@ async fn an_open_unnegotiated_stream_refuses_the_first_external_row_without_issu
     .unwrap()
     .unwrap();
     let text = String::from_utf8(body.to_vec()).unwrap();
-    assert!(text.contains("event: cma.agent.error"));
-    assert!(text.contains("external_approval_capability_required"));
+    let expected: Value = serde_json::from_str(include_str!("capability_fixtures.json")).unwrap();
+    let frames: Vec<_> = text
+        .split("\n\n")
+        .filter(|frame| !frame.is_empty())
+        .collect();
+    let error: Vec<_> = frames.last().unwrap().lines().collect();
+    assert_eq!(
+        error.len(),
+        2,
+        "error must contain only event and data, without id"
+    );
+    assert_eq!(
+        error[0],
+        format!(
+            "event: {}",
+            expected["stream_error"]["event"].as_str().unwrap()
+        )
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(error[1].strip_prefix("data: ").unwrap()).unwrap(),
+        expected["stream_error"]["data"]
+    );
+    assert_eq!(text.matches("event: cma.agent.error").count(), 1);
     assert!(!text.contains("external_approval_requested"));
     let ids: Vec<_> = text
         .lines()

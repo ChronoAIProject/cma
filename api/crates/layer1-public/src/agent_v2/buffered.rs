@@ -7,7 +7,10 @@ use super::{
     snapshot, AgentV2State,
 };
 use crate::AuthenticatedResourceCaller;
-use layer2_core::{sandbox::AgentBufferedEventRequest, AgentId};
+use layer2_core::{
+    sandbox::{AgentBufferedEventRequest, AgentEventStreamAuthorization},
+    AgentId,
+};
 
 pub(super) async fn page(
     state: &AgentV2State,
@@ -71,7 +74,7 @@ pub(super) async fn head(
     auth: &AuthenticatedResourceCaller,
     id: AgentId,
     raw: Option<String>,
-) -> Result<EventHead, Error> {
+) -> Result<(EventHead, AgentEventStreamAuthorization), Error> {
     parse::head(raw)?;
     let authorization = snapshot::authorize(state, auth, &id).await?;
     let window = state
@@ -91,12 +94,13 @@ pub(super) async fn head(
     } else {
         None
     };
-    Ok(EventHead {
+    let head = EventHead {
         object: "cma.agent.event_head",
         schema_version: 1,
         agent_id: id.to_string(),
         incarnation: identity.clone(),
         through_cursor: cursor::event(&identity, window.header.head),
         active_turn,
-    })
+    };
+    Ok((head, authorization))
 }

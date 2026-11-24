@@ -5,9 +5,9 @@ use crate::sandbox::store::{
 use crate::sandbox::PendingAgentApprovals;
 use crate::seconds_from_rfc3339;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl InMemorySandboxStore {
-    pub(crate) fn seed_turn_policy_fixture(&self, agent: Agent) {
+    pub fn seed_turn_policy_fixture(&self, agent: Agent) {
         self.lock().agents.insert(agent.id.clone(), agent);
     }
 }

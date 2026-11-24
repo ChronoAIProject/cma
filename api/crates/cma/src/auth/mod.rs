@@ -177,9 +177,6 @@ pub(super) struct RequestAuth {
 }
 
 impl AuthState {
-    pub(crate) fn approval_review_origin(&self) -> &str {
-        &self.nyxid_public_url
-    }
     #[cfg(test)]
     pub fn in_memory(mode: AuthMode, records: Option<SignInRecords>) -> Arc<Self> {
         Self::with_store(mode, records, Arc::new(MemoryAuthStore::default()))
