@@ -13,10 +13,18 @@ const channel = {
     sources: [{ type: 'nyxid_relay', platform: 'telegram', route_ids: ['saved-route'] }],
   },
 } as unknown as Channel;
-const capabilities = {
+const capabilities: RelayDiscovery = {
   status: 'ready',
-  authoring: { outbound_messages_writes_enabled: true, platforms: [] },
-} as RelayDiscovery;
+  authoring: {
+    outbound_messages_writes_enabled: true,
+    dynamic_sources_writes_enabled: false,
+    relay_raw_verification_writes_enabled: false,
+    multi_consumer_writes_enabled: false,
+    native_bot_mentions_writes_enabled: false,
+    thread_contract_writes_enabled: false,
+    platforms: [{ id: 'telegram', label: 'Telegram', verification_modes: [] }],
+  },
+};
 const receipt = (status = 'prepared', delivery: unknown = null) => ({
   delivery_id: 'delivery',
   route_id: 'saved-route',
