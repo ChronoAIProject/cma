@@ -95,3 +95,55 @@ async fn native_startup_policy_rejects_a_container_restart_during_the_read() {
     fixture.transport.retire(&handle()).await.unwrap();
     fixture.drained().await;
 }
+
+#[tokio::test]
+async fn retained_startup_policy_requires_effective_false_on_the_exact_running_boot() {
+    let fixture = fixture().await;
+    fixture
+        .state
+        .retained_evidence
+        .store(true, Ordering::SeqCst);
+    let request = request();
+    let boot = "a".repeat(32);
+    let changed_boot = "b".repeat(32);
+    let image = format!("registry.example/runtime@sha256:{}", "d".repeat(64));
+    let config = format!("sha256:{}", "c".repeat(64));
+    let wrong_config = format!("sha256:{}", "e".repeat(64));
+    let mut readback = crate::RetainedStartupPolicyReadback {
+        runtime: &request,
+        boot_id: &boot,
+        image: &image,
+        config_digest: &config,
+        journal_recovery: false,
+    };
+    let handle = handle();
+    let transport = &fixture.transport;
+    assert!(matches!(
+        transport.verify_retained_policy(&handle, &readback).await,
+        Err(AdapterError::Unavailable(message))
+            if message == "admitted runtime startup policy is not observable"
+    ));
+    *fixture.state.startup_policy.lock().unwrap() = Some(false);
+    readback.boot_id = &changed_boot;
+    assert!(matches!(
+        transport.verify_retained_policy(&handle, &readback).await,
+        Err(AdapterError::Rejected(message))
+            if message == "runtime container or boot changed during startup policy observation"
+    ));
+    readback.boot_id = &boot;
+    readback.config_digest = &wrong_config;
+    assert!(matches!(
+        transport.verify_retained_policy(&handle, &readback).await,
+        Err(AdapterError::Unavailable(message))
+            if message == "admitted runtime image is not observed"
+    ));
+    readback.config_digest = &config;
+    let positive = transport
+        .verify_retained_policy(&handle, &readback)
+        .await
+        .unwrap();
+    assert_eq!(positive.runtime.boot_id, boot);
+    assert!(!positive.legacy_journal_recovery_enabled);
+    transport.retire(&handle).await.unwrap();
+    fixture.drained().await;
+}

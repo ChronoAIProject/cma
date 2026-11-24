@@ -135,6 +135,7 @@ impl AgentSandboxPools {
         if replicas > 1000 {
             return Err(rejected("native warm pool target exceeds its bound"));
         }
+        management::require_canary_target(spec, replicas)?;
         let desired_template = model::template(&self.config, spec)?;
         // Scaling an existing pool down must remain possible after its seed is
         // retired. A zero-sized pool cannot create a Pod/PVC from that seed.

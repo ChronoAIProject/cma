@@ -11,27 +11,70 @@ impl Authority {
     pub(in crate::agent_ownership) async fn renew_store_owned(
         &self,
     ) -> Result<OwnershipLease, OwnershipError> {
-        let operation = {
-            let mut retained = self.renewal.lock().unwrap();
-            if !self.is_current() {
-                return Err(OwnershipError::Stale);
+        let operation = self.admit_renewal(|| self.start_store_renewal())?;
+        self.await_renewal(
+            operation,
+            Instant::now() + Duration::from_millis(STORE_DEADLINE_MS),
+        )
+        .await
+    }
+
+    #[cfg(feature = "qualification-hooks")]
+    pub(in crate::agent_ownership) async fn renew_store_qualified(
+        &self,
+        window: crate::agent_ownership::RenewalWindow,
+        select: impl FnOnce() -> Option<crate::qualification::RenewalAttempt>,
+    ) -> Result<OwnershipLease, OwnershipError> {
+        let mut waiter = None;
+        let operation = self.admit_renewal(|| match select() {
+            Some(attempt) => {
+                waiter = Some(attempt.waiter);
+                LeaseWrite::renewal_with(attempt.write)
             }
-            if retained.as_ref().is_some_and(|operation| matches!(operation.completed(), Some(WriteOutcome::Renewed(ref lease)) if self.validate_renewal(lease).is_ok())) {
-                retained.take();
-            }
-            retained
-                .get_or_insert_with(|| {
-                    LeaseWrite::renewal(
-                        self.store.as_ref().expect("store-backed authority").clone(),
-                        self.token.clone(),
-                    )
-                })
-                .clone()
+            None => self.start_store_renewal(),
+        })?;
+        let Some(waiter) = waiter else {
+            return self
+                .await_renewal(
+                    operation,
+                    Instant::now() + Duration::from_millis(STORE_DEADLINE_MS),
+                )
+                .await;
         };
-        match operation
-            .join_until(Instant::now() + Duration::from_millis(STORE_DEADLINE_MS))
-            .await?
-        {
+        // The coordinator supplies the caller deadline. Keep the store task
+        // available for settlement after that caller stops waiting.
+        let until = Instant::now() + crate::agent_ownership::lease_operation::OPERATION_LIMIT;
+        let result = self.await_renewal(operation, until).await;
+        waiter.deliver(result, window, &self.token).await
+    }
+
+    fn admit_renewal(
+        &self,
+        start: impl FnOnce() -> Arc<LeaseWrite>,
+    ) -> Result<Arc<LeaseWrite>, OwnershipError> {
+        let mut retained = self.renewal.lock().unwrap();
+        if !self.is_current() {
+            return Err(OwnershipError::Stale);
+        }
+        if retained.as_ref().is_some_and(|operation| matches!(operation.completed(), Some(WriteOutcome::Renewed(ref lease)) if self.validate_renewal(lease).is_ok())) {
+            retained.take();
+        }
+        Ok(retained.get_or_insert_with(start).clone())
+    }
+
+    fn start_store_renewal(&self) -> Arc<LeaseWrite> {
+        LeaseWrite::renewal(
+            self.store.as_ref().expect("store-backed authority").clone(),
+            self.token.clone(),
+        )
+    }
+
+    async fn await_renewal(
+        &self,
+        operation: Arc<LeaseWrite>,
+        until: Instant,
+    ) -> Result<OwnershipLease, OwnershipError> {
+        match operation.join_until(until).await? {
             WriteOutcome::Renewed(lease) => {
                 self.validate_renewal(&lease)?;
                 Ok(lease)

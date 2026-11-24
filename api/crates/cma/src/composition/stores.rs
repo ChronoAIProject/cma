@@ -30,6 +30,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
                 config.features.visitor_two_sandbox_defaults,
             ),
             released: Some(released.clone()),
+            runtime_pointer_required: config.runtime.runtime_pointer.is_some(),
         },
     )
     .await
@@ -130,5 +131,15 @@ pub(super) fn admission_ceilings(
     Arc::new(
         layer2_core::admission::AdmissionCeilingsService::new(stores.admission_ceilings.clone())
             .with_writes_enabled(config.features.admission_ceilings_writes_enabled),
+    )
+}
+
+pub(super) fn admission_control(
+    stores: &MongoStores,
+    config: &Config,
+) -> Arc<layer2_core::admission::AdmissionControlService> {
+    Arc::new(
+        layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
+            .with_writes_enabled(config.features.admission_control_writes_enabled),
     )
 }

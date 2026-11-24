@@ -46,6 +46,7 @@ impl SandboxStatus {
                 | (Self::Provisioning | Self::Installing, Self::Retiring)
                 | (Self::Pausing, Self::Paused | Self::Active | Self::Reviving)
                 | (Self::Reviving | Self::Rotating, Self::Pausing)
+                | (Self::Rotating, Self::Paused)
                 | (Self::Installing | Self::Provisioning, Self::Reviving)
                 | (
                     Self::Paused,

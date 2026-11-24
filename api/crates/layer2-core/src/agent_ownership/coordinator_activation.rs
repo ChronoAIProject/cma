@@ -48,6 +48,8 @@ impl OwnershipCoordinator {
             capacity,
             cleanup_slots: tokio::sync::Semaphore::new(4),
             owned: std::sync::Mutex::new(BTreeMap::new()),
+            #[cfg(feature = "qualification-hooks")]
+            qualification_renewal: std::sync::OnceLock::new(),
             acquisition: Mutex::new(()),
             cancelled_cursor: AtomicUsize::new(0),
             // Already passed: nothing is ready until registration sets it.

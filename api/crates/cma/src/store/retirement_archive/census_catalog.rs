@@ -12,9 +12,19 @@ pub(super) enum Policy {
     Empty,
 }
 use Policy::*;
-// Detached receipts have no Sandbox ownership or read grant. The schema
-// authority inventories them, but there is no receipt entry in a Sandbox manifest.
-pub(super) const OUTSIDE_MANIFEST: &[&str] = &[super::super::retained_consents::COLLECTION];
+
+// Deployment release authority is independent of any Sandbox. Keep it out
+// of the persisted census so the preceding build can read these archives.
+pub(super) const DEPLOYMENT_ONLY: &[&str] = &[
+    crate::store::released_runtimes::COLLECTION,
+    crate::store::released_runtimes::TRANSITIONS_COLLECTION,
+];
+
+// Detached receipts and measured billing custody have no entry in the Sandbox manifest.
+pub(super) const OUTSIDE_MANIFEST: &[&str] = &[
+    super::super::retained_consents::COLLECTION,
+    crate::store::migrations::measured_custody::COLLECTION,
+];
 pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("account_deletions", Independent),
     ("account_deletion_events", Independent),
@@ -35,6 +45,8 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("cma_document_artifacts", Documents),
     ("cma_document_quotas", Independent),
     ("native_warm_pool_targets", Independent),
+    ("released_runtimes", Independent),
+    ("released_runtime_transitions", Independent),
     ("native_prepared_sandboxes", Empty),
     ("runtime_backend_routes", Sandbox(&["sandbox_id"])),
     ("activity", Activity),

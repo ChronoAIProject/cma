@@ -20,6 +20,8 @@ use std::{
 };
 use tokio::sync::{Notify, RwLock};
 use tower::ServiceExt;
+#[path = "refusal_tests.rs"]
+mod refusal_tests;
 #[path = "source_tests.rs"]
 mod source_tests;
 #[path = "standing_tests.rs"]

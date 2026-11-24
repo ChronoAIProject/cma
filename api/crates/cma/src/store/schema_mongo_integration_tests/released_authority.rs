@@ -40,6 +40,7 @@ async fn opened_stores_share_the_one_released_runtime_authority() {
             shared_observation: false,
             initial_settings: Default::default(),
             released: Some(released.clone()),
+            runtime_pointer_required: false,
         },
     )
     .await
@@ -55,7 +56,7 @@ async fn opened_stores_share_the_one_released_runtime_authority() {
         Some("registry.example/runtime@sha256:released")
     );
     assert_eq!(
-        stores.sandbox_model.managed_machine_release().as_deref(),
+        stores.sandbox_model.released_runtime().machine.as_deref(),
         Some("registry.example/machine@sha256:released")
     );
     client.database(&name).drop().await.unwrap();

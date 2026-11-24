@@ -49,7 +49,7 @@ export function agentSignal(
         pose={presence.pose}
         tone={observation?.tone === 'error' ? 'error' : presence.tone}
         color={color}
-        still={observation !== undefined || !presence.animate}
+        still={presence.pose === 'preparing' || observation !== undefined || !presence.animate}
         phase={characterPhase(agentId)}
         size={size}
       />
@@ -75,7 +75,9 @@ export function lineMeta(status: Parameters<typeof statusLabel>[0], updatedAt: s
 }
 
 function visibleRows(tree: HTMLElement): HTMLElement[] {
-  return [...tree.querySelectorAll<HTMLElement>('[role="treeitem"]')];
+  return [...tree.querySelectorAll<HTMLElement>('[role="treeitem"]')].filter(
+    (row) => !row.closest('details:not([open]), [hidden]'),
+  );
 }
 
 export function keyboardNavigation(event: KeyboardEvent<HTMLDivElement>) {
