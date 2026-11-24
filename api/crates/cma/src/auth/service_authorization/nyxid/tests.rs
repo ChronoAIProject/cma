@@ -185,7 +185,7 @@ impl Fixture {
         }
     }
     fn authority(&self) -> &dyn GrantAuthority {
-        self.auth.service_authorization.as_ref().unwrap().as_ref()
+        self.auth.fixture_grant_authority().unwrap()
     }
 }
 

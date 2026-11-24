@@ -180,10 +180,7 @@ async fn provider_failure_is_unavailable_and_unconfigured_keys_do_not_reach_nyxi
         StatusCode::SERVICE_UNAVAILABLE
     );
 
-    let mut unconfigured = fixture.auth().await;
-    Arc::get_mut(&mut unconfigured)
-        .unwrap()
-        .agent_key_service_id = None;
+    let unconfigured = fixture.auth().await.with_agent_key_service(None);
     let app = router(unconfigured).await;
     let before = fixture.introspections.load(Ordering::SeqCst);
     assert_eq!(

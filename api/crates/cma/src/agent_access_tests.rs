@@ -116,7 +116,7 @@ impl BrowserCookie {
             None,
             store,
         );
-        *auth.metadata.write().await = Some(ProviderMetadata {
+        *auth.fixture_metadata().write().await = Some(ProviderMetadata {
             authorization_endpoint: format!("{base}/authorize"),
             token_endpoint: format!("{base}/token"),
             userinfo_endpoint: Some(format!("{base}/userinfo")),

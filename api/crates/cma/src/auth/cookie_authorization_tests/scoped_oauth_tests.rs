@@ -5,7 +5,7 @@ const RESOURCE: &str = "https://issuer.example/api/v1/proxy/s/cma";
 async fn scoped_fixture(owner: &str, resource: Option<&str>) -> (ResourceFixture, String) {
     let mut fixture = ResourceFixture::with_owner(owner).await;
     fixture.identity.auth = AuthState::with_store(
-        fixture.identity.auth.mode.clone(),
+        fixture.identity.auth.fixture_mode().clone(),
         None,
         fixture.identity.store.clone(),
     )
@@ -78,8 +78,8 @@ async fn restricted_oauth_session_commands_follow_current_account_standing() {
         state: std::sync::atomic::AtomicUsize::new(0),
     });
     let auth = Arc::get_mut(&mut fixture.identity.auth).unwrap();
-    auth.standing = standing.clone();
-    auth.account_deletion_enabled = true;
+    auth.set_fixture_standing(standing.clone());
+    auth.enable_fixture_account_deletion();
     let (status, active) = scoped_session(&fixture, &credential).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(active["api_commands"], true);
@@ -122,7 +122,9 @@ async fn restricted_oauth_commands_recheck_actor_and_owner_account_standing() {
                 subject: SubjectId::new(subject),
                 state: std::sync::atomic::AtomicUsize::new(0),
             });
-            Arc::get_mut(&mut fixture.identity.auth).unwrap().standing = standing.clone();
+            Arc::get_mut(&mut fixture.identity.auth)
+                .unwrap()
+                .set_fixture_standing(standing.clone());
             let context = external_context(&fixture, &credential).await;
             let command = admitted(&fixture, &credential, "active-account").await;
             fixture

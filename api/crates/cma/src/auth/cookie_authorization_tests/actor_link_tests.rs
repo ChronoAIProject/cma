@@ -244,9 +244,9 @@ async fn actor_link_renewal_refuses_erasing_subject_and_keeps_erasure_token_path
         .confirm_actor_link(&actor(), status.revision, subject, &code)
         .await
         .unwrap();
-    let auth = AuthState::with_store(f.auth.mode.clone(), None, f.store.clone())
+    let auth = AuthState::with_store(f.auth.fixture_mode().clone(), None, f.store.clone())
         .with_account_standing(Arc::new(ErasingAccount));
-    *auth.metadata.write().await = f.auth.metadata.read().await.clone();
+    *auth.fixture_metadata().write().await = f.auth.fixture_metadata().read().await.clone();
     assert!(auth
         .credential_for_grant(&grant.grant_id, &actor())
         .await
@@ -329,9 +329,9 @@ async fn standing_gate_actor_link_renewal_skips_deleting_owner_in_batch() {
     *f.control.userinfo.write().await = Reply::json(json!({
         "sub":healthy_subject.as_str(),"permissions":["cma:bot:manage"]
     }));
-    let auth = AuthState::with_store(f.auth.mode.clone(), None, f.store.clone())
+    let auth = AuthState::with_store(f.auth.fixture_mode().clone(), None, f.store.clone())
         .with_account_standing(Arc::new(DeletingSubject(deleting.subject.clone().unwrap())));
-    *auth.metadata.write().await = f.auth.metadata.read().await.clone();
+    *auth.fixture_metadata().write().await = f.auth.fixture_metadata().read().await.clone();
     auth.credential_for_grant(&healthy.link_id, &healthy.actor)
         .await
         .unwrap();

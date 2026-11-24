@@ -250,7 +250,7 @@ async fn timeout_and_connection_failure_are_bounded_without_retained_success() {
         if connection {
             fixture
                 .auth
-                .metadata
+                .fixture_metadata()
                 .write()
                 .await
                 .as_mut()
@@ -266,7 +266,7 @@ async fn timeout_and_connection_failure_are_bounded_without_retained_success() {
                 .0,
             StatusCode::SERVICE_UNAVAILABLE
         );
-        fixture.auth.identity_store.clear();
+        fixture.auth.clear_fixture_identity_store();
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(3), call(&app, &login, "/auth/session"))
                 .await
@@ -285,7 +285,7 @@ async fn local_capacity_is_fail_closed_without_provider_io_or_fallback() {
     assert_eq!(call(&app, &login, "/auth/session").await.0, StatusCode::OK);
     let _slots = fixture
         .auth
-        .verification_slots
+        .fixture_verification_slots()
         .acquire_many(64)
         .await
         .unwrap();
@@ -357,7 +357,7 @@ async fn rejected_refresh_grant_erases_custody_and_signs_out_immediately() {
     let mut state = fixture.seed().await;
     let (app, login) = browser(&fixture).await;
     assert_eq!(call(&app, &login, "/auth/session").await.0, StatusCode::OK);
-    assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
+    assert_eq!(fixture.auth.fixture_active_receipts(), 0);
     state.tokens.as_mut().unwrap().expires_at = SystemTime::now() + Duration::from_secs(30);
     fixture.store.put_subject(state).await.unwrap();
     fixture.control.exchange.write().await.status = StatusCode::BAD_REQUEST;
@@ -366,7 +366,7 @@ async fn rejected_refresh_grant_erases_custody_and_signs_out_immediately() {
         call(&app, &login, "/auth/session").await.0,
         StatusCode::UNAUTHORIZED
     );
-    assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
+    assert_eq!(fixture.auth.fixture_active_receipts(), 0);
     assert!(fixture
         .store
         .subject(&SubjectId::new("owner"))

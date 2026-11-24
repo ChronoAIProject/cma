@@ -1,6 +1,7 @@
-use super::*;
+use axum::{body::Body, extract::Request};
 use axum::{routing::get, Router};
 use http_body_util::BodyExt;
+use layer2_core::diagnostic_context::DiagnosticContext;
 use tower::ServiceExt;
 
 async fn streaming() -> Body {

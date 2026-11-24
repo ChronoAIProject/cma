@@ -162,7 +162,7 @@ async fn provider_outages_are_sanitized_and_leave_durable_authority_unchanged() 
     }
     let mut metadata = fixture.auth.metadata().await.unwrap();
     metadata.userinfo_endpoint = Some("http://127.0.0.1:0/userinfo".into());
-    *fixture.auth.metadata.write().await = Some(metadata);
+    *fixture.auth.fixture_metadata().write().await = Some(metadata);
     assert_unavailable(fixture.request(state.clone()).await);
     fixture.assert_unchanged(&state).await;
 }
@@ -173,7 +173,7 @@ async fn unadvertised_introspection_uses_only_complete_userinfo_permission_evide
     let state = fixture.seed().await;
     let mut metadata = fixture.auth.metadata().await.unwrap();
     metadata.introspection_endpoint = None;
-    *fixture.auth.metadata.write().await = Some(metadata);
+    *fixture.auth.fixture_metadata().write().await = Some(metadata);
     for body in [
         json!({"sub": "owner"}),
         json!({"sub": "owner", "permissions": ["cma:*", false]}),

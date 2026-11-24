@@ -6,13 +6,26 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
-use layer2_core::Capability;
+use layer2_core::{Authorization, Capability, StoreError, SubjectId};
 use serde_json::{json, Value};
+use std::{
+    sync::Weak,
+    time::{Duration, SystemTime},
+};
 use tokio::sync::{Notify, RwLock};
 
 use super::*;
-use crate::auth::persistence::{AuthStore, DurableSubjectTokens, MemoryAuthStore, SecretValue};
-use crate::auth::{profile::Profile, test_resources as resource_fixture, AuthMode};
+use crate::auth::persistence::{
+    AuthStore, DurableSubjectTokens, MemoryAuthStore, SecretDigest, SecretValue, SubjectAuthState,
+};
+use crate::auth::{
+    profile::Profile, test_resources as resource_fixture,
+    verification_error::ProviderVerificationError, AuthMode,
+};
+use cma_am_auth::auth::test_support::{
+    identity, request_for_browser_cookie, request_for_cookie, request_with_timeout,
+    verify_with_timeout, VerificationKey, MAX_VERIFICATION_FLIGHTS, PROVIDER_VERIFICATION_TIMEOUT,
+};
 
 #[path = "cookie_authorization_tests/actor_link_tests.rs"]
 mod actor_link_tests;

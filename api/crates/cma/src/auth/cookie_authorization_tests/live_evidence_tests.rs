@@ -30,11 +30,11 @@ async fn held_reader(
     ));
     let auth = Arc::get_mut(&mut fixture.auth).unwrap();
     // The initial read is named "join"; the held subject/login is after verification.
-    auth.browser_session_join_enabled = true;
-    auth.store = observed.clone();
+    auth.enable_fixture_browser_session_join();
+    auth.set_fixture_store(observed.clone());
     let (app, login) = browser(&fixture).await;
     assert_eq!(call(&app, &login, "/auth/session").await.0, StatusCode::OK);
-    assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
+    assert_eq!(fixture.auth.fixture_active_receipts(), 0);
     let gate = Arc::new(ReadGate::default());
     *observed.held_read.lock().unwrap() = Some((operation, gate.clone()));
     let before = fixture.control.requests.load(Ordering::SeqCst);
@@ -103,7 +103,7 @@ async fn unchanged_live_receipt_survives_both_durable_read_boundaries() {
         let (fixture, gate, pending) = held_reader(operation, false).await;
         gate.release.notify_one();
         assert_eq!(pending.await.unwrap().0, StatusCode::OK);
-        assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
+        assert_eq!(fixture.auth.fixture_active_receipts(), 0);
     }
 }
 
@@ -130,7 +130,7 @@ async fn equivalent_live_success_preserves_receipt_at_each_durable_boundary() {
         assert_eq!(fixture.control.requests.load(Ordering::SeqCst) - before, 2);
         gate.release.notify_one();
         assert_eq!(pending.await.unwrap().0, StatusCode::OK);
-        assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
+        assert_eq!(fixture.auth.fixture_active_receipts(), 0);
     }
 }
 
@@ -168,6 +168,6 @@ async fn profile_only_success_does_not_rewrite_a_held_requests_authority() {
         gate.release.notify_one();
         let (status, _) = pending.await.unwrap();
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
+        assert_eq!(fixture.auth.fixture_active_receipts(), 0);
     }
 }

@@ -194,7 +194,7 @@ async fn session_authority_scenario() {
         base_url,
         client_secret,
         ..
-    } = &fixture.auth.mode
+    } = fixture.auth.fixture_mode()
     else {
         panic!("the session fixture requires provider auth");
     };
@@ -202,8 +202,12 @@ async fn session_authority_scenario() {
     let am_secret = client_secret.clone();
     let am_resource = format!("{issuer}/api/v1/proxy/s/cma-agent-manager");
     let gateway_resource = format!("{issuer}/api/v1/proxy/s/cma-event-gateway");
-    fixture.auth = AuthState::with_store(fixture.auth.mode.clone(), None, fixture.store.clone())
-        .with_oauth_api_resource(Some(am_resource.clone()));
+    fixture.auth = AuthState::with_store(
+        fixture.auth.fixture_mode().clone(),
+        None,
+        fixture.store.clone(),
+    )
+    .with_oauth_api_resource(Some(am_resource.clone()));
     let access = crate::auth::token::random_token();
     let refresh = crate::auth::token::random_token();
     let gateway_secret = crate::auth::token::random_token();

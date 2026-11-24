@@ -89,10 +89,12 @@ async fn bearer_refusal_stays_unauthenticated_and_missing_permission_stays_forbi
 #[tokio::test]
 async fn bearer_transport_failure_and_timeout_return_unavailable() {
     let mut fixture = Fixture::new().await;
-    Arc::get_mut(&mut fixture.auth).unwrap().http = reqwest::Client::builder()
-        .timeout(Duration::from_millis(200))
-        .build()
-        .unwrap();
+    Arc::get_mut(&mut fixture.auth).unwrap().set_fixture_http(
+        reqwest::Client::builder()
+            .timeout(Duration::from_millis(200))
+            .build()
+            .unwrap(),
+    );
     fixture.control.userinfo.write().await.delay = Duration::from_secs(1);
     let app = application(&fixture);
     assert_eq!(

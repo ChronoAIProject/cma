@@ -7,7 +7,11 @@ async fn owner_api_consent_and_worker_restart_need_no_browser_login() {
     let credential = ordinary_token();
     provider_expiry(&fixture, future_expiry()).await;
     let isolated = Arc::new(MemoryAuthStore::default());
-    let auth = AuthState::with_store(fixture.identity.auth.mode.clone(), None, isolated.clone());
+    let auth = AuthState::with_store(
+        fixture.identity.auth.fixture_mode().clone(),
+        None,
+        isolated.clone(),
+    );
     let context = external_context(&fixture, &credential).await;
     let authority = auth
         .owner_service_access_authority(&context, &credential)
@@ -22,8 +26,11 @@ async fn owner_api_consent_and_worker_restart_need_no_browser_login() {
         .await
         .unwrap()
         .is_none());
-    let restarted =
-        AuthState::with_store(fixture.identity.auth.mode.clone(), None, isolated.clone());
+    let restarted = AuthState::with_store(
+        fixture.identity.auth.fixture_mode().clone(),
+        None,
+        isolated.clone(),
+    );
     let (recovered, token) = restarted
         .retained_owner_service_authority(&context.caller.subject, &authority)
         .await
@@ -188,7 +195,11 @@ async fn mongo_owner_api_scope_admission_and_credential_custody_survive_restart(
     provider_expiry(&fixture, future_expiry()).await;
     let context = external_context(&fixture, &credential).await;
     let isolated = Arc::new(MemoryAuthStore::default());
-    let auth = AuthState::with_store(fixture.identity.auth.mode.clone(), None, isolated.clone());
+    let auth = AuthState::with_store(
+        fixture.identity.auth.fixture_mode().clone(),
+        None,
+        isolated.clone(),
+    );
     let (client, database, store, original) =
         crate::store::agent_access_requests::tests::approved_scoped_fixture().await;
     store
@@ -239,8 +250,11 @@ async fn mongo_owner_api_scope_admission_and_credential_custody_survive_restart(
     let reopened = crate::store::MongoSandboxStore::open(&client, &database)
         .await
         .unwrap();
-    let restarted =
-        AuthState::with_store(fixture.identity.auth.mode.clone(), None, isolated.clone());
+    let restarted = AuthState::with_store(
+        fixture.identity.auth.fixture_mode().clone(),
+        None,
+        isolated.clone(),
+    );
     let tokens = crate::sandbox::ServiceAccessOwnerTokens::new(restarted, Arc::new(reopened));
     assert_eq!(
         tokens

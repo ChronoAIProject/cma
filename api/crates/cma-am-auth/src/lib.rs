@@ -2,6 +2,9 @@
 
 pub mod actor_links;
 mod api_bearer;
+pub mod auth;
+pub mod diagnostic_format;
+pub mod diagnostic_request;
 pub mod diagnostics;
 pub mod permissions;
 pub mod profile;
@@ -22,3 +25,7 @@ pub use records::{
 
 pub use proxy_grant::ProxyGrant;
 pub use store::{AuthStore, LoginAttempt, RecoveryIntent};
+
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub mod dependency_test_support;

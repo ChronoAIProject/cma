@@ -25,11 +25,11 @@ async fn access_b(f: &Fixture) -> StatusCode {
         .await
         .unwrap()
         .unwrap();
-    let AuthMode::Provider { base_url, .. } = &f.auth.mode else {
+    let AuthMode::Provider { base_url, .. } = f.auth.fixture_mode() else {
         unreachable!()
     };
     f.auth
-        .http
+        .fixture_http()
         .get(format!("{base_url}/api/v1/proxy/s/api-github"))
         .bearer_auth(token.expose())
         .send()

@@ -71,9 +71,9 @@ impl Provider {
         assert_eq!(url.host_str(), Some("127.0.0.1"));
         assert!(url.port().is_some());
         // Reuse the actual AuthState constructor's bounded dependency client.
-        let auth = crate::auth::nyxid_contract_tests::auth(origin);
+        let auth = cma_am_auth::auth::test_support::contract_auth(origin);
         self.issuer = Some(Arc::new(KeyIssuer::new(
-            auth.http.clone(),
+            auth.fixture_http().clone(),
             origin,
             "work-recovery-fixture",
         )));

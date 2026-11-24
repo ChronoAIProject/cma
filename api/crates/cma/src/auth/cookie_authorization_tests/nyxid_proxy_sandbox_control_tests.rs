@@ -160,7 +160,7 @@ async fn persisted_signed_pause_and_resume_refuse_revoked_or_replaced_authority(
             }
             let restarted = if cause == "disabled" {
                 AuthState::with_store(
-                    fixture.identity.auth.mode.clone(),
+                    fixture.identity.auth.fixture_mode().clone(),
                     None,
                     fixture.identity.store.clone(),
                 )

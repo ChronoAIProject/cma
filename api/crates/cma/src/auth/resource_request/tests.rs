@@ -101,7 +101,7 @@ impl Fixture {
         )
         .with_agent_key_service(Some("cma-service".into()))
         .with_resource_request_enabled(enabled);
-        *auth.metadata.write().await = Some(ProviderMetadata {
+        *auth.fixture_metadata().write().await = Some(ProviderMetadata {
             authorization_endpoint: format!("{}/authorize", self.base),
             token_endpoint: format!("{}/token", self.base),
             introspection_endpoint: Some(format!("{}/introspect", self.base)),

@@ -7,6 +7,7 @@ use axum::{
     routing::{get, post},
     Form, Json, Router,
 };
+use base64::Engine as _;
 use layer1_public::rest::worker_credentials::worker_credential_router;
 use layer2_core::sandbox::{binding::BindingAccessService, InMemorySandboxStore};
 use serde_json::json;
@@ -103,7 +104,7 @@ impl Fixture {
             None,
             Arc::new(MemoryAuthStore::default()),
         );
-        *auth.metadata.write().await = Some(ProviderMetadata {
+        *auth.fixture_metadata().write().await = Some(ProviderMetadata {
             authorization_endpoint: format!("{base}/authorize"),
             token_endpoint: format!("{base}/token"),
             userinfo_endpoint: Some(format!("{base}/userinfo")),
@@ -256,7 +257,7 @@ async fn unavailable_provider_or_missing_introspection_is_not_unknown() {
     *fixture.provider.status.write().await = StatusCode::OK;
     fixture
         .auth
-        .metadata
+        .fixture_metadata()
         .write()
         .await
         .as_mut()
@@ -385,7 +386,9 @@ impl layer2_core::account_deletion::AccountStanding for ErasingService {
 #[tokio::test]
 async fn standing_gate_denies_verified_worker_before_early_return() {
     let mut fixture = Fixture::new().await;
-    Arc::get_mut(&mut fixture.auth).unwrap().standing = Arc::new(ErasingService);
+    Arc::get_mut(&mut fixture.auth)
+        .unwrap()
+        .set_fixture_standing(Arc::new(ErasingService));
     let response = fixture.call(Some(&fixture.provider.expected), &[]).await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     let body: Value =
