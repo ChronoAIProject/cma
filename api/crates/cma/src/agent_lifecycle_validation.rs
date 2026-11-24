@@ -1,4 +1,4 @@
-use crate::store::LifecycleBehavior;
+use crate::store::{LifecycleBehavior, LifecycleLease};
 use layer1_public::rest::{
     AgentLifecycleCreateRequest, AgentLifecyclePermissions, AgentLifecycleProfile,
     AgentLifecycleProvisioningError,
@@ -424,19 +424,24 @@ pub(super) async fn create_sandbox_with_fence(
     caller: &layer2_core::Caller,
     profile: layer2_core::profiles::SandboxProfileRef,
     agent_name: &str,
-    operation_id: &str,
+    lease: &LifecycleLease,
     creation_fence: Option<layer2_core::sandbox::store::CreationFence>,
 ) -> Result<layer2_core::sandbox::Sandbox, SandboxServiceError> {
     let mut request = layer2_core::sandbox::CreateSandbox {
         profile,
-        name: Some(sandbox_name(agent_name, operation_id)),
+        name: Some(sandbox_name(agent_name, &lease.id)),
         confirmed_digest: None,
         origin: layer2_core::sandbox::SandboxOrigin::Lifecycle {
-            operation_id: operation_id.into(),
+            operation_id: lease.id.clone(),
         },
     };
     match service
-        .create_for_lifecycle_with_fence(caller, request.clone(), creation_fence.clone())
+        .create_for_lifecycle_with_lease(
+            caller,
+            request.clone(),
+            &lease.token,
+            creation_fence.clone(),
+        )
         .await
     {
         // A pre-update worker may have committed the old name, then lost the
@@ -445,7 +450,7 @@ pub(super) async fn create_sandbox_with_fence(
         Err(SandboxServiceError::SandboxOriginConflict) => {
             request.name = Some(legacy_sandbox_name(agent_name));
             service
-                .create_for_lifecycle_with_fence(caller, request, creation_fence)
+                .create_for_lifecycle_with_lease(caller, request, &lease.token, creation_fence)
                 .await
         }
         result => result,

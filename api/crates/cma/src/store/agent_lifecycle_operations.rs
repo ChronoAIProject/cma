@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VERSION};
 
 mod admission;
-mod canary_admission;
+pub(super) mod canary_admission;
 pub(crate) mod canary_key;
 pub(crate) use canary_admission::CanaryProfiles;
 #[cfg(test)]
@@ -121,6 +121,8 @@ pub(crate) struct LifecycleRecord {
     pub input: LifecycleInput,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     canary_admission: Option<canary_admission::CanaryAdmission>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canary_manifest_digest: Option<String>,
     pub status: String,
     pub phase: String,
     pub events: Vec<LifecycleEvent>,
@@ -208,21 +210,12 @@ impl MongoAgentLifecycleStore {
             )
             .await
             .map_err(driver)?;
+        canary_admission::ensure_admission_indexes(&operations).await?;
         Ok(Self {
             creation_writer_epoch: None,
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
         })
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn create(
-        &self,
-        owner: &SubjectId,
-        key: &str,
-        input: LifecycleInput,
-    ) -> Result<CreateResult, LifecycleCreateError> {
-        self.create_with_submission(owner, key, input, None).await
     }
 
     pub(crate) async fn create_with_submission(
@@ -285,6 +278,7 @@ impl MongoAgentLifecycleStore {
             creation_fence,
             input,
             canary_admission: None,
+            canary_manifest_digest: None,
             status: "queued".into(),
             phase: "queued".into(),
             events: Vec::new(),

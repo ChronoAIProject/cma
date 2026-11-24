@@ -13,6 +13,16 @@ pub(crate) enum LifecycleCreateError {
 }
 
 impl MongoAgentLifecycleStore {
+    #[cfg(test)]
+    pub(crate) async fn create(
+        &self,
+        owner: &SubjectId,
+        key: &str,
+        input: LifecycleInput,
+    ) -> Result<CreateResult, LifecycleCreateError> {
+        self.create_with_submission(owner, key, input, None).await
+    }
+
     pub(crate) fn supports_creation(
         &self,
         fence: &layer2_core::sandbox::store::CreationFence,

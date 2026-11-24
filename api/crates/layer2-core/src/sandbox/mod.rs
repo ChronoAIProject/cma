@@ -318,6 +318,7 @@ pub use conversation_recorder::{
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
     SandboxServiceGrant, SandboxServiceScopeRevision, SandboxSignInState,
+    ServiceConnectionSelection,
 };
 pub use credential_prerequisite::{
     FixedSandboxCredentialPrerequisite, SandboxCredentialPrerequisite,

@@ -5,7 +5,7 @@ pub(crate) use ticket::{finish, Ticket};
 
 use crate::config::RuntimeConfig;
 use crate::failure::Result;
-use crate::mutation_journal::{self as v1, Operation, Status};
+use crate::mutation_journal::{self as v1, Operation, Record, Status};
 use crate::mutation_ledger::Ledger;
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
@@ -95,6 +95,32 @@ impl Store {
         match &self.ledger {
             Some(ledger) => ledger.admitted(operation.clone()).await,
             None => v1::admitted(&self.config, operation),
+        }
+    }
+
+    pub(crate) async fn completed(&self, operation: &Operation) -> Result<bool> {
+        self.authorize_retirement(std::slice::from_ref(operation))
+            .await?;
+        match &self.ledger {
+            Some(ledger) => ledger.completed(operation.clone()).await,
+            None => v1::completed(&self.config, operation),
+        }
+    }
+
+    pub(crate) async fn find_operation(
+        &self,
+        operation_id: String,
+        operation: &Operation,
+    ) -> Result<Option<Record>> {
+        self.authorize_retirement(std::slice::from_ref(operation))
+            .await?;
+        match &self.ledger {
+            Some(ledger) => {
+                ledger
+                    .find_operation(operation_id, operation.subject.clone())
+                    .await
+            }
+            None => v1::find_operation(&self.config, &operation_id, &operation.subject),
         }
     }
     pub(crate) async fn begin<T: DeserializeOwned>(
