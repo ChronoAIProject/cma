@@ -166,7 +166,7 @@ export function useLifecycleIntent(
     )
       return;
     // A delayed connection action may only continue the request it was opened for.
-    if (saved.intent?.key !== current.current?.key || (body && current.current)) return;
+    if (body ? current.current : saved.intent?.key !== current.current?.key) return;
     const intent =
       current.current ??
       (body
