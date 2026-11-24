@@ -170,18 +170,26 @@ pub(in crate::store) async fn quarantine_row(
     row: &Document,
 ) -> Result<(), TransactionLogError> {
     let observed = crate::store::agents::read_agent(row).map_err(TransactionLogError::Domain)?;
+    layer2_core::sandbox::store::WorkAuthority::current()
+        .map_err(mongodb::error::Error::custom)
+        .map_err(TransactionLogError::Driver)?;
     let mut session = store
         .client
         .start_session()
         .await
         .map_err(TransactionLogError::Driver)?;
-    crate::store::sandbox_mongo::start_transaction(&mut session)
+    crate::store::sandbox_mongo::start_transaction_before_work_fence(&mut session)
         .await
         .map_err(TransactionLogError::Driver)?;
     let result = async {
+        // Classify a current hold before the scoped worker fence can return
+        // its generic conflict. Either fence's write rolls back on refusal.
         if !allow_ordinary_quarantine(store, &observed, &mut session).await? {
             return Ok(false);
         }
+        crate::store::work_publication::fence_current(&mut session)
+            .await
+            .map_err(TransactionLogError::Driver)?;
         write_quarantine(store, &observed, &mut session).await?;
         Ok(true)
     }
@@ -210,7 +218,7 @@ async fn allow_ordinary_quarantine(
     let parent = store
         .sandboxes
         .find_one(doc! {"_id": observed.sandbox_id.as_str()})
-        .projection(doc! {"_id": 1, LEDGER_MAINTENANCE_FIELD: 1})
+        .projection(doc! {"owner": 1, "record.owner": 1, LEDGER_MAINTENANCE_FIELD: 1})
         .session(session)
         .await
         .map_err(TransactionLogError::Driver)?;
@@ -218,7 +226,17 @@ async fn allow_ordinary_quarantine(
         // A legacy Agent can retain history after its Sandbox is absent.
         None => Ok(true),
         // Keep reporting the audit failure while maintenance owns the record.
-        Some(parent) if parent.contains_key(LEDGER_MAINTENANCE_FIELD) => Ok(false),
+        Some(parent)
+            if parent.contains_key(LEDGER_MAINTENANCE_FIELD)
+                && parent.get_str("owner").ok() == Some(observed.owner.as_str())
+                && parent
+                    .get_document("record")
+                    .ok()
+                    .and_then(|record| record.get_str("owner").ok())
+                    == Some(observed.owner.as_str()) =>
+        {
+            Ok(false)
+        }
         Some(_) => Err(SandboxStoreError::Conflict.into()),
     }
 }

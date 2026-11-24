@@ -1,8 +1,15 @@
 use super::*;
 use crate::store::sandbox_maintenance::mongo_integration_tests::{active_sandbox, ready_agent};
 use crate::store::sandbox_mongo::start_transaction;
+use crate::store::sandbox_mongo_integration_tests::{
+    sandbox_lifecycle_tests::claimed_pause_fixture, work_lease_deadline,
+};
 use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
-use layer2_core::sandbox::store::{AgentStore, SandboxStore};
+use layer2_core::sandbox::store::{
+    AgentStore, ClaimedWork, SandboxStore, SandboxWorkerStore, WorkAuthority,
+};
+use mongodb::options::WriteConcern;
+use tokio::time::Instant;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
@@ -137,5 +144,94 @@ async fn preparation_quarantine_conflicts_with_hold_installed_after_snapshot() {
         .unwrap()
         .unwrap()
         .contains_key(QUARANTINE_FIELD));
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn scoped_audit_preserves_the_sequence_error_after_a_hold() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let client = mongodb::Client::with_uri_str(&uri).await.unwrap();
+    let independent = mongodb::Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_quarantine_scope_{}", uuid::Uuid::new_v4().simple());
+    let store = MongoSandboxStore::open(&client, &name)
+        .await
+        .unwrap()
+        .with_renewable_work(true);
+    let other = MongoSandboxStore::open(&independent, &name)
+        .await
+        .unwrap()
+        .with_renewable_work(true);
+    let (claimed, _) = claimed_pause_fixture(&store, "audit_scope").await;
+    let agent = ready_agent(&claimed, "agt_scoped_quarantine");
+    // Retain the Agent head at sequence one with no corresponding log entry.
+    store.create_agent(agent.clone()).await.unwrap();
+    let agent_key = doc! {"_id": agent.id.as_str()};
+    let parent_key = doc! {"_id": claimed.id.as_str()};
+
+    WorkAuthority::new(
+        ClaimedWork::Sandbox(Box::new(claimed.clone())),
+        Instant::now(),
+    )
+    .run(
+        async {
+            let mut session = client.start_session().await.unwrap();
+            start_transaction(&mut session).await.unwrap();
+            let observed = store
+                .agents
+                .find_one(agent_key.clone())
+                .session(&mut session)
+                .await
+                .unwrap();
+            let before = store
+                .sandboxes
+                .find_one(parent_key.clone())
+                .session(&mut session)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(!before.contains_key(LEDGER_MAINTENANCE_FIELD));
+
+            let installed = other
+                .sandboxes
+                .update_one(
+                    parent_key.clone(),
+                    doc! {"$set": {LEDGER_MAINTENANCE_FIELD: Bson::Null}},
+                )
+                .write_concern(WriteConcern::majority())
+                .await
+                .unwrap();
+            assert_eq!(installed.modified_count, 1);
+            let held = other.sandboxes.find_one(parent_key.clone()).await.unwrap();
+            let audit = scan::scan_complete_log_with_session(
+                ScanCaller::Checkpoint,
+                &store,
+                &agent.id,
+                agent.conversation.last_seq,
+                &mut session,
+                |_| Ok(()),
+            );
+            assert!(matches!(
+                crate::store::work_publication::scope(&store, audit).await,
+                Err(TransactionLogError::Domain(
+                    SandboxStoreError::SequenceConflict
+                ))
+            ));
+            assert_eq!(store.agents.find_one(agent_key).await.unwrap(), observed);
+            assert_eq!(store.sandboxes.find_one(parent_key).await.unwrap(), held);
+            Ok(())
+        },
+        || async {
+            other
+                .renew_sandbox_authority(
+                    &claimed,
+                    &layer2_core::now_rfc3339(),
+                    &work_lease_deadline(),
+                )
+                .await
+        },
+    )
+    .await
+    .unwrap();
     client.database(&name).drop().await.unwrap();
 }

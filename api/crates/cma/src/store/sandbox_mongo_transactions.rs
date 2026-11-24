@@ -68,6 +68,19 @@ impl CommitOperation for ClientSession {
 }
 
 pub(crate) async fn start_transaction(session: &mut ClientSession) -> Result<(), Error> {
+    start_transaction_before_work_fence(session).await?;
+    if let Err(error) = crate::store::work_publication::fence_current(session).await {
+        if let Err(abort) = session.abort_transaction().await {
+            tracing::warn!(error = %abort, "ordinary work transaction abort was not acknowledged");
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+pub(in crate::store) async fn start_transaction_before_work_fence(
+    session: &mut ClientSession,
+) -> Result<(), Error> {
     session
         .start_transaction()
         .read_concern(ReadConcern::snapshot())
@@ -75,12 +88,6 @@ pub(crate) async fn start_transaction(session: &mut ClientSession) -> Result<(),
         .await?;
     // Read before the work-publication fence's Sandbox or Workspace write.
     if let Err(error) = crate::store::transaction_barrier::open(session).await {
-        if let Err(abort) = session.abort_transaction().await {
-            tracing::warn!(error = %abort, "ordinary work transaction abort was not acknowledged");
-        }
-        return Err(error);
-    }
-    if let Err(error) = crate::store::work_publication::fence_current(session).await {
         if let Err(abort) = session.abort_transaction().await {
             tracing::warn!(error = %abort, "ordinary work transaction abort was not acknowledged");
         }
