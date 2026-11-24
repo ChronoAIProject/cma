@@ -6,14 +6,12 @@ use layer2_core::sandbox::store::{
 };
 use layer2_core::sandbox::{Sandbox, SandboxEvent};
 use mongodb::bson::{doc, Bson};
-use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 
 use super::super::agent_log_integrity::{IntegrityFailurePolicy, TransactionLogError};
 use super::super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
 use super::super::sandbox_events::{
-    append_in_transaction, reconcile_event_with_snapshot_session, validate_in_transaction,
-    TransactionEventError,
+    append_in_transaction, validate_in_transaction, TransactionEventError,
 };
 use super::super::sandbox_mongo::{signed, unsigned, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
@@ -28,20 +26,40 @@ pub(super) use scoped::attempt;
 pub(super) enum MaintenanceRequest {
     Inactivity(SandboxInactivityPauseRequest),
     Rotation(SandboxImageRotationRequest),
+    FleetRotation(
+        SandboxImageRotationRequest,
+        Box<layer2_core::sandbox::store::RuntimeMigrationAdmissionBasis>,
+    ),
+    Custom(Box<layer2_core::sandbox::store::SandboxCustomRuntimeMigrationAdmission>),
 }
 
 impl MaintenanceRequest {
-    fn sandbox_id(&self) -> &SandboxId {
+    pub(super) fn requires_desktop_guard(&self) -> bool {
+        matches!(self, Self::FleetRotation(..) | Self::Custom(_))
+    }
+    pub(super) fn basis(
+        &self,
+    ) -> Option<&layer2_core::sandbox::store::RuntimeMigrationAdmissionBasis> {
         match self {
-            Self::Inactivity(request) => &request.sandbox_id,
-            Self::Rotation(request) => &request.sandbox_id,
+            Self::FleetRotation(_, basis) => Some(basis),
+            Self::Custom(admission) => Some(&admission.basis),
+            _ => None,
         }
     }
 
-    fn requested_at(&self) -> &str {
+    pub(super) fn sandbox_id(&self) -> &SandboxId {
+        match self {
+            Self::Inactivity(request) => &request.sandbox_id,
+            Self::Rotation(request) | Self::FleetRotation(request, _) => &request.sandbox_id,
+            Self::Custom(admission) => admission.sandbox_id(),
+        }
+    }
+
+    pub(super) fn requested_at(&self) -> &str {
         match self {
             Self::Inactivity(request) => &request.requested_at,
-            Self::Rotation(request) => &request.requested_at,
+            Self::Rotation(request) | Self::FleetRotation(request, _) => &request.requested_at,
+            Self::Custom(admission) => &admission.basis.admitted_at,
         }
     }
 }
@@ -157,7 +175,22 @@ async fn apply_with_sources(
             )))
         }
     };
+    if let MaintenanceRequest::Custom(admission) = request {
+        if admission.is_replay(&current).map_err(ApplyError::Domain)? {
+            return Ok(MaintenanceReceipt {
+                sandbox: current,
+                event: None,
+                outcome: SandboxMaintenanceOutcome::AlreadyScheduled,
+            });
+        }
+    }
     let agents = load_sandbox_agents(store, &current.id, session).await?;
+    if let Some(basis) = request.basis() {
+        super::custom_runtime::validate_admission(
+            store, &document, &current, &agents, basis, session,
+        )
+        .await?;
+    }
     let application = match request {
         MaintenanceRequest::Inactivity(request) => {
             let bounded_legacy_log =
@@ -237,6 +270,16 @@ async fn apply_with_sources(
             apply_proved_inactivity_pause(&current, &activities, request, agentless_idle)
         }
         MaintenanceRequest::Rotation(request) => apply_image_rotation(&current, &agents, request),
+        MaintenanceRequest::FleetRotation(request, basis) => {
+            layer2_core::sandbox::store::apply_scoped_image_rotation(
+                &current, &agents, request, basis,
+            )
+        }
+        MaintenanceRequest::Custom(admission) => {
+            layer2_core::sandbox::store::apply_custom_runtime_migration(
+                &current, &agents, admission,
+            )
+        }
     }
     .map_err(ApplyError::Domain)?;
     let (expected_revision, sandbox, event) = match application {
@@ -302,7 +345,7 @@ async fn apply_with_sources(
     validate_in_transaction(store, &current.id, last_seq, session).await?;
     // Snapshot isolation needs actual writes to prevent a concurrent Agent turn
     // from committing after the evidence read without conflicting with admission.
-    if matches!(request, MaintenanceRequest::Rotation(_)) {
+    if !matches!(request, MaintenanceRequest::Inactivity(_)) {
         if !super::evidence::fence_idle_workspaces(store, &current, session).await? {
             return Ok(MaintenanceReceipt {
                 sandbox: current,
@@ -343,6 +386,13 @@ async fn apply_with_sources(
             signed(desktop_activity_fence, "desktop activity fence")
                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
         );
+    }
+    if sandbox.lifecycle.custom_runtime.is_some()
+        || sandbox.lifecycle.runtime_migration_admission.is_some()
+    {
+        crate::store::work_schema::floor::retain_runtime_migration(store, session)
+            .await
+            .map_err(ApplyError::Driver)?;
     }
     let advanced = store
         .sandboxes
@@ -436,39 +486,4 @@ async fn fence_policy(
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
     Ok(false)
-}
-
-pub(super) async fn reconcile(
-    store: &MongoSandboxStore,
-    receipt: &MaintenanceReceipt,
-    snapshot_time: mongodb::bson::Timestamp,
-) -> Result<bool, SandboxStoreError> {
-    let mut session = store
-        .client
-        .start_session()
-        .snapshot(true)
-        .snapshot_time(snapshot_time)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let actual = store
-        .sandboxes
-        .find_one(doc! { "_id": receipt.sandbox.id.as_str() })
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(read_sandbox)
-        .transpose()?;
-    if actual.as_ref() != Some(&receipt.sandbox) {
-        return Ok(false);
-    }
-    match &receipt.event {
-        Some(event) => Ok(
-            reconcile_event_with_snapshot_session(store, event, &mut session)
-                .await?
-                .is_some(),
-        ),
-        None => Ok(false),
-    }
 }

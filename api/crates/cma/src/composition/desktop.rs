@@ -9,13 +9,13 @@ pub(crate) fn router(
 ) -> axum::Router {
     layer1_public::rest::desktop_router_with_origins(
         Arc::new(
-            layer2_core::sandbox::DesktopService::new(reads, adapter).with_admission(
-                if config.agent_manager_replicas.is_some() {
+            layer2_core::sandbox::DesktopService::new(reads, adapter)
+                .with_admission(if config.agent_manager_replicas.is_some() {
                     DesktopAdmission::Protected
                 } else {
                     DesktopAdmission::Disabled
-                },
-            ),
+                })
+                .with_runtime_migration_tracking(config.runtime.migration.enabled),
         ),
         origins(&config.public_url, &config.cors_origins),
     )

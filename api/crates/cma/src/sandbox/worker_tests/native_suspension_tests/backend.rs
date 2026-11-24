@@ -59,6 +59,7 @@ pub(super) struct NativeBackend {
     pub run_before_suspend: Arc<AtomicBool>,
     pub interrupted_workspace: Arc<AtomicBool>,
     pub calls: ActionLog,
+    pub adoptions: Arc<AtomicUsize>,
     pub inputs: Arc<Mutex<Vec<layer3_adapter::ConversationInput>>>,
     pub inspected_generations: Arc<Mutex<Vec<u64>>>,
 }
@@ -79,15 +80,6 @@ impl NativeBackend {
     }
     pub async fn request(&self) -> ProviderSandboxRequest {
         self.row.lock().await.as_ref().unwrap().request.clone()
-    }
-    pub async fn stage_reserved_request(&self, request: ProviderSandboxRequest) {
-        let mut rows = self.row.lock().await;
-        let row = rows.as_mut().unwrap();
-        assert_eq!(row.request.image, request.image);
-        assert_eq!(row.request.volumes, request.volumes);
-        row.observation.generation = request.metadata["cma/runtime-generation"].parse().unwrap();
-        row.request = request;
-        // The retained provider object and failed Pod have not been replaced.
     }
     pub async fn restart_process(&self) {
         self.retirement_incarnation.fetch_add(1, Ordering::SeqCst);
@@ -275,6 +267,7 @@ impl HostedBackend for NativeBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> layer3_adapter::Result<Option<RuntimeObservation>> {
+        self.adoptions.fetch_add(1, Ordering::SeqCst);
         let pause = self.adoption_pause.lock().unwrap().take();
         if let Some(pause) = pause {
             pause.entered.notify_one();

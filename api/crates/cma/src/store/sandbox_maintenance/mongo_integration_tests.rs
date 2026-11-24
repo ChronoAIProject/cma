@@ -185,3 +185,6 @@ mod integrity;
 mod retries;
 #[path = "maintenance_scheduling_tests.rs"]
 mod scheduling;
+
+#[path = "custom_runtime_mongo_tests.rs"]
+mod custom_runtime_mongo_tests;
