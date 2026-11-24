@@ -7,7 +7,7 @@ import { HISTORY_TOO_LARGE, MAX_HISTORY_BYTES, type RetainedHistory } from './re
 export function agentHistoryJsonl({ transcript, toolEvents }: RetainedHistory): string {
   const manifest = {
     format: 'cma.retained-conversation',
-    version: 2,
+    version: toolEvents ? 2 : 1,
     agent_id: transcript.agentId,
     through_seq: transcript.throughSeq,
     coverage: {
@@ -22,9 +22,13 @@ export function agentHistoryJsonl({ transcript, toolEvents }: RetainedHistory): 
         'recorded_user_messages',
         'recorded_assistant_messages',
         'turn_outcomes',
-        'recorded_tool_events',
+        ...(toolEvents ? ['recorded_tool_events'] : []),
       ],
-      excludes: ['raw_runtime_records', 'unrecorded_output'],
+      excludes: [
+        'raw_runtime_records',
+        ...(toolEvents ? [] : ['tool_records']),
+        'unrecorded_output',
+      ],
     },
   };
   const records = [];
@@ -56,7 +60,7 @@ export function agentHistoryJsonl({ transcript, toolEvents }: RetainedHistory): 
       });
     }
   }
-  for (const event of toolEvents) {
+  for (const event of toolEvents ?? []) {
     records.push({
       agent_id: transcript.agentId,
       through_seq: transcript.throughSeq,
@@ -82,7 +86,7 @@ export function downloadAgentHistory(agentId: string, source: RetainedHistory | 
   anchor.download =
     source instanceof Blob
       ? `cma-agent-${agentId}-history.jsonl`
-      : `cma-agent-${agentId}-retained-conversation-v2.jsonl`;
+      : `cma-agent-${agentId}-retained-conversation-v${source.toolEvents ? 2 : 1}.jsonl`;
   document.body.append(anchor);
   anchor.click();
   anchor.remove();

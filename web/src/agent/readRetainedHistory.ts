@@ -11,7 +11,7 @@ const TOOL_EVENTS = new Set(['tool_call_started', 'tool_call_updated', 'tool_out
 
 export interface RetainedHistory {
   readonly transcript: AgentTranscript;
-  readonly toolEvents: readonly AgentEvent[];
+  readonly toolEvents?: readonly AgentEvent[];
 }
 
 /** Read the same durable tool records shown in the conversation through the transcript watermark. */
@@ -19,6 +19,7 @@ export async function readRetainedHistory(
   client: CmaWebClient,
   agentId: string,
   signal: AbortSignal,
+  format: 'history' | 'transcript',
 ): Promise<RetainedHistory> {
   const transcript = await client.readAgentTranscript(agentId, {
     signal,
@@ -31,6 +32,7 @@ export async function readRetainedHistory(
     throw new Error('The retained conversation did not match this Agent. Please retry.');
   if (!Number.isSafeInteger(transcript.throughSeq) || transcript.throughSeq < 0)
     throw new Error(INCOMPLETE_HISTORY);
+  if (format === 'transcript') return { transcript };
 
   const toolEvents: AgentEvent[] = [];
   const encoder = new TextEncoder();

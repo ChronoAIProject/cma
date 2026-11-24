@@ -51,7 +51,7 @@ for (const status of ['ready', 'stopped', 'failed'] as const) {
             items: [
               ...events.slice(0, 3),
               {
-                ...events[3],
+                ...events[3]!,
                 kind: {
                   type: 'tool_call_started',
                   call_id: 'fixture-tool',
@@ -61,7 +61,7 @@ for (const status of ['ready', 'stopped', 'failed'] as const) {
                 },
               },
               {
-                ...events[4],
+                ...events[4]!,
                 kind: { type: 'tool_output_reported', call_id: 'fixture-tool', output: toolResult },
               },
               ...events.slice(5),
