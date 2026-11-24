@@ -111,6 +111,7 @@ struct ProvisionInput {
     existing_sandbox_id: Option<String>,
     existing_agent_id: Option<String>,
     actor: Option<layer2_core::resource_access::ResourceActor>,
+    canary_profiles: Option<crate::store::CanaryProfiles>,
 }
 
 impl InlineAgentLifecycle {
@@ -182,6 +183,7 @@ impl InlineAgentLifecycle {
             existing_sandbox_id,
             existing_agent_id,
             actor,
+            canary_profiles,
         } = input;
         let profile_started = tokio::time::Instant::now();
         let profile_result = profiles::create_profiles(
@@ -204,6 +206,17 @@ impl InlineAgentLifecycle {
             "inline Agent lifecycle preparation phase completed"
         );
         let (agent_revision, workspace_profile, sandbox_profile) = profile_result?;
+        if let Some(expected) = canary_profiles {
+            if expected.agent.id != agent_revision.profile_id
+                || expected.agent.revision != agent_revision.revision
+                || expected.workspace != workspace_profile
+                || expected.sandbox != sandbox_profile
+            {
+                return Err(AgentLifecycleProvisioningError::Conflict(
+                    "The canary profiles do not match the admitted operation.".into(),
+                ));
+            }
+        }
         self.progress(
             &lease,
             "sandbox_ready",
@@ -361,6 +374,11 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
     ) -> Result<AgentLifecycleCreateReceipt, AgentLifecycleProvisioningError> {
         if self.tasks.is_closed() {
             return Err(AgentLifecycleProvisioningError::Unavailable);
+        }
+        if crate::store::canary_key::is_reserved(idempotency_key) {
+            return Err(AgentLifecycleProvisioningError::Invalid(
+                "The idempotency key is reserved.".into(),
+            ));
         }
         validate_request(&request)?;
         caller

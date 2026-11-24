@@ -99,6 +99,7 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("agent_log_admissions", Linked(Agents, &["agent_id"]) => true),
     entry!("agent_capacity_recovery_work", Linked(Agents, &["agent_id"]) => true),
     entry!("agent_message_feedback", Owner(&["owner"]) => true),
+    entry!("runtime_canary_grants", Owner(&["owner"]) => true),
     entry!("agent_lifecycle_operations", Owner(&["owner"]) => true, Reference(ReferenceRule::Identities) => false),
     entry!("agent_profile_revisions", Reference(ReferenceRule::Profiles) => false),
     entry!("agent_profiles", Reference(ReferenceRule::Profiles) => false),

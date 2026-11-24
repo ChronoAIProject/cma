@@ -25,6 +25,9 @@ use sha2::{Digest, Sha256};
 use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VERSION};
 
 mod admission;
+pub(super) mod canary_grants;
+pub(crate) mod canary_key;
+pub(crate) use canary_grants::CanaryProfiles;
 #[cfg(test)]
 mod operator_stop_tests;
 pub(crate) use admission::LifecycleCreateError;
@@ -153,11 +156,12 @@ pub(crate) struct LifecycleLease {
 pub(crate) struct MongoAgentLifecycleStore {
     operations: Collection<LifecycleRecord>,
     admission_settings: Collection<mongodb::bson::Document>,
+    canary_grants: Collection<canary_grants::CanaryGrant>,
 }
 
 impl MongoAgentLifecycleStore {
     pub(crate) async fn open(database: &Database) -> Result<Self, StoreError> {
-        schema::initialize_collections(database, &[COLLECTION]).await?;
+        schema::initialize_collections(database, &[COLLECTION, canary_grants::COLLECTION]).await?;
         let operations = majority_collection(database, COLLECTION);
         operations
             .create_index(
@@ -194,6 +198,7 @@ impl MongoAgentLifecycleStore {
         Ok(Self {
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
+            canary_grants: canary_grants::open(database).await?,
         })
     }
 
@@ -203,6 +208,9 @@ impl MongoAgentLifecycleStore {
         key: &str,
         input: LifecycleInput,
     ) -> Result<CreateResult, LifecycleCreateError> {
+        if canary_key::is_reserved(key) {
+            return Err(StoreError::Malformed("reserved lifecycle key".into()).into());
+        }
         let bytes = serde_json::to_vec(&input.request)
             .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
         let fingerprint = Binary {

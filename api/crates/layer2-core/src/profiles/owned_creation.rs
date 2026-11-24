@@ -411,7 +411,8 @@ fn profile_id(
     Ok(format!("{kind}_{}", &digest[..32]))
 }
 
-fn profile_id_for_owner(
+/// Predict a private publication identity using the same inputs as the publisher.
+pub fn profile_id_for_owner(
     owner: &crate::SubjectId,
     kind: &str,
     key: &str,

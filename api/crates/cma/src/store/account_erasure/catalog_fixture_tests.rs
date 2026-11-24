@@ -62,6 +62,7 @@ fn fixtures(subject: &str, suffix: &str) -> Vec<(&'static str, Document)> {
     for collection in [
         "agent_message_feedback",
         "agent_lifecycle_operations",
+        "runtime_canary_grants",
         "agent_reuse_bindings",
         "event_worker_profiles",
         "event_worker_profile_revisions",
