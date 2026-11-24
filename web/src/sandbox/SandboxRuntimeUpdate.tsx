@@ -26,9 +26,22 @@ const statusCopy = {
   },
   failed: {
     title: 'Runtime update needs attention',
-    detail: 'The update could not finish. Review the reported reason and retry when available.',
+    detail: 'The runtime update stopped at its current step.',
   },
 } as const;
+
+const legacyFailureMessage =
+  'The runtime update paused safely. Your home and conversations are retained. Retry the update to continue.';
+
+function failedUpdateMessage(update: RuntimeUpdate, canRetry: boolean): string {
+  const detail = statusCopy.failed.detail;
+  if (update.canUpdate && !canRetry) return `${detail} Retry is unavailable in this client.`;
+  const reported = update.failure?.message;
+  if (reported && reported !== legacyFailureMessage) return reported;
+  return canRetry
+    ? `${detail} Retry the runtime update to continue.`
+    : `${detail} Contact the deployment operator for recovery help.`;
+}
 
 export function SandboxRuntimeUpdate({
   client,
@@ -84,6 +97,10 @@ export function SandboxRuntimeUpdate({
   const message = !submitting ? command.intent?.message : undefined;
   const target = unresolved ? command.intent?.target : current.targetVersion;
   const unavailable = client.updateSandboxRuntime === undefined || stale || busy || submitting;
+  const failure =
+    state === 'failed' && !unresolved && !submitting && !stale && !busy
+      ? failedUpdateMessage(current, current.canUpdate && !unavailable)
+      : undefined;
 
   return (
     <section className="sandbox-page__band" aria-label="Runtime">
@@ -112,22 +129,20 @@ export function SandboxRuntimeUpdate({
           <p className="sandbox-recovery__title" role="status">
             {complete && !submitting && !lifecycle ? 'Runtime updated' : title}
           </p>
-          <p key={title} className="sandbox-recovery__stage">
-            {lifecycle?.detail ??
-              (submitting
-                ? 'Saving your update request.'
-                : unresolved
-                  ? 'The result of your update request has not been confirmed.'
-                  : copy.detail)}
-          </p>
+          {lifecycle || !failure ? (
+            <p key={title} className="sandbox-recovery__stage">
+              {lifecycle?.detail ??
+                (submitting
+                  ? 'Saving your update request.'
+                  : unresolved
+                    ? 'The result of your update request has not been confirmed.'
+                    : copy.detail)}
+            </p>
+          ) : null}
           {current.preservesHome && sandboxStatus !== 'retired' && sandboxStatus !== 'retiring' ? (
             <p>Your existing home disk, files and conversations are preserved.</p>
           ) : null}
-          <Presence>
-            {state === 'failed' && current.failure ? (
-              <p role="alert">{current.failure.message}</p>
-            ) : null}
-          </Presence>
+          <Presence>{failure ? <p role="alert">{failure}</p> : null}</Presence>
           {current.completedAt !== undefined ? (
             <p>
               Last updated{' '}

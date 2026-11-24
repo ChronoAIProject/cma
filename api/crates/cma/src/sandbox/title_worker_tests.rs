@@ -364,7 +364,7 @@ async fn own_account_runtime_generates_with_scoped_service_custody() {
     let endpoint = Arc::new(PlatformTitleEndpoint {
         platform_base_url: format!("http://{}", listener.local_addr().unwrap()),
     });
-    let router = Router::new().route("/api/v1/proxy/s/chrono-llm/v1/responses", post(scoped));
+    let router = Router::new().route("/api/v1/proxy/s/chrono-llm/responses", post(scoped));
     let server = tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
     });
@@ -561,7 +561,7 @@ fn snapshot_identity_binds_owner_lineage_runtime_and_credential() {
 }
 
 #[path = "title_worker_tests/fixtures.rs"]
-mod fixtures;
+pub(super) mod fixtures;
 use fixtures::{agent, sandbox};
 
 #[tokio::test]
