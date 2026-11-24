@@ -1,5 +1,6 @@
 //! Issue and revoke bounded, owner-scoped runtime canary grants.
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 pub(crate) struct PrepareCanaryGrant {
     pub(crate) owner: SubjectId,
@@ -190,7 +191,7 @@ async fn finish_grant_write(
     let value = match mutation {
         Ok(value) => value,
         Err(error) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(error);
         }
     };

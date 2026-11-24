@@ -1,5 +1,6 @@
 //! Redeem a current owner grant with one majority-committed lifecycle operation.
 use super::{policy::*, *};
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{commit_transaction, is_confirmed_body_retry, start_transaction, CommitOutcome};
 use mongodb::{bson::Timestamp, ClientSession};
 
@@ -59,12 +60,12 @@ impl MongoAgentLifecycleStore {
                 .await
             {
                 Ok(Mutation::Replay(record)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Ok(CreateResult::Existing(record));
                 }
                 Ok(Mutation::Fresh(receipt)) => receipt,
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     match &error {
                         CanaryWriteError::Driver(error) if is_confirmed_body_retry(error) => {
                             continue
