@@ -8,8 +8,8 @@ use super::{
         validate_admission, validate_custom_auth, validate_https_url, validate_nonempty_unique,
         validate_relay_identity,
     },
-    ChannelSecrets, Platform, Source, MAX_EXTENDED_SOURCES, MAX_PROMPT_TEMPLATE_BYTES,
-    MAX_ROUTE_IDS, MAX_SOURCES,
+    AdmissionPolicy, ChannelSecrets, GroupAdmission, IdentityAdmission, Platform, Source,
+    MAX_EXTENDED_SOURCES, MAX_PROMPT_TEMPLATE_BYTES, MAX_ROUTE_IDS, MAX_SOURCES,
 };
 use crate::{require_string, ValidationError};
 
@@ -229,12 +229,41 @@ fn validate_source(
             admission,
             message_events,
             channel_posts,
+            member_join_chat_ids,
         } => {
             if *channel_posts && !message_events {
                 return Err(ValidationError::new(
                     format!("{pointer}/channel_posts"),
                     "native channel posts require retained message_events routing",
                 ));
+            }
+            if !member_join_chat_ids.is_empty() {
+                let field = format!("{pointer}/member_join_chat_ids");
+                validate_nonempty_unique(member_join_chat_ids, &field, 16)?;
+                let AdmissionPolicy::Scoped {
+                    senders: IdentityAdmission::Open,
+                    chats: IdentityAdmission::Allowlist(allowed_chats),
+                    groups: GroupAdmission::All,
+                    ..
+                } = admission
+                else {
+                    return Err(ValidationError::new(
+                        &field,
+                        "member join events require open senders and explicitly allowed groups",
+                    ));
+                };
+                if !message_events
+                    || member_join_chat_ids.iter().any(|id| {
+                        !id.parse::<i64>()
+                            .is_ok_and(|number| number < 0 && number.to_string() == *id)
+                            || !allowed_chats.contains(id)
+                    })
+                {
+                    return Err(ValidationError::new(
+                        &field,
+                        "member join events require message_events and exact allowed Telegram group IDs",
+                    ));
+                }
             }
             telegram::validate(bot_id, bot_username.as_deref(), admission, secrets, pointer)
         }

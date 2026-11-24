@@ -285,7 +285,7 @@ impl App {
             ))),
             discord_thread_history: None,
             complete_replies_enabled: false,
-            commonmark_relay_enabled: false,
+            commonmark_relay: Default::default(),
             telegram_effects_issuance_enabled: false,
             native_telegram_media_controls_enabled: false,
             native_telegram_media_control_edits_enabled: false,

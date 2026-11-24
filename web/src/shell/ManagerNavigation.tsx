@@ -5,7 +5,7 @@ import { SkeletonRows } from '../ui/Skeleton';
 import type { AgentDetail } from '../api/types';
 import type { AppRoute } from '../routing/routes';
 import type { ResourceViewsClient } from '../resources/client';
-import { NavigationScopePicker, type NavigationScopeChoices } from '../resources/NavigationScope';
+import { NavigationScopePicker, useNavigationScope } from '../resources/NavigationScope';
 import { ScopedNavigation } from '../resources/ScopedNavigation';
 import { Button } from '../ui/Button';
 import { sameAgent } from '../agent/status';
@@ -25,7 +25,6 @@ export function ManagerNavigation(props: Parameters<typeof ViewerNavigation>[0])
 function ViewerNavigation({
   client,
   scope,
-  choices,
   route,
   viewerId,
   navigation,
@@ -45,7 +44,6 @@ function ViewerNavigation({
 }: {
   readonly client?: ResourceViewsClient;
   readonly scope: string;
-  readonly choices: NavigationScopeChoices;
   readonly route: AppRoute;
   readonly viewerId: string;
   readonly navigation: NavigationState & { refresh: () => void };
@@ -64,6 +62,7 @@ function ViewerNavigation({
   readonly onAction: (action: TreeAction) => void;
 }) {
   const [view, setView] = useState<NavigationView>('agent');
+  const [environmentScope, setEnvironmentScope] = useState('');
   const settingsHost = useContext(NavigationSettingsContext);
   const sidebar = useContext(SidebarContext);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -74,7 +73,10 @@ function ViewerNavigation({
   const taskScrollTop = useRef(0);
   const taskPanel = useRef<HTMLDivElement>(null);
   const taskFocus = useRef<HTMLElement | null>(null);
-  const filters = useNavigationFilterState(viewerId, scope);
+  // Detail routes can choose a Tasks scope. Entering Environments starts with owned Sandboxes.
+  const activeScope = view === 'sandbox' ? environmentScope : scope;
+  const choices = useNavigationScope(client, activeScope);
+  const filters = useNavigationFilterState(viewerId, activeScope);
   const { statuses } = filters;
   const [taskReturn, setTaskReturn] = useState({
     route,
@@ -85,6 +87,10 @@ function ViewerNavigation({
   const modeChanged = useRef(false);
   const refreshRequestedFor = useRef<string | undefined>(undefined);
   const status = statuses[view];
+  function selectScope(next: string) {
+    if (view === 'sandbox') setEnvironmentScope(next);
+    onScope(next);
+  }
   function selectView(next: NavigationView) {
     if (sidebar?.collapsed) {
       modeChanged.current = true;
@@ -103,6 +109,7 @@ function ViewerNavigation({
       });
       setFiltersOpen(false);
       setEnvironmentsOpened(true);
+      if (scope !== environmentScope) onScope(environmentScope);
     } else {
       if (scope !== taskReturn.scope) onScope(taskReturn.scope);
       if (route !== taskReturn.route) onRestoreTaskRoute(taskReturn.route);
@@ -135,16 +142,15 @@ function ViewerNavigation({
     if (scrollport.current)
       scrollport.current.scrollTop = view === 'agent' ? taskReturn.scrollTop : 0;
   }, [view, sidebar?.collapsed, taskReturn.scrollTop]);
+  const displayedTasks = view === 'sandbox' ? taskReturn : { route, scope, status: statuses.agent };
   const navigationPanel = (panelView: NavigationView) => (
     <ScopedNavigation
-      route={panelView === 'agent' && view === 'sandbox' ? taskReturn.route : route}
+      route={panelView === 'agent' ? displayedTasks.route : route}
       client={client}
-      scope={panelView === 'agent' && view === 'sandbox' ? taskReturn.scope : scope}
+      scope={panelView === 'agent' ? displayedTasks.scope : environmentScope}
       choices={choices}
       view={panelView}
-      statusFilter={
-        panelView === 'agent' && view === 'sandbox' ? taskReturn.status : statuses[panelView]
-      }
+      statusFilter={panelView === 'agent' ? displayedTasks.status : statuses.sandbox}
       onNavigate={onNavigate}
       personal={
         navigation.status === 'ready' ? (
@@ -164,11 +170,7 @@ function ViewerNavigation({
               resourceClient={client}
               viewerId={viewerId}
               view={panelView}
-              statusFilter={
-                panelView === 'agent' && view === 'sandbox'
-                  ? taskReturn.status
-                  : statuses[panelView]
-              }
+              statusFilter={panelView === 'agent' ? displayedTasks.status : statuses.sandbox}
               items={navigation.items.map((item) => ({
                 ...item,
                 workspaces: item.workspaces.map((workspace) => ({
@@ -257,15 +259,15 @@ function ViewerNavigation({
       <NavigationFilters
         scope={
           client === undefined ? undefined : (
-            <NavigationScopePicker choices={choices} value={scope} onChange={onScope} />
+            <NavigationScopePicker choices={choices} value={activeScope} onChange={selectScope} />
           )
         }
         scopeSummary={
           client === undefined
             ? undefined
-            : (choices.options.find((option) => option.value === scope)?.label ?? 'Personal')
+            : (choices.options.find((option) => option.value === activeScope)?.label ?? 'Personal')
         }
-        scopeActive={client !== undefined && scope !== ''}
+        scopeActive={client !== undefined && activeScope !== ''}
         view={view}
         onView={selectView}
         open={filtersOpen}
@@ -274,7 +276,7 @@ function ViewerNavigation({
         onStatus={(next) => filters.select(view, next)}
         onClear={() => {
           filters.clear();
-          if (scope !== '') onScope('');
+          if (activeScope !== '') selectScope('');
         }}
       />
       {filters.unavailable ? (

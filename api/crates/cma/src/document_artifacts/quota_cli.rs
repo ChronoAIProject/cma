@@ -48,6 +48,7 @@ async fn execute(arguments: &[String]) -> Result<serde_json::Value, &'static str
     let mut options = ClientOptions::parse(uri)
         .await
         .map_err(|_| "database configuration")?;
+    crate::store::transaction_barrier::bind(&mut options, &name);
     options.server_selection_timeout = Some(IO);
     options.connect_timeout = Some(IO);
     let database = Client::with_options(options)

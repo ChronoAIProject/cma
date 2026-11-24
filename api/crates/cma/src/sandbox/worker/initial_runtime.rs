@@ -37,7 +37,8 @@ impl SandboxWorker {
         let adoption = RuntimeAdoptionRequest::new(
             binding.provision_generation.unwrap_or(1),
             RuntimeHandle::new(&binding.runtime_id),
-            sandbox_spec(&sandbox, &self.config.deployment_id),
+            sandbox_spec(&sandbox, &self.config.deployment_id)
+                .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?,
         )
         .with_expected_image(&binding.runtime_version);
         let transfer = completed_digest.is_some_and(|digest| {
