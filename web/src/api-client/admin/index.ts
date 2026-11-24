@@ -409,6 +409,14 @@ export class Administration {
   readRuntimeInventory(options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/runtime-inventory', runtimeInventory, options);
   }
+  searchActivityActors(textQuery: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      query('/api/v1/admin/activity/actors', { q: textQuery }),
+      array(object({ subject: text, display_name: nullable(text) })),
+      options,
+    );
+  }
   /** Table fields only; use listActivity for the complete retained audit details. */
   listActivitySummary(options: ActivityListOptions = {}) {
     bound(options);

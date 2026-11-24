@@ -33,6 +33,12 @@ pub(crate) struct AdminAlwaysOnRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct RetireParameters {
+    expected_revision: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SandboxPageParams {
     owner: Option<String>,
     status: Option<SandboxStatus>,
@@ -307,15 +313,31 @@ pub(crate) async fn events(
         .map_err(ProtectedProblem::sandbox)
 }
 
-#[utoipa::path(post, path = "/api/v1/admin/sandboxes/{id}/retire", tag = "administration", params(("id" = String, Path)), responses((status = 200, body = Object), (status = 404, body = crate::rest::ProblemDocument)))]
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/sandboxes/{id}/retire",
+    tag = "administration",
+    params(("id" = String, Path), ("expected_revision" = Option<u64>, Query)),
+    responses(
+        (status = 200, body = Object),
+        (status = 400, body = crate::rest::ProblemDocument),
+        (status = 404, body = crate::rest::ProblemDocument),
+        (status = 409, body = crate::rest::ProblemDocument)
+    )
+)]
 pub(crate) async fn retire(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
+    params: Result<Query<RetireParameters>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<Sandbox>, ProtectedProblem> {
+    if !caller.authorization.allows(Capability::ControlAnySandbox) {
+        return Err(ProtectedProblem::Hidden(ProtectedKind::Sandbox));
+    }
+    let Query(params) = params.map_err(|_| ProtectedProblem::InvalidRequest)?;
     state
         .sandboxes
-        .retire_sandbox(&caller, &SandboxId(id))
+        .retire_sandbox(&caller, &SandboxId(id), params.expected_revision)
         .await
         .map(|result| Json(result.sandbox))
         .map_err(ProtectedProblem::sandbox)

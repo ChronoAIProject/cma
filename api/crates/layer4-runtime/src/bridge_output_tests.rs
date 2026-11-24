@@ -28,7 +28,17 @@ async fn cumulative_acknowledgement_releases_only_its_prefix_and_accepts_duplica
         output.retain(frame).await;
     }
     assert!(output.acknowledge(output.stream_id(), 2).await);
+    let acknowledged = output.recovery_evidence().await.unwrap();
+    assert_eq!(acknowledged.boundary.acknowledged_through, 2);
+    assert_eq!(
+        acknowledged.acknowledged_payload_sha256,
+        Some(Sha256::digest(b"two").into())
+    );
     assert!(output.acknowledge(output.stream_id(), 1).await);
+    assert!(output.acknowledge(output.stream_id(), 2).await);
+    assert!(!output.acknowledge(output.stream_id(), 4).await);
+    assert!(!output.acknowledge(Uuid::new_v4(), 3).await);
+    assert_eq!(output.recovery_evidence().await.unwrap(), acknowledged);
     let frames = output.snapshot(0).await.unwrap().frames;
     assert_eq!(frames.len(), 1);
     assert_eq!(frames[0].cursor, 3);
@@ -37,6 +47,13 @@ async fn cumulative_acknowledgement_releases_only_its_prefix_and_accepts_duplica
     assert_eq!(output.journal.lock().await.bytes, 0);
     output.retain(b"four").await;
     assert_eq!(output.snapshot(0).await.unwrap().frames[0].cursor, 4);
+    let acknowledged = output.recovery_evidence().await.unwrap();
+    assert_eq!(acknowledged.boundary.acknowledged_through, 3);
+    assert_eq!(acknowledged.boundary.observed_through, 4);
+    assert_eq!(
+        acknowledged.acknowledged_payload_sha256,
+        Some(Sha256::digest(b"three").into())
+    );
 }
 
 #[tokio::test]
@@ -174,6 +191,8 @@ async fn choosing_legacy_output_releases_a_full_unselected_window() {
         ])
         .await;
     output.select_legacy();
+    assert!(!output.acknowledge(output.stream_id(), 1).await);
+    assert!(output.recovery_evidence().await.is_none());
     tokio::time::timeout(
         std::time::Duration::from_millis(20),
         output.retain(b"legacy frame"),
@@ -186,7 +205,40 @@ async fn choosing_legacy_output_releases_a_full_unselected_window() {
 async fn an_oversized_or_unreadable_native_frame_permanently_invalidates_replay() {
     let output = OutputRetention::default();
     output.retain(b"valid prefix").await;
+    assert!(output.acknowledge(output.stream_id(), 1).await);
+    assert!(output.recovery_evidence().await.is_some());
     output.gap().await;
     output.retain(b"later frame").await;
     assert_eq!(output.snapshot(0).await.err(), Some(2));
+    assert!(output.recovery_evidence().await.is_none());
+}
+
+#[tokio::test]
+async fn a_new_stream_has_no_acknowledged_payload_or_prior_frames() {
+    let prior = OutputRetention::default();
+    let initial = prior.recovery_evidence().await.unwrap();
+    assert_eq!(initial.boundary.observed_through, 0);
+    assert_eq!(initial.boundary.acknowledged_through, 0);
+    assert_eq!(initial.acknowledged_payload_sha256, None);
+
+    prior.retain(b"earlier turn").await;
+    assert!(prior.acknowledge(prior.stream_id(), 1).await);
+    let no_more_frames = prior.recovery_evidence().await.unwrap();
+    assert_eq!(
+        no_more_frames.boundary.stream_id,
+        initial.boundary.stream_id
+    );
+    assert_eq!(no_more_frames.boundary.observed_through, 1);
+    assert_eq!(no_more_frames.boundary.acknowledged_through, 1);
+    assert_eq!(
+        no_more_frames.acknowledged_payload_sha256,
+        Some(Sha256::digest(b"earlier turn").into())
+    );
+
+    let replacement = OutputRetention::default();
+    assert!(!replacement.acknowledge(prior.stream_id(), 1).await);
+    let blank = replacement.recovery_evidence().await.unwrap();
+    assert_ne!(blank.boundary.stream_id, initial.boundary.stream_id);
+    assert_eq!(blank.boundary.observed_through, 0);
+    assert_eq!(blank.acknowledged_payload_sha256, None);
 }
