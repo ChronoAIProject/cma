@@ -60,10 +60,11 @@ pub(crate) async fn admit_machine_for_pointer_fixture(
     let mut lifecycle = crate::store::MongoAgentLifecycleStore::open(&database).await?;
     lifecycle.released_lanes = store.released_lanes.clone();
     let result = lifecycle
-        .create_against_release(
+        .create_with_submission(
             &SubjectId::new(owner),
             key,
             lifecycle_input(&plan),
+            None,
             Some((release, ReleasedLane::Machine)),
         )
         .await?;

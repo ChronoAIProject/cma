@@ -32,6 +32,7 @@ impl InlineAgentLifecycle {
         caller: &Caller,
         request: &AgentLifecycleCreateRequest,
         key: &str,
+        expected_operation: Option<&str>,
     ) -> Result<Option<AgentLifecycleCreateReceipt>, AgentLifecycleProvisioningError> {
         let Some(record) = self
             .operations
@@ -41,6 +42,9 @@ impl InlineAgentLifecycle {
         else {
             return Ok(None);
         };
+        if expected_operation.is_some_and(|expected| expected != record.id) {
+            return Err(AgentLifecycleProvisioningError::Unavailable);
+        }
         self.operations
             .resume_connection(&caller.subject, &record.id)
             .await
@@ -66,7 +70,7 @@ impl InlineAgentLifecycle {
             return Ok(None);
         }
         // Another caller with this exact intent may have committed during the read.
-        if let Some(receipt) = self.replay_receipt(caller, request, key).await? {
+        if let Some(receipt) = self.replay_receipt(caller, request, key, None).await? {
             return Ok(Some(receipt));
         }
         Err(AgentLifecycleProvisioningError::SandboxLimitReached {
@@ -101,7 +105,10 @@ impl InlineAgentLifecycle {
         context: Option<&CallerContext>,
         delegated_credential: Option<&str>,
         request: AgentLifecycleCreateRequest,
-        idempotency_key: &str,
+        (idempotency_key, submission): (
+            &str,
+            Option<layer1_public::rest::creation_outcomes::Submission>,
+        ),
         instructions: &str,
     ) -> Result<CreateResult, AgentLifecycleProvisioningError> {
         use crate::store::LifecycleCreateError;
@@ -160,10 +167,11 @@ impl InlineAgentLifecycle {
             };
             match self
                 .operations
-                .create_against_release(
+                .create_with_submission(
                     &caller.subject,
                     idempotency_key,
                     input,
+                    submission.clone(),
                     captured.as_ref().zip(lane),
                 )
                 .await

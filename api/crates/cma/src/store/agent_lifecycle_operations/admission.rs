@@ -16,6 +16,24 @@ pub(crate) enum LifecycleCreateError {
 }
 
 impl MongoAgentLifecycleStore {
+    #[cfg(test)]
+    pub(crate) async fn create(
+        &self,
+        owner: &SubjectId,
+        key: &str,
+        input: LifecycleInput,
+    ) -> Result<CreateResult, LifecycleCreateError> {
+        self.create_with_submission(owner, key, input, None, None)
+            .await
+    }
+
+    pub(crate) fn supports_creation(
+        &self,
+        fence: &layer2_core::sandbox::store::CreationFence,
+    ) -> bool {
+        self.creation_writer_epoch.as_deref() == Some(fence.epoch.as_str())
+    }
+
     pub(super) async fn finish_create(
         &self,
         mut record: LifecycleRecord,
@@ -41,9 +59,17 @@ impl MongoAgentLifecycleStore {
             }
             Err(error) => return Err(StoreError::Unavailable(error.to_string()).into()),
         }
-        let inserted = if let (Some(store), Some((snapshot, lane))) =
-            (&self.released_lanes, release)
+        if record
+            .creation_fence
+            .as_ref()
+            .is_some_and(|fence| !self.supports_creation(fence))
         {
+            return Err(
+                StoreError::Unavailable("creation submission epoch is unsupported".into()).into(),
+            );
+        }
+        let release = self.released_lanes.as_ref().zip(release);
+        if let Some((_, (snapshot, lane))) = release {
             let image = match lane {
                 layer2_core::released_runtime::ReleasedLane::Agent => Some(snapshot.agent.as_str()),
                 layer2_core::released_runtime::ReleasedLane::Machine => snapshot.machine.as_deref(),
@@ -58,16 +84,45 @@ impl MongoAgentLifecycleStore {
                 .into());
             }
             record.released_lane = Some(lane);
-            let mut session = store
-                .session()
+        }
+
+        let inserted = if release.is_some() || record.creation_fence.is_some() {
+            use crate::store::sandbox_mongo as transaction;
+
+            let database = self
+                .operations
+                .client()
+                .database(&self.operations.namespace().db);
+            let mut session = database.client().start_session().await.map_err(driver)?;
+            transaction::start_transaction(&mut session)
                 .await
-                .map_err(|error| StoreError::Unavailable(error.to_string()))?;
-            match store.fence_snapshot(snapshot, lane, &mut session).await {
-                Ok(()) => {}
-                Err(SandboxStoreError::Conflict) => {
-                    return Err(LifecycleCreateError::StaleReleasedRuntime)
+                .map_err(driver)?;
+            if let Some((store, (snapshot, lane))) = release {
+                match store.fence_snapshot(snapshot, lane, &mut session).await {
+                    Ok(()) => {}
+                    Err(SandboxStoreError::Conflict) => {
+                        return Err(LifecycleCreateError::StaleReleasedRuntime);
+                    }
+                    Err(error) => return Err(StoreError::Unavailable(error.to_string()).into()),
                 }
-                Err(error) => return Err(StoreError::Unavailable(error.to_string()).into()),
+            }
+            if let Some(fence) = &record.creation_fence {
+                let linked = super::super::creation_outcomes::link_operation(
+                    &database,
+                    &record.owner,
+                    fence,
+                    &record.id,
+                    &mut session,
+                )
+                .await
+                .map_err(driver)?;
+                if !linked {
+                    session.abort_guarded().await.map_err(driver)?;
+                    return Err(StoreError::Unavailable(
+                        "creation submission fence is no longer held".into(),
+                    )
+                    .into());
+                }
             }
             match self
                 .operations
@@ -75,7 +130,12 @@ impl MongoAgentLifecycleStore {
                 .session(&mut session)
                 .await
             {
-                Ok(_) => session.commit_guarded().await,
+                Ok(_) => match transaction::commit_transaction(&mut session).await {
+                    transaction::CommitOutcome::Committed => Ok(()),
+                    transaction::CommitOutcome::Retry(error)
+                    | transaction::CommitOutcome::Unknown(error)
+                    | transaction::CommitOutcome::Failed(error) => Err(error),
+                },
                 Err(error) => Err(error),
             }
         } else {
@@ -98,10 +158,40 @@ impl MongoAgentLifecycleStore {
                     StoreError::Unavailable("lifecycle operation raced out of view".into()).into()
                 })
             }
-            Err(error) if error.contains_label("TransientTransactionError") => {
+            Err(error)
+                if release.is_some() && error.contains_label("TransientTransactionError") =>
+            {
                 Err(LifecycleCreateError::StaleReleasedRuntime)
             }
             Err(error) => Err(driver(error).into()),
         }
+    }
+
+    pub(crate) async fn fail_fenced_creation(
+        &self,
+        owner: &SubjectId,
+        lease: &LifecycleLease,
+        fence: &layer2_core::sandbox::store::CreationFence,
+        message: &str,
+        failure: Option<layer1_public::rest::AgentLifecycleFailure>,
+    ) -> Result<bool, StoreError> {
+        if !self.supports_creation(fence) {
+            return Err(StoreError::Unavailable(
+                "creation submission epoch is unsupported".into(),
+            ));
+        }
+        let database = self
+            .operations
+            .client()
+            .database(&self.operations.namespace().db);
+        super::super::creation_outcomes::refuse_with_operation(
+            &database,
+            owner,
+            fence,
+            &lease.id,
+            &lease.token,
+            super::writes::failure_update(message, failure)?,
+        )
+        .await
     }
 }

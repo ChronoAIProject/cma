@@ -105,10 +105,11 @@ async fn queue_desktop(
         actor: None,
     };
     let CreateResult::Created(operation_id) = operations
-        .create_against_release(
+        .create_with_submission(
             &lifecycle::owner().subject,
             "released-desktop",
             input,
+            None,
             release.map(|release| (release, lane.into())),
         )
         .await

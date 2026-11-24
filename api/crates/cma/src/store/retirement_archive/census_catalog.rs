@@ -170,6 +170,7 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("resource_share_commands", Sandbox(&["sandbox_id"])),
     ("resource_shares", Sandbox(&["sandbox_id"])),
     ("sandbox_admissions", Independent),
+    (super::super::creation_outcomes::COLLECTION, Independent),
     ("sandbox_billing_state", Sandbox(&["_id"])),
     ("sandbox_colors", Empty),
     ("sandbox_controls", Sandbox(&["sandbox_id"])),

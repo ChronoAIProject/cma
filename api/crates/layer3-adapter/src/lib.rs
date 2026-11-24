@@ -196,7 +196,9 @@ pub use runtime_startup::{RuntimeStartupFailure, RuntimeStartupFailureClass, Run
 pub use runtime_startup_policy::{
     RuntimeStartupPolicyObservation, RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE,
 };
-pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
+pub use runtime_status::{
+    valid_home_identity, AgentRestartRuntime, RuntimeStatus, RuntimeStatusRequest,
+};
 pub use tool_proxy::{ToolProxyRequest, ToolProxyStatus, LOCAL_TOOL_PROXY_URL};
 pub use workspace::{
     SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
