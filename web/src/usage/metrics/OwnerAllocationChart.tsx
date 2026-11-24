@@ -1,6 +1,7 @@
 import './OwnerAllocationChart.css';
+import { MeasuredChart } from './MeasuredChart';
 import { useEffect, useId, useRef, useState } from 'react';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from 'recharts';
 import { Picker } from '../../ui/Picker';
 import { Button } from '../../ui/Button';
 import { OwnerAllocationTable } from './OwnerAllocationTable';
@@ -115,45 +116,43 @@ export function OwnerAllocationChart({
                 className="usage-owner-allocation__window"
                 style={{ top: start * ROW, height: rows.length * ROW }}
               >
-                <div aria-hidden="true" className="usage-owner-allocation__bars">
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-                    <BarChart
-                      data={rows}
-                      layout="vertical"
-                      margin={{ left: 136, right: 24, top: 0, bottom: 0 }}
-                      accessibilityLayer={false}
-                    >
-                      <CartesianGrid
-                        horizontal={false}
-                        stroke="var(--dsw-alias-border-l2)"
-                        strokeDasharray="3 3"
-                      />
-                      <XAxis type="number" domain={[0, max]} ticks={ticks} hide />
-                      <YAxis type="category" dataKey="position" hide />
-                      <Tooltip
-                        labelFormatter={(position) => {
-                          const row = rows.find((row) => row.position === Number(position));
-                          return row ? ownerAllocationText(row) : 'Owner';
-                        }}
-                        formatter={(value) => [displayQuantity(Number(value)), unit]}
-                        cursor={{ fill: 'var(--dsw-alias-interactive-bg-hover)' }}
-                        contentStyle={{
-                          background: 'var(--dsw-alias-bg-layer-2)',
-                          color: 'var(--dsw-alias-label-primary)',
-                          borderColor: 'var(--dsw-alias-border-l2)',
-                          borderRadius: 8,
-                        }}
-                      />
-                      <Bar
-                        dataKey="value"
-                        fill="var(--dsw-alias-brand-primary)"
-                        barSize={16}
-                        radius={[0, 4, 4, 0]}
-                        isAnimationActive={false}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                <MeasuredChart className="usage-owner-allocation__bars">
+                  <BarChart
+                    data={rows}
+                    layout="vertical"
+                    margin={{ left: 136, right: 24, top: 0, bottom: 0 }}
+                    accessibilityLayer={false}
+                  >
+                    <CartesianGrid
+                      horizontal={false}
+                      stroke="var(--dsw-alias-border-l2)"
+                      strokeDasharray="3 3"
+                    />
+                    <XAxis type="number" domain={[0, max]} ticks={ticks} hide />
+                    <YAxis type="category" dataKey="position" hide />
+                    <Tooltip
+                      labelFormatter={(position) => {
+                        const row = rows.find((row) => row.position === Number(position));
+                        return row ? ownerAllocationText(row) : 'Owner';
+                      }}
+                      formatter={(value) => [displayQuantity(Number(value)), unit]}
+                      cursor={{ fill: 'var(--dsw-alias-interactive-bg-hover)' }}
+                      contentStyle={{
+                        background: 'var(--dsw-alias-bg-layer-2)',
+                        color: 'var(--dsw-alias-label-primary)',
+                        borderColor: 'var(--dsw-alias-border-l2)',
+                        borderRadius: 8,
+                      }}
+                    />
+                    <Bar
+                      dataKey="value"
+                      fill="var(--dsw-alias-brand-primary)"
+                      barSize={16}
+                      radius={[0, 4, 4, 0]}
+                      isAnimationActive={false}
+                    />
+                  </BarChart>
+                </MeasuredChart>
                 <ol
                   className="usage-owner-allocation__labels"
                   aria-label="Owner allocation values"
@@ -177,30 +176,28 @@ export function OwnerAllocationChart({
               </div>
             </div>
           </div>
-          <div className="usage-owner-allocation__axis" aria-hidden="true">
-            <ResponsiveContainer width="100%" height={36} minWidth={0}>
-              <BarChart
-                data={[{ value: max }]}
-                layout="vertical"
-                margin={{ left: 136, right: 24, top: 0, bottom: 0 }}
-                accessibilityLayer={false}
-              >
-                <XAxis
-                  type="number"
-                  domain={[0, max]}
-                  ticks={ticks}
-                  tick={{ fill: 'var(--dsw-alias-label-secondary)', fontSize: 12 }}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(value: number) =>
-                    Intl.NumberFormat('en-SG', { notation: 'compact' }).format(value)
-                  }
-                />
-                <YAxis type="category" hide />
-                <Bar dataKey="value" fill="transparent" isAnimationActive={false} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <MeasuredChart className="usage-owner-allocation__axis">
+            <BarChart
+              data={[{ value: max }]}
+              layout="vertical"
+              margin={{ left: 136, right: 24, top: 0, bottom: 0 }}
+              accessibilityLayer={false}
+            >
+              <XAxis
+                type="number"
+                domain={[0, max]}
+                ticks={ticks}
+                tick={{ fill: 'var(--dsw-alias-label-secondary)', fontSize: 12 }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(value: number) =>
+                  Intl.NumberFormat('en-SG', { notation: 'compact' }).format(value)
+                }
+              />
+              <YAxis type="category" hide />
+              <Bar dataKey="value" fill="transparent" isAnimationActive={false} />
+            </BarChart>
+          </MeasuredChart>
         </div>
       )}
       {count === 'all' && data.next && (

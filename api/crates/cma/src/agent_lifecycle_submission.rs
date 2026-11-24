@@ -61,9 +61,12 @@ impl InlineAgentLifecycle {
                 .await?;
         }
         let profile = request.profile.clone().unwrap_or_default();
+        let instructions = guidance::admission_instructions(
+            self.session_guidance_v4.get().copied().unwrap_or_default(),
+        );
         agent_content(&guidance::profile_with_instructions(
             profile.clone(),
-            Some(guidance::managed_v3()),
+            Some(instructions),
         ))?;
         services(&profile.permissions)?;
         if request.machine_included && request.image.is_some() {
@@ -100,7 +103,7 @@ impl InlineAgentLifecycle {
             .await?;
         let input = LifecycleInput {
             behavior: LifecycleBehavior::PromptRepository,
-            managed_agent_instructions: Some(guidance::managed_v3().into()),
+            managed_agent_instructions: Some(instructions.into()),
             setup_message: Some(validation::setup_message(&request)),
             request,
             resolved_image,

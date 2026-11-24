@@ -63,6 +63,7 @@ impl ConnectionSweep {
             rewinds = sweep.rewinds,
             ownership_attempted = counts.ownership_attempted,
             ownership_skipped = counts.ownership_skipped,
+            foreign_ownership_deferred = counts.foreign_ownership_deferred,
             recovery_deferred = counts.recovery_deferred,
             context_runtime_deferred = counts.context_runtime_deferred,
             context_current = counts.context_current,
@@ -171,6 +172,14 @@ impl AgentWorker {
         {
             counts.ownership_skipped += 1;
             counts.recovery_deferred += 1;
+            return Ok(());
+        }
+        if self.config.defer_foreign_reconciliation
+            && coordinator
+                .observe_foreign_reconciliation_owner(&candidate.agent_id)
+                .await
+        {
+            counts.foreign_ownership_deferred += 1;
             return Ok(());
         }
         counts.ownership_attempted += 1;
@@ -318,6 +327,7 @@ impl AgentWorker {
 struct ReconcileCounts {
     ownership_attempted: u64,
     ownership_skipped: u64,
+    foreign_ownership_deferred: u64,
     scheduled: usize,
     context_runtime_deferred: u64,
     recovery_deferred: u64,
