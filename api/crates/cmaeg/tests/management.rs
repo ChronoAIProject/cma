@@ -106,11 +106,16 @@ fn management_state(
 async fn serve_app(
     state: ManagementState,
 ) -> (String, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
+    serve_router(router_with_state(state)).await
+}
+async fn serve_router(
+    router: axum::Router,
+) -> (String, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (shutdown, signal) = oneshot::channel();
     let task = tokio::spawn(async move {
-        serve(listener, router_with_state(state))
+        serve(listener, router)
             .with_graceful_shutdown(async move {
                 let _ = signal.await;
             })
