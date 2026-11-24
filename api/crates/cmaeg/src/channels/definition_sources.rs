@@ -184,6 +184,7 @@ pub(super) fn build_sources(
                 verify_raw_event,
                 lark_message_effects,
                 lark_resources,
+                member_join_chat_ids,
                 admission,
             } => Source::NyxidRelay {
                 issuer: issuer.clone(),
@@ -197,6 +198,31 @@ pub(super) fn build_sources(
                 verify_raw_event: *verify_raw_event,
                 lark_message_effects: lark_message_effects.clone(),
                 lark_resources: lark_resources.clone(),
+                member_join_chat_ids: member_join_chat_ids.clone().unwrap_or_else(|| {
+                    current
+                        .and_then(|definition| {
+                            definition.sources.iter().find_map(|source| match source {
+                                Source::NyxidRelay {
+                                    issuer: saved_issuer,
+                                    key_id: saved_key,
+                                    route_ids: saved_routes,
+                                    bot_id: saved_bot,
+                                    platform: saved_platform,
+                                    member_join_chat_ids,
+                                    ..
+                                } if saved_issuer == issuer
+                                    && saved_key == key_id
+                                    && saved_routes == route_ids
+                                    && saved_bot == bot_id
+                                    && saved_platform == platform =>
+                                {
+                                    Some(member_join_chat_ids.clone())
+                                }
+                                _ => None,
+                            })
+                        })
+                        .unwrap_or_default()
+                }),
                 admission: admission.clone(),
             },
             SourceRequest::Custom {
