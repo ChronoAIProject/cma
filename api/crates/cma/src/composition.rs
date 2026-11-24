@@ -226,6 +226,12 @@ impl ControlPlaneComposition {
             authoring_bounds,
             CmaProfileAuthoringSource::production(config, Arc::clone(&auth))?,
         );
+        let nyxid_public_origin = config
+            .nyxid_public_url
+            .as_deref()
+            .map(reqwest::Url::parse)
+            .transpose()
+            .map_err(|_| "NyxID public origin is invalid".to_string())?;
         let sandbox_credentials = credentials::sandbox_credentials(config, auth.clone(), &stores);
         let model_routes = routes::models(
             config,
@@ -389,7 +395,10 @@ impl ControlPlaneComposition {
                 config.features.capacity_recovery_enabled,
             ))
             .merge(rest::resource_access_router(resource_access.clone()))
-            .merge(rest::profile_authoring_router(profile_authoring))
+            .merge(rest::profile_authoring_router(
+                profile_authoring,
+                nyxid_public_origin,
+            ))
             .merge(rest::hierarchy_router(hierarchy))
             .merge(projections.router(Arc::clone(&operations)))
             .merge(desktop::router(

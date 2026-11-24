@@ -32,7 +32,7 @@ it('shows every top-level and referenced revision setting before handing a pinne
     expect(screen.getByText(text)).toBeInTheDocument();
   expect(await screen.findByRole('link', { name: 'Chrono Storage' })).toHaveAttribute(
     'href',
-    'https://nyxid.ai/services/catalog-storage',
+    'https://catalog.example.test/services/catalog-storage',
   );
   expect(
     screen.getByRole('heading', { name: 'Research workspace · Revision 1' }),

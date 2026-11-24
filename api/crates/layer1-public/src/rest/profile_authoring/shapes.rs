@@ -31,6 +31,10 @@ pub(in super::super) struct AuthoringServiceView {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     catalog_id: Option<String>,
+    /// Browser-facing catalog URL in the identity environment serving this CMA.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    detail_url: Option<String>,
     name: String,
     /// Complete source description, at most 6144 UTF-8 bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,11 +42,27 @@ pub(in super::super) struct AuthoringServiceView {
     description: Option<String>,
 }
 
-impl From<AuthoringServiceEntry> for AuthoringServiceView {
-    fn from(value: AuthoringServiceEntry) -> Self {
+impl AuthoringServiceView {
+    pub(super) fn new(value: AuthoringServiceEntry, public_origin: Option<&url::Url>) -> Self {
+        let detail_url = value
+            .catalog_id
+            .as_deref()
+            .zip(public_origin)
+            .and_then(|(id, origin)| {
+                if matches!(id, "" | "." | "..") {
+                    return None;
+                }
+                let mut url = origin.clone();
+                url.path_segments_mut()
+                    .ok()?
+                    .pop_if_empty()
+                    .extend(["services", id]);
+                Some(url.to_string())
+            });
         Self {
             id: value.id.to_string(),
             catalog_id: value.catalog_id,
+            detail_url,
             name: value.name,
             description: value.description,
         }
