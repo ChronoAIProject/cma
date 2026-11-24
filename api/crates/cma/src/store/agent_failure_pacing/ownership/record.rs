@@ -1,4 +1,6 @@
 use super::*;
+use crate::store::agent_ownership::FenceError;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     agent_capacity_recovery::source::envelope_filter,
     sandbox_mongo::{
@@ -206,7 +208,7 @@ impl Observation {
             match self.apply(hint, &mut session).await {
                 Ok(HintWriteResult::Recorded) => (),
                 result => {
-                    if session.abort_transaction().await.is_err() {
+                    if session.abort_guarded().await.is_err() {
                         emit("unavailable", None);
                     }
                     match result {
@@ -234,12 +236,19 @@ impl Observation {
         let store = &self.store;
         #[cfg(test)]
         self.pause("before_fence").await;
-        store
+        // Keep the driver error typed so this bounded write loop retries a
+        // positively known abort; real owner refusals stay terminal.
+        match store
             .agent_ownership
             .as_ref()
             .ok_or(SandboxStoreError::Conflict)?
-            .fence_transaction(&self.owner, session)
-            .await?;
+            .fence_transaction_typed(&self.owner, session)
+            .await
+        {
+            Ok(()) => {}
+            Err(FenceError::Driver(error)) => return Err(Error::Driver(error)),
+            Err(FenceError::Domain(error)) => return Err(Error::Domain(error)),
+        }
         let Some(parent_row) = store
             .sandboxes
             .find_one(self.parent_filter.clone())

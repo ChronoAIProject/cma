@@ -34,7 +34,9 @@ const LATER: &str = "2026-09-05T00:30:00Z";
 mod availability;
 mod contention_completion;
 mod contention_tests;
+mod desktop_evidence_tests;
 mod idle_tests;
+mod legacy_log_budget_tests;
 mod operator_audit_tests;
 #[path = "platform_stop_integration_tests.rs"]
 mod platform_stop_integration_tests;
@@ -94,6 +96,7 @@ pub(in crate::store) fn ready_agent(sandbox: &Sandbox, id: &str) -> Agent {
         ]),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),

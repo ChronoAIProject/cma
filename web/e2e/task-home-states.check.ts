@@ -181,9 +181,11 @@ for (const theme of ['light', 'dark']) {
       await capture('repository');
       await page.getByLabel('Your task').fill('Research the project and summarize the findings.');
       await page.getByRole('button', { name: 'Start task' }).click();
-      await expect(page.getByRole('region', { name: 'Submitted task' })).toBeVisible();
-      await expect(page.getByText('Preparing a cloud computer for your Agent…')).toBeVisible();
-      const details = page.locator('.task-creation__details');
+      await expect(page.getByRole('region', { name: 'Original request' })).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: 'Getting its cloud computer ready' }),
+      ).toBeVisible();
+      const details = page.locator('.preparation__details');
       const summary = details.locator('summary');
       const progress = page.getByRole('region', {
         name: 'Agent provisioning progress',
@@ -321,12 +323,18 @@ for (const theme of ['light', 'dark'] as const) {
         await expect(start).toBeEnabled();
       };
       await fits('without-repository');
+      const templates = page.getByRole('button', { name: 'Templates', exact: true });
       await task.focus();
+      await page.keyboard.press('Tab');
+      await expect(templates).toBeFocused();
       await page.keyboard.press('Tab');
       await expect(cloud).toBeFocused();
       await expect(cloud).not.toHaveCSS('box-shadow', 'none');
       await page.keyboard.press('Shift+Tab');
+      await expect(templates).toBeFocused();
+      await page.keyboard.press('Shift+Tab');
       await expect(task).toBeFocused();
+      await page.keyboard.press('Tab');
       await page.keyboard.press('Tab');
       await cloud.press('Enter');
       await expect(page.getByRole('menu', { name: 'Run this task on' })).toBeVisible();

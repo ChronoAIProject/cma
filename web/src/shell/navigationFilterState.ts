@@ -61,10 +61,12 @@ export function useNavigationFilterState(viewerId: string, scope: string) {
   if (!stored[key]) setStored({ ...stored, [key]: current });
   return {
     ...current,
-    select(view: NavigationView, value: string) {
+    select(view: NavigationView, value: string, targetScope = scope) {
       if (!valid(view, value)) return;
-      const next = save(key, { ...current.statuses, [view]: value });
-      setStored((previous) => ({ ...previous, [key]: next }));
+      const targetKey = storageKey(viewerId, targetScope);
+      const target = stored[targetKey] ?? read(targetKey);
+      const next = save(targetKey, { ...target.statuses, [view]: value });
+      setStored((previous) => ({ ...previous, [targetKey]: next }));
     },
     clear() {
       const cleared = { [key]: save(key, defaults) };

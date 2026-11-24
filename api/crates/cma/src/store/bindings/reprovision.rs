@@ -5,6 +5,7 @@ use crate::sandbox::ManagedSandboxCredentials;
 use crate::store::sandbox_mongo::{
     commit_transaction, read_record, record_bson, start_transaction, CommitOutcome,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::binding::{
     BindingPreparationIntent, BindingPreparationReceipt, ProvidedCredential,
 };
@@ -51,7 +52,7 @@ impl MongoBindingCredentials {
                     .ok_or_else(|| unavailable("unacknowledged preparation commit")),
             },
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 // A concurrent exact winner is replayed; never re-inspect a
                 // newer generation or choose another pair of resource IDs.
                 match self.preparation_receipt(intent, credential).await? {

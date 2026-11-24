@@ -350,6 +350,11 @@ impl ProviderClient {
         })
     }
 
+    /// Refuse a provider that is not allowlisted, without contacting anyone.
+    pub(crate) fn require_allowlisted(&self, provider: &ProviderSlug) -> Result<(), ProviderError> {
+        self.handle(provider).map(|_| ())
+    }
+
     pub(super) fn handle(&self, provider: &ProviderSlug) -> Result<&ProviderHandle, ProviderError> {
         self.providers
             .get(provider)

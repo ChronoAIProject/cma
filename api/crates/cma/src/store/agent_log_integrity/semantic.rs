@@ -1,5 +1,6 @@
 //! Full semantic audits must revoke a disproved, previously trusted checkpoint.
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 pub(in crate::store) async fn audit_checkpoint(
     store: &MongoSandboxStore,
@@ -29,7 +30,7 @@ pub(in crate::store) async fn audit_checkpoint(
     });
     if previously_trusted {
         if let Err(corruption) = SemanticCheckpoint::validate_retained_semantics(agent, entries) {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             proof::quarantine_row(store, &row).await?;
             return Err(corruption.into());
         }

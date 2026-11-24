@@ -209,6 +209,7 @@ async fn failed_provision_new_child_after_inspection_fences_admission() {
             snapshot,
             proof,
             target_runtime_version: "image-latest".into(),
+            released_runtime: None,
             automatic: false,
             requested_at: NOW.into(),
         })

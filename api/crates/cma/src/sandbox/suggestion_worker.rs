@@ -86,6 +86,7 @@ impl SuggestionWorker {
             })
             || !sandbox.credential.validate()
             || !sandbox.credential.delivered
+            || sandbox.needs_service_access_credential()
         {
             return None;
         }

@@ -1,3 +1,4 @@
+import { proof, receipt } from '../../test/runtimeRecovery';
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { ProtocolError, type AgentEventKind, type SandboxEventKind } from '../index.js';
@@ -177,6 +178,13 @@ const sandboxEvents = {
     },
   },
   checkpoint_sealed: { type: 'checkpoint_sealed', object_reference: 'checkpoint-1' },
+  runtime_recovery_admitted: {
+    type: 'runtime_recovery_admitted',
+    previous_status: 'failed',
+    target_runtime_version: 'runtime-next',
+    proof,
+  },
+  runtime_recovery_quiesced: { type: 'runtime_recovery_quiesced', receipt },
   revived: { type: 'revived' },
   rotated: { type: 'rotated', runtime_version: 'runtime-2' },
   failed: { type: 'failed', failure },

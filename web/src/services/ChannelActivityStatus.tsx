@@ -1,4 +1,5 @@
 import { Button } from '../ui/Button';
+import { IconRefreshOutline16 } from '../ui/icons';
 import type { ActivityConsumer, ChannelActivityFeed } from './useChannelActivity';
 
 export function ActivityTimestamp({ value }: { readonly value?: string | null }) {
@@ -31,7 +32,8 @@ export const activityStateLabels: Record<ActivityConsumer['state'], string> = {
 export function ActivityConnection({
   connection,
   retry,
-}: Pick<ChannelActivityFeed, 'connection' | 'retry'>) {
+  refresh = false,
+}: Pick<ChannelActivityFeed, 'connection' | 'retry'> & { readonly refresh?: boolean }) {
   return (
     <div className="channel-activity__connection">
       <span role="status">
@@ -43,9 +45,16 @@ export function ActivityConnection({
               ? 'Reconnecting live activity…'
               : 'Live activity disconnected'}
       </span>
-      {connection === 'disconnected' ? (
-        <Button size="sm" onClick={retry}>
-          Reconnect activity
+      {refresh ? <p>Refresh reads the recorded activity. It does not resend messages.</p> : null}
+      {refresh || connection === 'disconnected' ? (
+        <Button
+          size="sm"
+          variant={refresh ? 'primary' : 'ghost'}
+          icon={<IconRefreshOutline16 />}
+          disabled={connection === 'connecting' || connection === 'reconnecting'}
+          onClick={retry}
+        >
+          {refresh ? 'Refresh activity' : 'Reconnect activity'}
         </Button>
       ) : null}
     </div>

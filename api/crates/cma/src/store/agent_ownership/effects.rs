@@ -82,13 +82,25 @@ impl MongoSandboxStore {
         id: &AgentId,
         session: &mut ClientSession,
     ) -> Result<(), FenceError> {
+        self.fence_agent_effect_observed(id, session)
+            .await
+            .map_err(ObservedFenceError::into_fence_error)
+    }
+
+    pub(in crate::store) async fn fence_agent_effect_observed(
+        &self,
+        id: &AgentId,
+        session: &mut ClientSession,
+    ) -> Result<(), ObservedFenceError> {
         let Some(store) = &self.agent_ownership else {
             return Ok(());
         };
         let token = execution_owner()
             .filter(|owner| owner.agent_id == *id)
-            .ok_or(FenceError::Domain(SandboxStoreError::Conflict))?;
-        store.fence_transaction_typed(&token, session).await
+            .ok_or(ObservedFenceError::Fence(FenceError::Domain(
+                SandboxStoreError::Conflict,
+            )))?;
+        store.fence_transaction_observed(&token, session).await
     }
 
     pub(in crate::store) fn agent_work_owner_fields(

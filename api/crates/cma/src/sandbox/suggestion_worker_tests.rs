@@ -8,7 +8,7 @@ use crate::sandbox::{
 use axum::{http::HeaderMap, routing::post, Json, Router};
 use layer2_core::{
     budget::*,
-    sandbox::store::{AgentStore as _, SandboxStore as _},
+    sandbox::store::{AgentStore as _, SandboxStore as _, SandboxTransactionStore as _},
     sandbox::*,
     *,
 };
@@ -153,6 +153,7 @@ impl Fixture {
             owner: sandbox.owner.clone(),
             authority: sandbox.credential.current.clone().unwrap(),
             value: SecretValue::new(KEY.into()),
+            github_route: None,
         }))));
         let reading = Arc::new(Reading(Mutex::new(SuggestionStatus::Running)));
         let budget = Arc::new(Budget {
@@ -332,6 +333,64 @@ async fn authority_change_during_reservation_refuses_dispatch_and_retains_the_ho
         "stale request reached the provider"
     );
     assert!(matches!(result, Err(SuggestionFailure::Unavailable)));
+    assert_eq!(f.budget.held.lock().unwrap().len(), 1);
+    assert_eq!(f.budget.settled.load(Ordering::SeqCst), 0);
+    f.stop().await;
+}
+
+#[tokio::test]
+async fn owner_scope_revision_during_reservation_blocks_the_old_credential() {
+    let f = Fixture::new().await;
+    let task = f.start().await;
+    let mut sandbox = f
+        .store
+        .get_sandbox(&records::sandbox().id)
+        .await
+        .unwrap()
+        .unwrap();
+    let previous_revision = sandbox.revision;
+    let old_authority = sandbox.credential.current.clone();
+    let owner = sandbox.owner.clone();
+    let at = now_rfc3339();
+    let scope = sandbox
+        .revise_live_service_access(
+            &owner,
+            &[
+                ServiceId::new("chrono-llm"),
+                ServiceId::new("synthetic-service"),
+            ],
+            at.clone(),
+        )
+        .unwrap();
+    assert!(sandbox.needs_service_access_credential());
+    assert_eq!(sandbox.credential.current, old_authority);
+    assert_eq!(
+        authority_digest(&records::agent(), &sandbox),
+        f.work.authority
+    );
+    assert_eq!(
+        f.credentials.0.lock().unwrap().as_ref().unwrap().value,
+        SecretValue::new(KEY.into())
+    );
+    f.store
+        .commit(store::SandboxTransaction::SaveSandboxAndAppend {
+            command_revival: None,
+            released_runtime: None,
+            expected_revision: previous_revision,
+            sandbox: Box::new(sandbox),
+            event_at: at,
+            event: SandboxEventKind::ServiceAccessRevised {
+                scope: Box::new(scope),
+            },
+        })
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        f.complete(task).await,
+        Err(SuggestionFailure::Unavailable)
+    ));
+    assert!(f.requests.lock().unwrap().is_empty());
     assert_eq!(f.budget.held.lock().unwrap().len(), 1);
     assert_eq!(f.budget.settled.load(Ordering::SeqCst), 0);
     f.stop().await;

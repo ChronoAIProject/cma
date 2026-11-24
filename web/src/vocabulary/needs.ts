@@ -61,6 +61,7 @@ export const publicCopy = {
   signupClosed: 'New accounts are not available. Sign in to an existing account.',
   storageUnavailable:
     'Your browser could not save this request. Allow session storage and try again.',
+  storageChanged: 'Your saved request changed. Read it again before continuing.',
   storageReadUnavailable:
     'Your saved request could not be read. Allow session storage and try again.',
   expired: 'Your saved request expired. Select the CMA button to start again.',

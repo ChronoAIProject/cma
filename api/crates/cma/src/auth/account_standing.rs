@@ -209,6 +209,12 @@ impl AuthState {
             .account_deletion_enabled = enabled;
         self
     }
+    pub(crate) fn with_privacy_export_enabled(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("export policy configured before sharing auth")
+            .privacy_export_enabled = enabled;
+        self
+    }
     pub(super) fn owner_session_authority(
         &self,
         request: &RequestAuth,

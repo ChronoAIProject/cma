@@ -8,12 +8,11 @@ pub(super) async fn register(
 ) -> Result<Option<Arc<crate::agent_manager::AgentManager>>, String> {
     match &config.agent_manager_replicas {
         Some(settings) => Ok(Some(
-            crate::agent_manager::AgentManager::register(
+            crate::agent_manager::AgentManager::register_configured(
                 stores.sandbox_model.clone(),
                 live_agents.clone(),
-                settings.relay_address.clone(),
-                settings.max_owned_agents,
-                config.features.ownership_cleanup_pacing,
+                settings,
+                &config.features,
             )
             .await?,
         )),
@@ -51,6 +50,9 @@ pub(super) fn relay(
     ))?;
     if config.features.agent_settings_owner_relay {
         relay.enable_settings_owner_routing();
+    }
+    if config.features.agent_file_write_handoff {
+        relay.enable_file_write_handoff();
     }
     relay.install_controls(stores.clone(), controls);
     relay.install_reopen(lifecycle.reopen_worker.clone(), stores);

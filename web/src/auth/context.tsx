@@ -14,6 +14,7 @@ import { retainDocumentShareToken } from '../documents/shareToken';
 import { retainAgentShareForSignIn } from '../resources/agentShareToken';
 import { retainTaskViewer } from '../create/taskIdentity';
 import { retainAgentDraftOwner } from '../agent/draftIdentity';
+import { retainPreparationDraftOwner } from '../preparation/preparationDraftIdentity';
 import { releaseNavigationGuard } from '../routing/navigationGuard';
 
 /**
@@ -25,6 +26,7 @@ import { releaseNavigationGuard } from '../routing/navigationGuard';
 interface AuthContextValue {
   readonly state: AuthState;
   readonly outage: Extract<AuthState, { status: 'error' }> | undefined;
+  readonly sessionReadSignal: AbortSignal;
   readonly retry: () => void;
   readonly signIn: (returnTo?: string, options?: SignInOptions) => Promise<void>;
   readonly signOut: () => Promise<void>;
@@ -33,6 +35,7 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const SILENT_SIGN_IN_TIMEOUT_MS = 10000;
+const SESSION_READ_PAUSED = AbortSignal.abort();
 
 interface AuthProviderProps {
   readonly provider: AuthProvider;
@@ -42,6 +45,18 @@ interface AuthProviderProps {
 export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   const [state, setState] = useState<AuthState>({ status: 'checking' });
   const currentRead = useRef(0);
+  const sessionReads = useRef<AbortController | undefined>(undefined);
+  const [sessionReadSignal, setSessionReadSignal] = useState(SESSION_READ_PAUSED);
+  const allowSessionReads = useCallback((allowed: boolean) => {
+    if (!allowed) {
+      sessionReads.current?.abort();
+      sessionReads.current = undefined;
+      setSessionReadSignal(SESSION_READ_PAUSED);
+    } else if (sessionReads.current === undefined) {
+      sessionReads.current = new AbortController();
+      setSessionReadSignal(sessionReads.current.signal);
+    }
+  }, []);
   const [outage, setOutage] = useState<Extract<AuthState, { status: 'error' }>>();
   const refreshRef = useRef<() => void>(() => {});
   const retry = useCallback(() => refreshRef.current(), []);
@@ -61,15 +76,19 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
       if (!live || inFlight || leaving !== undefined) return;
       clearTimeout(timer);
       inFlight = true;
+      allowSessionReads(false);
       const version = ++currentRead.current;
       void provider
         .current()
         .then((next) => {
           if (live && version === currentRead.current) {
-            if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
-            else if (next.status === 'anonymous') {
+            if (next.status === 'authenticated') {
+              retainAgentDraftOwner(next.user.id);
+              retainPreparationDraftOwner(next.user.id);
+            } else if (next.status === 'anonymous') {
               releaseNavigationGuard();
               retainAgentDraftOwner();
+              retainPreparationDraftOwner();
             }
             if (next.status !== 'error') last = next;
             let leavingSilently = false;
@@ -91,6 +110,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
               return;
             }
             if (next.status === 'authenticated') retainTaskViewer(next.user.id);
+            allowSessionReads(next.status === 'authenticated');
             if (next.status === 'error' && next.reason !== undefined) {
               setOutage(next);
               // Retain mounted views and drafts. This is presentation only;
@@ -149,6 +169,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
 
     return () => {
       live = false;
+      sessionReads.current?.abort();
+      sessionReads.current = undefined;
       clearTimeout(timer);
       clearTimeout(leaving);
       refreshRef.current = () => {};
@@ -158,11 +180,12 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
       window.removeEventListener('online', backgroundRefresh);
       document.removeEventListener('visibilitychange', visible);
     };
-  }, [provider]);
+  }, [provider, allowSessionReads]);
 
   const signIn = useCallback(
     async (returnTo?: string, options?: SignInOptions) => {
       const version = ++currentRead.current;
+      allowSessionReads(false);
       try {
         const current = parseRoute(window.location.pathname);
         if (current.kind === 'agent_share') {
@@ -176,9 +199,15 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         await provider.signIn(returnTo, options);
         const next = await provider.current();
         if (version !== currentRead.current) return;
-        if (next.status === 'authenticated') retainTaskViewer(next.user.id);
-        if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
-        else if (next.status === 'anonymous') retainAgentDraftOwner();
+        if (next.status === 'authenticated') {
+          retainTaskViewer(next.user.id);
+          retainAgentDraftOwner(next.user.id);
+          retainPreparationDraftOwner(next.user.id);
+        } else if (next.status === 'anonymous') {
+          retainAgentDraftOwner();
+          retainPreparationDraftOwner();
+        }
+        allowSessionReads(next.status === 'authenticated');
         setOutage(undefined);
         setState(next);
       } catch (error: unknown) {
@@ -189,15 +218,17 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         });
       }
     },
-    [provider],
+    [provider, allowSessionReads],
   );
 
   const signOut = useCallback(async () => {
     releaseNavigationGuard();
     const version = ++currentRead.current;
+    allowSessionReads(false);
     try {
       retainTaskViewer();
       retainAgentDraftOwner();
+      retainPreparationDraftOwner();
       setState({ status: 'checking' });
       await provider.signOut();
       if (version !== currentRead.current) return;
@@ -210,11 +241,11 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         message: error instanceof Error ? error.message : 'Sign-out did not complete.',
       });
     }
-  }, [provider]);
+  }, [provider, allowSessionReads]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ state, outage, retry, signIn, signOut }),
-    [state, outage, retry, signIn, signOut],
+    () => ({ state, outage, sessionReadSignal, retry, signIn, signOut }),
+    [state, outage, sessionReadSignal, retry, signIn, signOut],
   );
 
   return <AuthContext value={value}>{children}</AuthContext>;
@@ -231,4 +262,15 @@ export function useAuth(): AuthContextValue {
 export function useIdentityUncertain(): boolean {
   const value = useContext(AuthContext);
   return value !== null && (value.outage !== undefined || value.state.status !== 'authenticated');
+}
+
+/** Account identity for optional owner controls; absent outside an authenticated shell. */
+export function useAuthenticatedSubject(): string | undefined {
+  const value = useContext(AuthContext);
+  return value?.state.status === 'authenticated' ? value.state.user.id : undefined;
+}
+
+/** Access to background reads backed by the current same-origin session. */
+export function useSessionReadSignal(): AbortSignal | undefined {
+  return useContext(AuthContext)?.sessionReadSignal;
 }

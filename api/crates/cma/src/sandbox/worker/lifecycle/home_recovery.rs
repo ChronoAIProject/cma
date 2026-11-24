@@ -2,13 +2,26 @@ use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::{Sandbox, SandboxStoreError};
-use layer3_adapter::{RuntimeHandle, RuntimeStatus, RuntimeStatusRequest};
+use layer3_adapter::{
+    RetainedStartupPolicyControl, RuntimeHandle, RuntimeStatus, RuntimeStatusRequest,
+};
 
 use super::super::support::{adapter_failure, WorkerFailure};
 use super::super::SandboxWorker;
 use super::support::{lifecycle_lease, model_error};
 
 impl SandboxWorker {
+    pub(super) fn retained_startup_policy(
+        &self,
+    ) -> Result<&dyn RetainedStartupPolicyControl, WorkerFailure> {
+        self.dependencies
+            .adapter
+            .retained_startup_policy()
+            .ok_or_else(|| {
+                WorkerFailure::retryable("retained runtime startup policy is unavailable")
+            })
+    }
+
     pub(super) async fn verify_lifecycle_home(
         &self,
         sandbox: Sandbox,
@@ -91,6 +104,7 @@ impl SandboxWorker {
                     .as_ref()
                     .is_none_or(|binding| binding.runtime_id != observation.handle.0)
         };
+        let retained = sandbox.admitted_retained_runtime_transition();
         for observation in self
             .dependencies
             .adapter
@@ -100,6 +114,11 @@ impl SandboxWorker {
             .iter()
             .filter(|observation| old(observation))
         {
+            if retained.is_some() {
+                return Err(WorkerFailure::retryable(
+                    "another runtime exists for the admitted retained home",
+                ));
+            }
             // Older recovery records can lack a retained binding. Their original
             // storage-owning object must never become process cleanup.
             if observation.handle.as_str().starts_with("agent-sandbox:") {
@@ -134,6 +153,25 @@ impl SandboxWorker {
                     &self.config.deployment_id,
                 )
                 .map_err(adapter_failure)?;
+                if let Some(transition) = retained {
+                    // The grant already required a stopped predecessor. A new
+                    // suspension could change provider state after that proof expired.
+                    let predecessor = self
+                        .retained_startup_policy()?
+                        .inspect_retained_startup_policy(&request)
+                        .await
+                        .map_err(|_| {
+                            WorkerFailure::retryable(
+                                "the admitted stopped predecessor could not be verified",
+                            )
+                        })?;
+                    if predecessor != transition.request.predecessor {
+                        return Err(WorkerFailure::retryable(
+                            "the admitted stopped predecessor has changed",
+                        ));
+                    }
+                    return volumes.verify(&attachment).await.map_err(adapter_failure);
+                }
                 if sandbox
                     .lifecycle
                     .unpublished_recovery
@@ -225,6 +263,36 @@ impl SandboxWorker {
             ));
         }
         Ok(status)
+    }
+
+    pub(super) async fn verify_retained_policy_readback(
+        &self,
+        handle: &RuntimeHandle,
+        transition: &layer2_core::sandbox::RetainedRuntimeTransition,
+        boot_id: &str,
+    ) -> Result<layer3_adapter::RuntimeStartupPolicyObservation, WorkerFailure> {
+        let runtime = RuntimeStatusRequest {
+            sandbox_id: transition.request.sandbox_id.to_string(),
+            generation: transition.successor_generation,
+            home_identity: transition.request.predecessor.home_identity.clone(),
+        };
+        self.retained_startup_policy()?
+            .verify_retained_startup_policy(
+                handle,
+                &layer3_adapter::RetainedStartupPolicyReadback {
+                    runtime: &runtime,
+                    boot_id,
+                    image: &transition.request.target_image,
+                    config_digest: &transition.request.target_config_digest,
+                    journal_recovery: transition.request.journal_recovery,
+                },
+            )
+            .await
+            .map_err(|_| {
+                WorkerFailure::retryable(
+                    "retained runtime startup policy could not be confirmed on the admitted boot",
+                )
+            })
     }
 
     pub(super) async fn accept_lifecycle_home(

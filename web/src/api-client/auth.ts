@@ -40,8 +40,12 @@ const capability = enumeration(
   'configure_platform',
 );
 export type Capability = Output<typeof capability>;
+/** Terms the deployment publishes; present signed in or out only when configured. */
+const legalTerms = optional(object({ version: text, terms_url: text, privacy_url: text }));
+const signedOut = object({ legal_terms: legalTerms });
 const signedIn = object({
   api_commands: optional(boolean),
+  privacy_export: optional(boolean),
   usage_reporting: optional(object({ measured_visible: boolean })),
   subject: text,
   capabilities: array(capability),
@@ -49,9 +53,11 @@ const signedIn = object({
   display_name: optional(text),
   email: optional(text),
   avatar_url: optional(text),
+  legal_terms: legalTerms,
 });
 export type AuthSession =
-  { readonly authenticated: false } | ({ readonly authenticated: true } & Output<typeof signedIn>);
+  | ({ readonly authenticated: false } & Output<typeof signedOut>)
+  | ({ readonly authenticated: true } & Output<typeof signedIn>);
 const signupOptions = object({
   social_providers: array(text),
   email_signup: boolean,
@@ -90,7 +96,8 @@ export class Authentication {
             : body;
         throw errorFromBody(response, problem, metadata.requestId);
       }
-      if (response.status === 401 && body.authenticated === false) return { authenticated: false };
+      if (response.status === 401 && body.authenticated === false)
+        return { authenticated: false, ...signedOut(body) };
       if (response.status !== 200 || body.authenticated !== true)
         throw new ProtocolError('Authentication status did not match its body');
       return { authenticated: true, ...signedIn(body) };
