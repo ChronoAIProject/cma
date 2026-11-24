@@ -108,7 +108,7 @@ fn observation_projections_never_select_prompt_or_credential_payloads() {
         projection::command(),
         projection::log_tail(),
         projection::head(),
-        projection::session(),
+        crate::store::sandbox_maintenance::evidence::sessions::projection(),
     ] {
         for key in projection.keys() {
             assert_ne!(key, "record");

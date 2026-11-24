@@ -227,6 +227,14 @@ pub(super) async fn queued_control(
     store: &MongoSandboxStore,
     id: &layer2_core::SandboxId,
     session: &mut ClientSession,
+) -> Result<bool, ApplyError> {
+    read_queued_control(store, id, session, false).await
+}
+
+pub(super) async fn read_queued_control(
+    store: &MongoSandboxStore,
+    id: &layer2_core::SandboxId,
+    session: &mut ClientSession,
     snapshot_read: bool,
 ) -> Result<bool, ApplyError> {
     let mut find = store

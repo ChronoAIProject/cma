@@ -1,5 +1,5 @@
 use super::{records::*, *};
-use crate::store::sandbox_maintenance::evidence::{queued_control, sessions};
+use crate::store::sandbox_maintenance::evidence::{read_queued_control, sessions};
 
 pub(super) struct Captured {
     pub vector: RuntimeActivityVector,
@@ -59,7 +59,7 @@ pub(super) async fn current(
         .pop()
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let mut sandbox = aggregate(&root, id, false)?;
-    sandbox.active |= queued_control(store, id, session, snapshot_read).await?;
+    sandbox.active |= read_queued_control(store, id, session, snapshot_read).await?;
     if sandbox.last_seq.is_none() {
         return Err(invalid());
     }

@@ -146,7 +146,7 @@ pub(super) async fn validate_admission(
         }
         _ => return Err(ApplyError::Domain(SandboxStoreError::Conflict)),
     }
-    if super::evidence::queued_control(store, &current.id, session, false).await?
+    if super::evidence::queued_control(store, &current.id, session).await?
         || !super::evidence::sessions::clear(
             store,
             &current.id,

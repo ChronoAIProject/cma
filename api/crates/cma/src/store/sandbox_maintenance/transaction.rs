@@ -195,7 +195,7 @@ async fn apply_with_sources(
         MaintenanceRequest::Inactivity(request) => {
             let bounded_legacy_log =
                 store.bounded_inactivity_legacy_log && request.auto_pause_enabled && !platform_stop;
-            if super::evidence::queued_control(store, &current.id, session, false).await?
+            if super::evidence::queued_control(store, &current.id, session).await?
                 || (bounded_legacy_log
                     && !super::evidence::legacy_log_budget::within(
                         store, &agents, sources, session,
