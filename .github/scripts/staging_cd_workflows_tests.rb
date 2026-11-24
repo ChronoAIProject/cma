@@ -528,6 +528,27 @@ class StagingWorkflowTest < Minitest::Test
     end
   end
 
+  def test_publication_signal_waits_for_every_publisher_and_isolates_dispatch_credentials
+    jobs = workflow('staging-cd')['jobs']
+    signal = jobs.fetch('publication_signal')
+    publishers = %w[web am eg runtime runtime_omarchy]
+    assert_equal ['allocate', *publishers.map { |name| "release_#{name}" }], signal['needs']
+    assert_includes signal['if'], "vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true'"
+    assert_equal({ 'contents' => 'read', 'actions' => 'read' }, signal['permissions'])
+    refute signal.key?('environment')
+    _, verify, retain, notify = signal['steps']
+    publishers.each do |name|
+      assert_equal "$" + "{{ needs.release_#{name}.outputs.finalized }}", verify['env']["CD_FINALIZED_#{name.upcase}"]
+    end
+    assert_equal '${{ runner.temp }}/publication-signal.json', retain['with']['path']
+    assert_equal 'error', retain['with']['if-no-files-found']
+    refute signal['steps'][0...-1].to_s.include?('secrets.')
+    assert_equal({
+      'PUBLICATION_CONSUMER' => '${{ secrets.PUBLICATION_CONSUMER }}',
+      'PUBLICATION_SIGNAL_TOKEN' => '${{ secrets.PUBLICATION_SIGNAL_TOKEN }}'
+    }, notify['env'])
+  end
+
   def test_all_external_actions_are_pinned_and_only_sanitized_deployment_outcomes_upload
     %w[staging-cd staging-release staging-promote staging-deploy redeploy-staging].each do |name|
       workflow(name)['jobs'].each_value do |job|
