@@ -1,6 +1,7 @@
 //! A provider object keeps its handle while in-memory runtime Pods come and go.
 use super::*;
 mod recovery;
+mod reopen_fixture;
 mod retirement;
 use layer3_adapter::hosted::{HostedAgentOpenSettings, HostedBackend};
 use layer3_adapter::provider::ProviderSandboxRequest;
@@ -30,6 +31,7 @@ pub(super) struct NativeBackend {
     pub lose_resume: Arc<AtomicBool>,
     pub lose_delete: Arc<AtomicBool>,
     pub reject_reopen: Arc<AtomicBool>,
+    pub reopen_output: Arc<reopen_fixture::StartupOutput>,
     pub adoption_pause: Arc<Mutex<Option<Arc<RetirementProbePause>>>>,
     pub hold_reopen: Arc<AtomicBool>,
     pub reopen_entered: Arc<Notify>,
@@ -404,16 +406,8 @@ impl HostedBackend for NativeBackend {
         settings: HostedAgentOpenSettings,
         updates: tokio::sync::mpsc::Sender<ConversationUpdate>,
     ) -> layer3_adapter::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
-        if resume.is_some() {
-            if self.hold_reopen.swap(false, Ordering::SeqCst) {
-                self.reopen_entered.notify_one();
-                self.reopen_release.notified().await;
-            }
-            if self.reject_reopen.load(Ordering::SeqCst) {
-                return Err(layer3_adapter::AdapterError::Rejected(
-                    "fixture retained conversation rejected".into(),
-                ));
-            }
+        if let Some(native) = &resume {
+            self.before_reopen(native, &updates).await?;
         }
         let (mut channel, receipt) = self
             .inner

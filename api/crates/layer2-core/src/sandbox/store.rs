@@ -85,7 +85,7 @@ pub use agent_conversation::{
     validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
 };
 pub use agent_message_checkpoint::{AgentMessageCheckpoint, AgentMessageSnapshot};
-pub use agent_reopen::AgentReopenGuard;
+pub use agent_reopen::{AgentReopenGuard, ReopenRefusalFence};
 mod agent_lifecycle;
 mod agent_skill_result;
 pub use agent_skill_result::{requires_agent_skill_result_guard, AgentSkillResultGuard};

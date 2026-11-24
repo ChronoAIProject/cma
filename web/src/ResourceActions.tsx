@@ -12,11 +12,11 @@ import {
   deletionTarget,
   type DeleteAction,
   type DeletionRequest,
+  type AgentDeletionPermissions,
 } from './deletion';
 import { restoreDeletions } from './deletionRecovery';
 import {
   reconcileDeletionRequests,
-  sameDeletionRequest,
   type DeletionSettlements,
 } from './useDeletionNoticeReconciliation';
 import { Button } from './ui/Button';
@@ -40,6 +40,7 @@ export function useResourceActions(
   viewerId = 'current',
   onNavigate?: (route: AppRoute) => void,
   enabled = true,
+  agentPermissions?: AgentDeletionPermissions,
   settlements?: DeletionSettlements,
 ) {
   // Commands may settle after navigation; target matching belongs to the current view.
@@ -72,6 +73,11 @@ export function useResourceActions(
       reconcileDeletionRequests(current, restoreDeletions(viewerId), settled),
     );
   };
+  const reopenDeletion = (request: DeletionRequest) =>
+    setDeletion({
+      request: restoreDeletions(viewerId).find((item) => item.key === request.key) ?? request,
+      restored: true,
+    });
   const [stopping, setStopping] = useState<{ agentId: string; key: string }>();
   const [sandboxRequests, setSandboxRequests] = useState<readonly SandboxActionRequest[]>([]);
   const setSandboxRequest = (request: SandboxActionRequest) =>
@@ -185,11 +191,11 @@ export function useResourceActions(
         (request) => JSON.stringify(request.action) === JSON.stringify(action),
       );
       if (same) {
-        setDeletion({ request: same, restored: true });
+        reopenDeletion(same);
         return;
       }
       setDeletion(
-        retained === undefined || retained.accepted
+        retained === undefined || retained.accepted || retained.stop?.phase === 'blocked'
           ? {
               request: {
                 action: action as DeleteAction,
@@ -244,8 +250,7 @@ export function useResourceActions(
       stopping !== undefined ||
       connections.pending,
     error: history.error ?? error ?? connections.error,
-    viewDeletionStatus:
-      retained === undefined ? undefined : () => setDeletion({ request: retained, restored: true }),
+    viewDeletionStatus: retained === undefined ? undefined : () => reopenDeletion(retained),
     notice: (
       <>
         {history.notice ? (
@@ -268,7 +273,7 @@ export function useResourceActions(
             <Button
               size="sm"
               disabled={pending || deletion !== undefined || stopping !== undefined}
-              onClick={() => setDeletion({ request, restored: true })}
+              onClick={() => reopenDeletion(request)}
             >
               View {deletionTarget(request.action)} deletion status ({index + 1})
             </Button>
@@ -326,6 +331,8 @@ export function useResourceActions(
               key={deletion.request.key}
               client={client}
               viewerId={viewerId}
+              agentPermissions={agentPermissions}
+              enabled={enabled}
               initial={deletion.request}
               restored={deletion.restored}
               backgroundOnAcceptance
@@ -335,11 +342,12 @@ export function useResourceActions(
               }}
               onRequestChanged={(request) =>
                 setDeletionRequests((current) => [
-                  ...current.filter((item) => !sameDeletionRequest(item, deletion.request)),
+                  ...current.filter((item) => item.key !== deletion.request.key),
                   ...(request ? [request] : []),
                 ])
               }
               onAccepted={() => setDeletion(undefined)}
+              onAbandoned={(request) => keys.current.settle(JSON.stringify(request.action))}
               onClose={() => {
                 setDeletion(undefined);
                 refreshDeletions();

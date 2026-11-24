@@ -271,6 +271,7 @@ async fn batch_renewal_retries_known_abort_but_returns_no_uncertain_commit() {
         .await
         .unwrap();
     assert!(matches!(ambiguous, Err(OwnershipError::Unavailable(_))));
+    crate::store::test_visibility::majority_barrier(&store.client, store.database.name()).await;
     let observed = snapshots(&store, &tokens).await;
     // An ambiguous reply does not establish whether Mongo committed. It
     // must not cause a new transaction or a partially renewed owner set.

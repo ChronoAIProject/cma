@@ -4,7 +4,7 @@ import type { AgentDetail } from './api/types';
 import { coalesceDetailReads } from './api/detailReads';
 import { agentDetail } from './api/rest/hierarchy';
 import type { DeleteAction, DeletionRequest } from './deletion';
-import { forgetDeletion, restoreDeletions } from './deletionRecovery';
+import { forgetDeletion, restoreDeletions, sameDeletionRequest } from './deletionRecovery';
 
 function targetId(action: DeleteAction) {
   return action.kind === 'delete_sandbox'
@@ -14,12 +14,10 @@ function targetId(action: DeleteAction) {
       : action.agentId;
 }
 
-export function sameDeletionRequest(left: DeletionRequest, right: DeletionRequest) {
-  return (
-    left.key === right.key &&
-    left.action.kind === right.action.kind &&
-    targetId(left.action) === targetId(right.action)
-  );
+const completedRequests = new WeakMap<CmaWebClient, DeletionRequest[]>();
+
+export function deletionWasSettled(client: CmaWebClient, request: DeletionRequest): boolean {
+  return completedRequests.get(client)?.some((item) => sameDeletionRequest(item, request)) ?? false;
 }
 
 export interface DeletionSettlements {
@@ -37,9 +35,7 @@ export function reconcileDeletionRequests(
     ...memory,
     ...persisted.filter((request) => !memory.some((item) => sameDeletionRequest(item, request))),
   ];
-  return requests.filter(
-    (request) => !request.accepted || !settled.some((item) => sameDeletionRequest(item, request)),
-  );
+  return requests.filter((request) => !settled.some((item) => sameDeletionRequest(item, request)));
 }
 
 interface ReadAuthority {
@@ -91,6 +87,7 @@ function observeAcceptedDeletions(
   onAgent: (authority: ReadAuthority, detail?: AgentDetail) => void,
 ) {
   let active = false;
+  const completed: DeletionRequest[] = [];
   let authority: ReadAuthority | undefined;
   const latestAgentReads = new Map<string, object>();
   const matching = (kind: DeleteAction['kind'], id: string) =>
@@ -101,7 +98,8 @@ function observeAcceptedDeletions(
     active && permission?.authorized && authority === permission && !options?.signal?.aborted;
   const settle = (request: DeletionRequest) => {
     const current = matching(request.action.kind, targetId(request.action));
-    if (current.length === 1 && current[0]?.key === request.key && current[0].accepted) {
+    if (current.length === 1 && current[0]?.accepted && sameDeletionRequest(current[0], request)) {
+      completed.push(request);
       forgetDeletion(viewerId, request.key);
       onSettled(request);
     }
@@ -147,16 +145,22 @@ function observeAcceptedDeletions(
           const agent = before.filter(
             (request) => request.action.kind === 'delete_agent' && targetId(request.action) === id,
           );
+          const request = agent.length === 1 && agent[0]?.accepted ? agent[0] : undefined;
           if (
             settleAgent &&
+            request &&
             detail?.id === id &&
             detail.status === 'deleted' &&
             detail.worktree.agentId === id &&
             detail.worktree.status === 'removed' &&
-            agent.length === 1 &&
-            agent[0]?.accepted
+            (!request.stop ||
+              (detail.sandbox.id === request.stop.sandboxId &&
+                detail.workspace.id === request.stop.workspaceId &&
+                detail.worktree.id === request.stop.worktreeId &&
+                detail.worktree.sandboxId === request.stop.sandboxId &&
+                detail.worktree.workspaceId === request.stop.workspaceId))
           )
-            settle(agent[0]);
+            settle(request);
         }
         return value;
       } catch (error) {
@@ -199,6 +203,8 @@ function observeAcceptedDeletions(
   };
 
   const reads = coalesceDetailReads(client);
+  completedRequests.set(reads.client, completed);
+  completedRequests.set(client, completed);
   return {
     client: reads.client,
     authorize(permission: ReadAuthority) {

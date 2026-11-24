@@ -209,6 +209,7 @@ async fn lost_publication_acknowledgment_replays_after_closure_restart_and_later
         .await
         .unwrap();
     assert!(result.is_ok() || matches!(result, Err(SandboxStoreError::Unavailable(_))));
+    crate::store::test_visibility::majority_barrier(&admin, &db).await;
     let published = check_publication(&fixture, &full, 1).await;
     adoption_policy(&admin, &db, full.id.as_str(), 1, false).await;
     let restarted = MongoSandboxStore::open(&admin, &db).await.unwrap();

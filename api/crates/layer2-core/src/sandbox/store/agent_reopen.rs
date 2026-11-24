@@ -6,6 +6,16 @@ use crate::seconds_from_rfc3339;
 
 use super::{SandboxMutationGuard, SandboxStoreError};
 
+/// The checkpoint observed before dispatch, paired with the owner that
+/// returned the refusal. Parking must compare it in the lifecycle transaction.
+#[derive(Debug, Clone)]
+pub struct ReopenRefusalFence {
+    pub agent_id: crate::AgentId,
+    pub agent_revision: u64,
+    pub checkpoint: Option<Box<super::AgentMessageCheckpoint>>,
+    pub owner: Option<crate::agent_ownership::OwnershipToken>,
+}
+
 /// Authority for recording replacement output before publishing a reopened Agent.
 /// Stores must validate and write-fence the parent in the checkpoint transaction.
 #[derive(Debug, Clone)]
