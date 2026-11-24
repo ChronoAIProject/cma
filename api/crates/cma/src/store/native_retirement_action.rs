@@ -25,7 +25,7 @@ pub(super) const FIELD: &str = "native_retirement_action_v1";
         reason = "capture record is wired into transactions in the next slice"
     )
 )]
-mod capture;
+pub(crate) mod capture;
 mod child_write;
 mod parent_write;
 pub(super) use parent_write::preserve_custody;

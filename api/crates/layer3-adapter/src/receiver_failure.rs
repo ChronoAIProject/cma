@@ -15,7 +15,7 @@ pub struct RetirementReceiver {
 
 tokio::task_local! {
     static OBSERVATION: Mutex<Option<ObservedFailure>>;
-    static CAPTURE: Arc<OnceLock<EligibleReceiverFailure>>;
+    static CAPTURE: (uuid::Uuid, Arc<OnceLock<EligibleReceiverFailure>>);
 }
 
 pub async fn observe<T>(future: impl Future<Output = T>) -> (T, Option<ObservedFailure>) {
@@ -39,10 +39,18 @@ impl ReceiverFailureCapture {
 }
 
 pub fn capture<F: Future>(attempt: F) -> (ReceiverFailureCapture, impl Future<Output = F::Output>) {
+    capture_attempt(uuid::Uuid::new_v4(), attempt)
+}
+
+/// Bind the sealed result to the immutable attempt supplied at admission.
+pub fn capture_attempt<F: Future>(
+    attempt_id: uuid::Uuid,
+    attempt: F,
+) -> (ReceiverFailureCapture, impl Future<Output = F::Output>) {
     let slot = Arc::new(OnceLock::new());
     (
         ReceiverFailureCapture(slot.clone()),
-        CAPTURE.scope(slot, attempt),
+        CAPTURE.scope((attempt_id, slot), attempt),
     )
 }
 
@@ -67,11 +75,16 @@ impl ChallengeRefusal {
 
 /// Sealed only by an owned challenge exchange with an exact native receiver.
 pub struct EligibleReceiverFailure {
+    attempt_id: uuid::Uuid,
     receiver: RetirementReceiver,
     refusal: ChallengeRefusal,
 }
 
 impl EligibleReceiverFailure {
+    pub fn attempt_id(&self) -> uuid::Uuid {
+        self.attempt_id
+    }
+
     pub fn receiver(&self) -> &RetirementReceiver {
         &self.receiver
     }
@@ -85,17 +98,18 @@ pub(crate) fn record(
     refusal: ChallengeRefusal,
     receiver: impl FnOnce() -> Option<RetirementReceiver>,
 ) {
-    let capture = CAPTURE.try_with(Arc::clone).ok();
+    let capture = CAPTURE.try_with(Clone::clone).ok();
     if capture.is_none() && OBSERVATION.try_with(|_| ()).is_err() {
         return;
     }
     let receiver = receiver();
-    if let (Some(capture), Some(receiver)) = (capture, receiver.as_ref()) {
+    if let (Some((attempt_id, capture)), Some(receiver)) = (capture, receiver.as_ref()) {
         if crate::owner_protocol::current_authority()
             .is_some_and(|authority| authority.is_current() && authority.owner() == receiver.owner)
         {
             // The first eligible exchange owns this attempt's single slot.
             let _ = capture.set(EligibleReceiverFailure {
+                attempt_id,
                 receiver: receiver.clone(),
                 refusal,
             });

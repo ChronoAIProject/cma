@@ -85,11 +85,17 @@ async fn owned_preclose_challenge_refusal_seals_capture_without_dispatching_clos
     );
 }
 
-async fn receiver() -> (
+type ReceiverFixture = (
     Arc<ProviderHostedControlTransport>,
     Arc<Mutex<Vec<&'static str>>>,
     tokio::task::JoinHandle<()>,
-) {
+);
+
+async fn receiver() -> ReceiverFixture {
+    receiver_with_status("404 Not Found").await
+}
+
+async fn receiver_with_status(response: &'static str) -> ReceiverFixture {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let exchanges = Arc::new(Mutex::new(Vec::new()));
@@ -120,9 +126,9 @@ async fn receiver() -> (
         .route(
             "/api/v1/namespaces/fixture/pods/fixture-pod/portforward",
             axum::routing::get(
-                |ws: WebSocketUpgrade, State(exchanges): State<Arc<Mutex<Vec<&'static str>>>>| async move {
+                move |ws: WebSocketUpgrade, State(exchanges): State<Arc<Mutex<Vec<&'static str>>>>| async move {
                     ws.protocols(["v5.channel.k8s.io"])
-                        .on_upgrade(move |socket| refuse_challenge(socket, exchanges))
+                        .on_upgrade(move |socket| refuse_challenge(socket, exchanges, response))
                 },
             ),
         )
@@ -156,7 +162,11 @@ async fn receiver() -> (
     (Arc::new(transport), exchanges, server)
 }
 
-async fn refuse_challenge(mut socket: WebSocket, exchanges: Arc<Mutex<Vec<&'static str>>>) {
+async fn refuse_challenge(
+    mut socket: WebSocket,
+    exchanges: Arc<Mutex<Vec<&'static str>>>,
+    response: &str,
+) {
     for channel in [0, 1] {
         let mut frame = vec![channel];
         frame.extend_from_slice(&9090_u16.to_le_bytes());
@@ -183,13 +193,12 @@ async fn refuse_challenge(mut socket: WebSocket, exchanges: Arc<Mutex<Vec<&'stat
     );
     assert!(request.starts_with(expected.as_bytes()));
     exchanges.lock().unwrap().push("challenge");
+    let response = format!("\x00HTTP/1.1 {response}\r\nContent-Length: 0\r\n\r\n");
     socket
-        .send(Message::Binary(
-            b"\x00HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
-                .as_slice()
-                .into(),
-        ))
+        .send(Message::Binary(response.into_bytes().into()))
         .await
         .unwrap();
     while socket.recv().await.is_some_and(|frame| frame.is_ok()) {}
 }
+
+mod mongo;

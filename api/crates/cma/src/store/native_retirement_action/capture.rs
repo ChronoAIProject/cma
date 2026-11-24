@@ -13,6 +13,11 @@ use uuid::Uuid;
 
 const CAPTURE: &str = "native_retirement_capture_v1";
 const MAX_BYTES: usize = 256 * 1024;
+const MAX_RECEIVER_ID_BYTES: usize = 512;
+// Reserve the runtime, the two Pod identities, the owner tuple and BSON overhead.
+const OBSERVATION_RESERVE: usize = 2 * 1024;
+
+mod transactions;
 const CONFLICT: SandboxStoreError = SandboxStoreError::Conflict;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +75,26 @@ struct BoundAttempt {
     child_revision: u64,
     claim: AgentWorkLease,
     owner: TransportOwner,
+}
+
+/// A historical capability for one admitted slot and attempt.
+pub(crate) struct BoundCapture {
+    parent: ParentBinding,
+    offer_id: Uuid,
+    child: ChildLineage,
+    attempt: BoundAttempt,
+}
+
+impl BoundCapture {
+    pub(crate) fn capture<F: std::future::Future>(
+        &self,
+        future: F,
+    ) -> (
+        layer3_adapter::receiver_failure::ReceiverFailureCapture,
+        impl std::future::Future<Output = F::Output>,
+    ) {
+        layer3_adapter::receiver_failure::capture_attempt(self.attempt.id, future)
+    }
 }
 
 impl ParentBinding {
@@ -174,7 +199,7 @@ impl CaptureRecord {
     fn encode(&self) -> Result<Document, SandboxStoreError> {
         self.validate()?;
         let document = bson::serialize_to_document(self).map_err(|_| invalid_capture())?;
-        if !size_allowed(&document)? {
+        if !size_allowed(&document)? || !self.has_observation_capacity(&document)? {
             return Err(CONFLICT);
         }
         Ok(document)
@@ -187,7 +212,19 @@ impl CaptureRecord {
         let record: Self =
             bson::deserialize_from_document(document.clone()).map_err(|_| invalid_capture())?;
         record.validate()?;
+        if !record.has_observation_capacity(document)? {
+            return Err(invalid_capture());
+        }
         Ok(record)
+    }
+
+    fn has_observation_capacity(&self, document: &Document) -> Result<bool, SandboxStoreError> {
+        let bound = self
+            .slots
+            .iter()
+            .filter(|slot| matches!(slot.state, CaptureState::Bound { .. }))
+            .count();
+        Ok(encoded_size(document)? + bound * OBSERVATION_RESERVE <= MAX_BYTES)
     }
 
     fn validate(&self) -> Result<(), SandboxStoreError> {
@@ -229,8 +266,11 @@ impl Slot {
             } => {
                 if receiver.runtime.as_str() != parent.runtime.runtime_id
                     || receiver.owner != attempt.owner
+                    || receiver.runtime.as_str().len() > MAX_RECEIVER_ID_BYTES
                     || receiver.pod.uid.is_empty()
+                    || receiver.pod.uid.len() > MAX_RECEIVER_ID_BYTES
                     || receiver.pod.container_id.is_empty()
+                    || receiver.pod.container_id.len() > MAX_RECEIVER_ID_BYTES
                     || receiver.pod.restart_count < 0
                 {
                     return false;
@@ -249,8 +289,12 @@ impl Slot {
 }
 
 fn size_allowed(document: &Document) -> Result<bool, SandboxStoreError> {
+    Ok(encoded_size(document)? <= MAX_BYTES)
+}
+
+fn encoded_size(document: &Document) -> Result<usize, SandboxStoreError> {
     bson::serialize_to_vec(document)
-        .map(|bytes| bytes.len() <= MAX_BYTES)
+        .map(|bytes| bytes.len())
         .map_err(|_| invalid_capture())
 }
 
