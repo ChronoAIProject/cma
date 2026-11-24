@@ -208,7 +208,7 @@ pub(crate) async fn revoke(
         (status = 401, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
     ),
 )]
-pub(crate) async fn redeem(
+pub(super) async fn redeem(
     State(service): State<Arc<dyn RuntimeCanaryService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     context: Option<Extension<CallerContext>>,
