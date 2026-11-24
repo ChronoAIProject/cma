@@ -1,8 +1,11 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
+
+use tokio::time::Instant;
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
-    AgentConnectionRecoveryOutcome, PageRequest, SandboxStoreError, MAX_PAGE_SIZE,
+    AgentConnectionRecoveryCandidate, AgentConnectionRecoveryOutcome, PageRequest,
+    SandboxStoreError, MAX_PAGE_SIZE,
 };
 
 use super::{AgentWorker, ReconnectAction};
@@ -12,6 +15,68 @@ mod maintenance;
 pub(super) use maintenance::MaintenanceChecks;
 
 const MANAGED_GUIDANCE_REVISION: u64 = 1;
+const SLICE_PAGE_SIZE: u16 = 32;
+// Check between candidates. The background deadline still bounds a single slow
+// operation and its cancellation must leave the cursor at the preceding Agent.
+const SLICE_BUDGET: Duration = Duration::from_secs(1);
+const MAX_STALLED_ADMISSIONS: u8 = 2;
+
+/// Per Scheduler progress. Durable reads and ownership are revalidated on each
+/// admission. Restarting with no cursor safely begins at the first Agent.
+#[derive(Default)]
+pub(crate) struct ConnectionSweep {
+    cursor: Option<String>,
+    started: Option<Instant>,
+    pages: u64,
+    candidates: u64,
+    stalled_admissions: u8,
+    rewinds: u64,
+    counts: ReconcileCounts,
+}
+
+impl ConnectionSweep {
+    #[cfg(test)]
+    pub(crate) fn visited(&self) -> (u64, u64) {
+        (self.pages, self.candidates)
+    }
+
+    fn start_slice(&mut self) {
+        if self.stalled_admissions == MAX_STALLED_ADMISSIONS {
+            // Revisit earlier IDs without skipping the interrupted Agent or
+            // starting a new sweep with a fresh migration allowance.
+            self.cursor = None;
+            self.stalled_admissions = 0;
+            self.rewinds += 1;
+        }
+        if self.cursor.is_some() {
+            self.stalled_admissions += 1;
+        }
+    }
+
+    fn finish(&mut self) -> usize {
+        let sweep = std::mem::take(self);
+        let counts = sweep.counts;
+        tracing::info!(
+            parent: None,
+            pages = sweep.pages,
+            candidates = sweep.candidates,
+            rewinds = sweep.rewinds,
+            ownership_attempted = counts.ownership_attempted,
+            ownership_skipped = counts.ownership_skipped,
+            recovery_deferred = counts.recovery_deferred,
+            context_runtime_deferred = counts.context_runtime_deferred,
+            context_current = counts.context_current,
+            context_deferred = counts.context_deferred,
+            context_checks = counts.context_checks,
+            context_throttled = counts.context_throttled,
+            transport_attempts = counts.transport_attempts,
+            scheduled = counts.scheduled,
+            elapsed_ms = sweep.started.expect("admitted sweep").elapsed().as_millis() as u64,
+            "Agent connection reconciliation completed"
+        );
+        counts.scheduled
+    }
+}
 
 impl AgentWorker {
     /// Reconcile every durable live conversation into the process-local registry.
@@ -19,75 +84,109 @@ impl AgentWorker {
         &self,
         now: SystemTime,
     ) -> Result<usize, SandboxStoreError> {
-        let started = std::time::Instant::now();
-        let mut cursor = None;
-        let mut candidates = 0_u64;
-        let mut counts = ReconcileCounts::default();
-        loop {
-            let page = self
-                .dependencies
-                .store
-                .live_agent_connections(&PageRequest::new(MAX_PAGE_SIZE, cursor).expect("valid"))
-                .await?;
-            for candidate in page.items {
-                candidates += 1;
-                let target = LiveAgentTarget {
-                    agent_id: candidate.agent_id.clone(),
-                    conversation_id: candidate.conversation_id.clone(),
-                    runtime_generation: candidate.runtime_generation,
-                };
-                if let Some(coordinator) = &self.config.ownership {
-                    // Discovery proves recovery ineligibility for this observation.
-                    // Only a matching attachment can still need maintenance.
-                    if self.config.skip_ineligible_reconciliation
-                        && !candidate.recovery_eligible
-                        && !self.dependencies.registry.target_is_attached(&target)
-                    {
-                        counts.ownership_skipped += 1;
-                        counts.recovery_deferred += 1;
-                        continue;
-                    }
-                    counts.ownership_attempted += 1;
-                    let Some(authority) = coordinator
-                        .acquire(&candidate.agent_id)
-                        .await
-                        .map_err(|_| SandboxStoreError::Conflict)?
-                    else {
-                        continue;
-                    };
-                    authority
-                        .run(self.reconcile_candidate(candidate, &target, now, &mut counts))
-                        .await
-                        .map_err(|_| SandboxStoreError::Conflict)??;
-                } else {
-                    self.reconcile_candidate(candidate, &target, now, &mut counts)
-                        .await?;
-                }
-            }
-            let Some(next) = page.next else {
-                // One content-free summary per completed scheduler sweep (at most
-                // once per second), not one record per Agent or database call.
-                tracing::info!(
-                    parent: None,
-                    candidates,
-                    ownership_attempted = counts.ownership_attempted,
-                    ownership_skipped = counts.ownership_skipped,
-                    recovery_deferred = counts.recovery_deferred,
-                    context_runtime_deferred = counts.context_runtime_deferred,
-                    context_current = counts.context_current,
-                    context_deferred = counts.context_deferred,
-                    context_checks = counts.context_checks,
-                    context_throttled = counts.context_throttled,
-                    transport_attempts = counts.transport_attempts,
-                    scheduled = counts.scheduled,
-                    elapsed_ms = started.elapsed().as_millis() as u64,
-                    "Agent connection reconciliation completed"
-                );
-                return Ok(counts.scheduled);
-            };
-            cursor = Some(next);
-        }
+        let mut sweep = ConnectionSweep::default();
+        while !self
+            .reconcile_page(now, &mut sweep, MAX_PAGE_SIZE, None)
+            .await?
+        {}
+        Ok(sweep.finish())
     }
+
+    pub(crate) async fn reconcile_connection_slice(
+        &self,
+        now: SystemTime,
+        sweep: &mut ConnectionSweep,
+    ) -> Result<bool, SandboxStoreError> {
+        sweep.start_slice();
+        if self
+            .reconcile_page(now, sweep, SLICE_PAGE_SIZE, Some(SLICE_BUDGET))
+            .await?
+        {
+            sweep.finish();
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    async fn reconcile_page(
+        &self,
+        now: SystemTime,
+        sweep: &mut ConnectionSweep,
+        limit: u16,
+        budget: Option<Duration>,
+    ) -> Result<bool, SandboxStoreError> {
+        let started = Instant::now();
+        sweep.started.get_or_insert(started);
+        let page = self
+            .dependencies
+            .store
+            .live_agent_connections(
+                &PageRequest::new(limit, sweep.cursor.clone())
+                    .expect("valid reconciliation page size"),
+            )
+            .await?;
+        sweep.pages += 1;
+        let mut candidates = page.items.into_iter().peekable();
+        while let Some(candidate) = candidates.next() {
+            sweep.candidates += 1;
+            let cursor = budget.map(|_| candidate.agent_id.to_string());
+            self.reconcile_candidate_with_ownership(candidate, now, &mut sweep.counts)
+                .await?;
+            // Resume from the last settled item, including after timeout or cancellation.
+            if let Some(cursor) = cursor {
+                sweep.cursor = Some(cursor);
+                sweep.stalled_admissions = 0;
+            }
+            if candidates.peek().is_some()
+                && budget.is_some_and(|budget| started.elapsed() >= budget)
+            {
+                return Ok(false);
+            }
+        }
+        sweep.cursor = page.next;
+        Ok(sweep.cursor.is_none())
+    }
+
+    async fn reconcile_candidate_with_ownership(
+        &self,
+        candidate: AgentConnectionRecoveryCandidate,
+        now: SystemTime,
+        counts: &mut ReconcileCounts,
+    ) -> Result<(), SandboxStoreError> {
+        let target = LiveAgentTarget {
+            agent_id: candidate.agent_id.clone(),
+            conversation_id: candidate.conversation_id.clone(),
+            runtime_generation: candidate.runtime_generation,
+        };
+        let Some(coordinator) = &self.config.ownership else {
+            return self
+                .reconcile_candidate(candidate, &target, now, counts)
+                .await;
+        };
+        // Discovery proves recovery ineligibility for this observation. Only a
+        // matching attachment can still need maintenance.
+        if self.config.skip_ineligible_reconciliation
+            && !candidate.recovery_eligible
+            && !self.dependencies.registry.target_is_attached(&target)
+        {
+            counts.ownership_skipped += 1;
+            counts.recovery_deferred += 1;
+            return Ok(());
+        }
+        counts.ownership_attempted += 1;
+        let Some(authority) = coordinator
+            .acquire(&candidate.agent_id)
+            .await
+            .map_err(|_| SandboxStoreError::Conflict)?
+        else {
+            return Ok(());
+        };
+        authority
+            .run(self.reconcile_candidate(candidate, &target, now, counts))
+            .await
+            .map_err(|_| SandboxStoreError::Conflict)?
+    }
+
     async fn reconcile_candidate(
         &self,
         candidate: layer2_core::sandbox::store::AgentConnectionRecoveryCandidate,
@@ -154,6 +253,10 @@ impl AgentWorker {
                     return Ok(());
                 }
                 counts.context_checks += 1;
+                // Retain the charge when cancellation leaves the outcome uncertain.
+                if migration.is_some() {
+                    counts.transport_attempts += 1;
+                }
                 let result = self
                     .dependencies
                     .operations
@@ -169,8 +272,8 @@ impl AgentWorker {
                         migration.map(|migration| migration.origin.as_str()),
                     )
                     .await;
-                if migration.is_some() && !matches!(&result, Ok(false)) {
-                    counts.transport_attempts += 1;
+                if migration.is_some() && matches!(&result, Ok(false)) {
+                    counts.transport_attempts -= 1;
                 }
                 if let Err(error) = result {
                     tracing::debug!(agent_id=%candidate.agent_id, error=%error, "managed context refresh deferred");
@@ -179,7 +282,7 @@ impl AgentWorker {
             return Ok(());
         }
         // The same sweep already validated the entire Agent. A paused,
-        // stopping or already counts.scheduled candidate cannot be recovered
+        // stopping or already scheduled candidate cannot be recovered
         // by this observation. Changes remain visible on the next sweep.
         if !candidate.recovery_eligible {
             counts.recovery_deferred += 1;
