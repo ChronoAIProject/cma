@@ -187,9 +187,14 @@ pub(super) async fn record_with_marker(
             return other.map(|_| ()).or_else(optional_write_error);
         }
     }
-    match commit_transaction(&mut session).await {
+    optional_commit_result(commit_transaction(&mut session).await)
+}
+
+fn optional_commit_result(outcome: CommitOutcome) -> Result<(), SandboxStoreError> {
+    match outcome {
         CommitOutcome::Committed | CommitOutcome::Retry(_) => Ok(()),
-        CommitOutcome::Unknown(error) | CommitOutcome::Failed(error) => Err(unavailable(error)),
+        CommitOutcome::Failed(error) => optional_write_error(error),
+        CommitOutcome::Unknown(error) => Err(unavailable(error)),
     }
 }
 
@@ -271,4 +276,15 @@ pub(super) async fn decision(
 
 fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
     SandboxStoreError::Unavailable(error.to_string())
+}
+
+#[cfg(test)]
+#[test]
+fn retry_hint_preserves_publication_on_known_refusal_but_reports_unknown_commit() {
+    let conflict = || mongodb::error::Error::custom(SandboxStoreError::Conflict);
+    assert!(optional_commit_result(CommitOutcome::Failed(conflict())).is_ok());
+    assert!(matches!(
+        optional_commit_result(CommitOutcome::Unknown(conflict())),
+        Err(SandboxStoreError::Unavailable(_))
+    ));
 }
