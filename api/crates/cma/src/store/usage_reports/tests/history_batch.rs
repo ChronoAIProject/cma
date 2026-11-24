@@ -48,8 +48,7 @@ async fn observe_store(original: Arc<ReportingStore>) -> (Arc<ReportingStore>, A
     }));
     let client = Client::with_options(options).unwrap();
     let mut store = (*original).clone();
-    store.db = client.database(original.db.name());
-    store.client = client;
+    store.persistence = store.persistence.with_client(client);
     (Arc::new(store), commands)
 }
 

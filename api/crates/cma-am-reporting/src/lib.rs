@@ -2,6 +2,7 @@
 
 mod store {
     pub mod allocation_buckets;
+    pub mod mongo;
     pub mod transaction_scope;
     pub(super) mod usage_reports;
 }
@@ -16,4 +17,4 @@ pub mod metric_rollups;
 pub mod pool;
 pub mod usage_rollups;
 
-pub use store::{allocation_buckets, transaction_scope};
+pub use store::{allocation_buckets, mongo::ReportingStore, transaction_scope};
