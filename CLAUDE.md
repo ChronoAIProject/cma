@@ -418,12 +418,12 @@ does not need to repair a deployment by clicking a revive control.
 
 ### Runtime identity and persistent homes
 
-Changing the configured runtime image does not immediately replace existing live
-Sandboxes. Reconciliation adopts each retained runtime using its recorded image;
-new allocations use the configured image. API/web upgrade and rollback preserve
-the existing runtime, native conversation, admitted turns, approvals and dirty
-work. An incompatible feature stays disabled until retained runtime coexistence
-and uninterrupted interaction are proved.
+Existing live Sandboxes retain their recorded image across a runtime release.
+Reconciliation adopts each retained runtime using that image. New managed
+allocations use the released default for their lane under §6. API/web upgrade
+and rollback preserve the existing runtime, native conversation, admitted turns,
+approvals and dirty work. An incompatible feature stays disabled until retained
+runtime coexistence and uninterrupted interaction are proved.
 
 Managed native homes support two explicit update policies: the owner's Sandbox
 Details update command, and a daily check at 02:00 Asia/Singapore. The first
@@ -548,15 +548,23 @@ Production selects only the application components (`am`, `eg`, `web`), never th
 `runtime` or `runtime-omarchy` images: until a reviewed production runtime-promotion
 design exists, runtime images stay pinned in Agent Manager's privately maintained
 configuration, and an approved release set that holds one is refused rather than
-narrowed. Staging still deploys runtime images together with Agent Manager.
-`CHRONO_SANDBOX_IMAGE` is the single released default for new allocations,
-managed-runtime updates and owner-requested revival under §5. It is pinned to a
-verified CI artifact by explicit release promotion; publishing a CI tag alone
-never changes that authority, and no registry tag scan chooses a newer image. Existing live
-Sandboxes retain their image until an admitted update reaches idle. Deployment
-alone never starts immediate image-drift rotation. Persisted update requests
-require a compatible reader during rollback; older binaries that reject the new
-lifecycle metadata cannot safely be restored after admission.
+narrowed. Staging deploys runtime images together with Agent Manager until
+runtime pointer following is activated there.
+
+For new managed allocations, managed-runtime updates and owner-requested revival
+under §5, each lane uses the active digest that Agent Manager has durably
+recorded as its released default. `CHRONO_SANDBOX_IMAGE` and
+`CHRONO_MACHINE_SANDBOX_IMAGE` bootstrap empty Agent and Machine Included lanes,
+respectively, and supply the fixed defaults in deployments without durable lane
+authority. After pointer following is activated, the CD runtime lanes advance
+their own environment's pointers to verified, finalized digests. Agent Manager
+verifies the digest named by its environment's pointer, prewarms the matching
+native pool, and promotes that digest only after the pool is ready. Freezing
+following preserves the active digest. Existing live Sandboxes retain their
+image until an admitted update reaches idle. Deployment alone never starts
+immediate image-drift rotation. Persisted update requests require a compatible
+reader during rollback; older binaries that reject the new lifecycle metadata
+cannot safely be restored after admission.
 
 Full procedure in private maintainer guidance.
 

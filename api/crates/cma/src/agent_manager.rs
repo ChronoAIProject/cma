@@ -1,6 +1,8 @@
 //! One participating process: renew, rebalance, revoke receivers, then release.
 mod containment;
 mod drain;
+#[cfg(test)]
+pub(crate) use drain::handoff as drain_receiver_for_test;
 mod maintenance;
 pub(crate) mod relay;
 mod renewal;

@@ -79,11 +79,12 @@ pub(super) async fn bind(f: &Fixture) {
         .agent_log(&agent.id, 0, agent.conversation.last_seq as u16)
         .await
         .unwrap();
-    f.source.align_bound(&agent, rows);
+    f.source
+        .align_turn(&agent, agent.conversation.active_turn.unwrap(), rows);
 }
 
 impl Source {
-    fn align_bound(&self, agent: &Agent, rows: Vec<AgentLogEntry>) {
+    fn align_turn(&self, agent: &Agent, turn: u64, rows: Vec<AgentLogEntry>) {
         let mut fold = AgentLogProjectionState::default();
         let mut facts = None;
         for row in &rows {
@@ -92,12 +93,13 @@ impl Source {
                 .unwrap()
             {
                 if let AgentLogEvidenceChange::Turn(value) = change {
-                    facts = Some(*value);
+                    if value.turn_sequence == turn {
+                        facts = Some(*value);
+                    }
                 }
             }
         }
         let facts = facts.unwrap();
-        let turn = agent.conversation.active_turn.unwrap();
         let start = rows.iter().find(|row| row.seq == turn).unwrap();
         let mut index = AgentTurnOutputIndex::start(start).unwrap();
         let changes = rows
@@ -126,6 +128,69 @@ impl Source {
             changes,
         };
     }
+}
+
+pub(super) async fn retained_completed_response(f: &Fixture) -> String {
+    use layer3_adapter::{ConversationUpdate, PromptIdentity, PromptResponse, TurnStopReason};
+
+    let admitted = f
+        .router
+        .clone()
+        .oneshot(request(
+            Method::POST,
+            "/api/v2/responses",
+            "owner",
+            Some(json!({"conversation":"agt_composed", "input":"question", "stream":true})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(admitted.status(), StatusCode::OK);
+    drop(admitted);
+    let command = f
+        .store
+        .command_work_page(&layer2_core::sandbox::store::PageRequest::default())
+        .await
+        .unwrap()
+        .items
+        .remove(0);
+    bind(f).await;
+    let id = &command.receipt.envelope.agent_id;
+    let agent = f.store.get_agent(id).await.unwrap().unwrap();
+    let generation = agent.conversation.runtime_generation.unwrap();
+    let turn = agent.conversation.active_turn.unwrap();
+    let complete = ConversationUpdate::TurnEndedForPrompt {
+        prompt_id: PromptIdentity::new(
+            agent.conversation.conversation_id.as_deref().unwrap(),
+            generation,
+            turn,
+        ),
+        response: PromptResponse::new(TurnStopReason::EndTurn),
+    };
+    let outcome = DurableAgentUpdateRecorder::new(f.store.clone())
+        .record_update(
+            id,
+            generation,
+            &mut AgentMessageAssembly::default(),
+            complete,
+            layer2_core::now_rfc3339(),
+        )
+        .await
+        .unwrap();
+    assert!(outcome.turn_closed);
+    let settled = f
+        .store
+        .reconcile_command(&command.receipt.envelope.command_id)
+        .await
+        .unwrap();
+    assert_eq!(settled.status, AgentResponseStatus::Completed);
+    let agent = f.store.get_agent(id).await.unwrap().unwrap();
+    let rows = f
+        .store
+        .agent_log(id, 0, agent.conversation.last_seq.try_into().unwrap())
+        .await
+        .unwrap();
+    f.source.align_turn(&agent, turn, rows);
+    settled.receipt.response_id.unwrap().to_string()
 }
 
 #[tokio::test]
@@ -213,4 +278,54 @@ async fn assert_semantic_counter(failure: bool) {
     ] {
         assert!(!text.contains(private));
     }
+}
+
+pub(super) fn request(
+    method: Method,
+    path: &str,
+    subject: &str,
+    body: Option<Value>,
+) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("content-type", "application/json")
+        .header("idempotency-key", "composed-reader")
+        .body(body.map_or_else(Body::empty, |value| Body::from(value.to_string())))
+        .unwrap();
+    attach_identity(&mut request, subject);
+    request
+}
+
+pub(super) fn attach_identity(request: &mut Request<Body>, subject: &str) {
+    let caller = Caller::new(
+        SubjectId::new(subject),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    let context = CallerContext {
+        credential_source: CredentialSource::Retained,
+        actor: ResourceActor::Api {
+            subject: caller.subject.clone(),
+            delegation_id: None,
+        },
+        credential: CredentialContext {
+            issuer: "https://fixture.test".into(),
+            subject: caller.subject.clone(),
+            credential_id: "composed-reader".into(),
+        },
+        caller: caller.clone(),
+        memberships: vec![],
+    };
+    request
+        .extensions_mut()
+        .insert(layer1_public::AuthenticatedSubject(caller.subject));
+    request
+        .extensions_mut()
+        .insert(Authorization::new([Capability::UseOwnSandboxes]));
+    request.extensions_mut().insert(context);
+    request
+        .extensions_mut()
+        .insert(layer1_public::DelegatedCredential::new(
+            "fixture-credential".into(),
+        ));
 }

@@ -23,6 +23,7 @@ mod stale_turn_tests;
 mod strict_inactivity_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub image_manager_retirement: bool,
     pub am_startup_health_serving: bool,
     pub visitor_launch_admission: bool,
     pub usage_signed_cursors_enabled: bool,
@@ -43,6 +44,7 @@ pub(crate) struct FeatureFlags {
     pub runtime_loss_bounded_proof_enabled: bool,
     pub native_retirement_finality_enabled: bool,
     pub command_reconcile_pacing: bool,
+    pub command_cancel_wake: bool,
     pub ownership_cleanup_pacing: bool,
     pub batch_ownership_renewal: bool,
     /// Contain one receiver's transient housekeeping failure instead of
@@ -62,6 +64,7 @@ pub(crate) struct FeatureFlags {
     pub startup_sibling_hold_enabled: bool,
     pub retained_reopen_enabled: bool,
     pub retained_suspended_reopen_enabled: bool,
+    pub retained_repeat_reopen_enabled: bool,
     pub agent_skill_upgrade_enabled: bool,
     pub shared_runtime_output: bool,
     pub model_budget_writes_enabled: bool,
@@ -81,6 +84,7 @@ pub(crate) struct FeatureFlags {
     pub single_fence_event_pages: bool,
     pub concurrent_sandbox_detail_enrichment: bool,
     pub sandbox_agent_projection: bool,
+    pub sandbox_profile_readability: bool,
     pub sandbox_snapshot_reads: bool,
     pub sandbox_batched_reads: bool,
     pub sandbox_detail_timings: bool,
@@ -94,6 +98,7 @@ pub(crate) struct FeatureFlags {
     pub paged_response_events: bool,
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
+    pub github_repository_preflight: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
     /// Gated writer for the stable proxy replay principal (reader floor landed first).
@@ -102,6 +107,7 @@ pub(crate) struct FeatureFlags {
     pub silent_sign_in: bool,
     pub document_revocation_reserve: bool,
     pub document_quotas: bool,
+    pub document_source_commits: bool,
     pub document_object_deletion: bool,
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
@@ -114,11 +120,13 @@ pub(crate) struct FeatureFlags {
     pub retained_context_lookup: bool,
     pub context_diagnostics: bool,
     pub event_driven_reconciliation: bool,
+    pub resume_agent_reconciliation: bool,
     pub stale_turn_reconciliation: bool,
     pub stale_turn_terminal: bool,
     pub agent_connection_observations: bool,
     pub empty_discovery: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
+    pub sandbox_binding_hold_metrics: bool,
 }
 /// Rollout gates graduated to default-on after their rollout completed in
 /// every environment. Unset means enabled; an explicit `false` remains the
@@ -150,6 +158,7 @@ impl FeatureFlags {
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
         let flags = Self {
+            image_manager_retirement: flag(lookup, "CHRONO_IMAGE_MANAGER_RETIREMENT_ENABLED")?,
             am_startup_health_serving: flag(lookup, "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED")?,
             pending_home_reconciliation: flag(
                 lookup,
@@ -189,6 +198,7 @@ impl FeatureFlags {
                 "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
             )?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
+            command_cancel_wake: flag(lookup, "CHRONO_COMMAND_CANCEL_WAKE_ENABLED")?,
             ownership_cleanup_pacing: flag(lookup, "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED")?,
             batch_ownership_renewal: flag(lookup, "CHRONO_AM_BATCH_OWNERSHIP_RENEWAL")?,
             receiver_housekeeping_containment: flag(
@@ -218,6 +228,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_RETAINED_SUSPENDED_REOPEN_ENABLED",
             )?,
+            retained_repeat_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REPEAT_REOPEN_ENABLED")?,
             agent_skill_upgrade_enabled: flag(lookup, "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")?,
             access_snapshot_session: super::access_snapshot::enabled(lookup)?,
             resource_list_batch_reads: flag(lookup, "CHRONO_RESOURCE_LIST_BATCH_READS_ENABLED")?,
@@ -228,6 +239,10 @@ impl FeatureFlags {
             )?,
             agent_file_read_timings: flag(lookup, "CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED")?,
             sandbox_agent_projection: flag(lookup, "CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED")?,
+            sandbox_profile_readability: flag(
+                lookup,
+                "CHRONO_SANDBOX_PROFILE_READABILITY_ENABLED",
+            )?,
             sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
             sandbox_batched_reads: flag(lookup, "CHRONO_SANDBOX_BATCHED_READS_ENABLED")?,
             sandbox_detail_timings: match lookup("CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")? {
@@ -238,6 +253,7 @@ impl FeatureFlags {
                 )?,
             },
             document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
+            document_source_commits: flag(lookup, "CHRONO_DOCUMENT_SOURCE_COMMITS_ENABLED")?,
             document_object_deletion: flag(lookup, "CHRONO_DOCUMENT_OBJECT_DELETION_ENABLED")?,
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
@@ -265,6 +281,10 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
             )?,
+            resume_agent_reconciliation: flag(
+                lookup,
+                "CHRONO_AGENT_RECONCILIATION_RESUME_ENABLED",
+            )?,
             empty_discovery: flag(lookup, "CHRONO_EMPTY_DISCOVERY_COALESCING_ENABLED")?,
             agent_connection_observations: flag(
                 lookup,
@@ -273,6 +293,10 @@ impl FeatureFlags {
             sandbox_reconciliation_reserved_lane: flag(
                 lookup,
                 "CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED",
+            )?,
+            sandbox_binding_hold_metrics: flag(
+                lookup,
+                "CHRONO_SANDBOX_BINDING_HOLD_METRICS_ENABLED",
             )?,
             stale_turn_reconciliation: flag(lookup, "CHRONO_STALE_TURN_RECONCILIATION_ENABLED")?,
             stale_turn_terminal: flag(lookup, "CHRONO_STALE_TURN_TERMINAL_ENABLED")?,
@@ -318,6 +342,10 @@ impl FeatureFlags {
             paged_response_events: flag(lookup, "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")?,
             v2_ui_transport: flag(lookup, "CHRONO_V2_UI_TRANSPORT_ENABLED")?,
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
+            github_repository_preflight: flag(
+                lookup,
+                "CHRONO_GITHUB_REPOSITORY_PREFLIGHT_ENABLED",
+            )?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
             nyxid_proxy: flag(lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
             nyxid_proxy_replay_principal: flag(
