@@ -26,6 +26,8 @@ pub(crate) struct MongoConnectionPolicy {
 
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
+    /// The one released-default authority for new work in this process.
+    pub(crate) released_runtime: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
     pub(crate) account_deletions: Arc<super::account_deletions::MongoAccountDeletionStore>,
     pub(crate) request_limits: Arc<super::request_limits::MongoRequestLimits>,
     pub(crate) document_artifacts: Arc<crate::document_artifacts::MongoDocumentStore>,
@@ -246,7 +248,10 @@ impl MongoStores {
         )
         .await?
         .with_managed_runtime_version(startup.runtime.0.into());
-        let sandbox_model = Arc::new(sandbox_model);
+        let released_runtime: Arc<dyn layer3_adapter::ReleasedRuntimeSource> = Arc::new(
+            layer3_adapter::PinnedReleasedRuntime::new(startup.runtime.0, None),
+        );
+        let sandbox_model = Arc::new(sandbox_model.with_released_runtime(released_runtime.clone()));
         let sandbox_profiles = Arc::new(MongoProfileStore::open(&client, database).await?);
         let sandbox_credentials = Arc::new(
             MongoSandboxCredentialStore::open(&client, database, deployment, auth_encryption_key)
@@ -381,6 +386,7 @@ impl MongoStores {
             super::request_limits::MongoRequestLimits::open(&client.database(database)).await?,
         );
         let stores = Self {
+            released_runtime,
             account_deletions,
             request_limits,
             document_artifacts,
@@ -432,7 +438,16 @@ async fn connection_options(uri: &str) -> Result<ClientOptions, StoreError> {
     // Replica ownership changes authority, not the deployment's connection
     // budget. Preserve explicit URI options and driver defaults in both modes.
     super::mongo_latency::observe(&mut options);
+    #[cfg(test)]
+    if let Ok(handler) = STARTUP_COMMANDS.try_with(Clone::clone) {
+        options.command_event_handler = Some(handler);
+    }
     Ok(options)
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    pub(super) static STARTUP_COMMANDS: mongodb::event::EventHandler<mongodb::event::command::CommandEvent>;
 }
 
 #[cfg(test)]

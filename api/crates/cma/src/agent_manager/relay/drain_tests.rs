@@ -62,6 +62,7 @@ async fn authenticated_prestop_drains_actual_managers_before_peer_takeover() {
                 address.clone(),
                 256,
                 false,
+                false,
             )
             .await
             .unwrap();
@@ -203,6 +204,7 @@ async fn prestop_and_main_retain_ownership_until_blocked_lifecycle_has_joined() 
         Arc::new(LiveAgentRegistry::default()),
         address.clone(),
         256,
+        false,
         false,
     )
     .await

@@ -112,7 +112,9 @@ pub struct MongoSandboxStore {
     pub(super) sandboxes: Collection<Document>,
     pub(super) lifecycle_operations: Collection<Document>,
     pub(super) sandbox_sessions: Collection<Document>,
+    pub(super) strict_inactivity_session_evidence: bool,
     pub(super) workspaces: Collection<Document>,
+    pub(super) bounded_inactivity_legacy_log: bool,
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
     pub(super) agent_writes: std::sync::Arc<super::agent_write_coordination::AgentWrites>,
@@ -157,6 +159,9 @@ pub struct MongoSandboxStore {
     pub(super) warm_runtime_version: Option<String>,
     pub(super) managed_runtime_version: Option<String>,
     pub(super) managed_machine_runtime_version: Option<String>,
+    /// The process's released-default authority. When set it supersedes the
+    /// two fixed pins above, which remain only for store fixtures.
+    pub(super) released: Option<std::sync::Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
     pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
     pub(crate) native_prepared_changed: std::sync::Arc<tokio::sync::Notify>,
@@ -174,13 +179,60 @@ impl MongoSandboxStore {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_machine_runtime_version(mut self, version: Option<String>) -> Self {
         self.managed_machine_runtime_version = version;
         self
     }
 
+    pub(crate) fn with_released_runtime(
+        mut self,
+        released: std::sync::Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
+    ) -> Self {
+        self.released = Some(released);
+        self
+    }
+
+    /// The current release of both lanes, captured once.
+    pub(crate) fn released_runtime(&self) -> layer3_adapter::ReleasedRuntime {
+        match &self.released {
+            Some(released) => released.snapshot(),
+            None => layer3_adapter::ReleasedRuntime {
+                revision: 0,
+                agent: self.managed_runtime_version.clone().unwrap_or_default(),
+                machine: self.managed_machine_runtime_version.clone(),
+            },
+        }
+    }
+
+    /// The current agent-lane release for new managed work.
+    pub(crate) fn managed_agent_release(&self) -> Option<String> {
+        match &self.released {
+            Some(released) => Some(released.snapshot().agent),
+            None => self.managed_runtime_version.clone(),
+        }
+    }
+
+    /// The current machine-lane release, when the deployment has one.
+    pub(crate) fn managed_machine_release(&self) -> Option<String> {
+        match &self.released {
+            Some(released) => released.snapshot().machine,
+            None => self.managed_machine_runtime_version.clone(),
+        }
+    }
+
     pub(crate) fn with_agent_control_write_coordination(mut self, enabled: bool) -> Self {
         self.agent_control_write_coordination = enabled;
+        self
+    }
+
+    pub(crate) fn with_bounded_inactivity_legacy_log(mut self, enabled: bool) -> Self {
+        self.bounded_inactivity_legacy_log = enabled;
+        self
+    }
+
+    pub(crate) fn with_strict_inactivity_session_evidence(mut self, enabled: bool) -> Self {
+        self.strict_inactivity_session_evidence = enabled;
         self
     }
 
@@ -258,7 +310,9 @@ impl MongoSandboxStore {
                 super::agent_lifecycle_operations::COLLECTION,
             ),
             sandbox_sessions: majority_collection(&database, SANDBOX_SESSIONS),
+            strict_inactivity_session_evidence: false,
             workspaces: majority_collection(&database, WORKSPACES),
+            bounded_inactivity_legacy_log: false,
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
             agent_writes: Default::default(),
@@ -315,6 +369,7 @@ impl MongoSandboxStore {
             warm_runtime_version: None,
             managed_runtime_version: None,
             managed_machine_runtime_version: None,
+            released: None,
             warm_home_policy: None,
             warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
             native_prepared_changed: std::sync::Arc::new(tokio::sync::Notify::new()),

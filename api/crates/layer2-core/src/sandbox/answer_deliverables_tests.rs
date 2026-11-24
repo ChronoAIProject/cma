@@ -629,3 +629,157 @@ async fn answer_deliverables_live_file_never_becomes_a_snapshot_or_shared_artifa
         .is_empty());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+struct ConfirmedAgent(crate::sandbox::agent_access_tool::AgentAccessRequester);
+
+#[async_trait::async_trait]
+impl crate::sandbox::agent_access_tool::AgentAccessToolAuthenticator for ConfirmedAgent {
+    async fn authenticate_setup(
+        &self,
+        _: &str,
+    ) -> Result<(), crate::sandbox::agent_access::AgentAccessError> {
+        Ok(())
+    }
+
+    async fn authenticate(
+        &self,
+        _: &str,
+    ) -> Result<
+        crate::sandbox::agent_access_tool::AgentAccessRequester,
+        crate::sandbox::agent_access::AgentAccessError,
+    > {
+        Ok(self.0.clone())
+    }
+}
+
+#[tokio::test]
+async fn agent_deliverable_paths_resolve_within_the_agents_own_worktree() {
+    let root = std::env::temp_dir().join(format!(
+        "cma-deliverable-paths-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let worktree_dir = root.join("project/.worktrees/wt-1");
+    std::fs::create_dir_all(worktree_dir.join("out")).unwrap();
+    std::fs::write(worktree_dir.join("report.docx"), b"docx").unwrap();
+    std::fs::write(worktree_dir.join("out/tables.csv"), b"a,b\n").unwrap();
+    std::fs::write(worktree_dir.join("both.txt"), b"worktree").unwrap();
+    std::fs::write(root.join("both.txt"), b"home").unwrap();
+    let store = Arc::new(store::InMemorySandboxStore::default());
+    let mut sandbox = sandbox();
+    sandbox.runtime = Some(RuntimeBinding {
+        boot_id: Some("b".repeat(32)),
+        runtime_id: "runtime-test".into(),
+        runtime_version: "image".into(),
+        provision_generation: Some(1),
+        bound_at: NOW.into(),
+    });
+    sandbox.lifecycle.home = Some(Box::new(super::attachments::persistent_home()));
+    sandbox.lifecycle.runtime_generation_high_water = 1;
+    store.create_sandbox(sandbox).await.unwrap();
+    store.create_workspace(workspace()).await.unwrap();
+    store.create_worktree(worktree()).await.unwrap();
+    let mut agent = agent();
+    agent.status = AgentStatus::Ready;
+    agent.conversation.conversation_id = Some("native-delivery".into());
+    agent.conversation.runtime_generation = Some(1);
+    store.create_agent(agent.clone()).await.unwrap();
+    let access = Arc::new(ResourceAccessService::new(
+        store.clone(),
+        Arc::new(super::filesystem::OrganizationAdmin),
+    ));
+    let artifacts = agent_artifacts::AgentArtifactService::new(store.clone(), access.clone());
+    let files = agent_filesystem::AgentFileService::new(
+        access.clone(),
+        Arc::new(super::attachments::runtime::UnusedRuntime {
+            status: None,
+            file_root: Some((root.clone(), Arc::default())),
+        }),
+    );
+    let reads = AgentReadService::new(store.clone(), Arc::new(NoRuntimeResources))
+        .with_resource_access(access.clone());
+    let caller = context("owner").caller;
+    let lineage = reads.lineage(&caller, &agent.id).await.unwrap();
+    let service = AnswerDeliverableService::new(reads, artifacts).with_files(files);
+    let auth = ConfirmedAgent(crate::sandbox::agent_access_tool::AgentAccessRequester {
+        agent_id: agent.id.clone(),
+        owner: agent.owner.clone(),
+        sandbox_id: agent.sandbox_id.clone(),
+        conversation: "native-delivery".into(),
+        runtime: lineage.sandbox.runtime.clone().unwrap(),
+        creation: crate::sandbox::provenance::AgentCreationProvenance {
+            schema_version: 1,
+            agent_id: agent.id.clone(),
+            agent_created_at: agent.created_at.clone(),
+            sandbox_id: agent.sandbox_id.clone(),
+            sandbox_created_at: lineage.sandbox.created_at.clone(),
+            workspace_id: agent.workspace_id.clone(),
+            worktree_id: agent.worktree_id.clone(),
+            owner: ResourceOwner::Person {
+                subject: agent.owner.clone(),
+            },
+            creation_origin: crate::sandbox::provenance::AgentCreationOrigin::Manual,
+            created_by: None,
+            provisioning_origin: agent.origin,
+            creation_fingerprint: agent.creation_fingerprint.clone(),
+        },
+    });
+    let describe = |path: &str| {
+        service.describe_for_agent(
+            &auth,
+            "capability",
+            DeliverableResource::LiveFile { path: path.into() },
+        )
+    };
+    let report = "project/.worktrees/wt-1/report.docx";
+    for (input, resolved) in [
+        ("report.docx", report),
+        ("./report.docx", report),
+        ("/home/cma/project/.worktrees/wt-1/report.docx", report),
+        (report, report),
+        ("out/tables.csv", "project/.worktrees/wt-1/out/tables.csv"),
+        // The documented home-relative path wins when both exist.
+        ("both.txt", "both.txt"),
+    ] {
+        let described = describe(input).await.unwrap();
+        assert_eq!(
+            described.reference.resource,
+            DeliverableResource::LiveFile {
+                path: resolved.into()
+            },
+            "{input}"
+        );
+    }
+    assert_eq!(describe("both.txt").await.unwrap().reference.size_bytes, 4);
+    assert!(matches!(
+        describe("absent.docx").await,
+        Err(DeliverableError::File(
+            crate::sandbox::agent_filesystem::AgentFileError::NotFound
+        ))
+    ));
+    for refused in [
+        "/etc/hosts",
+        "../report.docx",
+        "",
+        ".",
+        "./",
+        "/home/cma",
+        "/home/cma/",
+    ] {
+        assert!(
+            matches!(
+                describe(refused).await,
+                Err(DeliverableError::File(
+                    crate::sandbox::agent_filesystem::AgentFileError::Invalid
+                ))
+            ),
+            "{refused}"
+        );
+    }
+    // A trailing separator names a directory; it never reaches a file.
+    assert!(describe("report.docx/").await.is_err());
+    let _ = std::fs::remove_dir_all(root);
+}

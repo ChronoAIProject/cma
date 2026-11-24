@@ -5,12 +5,13 @@ use std::collections::BTreeMap;
 mod checkpoint_receipt;
 mod integrity_write;
 pub(super) mod reconciliation;
+mod reopen_refusal;
 mod segmented;
 use integrity_write::{advance_agent, classify_aggregate_write, classify_log_write};
 
 use layer2_core::sandbox::store::{
-    validate_lifecycle_mutation, SandboxLifecycleAgentMutation, SandboxLifecycleMutation,
-    SandboxStoreError,
+    validate_lifecycle_mutation, ReopenRefusalFence, SandboxLifecycleAgentMutation,
+    SandboxLifecycleMutation, SandboxStoreError,
 };
 use layer2_core::sandbox::{Agent, AgentLogEntry, Sandbox, SandboxEvent};
 use mongodb::bson::{doc, Bson, Timestamp};
@@ -76,6 +77,7 @@ impl From<TransactionLogError> for ApplyError {
 pub(super) async fn commit_lifecycle(
     store: &MongoSandboxStore,
     mutation: SandboxLifecycleMutation,
+    refusal: Option<ReopenRefusalFence>,
 ) -> Result<(), SandboxStoreError> {
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
@@ -100,7 +102,7 @@ pub(super) async fn commit_lifecycle(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        let applied = apply_lifecycle(store, &mutation, scope).await;
+        let applied = apply_lifecycle(store, &mutation, scope, refusal.as_ref()).await;
         let receipt = match applied {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
@@ -166,6 +168,7 @@ pub(super) async fn apply_lifecycle(
     store: &MongoSandboxStore,
     mutation: &SandboxLifecycleMutation,
     mut scope: TransactionScope<'_>,
+    refusal: Option<&ReopenRefusalFence>,
 ) -> Result<LifecycleReceipt, ApplyError> {
     scope
         .fence_ordinary_work(store)
@@ -209,6 +212,9 @@ pub(super) async fn apply_lifecycle(
     // any later validation/write error is aborted by the root above.
     let segment_receipts = segmented::publish(store, &agents, mutation, &mut scope).await?;
     let session = scope.release();
+    if let Some(refusal) = refusal {
+        reopen_refusal::fence(store, &current, refusal, session).await?;
+    }
     if !segmented {
         super::checkpoint_capture::validate_and_fence_begin(
             store,

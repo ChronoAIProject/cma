@@ -1,5 +1,11 @@
 use super::*;
-use layer2_core::sandbox::{RuntimeBinding, SandboxRuntimeUpdateService};
+use layer2_core::sandbox::store::SandboxStoreError;
+use layer2_core::sandbox::{
+    RuntimeBinding, SandboxCredentialAuthority, SandboxImageRotationPhase,
+    SandboxLifecycleOperation, SandboxRotationIdentity, SandboxRuntimeUpdateService,
+    SandboxUnpublishedRecoveryProof, SandboxUnpublishedRecoverySnapshot,
+    SandboxUnpublishedRecoveryVerifier, TypedFailure,
+};
 const PATH: &str = "/api/v1/sandboxes/sbx_update/runtime-update";
 
 #[path = "sandbox_retained_recovery_tests.rs"]
@@ -135,4 +141,123 @@ async fn runtime_update_detail_projection_is_optional_without_feature_and_hides_
     )
     .await;
     assert_eq!(result.0, StatusCode::NOT_FOUND);
+}
+
+struct NeverVerify;
+
+#[async_trait::async_trait]
+impl SandboxUnpublishedRecoveryVerifier for NeverVerify {
+    async fn verify(
+        &self,
+        _: &SandboxUnpublishedRecoverySnapshot,
+    ) -> Result<SandboxUnpublishedRecoveryProof, SandboxStoreError> {
+        panic!("reading runtime guidance must not verify or admit a recovery")
+    }
+}
+
+fn parked_rotation(phase: SandboxImageRotationPhase) -> Sandbox {
+    let mut sandbox = stored_sandbox("sbx_update", "owner", SandboxStatus::Active, 4);
+    sandbox.runtime = Some(RuntimeBinding {
+        runtime_id: "agent-sandbox:member:sandbox-uid".into(),
+        runtime_version: "runtime-v1".into(),
+        provision_generation: Some(1),
+        boot_id: Some("b".repeat(32)),
+        bound_at: NOW.into(),
+    });
+    sandbox.lifecycle.home = Some(Box::new(retained::reopen::home(&sandbox.id)));
+    sandbox.lifecycle.runtime_generation_high_water = 1;
+    sandbox.credential.key_generation = 1;
+    sandbox.credential.delivered = true;
+    sandbox.credential.current = Some(SandboxCredentialAuthority {
+        generation: 1,
+        provider_key_id: "fixture-credential-reference".into(),
+        provider_state_version: 1,
+        issued_at: NOW.into(),
+        expires_at: "2026-09-06T00:00:00Z".into(),
+        grant_fingerprint: "b".repeat(64),
+    });
+    assert!(sandbox
+        .request_runtime_update("runtime-v2".into(), false, NOW.into())
+        .unwrap());
+    let identity = SandboxRotationIdentity::capture(&sandbox, &[]).unwrap();
+    sandbox
+        .begin_image_rotation("runtime-v2".into(), identity, NOW.into())
+        .unwrap();
+    if let Some(SandboxLifecycleOperation::ImageRotation { phase: step, .. }) =
+        sandbox.lifecycle.operation.as_mut()
+    {
+        *step = phase;
+    }
+    if phase == SandboxImageRotationPhase::ConversationReopen {
+        sandbox.runtime.as_mut().unwrap().runtime_version = "runtime-v2".into();
+    }
+    let holder = "fixture-worker";
+    let fence = sandbox
+        .work
+        .claim(holder.into(), NOW, "2026-09-05T01:00:00Z".into())
+        .unwrap();
+    sandbox
+        .park_failed_runtime_update(
+            TypedFailure {
+                class: "terminal_validation".into(),
+                detail: "Synthetic provider refusal".into(),
+            },
+            holder,
+            fence,
+            NOW.into(),
+        )
+        .unwrap();
+    sandbox.revision = 1;
+    sandbox.validate().unwrap();
+    sandbox
+}
+
+#[tokio::test]
+async fn parked_update_guidance_matches_available_retry_and_keeps_the_pinned_request() {
+    use SandboxImageRotationPhase::{CaptureAndPublishCheckpoint, ConversationReopen};
+    for (phase, recovery, expected) in [
+        (ConversationReopen, true, "can use the latest runtime"),
+        (
+            CaptureAndPublishCheckpoint,
+            true,
+            "with the requested runtime",
+        ),
+        (ConversationReopen, false, "Retry is unavailable"),
+    ] {
+        let mut f = fixture(3);
+        let sandbox = parked_rotation(phase);
+        assert_eq!(
+            sandbox.unpublished_recovery_candidate(),
+            phase == ConversationReopen
+        );
+        f.store.create_sandbox(sandbox.clone()).await.unwrap();
+        let mut service = SandboxRuntimeUpdateService::new(f.store.clone(), "runtime-v3".into());
+        if recovery {
+            service = service.with_unpublished_recovery(Arc::new(NeverVerify));
+        }
+        f.state = f.state.with_runtime_updates(Arc::new(service));
+        let (status, body) = json_response(
+            &hierarchy_router(f.state),
+            authenticated(Method::GET, "/api/v1/sandboxes/sbx_update", None, None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "rotating");
+        let update = &body["runtime_update"];
+        assert_eq!(update["state"], "failed");
+        assert_eq!(update["can_update"], recovery);
+        assert_eq!(update["target_version"], "runtime-v2");
+        assert_eq!(update["latest_version"], "runtime-v3");
+        assert_eq!(update["preserves_home"], true);
+        assert_eq!(update["failure"]["code"], "terminal_validation");
+        let message = update["failure"]["message"].as_str().unwrap();
+        assert!(message.starts_with("The runtime update stopped at its current step."));
+        assert!(message.contains(expected), "{message}");
+        assert_eq!(message.contains("Retry the runtime update"), recovery);
+        assert!(!message.contains("Synthetic provider refusal"));
+        assert_eq!(
+            f.store.get_sandbox(&sandbox.id).await.unwrap(),
+            Some(sandbox)
+        );
+    }
 }

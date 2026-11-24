@@ -25,7 +25,7 @@ ARG OMARCHY_CMA_BASE=runtime-tools
 #     output moved, from the signed indexes.
 #  4. Land it only with an independent review of both catalogs, which sets
 #     APPROVED_PACKAGE_EVIDENCE and APPROVED_OMARCHY_PACKAGE_EVIDENCE.
-ARG DEBIAN_SNAPSHOT=20261121T100000Z
+ARG DEBIAN_SNAPSHOT=20261123T154646Z
 # The Omarchy stages install Arch packages exactly as the Arch Linux Archive
 # indexed core, extra and multilib on this one date, so the same source
 # installs the same packages and rebuilds the OpenSSL CLI, wlroots, Aquamarine
@@ -245,7 +245,7 @@ ARG DESKTOP_CODEX_NATIVE_SHA256_ARM64=b32ece31af06440da980b733fb8fefdd1f19343959
 ARG DESKTOP_CODEX_LAUNCHER_SHA256=61b0194f3bb6534439c8d26a3ed57d0805f84b884588b761795323eeb92fcf70
 ARG CODEX_ACP_VERSION=1.4.0
 ARG CODEX_ACP_UPSTREAM_SHA256=ba74f54f7c89ba61858e544eb3afefbb0c1b90f2b23a136664828816a8430dbf
-ARG CODEX_ACP_SHA256=8f0c023269496f9ad21aa2958491772fefe65011b9aebaf674c67d2aaa9fbcf4
+ARG CODEX_ACP_SHA256=e26bce27dbdcf4d665e081b4a81762542795e2af6453da2a2f050fab5110f484
 # Node is downloaded from upstream and verified against digests recorded here.
 # Both Codex packages are JavaScript launchers for pinned native/runtime code.
 ARG NODE_VERSION=24.19.0

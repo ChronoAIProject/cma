@@ -21,6 +21,8 @@ const suites = [
       "resource-lifecycle-history",
       "resource-lifecycle-deletion",
       "agent-stop-deletion",
+      "parked-runtime-status",
+      "parked-task-deletion",
     ],
   },
   {

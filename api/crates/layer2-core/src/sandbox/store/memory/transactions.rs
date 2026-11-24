@@ -37,7 +37,7 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                         &sandbox,
                         &event_at,
                         &event,
-                        self.managed_runtime_version(),
+                        self.managed_runtime_version().as_deref(),
                     )?;
                 }
                 let id = sandbox.id.clone();

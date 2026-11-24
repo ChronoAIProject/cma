@@ -14,7 +14,9 @@ impl AgentTitleService {
         if let Some(title) = state.accepted() {
             return self.publish_custodied_title(&claim, title).await;
         }
-        if state.unknown() {
+        // An unresolved effect is never redispatched. Its store grants only a
+        // fallback-only claim, which publishes the prompt-derived title below.
+        if state.unknown() && claim.mode() != AgentTitleClaimMode::FallbackOnly {
             return Err(AgentTitleServiceError::EffectUnknown);
         }
         let transcript = self

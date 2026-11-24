@@ -17,6 +17,7 @@ use super::AgentWorker;
 
 #[path = "cleanup_retired.rs"]
 mod retired;
+pub(super) use retired::CleanupPreflightError;
 
 impl AgentWorker {
     pub(super) async fn fence_interaction(
@@ -194,9 +195,6 @@ impl AgentWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
-        if self.complete_retired_cleanup(&agent, now).await? {
-            return Ok(());
-        }
         if !matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed) {
             return self.invalid_cleanup(agent, now).await;
         }
@@ -281,9 +279,6 @@ impl AgentWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
-        if self.complete_retired_cleanup(&agent, now).await? {
-            return Ok(());
-        }
         let context = match self.cleanup_context(&agent).await {
             Ok(context) => context,
             Err(failure) => {
@@ -348,9 +343,6 @@ impl AgentWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
-        if self.complete_retired_cleanup(&agent, now).await? {
-            return Ok(());
-        }
         let context = match self.cleanup_context(&agent).await {
             Ok(context) => context,
             Err(failure) => {

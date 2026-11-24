@@ -133,7 +133,7 @@ impl SandboxControlStore for InMemorySandboxStore {
             record,
             &snapshot.lineage.sandbox,
             at,
-            self.managed_runtime_version(),
+            self.managed_runtime_version().as_deref(),
         )?;
         let mut candidate = state.clone();
         let mut next = record.clone();

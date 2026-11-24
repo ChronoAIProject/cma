@@ -85,7 +85,7 @@ async fn eof_before_publication_commit_keeps_recovery_durable() {
     let (harness, agent, attachment) = publication_with_completed_eof().await;
     harness
         .worker
-        .finish_connection_publication(agent.clone(), &attachment, harness.now)
+        .finish_connection_publication(agent.clone(), &attachment, None, harness.now)
         .await
         .unwrap();
     let recovering = harness.stored(&agent.id).await;
@@ -112,7 +112,7 @@ async fn completed_publication_loss_cannot_reschedule_a_newer_connection() {
     let (harness, agent, old) = publication_with_completed_eof().await;
     harness
         .worker
-        .finish_connection_publication(agent.clone(), &old, harness.now)
+        .finish_connection_publication(agent.clone(), &old, None, harness.now)
         .await
         .unwrap();
     harness.run(&agent.id, SystemTime::now()).await;
@@ -187,7 +187,7 @@ async fn publication_after_durable_update_does_not_backdate_or_retry_the_connect
         .unwrap();
     harness
         .worker
-        .finish_connection_publication(claimed, &attachment, harness.now)
+        .finish_connection_publication(claimed, &attachment, None, harness.now)
         .await
         .unwrap();
     let published = harness.stored(&pending.id).await;

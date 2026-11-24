@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn batch_ownership_renewal_is_strict_and_default_off() {
+    const KEY: &str = "CHRONO_AM_BATCH_OWNERSHIP_RENEWAL";
+    for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok(if key == KEY {
+                value.map(str::to_owned)
+            } else {
+                None
+            })
+        })
+        .unwrap();
+        assert_eq!(flags.batch_ownership_renewal, enabled);
+        assert!(flags.ownership_cleanup_pacing);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "1".into()))).is_err());
+}
+
+#[test]
 fn ownership_cleanup_pacing_is_independent_strict_and_default_on() {
     const KEY: &str = "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED";
     for (value, expected) in [(None, true), (Some("false"), false), (Some("true"), true)] {
@@ -75,6 +93,26 @@ fn event_driven_reconciliation_requires_an_explicit_boolean_opt_in() {
         })
         .is_err());
     }
+}
+
+#[test]
+fn agent_reconciliation_continuation_is_independent_and_default_off() {
+    const KEY: &str = "CHRONO_AGENT_RECONCILIATION_RESUME_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok(if key == KEY {
+                value.map(str::to_owned)
+            } else {
+                None
+            })
+        })
+        .unwrap();
+        assert_eq!(flags.resume_agent_reconciliation, expected);
+        assert!(!flags.event_driven_reconciliation);
+    }
+    assert!(
+        FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "1".to_owned()))).is_err()
+    );
 }
 
 #[test]

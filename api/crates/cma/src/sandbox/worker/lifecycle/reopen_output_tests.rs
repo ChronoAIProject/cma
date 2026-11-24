@@ -113,6 +113,7 @@ async fn expired_reopen_authority_never_polls_a_ready_effect() {
         &recorder,
         &AgentId("agt_reopen".into()),
         &observed,
+        false,
     )
     .await;
     assert_eq!(
@@ -148,6 +149,7 @@ async fn reopen_ack_follows_commit_even_when_handshake_then_fails() {
             task_recorder.as_ref(),
             &AgentId("agt_reopen".into()),
             &guard(),
+            false,
         )
         .await
     });
@@ -186,7 +188,8 @@ async fn rejected_startup_commit_never_acknowledges_and_disconnect_ends_drain() 
         &mut receiver,
         &recorder,
         &AgentId("agt_reopen".into()),
-        &guard()
+        &guard(),
+        false,
     )
     .await
     .is_err());
@@ -200,7 +203,8 @@ async fn rejected_startup_commit_never_acknowledges_and_disconnect_ends_drain() 
             &mut receiver,
             &recorder,
             &AgentId("agt_reopen".into()),
-            &guard()
+            &guard(),
+            false,
         )
     )
     .await
@@ -238,6 +242,7 @@ async fn failed_ack_preserves_available_open_failure_after_the_commit_finishes()
                 task_recorder.as_ref(),
                 &AgentId("agt_reopen".into()),
                 &guard(),
+                false,
             )
             .await
         });
@@ -274,6 +279,7 @@ async fn failed_ack_does_not_wait_for_an_unresolved_open_or_publish_success() {
             &recorder,
             &AgentId("agt_reopen".into()),
             &guard(),
+            false,
         ),
     )
     .await
@@ -307,119 +313,9 @@ async fn closed_update_receiver_preserves_an_open_failure_finishing_cleanup() {
         &recorder,
         &AgentId("agt_reopen".into()),
         &guard(),
+        false,
     )
     .await;
     assert_eq!(result, Err(error));
     assert!(recorder.committed.lock().unwrap().is_empty());
-}
-
-fn idle_recorder() -> Recorder {
-    Recorder {
-        entered: Notify::new(),
-        release: Notify::new(),
-        committed: Mutex::new(Vec::new()),
-        refuse: false,
-    }
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_relayed_reopen_outlives_its_call_snapshot_while_the_lease_stays_held() {
-    let recorder = idle_recorder();
-    let (_send, mut receiver) = mpsc::channel(1);
-    let started = tokio::time::Instant::now();
-    // Longer than any 15 s work-lease snapshot could allow.
-    let opening = async {
-        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
-        Ok("reopened")
-    };
-    let result = drain_while_held(
-        opening,
-        &mut receiver,
-        &recorder,
-        &AgentId("agt_reopen".into()),
-        &guard(),
-        || async { true },
-    )
-    .await;
-    assert_eq!(result, Ok("reopened"));
-    assert_eq!(started.elapsed(), std::time::Duration::from_secs(20));
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_relayed_reopen_stops_promptly_once_the_caller_lease_is_lost() {
-    let recorder = idle_recorder();
-    let (_send, mut receiver) = mpsc::channel(1);
-    let checks = std::sync::atomic::AtomicUsize::new(0);
-    let started = tokio::time::Instant::now();
-    let result = drain_while_held(
-        std::future::pending::<layer3_adapter::Result<()>>(),
-        &mut receiver,
-        &recorder,
-        &AgentId("agt_reopen".into()),
-        &guard(),
-        || {
-            let held = checks.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 3;
-            async move { held }
-        },
-    )
-    .await;
-    assert_eq!(
-        result,
-        Err(AdapterError::Unavailable(
-            "reopen output lifecycle lease expired".into()
-        ))
-    );
-    // The initial check plus two one-second watches held; the third refused.
-    assert_eq!(started.elapsed(), std::time::Duration::from_secs(3));
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_relayed_reopen_never_polls_once_its_lease_is_already_gone() {
-    let recorder = idle_recorder();
-    let (_send, mut receiver) = mpsc::channel(1);
-    let mut polls = 0;
-    let effect = async {
-        polls += 1;
-        Ok(())
-    };
-    let result = drain_while_held(
-        effect,
-        &mut receiver,
-        &recorder,
-        &AgentId("agt_reopen".into()),
-        &guard(),
-        || async { false },
-    )
-    .await;
-    assert_eq!(
-        result,
-        Err(AdapterError::Unavailable(
-            "reopen output lifecycle lease expired".into()
-        ))
-    );
-    assert_eq!(polls, 0);
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_relayed_reopen_is_capped_below_the_relay_timeout() {
-    let recorder = idle_recorder();
-    let (_send, mut receiver) = mpsc::channel(1);
-    let started = tokio::time::Instant::now();
-    let result = drain_while_held(
-        std::future::pending::<layer3_adapter::Result<()>>(),
-        &mut receiver,
-        &recorder,
-        &AgentId("agt_reopen".into()),
-        &guard(),
-        || async { true },
-    )
-    .await;
-    assert_eq!(
-        result,
-        Err(AdapterError::Unavailable(
-            "reopen output operation timed out".into()
-        ))
-    );
-    assert_eq!(started.elapsed(), RELAYED_REOPEN_LIMIT);
-    assert!(RELAYED_REOPEN_LIMIT < std::time::Duration::from_secs(60));
 }
