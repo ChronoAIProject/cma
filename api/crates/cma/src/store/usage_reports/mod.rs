@@ -76,6 +76,7 @@ impl ReportingStore {
             .map_err(tx::into_domain)
     }
 
+    #[cfg(test)]
     pub(super) async fn bulk_updates_in_session(
         &self,
         collection: &str,
