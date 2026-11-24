@@ -144,6 +144,7 @@ jobs:
       -
         uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" # v5
         with:
+          ref: "${{ github.sha }}"
           fetch-depth: 0
       -
         name: "gitleaks"
@@ -166,4 +167,50 @@ jobs:
         run: |
           python3 -B .github/scripts/image-scanner-policy-tests.py
           python3 -B .github/scripts/image_scanner_policy.py
-          PATH="$RUNNER_TEMP:$PATH" bash .github/scripts/image-secret-scanner/self-test.sh
+  scanner-tests:
+    name: "Frozen image scanner tests (${{ matrix.shard }})"
+    needs: ["secrets"]
+    runs-on: "ubuntu-latest"
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    outputs:
+      shard_0: "${{ steps.tests.outputs.shard_0 }}"
+      shard_1: "${{ steps.tests.outputs.shard_1 }}"
+    steps:
+      -
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" # v5
+        with:
+          ref: "${{ github.sha }}"
+      -
+        name: "Install pinned image secret scanner"
+        timeout-minutes: 5
+        run: "bash .github/scripts/install-image-gitleaks.sh"
+      -
+        id: tests
+        name: "Run frozen image scanner test shard"
+        working-directory: ".github/scripts/image-secret-scanner"
+        shell: bash
+        env:
+          SHARD: "${{ matrix.shard }}"
+        run: |
+          umask 077
+          python3 -B ../ci_tracks/repo_secrets.py --shard "$SHARD"
+          printf 'shard_%s=%s\n' "$SHARD" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+  result:
+    name: "Repo result"
+    if: "always()"
+    needs: ["structure", "secrets", "scanner-tests"]
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      -
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" # v5
+        with:
+          ref: "${{ github.sha }}"
+      -
+        name: "Validate repository job results"
+        env:
+          NEEDS: "${{ toJSON(needs) }}"
+        run: "python3 -B .github/scripts/ci_tracks/repo_secrets.py --check-gate"
