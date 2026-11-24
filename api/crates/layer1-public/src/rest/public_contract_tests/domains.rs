@@ -151,8 +151,14 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
                 },
             )
         }
-        "admin_operator" | "admin_forbidden" | "admin_anonymous" | "admin_no_inventory" => {
+        "admin_operator" | "admin_forbidden" | "admin_anonymous" | "admin_no_inventory"
+        | "admin_actor_search" => {
             let fixture = admin::fixture(name != "admin_no_inventory");
+            let actor_search = name == "admin_actor_search";
+            fixture
+                .names
+                .searches_enabled
+                .store(actor_search, std::sync::atomic::Ordering::SeqCst);
             fixture
                 .sandboxes
                 .create_sandbox(admin::sandbox("sbx_contract", "owner-a", "runtime-v1"))
@@ -174,6 +180,8 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
                 (name != "admin_anonymous").then_some("operator-a"),
                 if name == "admin_forbidden" {
                     vec![]
+                } else if actor_search {
+                    vec![Capability::ReadActivityLog, Capability::ReadUserDirectory]
                 } else {
                     vec![
                         Capability::ConfigurePlatform,

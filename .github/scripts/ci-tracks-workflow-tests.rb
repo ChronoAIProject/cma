@@ -127,23 +127,65 @@ IMAGE_SCAN_IF = "success() && (github.event_name == 'merge_group' || (github.eve
 # runs the same gate on its exported image before retaining it, so a PR or
 # merge group fails first instead of the release after the merge.
 def require_image_secret_scan(documents)
-  [['ci-images', 'images', '"$IMAGE_COMPONENT"', 'Scan tested image as staging publication does', 'Retain tested native image'],
-   ['ci-omarchy', 'omarchy', 'runtime-omarchy', 'Scan tested Omarchy image as staging publication does', 'Retain tested Omarchy image']].each do |file, job, component, name, retain|
-    steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
-    install = steps.index { |step| step['name'] == 'Install pinned image secret scanner' }
-    scan = steps.index { |step| step['name'] == name }
-    export = steps.index { |step| step.fetch('run', '').include?('export-ci-native-image.py') }
-    keep = steps.index { |step| step['name'] == retain }
-    require_check(install && scan && export && keep && export < install && install < scan && scan < keep,
-                  "#{file} must scan the exported image before retaining it")
-    [steps[install], steps[scan]].each do |step|
-      require_check(step['if'] == IMAGE_SCAN_IF && !step.key?('continue-on-error'), "#{file} image secret scan is optional")
-    end
-    require_check(steps[install]['run'] == "bash .github/scripts/staging_cd_transport.sh\nbash .github/scripts/install-image-gitleaks.sh\n" &&
-                  steps[install]['timeout-minutes'] == 5, "#{file} image scanner install differs")
-    command = "python3 -B .github/scripts/ci_image_secret_scan.py #{component} \"$RUNNER_TEMP/ci-native-image\" \"$GITHUB_SHA\""
-    require_check(steps[scan]['run'] == command && steps[scan]['timeout-minutes'] == 30, "#{file} image secret scan command differs")
+  steps = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
+  install = steps.index { |step| step['name'] == 'Install pinned image secret scanner' }
+  scan = steps.index { |step| step['name'] == 'Scan tested image as staging publication does' }
+  export = steps.index { |step| step.fetch('run', '').include?('export-ci-native-image.py') }
+  keep = steps.index { |step| step['name'] == 'Retain tested native image' }
+  require_check(install && scan && export && keep && export < install && install < scan && scan < keep,
+                'ci-images must scan the exported image before retaining it')
+  [steps[install], steps[scan]].each do |step|
+    require_check(step['if'] == IMAGE_SCAN_IF && !step.key?('continue-on-error'), 'ci-images image secret scan is optional')
   end
+  require_check(steps[install]['run'] == "bash .github/scripts/staging_cd_transport.sh\nbash .github/scripts/install-image-gitleaks.sh\n" &&
+                steps[install]['timeout-minutes'] == 5, 'ci-images image scanner install differs')
+  command = 'python3 -B .github/scripts/ci_image_secret_scan.py "$IMAGE_COMPONENT" "$RUNNER_TEMP/ci-native-image" "$GITHUB_SHA"'
+  require_check(steps[scan]['run'] == command && steps[scan]['timeout-minutes'] == 30, 'ci-images image secret scan command differs')
+  require_omarchy_image_secret_scan(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'))
+end
+
+def require_omarchy_image_secret_scan(steps)
+  input = steps.find { |step| step['id'] == 'omarchy-scan-input' }
+  install = steps.find { |step| step['id'] == 'omarchy-scanner-install' }
+  scan = steps.find { |step| step['id'] == 'omarchy-scan-start' }
+  export = steps.find { |step| step['name'] == 'Export tested Omarchy image' }
+  retain = steps.find { |step| step['name'] == 'Retain tested Omarchy image' }
+  order = [steps.find { |step| step['name'] == 'Verify every Omarchy image layer' }, input, install, scan,
+           steps.find { |step| step['name'] == 'Verify Omarchy runtime contract' },
+           steps.find { |step| step['name'] == 'Omarchy vulnerability gate' }, export, retain]
+  require_check(order.all? && order.map { |step| steps.index(step) }.each_cons(2).all? { |a, b| a < b },
+                'Omarchy must join its scanner after the foreground image checks and before retention')
+  require_check(input['if'] == IMAGE_SCAN_IF && input['timeout-minutes'] == 11 &&
+                input['run'] == <<~'SH', 'Omarchy must prepare a private scan input on scan-eligible runs')
+    if timeout 10m python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-ci-scan-input"; then
+      echo "ready=true" >> "$GITHUB_OUTPUT"
+    fi
+  SH
+  require_check(install['if'] == "success() && steps.omarchy-scan-input.outputs.ready == 'true'" &&
+                install['timeout-minutes'] == 6 && install['env'] == {'CD_COMPONENT' => 'runtime-omarchy'} &&
+                install['run'] == <<~'SH', 'Omarchy image scanner install differs')
+    if timeout 5m bash -ec 'bash .github/scripts/staging_cd_transport.sh && bash .github/scripts/install-image-gitleaks.sh'; then
+      echo "ready=true" >> "$GITHUB_OUTPUT"
+    fi
+  SH
+  require_check(scan['if'] == "success() && steps.omarchy-scanner-install.outputs.ready == 'true'" &&
+                scan['timeout-minutes'] == 1 && scan['run'] == <<~'SH', 'Omarchy must attest scanner startup')
+    if python3 -B .github/scripts/omarchy-ci-scan.py start "$GITHUB_SHA"; then
+      echo "ready=true" >> "$GITHUB_OUTPUT"
+    fi
+  SH
+  require_check([input, install, scan, export, retain].none? { |step| step.key?('continue-on-error') },
+                'Omarchy scan start and retention must reject optional workflow failure')
+  require_check(export['env'] == {
+    'OMARCHY_SCAN_STARTED' => '${{ steps.omarchy-scan-start.outputs.ready }}',
+  } && export['timeout-minutes'] == 31 && export['run'] == <<~'SH', 'Omarchy could export before image scan completion')
+    if [ "$GITHUB_EVENT_NAME" = push ]; then
+      timeout 10m python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
+    else
+      test "$OMARCHY_SCAN_STARTED" = true
+      python3 -B .github/scripts/omarchy-ci-scan.py promote "$GITHUB_SHA"
+    fi
+  SH
 end
 
 RUNTIME_VULNERABILITY_BASE = "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}"
@@ -380,7 +422,7 @@ def validate(documents, actions)
   check_merge_group_artifacts(documents)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
-  require_check(events.keys.sort == %w[merge_group pull_request push], 'CI must cover PRs, develop pushes and merge groups')
+  require_check(events.keys.sort == %w[merge_group push], 'post-merge CI must cover develop pushes and retained merge-group events')
   require_check(events['push'] == {'branches' => ['develop']}, 'CI push must cover develop without path filters')
   # Without a branch or path filter every queue entry creates the required
   # checks; a non-develop queue is refused by the selector, not left pending.
@@ -398,10 +440,6 @@ def validate(documents, actions)
   require_check(ci['concurrency'] == {'group' => 'ci-${{ github.workflow }}-${{ github.ref }}',
     'cancel-in-progress' => "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"},
     'CI concurrency must remain per ref and keep develop cache writers running')
-  pr = events.fetch('pull_request')
-  require_check(pr.fetch('branches') == %w[develop main], 'CI target differs')
-  require_check(pr.fetch('types').sort == %w[opened reopened synchronize edited labeled unlabeled].sort, 'label event coverage differs')
-  require_check(!pr.key?('paths') && !pr.key?('paths-ignore'), 'required checks must always be created')
   jobs = ci.fetch('jobs')
   require_check(jobs.keys.none? { |key| key.start_with?('trigger-') }, 'Trigger job retained')
   required = {
@@ -416,6 +454,42 @@ def validate(documents, actions)
     require_check(job.fetch('needs').sort == dependencies.sort, 'gate dependency omitted')
     require_check(job.fetch('steps').any? { |step| step.fetch('run', '').include?('ci_tracks/gate.py') }, 'gate validator missing')
   end
+  %w[repo am eg web].each_with_index do |track, index|
+    workflow = documents.fetch("ci-pr-#{track}")
+    events = workflow.fetch('on', workflow[true])
+    pr = events.fetch('pull_request')
+    require_check(events.keys == ['pull_request'] && pr.keys.sort == %w[branches types],
+      'PR product workflows must run without path or extra event filters')
+    require_check(pr.fetch('branches') == %w[develop main], 'CI target differs')
+    require_check(pr.fetch('types').sort == %w[opened reopened synchronize edited labeled unlabeled].sort,
+      'label event coverage differs')
+    number = index + 1
+    track_jobs = workflow.fetch('jobs')
+    gate_key = "gate-#{track}"
+    check_name, prerequisites = required.fetch(gate_key)
+    prerequisites -= %w[runtime-images omarchy] if track == 'eg'
+    selector = track_jobs.fetch('changes')
+    require_check(track_jobs.keys.first == 'changes' && selector['name'] == "#{number}.1 Select changes" &&
+      selector['uses'] == './.github/workflows/ci-track-selection.yml', 'each workflow selects before validating')
+    require_check(track_jobs.keys.sort == (prerequisites + [gate_key]).sort, 'product validation task missing or duplicated')
+    gate = track_jobs.fetch(gate_key)
+    require_check(gate['name'] == check_name && gate['if'] == 'always()' && gate['needs'].sort == prerequisites.sort &&
+      gate.fetch('steps').last.fetch('run') == "python3 -B .github/scripts/ci_tracks/gate.py #{track} --split",
+      'product result must use its original required context and check every prerequisite')
+    if %w[am eg].include?(track)
+      require_check(track_jobs.fetch('rust-test-build')['if'] == "needs.changes.outputs.#{track} == 'true'",
+        'each Rust product archive must be built in its own selected workflow')
+    end
+    if track == 'am'
+      %w[runtime-images omarchy].each do |key|
+        require_check(track_jobs.fetch(key).fetch('if') == "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'",
+          'Agent Manager must validate runtime images for changes to either Rust product')
+      end
+    end
+  end
+  select_workflow = documents.fetch('ci-track-selection')
+  require_check(select_workflow.fetch('jobs').fetch('changes') == jobs.fetch('changes'),
+    'pull requests and post-merge CI must use identical selection')
   version = jobs.fetch('version-label')
   require_check(version.fetch('name') == 'CI / Version label' && version.fetch('if') == 'always()', 'version gate missing')
   require_check(version.fetch('needs') == ['changes'], 'version must use selector')
@@ -788,6 +862,8 @@ mutations = [
   ->(d) { steps = d['ci-images']['jobs']['images']['steps']; scan = steps.index { |s| s['name'] == 'Scan tested image as staging publication does' }; steps.insert(steps.index { |s| s['name'] == 'Retain tested native image' } + 1, steps.delete_at(scan)) },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].reject! { |s| s['name'] == 'Install pinned image secret scanner' } },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Scan tested Omarchy image as staging publication does' }['timeout-minutes'] = 120 },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-scan-input' }['if'] = 'success()' },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Export tested Omarchy image' }['run'].sub!('test "$OMARCHY_SCAN_STARTED" = true', 'true') },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].reject! { |s| s['name'] == 'API allocator qualification' } },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'] << d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }.dup },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['continue-on-error'] = true },
@@ -812,7 +888,7 @@ mutations = [
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Vulnerability scan' }['with'].delete('cache') },
   ->(d) { d['ci'][true].delete('push') },
   ->(d) { d['ci'][true]['push']['paths'] = ['web/**'] },
-  ->(d) { d['ci'][true]['pull_request']['branches'].delete('main') },
+  ->(d) { d['ci-pr-repo'][true]['pull_request']['branches'].delete('main') },
   ->(d) { d['ci']['jobs']['changes']['steps'].last['run'] = 'python3 -B .github/scripts/ci_tracks/selection.py' },
   ->(d) { d['ci']['jobs']['am']['if'] = 'false' },
   ->(d) { d['ci']['jobs']['eg']['if'] = 'false' },
@@ -824,9 +900,12 @@ mutations = [
   ->(d) { d['ci']['jobs']['gate-eg']['needs'].delete('runtime-images') },
   ->(d) { d['ci']['jobs']['gate-am']['if'] = 'success()' },
   ->(d) { d['ci']['jobs']['version-label']['name'] = 'Optional label' },
-  ->(d) { d['ci'][true]['pull_request']['types'].delete('labeled') },
-  ->(d) { d['ci'][true]['pull_request']['types'].delete('unlabeled') },
-  ->(d) { d['ci'][true]['pull_request']['paths-ignore'] = ['README.md'] },
+  ->(d) { d['ci-pr-am'][true]['pull_request']['types'].delete('labeled') },
+  ->(d) { d['ci-pr-eg'][true]['pull_request']['types'].delete('unlabeled') },
+  ->(d) { d['ci-pr-web'][true]['pull_request']['paths-ignore'] = ['README.md'] },
+  ->(d) { d['ci-pr-am']['jobs']['runtime-images']['if'] = "needs.changes.outputs.am == 'true'" },
+  ->(d) { d['ci-pr-eg']['jobs']['gate-eg']['needs'] << 'runtime-images' },
+  ->(d) { d['ci-track-selection']['jobs']['changes']['steps'].last['run'] = 'true' },
   ->(d) { d['ci']['jobs']['gate-repo']['needs'].delete('version-label') },
   ->(d) { d['ci']['jobs']['version-label']['if'] = "needs.changes.outputs.deployables != '[]'" },
   ->(d) { d['ci']['jobs']['version-label']['continue-on-error'] = true },

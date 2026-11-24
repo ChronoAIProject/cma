@@ -94,10 +94,7 @@ impl SuggestionStore for MongoSandboxStore {
         if work.scope != scope {
             return Err(AgentReadError::NotFound);
         }
-        Ok(work.reading(
-            context::current(self, &work, &mut session, true).await?,
-            unix_millis(),
-        ))
+        Ok(work.reading(context::current(self, &work, &mut session, true).await?))
     }
 
     async fn claim_suggestions(
