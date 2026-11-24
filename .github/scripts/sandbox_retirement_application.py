@@ -144,6 +144,24 @@ def retained_storage_matches(member, home):
     )
 
 
+def make_guard(batch, member, sandbox):
+    # Match the Rust DTO's field order. The nested typed objects come directly
+    # from the application's serde JSON representation.
+    return {
+        "batch_sha256": batch,
+        "member_sha256": member["member_sha256"],
+        "sandbox_id": member["id"],
+        "owner": member["owner"],
+        "created_at": member["created_at"],
+        "revision": member["revision"],
+        "status": sandbox["status"],
+        "last_activity_at": sandbox["last_activity_at"],
+        "idle_before": member["idle_before"],
+        "runtime": sandbox["runtime"],
+        "home": sandbox["lifecycle"]["home"],
+    }
+
+
 class ApplicationRetirement:
     def __init__(self, app, provider, batch, cutoff, inspect, timeout):
         self.app = app
@@ -178,21 +196,7 @@ class ApplicationRetirement:
             provider = self.provider.read(member["provider"], deadline)
             if not matches_preimage(member["provider"], provider) or monotonic() >= deadline:
                 return Eligibility.UNKNOWN, None
-            # Match the Rust DTO's field order. The nested typed objects come
-            # directly from the application's serde JSON representation.
-            guard = {
-                "batch_sha256": self.batch,
-                "member_sha256": member["member_sha256"],
-                "sandbox_id": member["id"],
-                "owner": member["owner"],
-                "created_at": member["created_at"],
-                "revision": member["revision"],
-                "status": sandbox["status"],
-                "last_activity_at": sandbox["last_activity_at"],
-                "idle_before": member["idle_before"],
-                "runtime": sandbox["runtime"],
-                "home": home,
-            }
+            guard = make_guard(self.batch, member, sandbox)
             fingerprint = digest(guard, ordered=True)
             self.prepared = guard, fingerprint
             return Eligibility.ELIGIBLE, fingerprint

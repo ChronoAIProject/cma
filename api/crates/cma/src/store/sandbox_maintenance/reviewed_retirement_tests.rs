@@ -9,7 +9,7 @@ mod home;
 const NOW: &str = "2026-09-19T00:00:00Z";
 const CUTOFF: &str = "2026-09-17T00:00:00Z";
 
-async fn seed(store: &MongoSandboxStore, id: &str) -> (Sandbox, ReviewedRetirementMember) {
+fn fixture(id: &str) -> (Sandbox, ReviewedRetirementMember) {
     let mut sandbox = sandbox(id, "test-owner", "reviewed", SandboxStatus::Active, "old");
     let home = home::native_home(&sandbox.id);
     let runtime = sandbox.runtime.as_mut().unwrap();
@@ -38,8 +38,46 @@ async fn seed(store: &MongoSandboxStore, id: &str) -> (Sandbox, ReviewedRetireme
         home: Box::new(home),
     };
     sandbox.lifecycle.home = Some(member.home.clone());
+    (sandbox, member)
+}
+
+async fn seed(store: &MongoSandboxStore, id: &str) -> (Sandbox, ReviewedRetirementMember) {
+    let (sandbox, member) = fixture(id);
     store.create_sandbox(sandbox.clone()).await.unwrap();
     (sandbox, member)
+}
+
+#[test]
+#[ignore = "runs the operator CLI wire compatibility check with Python 3"]
+fn executor_matches_rust_member_and_receipt_wire_bytes() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let (_, mut member) = fixture("sbx_receipt_wire");
+    member.owner = layer2_core::SubjectId("synthetic-用户".into());
+    assert!(member.validate(NOW));
+    let receipt = ReviewedRetirementReceipt {
+        batch_sha256: member.batch_sha256.clone(),
+        member_sha256: member.member_sha256.clone(),
+        guard_sha256: member.fingerprint().unwrap(),
+        sandbox_id: member.sandbox_id.clone(),
+        accepted_revision: member.revision + 1,
+        event_sequence: 3,
+    };
+    let vector = serde_json::to_vec(&(member, receipt)).unwrap();
+    let script = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../.github/scripts/sandbox-retirement-executor-tests.py"
+    );
+    let mut child = Command::new("python3")
+        .args(["-B", script, "--check-rust-vector"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let sent = child.stdin.take().unwrap().write_all(&vector);
+    let status = child.wait().unwrap();
+    sent.unwrap();
+    assert!(status.success(), "the executor rejected the Rust receipt");
 }
 
 #[tokio::test]

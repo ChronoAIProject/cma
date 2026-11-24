@@ -9,7 +9,7 @@ import unittest
 from sandbox_retirement_journal import Refused, RetirementJournal
 
 
-APPROVAL = "a" * 64
+REVIEW = "a" * 64
 INVENTORY = "b" * 64
 FIRST = "c" * 64
 SECOND = "d" * 64
@@ -23,8 +23,8 @@ class JournalTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.path = Path(temporary.name) / "journal.jsonl"
 
-    def journal(self, approval=APPROVAL, inventory=INVENTORY):
-        return RetirementJournal(self.path, approval, inventory)
+    def journal(self, review=REVIEW, inventory=INVENTORY):
+        return RetirementJournal(self.path, review, inventory)
 
     def test_reopen_requires_observation_and_preserves_order(self):
         with self.journal() as journal:
@@ -46,13 +46,13 @@ class JournalTests(unittest.TestCase):
             self.assertIsNone(journal.pending)
             self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
 
-    def test_refuses_a_competing_executor_and_different_approval(self):
+    def test_refuses_a_competing_executor_and_different_review(self):
         with self.journal() as journal:
             self.assertTrue(journal.reserve(0, FIRST, GUARD))
             with self.assertRaisesRegex(Refused, "already open"), self.journal():
                 self.fail("second executor acquired the journal")
-        with self.assertRaisesRegex(Refused, "different approval"), self.journal(approval=SECOND):
-            self.fail("different approval acquired the journal")
+        with self.assertRaisesRegex(Refused, "different review"), self.journal(review=SECOND):
+            self.fail("different review acquired the journal")
 
     def test_refuses_an_incomplete_write_and_leaves_existing_intent(self):
         with self.journal() as journal:

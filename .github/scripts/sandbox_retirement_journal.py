@@ -30,14 +30,14 @@ class Intent:
 
 
 class RetirementJournal:
-    def __init__(self, path, approval_sha256, inventory_sha256, *, create=True):
-        if not digest(approval_sha256) or not digest(inventory_sha256):
+    def __init__(self, path, review_sha256, inventory_sha256, *, create=True):
+        if not digest(review_sha256) or not digest(inventory_sha256):
             raise Refused("invalid journal binding")
         self.path = path
         self.create = create
         self.binding = {
             "format": 1,
-            "approval_sha256": approval_sha256,
+            "review_sha256": review_sha256,
             "inventory_sha256": inventory_sha256,
         }
         self.next_index = 0
@@ -97,7 +97,7 @@ class RetirementJournal:
         except ValueError as error:
             raise Refused("journal contains invalid records") from error
         if binding != self.binding:
-            raise Refused("journal belongs to a different approval or inventory")
+            raise Refused("journal belongs to a different review or inventory")
         self.next_index = 0
         self.pending = None
         for record in records:

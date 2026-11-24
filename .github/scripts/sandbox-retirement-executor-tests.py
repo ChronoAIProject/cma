@@ -16,6 +16,8 @@ import tempfile
 from threading import Thread
 import unittest
 
+from sandbox_retirement_application import ApplicationRetirement, digest as guard_digest, make_guard
+
 
 SCRIPT = Path(__file__).with_name("sandbox-retirement-executor.py")
 EXECUTOR = runpy.run_path(str(SCRIPT))
@@ -31,6 +33,12 @@ CLAIM = "/apis/extensions.agents.x-k8s.io/v1beta1/namespaces/fixture/sandboxclai
 PVC = CORE + "/persistentvolumeclaims/home-native"
 PV = "/api/v1/persistentvolumes/volume"
 APPROVAL = "synthetic-approval"
+RELEASE = {
+    "source_sha": "b" * 40,
+    "admission_floor_sha": "c" * 40,
+    "rollout_evidence_sha256": "d" * 64,
+    "version": "1.2.3",
+}
 
 
 def digest(value):
@@ -117,7 +125,12 @@ class ExecutorTests(unittest.TestCase):
         self.receipt = None
         self.corrupt_receipt = False
         self.replacement = None
+        self.serving_release = {key: RELEASE[key] for key in ("source_sha", "version")}
+        self.controller_approves = True
         self.guard = None
+        self.second_sandbox = None
+        self.second_receipt = None
+        self.approval = APPROVAL
         self.home = {
             "request": {"sandbox_id": "sbx_fixture"},
             "receipt": {
@@ -133,7 +146,9 @@ class ExecutorTests(unittest.TestCase):
                 "claim": {"uid": "claim-uid"}, "cleaned": False,
             },
         }
-        self.runtime = {"runtime_id": "agent-sandbox:native:native-uid", "runtime_version": IMAGE}
+        self.runtime = {
+            "runtime_id": "agent-sandbox:native:native-uid", "runtime_version": IMAGE, "bound_at": CREATED,
+        }
         self.snapshot = {
             "id": "sbx_fixture", "owner": "synthetic-用户", "created_at": CREATED, "revision": 7,
             "status": "active", "last_activity_at": ACTIVE, "image": IMAGE,
@@ -151,24 +166,34 @@ class ExecutorTests(unittest.TestCase):
             "pods": [{"name": "worker", "uid": "pod-uid"}],
         }
         self.policy_calls = self.directory / "policy-calls"
-        self.policy = self.directory / "policy.py"
-        self.policy.write_text(
-            f"#!{sys.executable}\n"
-            "from pathlib import Path\n"
-            "import os, sys\n"
-            "assert not any(name.startswith('CMA_RETIREMENT_') for name in os.environ)\n"
-            "assert len(sys.argv) == 7 and sys.argv[1:4] == ['policy-check', 'deploy', '--approval']\n"
-            "assert sys.argv[4] == 'synthetic-approval' and sys.argv[5] == '--context'\n"
-            f"with Path({str(self.policy_calls)!r}).open('a') as log: log.write(sys.argv[6] + '\\n')\n"
-            "print('ALLOWED once via reviewed-release-controller')\n",
-        )
-        self.policy.chmod(0o700)
 
     def files(self, expires=None, second=False):
         row = {"snapshot": self.snapshot, "provider": self.expected}
         inventory = {"format": 1, "idle_before": CUTOFF, "members": [row]}
         if second:
-            inventory["members"].append({**row, "snapshot": {**self.snapshot, "id": "sbx_second"}})
+            second_home = copy.deepcopy(self.home)
+            second_home["request"]["sandbox_id"] = "sbx_second"
+            receipt = second_home["receipt"]
+            receipt.update(storage_reference="home-native-2", storage_generation="pvc-uid-2")
+            origin = receipt["native_authority"]
+            origin.update(sandbox_uid="native-uid-2", pvc_uid="pvc-uid-2")
+            origin["claim"].update(name="claim-2", uid="claim-uid-2", sandbox_name="native-2")
+            second_home["native_pool"]["claim"]["uid"] = "claim-uid-2"
+            runtime = {**self.runtime, "runtime_id": "agent-sandbox:native-2:native-uid-2"}
+            snapshot = {
+                **self.snapshot, "id": "sbx_second", "runtime_sha256": digest(runtime),
+                "home_sha256": digest(second_home),
+            }
+            provider = {
+                **self.expected,
+                **{kind: {key: value + "-2" for key, value in self.expected[kind].items()}
+                   for kind in ("claim", "sandbox", "pvc", "pv")},
+                "pods": [{"name": "worker-2", "uid": "pod-uid-2"}],
+            }
+            second_row = {"snapshot": snapshot, "provider": provider}
+            inventory["members"].append(second_row)
+            self.second_sandbox = {**snapshot, "runtime": runtime, "lifecycle": {"home": second_home}}
+            self.second_member_sha = digest(second_row)
         self.inventory = json_file(self.directory / "inventory.json", inventory)
         self.inventory_sha = sha256(self.inventory.read_bytes()).hexdigest()
         self.member_sha = digest(row)
@@ -178,26 +203,68 @@ class ExecutorTests(unittest.TestCase):
             "format": 1, "verdict": "GO", "executor_sha256": EXECUTOR["source_digest"](),
             "inventory_sha256": self.inventory_sha,
             "origin_sha256": digest({"application": self.app.origin, "provider": self.provider.origin}),
+            "state_dir_sha256": digest(str(self.directory.resolve())),
             "dispatch_before": expires.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "approval_sha256": sha256(APPROVAL.encode()).hexdigest(),
+            "approval_sha256": sha256(self.approval.encode()).hexdigest(),
+            "serving_release": RELEASE,
+            "resume_index": 0,
         }
         self.review = json_file(self.directory / "review.json", self.review_body)
 
     def run_cli(self, *authority):
+        harness = """
+import json, runpy, sys
+from pathlib import Path
+source, policy_log, approve = sys.argv[1:4]
+sys.argv = [source, *sys.argv[4:]]
+sys.path.insert(0, str(Path(source).parent))
+def consume(request):
+    consumed = Path(policy_log + ".consumed")
+    approvals = consumed.read_text().splitlines() if consumed.exists() else []
+    approved = approve == "yes" and request["approval"] not in approvals
+    with open(policy_log, "a") as log:
+        log.write(json.dumps(request) + "\\n")
+    if approved:
+        with consumed.open("a") as log:
+            log.write(request["approval"] + "\\n")
+    return approved
+raise SystemExit(runpy.run_path(source)["main"](consume))
+"""
         args = [
-            sys.executable, str(SCRIPT), "--application", self.app.origin, "--provider", self.provider.origin,
+            sys.executable, "-c", harness, str(SCRIPT), str(self.policy_calls),
+            "yes" if self.controller_approves else "no",
+            "--application", self.app.origin, "--provider", self.provider.origin,
             "--inventory", str(self.inventory), "--review", str(self.review),
             "--state-dir", str(self.directory), "--observe-seconds", "1", *authority,
         ]
         environment = {
-            **os.environ, "PYTHONDONTWRITEBYTECODE": "1", "CMA_RETIREMENT_APPROVAL": APPROVAL,
+            **os.environ, "PYTHONDONTWRITEBYTECODE": "1", "CMA_RETIREMENT_APPROVAL": self.approval,
             "CMA_RETIREMENT_APP_TOKEN": "synthetic-app", "CMA_RETIREMENT_PROVIDER_TOKEN": "synthetic-provider",
         }
         return subprocess.run(args, capture_output=True, text=True, env=environment, timeout=10, check=False)
 
     def app_response(self, method, path, body):
+        if method == "GET" and path == "/api/v1/build-info":
+            return 200, self.serving_release
         if method == "GET" and path == APP:
             return 200, {"sandbox": self.sandbox, "agents": []}
+        second = APP.replace("sbx_fixture", "sbx_second")
+        if method == "GET" and path == second and self.second_sandbox is not None:
+            return 200, {"sandbox": self.second_sandbox, "agents": []}
+        if method == "POST" and path == second + "/retire-reviewed":
+            encoded = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode()
+            self.second_receipt = {
+                "batch_sha256": self.inventory_sha, "member_sha256": self.second_member_sha,
+                "sandbox_id": "sbx_second", "accepted_revision": 8, "event_sequence": 3,
+                "guard_sha256": sha256(b"cma-reviewed-retirement-v1\0" + encoded).hexdigest(),
+            }
+            self.second_sandbox.update(status="retired", runtime=None, revision=9)
+            self.second_sandbox["lifecycle"]["home"]["released"] = True
+            return 200, {"status": "accepted", "receipt": self.second_receipt}
+        if method == "GET" and self.second_receipt and path == (
+            f"{second}/retire-reviewed/{self.inventory_sha}/{self.second_member_sha}"
+        ):
+            return 200, self.second_receipt
         if method == "POST" and path == APP + "/retire-reviewed":
             self.guard = body
             ordered = {
@@ -223,26 +290,30 @@ class ExecutorTests(unittest.TestCase):
     def provider_response(self, method, path, body):
         if method != "GET":
             return 405, {}
-        retired = self.sandbox["status"] == "retired"
-        if path == SANDBOX:
+        secondary = path.endswith("-2")
+        suffix = "-2" if secondary else ""
+        name_path = path.removesuffix(suffix) if secondary else path
+        retired = (self.second_sandbox if secondary else self.sandbox)["status"] == "retired"
+        if name_path == SANDBOX:
             if retired:
                 return absent(path, "agents.x-k8s.io")
-            return 200, object_body("Sandbox", "native", "native-uid")
-        if path == CLAIM:
+            return 200, object_body("Sandbox", "native" + suffix, "native-uid" + suffix)
+        if name_path == CLAIM:
             if retired:
                 return absent(path, "extensions.agents.x-k8s.io")
-            return 200, object_body("SandboxClaim", "claim", "claim-uid")
-        if path == PVC:
+            return 200, object_body("SandboxClaim", "claim" + suffix, "claim-uid" + suffix)
+        if name_path == PVC:
             return 200, object_body(
-                "PersistentVolumeClaim", "home-native", "pvc-uid",
-                spec={"volumeName": "volume"}, status={"phase": "Bound"},
+                "PersistentVolumeClaim", "home-native" + suffix, "pvc-uid" + suffix,
+                spec={"volumeName": "volume" + suffix}, status={"phase": "Bound"},
             )
-        if path == PV:
+        if name_path == PV:
             return 200, object_body(
-                "PersistentVolume", "volume", "pv-uid", namespaced=False,
+                "PersistentVolume", "volume" + suffix, "pv-uid" + suffix, namespaced=False,
                 spec={
                     "persistentVolumeReclaimPolicy": "Retain",
-                    "claimRef": {"name": "home-native", "uid": "pvc-uid", "namespace": NAMESPACE},
+                    "claimRef": {"name": "home-native" + suffix, "uid": "pvc-uid" + suffix,
+                                 "namespace": NAMESPACE},
                 },
                 status={"phase": "Bound"},
             )
@@ -252,6 +323,12 @@ class ExecutorTests(unittest.TestCase):
                 pod = object_body("Pod", "worker", self.replacement or "pod-uid")
                 pod["metadata"]["ownerReferences"] = [{
                     "apiVersion": "agents.x-k8s.io/v1beta1", "kind": "Sandbox", "uid": "native-uid",
+                }]
+                pods.append(pod)
+            if self.second_sandbox and self.second_sandbox["status"] != "retired":
+                pod = object_body("Pod", "worker-2", "pod-uid-2")
+                pod["metadata"]["ownerReferences"] = [{
+                    "apiVersion": "agents.x-k8s.io/v1beta1", "kind": "Sandbox", "uid": "native-uid-2",
                 }]
                 pods.append(pod)
             return 200, {"kind": "PodList", "metadata": {"resourceVersion": "1"}, "items": pods}
@@ -264,7 +341,7 @@ class ExecutorTests(unittest.TestCase):
 
     def test_lost_ack_restart_refuses_wrong_receipt_and_same_name_replacement_then_settles(self):
         self.files()
-        first = self.run_cli("--policy-tool", str(self.policy))
+        first = self.run_cli("--execute")
         self.assertEqual(first.returncode, 1, first.stderr)
         self.assertEqual(json.loads(first.stdout)["completed_members"], 0)
         self.assertEqual(self.guard["idle_before"], CUTOFF)
@@ -287,31 +364,95 @@ class ExecutorTests(unittest.TestCase):
         )
         self.assertTrue(all(call[0] == "GET" for call in self.provider.calls))
         authority = digest({key: value for key, value in self.review_body.items() if key != "approval_sha256"})
-        self.assertEqual(self.policy_calls.read_text().splitlines(), [
-            f"old-sandbox-retire/{self.review_body['executor_sha256']}/{self.inventory_sha}/{authority}",
-        ])
+        requests = [json.loads(line) for line in self.policy_calls.read_text().splitlines()]
+        self.assertEqual(requests, [{
+            "approval": APPROVAL, "context": f"old-sandbox-retire/{authority}",
+            "origin": self.app.origin, "serving_release": RELEASE,
+        }])
+        self.assertLessEqual(len(requests[0]["context"]), 200)
         journal = (self.directory / f"{self.inventory_sha}.jsonl").read_text()
         self.assertNotIn(self.snapshot["owner"], journal)
         self.assertNotIn(self.snapshot["id"], journal)
 
     def test_unresolved_submission_stops_later_members(self):
         self.files(second=True)
-        first = self.run_cli("--policy-tool", str(self.policy))
+        first = self.run_cli("--execute")
         self.assertEqual(first.returncode, 1, first.stderr)
         self.assertTrue(self.app.calls)
         self.assertTrue(all("/sbx_second" not in path for _, path, _ in self.app.calls))
 
     def test_expired_or_altered_inventory_fails_before_outbound_requests(self):
         self.files(expires=datetime.now(timezone.utc) - timedelta(seconds=1))
-        expired = self.run_cli("--policy-tool", str(self.policy))
+        expired = self.run_cli("--execute")
         self.assertEqual(expired.returncode, 2, expired.stderr)
         with self.inventory.open("a") as stream:
             stream.write(" ")
-        altered = self.run_cli("--policy-tool", str(self.policy))
+        altered = self.run_cli("--execute")
         self.assertEqual(altered.returncode, 2, altered.stderr)
         self.assertEqual((self.app.calls, self.provider.calls), ([], []))
         self.assertFalse(self.policy_calls.exists())
 
+    def test_stale_build_or_controller_refusal_prevents_every_post(self):
+        self.files()
+        self.serving_release["source_sha"] = "f" * 40
+        stale = self.run_cli("--execute")
+        self.assertEqual(stale.returncode, 1, stale.stderr)
+        self.assertFalse(self.policy_calls.exists())
+        self.serving_release["source_sha"] = RELEASE["source_sha"]
+        self.controller_approves = False
+        denied = self.run_cli("--execute")
+        self.assertEqual(denied.returncode, 1, denied.stderr)
+        self.assertTrue(self.policy_calls.exists())
+        self.assertTrue(all(method == "GET" for method, _, _ in self.app.calls))
+
+    def test_resume_settles_first_member_then_uses_fresh_approval_for_second(self):
+        self.files(second=True)
+        first = self.run_cli("--execute")
+        self.assertEqual(first.returncode, 1, first.stderr)
+        self.assertIsNone(self.second_receipt)
+        self.settle()
+        observe = self.run_cli("--observe-only")
+        self.assertEqual(observe.returncode, 1, observe.stderr)
+        self.assertEqual(json.loads(observe.stdout)["completed_members"], 1)
+        reused = self.run_cli("--execute")
+        self.assertEqual(reused.returncode, 2, reused.stderr)
+        self.assertIsNone(self.second_receipt)
+        self.approval = APPROVAL + "-continuation"
+        new_review = {
+            **self.review_body, "approval_sha256": sha256(self.approval.encode()).hexdigest(),
+            "resume_index": 1,
+        }
+        self.review = json_file(self.directory / "review-continuation.json", new_review)
+        complete = self.run_cli("--execute")
+        self.assertEqual(complete.returncode, 0, complete.stderr)
+        self.assertEqual(json.loads(complete.stdout)["completed_members"], 2)
+        self.assertEqual(
+            [path for method, path, _ in self.app.calls if method == "POST"],
+            [APP + "/retire-reviewed", APP.replace("sbx_fixture", "sbx_second") + "/retire-reviewed"],
+        )
+        grants = self.policy_calls.with_suffix(".consumed").read_text().splitlines()
+        self.assertEqual(grants, [APPROVAL, self.approval])
+
+
+def check_rust_vector():
+    member, receipt = json.load(sys.stdin)
+    assert member["runtime"]["bound_at"]
+    assert member["home"]["receipt"]["native_authority"]["pvc_uid"]
+    assert not member["owner"].isascii()
+    row = {**member, "id": member["sandbox_id"]}
+    sandbox = {**member, "lifecycle": {"home": member["home"]}}
+    batch = member["batch_sha256"]
+    reconstructed = make_guard(batch, row, sandbox)
+    assert reconstructed == member
+    fingerprint = guard_digest(reconstructed, ordered=True)
+    boundary = ApplicationRetirement(None, None, batch, None, None, 1)
+    assert boundary.matches_receipt(row, fingerprint, receipt)
+    adjusted = make_guard(batch, {**row, "idle_before": "2026-09-16T00:00:00Z"}, sandbox)
+    assert not boundary.matches_receipt(row, guard_digest(adjusted, ordered=True), receipt)
+
 
 if __name__ == "__main__":
-    unittest.main()
+    if sys.argv[1:] == ["--check-rust-vector"]:
+        check_rust_vector()
+    else:
+        unittest.main()
