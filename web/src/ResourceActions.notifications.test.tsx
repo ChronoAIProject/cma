@@ -75,6 +75,7 @@ function DeletionNotices({
     'owner',
     undefined,
     true,
+    undefined,
     observed.settlements,
   );
   return (
