@@ -1,0 +1,44 @@
+name: "Merge-queue flaky test tracker"
+
+# Until CMA_MONGO_FLAKY_RETRY_UNTIL (.github/workflows/ci-rust.yml), the
+# merge queue's ordinary Agent Manager Mongo shards retry a failing test once
+# (owner-approved on 2026-11-24). A test that passes only on that retry is
+# still flagged: the shard annotates it and uploads a small JSON record.
+#
+# CI stays contents: read and issues: read, so it cannot write the issue.
+# This scheduled run alone holds issues: write. It reads those records from
+# merge-group CI runs (actions: read) and keeps exactly one tracking issue,
+# "Flaky tests retried in the merge queue", with each test's count and run
+# links and the retry's expiry date (.github/scripts/mongo_flaky_tracker.py).
+# It runs only from develop and never on a pull request's code.
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: "mongo-flaky-tracker"
+  cancel-in-progress: false
+
+jobs:
+  track:
+    name: "Track tests retried in the merge queue"
+    if: "github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'"
+    runs-on: "ubuntu-24.04"
+    timeout-minutes: 10
+    permissions:
+      contents: "read"
+      actions: "read"
+      issues: "write"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: "Collect retried tests into the tracking issue"
+        timeout-minutes: 8
+        env:
+          GH_TOKEN: "${{ github.token }}"
+        run: "python3 -B .github/scripts/mongo_flaky_tracker.py"

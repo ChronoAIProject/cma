@@ -81,6 +81,7 @@ async fn public_owner_stop_and_delete_settle_only_after_provider_absence() {
                     operation_id: "unrelated-credential".into(),
                     value: RuntimeCredential::new("unrelated-fixture-authority"),
                     custody_generation: Some(1),
+                    github_route: None,
                 },
             )
             .await

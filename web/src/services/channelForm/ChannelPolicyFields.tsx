@@ -19,6 +19,8 @@ import { object, optional, records, strings, text, type Fields } from './model';
 const customPartitionKeys = partitionKeys.filter((option) =>
   ['fixed', 'event_subject', 'per_event'].includes(option.value),
 );
+export const channelNameRequired = 'Enter a channel name.';
+
 export function ChannelPolicyFields({
   value,
   onChange,
@@ -33,6 +35,7 @@ export function ChannelPolicyFields({
   retainedAckDelay?: unknown;
 }) {
   const discovery = useRelayCapabilities();
+  const name = text(value.name);
   const nativeLark = records(value.sources).some((source) => source.type === 'native_lark');
   const threadWritesDisabled = discovery.authoring?.thread_contract_writes_enabled === false;
   const partition = object(value.partition),
@@ -49,9 +52,11 @@ export function ChannelPolicyFields({
           description="Give the channel a recognizable name and review its shared connection."
         >
           <TextField
+            path="/name"
             label="Channel name"
-            value={value.name}
+            value={name}
             onChange={(v) => set('name', v)}
+            validationMessage={name && !name.trim() ? channelNameRequired : undefined}
             required
           />
           {!hideConnection ? (

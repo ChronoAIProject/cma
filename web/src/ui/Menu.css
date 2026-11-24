@@ -116,6 +116,11 @@
   white-space: nowrap;
 }
 
+.menu[aria-label='Model'] .menu__itemlabel {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .menu__item[data-has-reason] .menu__itemlabel {
   white-space: normal;
   overflow-wrap: anywhere;

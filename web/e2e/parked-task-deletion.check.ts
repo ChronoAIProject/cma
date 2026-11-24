@@ -100,6 +100,7 @@ for (const purpose of ['image_rotation', 'revive'] as const) {
     });
     await page.goto('/agent-manager');
     await navigation(page, true);
+    await page.locator('.runtime-attention > summary').click();
     const menu = resourceRow(page, 'agent', boundary.agent.id).getByRole('button', {
       name: /^Options for/,
     });
@@ -137,9 +138,7 @@ for (const purpose of ['image_rotation', 'revive'] as const) {
       expect(deletes).toHaveLength(1);
       await pending.getByRole('button', { name: 'Check request', exact: true }).click();
     }
-    await expect(
-      page.getByText('Sandbox delete request accepted. Cleanup continues in the background.'),
-    ).toBeVisible();
+    await expect(page.getByText('Deleting 1 environment')).toBeVisible();
     expect(deletes).toHaveLength(uncertain ? 2 : 1);
     expect(deletes[0]).toMatchObject({
       path: `/api/v1/sandboxes/${boundary.sandbox.id}`,
@@ -149,6 +148,10 @@ for (const purpose of ['image_rotation', 'revive'] as const) {
     expect(deletes[0]!.key).toBeTruthy();
     if (uncertain) expect(deletes[1]).toEqual(deletes[0]);
     await page.reload();
+    await page
+      .getByRole('region', { name: 'Deletion request', exact: true })
+      .getByRole('button', { name: 'View status', exact: true })
+      .click();
     await page.getByRole('button', { name: /View Sandbox deletion status/ }).click();
     const progress = page.getByRole('dialog', { name: 'Deleting Sandbox', exact: true });
     await expect(progress).toBeVisible();

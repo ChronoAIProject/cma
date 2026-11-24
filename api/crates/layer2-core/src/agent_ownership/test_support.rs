@@ -185,7 +185,12 @@ impl OwnershipStore for MemoryOwnershipStore {
             return Ok((lease.token.instance_id == instance).then(|| lease.clone()));
         }
         let membership = self.snapshot(&state);
-        if candidates(id, &membership, None)?
+        let previous_member = state
+            .owners
+            .get(id)
+            .and_then(|(_, lease)| lease.as_ref())
+            .map(|lease| lease.token.instance_id.as_str());
+        if candidates(id, &membership, previous_member)?
             .first()
             .is_none_or(|member| member.instance_id != instance)
         {

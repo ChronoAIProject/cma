@@ -24,6 +24,8 @@ mod home;
 mod runtime;
 #[path = "file_handoff/withdrawal.rs"]
 mod withdrawal;
+#[path = "file_handoff/writes.rs"]
+mod writes;
 
 struct NoResources;
 
@@ -90,6 +92,9 @@ struct PeerProbe {
     mode: Mutex<PeerReply>,
     requests: AtomicUsize,
     writes: AtomicUsize,
+    pause_write_refusal: std::sync::atomic::AtomicBool,
+    write_refused: tokio::sync::Notify,
+    resume_write_reply: tokio::sync::Notify,
 }
 
 impl PeerProbe {
@@ -104,7 +109,18 @@ impl PeerProbe {
         self.requests.fetch_add(1, SeqCst);
         let mode = *self.mode.lock().unwrap();
         match mode {
-            PeerReply::Production => next.run(request).await,
+            PeerReply::Production => {
+                let response = next.run(request).await;
+                if response
+                    .headers()
+                    .contains_key(file_write::NOT_ENTERED_HEADER)
+                    && self.pause_write_refusal.swap(false, SeqCst)
+                {
+                    self.write_refused.notify_one();
+                    self.resume_write_reply.notified().await;
+                }
+                response
+            }
             PeerReply::Legacy => {
                 let mut response = next.run(request).await;
                 response.headers_mut().remove(file_read::HANDOFF_HEADER);
@@ -137,7 +153,13 @@ struct Replica {
 }
 
 impl Replica {
-    async fn bind(uri: &str, db: &Database, agent: &Agent, index: usize) -> Self {
+    async fn bind(
+        uri: &str,
+        db: &Database,
+        agent: &Agent,
+        index: usize,
+        write_contents: Option<Arc<Mutex<Vec<u8>>>>,
+    ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = format!("http://{}", listener.local_addr().unwrap());
         let client = Client::with_uri_str(uri).await.unwrap();
@@ -173,7 +195,10 @@ impl Replica {
         let access = Arc::new(ResourceAccessService::new(store.clone(), auth.clone()));
         let reads = AgentReadService::new(store, Arc::new(NoResources))
             .with_resource_access(access.clone());
-        let runtime = Arc::new(Files::default());
+        if write_contents.is_some() {
+            relay.enable_file_write_handoff();
+        }
+        let runtime = Arc::new(Files::with_write_contents(write_contents));
         relay
             .install_public_access(PublicAccess::new(
                 auth.clone(),
@@ -274,8 +299,8 @@ async fn ready_agent_file_reads_survive_owner_admission_closing() {
     let db = admin.database(&name);
     let agent = resources(&admin, &name).await;
     let replicas = [
-        Replica::bind(&uri, &db, &agent, 0).await,
-        Replica::bind(&uri, &db, &agent, 1).await,
+        Replica::bind(&uri, &db, &agent, 0, None).await,
+        Replica::bind(&uri, &db, &agent, 1, None).await,
     ];
     let membership = replicas[0]
         .instance

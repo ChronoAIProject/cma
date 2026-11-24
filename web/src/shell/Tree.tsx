@@ -1,7 +1,8 @@
 import { selectAgentAction } from './agentActionDispatch';
 import { useTreeFocus } from './useTreeFocus';
 import { Presence } from '../ui/Presence';
-import { useId, useState } from 'react';
+import { useId } from 'react';
+import { useTreeCollapse } from './useTreeCollapse';
 import {
   sandboxChildrenAvailable,
   sandboxChildrenReadable,
@@ -20,6 +21,8 @@ import {
   IconFolderOpenOutline16,
   IconPauseOutline16,
 } from '../ui/icons';
+import type { AgentDetail } from '../api/types';
+import type { RuntimeAttention } from './runtimeAttention';
 import type { NavigationSandbox } from './navigation';
 import { TreeRow } from './TreeRow';
 import { agentActions, sandboxActions, workspaceActions } from './treeActions';
@@ -64,6 +67,10 @@ export type TreeAction =
 
 export interface TreeProps {
   readonly currentTask?: CurrentTask;
+  readonly selectedRetired?: AgentDetail;
+  readonly onShowAll?: () => void;
+  readonly attention?: RuntimeAttention;
+  readonly showDeletionProgress?: boolean;
   readonly active?: boolean;
   readonly resourceClient?: ResourceViewsClient;
   readonly viewerId: string;
@@ -82,25 +89,12 @@ export interface TreeProps {
   readonly onAction: (action: TreeAction) => void;
 }
 
-function storageKey(viewerId: string): string {
-  return `cma:tree:${viewerId}:collapsed`;
-}
-
-function restored(viewerId: string): Set<string> {
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(storageKey(viewerId)) ?? '[]');
-    return new Set(
-      Array.isArray(parsed)
-        ? parsed.filter((value): value is string => typeof value === 'string')
-        : [],
-    );
-  } catch {
-    return new Set();
-  }
-}
-
 export function Tree({
   currentTask,
+  selectedRetired,
+  onShowAll,
+  attention,
+  showDeletionProgress = true,
   active = true,
   resourceClient,
   viewerId,
@@ -138,25 +132,18 @@ export function Tree({
   );
   const groupId = useId();
   const focus = useTreeFocus();
-  const [collapsed, setCollapsed] = useState(() => restored(viewerId));
-  const toggle = (node: string) => {
-    setCollapsed((current) => {
-      const next = new Set(current);
-      if (next.has(node)) next.delete(node);
-      else next.add(node);
-      localStorage.setItem(storageKey(viewerId), JSON.stringify([...next]));
-      return next;
-    });
-  };
+  const { collapsed, toggle } = useTreeCollapse(viewerId);
 
   return (
     <div className="resource-tree" {...focus}>
-      <DeletionProgressList
-        sandboxes={deletingItems.map(({ sandbox }) => sandbox)}
-        onViewStatus={(id) =>
-          onViewDeletion ? onViewDeletion(id) : onNavigate({ kind: 'sandbox', sandboxId: id })
-        }
-      />
+      {showDeletionProgress ? (
+        <DeletionProgressList
+          sandboxes={deletingItems.map(({ sandbox }) => sandbox)}
+          onViewStatus={(id) =>
+            onViewDeletion ? onViewDeletion(id) : onNavigate({ kind: 'sandbox', sandboxId: id })
+          }
+        />
+      ) : null}
       <Presence>
         {refreshError === undefined ? null : (
           <p className="resource-tree__notice" role="alert">
@@ -168,6 +155,9 @@ export function Tree({
         <PersonalAgentTree
           viewerId={viewerId}
           currentTask={currentTask}
+          selectedRetired={selectedRetired}
+          onShowAll={onShowAll}
+          attention={attention}
           active={active}
           items={visibleItems}
           statusFilter={statusFilter}
@@ -294,6 +284,7 @@ export function Tree({
                                 .map((workspace) => {
                                   const workspaceNode = `workspace:${workspace.id}`;
                                   const workspaceReady = workspace.status === 'ready';
+                                  const workspaceFailed = workspace.status === 'failed';
                                   const selectedAgent =
                                     route.kind === 'agent'
                                       ? workspace.agents.find((agent) => agent.id === route.agentId)
@@ -306,6 +297,16 @@ export function Tree({
                                         nodeId={workspaceNode}
                                         parentId={sandboxNode}
                                         level={2}
+                                        route={
+                                          workspaceFailed
+                                            ? { kind: 'workspace', workspaceId: workspace.id }
+                                            : undefined
+                                        }
+                                        selected={
+                                          workspaceFailed &&
+                                          route.kind === 'workspace' &&
+                                          route.workspaceId === workspace.id
+                                        }
                                         label={
                                           selectedAgent?.runtimeMetadata?.workingDirectory?.trim() ||
                                           workspace.path ||

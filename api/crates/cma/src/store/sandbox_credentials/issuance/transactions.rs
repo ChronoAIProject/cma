@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 pub(super) async fn start(
     store: &MongoSandboxCredentialStore,
@@ -21,7 +22,7 @@ pub(super) async fn start(
         Ok(())
     }.await;
     if let Err(error) = outcome {
-        if let Err(abort) = session.abort_transaction().await {
+        if let Err(abort) = session.abort_guarded().await {
             tracing::warn!(error = %abort, "credential authority abort was not acknowledged");
         }
         return Err(error);
@@ -36,7 +37,7 @@ pub(super) async fn finish<T>(
     let result = match outcome {
         Ok(result) => result,
         Err(error) => {
-            if let Err(abort) = session.abort_transaction().await {
+            if let Err(abort) = session.abort_guarded().await {
                 tracing::warn!(error = %abort, "credential custody abort was not acknowledged");
             }
             return Err(error);

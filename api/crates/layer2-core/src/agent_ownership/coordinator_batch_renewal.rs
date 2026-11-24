@@ -33,6 +33,34 @@ impl OwnershipCoordinator {
             if active.is_empty() {
                 continue;
             }
+            #[cfg(feature = "qualification-hooks")]
+            if let Some(hook) = self.qualification_renewal.get() {
+                // Keep unrelated owners on the ordinary batch client. Run the selected
+                // renewal inside the same coordinator deadline and containment path.
+                let split = active.iter().position(|(owner, _)| hook.selected(owner));
+                if let Some(index) = split {
+                    let (owner, _) = active.remove(index);
+                    let selected = self.renew_one_before_member_deadline(owner, heartbeat);
+                    if active.is_empty() {
+                        selected.await?;
+                        continue;
+                    }
+                    let owners: Vec<_> = active.iter().map(|(owner, _)| *owner).collect();
+                    let earliest = active.iter().map(|(_, until)| *until).min().unwrap();
+                    let ordinary = self.renew_chunk(&owners, earliest, heartbeat);
+                    let (_, completion) = tokio::try_join!(selected, ordinary)?;
+                    if matches!(completion, ChunkCompletion::RenewIndividually) {
+                        for owner in owners {
+                            if !self.refresh_due_heartbeat(heartbeat).await? {
+                                return Ok(false);
+                            }
+                            self.renew_one_before_member_deadline(owner, heartbeat)
+                                .await?;
+                        }
+                    }
+                    continue;
+                }
+            }
             let owners: Vec<_> = active.iter().map(|(owner, _)| *owner).collect();
             let earliest = active.iter().map(|(_, until)| *until).min().unwrap();
             let result = self.renew_chunk(&owners, earliest, heartbeat).await?;
@@ -41,17 +69,26 @@ impl OwnershipCoordinator {
                     if !self.refresh_due_heartbeat(heartbeat).await? {
                         return Ok(false);
                     }
-                    tokio::select! {
-                        biased;
-                        _ = tokio::time::sleep_until(heartbeat.member_deadline) => {
-                            return Err(self.maintenance_error("member_batch_deadline", None, OwnershipError::Stale));
-                        }
-                        result = self.renew_owned(owner, heartbeat.started, heartbeat.membership.now_ms) => result?,
-                    }
+                    self.renew_one_before_member_deadline(owner, heartbeat)
+                        .await?;
                 }
             }
         }
         Ok(true)
+    }
+
+    async fn renew_one_before_member_deadline(
+        &self,
+        owner: &Arc<Authority>,
+        heartbeat: &RenewalHeartbeat,
+    ) -> Result<(), OwnershipError> {
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep_until(heartbeat.member_deadline) => {
+                Err(self.maintenance_error("member_batch_deadline", None, OwnershipError::Stale))
+            }
+            result = self.renew_owned(owner, heartbeat.started, heartbeat.membership.now_ms) => result,
+        }
     }
 
     async fn refresh_due_heartbeat(

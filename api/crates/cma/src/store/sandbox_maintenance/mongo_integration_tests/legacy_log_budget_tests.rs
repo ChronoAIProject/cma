@@ -2,7 +2,7 @@ use super::*;
 use crate::store::sandbox_maintenance::evidence::legacy_log_budget::{
     MAX_LEGACY_BYTES, MAX_LEGACY_ROWS,
 };
-use layer2_core::sandbox::store::InactivityPauseCause;
+use layer2_core::sandbox::store::{InactivityPauseCause, SandboxSessionStore};
 use mongodb::{
     bson::{Bson, Document},
     event::{command::CommandEvent, EventHandler},
@@ -143,6 +143,88 @@ async fn assert_unchanged(store: &MongoSandboxStore, sandbox: &Sandbox) {
         .await
         .unwrap()
         .is_empty());
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn bounded_legacy_and_strict_session_evidence_gate_the_same_idle_pause() {
+    let f = TestStore::open().await;
+    let store = f
+        .store
+        .clone()
+        .with_strict_inactivity_session_evidence(true);
+    let (sandbox, agent) = fixture(&store, "sbx_combined_inactivity_evidence").await;
+    let request = f.request(&sandbox);
+
+    store
+        .open_sandbox_session(&sandbox.id, "desktop", "2026-09-05T01:00:00Z")
+        .await
+        .unwrap();
+    f.commands();
+    assert_eq!(
+        store
+            .preview_inactivity_pause(request.clone())
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::NotEligible
+    );
+    let commands = f.commands();
+    let [probe] = commands.as_slice() else {
+        panic!("expected the budget probe to fit and the session to prevent the log payload read")
+    };
+    assert_probe(probe, &[agent.id.as_str()]);
+    assert_eq!(
+        store
+            .schedule_inactivity_pause(request.clone())
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::NotEligible
+    );
+    assert_unchanged(&store, &sandbox).await;
+
+    store
+        .close_sandbox_session(&sandbox.id, "desktop")
+        .await
+        .unwrap();
+    f.commands();
+    assert_eq!(
+        store
+            .preview_inactivity_pause(request.clone())
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::Scheduled
+    );
+    let commands = f.commands();
+    assert!(commands
+        .iter()
+        .any(|command| command.contains_key("aggregate")));
+    assert!(commands.iter().any(|command| command.contains_key("find")));
+    assert_unchanged(&store, &sandbox).await;
+
+    assert_eq!(
+        store
+            .schedule_inactivity_pause(request.clone())
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::Scheduled
+    );
+    assert_eq!(
+        store.schedule_inactivity_pause(request).await.unwrap(),
+        SandboxMaintenanceOutcome::AlreadyScheduled
+    );
+    let paused = store.get_sandbox(&sandbox.id).await.unwrap().unwrap();
+    assert_eq!(paused.status, SandboxStatus::Pausing);
+    let events = store.sandbox_events(&sandbox.id, 0, 10).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].kind,
+        SandboxEventKind::StatusChanged {
+            from: SandboxStatus::Active,
+            to: SandboxStatus::Pausing,
+        }
+    );
+    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
+    f.cleanup().await;
 }
 
 #[tokio::test]

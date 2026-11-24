@@ -13,12 +13,35 @@ fn policy(account: &str, capabilities: &[&str]) -> Arc<TaskExperiencePolicy> {
     )
 }
 
+fn machine_image(digest_digit: &str) -> String {
+    format!("runtime.example/desktop@sha256:{}", digest_digit.repeat(64))
+}
+
 async fn configured_router(
     harness: &Harness<MongoSandboxStore>,
     database: &mongodb::Database,
     client: &mongodb::Client,
     policy: Option<Arc<TaskExperiencePolicy>>,
     can_create: bool,
+) -> (Router, crate::agent_lifecycle::LifecycleDrain) {
+    configured_router_for_image(
+        harness,
+        database,
+        client,
+        policy,
+        can_create,
+        machine_image("a"),
+    )
+    .await
+}
+
+async fn configured_router_for_image(
+    harness: &Harness<MongoSandboxStore>,
+    database: &mongodb::Database,
+    client: &mongodb::Client,
+    policy: Option<Arc<TaskExperiencePolicy>>,
+    can_create: bool,
+    image: String,
 ) -> (Router, crate::agent_lifecycle::LifecycleDrain) {
     router_with_support(
         harness.store.clone(),
@@ -33,7 +56,7 @@ async fn configured_router(
             ),
             adapter: None,
             policy,
-            machine_image: Some(format!("runtime.example/desktop@sha256:{}", "a".repeat(64))),
+            machine_image: Some(image),
         },
     )
     .await
@@ -119,10 +142,7 @@ async fn machine_only_admits_enabled_account_without_task_home_capability() {
         .unwrap();
     assert!(record.input.request.machine_included);
     assert!(record.input.request.initial_message.is_none());
-    assert_eq!(
-        record.input.resolved_image,
-        Some(format!("runtime.example/desktop@sha256:{}", "a".repeat(64)))
-    );
+    assert_eq!(record.input.resolved_image, Some(machine_image("a")));
     database.drop().await.unwrap();
 }
 
@@ -218,6 +238,109 @@ async fn desktop_policy_does_not_replace_validation_or_resource_authority() {
         StatusCode::FORBIDDEN,
     )
     .await;
+    drain.drain(Duration::from_secs(5)).await.unwrap();
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
+async fn verified_desktop_default_can_share_the_canary_manifest_digest() {
+    use crate::store::{CreateResult, LifecycleBehavior, LifecycleInput};
+
+    let (client, database, mut harness) = isolated_environment().await;
+    desktop::configure(&mut harness).await;
+    let operations = MongoAgentLifecycleStore::open(&database).await.unwrap();
+    let owner = SubjectId::new("owner");
+    let input = LifecycleInput {
+        behavior: LifecycleBehavior::Legacy,
+        managed_agent_instructions: None,
+        setup_message: None,
+        request: serde_json::from_value(json!({"name": "Runtime canary fixture"})).unwrap(),
+        resolved_image: None,
+        capacity: Some(desktop::capacity()),
+        sandbox_availability: Default::default(),
+        capabilities: vec![],
+        actor: None,
+    };
+    let CreateResult::Created(id) = operations
+        .create(&owner, "canary-fixture", input)
+        .await
+        .unwrap()
+    else {
+        panic!("expected a new canary fixture");
+    };
+    let mut canary = operations.claim(&id).await.unwrap().unwrap();
+    let image = desktop::image();
+    let canary_profiles = operations
+        .install_canary_worker_fixture(
+            &mut canary,
+            layer3_adapter::RuntimeImage {
+                uri: image.clone(),
+                ..Default::default()
+            },
+        )
+        .await;
+
+    let (router, drain) = router_with_support(
+        harness.store.clone(),
+        harness.registry.clone(),
+        &database,
+        &client,
+        owner.as_str(),
+        true,
+        desktop::CreationSupport {
+            connections: Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+            adapter: Some(harness.adapter.clone()),
+            policy: Some(task_experience_policy()),
+            machine_image: None,
+        },
+    )
+    .await;
+    let (status, receipt) = create(
+        &router,
+        &json!({"name": "Ordinary desktop", "desktop": true, "initial_message": "Open the page"}),
+        "ordinary-desktop",
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{receipt}");
+    let desktop_id = receipt["id"].as_str().unwrap();
+    let (record, sandbox_id) = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let record = operations
+                .read_for_owner(&owner, desktop_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_ne!(record.status, "failed", "{:?}", record.error);
+            if let Some(sandbox_id) = record.sandbox_id.clone() {
+                break (record, layer2_core::SandboxId(sandbox_id));
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(record.input.resolved_image.as_deref(), Some(image.as_str()));
+    assert!(record.input.request.desktop);
+    assert!(!record.input.request.machine_included);
+    let sandbox = harness
+        .store
+        .get_sandbox(&sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(sandbox.owner, owner);
+    assert_eq!(
+        sandbox.origin,
+        layer2_core::sandbox::SandboxOrigin::Lifecycle {
+            operation_id: desktop_id.into()
+        },
+    );
+    assert_ne!(sandbox.profile.id, canary_profiles.sandbox.id);
+    assert_eq!(
+        sandbox.profile.content.runtime_image.as_deref(),
+        Some(image.as_str())
+    );
     drain.drain(Duration::from_secs(5)).await.unwrap();
     database.drop().await.unwrap();
 }

@@ -5,7 +5,7 @@ use crate::ids::{AgentId, SandboxId};
 use crate::sandbox::{Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, Worktree};
 use crate::seconds_from_rfc3339;
 
-use super::{Page, PageRequest, SandboxStoreError};
+use super::{AgentWorkClaimError, Page, PageRequest, SandboxStoreError};
 
 /// Advisory discovery for runtime-dependent background steps. A directed
 /// probe remains discoverable even when its Sandbox is hidden in ordinary work.
@@ -311,32 +311,19 @@ pub struct AgentCreateAdmission {
     pub machine_included: Option<bool>,
 }
 
-/// Compare-and-set proof for the parents observed while rebuilding a publication.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AgentWorkPublicationParents {
-    pub sandbox_revision: u64,
-    pub workspace_revision: u64,
-    pub worktree_revision: u64,
-    pub lineage: AgentWorkPublicationLineage,
-}
-
-/// A preflight rejection carries the exact versions that demonstrated invalid lineage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentWorkPublicationLineage {
-    Authorized,
-    Rejected { workspace_foreign: bool },
-}
-
-/// Publication disposition before authorizing a fresh mutation body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentWorkPublication {
-    Published,
-    KnownAborted,
-}
+mod publication;
+pub use publication::{
+    AgentWorkPublication, AgentWorkPublicationLineage, AgentWorkPublicationParents,
+};
 
 /// Durable agent work discovery, lease fencing, and atomic publication.
 #[async_trait]
 pub trait AgentWorkerStore: Send + Sync {
+    /// Receipt for the exact admitted owner Stop on the captured revision.
+    async fn has_owner_stop_receipt(&self, _agent: &Agent) -> Result<bool, SandboxStoreError> {
+        Ok(false)
+    }
+
     /// Original lifecycle admission in BSON millisecond precision, when this
     /// store can resolve the operation that admitted the Agent. Legacy and
     /// existing-workspace records intentionally return no boundary.
@@ -460,6 +447,18 @@ pub trait AgentWorkerStore: Send + Sync {
         now: String,
         lease_expires_at: String,
     ) -> Result<Option<Agent>, SandboxStoreError>;
+
+    async fn claim_agent_work_observed(
+        &self,
+        id: &AgentId,
+        holder: &str,
+        now: String,
+        lease_expires_at: String,
+    ) -> Result<Option<Agent>, AgentWorkClaimError> {
+        self.claim_agent_work(id, holder, now, lease_expires_at)
+            .await
+            .map_err(Into::into)
+    }
 
     /// Publish a skill result under the captured parent environment. Unsupported
     /// stores must refuse rather than discard the parent authority.

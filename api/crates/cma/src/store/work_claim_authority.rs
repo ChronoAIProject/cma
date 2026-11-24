@@ -3,6 +3,15 @@
 use layer2_core::sandbox::store::SandboxStoreError;
 use mongodb::bson::{doc, Bson, DateTime, Document};
 
+pub(super) const LEDGER_MAINTENANCE_FIELD: &str = "ledger_maintenance";
+
+pub(super) fn without_ledger_maintenance(mut filter: Document) -> Document {
+    // Any persisted hold blocks ordinary work. Only a future authorized
+    // maintenance transition can decide when the Sandbox can serve again.
+    filter.insert(LEDGER_MAINTENANCE_FIELD, doc! {"$exists": false});
+    filter
+}
+
 /// Combine with the original revision/parent fence at the acquisition write.
 /// Caller time may narrow discovery, but cannot steal a live claim or run work
 /// before its persisted due time. The stored canonical string format is intact.
@@ -61,11 +70,11 @@ pub(super) fn sandbox_claim(
         .as_ref()
         .map(|operation| Bson::String(operation.authority().operation_id.clone()))
         .unwrap_or(Bson::Null);
-    Ok(doc! {"$and":[filter,{
+    Ok(without_ledger_maintenance(doc! {"$and":[filter,{
         "record.lifecycle.operation.authority.operation_id":operation.clone(),
         "$expr":{"$eq":[{"$ifNull":["$record.lifecycle.operation.authority.operation_id",Bson::Null]},
             {"$literal":operation}]},
-    }]})
+    }]}))
 }
 
 pub(super) fn workspace_claim(

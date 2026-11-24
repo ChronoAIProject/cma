@@ -1,5 +1,6 @@
 //! A closure transition is valid only while both its policy and accounting
 //! evidence are current. The settings write prevents snapshot write skew.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::budget::BudgetError;
 use mongodb::bson::{doc, Document};
 use mongodb::{ClientSession, Collection};
@@ -44,7 +45,7 @@ pub(super) async fn persist(
             CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => Err(BudgetError::Unavailable),
         },
         result => {
-            if let Err(error) = session.abort_transaction().await {
+            if let Err(error) = session.abort_guarded().await {
                 tracing::warn!(event = "platform_spend_transition_abort", error = %error,
                     "could not confirm closure transition abort");
             }

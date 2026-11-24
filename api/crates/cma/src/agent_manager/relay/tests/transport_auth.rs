@@ -10,9 +10,12 @@ impl public_access::PublicAuthorization for TransportPolicy {
     async fn authorize(
         &self,
         request: public_access::PublicRequest<'_>,
-    ) -> Result<(), public_access::PublicRefusal> {
+    ) -> Result<
+        Option<layer2_core::sandbox::agent_filesystem::FileWriteTarget>,
+        public_access::PublicRefusal,
+    > {
         if request.context.caller.subject.as_str() == "synthetic-caller" {
-            Ok(())
+            Ok(None)
         } else {
             Err(StatusCode::UNAUTHORIZED.into())
         }

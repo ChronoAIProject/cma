@@ -38,6 +38,7 @@ pub(super) async fn retire_claimed(
         {
             return Err(WarmPoolError::Unavailable);
         }
+        target = store.begin_retirement(&target).await?;
         if target.binding.is_none() {
             // Recover an uncertain configure acknowledgement before marking
             // the original definitions. Never create positive old capacity.
@@ -48,7 +49,6 @@ pub(super) async fn retire_claimed(
             store.bind(&target, &status.binding).await?;
             target.binding = Some(status.binding);
         }
-        target = store.begin_retirement(&target).await?;
         let binding = target.binding.as_ref().ok_or(WarmPoolError::Conflict)?;
         provider
             .begin_retirement(binding)
