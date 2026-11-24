@@ -1,7 +1,7 @@
 use super::*;
 use crate::store::sandbox_operator_mongo_integration_tests::{agent, database, sandbox};
 use layer2_core::sandbox::store::{AgentLogStore, AgentStore, SandboxStore};
-use layer2_core::sandbox::{AgentLogKind, AgentStatus, SandboxHome};
+use layer2_core::sandbox::{AgentLogKind, AgentStatus, SandboxHome, SandboxNativePool};
 
 #[path = "../sandbox_mongo_integration_tests/command_ledger_tests/capacity_public_tests/retained_output/home.rs"]
 mod home;
