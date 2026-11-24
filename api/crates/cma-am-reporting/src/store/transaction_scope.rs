@@ -60,7 +60,8 @@ pub fn into_domain(error: ErrorKind) -> MetricsError {
     }
 }
 
-type SessionOperation = for<'a> fn(&'a mut ClientSession) -> BoxFuture<'a, mongodb::error::Result<()>>;
+type SessionOperation =
+    for<'a> fn(&'a mut ClientSession) -> BoxFuture<'a, mongodb::error::Result<()>>;
 
 // Context borrows share the session borrow's lifetime; retries cannot retain
 // cursors or mutable observations from an earlier attempt.
@@ -93,15 +94,8 @@ where
         // Own that terminal operation so caller cancellation cannot strand a
         // server transaction that session drop would no longer abort.
         let finished = tokio::spawn(
-            async move {
-                let mut terminal = SessionTerminal {
-                    session: &mut session,
-                    commit,
-                    abort,
-                };
-                finish(&mut terminal, result, backoff).await
-            }
-            .with_current_subscriber(),
+            async move { finish_session(&mut session, result, commit, abort, backoff).await }
+                .with_current_subscriber(),
         )
         .await
         .map_err(super::usage_reports::unavailable)?;
@@ -112,6 +106,22 @@ where
         }
     }
     unreachable!("the final attempt returns its original error")
+}
+
+/// Finish an existing reporting transaction with the same terminal retry policy.
+pub async fn finish_session<T>(
+    session: &mut ClientSession,
+    result: Result<T>,
+    commit: SessionOperation,
+    abort: SessionOperation,
+    backoff: fn(usize) -> BoxFuture<'static, ()>,
+) -> Result<T> {
+    let mut terminal = SessionTerminal {
+        session,
+        commit,
+        abort,
+    };
+    finish(&mut terminal, result, backoff).await
 }
 
 #[async_trait::async_trait]

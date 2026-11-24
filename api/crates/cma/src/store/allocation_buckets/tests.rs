@@ -189,10 +189,25 @@ fn immutable_coverage_reuses_later_heads_but_rejects_same_revision_drift() {
     assert!(!b.validate_source(&next).unwrap());
     next.source_seq -= 1;
     assert!(b.validate_source(&next).is_err());
-    assert!(b.baseline_matches(s.revision - 1, false).is_err());
-    let mut incomplete = b;
-    incomplete.complete_lifecycle = false;
-    assert!(incomplete.baseline_matches(s.revision + 1, true).is_err());
+    next = s.clone();
+    next.revision -= 1;
+    next.complete_lifecycle = false;
+    assert!(b.validate_source(&next).is_err());
+    let incomplete = materialize::build(
+        &SandboxUsage {
+            complete_lifecycle: false,
+            ..s.clone()
+        },
+        &[event(&s, 1, from, from + DAY)],
+        Range {
+            from,
+            to: from + DAY,
+        },
+    )
+    .unwrap();
+    next = s;
+    next.revision += 1;
+    assert!(incomplete.validate_source(&next).is_err());
 }
 
 #[test]
