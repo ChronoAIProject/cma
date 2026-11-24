@@ -114,6 +114,11 @@ export const OPEN_SANDBOX_TO_RESUME = 'open_sandbox_to_resume';
 export const OPEN_RUNTIME_UPDATE = 'open_runtime_update';
 const ACTION_BUSY = 'Another action is still being confirmed.';
 const REQUIRES_ACTIVE_SANDBOX = 'Available when the Sandbox is active.';
+const terminalStopReasons: Partial<Record<AgentStatus, string>> = {
+  stopped: 'Agent is already stopped.',
+  failed: 'Agent has failed. There is no running Agent to stop.',
+  deleted: 'Agent has been deleted.',
+};
 
 export function agentActions(
   status: AgentStatus,
@@ -165,11 +170,13 @@ export function agentActions(
       disabled:
         !runtimeAvailable ||
         !['starting', 'ready', 'working', 'waiting_approval', 'paused'].includes(status),
-      reason: busy
-        ? ACTION_BUSY
-        : !runtimeAvailable
-          ? (agentDeletionBlock(context) ?? recoveryReason ?? REQUIRES_ACTIVE_SANDBOX)
-          : undefined,
+      reason:
+        terminalStopReasons[status] ??
+        (busy
+          ? ACTION_BUSY
+          : !runtimeAvailable
+            ? (agentDeletionBlock(context) ?? recoveryReason ?? REQUIRES_ACTIVE_SANDBOX)
+            : undefined),
     });
   if (permissions.deleteAgent) {
     const terminal = status === 'stopped' || status === 'failed';
