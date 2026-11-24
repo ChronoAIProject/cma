@@ -85,12 +85,34 @@ pub struct SandboxServiceGrant {
     pub credential_generation_floor: u64,
 }
 
+/// An owner-selected connection for one service in a Sandbox scope revision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceConnectionSelection {
+    pub service: ServiceId,
+    pub connection_id: String,
+}
+
+impl ServiceConnectionSelection {
+    pub fn matches_scope(&self, services: &[ServiceId]) -> bool {
+        services.contains(&self.service)
+            && !self.connection_id.is_empty()
+            && self.connection_id.len() <= 128
+            && self
+                .connection_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    }
+}
+
 /// The latest exact owner-approved scope, separate from immutable creation scope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxServiceScopeRevision {
     pub revision: u64,
     pub services: Vec<ServiceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<ServiceConnectionSelection>,
     pub authorized_by: SubjectId,
     pub authorized_at: String,
     /// Credentials at or below this reservation predate this exact scope.
