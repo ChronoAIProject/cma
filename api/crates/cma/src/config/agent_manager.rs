@@ -2,12 +2,15 @@ use layer2_core::agent_ownership::DEFAULT_MAX_OWNED_AGENTS;
 
 const SKIP_INELIGIBLE_RECONCILIATION: &str =
     "CHRONO_AGENT_RECONCILIATION_SKIP_INELIGIBLE_OWNERSHIP_ENABLED";
+const DEFER_FOREIGN_RECONCILIATION: &str =
+    "CHRONO_AGENT_RECONCILIATION_DEFER_FOREIGN_OWNERSHIP_ENABLED";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AgentManagerReplicas {
     pub relay_address: String,
     pub max_owned_agents: u32,
     pub skip_ineligible_reconciliation: bool,
+    pub defer_foreign_reconciliation: bool,
 }
 
 impl AgentManagerReplicas {
@@ -47,6 +50,10 @@ impl AgentManagerReplicas {
                 lookup,
                 SKIP_INELIGIBLE_RECONCILIATION,
             )?,
+            defer_foreign_reconciliation: super::features::flag(
+                lookup,
+                DEFER_FOREIGN_RECONCILIATION,
+            )?,
         }))
     }
 }
@@ -76,7 +83,10 @@ mod tests {
         limit: &str,
     ) -> Result<Option<AgentManagerReplicas>, String> {
         AgentManagerReplicas::from_lookup(&mut |key| {
-            if key == SKIP_INELIGIBLE_RECONCILIATION {
+            if matches!(
+                key,
+                SKIP_INELIGIBLE_RECONCILIATION | DEFER_FOREIGN_RECONCILIATION
+            ) {
                 return Ok(None);
             }
             Ok(Some(
@@ -99,6 +109,7 @@ mod tests {
                 relay_address: "http://10.0.0.1:8080/".into(),
                 max_owned_agents: 256,
                 skip_ineligible_reconciliation: false,
+                defer_foreign_reconciliation: false,
             })
         );
         for flag in ["1", "TRUE", "true ", "", "yes"] {
@@ -118,27 +129,41 @@ mod tests {
     }
 
     #[test]
-    fn reconciliation_ownership_skip_requires_a_strict_opt_in() {
-        for (value, expected) in [
-            (None, Ok(false)),
-            (Some("false"), Ok(false)),
-            (Some("true"), Ok(true)),
-            (Some("1"), Err(())),
-        ] {
-            let config = AgentManagerReplicas::from_lookup(&mut |key| {
-                Ok(match key {
-                    "CHRONO_AGENT_MANAGER_REPLICAS_ENABLED" => Some("true".into()),
-                    "CHRONO_AGENT_MANAGER_RELAY_ADDRESS" => Some("http://fixture.example".into()),
-                    SKIP_INELIGIBLE_RECONCILIATION => value.map(str::to_owned),
-                    _ => None,
-                })
-            });
-            assert_eq!(
-                config
-                    .map(|replicas| replicas.unwrap().skip_ineligible_reconciliation)
-                    .map_err(|_| ()),
-                expected
-            );
+    fn reconciliation_ownership_optimizations_require_independent_strict_opt_ins() {
+        for option in [SKIP_INELIGIBLE_RECONCILIATION, DEFER_FOREIGN_RECONCILIATION] {
+            for (value, expected) in [
+                (None, Ok(false)),
+                (Some("false"), Ok(false)),
+                (Some("true"), Ok(true)),
+                (Some("1"), Err(())),
+            ] {
+                let config = AgentManagerReplicas::from_lookup(&mut |key| {
+                    Ok(match key {
+                        "CHRONO_AGENT_MANAGER_REPLICAS_ENABLED" => Some("true".into()),
+                        "CHRONO_AGENT_MANAGER_RELAY_ADDRESS" => {
+                            Some("http://fixture.example".into())
+                        }
+                        key if key == option => value.map(str::to_owned),
+                        _ => None,
+                    })
+                });
+                let actual = config
+                    .map(|replicas| {
+                        let replicas = replicas.unwrap();
+                        (
+                            replicas.skip_ineligible_reconciliation,
+                            replicas.defer_foreign_reconciliation,
+                        )
+                    })
+                    .map_err(|_| ());
+                assert_eq!(
+                    actual,
+                    expected.map(|enabled| (
+                        enabled && option == SKIP_INELIGIBLE_RECONCILIATION,
+                        enabled && option == DEFER_FOREIGN_RECONCILIATION,
+                    ))
+                );
+            }
         }
     }
 }

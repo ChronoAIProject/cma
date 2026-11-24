@@ -4,7 +4,7 @@ use super::{
     intents::{DeliveryOutcome, IntentReceipt},
     pacing::Pacing,
     relay_client::{unknown, Credential, RelayClient},
-    render::{RelayText, Renderer},
+    render::{LiteralText, RelayText, Renderer},
 };
 use crate::{
     channels::resolver::ResolvedChannel, tools::Capabilities, turns::observer::ActivityObserver,
@@ -216,7 +216,11 @@ impl Sender {
         if !interactive {
             capabilities.buttons = "numbered_text".into();
         }
-        let (parts, rendering) = RelayText.render(message, &capabilities);
+        let (parts, rendering) = if super::render::literal_platform(*platform) {
+            LiteralText.render(message, &capabilities)
+        } else {
+            RelayText.render(message, &capabilities)
+        };
         let mut result = IntentReceipt {
             message_parts: vec![],
             message_ref: None,

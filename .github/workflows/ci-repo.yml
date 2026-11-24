@@ -21,6 +21,7 @@ jobs:
         name: "Track selection and workflow regressions"
         run: |
           python3 -B -m unittest discover -s .github/scripts/ci_tracks -p "test_*.py"
+          python3 -B -m unittest discover -s .github/scripts -p 'mongo_flaky_retry_tests.py'
           ruby .github/scripts/ci-tracks-workflow-tests.rb
       -
         name: "Staging publication and deployment contracts"

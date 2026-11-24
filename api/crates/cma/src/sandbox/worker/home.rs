@@ -77,7 +77,8 @@ impl SandboxWorker {
                         crate::sandbox::runtime_mapping::sandbox_spec(
                             sandbox,
                             &self.config.deployment_id,
-                        ),
+                        )
+                        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?,
                     );
                     request.native_canary_image = canary_image.clone();
                     match crate::sandbox::home_native::reserve(
