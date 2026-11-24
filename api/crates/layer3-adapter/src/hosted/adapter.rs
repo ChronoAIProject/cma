@@ -113,9 +113,7 @@ impl HostedAdapter {
         request: &RuntimeProvisionRequest,
         home: &crate::HomeVolumeRequest,
     ) -> crate::Result<Option<crate::agent_sandbox::NativePoolBinding>> {
-        let rendered = self
-            .deployment
-            .render_runtime(&request.spec, request.generation)?;
+        let rendered = self.deployment.render_request(request)?;
         if let Some(image) = &request.native_canary_image {
             return self
                 .backend
@@ -123,12 +121,17 @@ impl HostedAdapter {
                 .await
                 .map(Some);
         }
-        let image = self
-            .native_runtime_images
-            .get(&rendered.image.uri)
-            .unwrap_or(&self.deployment.image);
+        let image = match self.native_runtime_images.get(&rendered.image.uri) {
+            Some(image) => image.clone(),
+            // An image of the admitted release carries this build's contract.
+            None => request
+                .released
+                .as_ref()
+                .and_then(|released| released.image(&rendered.image.uri))
+                .unwrap_or_else(|| self.deployment.image.clone()),
+        };
         self.backend
-            .select_native_pool(&rendered, image, home)
+            .select_native_pool(&rendered, &image, home)
             .await
     }
 

@@ -65,10 +65,14 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
     );
     const commandId =
       item.message_command_id ?? (firstInput ? state.responseBinding?.commandId : undefined);
+    const responseId =
+      state.responseBinding?.commandId === commandId
+        ? state.responseBinding?.responseId
+        : undefined;
     next = {
       ...next,
       messages: next.messages.map((message) =>
-        message.id === `event:${item.sequence}` ? { ...message, commandId } : message,
+        message.id === `event:${item.sequence}` ? { ...message, commandId, responseId } : message,
       ),
     };
   }

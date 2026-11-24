@@ -84,6 +84,13 @@ impl SandboxWorker {
             .await
             {
                 Ok(Some(home)) if sandbox.lifecycle.home.is_none() => {
+                    // Ordinary reservations fence the captured release. A
+                    // canary's verified image already comes from its receipt.
+                    let released = if canary_image.is_none() {
+                        self.config.release()
+                    } else {
+                        None
+                    };
                     let mut request = RuntimeProvisionRequest::new(
                         sandbox.lifecycle.runtime_generation_high_water.max(1),
                         crate::sandbox::runtime_mapping::sandbox_spec(
@@ -93,13 +100,25 @@ impl SandboxWorker {
                         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?,
                     );
                     request.native_canary_image = canary_image.clone();
-                    match crate::sandbox::home_native::reserve(
+                    request.released = released.clone();
+                    let reserved = crate::sandbox::home_native::reserve(
                         self.dependencies.adapter.as_ref(),
                         &request,
                         home,
                     )
                     .await
-                    {
+                    .and_then(|home| {
+                        match (&self.config.released, &released) {
+                            (Some(source), Some(released)) => source
+                                .require_current(released)
+                                .map(|()| home)
+                                .map_err(|stale| {
+                                    layer3_adapter::AdapterError::Unavailable(stale.to_string())
+                                }),
+                            _ => Ok(home),
+                        }
+                    });
+                    match reserved {
                         Ok(home) => home,
                         Err(error) => return Ok(Some(adapter_failure(error))),
                     }

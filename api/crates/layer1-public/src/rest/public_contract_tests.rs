@@ -25,6 +25,7 @@ mod bot_setup_cases;
 mod capacity_recovery_cases;
 mod channel_usage_cases;
 mod creation_inventory_cases;
+mod creation_outcome_cases;
 mod credential_cases;
 mod deliverable_cases;
 mod desktop_cases;
@@ -178,6 +179,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = creation_outcome_cases::scenario(name) {
+        return scenario;
+    }
     if let Some(scenario) = runtime_canary_cases::scenario(name) {
         return scenario;
     }

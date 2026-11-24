@@ -379,6 +379,7 @@ async fn attachment_runtime_writer_requires_actual_capability_and_exact_boot() {
             agent_model_catalog: false,
             agent_browser: false,
             agent_resource_preparation: false,
+            agent_process_restart: false,
             exact_github_credential_route: false,
             sandbox_id: "sbx_test".into(),
             generation: 1,

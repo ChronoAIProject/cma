@@ -130,6 +130,7 @@ async fn native_claim_recovery_and_cleanup_refuse_legacy_or_unknown_cluster_befo
     let runtime = RuntimeProvisionRequest {
         funded_until: None,
         native_canary_image: None,
+        released: None,
         generation: 1,
         spec: SandboxSpec {
             sandbox_id: local.home.request.sandbox_id.clone(),

@@ -133,6 +133,10 @@ pub struct RuntimeProvisionRequest {
     pub native_canary_image: Option<RuntimeImage>,
     pub generation: u64,
     pub spec: SandboxSpec,
+    /// The release this operation was admitted against. It supplies the image
+    /// only when the spec records none, so it never enters the receipt digest.
+    #[serde(skip)]
+    pub released: Option<crate::ReleasedRuntime>,
 }
 
 impl RuntimeProvisionRequest {
@@ -142,7 +146,14 @@ impl RuntimeProvisionRequest {
             spec,
             funded_until: None,
             native_canary_image: None,
+            released: None,
         }
+    }
+
+    /// Render new work from the release captured at its admission.
+    pub fn with_released(mut self, released: crate::ReleasedRuntime) -> Self {
+        self.released = Some(released);
+        self
     }
 }
 

@@ -1,5 +1,6 @@
 //! Owner-facing Sandbox routes.
 
+pub(super) mod creation;
 #[path = "sandbox_enrichment.rs"]
 mod enrichment;
 
@@ -10,10 +11,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use layer2_core::profiles::SandboxProfileRef;
 use layer2_core::sandbox::store::PageRequest;
-use layer2_core::sandbox::{CreateSandbox, OwnerSandboxQuery, SandboxOrigin, SandboxStatus};
-use layer2_core::{Capability, SandboxId, SandboxProfileId};
+use layer2_core::sandbox::{OwnerSandboxQuery, SandboxStatus};
+use layer2_core::{Capability, SandboxId};
 use serde::Deserialize;
 
 use super::hierarchy_shared_shapes::{
@@ -23,10 +23,8 @@ use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredentia
 use layer2_core::sandbox::SandboxHierarchyReading;
 
 use super::idempotency::{IdempotencyKey, RequestBody};
-use super::instances::{confirmed_digest, execute_command, execute_empty_command, HierarchyState};
-use super::instances_openapi_shapes::{
-    CreateSandboxRequest, OwnerSandboxSummaryView, SandboxEventView, SandboxView,
-};
+use super::instances::{execute_command, execute_empty_command, HierarchyState};
+use super::instances_openapi_shapes::{OwnerSandboxSummaryView, SandboxEventView, SandboxView};
 use super::instances_problem::HierarchyProblem;
 use super::BodyProblem;
 
@@ -55,7 +53,7 @@ pub(crate) struct EventParams {
 
 pub(super) fn routes() -> Router<HierarchyState> {
     Router::new()
-        .route("/api/v1/sandboxes", post(create).get(list))
+        .route("/api/v1/sandboxes", post(creation::create).get(list))
         .route(
             "/api/v1/sandboxes/capacity",
             get(super::sandbox_capacity::read),
@@ -81,62 +79,6 @@ pub(super) fn routes() -> Router<HierarchyState> {
             post(super::sandbox_service_access::grant),
         )
         .route("/api/v1/sandboxes/{id}/events", get(events))
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/v1/sandboxes",
-    tag = "sandboxes",
-    params(("Idempotency-Key" = String, Header)),
-    request_body = CreateSandboxRequest,
-    responses(
-        (status = 201, body = SandboxView),
-        (status = 409, body = crate::rest::ProblemDocument),
-        (status = 429, body = crate::rest::ProblemDocument)
-    )
-)]
-pub(super) async fn create(
-    State(state): State<HierarchyState>,
-    AuthenticatedCaller(caller): AuthenticatedCaller,
-    key: IdempotencyKey,
-    body: Result<RequestBody<CreateSandboxRequest>, BodyProblem>,
-) -> Response {
-    let command_state = state.clone();
-    let command_caller = caller.clone();
-    execute_command(
-        &state,
-        &caller,
-        Capability::CreateSandbox,
-        key,
-        "sandbox:create".into(),
-        body,
-        move |body| async move {
-            let confirmed_digest = confirmed_digest(body.trust_confirmed, body.commands_digest)?;
-            let sandbox = command_state
-                .sandboxes
-                .create(
-                    &command_caller,
-                    CreateSandbox {
-                        profile: SandboxProfileRef::new(
-                            SandboxProfileId(body.sandbox_profile.id),
-                            body.sandbox_profile.revision,
-                        ),
-                        name: body.name,
-                        confirmed_digest,
-                        origin: SandboxOrigin::Manual,
-                    },
-                )
-                .await
-                .map_err(HierarchyProblem::sandbox)?;
-            let mut view = SandboxView::from(&sandbox);
-            view.color =
-                super::sandbox_colors::colors(&command_state, &command_caller.subject, &[&sandbox])
-                    .await
-                    .remove(&view.id);
-            Ok((StatusCode::CREATED, Json(view)).into_response())
-        },
-    )
-    .await
 }
 
 #[utoipa::path(
