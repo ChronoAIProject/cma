@@ -49,9 +49,7 @@ impl AgentSandboxClient {
             .resource_version()
             .filter(|version| !version.is_empty())
             .ok_or_else(|| rejected("Sandbox resource version is absent"))?;
-        if !self.suspension_pods_absent(name, uid).await? {
-            return Err(unavailable("Sandbox suspension is waiting for Pod removal"));
-        }
+        self.pools.prove_member_pods_absent(uid).await?;
         let current = self.pools.prove_native_home(home).await?;
         if current.resource_version().as_ref() != Some(&resource_version) {
             return Err(unavailable("stopped Sandbox changed during observation"));
@@ -157,7 +155,13 @@ impl AgentSandboxClient {
             self.pools
                 .runtime_desired_with_upgrade(origin, home, next, name, Some(&proof))?;
         self.verify_explicit_runtime_policy(&member).await?;
-        self.wait_suspended(runtime, &before).await?;
+        if let Some(admission) = admission {
+            self.pools
+                .prove_member_pods_absent(&admission.predecessor.uid)
+                .await?;
+        } else {
+            self.wait_suspended(runtime, &before).await?;
+        }
         // Pod removal can take minutes. Reacquire the complete original home
         // graph as well as the stopped generation before the UID/version CAS.
         let actual = self.pools.prove_native_home(home).await?;

@@ -1,6 +1,8 @@
 use super::*;
 use crate::agent_sandbox::{RetainedStartupPolicyPredecessor, RetainedStartupPolicyUpgrade};
 
+const PODS: &str = "/api/v1/namespaces/cma-test/pods";
+
 async fn predecessor(fixture: &Resume) -> crate::Result<RetainedStartupPolicyPredecessor> {
     client(&fixture.fixture, true)
         .observe_retained_startup_policy_predecessor(
@@ -110,29 +112,45 @@ async fn retained_policy_upgrade_replays_an_exact_lost_ack_after_version_advance
 }
 
 #[tokio::test]
-async fn retained_policy_observation_refuses_an_owned_pod_and_a_concurrent_member_edit() {
-    use super::super::read_fixture::Effects;
-    use crate::agent_sandbox::pods::{name_hash, TRACKING_LABEL};
-
-    const PODS: &str = "/api/v1/namespaces/cma-test/pods";
+async fn retained_policy_refuses_an_owned_pod_even_without_its_tracking_label() {
+    use crate::agent_sandbox::pods::TRACKING_LABEL;
     const POD: &str = "/api/v1/namespaces/cma-test/pods/warm-pod";
     let fixture = Resume::new().await;
     let observed = predecessor(&fixture).await.unwrap();
-    fixture.fixture.state.lock().unwrap().rows.insert(
-        POD.into(),
-        json!({"apiVersion":"v1","kind":"Pod","metadata":{
-            "name":"warm-pod","namespace":"cma-test",
-            "labels":{(TRACKING_LABEL): name_hash("warm-member")},
-            "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1",
-                "kind":"Sandbox","name":"warm-member","uid":observed.uid}]
-        }}),
-    );
-    let error = predecessor(&fixture).await.unwrap_err();
-    assert!(matches!(error, crate::AdapterError::Unavailable(message)
-        if message == "Sandbox suspension is waiting for Pod removal"));
-    fixture.no_writes();
+    let admission = RetainedStartupPolicyUpgrade {
+        operation_id: "retained-policy-operation",
+        predecessor: &observed,
+        target_image: &fixture.previous.image.uri,
+        successor_generation: 2,
+        journal_recovery: true,
+    };
+    for labels in [json!({}), json!({(TRACKING_LABEL): "different"})] {
+        fixture.fixture.state.lock().unwrap().rows.insert(
+            POD.into(),
+            json!({"apiVersion":"v1","kind":"Pod","metadata":{
+                "name":"warm-pod","namespace":"cma-test","uid":"pod-uid",
+                "labels": labels,
+                "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1",
+                    "kind":"Sandbox","name":"warm-member","uid":observed.uid}]
+            }}),
+        );
+        let observation = predecessor(&fixture).await.unwrap_err();
+        let mutation = dispatch(&fixture, &admission).await.unwrap_err();
+        for error in [observation, mutation] {
+            assert!(matches!(error, crate::AdapterError::Unavailable(message)
+                if message == "native member Pods remain present"));
+        }
+        fixture.no_writes();
+    }
     fixture.fixture.state.lock().unwrap().rows.remove(POD);
+    dispatch(&fixture, &admission).await.unwrap();
+}
 
+#[tokio::test]
+async fn retained_policy_observation_refuses_a_concurrent_member_edit() {
+    use super::super::read_fixture::Effects;
+
+    let fixture = Resume::new().await;
     let gate = Gate::new();
     let effects = Effects::new(
         &fixture.fixture,
@@ -166,6 +184,32 @@ async fn retained_policy_observation_refuses_an_owned_pod_and_a_concurrent_membe
     assert!(matches!(error, crate::AdapterError::Unavailable(message)
         if message == "stopped Sandbox changed during observation"));
     effects.assert_read_only();
+}
+
+#[tokio::test]
+async fn retained_policy_observation_rejects_an_incomplete_pod_inventory() {
+    let fixture = Resume::new().await;
+    let (_, adapter) = fixture.reads(
+        BTreeMap::from([(
+            PODS.into(),
+            (
+                200,
+                json!({"apiVersion":"v1","kind":"PodList","metadata":{
+                    "resourceVersion":"5","continue":"repeated-page"
+                },"items":[]}),
+            ),
+        )]),
+        BTreeMap::new(),
+    );
+    let error = adapter
+        .observe_retained_startup_policy_predecessor(
+            &fixture.handle,
+            &fixture.previous,
+            &fixture.home,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, crate::AdapterError::Unavailable(_)));
 }
 
 #[tokio::test]
