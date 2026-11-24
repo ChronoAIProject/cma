@@ -14,6 +14,15 @@ pub struct ReleasedRuntime {
     pub agent: String,
     /// The pinned machine-lane image, when this deployment provides one.
     pub machine: Option<String>,
+    /// Independent revisions for transactional admission against either lane.
+    /// Static deployment pins have no durable release revision.
+    pub lane_revisions: Option<ReleasedLaneRevisions>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReleasedLaneRevisions {
+    pub agent: u64,
+    pub machine: Option<u64>,
 }
 
 impl ReleasedRuntime {
@@ -54,6 +63,7 @@ pub fn released_image(uri: String) -> crate::RuntimeImage {
 pub struct StaleReleasedRuntime;
 
 /// The authority for new work's default images.
+#[async_trait::async_trait]
 pub trait ReleasedRuntimeSource: Send + Sync + std::fmt::Debug {
     /// The current release. Take it once per admitted operation.
     fn snapshot(&self) -> ReleasedRuntime;
@@ -61,6 +71,9 @@ pub trait ReleasedRuntimeSource: Send + Sync + std::fmt::Debug {
     /// Confirm a captured snapshot is still the release before admitting work
     /// against it. A replica that missed a change refuses here and retries.
     fn require_current(&self, released: &ReleasedRuntime) -> Result<(), StaleReleasedRuntime>;
+
+    /// A durable fence may discover a change before the background refresh.
+    async fn refresh_after_stale(&self) {}
 }
 
 /// The deployment's configured pins. They never change for the process.
@@ -73,6 +86,7 @@ impl PinnedReleasedRuntime {
             revision: 0,
             agent: agent.into(),
             machine,
+            lane_revisions: None,
         })
     }
 }

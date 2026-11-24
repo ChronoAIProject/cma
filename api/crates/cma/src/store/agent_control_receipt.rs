@@ -15,6 +15,9 @@ pub(super) const STOP_RECEIPT_FIELD: &str = "control_stop_receipt";
 pub(super) const DELETE_RECEIPT_FIELD: &str = "control_delete_receipt";
 const CONTROL_OPERATION_PREFIX: &str = "ctl_";
 
+#[path = "agent_restart_control_predecessor.rs"]
+mod restart;
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -142,6 +145,7 @@ pub(super) fn read_control_receipts(
 ) -> Result<StoredControlReceipts, AgentControlStoreError> {
     let stop = read_receipt(document, STOP_RECEIPT_FIELD, true)?;
     let delete = read_receipt(document, DELETE_RECEIPT_FIELD, false)?;
+    restart::validate_predecessor(document, agent, stop.as_ref(), delete.as_ref())?;
     if stop
         .iter()
         .chain(delete.iter())
@@ -175,6 +179,28 @@ pub(super) fn read_control_receipts(
     Ok(StoredControlReceipts { stop, delete })
 }
 
+pub(super) fn has_owner_stop_receipt(row: &Document, agent: &Agent) -> bool {
+    let Ok(StoredControlReceipts {
+        stop: Some(receipt),
+        ..
+    }) = read_control_receipts(row, agent)
+    else {
+        return false;
+    };
+    let ControlRequest::Stop(request) = receipt.request else {
+        return false;
+    };
+    let Some(requested) = layer2_core::seconds_from_rfc3339(&request.requested_at) else {
+        return false;
+    };
+    request.reason == layer2_core::sandbox::AgentStopReason::Owner
+        && agent.work.receipts.iter().any(|close| {
+            close.step == layer2_core::sandbox::AgentWorkStep::CloseProcess
+                && layer2_core::seconds_from_rfc3339(&close.completed_at)
+                    .is_some_and(|completed| completed >= requested)
+        })
+}
+
 fn receipt_belongs_to_agent(receipt: &ControlReceipt, agent: &Agent) -> bool {
     let target = receipt.request.target();
     target.agent_id == agent.id
@@ -196,6 +222,15 @@ fn read_receipt(
     };
     let receipt: ControlReceipt = mongodb::bson::deserialize_from_bson(value.clone())
         .map_err(|error| corrupt(&format!("stored {field} is invalid: {error}")))?;
+    validate_receipt(&receipt, field, stop)?;
+    Ok(Some(receipt))
+}
+
+fn validate_receipt(
+    receipt: &ControlReceipt,
+    field: &str,
+    stop: bool,
+) -> Result<(), AgentControlStoreError> {
     let expected_revision = receipt
         .request
         .target()
@@ -218,7 +253,7 @@ fn read_receipt(
     {
         return Err(corrupt(&format!("stored {field} is inconsistent")));
     }
-    Ok(Some(receipt))
+    Ok(())
 }
 
 fn operation_id_is_valid(value: &str) -> bool {

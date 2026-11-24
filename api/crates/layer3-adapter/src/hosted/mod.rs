@@ -16,6 +16,8 @@ mod acp_turn;
 mod adapter;
 mod agent_sandbox_backend;
 mod backend;
+mod retained_startup_policy;
+pub use retained_startup_policy::HostedRetainedStartupPolicy;
 mod capacity_recovery;
 pub use capacity_recovery::CapacityRecoveryNativeTransport;
 mod channel_tools;
@@ -76,6 +78,7 @@ pub(crate) use deployment::{
 pub use deployment::{
     HostedDeployment, MODEL_PROXY_BASE_URL, NYXID_PROXY_BASE_URL, PLACEHOLDER_CREDENTIAL,
 };
+pub(crate) use deployment_request::JOURNAL_RECOVERY;
 pub use managed_context::HostedContextRefresh;
 pub use memory::{InMemoryHostedBackend, InMemoryRuntimeSnapshot};
 pub(crate) use nonexecuting::IdleBootstrapProof;

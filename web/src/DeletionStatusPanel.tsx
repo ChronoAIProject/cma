@@ -43,20 +43,19 @@ export function DeletionReference({ request }: { readonly request: DeletionReque
 export function DeletionStatusPanel({
   request,
   observation,
-  completedInBackground = false,
+  complete = observation?.complete === true,
   sending,
   readError,
   commandError,
 }: {
   readonly request: DeletionRequest;
   readonly observation?: DeletionObservation;
-  readonly completedInBackground?: boolean;
+  readonly complete?: boolean;
   readonly sending: boolean;
   readonly readError?: string;
   readonly commandError?: string;
 }) {
   const target = deletionTarget(request.action);
-  const complete = observation?.complete === true || completedInBackground;
   const unknownDelete = !request.accepted && deleteMayHaveBeenSent(request);
   const blocked = request.stop?.phase === 'blocked' && !request.accepted;
   const stopping =
@@ -140,21 +139,21 @@ export function DeletionStatusPanel({
           </time>
         </p>
       ) : null}
-      {completedInBackground || observation?.failure === undefined ? null : (
+      {observation?.failure === undefined || complete ? null : (
         <p role="alert">
           Cleanup reported: {observation.failure.detail}. Deletion is not complete.
         </p>
       )}
-      {completedInBackground ||
+      {complete ||
       commandError === undefined ||
       (blocked && commandError === stoppedProofMissing) ? null : (
         <p role="alert">{commandError}</p>
       )}
-      {completedInBackground || readError === undefined ? null : <p role="alert">{readError}</p>}
+      {readError === undefined || complete ? null : <p role="alert">{readError}</p>}
       <DeletionReference key={request.key} request={request} />
       <details className="deletion-status__details">
         <summary>Cleanup progress</summary>
-        {completedInBackground || observation === undefined ? null : (
+        {observation === undefined || complete ? null : (
           <ProvisioningProgress title="Deletion progress" steps={observation.steps} />
         )}
         <LiveActivity
@@ -163,8 +162,8 @@ export function DeletionStatusPanel({
             request.action.kind === 'delete_agent' ? 'agent' : 'sandbox',
           )}
           syncedAt={observation?.observedAt}
-          stale={readError !== undefined}
-          loading={observation === undefined && readError === undefined}
+          stale={!complete && readError !== undefined}
+          loading={!complete && observation === undefined && readError === undefined}
         />
       </details>
     </section>

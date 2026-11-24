@@ -1,142 +1,184 @@
-//! Per-receiver containment of transient receiver housekeeping failures (#3069).
-//!
-//! A receiver handoff that fails with `Unavailable` has already revoked its
-//! local authority and kept its durable lease: `OwnershipCoordinator::handoff`
-//! releases the lease only after the receiving runtime confirms revocation.
-//! Without containment that one error stops the whole process. With it, the
-//! receiver stays fenced and is retried on later housekeeping ticks, paced by
-//! the coordinator's cleanup pacing, while healthy owners keep serving.
-//! Every other error, including Stale, IncompatibleProtocol, Invalid and any
-//! membership failure, still stops the process exactly as before.
-use layer2_core::agent_ownership::{Authority, OwnershipCoordinator, OwnershipError};
-use layer2_core::AgentId;
-use std::{
-    collections::BTreeMap,
-    future::Future,
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex,
-    },
+use super::*;
+use futures_util::{stream, StreamExt, TryStreamExt};
+use layer2_core::{
+    agent_ownership::{Authority, OwnershipError, OwnershipToken, RetirementIntent},
+    sandbox::AgentWorkStep,
 };
 
-/// Bounded like the other receiver work in one housekeeping pass.
-const RETRIES_PER_PASS: usize = 4;
+#[cfg(test)]
+mod mongo_tests;
 
 #[derive(Default)]
-pub(super) struct ContainedHandoffs {
-    enabled: AtomicBool,
-    cursor: AtomicUsize,
-    pending: Mutex<BTreeMap<AgentId, Arc<Authority>>>,
+pub(super) struct IntentTimes {
+    entries: BTreeMap<AgentId, Timers>,
 }
 
-impl ContainedHandoffs {
-    pub(super) fn enable(&self) {
-        self.enabled.store(true, Ordering::Release);
-    }
+struct Timers {
+    token: OwnershipToken,
+    cooperative: Option<Instant>,
+    inactive: Option<Instant>,
+}
 
-    /// Keep a transiently failed receiver for retry, or return the error.
-    pub(super) fn contain(
-        &self,
-        stage: &'static str,
-        authority: &Arc<Authority>,
-        error: OwnershipError,
-    ) -> Result<(), OwnershipError> {
-        if !self.enabled.load(Ordering::Acquire) || !matches!(error, OwnershipError::Unavailable(_))
-        {
-            return Err(error);
-        }
-        authority.log_receiver_handoff_failure(
-            stage,
-            &error,
-            "Receiver handoff unavailable; receiver stays fenced and is retried",
-        );
-        self.pending
-            .lock()
-            .unwrap()
-            .insert(authority.token.agent_id.clone(), authority.clone());
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub(super) fn pending(&self) -> usize {
-        self.pending.lock().unwrap().len()
-    }
-
-    /// Retry a bounded set of contained receivers through `handoff`.
-    ///
-    /// An entry whose exact authority the coordinator no longer owns is
-    /// dropped: a later acquisition replaced it or its release completed.
-    /// Before each retry, an entry whose token no longer holds a live durable
-    /// lease is forgotten, so this process can acquire the Agent again just as
-    /// a restart would allow. `Ok(true)` drops it, `Ok(false)` and
-    /// `Unavailable` keep it, and any other error is returned to stop the
-    /// process as before. Returned ids have no newer local authority, so their
-    /// per-Agent housekeeping timers can be cleared.
-    pub(super) async fn retry<F, Fut>(
-        &self,
-        coordinator: &OwnershipCoordinator,
-        mut handoff: F,
-    ) -> Result<Vec<AgentId>, OwnershipError>
-    where
-        F: FnMut(Arc<Authority>) -> Fut,
-        Fut: Future<Output = Result<bool, OwnershipError>>,
-    {
-        let batch: Vec<_> = {
-            let pending = self.pending.lock().unwrap();
-            if pending.is_empty() {
-                return Ok(Vec::new());
-            }
-            // Rotate so a few persistently failing receivers cannot starve others.
-            let start = self.cursor.fetch_add(RETRIES_PER_PASS, Ordering::Relaxed) % pending.len();
-            pending
-                .values()
-                .cycle()
-                .skip(start)
-                .take(RETRIES_PER_PASS.min(pending.len()))
-                .cloned()
-                .collect()
-        };
-        let owned = coordinator.owned().await;
-        let mut completed = Vec::new();
-        for authority in batch {
-            let id = authority.token.agent_id.clone();
-            let retained = owned.iter().any(|current| Arc::ptr_eq(current, &authority));
-            let done = if !retained {
-                true
-            } else {
-                // Lease custody first: it is checked on every pass, unpaced.
-                match coordinator.forget_unconfirmed_retirement(&authority).await {
-                    Ok(true) => true,
-                    Ok(false) | Err(OwnershipError::Unavailable(_)) => {
-                        match handoff(authority.clone()).await {
-                            Ok(done) => done,
-                            Err(OwnershipError::Unavailable(_)) => false,
-                            Err(error) => return Err(error),
-                        }
-                    }
-                    Err(error) => return Err(error),
-                }
+impl IntentTimes {
+    fn eligible(&mut self, authority: &Authority, intent: RetirementIntent, active: bool) -> bool {
+        let timers = self
+            .entries
+            .entry(authority.token.agent_id.clone())
+            .or_insert_with(|| Timers {
+                token: authority.token.clone(),
+                cooperative: None,
+                inactive: None,
+            });
+        if timers.token != authority.token {
+            *timers = Timers {
+                token: authority.token.clone(),
+                cooperative: None,
+                inactive: None,
             };
-            if done {
-                let mut pending = self.pending.lock().unwrap();
-                if pending
-                    .get(&id)
-                    .is_some_and(|current| Arc::ptr_eq(current, &authority))
-                {
-                    pending.remove(&id);
-                }
-                let newer = owned.iter().any(|current| {
-                    current.token.agent_id == id && !Arc::ptr_eq(current, &authority)
-                });
-                if !newer {
-                    completed.push(id);
-                }
-            }
         }
-        Ok(completed)
+        let timer = match intent {
+            RetirementIntent::Cooperative => &mut timers.cooperative,
+            RetirementIntent::Inactive => &mut timers.inactive,
+        };
+        if !active {
+            *timer = None;
+            return false;
+        }
+        timer.get_or_insert_with(Instant::now).elapsed() >= Duration::from_secs(60)
+    }
+
+    fn remove(&mut self, authority: &Authority) {
+        if self
+            .entries
+            .get(&authority.token.agent_id)
+            .is_some_and(|entry| entry.token == authority.token)
+        {
+            self.entries.remove(&authority.token.agent_id);
+        }
+    }
+
+    fn retain(&mut self, owned: &[Arc<Authority>]) {
+        self.entries
+            .retain(|_, entry| owned.iter().any(|authority| authority.token == entry.token));
+    }
+}
+
+impl AgentManager {
+    pub(super) async fn service_retirements(
+        &self,
+        hints: Vec<Arc<Authority>>,
+    ) -> Result<(), OwnershipError> {
+        let owned = self.coordinator.owned().await;
+        self.containment_times.lock().unwrap().retain(&owned);
+        let pending = self.coordinator.cancelled_receivers().await;
+        let cleanup = stream::iter(pending)
+            .map(|authority| async move {
+                self.registry.detach_owner(&authority.token);
+                if self
+                    .coordinator
+                    .retirement_background(&authority)
+                    .await?
+                    .is_some()
+                {
+                    self.containment_times.lock().unwrap().remove(&authority);
+                }
+                Ok::<_, OwnershipError>(())
+            })
+            .buffer_unordered(4)
+            .try_collect::<Vec<_>>();
+        let discovery = async {
+            let count = owned.len();
+            let start = self.retired_cursor.fetch_add(4, Ordering::Relaxed) % count.max(1);
+            let inspections = (0..count.min(4))
+                .map(|index| {
+                    (
+                        owned[(start + index) % count].clone(),
+                        RetirementIntent::Inactive,
+                    )
+                })
+                .chain(
+                    hints
+                        .into_iter()
+                        .take(4)
+                        .map(|authority| (authority, RetirementIntent::Cooperative)),
+                );
+            stream::iter(inspections)
+                .map(|(authority, intent)| async move {
+                    if !authority.is_current() {
+                        return Ok(());
+                    }
+                    let observed = tokio::time::timeout(
+                        Duration::from_secs(2),
+                        self.store.get_agent(&authority.token.agent_id),
+                    )
+                    .await;
+                    let Ok(Ok(agent)) = observed else {
+                        return Ok(());
+                    };
+                    let eligible = match intent {
+                        RetirementIntent::Inactive => {
+                            let inactive = agent.is_none_or(|agent| {
+                                !agent.status.is_live() && agent.work.step == AgentWorkStep::None
+                            });
+                            self.containment_times
+                                .lock()
+                                .unwrap()
+                                .eligible(&authority, intent, inactive)
+                        }
+                        RetirementIntent::Cooperative => {
+                            let busy = agent.is_none_or(|agent| {
+                                agent.conversation.active_turn.is_some()
+                                    || agent.work.lease.is_some()
+                            });
+                            !busy
+                                || self
+                                    .containment_times
+                                    .lock()
+                                    .unwrap()
+                                    .eligible(&authority, intent, true)
+                        }
+                    };
+                    if eligible {
+                        authority.begin_retirement(intent)?;
+                        self.registry.detach_owner(&authority.token);
+                    }
+                    Ok::<_, OwnershipError>(())
+                })
+                .buffer_unordered(4)
+                .try_collect::<Vec<_>>()
+                .await
+        };
+        tokio::try_join!(cleanup, discovery, self.coordinator.poll_acquisitions())?;
+        Ok(())
     }
 }
 
 #[cfg(test)]
-#[path = "containment_tests.rs"]
-mod tests;
+mod tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn late_completion_cannot_clear_successor_intent_timing() {
+        let old = Authority::new(
+            OwnershipToken {
+                agent_id: AgentId("agent".into()),
+                instance_id: "manager".into(),
+                epoch: 1,
+                protocol: PROTOCOL_VERSION,
+            },
+            Instant::now() + Duration::from_secs(120),
+        );
+        let mut token = old.token.clone();
+        token.epoch += 1;
+        let next = Authority::new(token, Instant::now() + Duration::from_secs(120));
+        let mut times = IntentTimes::default();
+        assert!(!times.eligible(&old, RetirementIntent::Inactive, true));
+        tokio::time::advance(Duration::from_secs(50)).await;
+        assert!(!times.eligible(&next, RetirementIntent::Inactive, true));
+        times.remove(&old);
+        tokio::time::advance(Duration::from_secs(60)).await;
+        assert!(times.eligible(&next, RetirementIntent::Inactive, true));
+        times.remove(&next);
+        assert!(times.entries.is_empty());
+    }
+}

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) struct MemoryCredentials {
+pub(crate) struct MemoryCredentials {
     pub(super) live_keys: Mutex<std::collections::BTreeSet<String>>,
     pub(super) revoke_failure_ids: Mutex<std::collections::BTreeSet<String>>,
     pub(super) census_failure: Mutex<Option<CredentialError>>,
@@ -14,7 +14,7 @@ pub(super) struct MemoryCredentials {
 }
 
 impl MemoryCredentials {
-    pub(super) fn new(actions: ActionLog) -> Arc<Self> {
+    pub(crate) fn new(actions: ActionLog) -> Arc<Self> {
         Arc::new(Self {
             live_keys: Default::default(),
             revoke_failure_ids: Default::default(),

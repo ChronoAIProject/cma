@@ -1,5 +1,6 @@
 import type { KeyboardEvent } from 'react';
 import { validRepository, validRepositoryRef } from './repository';
+import { spreadsheetLinkIssue } from './spreadsheetLinkValidation';
 import { compileTaskTemplate, type TaskTemplate, type TemplateIssue } from './taskTemplateModel';
 
 export function taskSubmission(
@@ -32,7 +33,13 @@ export function taskSubmission(
                       (!draft.repositoryUrl || !validRepositoryRef(draft.repositoryRef))
                     ? 'Enter a valid repository ref with a repository URL.'
                     : undefined;
-  return { text: compiled.text, issue: compiled.issue ?? (message ? { message } : undefined) };
+  return {
+    text: compiled.text,
+    issue:
+      compiled.issue ??
+      (draft.template ? spreadsheetLinkIssue(draft.template) : undefined) ??
+      (message ? { message } : undefined),
+  };
 }
 export function submitTaskOnShortcut(event: KeyboardEvent<HTMLFormElement>) {
   const target = event.target;

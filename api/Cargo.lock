@@ -454,6 +454,7 @@ dependencies = [
  "opentelemetry",
  "reqwest",
  "ring",
+ "semver",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
@@ -647,11 +648,15 @@ name = "cmaeg-execution"
 version = "0.1.0"
 dependencies = [
  "cmaeg-core",
+ "cmaeg-engine",
  "dashmap",
+ "futures-util",
  "metrics",
+ "metrics-exporter-prometheus",
  "sha2 0.10.9",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -659,9 +664,12 @@ name = "cmaeg-http"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "cmaeg-core",
+ "cmaeg-engine",
  "pulldown-cmark",
  "reqwest",
  "ring",
+ "serde_json",
 ]
 
 [[package]]

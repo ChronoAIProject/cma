@@ -91,6 +91,10 @@ class Source:
         if not match:
             raise ValueError("unrecognized collection registry: " + path)
         body = re.sub(r"//[^\n]*", "", match[1])
+        imports = {
+            target.rsplit("::", 1)[-1]: target
+            for target in re.findall(r"^use ((?:crate|self|super)(?:::[A-Za-z_]\w*)+);", source, re.M)
+        }
         rows = []
         for expression in filter(None, (part.strip() for part in body.split(","))):
             if re.fullmatch(r'"[a-z0-9_]+"', expression):
@@ -98,6 +102,9 @@ class Source:
                 definition = {"path": path, "sha256": digest(source.encode()),
                               "symbol": module + "::COLLECTIONS"}
             elif re.fullmatch(r"[A-Za-z_][\w:]*", expression):
+                first, separator, rest = expression.partition("::")
+                if separator and first in imports:
+                    expression = imports[first] + separator + rest
                 name, definition = self.constant(self.resolve(module, expression))
             else:
                 raise ValueError("unrecognized collection expression: " + expression)

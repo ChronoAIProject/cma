@@ -114,6 +114,13 @@ impl HostedAdapter {
         home: &crate::HomeVolumeRequest,
     ) -> crate::Result<Option<crate::agent_sandbox::NativePoolBinding>> {
         let rendered = self.deployment.render_request(request)?;
+        if let Some(image) = &request.native_canary_image {
+            return self
+                .backend
+                .select_native_canary_pool(&rendered, image, home)
+                .await
+                .map(Some);
+        }
         let image = match self.native_runtime_images.get(&rendered.image.uri) {
             Some(image) => image.clone(),
             // An image of the admitted release carries this build's contract.
@@ -170,3 +177,6 @@ impl HostedAdapter {
 
 #[path = "adapter_sandbox.rs"]
 mod sandbox;
+
+#[path = "adapter_retained_policy.rs"]
+mod retained_policy;
