@@ -416,7 +416,10 @@ export class Agents extends AgentDeliverables {
     return this.operate(id, '', 'DELETE', options);
   }
 
-  events(id: string, options: EventOptions & { readonly toolOutput?: boolean } = {}) {
+  events(
+    id: string,
+    options: EventOptions & { readonly toolOutput?: boolean; readonly cache?: 'no-store' } = {},
+  ) {
     return readAgentEvents(this.config, id, options);
   }
 

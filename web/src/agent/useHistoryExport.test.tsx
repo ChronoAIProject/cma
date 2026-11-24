@@ -10,12 +10,13 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it('exports only the bounded no-store transcript for a retained Agent', async () => {
+it('exports only the bounded no-store transcript for a retired Agent', async () => {
   const client = agentClient();
   const read = vi.spyOn(client, 'readAgentTranscript');
+  const events = vi.spyOn(client, 'readAgentEvents');
   const raw = vi.spyOn(client, 'exportAgentHistory');
   const hook = renderHook(() => useHistoryExport(client, 'owner', true));
-  await act(() => hook.result.current.run('agt_1', true));
+  await act(() => hook.result.current.run('agt_1', true, 'transcript'));
   expect(read).toHaveBeenCalledExactlyOnceWith('agt_1', {
     signal: expect.any(AbortSignal),
     cache: 'no-store',
@@ -23,8 +24,11 @@ it('exports only the bounded no-store transcript for a retained Agent', async ()
     maxBytes: 16 * 1024 * 1024,
   });
   expect(raw).not.toHaveBeenCalled();
-  expect(downloadAgentHistory).toHaveBeenCalledExactlyOnceWith('agt_1', AGENT_TRANSCRIPT);
-  expect(hook.result.current.notice).toContain('Raw runtime and tool records are not included.');
+  expect(events).not.toHaveBeenCalled();
+  expect(downloadAgentHistory).toHaveBeenCalledExactlyOnceWith('agt_1', {
+    transcript: AGENT_TRANSCRIPT,
+  });
+  expect(hook.result.current.notice).toContain('recorded messages and turn outcomes');
 });
 
 it.each(['client', 'viewerId', 'enabled', 'authority'] as const)(

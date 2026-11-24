@@ -15,6 +15,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "account_deletions",
     "account_deletion_events",
     retained_consents::COLLECTION,
+    super::migrations::measured_custody::COLLECTION,
     super::budget::COLLECTION,
     super::agent_observation::COLLECTION,
     super::sandbox_metric_bindings::COLLECTION,
@@ -187,6 +188,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
 // These stores activate separately. Existing credentials still start while disabled.
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     retained_consents::COLLECTION,
+    super::migrations::measured_custody::COLLECTION,
     super::sandbox_usage_export::CAPTURES,
     super::sandbox_usage_export::EVIDENCE,
     super::sandbox_usage_export::OUTBOX,
@@ -206,6 +208,8 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     "resource_execution_records_v1",
     "resource_revocation_operations_v1",
 ];
+const MEASURED_CUSTODY: &str = super::migrations::measured_custody::COLLECTION;
+pub(super) const MEASURED_CUSTODY_ACTIONS: &[&str] = &["find", "insert", "listIndexes"];
 const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
 const MIGRATION_ACTIONS: &[&str] = &["find", "insert", "update", "createCollection"];
 // Existing AM stores initialize their own indexes and schemas at startup.
@@ -237,40 +241,9 @@ pub(crate) fn activity_index_job_role(database: &str) -> Document {
     role_with_index_operation(database, &["activity"], true, true)
 }
 
-fn role_with_index_operation(
-    database: &str,
-    metadata_collections: &[&str],
-    migration_ledger: bool,
-    include_optional: bool,
-) -> Document {
-    let mut grants: Vec<_> = COLLECTIONS
-        .iter()
-        .filter(|name| **name != retained_consents::COLLECTION)
-        .filter(|name| include_optional || !OPTIONAL_COLLECTIONS.contains(name))
-        .map(|name| {
-            let mut actions = ACTIONS.to_vec();
-            if *name == "binding_conversations" {
-                actions.push("dropIndex");
-            }
-            if metadata_collections.contains(name) {
-                actions.extend_from_slice(ACTIVITY_INSPECTION_ACTIONS);
-            }
-            doc! {"resource":{"db":database,"collection":*name},"actions":actions}
-        })
-        .collect();
-    if migration_ledger {
-        grants.push(
-            doc! {"resource":{"db":database,"collection":MIGRATION_COLLECTION},"actions":MIGRATION_ACTIONS},
-        );
-    }
-    if include_optional {
-        // Detached legal receipts have no account or Sandbox selector. Their
-        // writer can create the namespace and append receipts only.
-        grants.push(doc! {"resource":{"db":database,"collection":retained_consents::COLLECTION},"actions":retained_consents::ACTIONS});
-    }
-    grants.push(doc! {"resource":{"db":database,"collection":""},"actions":["listCollections"]});
-    doc! {"createRole":"cma_am_runtime","privileges":grants,"roles":[]}
-}
+mod runtime_role;
+use runtime_role::role_with_index_operation;
+
 pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreError> {
     validate_index_role(status, database, &[], false)
 }
@@ -335,6 +308,8 @@ fn validate_index_role(
                 action == "listCollections"
             } else if collection == super::provenance_progress::COLLECTION {
                 super::provenance_progress::ACTIONS.contains(&action)
+            } else if collection == MEASURED_CUSTODY {
+                MEASURED_CUSTODY_ACTIONS.contains(&action)
             } else if collection == retained_consents::COLLECTION {
                 retained_consents::ACTIONS.contains(&action)
             } else if migration_ledger && collection == MIGRATION_COLLECTION {
@@ -375,8 +350,13 @@ fn validate_index_role(
     {
         return Err(denied());
     }
-    if !COLLECTIONS.iter().all(|name| {
+    if grants.get(MEASURED_CUSTODY).is_some_and(|actions| {
+        !MEASURED_CUSTODY_ACTIONS
+            .iter()
+            .all(|action| actions.contains(*action))
+    }) || !COLLECTIONS.iter().all(|name| {
         *name == retained_consents::COLLECTION
+            || *name == MEASURED_CUSTODY
             || (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
             || ACTIONS
                 .iter()
@@ -482,6 +462,9 @@ mod allocation_tests;
 #[cfg(test)]
 #[path = "lifecycle_children_contract.rs"]
 mod lifecycle_children_contract;
+#[cfg(test)]
+#[path = "isolation/measured_tests.rs"]
+mod measured_tests;
 #[cfg(test)]
 #[path = "profile_internal_contract.rs"]
 mod profile_internal_contract;
