@@ -149,7 +149,7 @@ impl Competition<'_> {
         }
         if race == Race::Checkpoint {
             let before = self.peer.get_agent(&agent.id).await.unwrap().unwrap();
-            let (ack, mut confirmed) = tokio::sync::mpsc::channel(1);
+            let (ack, _receiver) = tokio::sync::mpsc::channel(1);
             owner
                 .run(
                     DurableAgentUpdateRecorder::new(store.clone()).record_update(
@@ -166,7 +166,14 @@ impl Competition<'_> {
                 .await
                 .unwrap()
                 .unwrap();
-            assert_eq!(confirmed.try_recv().unwrap(), self.source);
+            let checkpoint = self
+                .peer
+                .agent_message_checkpoint(&agent.id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(checkpoint.output.as_ref(), Some(&self.source));
+            assert!(checkpoint.matches(&before));
             assert_eq!(
                 self.peer.get_agent(&agent.id).await.unwrap().unwrap(),
                 before

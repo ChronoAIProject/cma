@@ -7,7 +7,7 @@ use layer2_core::{
 };
 use layer3_adapter::{
     stale_turn::{SealedOutput, StaleTurnSeal, SEAL_VERSION},
-    ConversationInput, ConversationUpdate, PromptIdentity, RuntimeOutputReceipt,
+    ContentBlock, ConversationInput, ConversationUpdate, PromptIdentity, RuntimeOutputReceipt,
     RuntimeOutputSource, SessionUpdate,
 };
 use sha2::{Digest, Sha256};
@@ -60,7 +60,7 @@ async fn native_stop_trace_recorder_ack_matches_a_fresh_checkpoint() {
         &name,
         Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         parent,
-        None,
+        Some((6, false)),
         Some((input.clone(), trace.conversation.clone())),
     )
     .await;
@@ -127,12 +127,18 @@ async fn native_stop_trace_recorder_ack_matches_a_fresh_checkpoint() {
 
     // Decode the captured protocol effects and preserve each exact payload's hash.
     let (acknowledgements, mut acks) = tokio::sync::mpsc::channel(16);
+    let mut expected_message = String::new();
     for (index, payload) in trace.before.iter().enumerate() {
         let frame: serde_json::Value = serde_json::from_str(payload).unwrap();
         let update = if frame["method"] == "session/update" {
             assert_eq!(frame["params"]["sessionId"], trace.conversation);
             let update: SessionUpdate =
                 serde_json::from_value(frame["params"]["update"].clone()).unwrap();
+            if let SessionUpdate::AgentMessageChunk(chunk) = &update {
+                if let ContentBlock::Text(text) = &chunk.content {
+                    expected_message.push_str(&text.text);
+                }
+            }
             Some(Box::new(ConversationUpdate::Said(update)).into())
         } else {
             assert!(frame.get("result").is_some());
@@ -155,6 +161,7 @@ async fn native_stop_trace_recorder_ack_matches_a_fresh_checkpoint() {
             .await
             .unwrap();
     }
+    assert!(expected_message.contains("One partial model response."));
     let final_ack = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let ack = acks.recv().await.unwrap();
@@ -262,7 +269,7 @@ async fn native_stop_trace_recorder_ack_matches_a_fresh_checkpoint() {
     let logs = peer.agent_log(&agent.id, turn, 100).await.unwrap();
     assert_eq!(
         logs.iter()
-            .filter(|entry| matches!(&entry.kind, AgentLogKind::AgentMessage { content } if content == "One partial model response."))
+            .filter(|entry| matches!(&entry.kind, AgentLogKind::AgentMessage { content } if content == &expected_message))
             .count(),
         1
     );
