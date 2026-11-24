@@ -289,3 +289,6 @@ mod organization_channels;
 
 #[path = "management/partition_resets.rs"]
 mod partition_resets;
+
+#[path = "management/record_management.rs"]
+mod record_management;
