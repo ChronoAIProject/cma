@@ -1,4 +1,4 @@
-import { check, clock, count, isHash, reconcile, waitFor } from '../lib/checks.mjs';
+import { check, clock, count, isHash, reconcile, waitFor, withinDeadline } from '../lib/checks.mjs';
 import { connectedWorkload } from '../lib/load.mjs';
 import { scalingSequence } from '../lib/replicas.mjs';
 
@@ -67,25 +67,31 @@ export async function autoscale(driver, config, { users = 2, time = clock } = {}
   const sequence = scalingSequence(peak);
   let cohort; let stress;
   const observations = [];
-  const sample = async (remaining) => {
-    const value = checkSnapshot(await driver.snapshot(cohort, { timeoutMs: remaining }), users);
+  const sample = async (remaining, signal) => {
+    signal.throwIfAborted();
+    const snapshot = await driver.snapshot(cohort, { timeoutMs: remaining, signal });
+    signal.throwIfAborted();
+    const value = checkSnapshot(snapshot, users);
     observations.push(value);
     check(['am', 'eg'].every((role) => value[role].ready <= peak && value[role].desired <= peak),
       'scaling_peak_exceeded');
     return value;
   };
   const both = (row, accept) => ['am', 'eg'].every((role) => accept(row[role]));
+  const observe = (run) => withinDeadline(run, config.scaleTimeoutMs, 'scaling_observation_deadline_exceeded');
+  const observeReplicas = (count) => observe((signal) =>
+    waitFor((remaining) => sample(remaining, signal),
+      (row) => both(row, (role) => role.ready === count && role.desired === count),
+      { timeoutMs: config.scaleTimeoutMs, intervalMs: 1000, time }));
   try {
     cohort = await driver.connectUsers({ ...connectedWorkload, users, streams: users });
-    const initial = await sample(config.scaleTimeoutMs);
+    const initial = await observe((signal) => sample(config.scaleTimeoutMs, signal));
     check(both(initial, (role) => role.ready === 2 && role.desired === 2), 'initial_replicas_not_two', true);
     stress = await driver.startStress(cohort, { targetReplicas: peak });
-    await waitFor(sample, (row) => both(row, (role) => role.ready === peak && role.desired === peak),
-      { timeoutMs: config.scaleTimeoutMs, intervalMs: 1000, time });
+    await observeReplicas(peak);
     await driver.stopStress(stress); stress = null;
     // Connected users and canaries continue through the downscale stabilization window.
-    await waitFor(sample, (row) => both(row, (role) => role.ready === 2 && role.desired === 2),
-      { timeoutMs: config.scaleTimeoutMs, intervalMs: 1000, time });
+    await observeReplicas(2);
     const final = await driver.finishUsers(cohort);
     checkSnapshot(final, users);
     check(count(final.attemptedRequests) > 0 && final.hpaEventsObserved === true,

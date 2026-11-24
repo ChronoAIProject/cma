@@ -1,5 +1,6 @@
 //! Bounded trusted-prefix checks and fail-closed invalidation.
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 pub(super) async fn validate_summary(
     store: &MongoSandboxStore,
@@ -90,7 +91,9 @@ pub(super) async fn read_only_summary(
     if integrity.head_seq > 0 {
         let raw = point_read(
             store,
-            doc! { "_id": log_id(&agent.id, integrity.head_seq) },
+            // Match the same owner of the log row as the sequence scan before
+            // returning a trusted tail's payload to the integrity validator.
+            doc! { "_id": log_id(&agent.id, integrity.head_seq), "agent_id": agent.id.as_str() },
             false,
             session,
             snapshot,
@@ -185,6 +188,23 @@ pub(in crate::store) async fn quarantine_row(
     Ok(())
 }
 
+pub(in crate::store) async fn trusted_summary_at_head(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    row: &Document,
+    session: &mut mongodb::ClientSession,
+) -> Result<Option<LogSummary>, TransactionLogError> {
+    // Settlement charges the current tail, so refuse a stale anchor before
+    // the integrity check can read its earlier log row.
+    if !parse_integrity(row)?.is_some_and(|integrity| {
+        integrity.head_seq == agent.conversation.last_seq
+            && integrity.bound_agent_revision == agent.revision
+    }) {
+        return Ok(None);
+    }
+    read_only_summary(store, agent, row, session, false).await
+}
+
 pub(in crate::store) async fn trusted_summary(
     store: &MongoSandboxStore,
     agent: &Agent,
@@ -198,7 +218,7 @@ pub(in crate::store) async fn trusted_summary(
         &result,
         Err(TransactionLogError::Domain(SandboxStoreError::Corrupt(_)))
     ) {
-        let _ = session.abort_transaction().await;
+        let _ = session.abort_guarded().await;
         quarantine_row(store, row).await?;
     }
     if store.bounded_log_enabled(&agent.id) {

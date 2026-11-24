@@ -54,6 +54,12 @@ impl IngressWorkScope {
         self.storage.belongs_to(&policy.root)
     }
 
+    /// Compare this scope's root and optional attachment exactly.
+    /// Independently owned payloads require their own custody checks.
+    pub fn shares_custody_domain(&self, policy: &super::IngressOwnershipPolicy) -> bool {
+        self.storage.shares_custody_domain(&policy.root)
+    }
+
     /// The plan must include this payload, its Arc and all overlapping siblings.
     pub fn initialize<T>(&self, initialize: impl FnOnce() -> T) -> super::SharedOwned<T> {
         super::SharedOwned {
@@ -168,6 +174,14 @@ impl<T> OwnedWork<T> {
         self.scope
             .as_ref()
             .is_some_and(|scope| scope.storage.belongs_to(&policy.root))
+    }
+
+    /// Compare the envelope's root and optional attachment, not nested owners.
+    /// A result without an admitted scope never has a matching custody domain.
+    pub fn shares_custody_domain(&self, policy: &super::IngressOwnershipPolicy) -> bool {
+        self.scope
+            .as_ref()
+            .is_some_and(|scope| scope.shares_custody_domain(policy))
     }
 
     /// Admit result retention separately before releasing transformation capacity.

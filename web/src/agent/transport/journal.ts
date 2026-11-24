@@ -82,6 +82,14 @@ export function agentTransportJournal(
   return new AgentTransportJournal(storage, identity, agent, makeKey);
 }
 
+export function readRetainedPromptIntent(storage: BrowserStorage, user: string, agent: string) {
+  const identity = readIdentity(storage);
+  if (!user || !agent || identity?.user !== user) return undefined;
+  return new AgentTransportJournal(storage, identity, agent, () => crypto.randomUUID())
+    .promptSettingsIntent()
+    .read();
+}
+
 export class AgentTransportJournal {
   private readonly key: string;
   private invalidated = false;

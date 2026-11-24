@@ -8,12 +8,14 @@ mod charts;
 mod control;
 mod controlled_updates;
 mod diagnostics;
+mod initial_snapshot;
 pub(crate) mod inventory;
 mod on_demand_views;
 mod options;
 mod owner_allocation;
 mod owner_names;
 mod owners;
+mod ownership;
 mod progress;
 pub(crate) use progress::Progress;
 mod reads;
@@ -142,6 +144,7 @@ impl ReportingStore {
         pool_size: u32,
     ) -> Result<Arc<Self>> {
         let mut options = ClientOptions::parse(uri).await.map_err(unavailable)?;
+        super::transaction_barrier::bind(&mut options, database);
         configure_pool(&mut options, pool_size);
         let circuit = Arc::default();
         budget::observe(&mut options, Arc::clone(&circuit));

@@ -120,6 +120,7 @@ fn request(snapshot: SandboxUnpublishedRecoverySnapshot) -> SandboxUnpublishedRe
         },
         snapshot,
         target_runtime_version: "image-v3".into(),
+        released_runtime: None,
         automatic: false,
         requested_at: NOW.into(),
     }

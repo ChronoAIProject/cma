@@ -55,6 +55,20 @@ pub(super) async fn remove(
     if ids.is_empty() {
         return Ok(());
     }
+    if entry.collection == crate::store::directory::USERS && options.retain_legal_consents {
+        use crate::store::retained_consents;
+        retained_consents::prepare(db).await?;
+        for id in ids {
+            let subject = id.as_str().ok_or(Error::InvalidRecord(entry.collection))?;
+            if retained_consents::erase_user(db, subject)
+                .await
+                .map_err(|error| error.attribute(subject))?
+            {
+                *batch.deleted.entry(entry.collection.into()).or_default() += 1;
+            }
+        }
+        return Ok(());
+    }
     let filter = match entry.collection {
         crate::store::agent_observation::COLLECTION => {
             // Lease creation writes its source Agent in the same transaction.

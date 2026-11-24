@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createClient } from '@cma/client';
 import { agentClient } from '../test/agent';
 import { useAgentDraft } from './draft';
-import { agentDraftKey, readAgentDraft } from './draftStorage';
+import { acceptDraftCommand, agentDraftKey, readAgentDraft } from './draftStorage';
 import { agentTransportJournal } from './transport/journal';
 import { recoverAgentInput, submitAgentInput } from './transport/submit';
 import { accepted, completedInputReceipt } from './transport/controller.fixture';
@@ -137,30 +137,55 @@ it.each([text, 'A later draft'])(
   },
 );
 
-it.each(['agent', 'owner', 'client', 'unmount'] as const)(
-  'does not bind from an old submission after changing %s',
+it.each(['agent', 'client', 'unmount'] as const)(
+  'clears the original draft when its send is accepted after changing %s',
   (change) => {
     const client = agentClient();
-    const hook = renderHook(({ owner, agent, selected }) => useAgentDraft(selected, owner, agent), {
-      initialProps: { owner: 'owner', agent: 'agt_1', selected: client },
+    const hook = renderHook(({ agent, selected }) => useAgentDraft(selected, 'owner', agent), {
+      initialProps: { agent: 'agt_1', selected: client },
     });
     act(() => hook.result.current.setContent(text));
     const submission = hook.result.current.beginSubmission!(text);
     if (change === 'unmount') hook.unmount();
     else
       hook.rerender({
-        owner: change === 'owner' ? 'someone-else' : 'owner',
         agent: change === 'agent' ? 'agt_2' : 'agt_1',
         selected: change === 'client' ? agentClient() : client,
       });
-    const before = { ...sessionStorage };
-    expect(bindDraftCommand('owner', 'agt_1', text, 'old-request', sessionStorage)).toBe(
-      'superseded',
-    );
+    if (change === 'agent') act(() => hook.result.current.setContent('Other Agent draft'));
+    act(() => {
+      expect(bindDraftCommand('owner', 'agt_1', text, 'old-request', sessionStorage)).toBe('bound');
+    });
+    if (change === 'agent') {
+      hook.rerender({ agent: 'agt_1', selected: client });
+      act(() => hook.result.current.retryStorage!());
+      expect(readAgentDraft('owner', 'agt_1').commandKey).toBe('old-request');
+    }
+    act(() => acceptDraftCommand('owner', 'agt_1', 'old-request', sessionStorage));
     submission.settled();
-    expect({ ...sessionStorage }).toEqual(before);
+    expect(readAgentDraft('owner', 'agt_1').content).toBe('');
+    if (change !== 'unmount') expect(hook.result.current.content).toBe('');
+    if (change === 'agent')
+      expect(readAgentDraft('owner', 'agt_2').content).toBe('Other Agent draft');
   },
 );
+
+it('does not bind a submission after the owner changes', () => {
+  const client = agentClient();
+  const hook = renderHook(({ owner }) => useAgentDraft(client, owner, 'agt_1'), {
+    initialProps: { owner: 'owner' },
+  });
+  act(() => hook.result.current.setContent(text));
+  const submission = hook.result.current.beginSubmission!(text);
+  hook.rerender({ owner: 'someone-else' });
+  act(() => hook.result.current.setContent('Other owner draft'));
+  const before = { ...sessionStorage };
+  expect(bindDraftCommand('owner', 'agt_1', text, 'old-request', sessionStorage)).toBe(
+    'superseded',
+  );
+  submission.settled();
+  expect({ ...sessionStorage }).toEqual(before);
+});
 
 it('keeps a retry queued immediately after binding on the same request key', () => {
   const { hook, journal } = setup();

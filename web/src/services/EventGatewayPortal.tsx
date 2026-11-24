@@ -173,6 +173,7 @@ function Consumers({
   if (state.status === 'anonymous')
     return (
       <SignInLanding
+        legalTerms={state.legalTerms}
         onSignIn={async () => {
           retainFatherDraftForSignIn();
           await signIn(routePath(route));

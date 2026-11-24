@@ -27,6 +27,8 @@ pub enum TriggerReferenceError {
     ImageAccessDenied { field: &'static str },
     #[error("trigger_image_sign_in_required: {field}")]
     ImageSignInRequired { field: &'static str },
+    #[error("trigger_image_selection_unsupported: {field}")]
+    ImageSelectionUnsupported { field: &'static str },
 }
 
 impl TriggerReferenceError {
@@ -36,6 +38,7 @@ impl TriggerReferenceError {
             Self::NotPublic { .. } => "trigger_reference_not_public",
             Self::ImageAccessDenied { .. } => "trigger_image_access_denied",
             Self::ImageSignInRequired { .. } => "trigger_image_sign_in_required",
+            Self::ImageSelectionUnsupported { .. } => "trigger_image_selection_unsupported",
         }
     }
 
@@ -44,7 +47,8 @@ impl TriggerReferenceError {
             Self::Unavailable { field }
             | Self::NotPublic { field }
             | Self::ImageAccessDenied { field }
-            | Self::ImageSignInRequired { field } => field,
+            | Self::ImageSignInRequired { field }
+            | Self::ImageSelectionUnsupported { field } => field,
         }
     }
 }
@@ -96,6 +100,19 @@ pub trait TriggerInlineTargetMaterializer: Send + Sync {
         _delegated_credential: Option<&str>,
     ) -> Result<TriggerTarget, TriggerReferenceError> {
         self.materialize(owner, target).await
+    }
+
+    /// The existing target comes from the publisher's stored draft, so a
+    /// materializer can preserve an immutable selection during other edits.
+    async fn materialize_draft_update(
+        &self,
+        owner: &SubjectId,
+        target: &TriggerTarget,
+        _existing: &TriggerTarget,
+        delegated_credential: Option<&str>,
+    ) -> Result<TriggerTarget, TriggerReferenceError> {
+        self.materialize_with_credential(owner, target, delegated_credential)
+            .await
     }
 }
 

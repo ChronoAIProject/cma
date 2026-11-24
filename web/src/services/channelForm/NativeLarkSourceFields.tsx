@@ -1,3 +1,4 @@
+import { larkIdentityMessage } from './connectorValidation';
 import { nativeLarkUnavailable, useRelayCapabilities } from '../RelayCapabilities';
 import { SourceAdmissionFields } from './SourceAdmissionFields';
 import { Choice, Section, TextField, Toggle } from './Fields';
@@ -33,6 +34,8 @@ export function NativeLarkSourceFields({
           onChange={(region) => setIdentity('region', region)}
         />
         <TextField
+          path="identity/app_id"
+          validationMessage={larkIdentityMessage(identity.app_id, 'app_id')}
           label="App ID"
           value={identity.app_id}
           onChange={(next) => setIdentity('app_id', next)}
@@ -40,6 +43,8 @@ export function NativeLarkSourceFields({
           hint="Use the separate app’s cli_ identifier from the selected region."
         />
         <TextField
+          path="identity/tenant_key"
+          validationMessage={larkIdentityMessage(identity.tenant_key, 'tenant_key')}
           label="Tenant key"
           value={identity.tenant_key}
           onChange={(next) => setIdentity('tenant_key', next)}
@@ -47,6 +52,8 @@ export function NativeLarkSourceFields({
           hint="The exact tenant in which this app is installed."
         />
         <TextField
+          path="identity/bot_open_id"
+          validationMessage={larkIdentityMessage(identity.bot_open_id, 'bot_open_id')}
           label="Bot open ID"
           value={identity.bot_open_id}
           onChange={(next) => setIdentity('bot_open_id', next)}
@@ -54,6 +61,7 @@ export function NativeLarkSourceFields({
           hint="Use this app’s ou_ bot identity. Identities from another app cannot be reused."
         />
         <Toggle
+          path="separate_app"
           label="This is a separate app with its own webhook"
           value={value.separate_app}
           onChange={(separate_app) => onChange({ ...value, separate_app })}

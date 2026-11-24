@@ -17,7 +17,7 @@ class Feed extends EventTarget {
   close() {
     this.closed = true;
   }
-  snapshot(value: ActivityPage, type = 'activity') {
+  snapshot(value: unknown, type = 'activity') {
     this.dispatchEvent(new MessageEvent(type, { data: JSON.stringify(value) }));
   }
 }
@@ -27,7 +27,9 @@ function expandDetails() {
   }
 }
 
-const snapshot = (state: 'queued' | 'produced' = 'queued'): ActivityPage => ({
+type Mutable<T> = { -readonly [Key in keyof T]: Mutable<T[Key]> };
+
+const snapshot = (state: 'queued' | 'produced' = 'queued'): Mutable<ActivityPage> => ({
   cursor: state,
   retention_days: 7,
   limit: 50,
@@ -264,6 +266,82 @@ it('retains the last authoritative evidence and offers retry for malformed snaps
   act(() => feed.onerror?.());
   expect(screen.getByText('Queued')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Refresh activity' })).toBeVisible();
+});
+
+it.each(['activity', 'reset'])(
+  'rejects a malformed source in an %s frame and reconnects',
+  async (type) => {
+    vi.stubGlobal('EventSource', Feed);
+    render(<ChannelActivity owner="owner" channelId="channel" active />);
+    const feed = Feed.instances[0]!;
+    act(() => feed.snapshot(snapshot()));
+    const receipt = screen.getByRole('article');
+    const replacement = snapshot('produced');
+    const next = { ...replacement.items[0]!, event_id: 'event-two' };
+    act(() =>
+      feed.snapshot(
+        {
+          ...replacement,
+          items: [
+            next,
+            {
+              ...next,
+              event_id: 'malformed-event',
+              source: { type: 'nyxid_relay', platform: { name: 'telegram' } },
+            },
+          ],
+        },
+        type,
+      ),
+    );
+
+    expect(feed.closed).toBe(true);
+    expect(screen.getByRole('article')).toBe(receipt);
+    expect(screen.getByText('Queued')).toBeVisible();
+    expect(screen.queryByText('event-two')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Live activity disconnected');
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh activity' }));
+    expect(Feed.instances).toHaveLength(2);
+    act(() => Feed.instances[1]!.snapshot({ ...replacement, items: [next] }));
+    expect(screen.getByRole('status')).toHaveTextContent('Live activity');
+    expect(screen.getByText('event-two')).toBeVisible();
+    expect(screen.queryByText('event-one')).not.toBeInTheDocument();
+  },
+);
+
+it('renders an older snapshot with optional receipt fields omitted', () => {
+  vi.stubGlobal('EventSource', Feed);
+  render(<ChannelActivity owner="owner" channelId="channel" active />);
+  const { items, ...page } = snapshot();
+  const { consumers, ...event } = items[0]!;
+  const { consumer_id, state } = consumers[0]!;
+  act(() =>
+    Feed.instances[0]!.snapshot({
+      ...page,
+      items: [
+        {
+          ...event,
+          consumers: [
+            {
+              consumer_id,
+              state,
+              deliveries: [
+                {
+                  step: 'answer',
+                  destination: 'origin',
+                  outcome: 'unknown',
+                  observed_at: event.received_at,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  expect(screen.getByRole('status')).toHaveTextContent('Live activity');
+  expect(screen.getByText('Event received · custom')).toBeVisible();
+  expect(screen.getByText('Recipient not reported')).toBeVisible();
 });
 
 it('keeps native recoverable reconnects alive beyond five errors and accepts the next snapshot', () => {

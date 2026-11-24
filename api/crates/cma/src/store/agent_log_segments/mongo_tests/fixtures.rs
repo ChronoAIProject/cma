@@ -44,6 +44,7 @@ pub(in crate::store) fn agent() -> Agent {
         ]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),
@@ -109,59 +110,75 @@ pub(in crate::store) async fn segmented_with_width(
 
 pub(in crate::store) async fn install(
     store: &MongoSandboxStore,
-    mut agent: Agent,
+    agent: Agent,
     entries: Vec<AgentLogEntry>,
     closed: i64,
     width: i64,
 ) -> (Agent, Vec<AgentLogEntry>) {
+    let agent = install_bounded(
+        store,
+        agent,
+        entries.iter().cloned(),
+        entries.len() as i64,
+        closed,
+        width,
+    )
+    .await;
+    (agent, entries)
+}
+
+pub(super) async fn install_bounded(
+    store: &MongoSandboxStore,
+    mut agent: Agent,
+    mut entries: impl Iterator<Item = AgentLogEntry>,
+    count: i64,
+    closed: i64,
+    width: i64,
+) -> Agent {
+    const INSERT_BATCH: usize = 256;
     crate::store::migrations::agent_log_source_keys::prepare_for_test(
         &store.client.database(&store.agent_log.namespace().db),
     )
     .await;
-    store
-        .agents
-        .insert_one(crate::store::agents::agent_document(&agent).unwrap())
-        .await
-        .unwrap();
-    if !entries.is_empty() {
-        store
-            .agent_log
-            .insert_many(entries.iter().map(|e| log_document(e).unwrap()))
-            .await
-            .unwrap();
-    }
-    let raw: Vec<RawDocumentBuf> = store
-        .agent_log
-        .clone_with_type()
-        .find(doc! {"agent_id":agent.id.as_str()})
-        .sort(doc! {"seq":1})
-        .await
-        .unwrap()
-        .try_collect()
-        .await
-        .unwrap();
+    assert!(width > 0 && closed * width <= count);
     let incarnation = digest::incarnation(&agent);
     let mut previous = None;
-    let mut prefix_bytes = 0;
-    let mut seals = Vec::new();
-    for ordinal in 0..closed {
+    let mut lifetime_bytes = 0;
+    let mut active_bytes = 0;
+    let active_count = count - closed * width;
+    let collection_rows = store.agent_log.clone_with_type::<RawDocumentBuf>();
+    for ordinal in 0..=closed {
         let start = ordinal * width + 1;
-        let rows = &raw[(ordinal * width) as usize..((ordinal + 1) * width) as usize];
-        let bytes = rows.iter().map(|r| r.as_bytes().len() as i64).sum::<i64>();
-        prefix_bytes += bytes;
-        let leaves = rows
-            .iter()
-            .enumerate()
-            .flat_map(|(i, r)| {
-                digest::leaf(
-                    agent.id.as_str(),
-                    &incarnation,
-                    start + i as i64,
-                    r.as_bytes(),
-                )
-                .bytes
-            })
-            .collect::<Vec<_>>();
+        let size = if ordinal == closed {
+            active_count
+        } else {
+            width
+        };
+        let mut leaves = Vec::new();
+        let mut bytes = 0;
+        let mut batch = Vec::with_capacity(INSERT_BATCH);
+        for seq in start..start + size {
+            let entry = entries.next().expect("fixture row missing");
+            assert_eq!(entry.seq, seq as u64);
+            assert_eq!(entry.agent_id, agent.id);
+            let raw = bson::serialize_to_vec(&log_document(&entry).unwrap()).unwrap();
+            bytes += raw.len() as i64;
+            if ordinal < closed {
+                leaves.extend(digest::leaf(agent.id.as_str(), &incarnation, seq, &raw).bytes);
+            }
+            batch.push(RawDocumentBuf::from_bytes(raw).unwrap());
+            if batch.len() == INSERT_BATCH {
+                collection_rows.insert_many(batch.drain(..)).await.unwrap();
+            }
+        }
+        if !batch.is_empty() {
+            collection_rows.insert_many(batch).await.unwrap();
+        }
+        lifetime_bytes += bytes;
+        if ordinal == closed {
+            active_bytes = bytes;
+            break;
+        }
         let mut seal = Seal {
             id: Seal::identity(agent.id.as_str(), &incarnation, ordinal),
             format_version: 1,
@@ -169,12 +186,12 @@ pub(in crate::store) async fn install(
             incarnation: incarnation.clone(),
             ordinal,
             start_seq: start,
-            end_seq: start + width - 1,
-            entry_count: width,
+            end_seq: start + size - 1,
+            entry_count: size,
             encoded_bytes: bytes,
             previous_seal: previous,
-            prefix_count: start + width - 1,
-            prefix_bytes,
+            prefix_count: start + size - 1,
+            prefix_bytes: lifetime_bytes,
             leaf_digests: digest::binary(leaves),
             seal_digest: digest::binary(vec![]),
             digest_version: digest::VERSION.into(),
@@ -185,19 +202,13 @@ pub(in crate::store) async fn install(
         seal.seal_digest = seal.digest();
         seal.validate().unwrap();
         previous = Some(seal.seal_digest.clone());
-        seals.push(bson::serialize_to_document(&seal).unwrap());
-    }
-    if !seals.is_empty() {
         collection(store, SEGMENTS)
-            .insert_many(seals)
+            .insert_one(bson::serialize_to_document(&seal).unwrap())
             .await
             .unwrap();
     }
-    let active_bytes = raw[(closed * width) as usize..]
-        .iter()
-        .map(|r| r.as_bytes().len() as i64)
-        .sum::<i64>();
-    agent.conversation.last_seq = entries.len() as u64;
+    assert!(entries.next().is_none(), "unexpected fixture rows");
+    agent.conversation.last_seq = count as u64;
     let head = Head {
         agent_id: agent.id.0.clone(),
         format_version: 1,
@@ -205,15 +216,15 @@ pub(in crate::store) async fn install(
         revision: 1,
         active_ordinal: closed,
         active_start_seq: closed * width + 1,
-        last_seq: entries.len() as i64,
-        active_count: entries.len() as i64 - closed * width,
+        last_seq: count,
+        active_count,
         active_bytes,
         previous_seal: previous,
-        lifetime_count: entries.len() as i64,
-        lifetime_bytes: prefix_bytes + active_bytes,
+        lifetime_count: count,
+        lifetime_bytes,
         projection_format: 1,
         evidence_generation: "initial".into(),
-        projection_through: entries.len() as i64,
+        projection_through: count,
         migration_id: segments::MIGRATION.into(),
         required_reader: segments::READER.into(),
     };
@@ -227,12 +238,8 @@ pub(in crate::store) async fn install(
     row.insert("agent_log_format", segments::FORMAT);
     row.insert("agent_log_incarnation", incarnation);
     row.insert("agent_log_head_revision", 1_i64);
-    store
-        .agents
-        .replace_one(doc! {"_id":agent.id.as_str()}, row)
-        .await
-        .unwrap();
-    (agent, entries)
+    store.agents.insert_one(row).await.unwrap();
+    agent
 }
 
 pub(in crate::store) async fn certify(

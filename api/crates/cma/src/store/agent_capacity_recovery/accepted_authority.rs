@@ -4,6 +4,7 @@ use super::{
     authority::{self, RecoveryAuthority},
     receipts, transactions,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     agent_log_integrity::TransactionLogError,
     agent_log_segments::transaction_scope::TransactionScope, sandbox_mongo::MongoSandboxStore,
@@ -96,7 +97,7 @@ pub(super) async fn authorize(
         Ok::<_, TransactionLogError>(())
     }
     .await;
-    let _ = scope.release().abort_transaction().await;
+    let _ = scope.release().abort_guarded().await;
     result.map_err(transactions::error)?;
     Ok(AcceptedAuthority {
         snapshot,

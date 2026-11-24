@@ -1,17 +1,29 @@
-import type { AgentBrowserControlClient, Cma } from '@cma/client';
+import { TimeoutError, type AgentBrowserControlClient, type Cma } from '@cma/client';
 import type { ReadOptions } from '../client';
+
+/** Browser control keeps its short bound on the serialized per-Agent queue. */
+const CONTROL_BUDGET_MS = 4000;
+/**
+ * An environment read crosses the owner hop and a bounded runtime observation;
+ * 4 s cut healthy reads off (#2268). Stay below the 15 s authorized-read guard.
+ */
+const ENVIRONMENT_BUDGET_MS = 10_000;
 
 export function computerClient(sdk: Cma) {
   const pending = new Map<string, Promise<unknown>>();
-  const run = <Value>(agent: string, operation: () => Promise<Value>, signal?: AbortSignal) => {
+  const run = <Value>(
+    agent: string,
+    operation: () => Promise<Value>,
+    signal?: AbortSignal,
+    budgetMs = CONTROL_BUDGET_MS,
+  ) => {
     const controller = new AbortController();
     const abort = () => controller.abort(signal?.reason);
     if (signal?.aborted) abort();
     else signal?.addEventListener('abort', abort, { once: true });
-    const deadline = setTimeout(
-      () => controller.abort(new DOMException('Computer request timed out', 'TimeoutError')),
-      4000,
-    );
+    // A missed deadline is transient: readers retry instead of reporting the
+    // feature as unavailable.
+    const deadline = setTimeout(() => controller.abort(new TimeoutError(budgetMs)), budgetMs);
     const result = (pending.get(agent) ?? Promise.resolve())
       .catch(() => {})
       .then(async () => {
@@ -44,7 +56,7 @@ export function computerClient(sdk: Cma) {
           sdk.agentBrowserControl.read(agent, scope, {
             ...options,
             signal: undefined,
-            timeoutMs: Math.min(options?.timeoutMs ?? 4000, 4000),
+            timeoutMs: Math.min(options?.timeoutMs ?? CONTROL_BUDGET_MS, CONTROL_BUDGET_MS),
           }),
         options?.signal,
       ),
@@ -55,7 +67,7 @@ export function computerClient(sdk: Cma) {
           sdk.agentBrowserControl.change(agent, input, {
             ...options,
             signal: undefined,
-            timeoutMs: Math.min(options?.timeoutMs ?? 4000, 4000),
+            timeoutMs: Math.min(options?.timeoutMs ?? CONTROL_BUDGET_MS, CONTROL_BUDGET_MS),
           }),
         options?.signal,
       ),
@@ -63,6 +75,11 @@ export function computerClient(sdk: Cma) {
   return {
     browserControl,
     environment: (agent: string, options?: ReadOptions) =>
-      run(agent, () => sdk.agentFiles.environment(agent, { timeoutMs: 4000 }), options?.signal),
+      run(
+        agent,
+        () => sdk.agentFiles.environment(agent, { timeoutMs: ENVIRONMENT_BUDGET_MS }),
+        options?.signal,
+        ENVIRONMENT_BUDGET_MS,
+      ),
   };
 }

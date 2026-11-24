@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Alert } from '../ui/Alert';
 import type { CmaWebClient } from '../api/client';
 import { useConnectionGate } from '../connections/useConnectionGate';
@@ -12,10 +12,19 @@ import './AgentLifecycleFollowup.css';
 
 const retrySetupStatus = { label: 'Retry setup status', kind: 'status' } as const;
 
+export interface LifecycleFollowupView {
+  readonly lifecycle?: ReturnType<typeof useLifecycleIntent>;
+  readonly context?: { readonly workspaceId?: string; readonly sandboxId?: string };
+  readonly feedback: ReactNode;
+  readonly details?: ReactNode;
+}
+
 interface Props {
   readonly client: CmaWebClient;
   readonly viewerId: string;
   readonly agentId: string;
+  readonly enabled?: boolean;
+  readonly render?: (view: LifecycleFollowupView) => ReactNode;
 }
 
 export function AgentLifecycleFollowup(props: Props) {
@@ -26,10 +35,19 @@ export function AgentLifecycleFollowup(props: Props) {
   return <FollowupScope key={scope.generation} {...props} />;
 }
 
-function FollowupScope({ client, viewerId, agentId }: Props) {
+function FollowupScope({ client, viewerId, agentId, render, enabled }: Props) {
   const [scope] = useState(() => lifecycleScopeForAgent(viewerId, agentId));
-  return scope === undefined ? null : (
-    <RetainedSetup client={client} viewerId={viewerId} agentId={agentId} {...scope} />
+  return scope === undefined ? (
+    render?.({ feedback: null })
+  ) : (
+    <RetainedSetup
+      client={client}
+      viewerId={viewerId}
+      agentId={agentId}
+      render={render}
+      enabled={enabled}
+      {...scope}
+    />
   );
 }
 
@@ -40,15 +58,21 @@ function RetainedSetup({
   workspaceId,
   sandboxId,
   operationId,
+  render,
+  enabled = true,
 }: Props & {
   readonly workspaceId?: string;
   readonly sandboxId?: string;
   readonly operationId: string;
 }) {
-  const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId, {
-    agentId,
-    operationId,
-  });
+  const lifecycle = useLifecycleIntent(
+    client,
+    viewerId,
+    workspaceId,
+    sandboxId,
+    { agentId, operationId },
+    enabled,
+  );
   const connections = useConnectionGate();
   const cleared = useRef(false);
   const { operation, intent, clear } = lifecycle;
@@ -57,25 +81,27 @@ function RetainedSetup({
     operation?.id === intent.receipt?.id &&
     operation?.agent_id === agentId;
   useEffect(() => {
-    if (matches && operation?.status === 'succeeded' && !cleared.current) {
+    if (enabled && !render && matches && operation?.status === 'succeeded' && !cleared.current) {
       cleared.current = true;
       clear();
     }
-  }, [clear, matches, operation?.status]);
-  if (!intent)
-    return lifecycle.failure ? (
+  }, [clear, enabled, matches, operation?.status, render]);
+  if (!enabled) return render?.({ lifecycle, context: { workspaceId, sandboxId }, feedback: null });
+  if (!intent) {
+    const feedback = lifecycle.failure ? (
       <Alert tone="error">{lifecycleFailureMessage(lifecycle.failure, retrySetupStatus)}</Alert>
     ) : null;
+    return render ? render({ lifecycle, context: { workspaceId, sandboxId }, feedback }) : feedback;
+  }
   const waiting = matches && operation?.status === 'waiting_for_connection';
   const failed = matches && operation?.status === 'failed';
   const error = lifecycleFailureMessage(lifecycle.failure, retrySetupStatus) ?? connections.error;
-  return (
+  const details =
+    matches && intent.receipt ? (
+      <AgentProvisioningProgress receipt={intent.receipt} operation={operation} />
+    ) : null;
+  const feedback = (
     <>
-      {matches && intent.receipt ? (
-        <div className="agent-lifecycle-followup__progress">
-          <AgentProvisioningProgress receipt={intent.receipt} operation={operation} />
-        </div>
-      ) : null}
       {connections.dialog}
       {waiting ? (
         <Alert
@@ -123,6 +149,14 @@ function RetainedSetup({
           {error}
         </Alert>
       ) : null}
+    </>
+  );
+  return render ? (
+    render({ lifecycle, context: { workspaceId, sandboxId }, feedback, details })
+  ) : (
+    <>
+      <div className="agent-lifecycle-followup__progress">{details}</div>
+      {feedback}
     </>
   );
 }

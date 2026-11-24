@@ -1,16 +1,21 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import type { AgentActionOptions } from './actionOptions';
+import type { InputErrorOwner } from './actionError';
 import type { AgentCommand, ApprovalDecision } from './controller';
 import type { MessageAcceptance } from './controllerTypes';
 import { ApiError, type AnswerContext } from '@cma/client';
 import { DraftBindingError } from './draftDelivery';
+import {
+  isLegacySuggestionRefusal,
+  isV2InputRefusal,
+  stoppedInputMessage,
+} from './controllerError';
 import { submitV2Control, recoverV2Control } from './transport/controls';
 import {
   submitV2Interruption,
   recoverV2Interruption,
   InterruptionNotSubmittedError,
 } from './transport/interruption';
-
 function runId(): string {
   return typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -128,6 +133,7 @@ export function useAgentActions({
       let accepted = false;
       let recoveringInput = false;
       let legacyKey: string | undefined;
+      let retainedInput: InputErrorOwner | undefined;
       try {
         if (session !== undefined) {
           const sendInput = (text: string) => {
@@ -145,6 +151,9 @@ export function useAgentActions({
                   onReceiptObserved?.(receipt);
               },
               answerContext,
+              (key) => {
+                retainedInput = { session, key };
+              },
             );
           };
           if (approving) {
@@ -275,10 +284,7 @@ export function useAgentActions({
           currentContext.current === context &&
           legacyKey &&
           !accepted &&
-          error instanceof ApiError &&
-          ((error.status === 422 &&
-            ['invalid_run_request', 'invalid_answer_context'].includes(error.code ?? '')) ||
-            (error.status === 409 && error.code === 'agent_not_ready'))
+          isLegacySuggestionRefusal(error)
         ) {
           legacy?.journal.legacySuggestion.refused(legacyKey);
           onRefused?.(error.status === 409 ? 'answer_changed' : undefined);
@@ -292,21 +298,7 @@ export function useAgentActions({
           !recoveringInput &&
           (error instanceof DraftBindingError ||
             error instanceof InterruptionNotSubmittedError ||
-            (error instanceof ApiError &&
-              ((error.status === 422 &&
-                [
-                  'invalid_response_input',
-                  'invalid_answer_context',
-                  'invalid_control_request',
-                  'invalid_interrupt_request',
-                  ...(mode === 'interrupt' ? ['capability_unsupported'] : []),
-                ].includes(error.code ?? '')) ||
-                (error.status === 409 &&
-                  [
-                    'response_control_not_admitted',
-                    'response_interrupt_not_admitted',
-                    'agent_command_not_admissible',
-                  ].includes(error.code ?? '')))))
+            isV2InputRefusal(error, mode === 'interrupt'))
         )
           onRefused?.(
             answerContext &&
@@ -316,7 +308,11 @@ export function useAgentActions({
               : undefined,
           );
         if (!controller.signal.aborted && !onIdentityChange(error))
-          setActionError(errorMessage(error));
+          setActionError(
+            (!approving && !accepted && stoppedInputMessage(error, stateRef.current, agentId)) ||
+              errorMessage(error),
+            retainedInput,
+          );
       } finally {
         if (actionAbortRef.current === controller) {
           actionAbortRef.current = undefined;

@@ -4,10 +4,11 @@ const { readFileSync } = require("node:fs");
 const { runInNewContext } = require("node:vm");
 const { setImmediate: tick, setTimeout: delay } = require("node:timers/promises");
 const { bridgePath } = require("./persist_conversations.cjs");
+const { withoutPromptOutputIdentity } = require("./prompt_output_identity.cjs");
 const { sessionOpenOverlap, withoutSessionOpenOverlap } = require("./session_open_overlap.cjs");
 const { metadataFixture } = require("./deferred_session_fixture.cjs");
 
-const source = readFileSync(process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath, "utf8");
+const source = withoutPromptOutputIdentity(readFileSync(process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath, "utf8"));
 const base = withoutSessionOpenOverlap(source);
 const candidate = sessionOpenOverlap(base);
 const start = candidate.indexOf("  async resumeSession(request, onSubscribed) {");

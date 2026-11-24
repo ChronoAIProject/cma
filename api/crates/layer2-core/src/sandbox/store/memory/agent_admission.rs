@@ -146,7 +146,7 @@ impl InMemorySandboxStore {
                 let revival = next_sandbox
                     .record_creation_admission_with_managed_runtime(
                         SandboxReviveCause::TriggerLaunch,
-                        self.managed_runtime_version(),
+                        self.managed_runtime_version().as_deref(),
                         admission.event_at.clone(),
                     )
                     .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
@@ -251,7 +251,7 @@ impl InMemorySandboxStore {
             &mut next_sandbox,
             &workspace,
             cause,
-            self.managed_runtime_version(),
+            self.managed_runtime_version().as_deref(),
         )?;
         candidate
             .sandboxes

@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::agent_io::{
     AdmittedAgentCommand, AgentCommandWorkerStore, CommandClaim, CommandClaimRequest,
     CommandFailureCode, CommandLedgerError,
@@ -274,11 +275,11 @@ async fn transaction_observed(
         let (result, receipt) = match applied {
             Ok(result) => result,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if is_transient(&error) {
                     tokio::task::yield_now().await;
                     continue;

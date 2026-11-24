@@ -16,7 +16,7 @@ import {
 } from '../../api/agentFiles';
 import { Alert } from '../../ui/Alert';
 import { Button } from '../../ui/Button';
-import { FileCreateForm } from './FileCreateForm';
+import { FileCreateForm, fileNameIssue } from './FileCreateForm';
 import { FileExplorerFrame, FileLocation } from './FileExplorerFrame';
 import { FileToolbar } from './FileToolbar';
 import { FileRail } from './FileRail';
@@ -65,7 +65,13 @@ export function FileExplorer({
   const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [denied, setDenied] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setErrorState] = useState<string>();
+  // A later successful listing of the failed folder clears its alert (#2268).
+  const listingFailure = useRef<string | undefined>(undefined);
+  const setError = useCallback((message?: string) => {
+    listingFailure.current = undefined;
+    setErrorState(message);
+  }, []);
   const [notice, setNotice] = useState<string>();
   const [create, setCreate] = useState<'file' | 'directory'>();
   const [name, setName] = useState('');
@@ -106,7 +112,7 @@ export function FileExplorer({
         onAccessChanged?.();
       }
     },
-    [onAccessChanged],
+    [onAccessChanged, setError],
   );
   const load = useCallback(
     async (path: string, signal: AbortSignal) => {
@@ -114,9 +120,15 @@ export function FileExplorer({
       setLoading((value) => new Set([...value, path]));
       try {
         const entries = await client.list(agentId, path, { signal });
-        if (!signal.aborted) setDirectories((value) => new Map(value).set(path, entries));
+        if (!signal.aborted) {
+          setDirectories((value) => new Map(value).set(path, entries));
+          if (listingFailure.current === path) setError(undefined);
+        }
       } catch (cause) {
-        if (!signal.aborted) failure(cause);
+        if (!signal.aborted) {
+          failure(cause);
+          listingFailure.current = path;
+        }
       } finally {
         if (!signal.aborted)
           setLoading((value) => {
@@ -126,7 +138,7 @@ export function FileExplorer({
           });
       }
     },
-    [agentId, client, failure],
+    [agentId, client, failure, setError],
   );
   useEffect(() => {
     if (!active) return;
@@ -271,16 +283,10 @@ export function FileExplorer({
     });
   };
   const createFile = () => {
-    if (
-      blocked ||
-      !create ||
-      !name.trim() ||
-      /[/\\]/.test(name) ||
-      [...name].some((character) => character.charCodeAt(0) < 32) ||
-      name === '.' ||
-      name === '..'
-    ) {
-      setError('Enter a file or folder name without path separators.');
+    if (blocked || !create) return;
+    const issue = fileNameIssue(name);
+    if (issue) {
+      setError(issue);
       return;
     }
     const path = (directory ? `${directory}/` : '') + name;

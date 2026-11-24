@@ -10,6 +10,30 @@ use layer3_adapter::{DesktopOwnership, DesktopOwnershipChallenge};
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
+#[tokio::test]
+async fn only_terminal_desktop_unavailability_has_a_failed_state_header() {
+    for retryable in [true, false] {
+        let response = unavailable(retryable);
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(DESKTOP_STATE_HEADER)
+                .map(|value| value.to_str().unwrap()),
+            (!retryable).then_some(DESKTOP_STATE_FAILED),
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "desktop_unavailable");
+        assert_eq!(body["retryable"], retryable);
+    }
+}
+
 #[test]
 fn a_non_machine_never_owns_a_desktop_with_supervision_enabled() {
     let home = std::env::temp_dir().join(format!("cma-non-machine-{}", uuid::Uuid::new_v4()));

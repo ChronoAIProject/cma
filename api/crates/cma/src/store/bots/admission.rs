@@ -3,6 +3,7 @@ use super::*;
 use crate::store::sandbox_mongo::{
     commit_transaction, is_duplicate_key, start_transaction, CommitOutcome,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 pub(super) async fn insert(store: &MongoBotStore, bot: &Bot) -> Result<(), BotError> {
     let row = BotDocument::new(bot)?;
@@ -17,11 +18,11 @@ pub(super) async fn insert(store: &MongoBotStore, bot: &Bot) -> Result<(), BotEr
     match apply(store, bot, &row, &mut session).await {
         Ok(true) => {}
         Ok(false) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(BotError::Conflict);
         }
         Err(error) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(if is_duplicate_key(&error) {
                 BotError::Conflict
             } else {

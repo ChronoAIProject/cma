@@ -341,6 +341,7 @@ async fn telegram_app() -> (App, MessageRef, crate::telegram::media_fixture::Fix
         topic_creation: false,
         message_events: false,
         channel_posts: false,
+        member_join_chat_ids: Vec::new(),
         bot_username: None,
         bot_id: "77".into(),
         admission: AdmissionPolicy::All {},

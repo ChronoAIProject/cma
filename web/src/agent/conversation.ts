@@ -113,6 +113,8 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     case 'approval_requested': {
       const id = text(kind.approval_id);
       if (id === undefined) return next;
+      if (next.approvals.some((approval) => approval.id === id && approval.source === 'external'))
+        throw new Error('Native approval conflicts with an external approval identity.');
       return {
         ...next,
         approvals: upsert(next.approvals, {
@@ -124,7 +126,9 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     }
     case 'approval_resolved': {
       const id = text(kind.approval_id);
-      const current = next.approvals.find((approval) => approval.id === id);
+      const current = next.approvals.find(
+        (approval) => approval.id === id && approval.source !== 'external',
+      );
       if (id === undefined || current === undefined) return next;
       return {
         ...next,
@@ -272,12 +276,19 @@ function patchState(
   if (path.startsWith('/pendingApprovals/')) {
     const id = path.slice('/pendingApprovals/'.length).replaceAll('~1', '/').replaceAll('~0', '~');
     if (operation === 'remove') {
-      const current = state.approvals.find((approval) => approval.id === id);
+      const current = state.approvals.find(
+        (approval) => approval.id === id && approval.source !== 'external',
+      );
       return current === undefined
         ? state
         : { ...state, approvals: upsert(state.approvals, { ...current, decision: 'resolved' }) };
     }
     const approval = approvalFrom(item.value);
+    if (
+      approval &&
+      state.approvals.some((current) => current.id === approval.id && current.source === 'external')
+    )
+      throw new Error('Native approval conflicts with an external approval identity.');
     return approval === undefined
       ? state
       : { ...state, approvals: upsert(state.approvals, approval) };
@@ -419,7 +430,13 @@ function foldLive(
     const approvals = interrupts
       .map(approvalFrom)
       .filter((approval): approval is ApprovalRequest => approval !== undefined)
-      .reduce((items, approval) => upsert(items, approval), next.approvals);
+      .reduce(
+        (items, approval) =>
+          items.some((item) => item.id === approval.id && item.source === 'external')
+            ? items
+            : upsert(items, approval),
+        next.approvals,
+      );
     return {
       ...(interrupts.length === 0 ? finishTurn(next, event.runId, event.timestamp) : next),
       turnOutcomes:

@@ -221,3 +221,7 @@ impl Supervisor {
 #[cfg(test)]
 #[path = "supervisor_startup_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "home_restore_preflight_tests.rs"]
+mod home_restore_preflight_tests;

@@ -52,6 +52,8 @@ export * from './launch/index.js';
 export type { CommandOptions, EventOptions, PageOptions, ResourcePage } from './resources.js';
 export type * from './agents/types.js';
 export type * from './agents/lifecycle.js';
+export type * from './agents/reply-preview.js';
+export type * from './agents/original-request.js';
 export type * from './agents/desktop.js';
 export type * from './agents/models.js';
 export type * from './agents/skills.js';
@@ -165,5 +167,6 @@ export type { SandboxCapacity } from './instances/capacity.js';
 export { agentLifecycleFailure } from './agents/lifecycle.js';
 
 export * from './account-deletion.js';
+export * from './legal-consent.js';
 export { ResourceRevocations, pendingRevocation } from './resource-revocations.js';
 export type { ResourceRevocationStatus, RevocationRequest } from './resource-revocations.js';
