@@ -98,15 +98,32 @@ async fn indexed_owner_stop_close_proof_refuses_admitted_successor_without_recov
         failure(supervisor.dispatch(close_request.clone()).await).code,
         "agent_process_close_unproved"
     );
-    assert!(!ledger.admitted(operation).await.unwrap());
+    assert!(!ledger.admitted(operation.clone()).await.unwrap());
     assert!(supervisor.bridge("agent-1").await.is_none());
 
     let pinned = super::persistent_home_tests::restart_open(&supervisor, 5, &launch);
-    assert!(matches!(
-        supervisor.dispatch(pinned.clone()).await,
-        ResponseFrame::OpenAgent(_)
-    ));
-    let bridge = supervisor.bridge("agent-1").await.unwrap();
+    // The process started before its Open receipt could become durable.
+    assert!(ledger.begin(operation.clone()).await.unwrap().new);
+    let bridge = Arc::new(crate::bridge::Bridge::start(&launch, &Default::default()).unwrap());
+    supervisor.agents.write().await.insert(
+        launch.agent_id.clone(),
+        AgentProcess {
+            launch: launch.clone(),
+            bridge: Arc::clone(&bridge),
+        },
+    );
+    let mut stale = close_successor.clone();
+    stale.authority_fence = 4;
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::FenceAgentRestart(stale))
+                .await
+        )
+        .code,
+        "mutation_authority_stale"
+    );
+    assert!(!ledger.completed(operation.clone()).await.unwrap());
     let mut wrong_digest = close_successor.clone();
     wrong_digest.successor_open_request_sha256 = Some("d".repeat(64));
     assert_eq!(
@@ -118,6 +135,19 @@ async fn indexed_owner_stop_close_proof_refuses_admitted_successor_without_recov
         .code,
         "agent_process_close_unproved"
     );
+    assert!(!bridge.is_ended());
+    {
+        let _gate = supervisor.operation_gate.lock().await;
+        let _writer = supervisor.removal_writer_guard().unwrap().unwrap();
+        let close = supervisor
+            .prepare_restart_successor_close(&close_successor, 2, &launch.request_sha256)
+            .await
+            .unwrap();
+        assert_eq!(close.operation_id, "agent:agent-1:close:2:v1");
+        // Lose the request after committing the Close fence, before beginning Close.
+    }
+    supervisor.recover_journals().await.unwrap();
+    assert!(ledger.completed(operation).await.unwrap());
     assert!(!bridge.is_ended());
     for _ in 0..2 {
         assert_eq!(
