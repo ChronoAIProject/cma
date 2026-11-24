@@ -17,6 +17,7 @@ pub(crate) fn start_title_scheduler(
     let credentials = Arc::new(Credentials(
         Mutex::new(Some(CredentialMaterial {
             source: Default::default(),
+            github_route: None,
             sandbox_id: sandbox.id.clone(),
             owner: sandbox.owner.clone(),
             authority: sandbox.credential.current.clone().unwrap(),
@@ -37,7 +38,7 @@ pub(crate) fn start_title_scheduler(
     AgentTitleScheduler::new(worker).spawn(shutdown)
 }
 
-pub(super) fn sandbox() -> Sandbox {
+pub(in crate::sandbox) fn sandbox() -> Sandbox {
     Sandbox {
         id: SandboxId("sbx_title".into()),
         owner: SubjectId::new("owner"),
@@ -108,7 +109,7 @@ pub(super) fn sandbox() -> Sandbox {
     }
 }
 
-pub(super) fn agent() -> Agent {
+pub(in crate::sandbox) fn agent() -> Agent {
     Agent {
         id: AgentId("agt_title".into()),
         worktree_id: WorktreeId("wkt_title".into()),
@@ -133,6 +134,7 @@ pub(super) fn agent() -> Agent {
         capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         status: AgentStatus::Ready,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),

@@ -179,7 +179,11 @@ export function useTaskDraft(
       change({ ...current.current, repositoryUrl: url, repositoryRef: reference });
     },
     error,
-    persist: () => persist({ ...current.current, revision: crypto.randomUUID() }),
+    persist: (template = current.current.template) => {
+      const currentDraft = current.current;
+      const submittedDraft = template ? keepTaskTemplate(currentDraft, template) : currentDraft;
+      return persist({ ...submittedDraft, revision: crypto.randomUUID() });
+    },
     change: (text: string) => {
       change({ ...current.current, text });
     },

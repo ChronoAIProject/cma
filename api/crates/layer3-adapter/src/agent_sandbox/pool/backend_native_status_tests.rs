@@ -212,6 +212,7 @@ async fn serve(
             agent_browser: false,
             agent_resource_preparation: false,
             agent_process_restart: false,
+            exact_github_credential_route: false,
             sandbox_id: request.sandbox_id,
             generation: request.generation,
             home_identity: request.home_identity,

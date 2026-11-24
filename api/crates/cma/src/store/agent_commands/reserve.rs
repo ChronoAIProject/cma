@@ -1,4 +1,5 @@
 use crate::store::agent_log_telemetry::ScanCaller;
+use crate::store::work_claim_authority::without_ledger_maintenance;
 use layer2_core::sandbox::agent_io::{
     validate_command_reservation, CommandLedgerError, CommandReservation, CommandReservationResult,
 };
@@ -195,11 +196,11 @@ pub(in crate::store) async fn apply_with_cause(
     let result = store
         .sandboxes
         .update_one(
-            crate::store::work_schema::query(doc! {
+            crate::store::work_schema::query(without_ledger_maintenance(doc! {
                 "_id": parent.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "revision": parent_revision,
-            }),
+            })),
             doc! { "$inc": { "agent_command_admission_fence": 1_i64 } },
         )
         .session(&mut *session)

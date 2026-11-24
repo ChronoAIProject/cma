@@ -250,9 +250,14 @@ pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crat
                 )
         }
         (RequestFrame::Restore(_), ResponseFrame::Restore(receipt)) => receipt.accepted,
-        (RequestFrame::Credential(request), ResponseFrame::Credential(receipt)) => {
-            receipt.operation_id == request.operation_id && receipt.installed
-        }
+        (RequestFrame::Credential(request), ResponseFrame::Credential(receipt))
+        | (
+            RequestFrame::CredentialForReceiver {
+                credential: request,
+                ..
+            },
+            ResponseFrame::Credential(receipt),
+        ) => receipt.operation_id == request.operation_id && receipt.installed,
         (RequestFrame::Resources, ResponseFrame::Resources(reading)) => reading
             .stall_permille
             .is_none_or(|permille| permille <= 1_000),

@@ -62,6 +62,9 @@ pub struct RuntimeStatus {
     /// This runtime accepts a new process for an Agent with a proved Close.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub agent_process_restart: bool,
+    /// The identified supervisor can install a generation-bound GitHub route.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exact_github_credential_route: bool,
     pub sandbox_id: String,
     pub generation: u64,
     pub home_identity: String,
@@ -180,6 +183,7 @@ mod compatibility_tests {
         assert!(!status.agent_browser);
         assert!(!status.agent_resource_preparation);
         assert!(!status.agent_process_restart);
+        assert!(!status.exact_github_credential_route);
         assert_eq!(serde_json::to_value(status).unwrap(), original);
     }
 

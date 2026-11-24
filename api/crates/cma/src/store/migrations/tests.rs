@@ -7,6 +7,7 @@ mod collection;
 mod failpoints;
 mod key_order;
 mod opening;
+mod release_identity;
 mod segments;
 mod segments_runtime;
 mod source_keys;

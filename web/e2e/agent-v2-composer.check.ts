@@ -77,7 +77,9 @@ for (const theme of ['light', 'dark']) {
         input: 'Continue with this after the active response',
         stream: true,
       });
-      await expect(page.getByRole('status').filter({ hasText: /^Thinking$/ })).toBeVisible();
+      await expect(
+        page.getByRole('status').filter({ hasText: /^Waiting for a response$/ }),
+      ).toBeVisible();
       await expect(stop).toBeEnabled();
       fixture.append({
         type: 'tool_started',

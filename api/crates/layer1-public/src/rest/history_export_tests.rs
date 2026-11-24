@@ -115,6 +115,17 @@ async fn retained_transcript_survives_stopped_failed_and_paused_without_runtime_
             ..Default::default()
         });
         let router = agent_router(fixture.state.with_history_exporter(exporter.clone()));
+        for verified in [false, true] {
+            let response = router
+                .clone()
+                .oneshot(request("owner-a", verified))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let body = to_bytes(response.into_body(), 8192).await.unwrap();
+            let problem: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(problem["code"], "history_export_unavailable");
+        }
         for subject in ["owner-a", "foreign"] {
             let mut read = request(subject, true);
             *read.uri_mut() = "/api/v1/agents/agt_shared_read/transcript?limit=32"

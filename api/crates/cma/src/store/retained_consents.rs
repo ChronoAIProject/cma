@@ -7,6 +7,7 @@ use super::{
     sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome},
     schema::ensure_collections,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, Document},
     ClientSession, Database,
@@ -38,10 +39,7 @@ pub(super) async fn erase_user(db: &Database, subject: &str) -> Result<bool, Err
     let removed = match remove_and_retain(db, subject, &mut session).await {
         Ok(true) => true,
         result => {
-            session
-                .abort_transaction()
-                .await
-                .map_err(|_| unavailable())?;
+            session.abort_guarded().await.map_err(|_| unavailable())?;
             return result;
         }
     };

@@ -193,18 +193,18 @@ it('restarts the exhausted embedded desktop only on explicit Reconnect and retur
       />
     </CmaClientProvider>,
   );
-  await act(() => vi.advanceTimersByTimeAsync(61_000));
-  expect(discover).toHaveBeenCalledTimes(7);
+  await act(() => vi.advanceTimersByTimeAsync(300_000));
+  expect(discover).toHaveBeenCalledTimes(14);
   expect(screen.getByRole('region', { name: 'Machine desktop' })).toHaveTextContent(
     'Could not reconnect automatically.',
   );
   expect(screen.getByRole('button', { name: 'Take control' })).toBeDisabled();
   discover.mockResolvedValue({ websocket_url: '/api/v1/agents/agt_1/desktop/ws' });
   fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
-  await act(() => vi.advanceTimersByTimeAsync(29_999));
-  expect(discover).toHaveBeenCalledTimes(7);
+  await act(() => vi.advanceTimersByTimeAsync(999));
+  expect(discover).toHaveBeenCalledTimes(14);
   await act(() => vi.advanceTimersByTimeAsync(1));
-  expect(discover).toHaveBeenCalledTimes(8);
+  expect(discover).toHaveBeenCalledTimes(15);
   act(() => connections[0]!.dispatchEvent(new Event('connect')));
   expect(screen.getByRole('button', { name: 'Take control' })).toBeEnabled();
   expect(connections[0]!.viewOnly).toBe(true);

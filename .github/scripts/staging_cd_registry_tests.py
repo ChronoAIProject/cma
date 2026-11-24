@@ -55,6 +55,38 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             registry.token("ghcr.io/chronoaiproject/cma-web")
 
+    def test_settle_read_waits_for_a_just_written_tag_and_names_a_lasting_absence(self):
+        manifest = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                    "config": {"digest": "sha256:" + "a" * 64}, "layers": []}
+        raw = json.dumps(manifest).encode()
+        digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+        missing = urllib.error.HTTPError("https://ghcr.io/fixture", 404, "private", {}, None)
+        waits = []
+        opener = Mock()
+        opener.open.side_effect = [self.response({"token": "fixture"}), missing, missing,
+                                   self.response(raw, {"Docker-Content-Digest": digest})]
+        registry = Registry(opener, retry={"sleep": waits.append})
+        self.assertEqual(registry.manifest("ghcr.io/chronoaiproject/cma-agent-manager", "0.21.0", settle=True),
+                         (digest, manifest))
+        self.assertEqual(len(waits), 2)
+        # A lasting 404 ends with the named refusal after the settle attempts.
+        opener = Mock()
+        opener.open.side_effect = [self.response({"token": "fixture"})] + [missing] * 6
+        registry = Registry(opener, retry=NO_WAIT)
+        with self.assertRaises(Refusal) as caught:
+            registry.manifest("ghcr.io/chronoaiproject/cma-agent-manager", "0.21.0", settle=True)
+        self.assertEqual(str(caught.exception), "Registry write is not visible yet")
+        self.assertEqual(opener.open.call_count, 7)
+        # Without settle, a 404 for an expected tag still fails at once; other statuses keep their meaning.
+        for status, calls in ((404, 2), (401, 2), (500, 4)):
+            error = urllib.error.HTTPError("https://ghcr.io/fixture", status, "private", {}, None)
+            opener = Mock()
+            opener.open.side_effect = [self.response({"token": "fixture"})] + [error] * 6
+            with self.subTest(status=status), self.assertRaises(Refusal) as caught:
+                Registry(opener, retry=NO_WAIT).manifest("ghcr.io/chronoaiproject/cma-web", "0.10.1")
+            self.assertEqual(str(caught.exception), "Registry request failed")
+            self.assertEqual(opener.open.call_count, calls)
+
     def test_transport_failures_repeat_and_then_read_the_same_manifest(self):
         manifest = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
                     "config": {"digest": "sha256:" + "a" * 64}, "layers": []}
