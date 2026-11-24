@@ -9,6 +9,7 @@ use layer2_core::{
 pub(crate) struct ActivityParams {
     actor: Option<String>,
     action: Option<ActivityAction>,
+    exclude_successful_reads: Option<bool>,
     limit: Option<u32>,
     cursor: Option<String>,
     view: Option<ListView>,
@@ -83,6 +84,7 @@ pub(crate) struct ActivityPageView {
     params(
         ("actor" = Option<String>, Query),
         ("action" = Option<String>, Query),
+        ("exclude_successful_reads" = Option<bool>, Query, description = "Omit successful read, list and gateway record read events before pagination"),
         ("limit" = Option<u32>, Query),
         ("cursor" = Option<String>, Query),
         ("view" = Option<String>, Query, description = "summary omits undisplayed audit detail; absent preserves full records")
@@ -101,6 +103,7 @@ pub(crate) async fn activity(
     let query = ActivityQuery {
         actor: params.actor.map(SubjectId),
         action: params.action,
+        exclude_successful_reads: params.exclude_successful_reads.unwrap_or_default(),
         limit: params.limit.unwrap_or(DEFAULT_ACTIVITY_LIMIT),
         cursor: params.cursor,
     };

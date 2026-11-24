@@ -47,7 +47,7 @@ const actions: readonly ActivityAction[] = [
 
 export function Activity({ client }: { readonly client: OperatorClient }) {
   const [actor, setActor] = useState('');
-  const [action, setAction] = useState<ActivityAction | ''>('');
+  const [action, setAction] = useState<ActivityAction | 'audit' | ''>('audit');
   const [filters, setFilters] = useState({ actor, action });
   // The public operator API currently returns canonical actor names alongside
   // activity records, but has no separate actor catalogue endpoint. Accumulate
@@ -92,8 +92,9 @@ export function Activity({ client }: { readonly client: OperatorClient }) {
           <Picker
             label="Activity action"
             value={action}
-            onChange={(choice) => setAction(choice as ActivityAction | '')}
+            onChange={(choice) => setAction(choice as ActivityAction | 'audit' | '')}
             options={[
+              { value: 'audit', label: 'Audit events' },
               { value: '', label: 'All actions' },
               ...actions.map((value) => ({ value, label: stateWord(value) })),
             ]}
@@ -119,7 +120,7 @@ function ActivitySummarys({
   onItemsLoaded,
 }: {
   readonly client: OperatorClient;
-  readonly filters: { readonly actor: string; readonly action: ActivityAction | '' };
+  readonly filters: { readonly actor: string; readonly action: ActivityAction | 'audit' | '' };
   readonly onItemsLoaded: (items: readonly ActivitySummary[]) => void;
 }) {
   const load = useCallback(
@@ -129,7 +130,8 @@ function ActivitySummarys({
         signal,
         limit: 50,
         actor: filters.actor || undefined,
-        action: filters.action || undefined,
+        action: filters.action === 'audit' ? undefined : filters.action || undefined,
+        excludeSuccessfulReads: filters.action === 'audit' || undefined,
       }),
     [client, filters],
   );
