@@ -136,7 +136,7 @@ pub(crate) struct Fixture {
     pub(crate) sandboxes: Arc<InMemorySandboxStore>,
     pub(crate) profiles: Arc<InMemoryProfileStore>,
     activity: Arc<MemoryActivity>,
-    names: Arc<crate::rest::public_names::tests::Names>,
+    pub(crate) names: Arc<crate::rest::public_names::tests::Names>,
 }
 
 pub(crate) fn fixture(inventory: bool) -> Fixture {
