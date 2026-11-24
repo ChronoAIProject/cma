@@ -90,6 +90,41 @@ function safeLocation(value) {
   return ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname) ? 'Local page' : 'Web page';
 }
 
+async function mainFrame() {
+  const { frameTree } = await browser.call('Page.getFrameTree', {}, session);
+  return frameTree.frame;
+}
+
+function frameAddress(frame) {
+  return frame.url + (frame.urlFragment ?? '');
+}
+
+async function readFirstHeading(frame) {
+  const { executionContextId } = await browser.call('Page.createIsolatedWorld', {
+    frameId: frame.id, worldName: 'cma-browser-navigation',
+  }, session);
+  const evaluation = await browser.call('Runtime.evaluate', {
+    expression: `new Promise(resolve => {
+      const read = () => {
+        const heading = document.querySelector('h1');
+        resolve({ address: location.href, heading: heading ? heading.textContent.trim().slice(0, 512) : null });
+      };
+      if (document.readyState === 'complete') read();
+      else window.addEventListener('load', read, { once: true });
+    })`,
+    contextId: executionContextId, awaitPromise: true, returnByValue: true,
+  }, session);
+  const current = await mainFrame();
+  const value = evaluation.result?.value;
+  if (evaluation.exceptionDetails || value?.address !== frameAddress(frame)
+      || (value.heading !== null && typeof value.heading !== 'string')
+      || current.id !== frame.id || current.loaderId !== frame.loaderId
+      || frameAddress(current) !== frameAddress(frame)) {
+    throw refused('browser_navigation_unconfirmed');
+  }
+  return value.heading;
+}
+
 async function navigate(value) {
   control.requireAgent();
   if (!browser || browser.closed) throw new Error('Browser is not enabled');
@@ -98,15 +133,25 @@ async function navigate(value) {
     throw new Error('Navigation requires an HTTP or HTTPS page without credentials');
   state = 'loading';
   frame = undefined;
+  const previous = await mainFrame();
   const result = await browser.call('Page.navigate', { url: url.href }, session);
   if (result.errorText) throw new Error('Navigation failed');
-  await browser.call('Runtime.evaluate', {
-    expression: 'new Promise(resolve => { if (document.readyState === "complete") resolve(true); else window.addEventListener("load", () => resolve(true), {once:true}); })',
-    awaitPromise: true, returnByValue: true,
-  }, session);
-  const tree = await browser.call('Page.getFrameTree', {}, session);
-  location = safeLocation(tree.frameTree.frame.url);
-  return { navigated: true, location };
+  const committed = await mainFrame();
+  if (result.isDownload) {
+    location = safeLocation(committed.url);
+    return { navigated: true, location };
+  }
+  // Chrome omits the loader on same-document navigation. Confirm that the
+  // requested address belongs to the original main document in that case.
+  const sameDocument = result.loaderId === undefined;
+  if (committed.url === 'about:blank' || committed.unreachableUrl
+      || committed.id !== result.frameId || committed.loaderId !== (result.loaderId ?? previous.loaderId)
+      || (sameDocument && (committed.id !== previous.id || frameAddress(committed) !== url.href))) {
+    throw refused('browser_navigation_unconfirmed');
+  }
+  const firstHeading = await readFirstHeading(committed);
+  location = safeLocation(committed.url);
+  return { navigated: true, location, first_heading: firstHeading };
 }
 
 async function observe(request) {

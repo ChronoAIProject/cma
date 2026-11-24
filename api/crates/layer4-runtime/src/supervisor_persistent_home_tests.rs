@@ -11,6 +11,7 @@ use super::{Phase, RuntimeConfig, Supervisor, SupervisorBoundary};
 
 #[path = "supervisor_process_generation_tests.rs"]
 mod process_generation;
+pub(super) use process_generation::restart_open;
 #[path = "supervisor_workspace_preparation_tests.rs"]
 mod workspace_preparation;
 #[path = "supervisor_workspace_recovery_tests.rs"]
@@ -76,6 +77,7 @@ fn credential() -> RequestFrame {
         operation_id: "persistent-credential".into(),
         value: RuntimeCredential::new("opaque-test-credential"),
         custody_generation: Some(1),
+        github_route: None,
     })
 }
 

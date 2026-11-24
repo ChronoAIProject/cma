@@ -1,5 +1,6 @@
 //! Bounded, indexed authority reads for active runtime group candidates.
 //! No initializer, DDL, history read, retention write or effect authority here.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::{collections::BTreeMap, time::Duration};
 
 use layer2_core::sandbox::{Agent, SandboxHierarchyRecord, Workspace, Worktree};
@@ -51,7 +52,7 @@ pub(crate) async fn observe(
             .map_err(|_| AuthorityUnavailable)?;
         let result = read(database, request, &mut session).await;
         session
-            .abort_transaction()
+            .abort_guarded()
             .await
             .map_err(|_| AuthorityUnavailable)?;
         result

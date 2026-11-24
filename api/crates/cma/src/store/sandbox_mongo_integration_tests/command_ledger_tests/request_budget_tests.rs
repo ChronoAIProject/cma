@@ -4,6 +4,8 @@ use layer3_adapter::{ConversationUpdate, PromptResponse, TurnStopReason};
 
 #[path = "request_budget_tests/http_tests.rs"]
 mod http_tests;
+#[path = "request_budget_tests/ordinary_parent.rs"]
+mod ordinary_parent;
 #[path = "request_budget_tests/settlement_tests.rs"]
 mod settlement_tests;
 
@@ -11,10 +13,9 @@ pub(in crate::store) async fn completed(
     client: &Client,
     name: &str,
 ) -> (Arc<MongoSandboxStore>, RequestScope, ModelRequest) {
-    let (store, scope, request) =
-        completed_without_finality(client, name, u64::from(u8::MAX)).await;
-    // Synthetic precondition for the future authoritative settlement contract.
-    // Ordinary runtime terminal events never assert these finality fields.
+    let (store, scope, request) = completed_without_finality(client, name, None).await;
+    // Fixture for the future authoritative gateway settlement contract. CMA's
+    // ordinary runtime terminal events never assert these finality fields.
     store
         .model_budget
         .update_one(
@@ -30,15 +31,25 @@ pub(in crate::store) async fn completed(
 async fn completed_without_finality(
     client: &Client,
     name: &str,
-    turn_limit: u64,
+    turn_limit: Option<u64>,
 ) -> (Arc<MongoSandboxStore>, RequestScope, ModelRequest) {
     let (store, agent, parent, execution, _, _) = composed(client, name).await;
-    super::super::budget_tests::configure(&store, &agent.owner).await;
-    store.budget_settings.update_one(doc! {"_id": "platform"}, doc! {"$set": {
-        "settings.model_budget.owners.0.policy.owner_day_limit": (turn_limit * 4) as i64,
-        "settings.model_budget.owners.0.policy.turn_limit": turn_limit as i64,
+    let policy = super::super::budget_tests::configure(&store, &agent.owner).await;
+    let mut limits = doc! {
+        "settings.model_budget.owners.0.policy.owner_day_limit": (turn_limit.unwrap_or(policy.owner_day_limit) * 4) as i64,
         "settings.model_budget.request_models": [{"model": "request-fixture", "input_overhead_tokens": 1_i64}]
-    }}).await.unwrap();
+    };
+    if let Some(turn_limit) = turn_limit {
+        limits.insert(
+            "settings.model_budget.owners.0.policy.turn_limit",
+            turn_limit as i64,
+        );
+    }
+    store
+        .budget_settings
+        .update_one(doc! {"_id": "platform"}, doc! {"$set": limits})
+        .await
+        .unwrap();
     let admitted = record(
         store
             .reserve_command(live_request(&agent, &parent, "parent-turn"))
@@ -69,7 +80,7 @@ async fn completed_without_finality(
     };
     let request = ModelRequest {
         model: "request-fixture".into(),
-        input_bytes: turn_limit / 2,
+        input_bytes: turn_limit.unwrap_or(policy.turn_limit) / 2,
         max_output_tokens: 1,
         fingerprint: "b".repeat(64),
     };
@@ -189,6 +200,7 @@ async fn unknown_request_commit_never_returns_another_send_permit() {
         .await
         .unwrap();
     assert_eq!(result, Err(BudgetError::Unavailable));
+    crate::store::test_visibility::majority_barrier(&admin, &name).await;
     let reopened = MongoSandboxStore::open(&admin, &name).await.unwrap();
     assert_eq!(
         reopened.reserve_request(&scope, &request).await,

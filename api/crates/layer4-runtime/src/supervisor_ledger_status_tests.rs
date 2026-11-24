@@ -1,7 +1,8 @@
 use super::*;
 use layer3_adapter::{
-    RuntimeLedgerObservation, RuntimeLedgerStatus, RuntimeStatusRequest,
-    RUNTIME_LEDGER_STATUS_MEDIA_TYPE,
+    RuntimeLedgerObservation, RuntimeLedgerStatus, RuntimeStartupPolicyObservation,
+    RuntimeStatusRequest, RUNTIME_LEDGER_STATUS_MEDIA_TYPE,
+    RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE,
 };
 use sha2::{Digest, Sha256};
 
@@ -39,6 +40,71 @@ impl Fixture {
 impl Drop for Fixture {
     fn drop(&mut self) {
         std::fs::remove_dir_all(&self.root).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn startup_policy_status_returns_effective_policy_only_when_requested() {
+    for enabled in [false, true] {
+        let mut fixture = Fixture::new();
+        fixture.config.legacy_journal_recovery_enabled = enabled;
+        let supervisor = Supervisor::start(fixture.config.clone(), SupervisorBoundary::default())
+            .await
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = crate::link::router(Arc::clone(&supervisor));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let url = format!("http://{address}/runtime/control");
+        let request = fixture.request();
+        let frame = RequestFrame::RuntimeStatus(request.clone());
+        let baseline = client.post(&url).json(&frame).send().await.unwrap();
+        assert_eq!(baseline.headers()["content-type"], "application/json");
+        let baseline = baseline.bytes().await.unwrap();
+        assert_eq!(
+            RuntimeStartupPolicyObservation::decode(&baseline, &request).unwrap(),
+            None
+        );
+        let ResponseFrame::RuntimeStatus(baseline) = serde_json::from_slice(&baseline).unwrap()
+        else {
+            panic!("expected ordinary runtime status");
+        };
+
+        let observation = client
+            .post(&url)
+            .header("accept", RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE)
+            .json(&frame)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            observation.headers()["content-type"],
+            RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE
+        );
+        let observation = observation.bytes().await.unwrap();
+        let readback = RuntimeStartupPolicyObservation::decode(&observation, &request)
+            .unwrap()
+            .unwrap();
+        assert_eq!(readback.runtime, baseline);
+        assert_eq!(readback.legacy_journal_recovery_enabled, enabled);
+
+        let mut wrong = request;
+        wrong.generation += 1;
+        assert!(RuntimeStartupPolicyObservation::decode(&observation, &wrong).is_err());
+        let refused: ResponseFrame = client
+            .post(&url)
+            .header("accept", RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE)
+            .json(&RequestFrame::RuntimeStatus(wrong))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(matches!(refused, ResponseFrame::Failure(_)));
+        server.abort();
+        let _ = server.await;
     }
 }
 

@@ -64,6 +64,7 @@ pub struct AgentCommandService {
     authority: Arc<dyn AgentCommandAdmissionAuthority>,
     task_experience: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
     ownership: Option<Arc<crate::agent_ownership::OwnershipCoordinator>>,
+    cancel_wake: Option<Arc<tokio::sync::Notify>>,
     model_credit_required: bool,
     model_funding: Option<Arc<crate::sandbox::model_credit::AgentTurnFunding>>,
 }
@@ -80,6 +81,7 @@ impl AgentCommandService {
             authority,
             task_experience: Default::default(),
             ownership: None,
+            cancel_wake: None,
             model_credit_required: false,
             model_funding: None,
         })
@@ -89,6 +91,33 @@ impl AgentCommandService {
         &self,
     ) -> Arc<crate::sandbox::task_experience::TaskExperiencePolicy> {
         self.task_experience.clone()
+    }
+
+    pub fn with_cancel_wake(self: Arc<Self>, wake: Option<Arc<tokio::sync::Notify>>) -> Arc<Self> {
+        let mut service = Self::clone(&self);
+        service.cancel_wake = wake;
+        Arc::new(service)
+    }
+
+    pub(super) async fn notify_new_cancel(
+        &self,
+        envelope: &AgentCommandEnvelope,
+        committed: &AdmittedAgentCommand,
+    ) {
+        let (Some(wake), Some(ownership)) = (&self.cancel_wake, &self.ownership) else {
+            return;
+        };
+        // Each admission attempt generates a distinct ID. A confirmed replay
+        // carries the original ID, including recovery after an unknown commit.
+        if envelope.command == AgentCommand::Interrupt
+            && envelope.command_id == committed.receipt.envelope.command_id
+            && ownership
+                .local(&envelope.agent_id)
+                .await
+                .is_some_and(|authority| ownership.is_ready() && authority.is_current())
+        {
+            wake.notify_one();
+        }
     }
 
     /// Current access and durable credential custody precede reservation. No
@@ -246,6 +275,7 @@ impl AgentCommandService {
             let CommandReservationResult::Existing(record) = expected.replay(record)? else {
                 return Err(CommandLedgerError::Corrupt.into());
             };
+            self.notify_new_cancel(&expected.envelope, &record).await;
             return Ok(CommandStatusView::from_record(&record));
         }
         Err(CommandLedgerError::Conflict.into())

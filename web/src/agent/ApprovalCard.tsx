@@ -2,6 +2,8 @@ import type { ApprovalDecision } from './controller';
 import type { ApprovalRequest } from './model';
 import { Button } from '../ui/Button';
 import { CharacterAvatar } from '../character/CharacterAvatar';
+import { ExternalApprovalCard } from './ExternalApprovalCard';
+import type { ExternalApprovalReviewPolicy } from './externalApproval';
 import './ApprovalCard.css';
 
 /**
@@ -28,12 +30,25 @@ export function ApprovalCard({
   busy,
   readOnly,
   onApproval,
+  active = false,
+  reviewPolicy,
 }: {
   readonly approval: ApprovalRequest;
   readonly busy: boolean;
   readonly readOnly: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
+  readonly active?: boolean;
+  readonly reviewPolicy?: ExternalApprovalReviewPolicy;
 }) {
+  if (approval.source === 'external')
+    return (
+      <ExternalApprovalCard
+        approval={approval}
+        policy={reviewPolicy}
+        active={active}
+        readOnly={readOnly}
+      />
+    );
   const heading = `approval-${approval.id}`;
   return (
     <section className="approval" aria-labelledby={heading}>

@@ -4,6 +4,14 @@ use std::sync::Mutex;
 
 type Balances = HashMap<(String, String), u64>;
 
+#[derive(Clone, Copy, Debug)]
+pub(in crate::sandbox) enum BeginReply {
+    Error(FundingError),
+    UnchangedVersion,
+    ChangedReservation,
+    WrongState,
+}
+
 #[derive(Default)]
 pub(in crate::sandbox) struct LedgerState {
     balances: Balances,
@@ -13,6 +21,10 @@ pub(in crate::sandbox) struct LedgerState {
     refused_versions: HashMap<PhaseId, NonZeroU64>,
     admissions: HashMap<PhaseId, HashSet<NonZeroU64>>,
     last_participant: u64,
+    pub(in crate::sandbox) begin_reply: Option<BeginReply>,
+    pub(in crate::sandbox) begin_barrier: Option<std::sync::Arc<tokio::sync::Barrier>>,
+    pub(in crate::sandbox) settle_barrier: Option<std::sync::Arc<tokio::sync::Barrier>>,
+    pub(in crate::sandbox) read_unavailable: bool,
 }
 
 pub(in crate::sandbox) type Ledger = Mutex<LedgerState>;
@@ -137,8 +149,11 @@ impl ReservationAuthority for Ledger {
     }
 
     async fn read(&self, id: &PhaseId) -> Result<Checkpoint, FundingError> {
-        self.lock()
-            .unwrap()
+        let state = self.lock().unwrap();
+        if state.read_unavailable {
+            return Err(FundingError::Unavailable);
+        }
+        state
             .checkpoints
             .get(id)
             .cloned()
@@ -203,19 +218,31 @@ impl ReservationAuthority for Ledger {
 
     async fn begin(&self, expected: &Checkpoint) -> Result<Checkpoint, FundingError> {
         tokio::task::yield_now().await;
+        let barrier = self.lock().unwrap().begin_barrier.clone();
+        if let Some(barrier) = barrier {
+            barrier.wait().await;
+        }
         let mut state = self.lock().unwrap();
         if expected.state != PhaseState::Reserved {
             return Err(FundingError::CheckpointChanged);
         }
+        let permit = state.next(expected, PhaseState::InFlight)?;
         if state.expired.contains(&expected.reservation.id) {
             return Err(FundingError::Expired);
         }
-        let permit = state.next(expected, PhaseState::InFlight)?;
         state.admissions.remove(&expected.reservation.id);
         state
             .checkpoints
             .insert(expected.reservation.id.clone(), permit.clone());
-        Ok(permit)
+        let mut reply = permit;
+        match state.begin_reply.take() {
+            Some(BeginReply::Error(error)) => return Err(error),
+            Some(BeginReply::UnchangedVersion) => reply.version = expected.version,
+            Some(BeginReply::ChangedReservation) => reply.reservation.request_digest[0] ^= 1,
+            Some(BeginReply::WrongState) => reply.state = PhaseState::Reserved,
+            None => {}
+        }
+        Ok(reply)
     }
 
     async fn settle(
@@ -224,6 +251,11 @@ impl ReservationAuthority for Ledger {
         effect: Effect,
     ) -> Result<Checkpoint, FundingError> {
         tokio::task::yield_now().await;
+        let barrier = self.lock().unwrap().settle_barrier.take();
+        if let Some(barrier) = barrier {
+            barrier.wait().await;
+            barrier.wait().await;
+        }
         let mut state = self.lock().unwrap();
         let reservation = &expected.reservation;
         if expected.state != PhaseState::InFlight

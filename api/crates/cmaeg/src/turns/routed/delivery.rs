@@ -148,7 +148,7 @@ impl RoutedDelivery {
             custom: custom_effect.as_ref().map(|effect| {
                 CustomCheckpoint::new(
                     &super::model::delivery_event(&plan, target),
-                    &body,
+                    &body.delivery.policy.sinks,
                     effect.webhook(),
                 )
             }),

@@ -22,7 +22,7 @@ struct Fixture {
 impl Fixture {
     async fn new() -> Self {
         let (client, name) = database("auxiliary_http").await;
-        let (store, scope, _) = completed_without_finality(&client, &name, 65_536).await;
+        let (store, scope, _) = completed_without_finality(&client, &name, Some(65_536)).await;
         store
             .budget_settings
             .update_one(

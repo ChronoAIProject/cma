@@ -3,11 +3,28 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use super::super::deployment::provider_request_identity;
-use super::{InMemoryHostedBackend, InMemoryRuntimeSnapshot, MemoryOperation, MemoryRuntime};
+use super::{InMemoryHostedBackend, MemoryOperation, MemoryRuntime};
 use crate::provider::ProviderSandboxRequest;
 use crate::wire::{ResponseFrame, WireFailure, WireOperation};
-use crate::{AdapterError, CommandReceipt, RuntimeHandle, RuntimeLifecycle, RuntimeObservation};
+use crate::{
+    AdapterError, AgentHomePlan, AgentLaunch, AgentSlot, CommandReceipt, RuntimeHandle,
+    RuntimeLifecycle, RuntimeObservation, WorkspaceReceipt, WorktreeReceipt,
+};
 use serde::Serialize;
+
+/// Observable in-memory state used by Layer 2 lifecycle tests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InMemoryRuntimeSnapshot {
+    pub request: ProviderSandboxRequest,
+    pub credential_delivered: bool,
+    pub workspaces: BTreeMap<String, WorkspaceReceipt>,
+    pub worktrees: BTreeMap<(String, String), WorktreeReceipt>,
+    pub homes: BTreeMap<AgentSlot, AgentHomePlan>,
+    pub agents: BTreeMap<AgentSlot, AgentLaunch>,
+    pub writer_fence_captures: u64,
+    pub writers_held: bool,
+    pub restored_object: Option<String>,
+}
 
 impl MemoryRuntime {
     pub(super) fn snapshot(&self) -> InMemoryRuntimeSnapshot {
@@ -209,4 +226,11 @@ pub(super) fn fingerprint(value: &impl Serialize) -> crate::Result<String> {
 pub(super) fn digest(bytes: &[u8]) -> String {
     let bytes = Sha256::digest(bytes);
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+pub(super) fn channel(conversation_id: Option<String>) -> crate::ConversationChannel {
+    crate::ConversationChannel {
+        input: crate::ConversationInputSender::spawn(1, |_| async { Ok(()) }),
+        conversation_id,
+    }
 }

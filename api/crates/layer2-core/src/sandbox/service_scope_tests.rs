@@ -253,6 +253,7 @@ async fn exact_scope_revision_requires_matching_durable_event_and_preserves_lega
     store
         .commit(SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision: before.revision,
             sandbox: Box::new(next.clone()),
             event_at: NOW.into(),

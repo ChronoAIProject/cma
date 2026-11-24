@@ -74,6 +74,8 @@ export const sandboxProgressCopy = {
   unavailable: 'Sandbox progress is unavailable. Reconnecting.',
   checking: 'Checking sandbox progress',
   background: 'Preparation continues if you close this page.',
+  parked:
+    'The runtime update stopped. Your home and conversations are retained. Review the runtime update before retrying.',
   elapsed: 'Elapsed',
   checked: 'Last checked',
   started: 'Started',

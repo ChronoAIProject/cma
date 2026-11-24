@@ -17,6 +17,7 @@ approved set that holds one is refused. Staging still deploys runtime images
 with Agent Manager; that rule lives in staging_cd_policy and is unchanged.
 """
 
+import heapq
 import io
 import json
 import os
@@ -168,43 +169,60 @@ def evidence_lane(name, run_id):
     attempt, _, lane = name[len(prefix):].partition("-")
     if not attempt.isdigit() or attempt.startswith("0"):
         return None
-    return lane
+    # An automatic retry's evidence belongs to the same lane.
+    return lane[: -len("-retry")] if lane.endswith("-retry") else lane
+
+
+def newest_first(item):
+    run = item[0]
+    return -run["id"] if isinstance(run, dict) and isinstance(run.get("id"), int) else 0
 
 
 def staging_verified(images, request, download):
     """Return the components whose exact image staging recorded as controller-verified."""
     pending, verified, downloads, listings = dict(images), set(), 0, 0
-    for workflow in EVIDENCE_WORKFLOWS:
-        name = workflow.rsplit("/", 1)[1]
-        for page in range(1, EVIDENCE_RUN_PAGES + 1):
+    # Read the workflows page by page together, newest run first within each
+    # page round (not across rounds; acceptance never depends on order). Searching one
+    # workflow to its end before the next starved redeploy-staging: its evidence
+    # sat behind every staging CD run and the listing bound refused first.
+    remaining = list(EVIDENCE_WORKFLOWS)
+    for page in range(1, EVIDENCE_RUN_PAGES + 1):
+        listed = []
+        for workflow in list(remaining):
+            name = workflow.rsplit("/", 1)[1]
             runs = request(f"actions/workflows/{name}/runs?branch=develop&status=completed&per_page=100&page={page}")
             require(isinstance(runs, dict) and isinstance(runs.get("workflow_runs"), list),
                     "Staging deployment evidence inventory is unavailable")
-            for run in runs["workflow_runs"]:
-                if not trusted_view(run) or run.get("path") != workflow:
-                    continue
-                require(listings < MAX_RUN_LISTINGS, "Staging deployment evidence search exceeded its bound")
-                listings += 1
-                listing = request(f"actions/runs/{run['id']}/artifacts?per_page=100")
-                require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list),
-                        "Staging deployment evidence inventory is unavailable")
-                for artifact in listing["artifacts"]:
-                    lane = evidence_lane(artifact.get("name"), run["id"])
-                    if lane is None or artifact.get("expired"):
-                        continue
-                    if lane in COMPONENT_LANES and lane not in pending:
-                        continue
-                    require(downloads < MAX_DOWNLOADS, "Staging deployment evidence search exceeded its bound")
-                    downloads += 1
-                    for component, row in evidence_rows(download(artifact)).items():
-                        if (component in pending and isinstance(row, dict) and row.get("state") == VERIFIED
-                                and row.get("image") == pending[component]):
-                            verified.add(component)
-                            del pending[component]
-                    if not pending:
-                        return verified
+            listed.append([(run, workflow) for run in runs["workflow_runs"]])
             if len(runs["workflow_runs"]) < 100:
-                break
+                remaining.remove(workflow)
+        # Each listing is already newest first; merge them by run id and keep
+        # each workflow's own order.
+        for run, workflow in heapq.merge(*listed, key=newest_first):
+            if not trusted_view(run) or run.get("path") != workflow:
+                continue
+            require(listings < MAX_RUN_LISTINGS, "Staging deployment evidence search exceeded its bound")
+            listings += 1
+            listing = request(f"actions/runs/{run['id']}/artifacts?per_page=100")
+            require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list),
+                    "Staging deployment evidence inventory is unavailable")
+            for artifact in listing["artifacts"]:
+                lane = evidence_lane(artifact.get("name"), run["id"])
+                if lane is None or artifact.get("expired"):
+                    continue
+                if lane in COMPONENT_LANES and lane not in pending:
+                    continue
+                require(downloads < MAX_DOWNLOADS, "Staging deployment evidence search exceeded its bound")
+                downloads += 1
+                for component, row in evidence_rows(download(artifact)).items():
+                    if (component in pending and isinstance(row, dict) and row.get("state") == VERIFIED
+                            and row.get("image") == pending[component]):
+                        verified.add(component)
+                        del pending[component]
+                if not pending:
+                    return verified
+        if not remaining:
+            break
     return verified
 
 

@@ -113,7 +113,7 @@ async fn fixture() -> Fixture {
         custody: custody.policy().await.unwrap(),
         schema_sha256: crate::store::retirement_archive::schema_sha256(),
         files,
-        database: crate::store::isolation::COLLECTIONS
+        database: crate::store::retirement_archive::manifest_collections()
             .iter()
             .map(|name| DatabaseRecord {
                 collection: (*name).into(),

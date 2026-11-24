@@ -38,10 +38,19 @@ impl DocumentStorageConfig {
         {
             return Err("CHRONO_DOCUMENT_BUCKET must be a valid bucket name".into());
         }
-        let platform_origin = super::parse_canonical_https_origin(
-            "CHRONO_PLATFORM_BASE_URL",
-            &required(lookup, "CHRONO_PLATFORM_BASE_URL")?,
-        )?;
+        // Document storage may use another platform than the runtimes do: a
+        // non-production deployment can keep its own NyxID for identity and
+        // sandboxes while its documents use the storage service that platform
+        // provides, with a dedicated non-production identity and bucket.
+        let platform_origin = match lookup("CHRONO_DOCUMENT_PLATFORM_BASE_URL")? {
+            Some(value) => {
+                super::parse_canonical_https_origin("CHRONO_DOCUMENT_PLATFORM_BASE_URL", &value)?
+            }
+            None => super::parse_canonical_https_origin(
+                "CHRONO_PLATFORM_BASE_URL",
+                &required(lookup, "CHRONO_PLATFORM_BASE_URL")?,
+            )?,
+        };
         let client_id = required(lookup, "CHRONO_STORAGE_CLIENT_ID")?;
         let client_secret = required(lookup, "CHRONO_STORAGE_CLIENT_SECRET")?.into();
         Ok(Some(Self {
@@ -107,6 +116,45 @@ mod tests {
             .is_err());
         }
     }
+    #[test]
+    fn document_platform_overrides_only_the_storage_origin() {
+        let mut config = values();
+        config.insert(
+            "CHRONO_DOCUMENT_PLATFORM_BASE_URL",
+            "https://storage-platform.example".into(),
+        );
+        let parsed = DocumentStorageConfig::from_lookup(&mut |key| Ok(config.get(key).cloned()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(parsed.platform_origin, "https://storage-platform.example");
+        // The override is held to the same canonical HTTPS origin rule.
+        for bad in [
+            "http://storage-platform.example",
+            "https://user:password@storage-platform.example",
+            "https://storage-platform.example/path",
+            "",
+        ] {
+            let mut config = values();
+            config.insert("CHRONO_DOCUMENT_PLATFORM_BASE_URL", bad.into());
+            assert!(
+                DocumentStorageConfig::from_lookup(&mut |key| Ok(config.get(key).cloned()))
+                    .is_err(),
+                "{bad}"
+            );
+        }
+        // Without a bucket the override configures nothing.
+        let mut config = HashMap::from([(
+            "CHRONO_DOCUMENT_PLATFORM_BASE_URL",
+            "https://storage-platform.example".to_string(),
+        )]);
+        config.remove("CHRONO_DOCUMENT_BUCKET");
+        assert!(
+            DocumentStorageConfig::from_lookup(&mut |key| Ok(config.get(key).cloned()))
+                .unwrap()
+                .is_none()
+        );
+    }
+
     #[test]
     fn refuses_embedded_credentials_http_and_bucket_path_injection() {
         for (key, bad) in [

@@ -54,6 +54,7 @@ async fn parent_readiness_wake_follows_durable_commit_and_never_failed_publicati
             next.revision += 1;
             SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision: parent.revision,
                 sandbox: Box::new(next),
                 event_at: MINUTE.into(),

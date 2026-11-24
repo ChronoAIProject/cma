@@ -25,221 +25,12 @@ pub(in crate::store) struct LogRange {
     pub limit: u16,
 }
 
-pub(in crate::store) async fn read_head(
-    store: &MongoSandboxStore,
-    aggregate: &Document,
-    session: &mut ClientSession,
-    snapshot: bool,
-) -> Result<Head> {
-    read_head_from(&database(store), aggregate, session, snapshot).await
-}
-
-async fn read_head_from(
-    db: &Database,
-    aggregate: &Document,
-    session: &mut ClientSession,
-    snapshot: bool,
-) -> Result<Head> {
-    let agent = crate::store::agents::read_agent(aggregate)?;
-    if aggregate.contains_key(QUARANTINE_FIELD) {
-        return Err(corrupt().into());
-    }
-    let (incarnation, revision) = read_format(aggregate)?.ok_or_else(corrupt)?;
-    let audits = majority_collection::<Document>(db, AUDITS);
-    let find = audits
-        .find_one(doc! {"agent_id":agent.id.as_str(),"incarnation":incarnation,"status":"corrupt"})
-        .projection(doc! {"_id":1});
-    let find = if snapshot {
-        find.read_concern(ReadConcern::snapshot())
-    } else {
-        find
-    };
-    if find
-        .session(&mut *session)
-        .await
-        .map_err(TransactionLogError::Driver)?
-        .is_some()
-    {
-        return Err(SandboxStoreError::Corrupt(
-            "Agent log is quarantined by an integrity audit".into(),
-        )
-        .into());
-    }
-
-    let heads = majority_collection(db, HEADS);
-    let find = heads.find_one(doc! {"_id":agent.id.as_str()});
-    let find = if snapshot {
-        find.read_concern(ReadConcern::snapshot())
-    } else {
-        find
-    };
-    let head = Head::read(
-        find.session(&mut *session)
-            .await
-            .map_err(TransactionLogError::Driver)?
-            .ok_or_else(corrupt)?,
-    )?;
-    if head.agent_id != agent.id.as_str()
-        || head.incarnation != incarnation
-        || head.revision != revision
-        || u64::try_from(head.last_seq).ok() != Some(agent.conversation.last_seq)
-    {
-        return Err(corrupt().into());
-    }
-    let seals = majority_collection::<Document>(db, SEGMENTS);
-    let find = seals.find_one(doc! {
-        "agent_id":&head.agent_id,"incarnation":&head.incarnation,"ordinal":{"$gte":head.active_ordinal},
-    }).projection(doc! {"_id":1});
-    let find = if snapshot {
-        find.read_concern(ReadConcern::snapshot())
-    } else {
-        find
-    };
-    if find
-        .session(&mut *session)
-        .await
-        .map_err(TransactionLogError::Driver)?
-        .is_some()
-    {
-        return Err(corrupt().into());
-    }
-    if head.active_ordinal == 0 && head.last_seq > 0 {
-        validate_unsealed_creation(db, &agent, session, snapshot).await?;
-    }
-    super::source_keys::prove(db, &head, session, snapshot).await?;
-    Ok(head)
-}
-
-/// Until creation belongs to an immutable seal, even a page that does not
-/// deliver that row must bind its lineage to the captured Agent.
-async fn validate_unsealed_creation(
-    db: &Database,
-    agent: &layer2_core::sandbox::Agent,
-    session: &mut ClientSession,
-    snapshot: bool,
-) -> Result<()> {
-    let source = majority_collection::<RawDocumentBuf>(db, AGENT_LOG);
-    let mut read = crate::store::mongo_read_telemetry::Read::find(source.name());
-    let query = source.find_one(doc! {"agent_id":agent.id.as_str(),"seq":1_i64});
-    let query = if snapshot {
-        query.read_concern(ReadConcern::snapshot())
-    } else {
-        query
-    };
-    let raw = query
-        .session(session)
-        .await
-        .map_err(TransactionLogError::Driver)?
-        .ok_or_else(corrupt)?;
-    read.document(raw.as_bytes().len());
-    let entry = read_entry(&Document::try_from(&raw).map_err(|_| corrupt())?)?;
-    if entry.agent_id != agent.id
-        || entry.seq != 1
-        || !matches!(&entry.kind,
-        AgentLogKind::Created { workspace_id, worktree_id }
-        if workspace_id == &agent.workspace_id && worktree_id == agent.creation_worktree_id())
-    {
-        return Err(corrupt().into());
-    }
-    read.complete();
-    Ok(())
-}
-
-pub(super) async fn seal_at(
-    store: &MongoSandboxStore,
-    head: &Head,
-    ordinal: i64,
-    session: &mut ClientSession,
-    snapshot: bool,
-) -> Result<Seal> {
-    seal_at_from(&database(store), head, ordinal, session, snapshot).await
-}
-
-async fn seal_at_from(
-    db: &Database,
-    head: &Head,
-    ordinal: i64,
-    session: &mut ClientSession,
-    snapshot: bool,
-) -> Result<Seal> {
-    let seals = majority_collection(db, SEGMENTS);
-    let find = seals.find_one(doc! {
-        "agent_id": &head.agent_id, "incarnation": &head.incarnation, "ordinal":ordinal,
-    });
-    let find = if snapshot {
-        find.read_concern(ReadConcern::snapshot())
-    } else {
-        find
-    };
-    let seal = Seal::read(
-        find.session(session)
-            .await
-            .map_err(TransactionLogError::Driver)?
-            .ok_or_else(corrupt)?,
-    )?;
-    if seal.agent_id != head.agent_id
-        || seal.incarnation != head.incarnation
-        || seal.ordinal != ordinal
-    {
-        return Err(corrupt().into());
-    }
-    Ok(seal)
-}
-
-pub(super) async fn containing(
-    store: &MongoSandboxStore,
-    head: &Head,
-    seq: i64,
-    session: &mut ClientSession,
-    snapshot: bool,
-) -> Result<Seal> {
-    containing_from(&database(store), head, seq, session, snapshot).await
-}
-
-async fn containing_from(
-    db: &Database,
-    head: &Head,
-    seq: i64,
-    session: &mut ClientSession,
-    snapshot: bool,
-) -> Result<Seal> {
-    let seals = majority_collection(db, SEGMENTS);
-    let find = seals
-        .find_one(doc! {
-            "agent_id": &head.agent_id, "incarnation": &head.incarnation, "start_seq":{"$lte":seq},
-        })
-        .sort(doc! {"start_seq":-1});
-    let find = if snapshot {
-        find.read_concern(ReadConcern::snapshot())
-    } else {
-        find
-    };
-    let seal = Seal::read(
-        find.session(&mut *session)
-            .await
-            .map_err(TransactionLogError::Driver)?
-            .ok_or_else(corrupt)?,
-    )?;
-    if seal.agent_id != head.agent_id
-        || seal.incarnation != head.incarnation
-        || seal.start_seq > seq
-        || seal.end_seq < seq
-        || seal.ordinal >= head.active_ordinal
-    {
-        return Err(corrupt().into());
-    }
-    if seal.ordinal > 0 {
-        let previous = seal_at_from(db, head, seal.ordinal - 1, session, snapshot).await?;
-        seal.follows(&previous)?;
-    }
-    if seal.ordinal + 1 == head.active_ordinal {
-        seal.precedes(head)?;
-    } else {
-        let next = seal_at_from(db, head, seal.ordinal + 1, session, snapshot).await?;
-        next.follows(&seal)?;
-    }
-    Ok(seal)
-}
+mod metadata;
+pub(in crate::store) use metadata::read_head;
+pub(super) use metadata::{
+    containing, preview_containing, preview_head, preview_seal_at, read_export_head, seal_at,
+};
+use metadata::{containing_from, read_head_from, seal_at_from, validate_unsealed_creation};
 
 /// Validate all requested rows even when the caller has filled its projected
 /// byte budget. Corruption in an undelivered source row must not be truncation.
@@ -278,7 +69,7 @@ where
     super::source_keys::prove(db, head, session, snapshot).await?;
     let mut next = after + 1;
     while next <= end && next < head.active_start_seq {
-        let seal = containing_from(db, head, next, session, snapshot).await?;
+        let seal = containing_from(db, head, next, session, snapshot, None).await?;
         let stop = end.min(seal.end_seq);
         scan_rows(
             db,
@@ -294,7 +85,7 @@ where
     }
     if next <= end || after == end {
         if head.active_ordinal > 0 {
-            seal_at_from(db, head, head.active_ordinal - 1, session, snapshot)
+            seal_at_from(db, head, head.active_ordinal - 1, session, snapshot, None)
                 .await?
                 .precedes(head)?;
         }
@@ -418,7 +209,7 @@ pub(in crate::store) async fn retained_turn(
         return Ok(false);
     }
     let entry = if read_format(aggregate)?.is_some() {
-        let head = read_head_from(db, aggregate, session, true).await?;
+        let head = read_head_from(db, aggregate, session, true, None, None).await?;
         let mut entry = None;
         visit_range_from(
             db,
@@ -438,7 +229,7 @@ pub(in crate::store) async fn retained_turn(
         .await?;
         entry
     } else {
-        validate_unsealed_creation(db, &agent, session, true).await?;
+        validate_unsealed_creation(db, &agent, session, true, None).await?;
         majority_collection(db, AGENT_LOG)
             .find_one(doc! {"_id": log_id(&agent.id, turn)})
             .read_concern(ReadConcern::snapshot())

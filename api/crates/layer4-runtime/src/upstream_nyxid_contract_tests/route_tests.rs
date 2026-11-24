@@ -129,6 +129,7 @@ async fn credential_rotation_applies_after_the_in_flight_request_snapshot() {
             operation_id: "contract-rotate".into(),
             value: RuntimeCredential::new("contract-rotated-fixture"),
             custody_generation: Some(2),
+            github_route: None,
         })
         .await
         .unwrap();

@@ -48,10 +48,10 @@ export const taskTemplates = [
 export function templateDefinition(id: TaskTemplateId) {
   return taskTemplates.find((template) => template.id === id)!;
 }
-export function emptyTemplate(id: TaskTemplateId): TaskTemplate {
+export function emptyTemplate(id: TaskTemplateId, version: 1 | 2 = 1): TaskTemplate {
   return taskTemplate({
     id,
-    version: 1,
+    version,
     fields: Object.fromEntries(templateDefinition(id).fields.map(({ key }) => [key, ''])),
   });
 }
@@ -63,8 +63,14 @@ export function changeTemplateField(
   template: TaskTemplate,
   field: string,
   value: string,
+  allowV2 = false,
 ): TaskTemplate {
-  return taskTemplate({ ...template, fields: { ...template.fields, [field]: value } });
+  if ((template.fields as Readonly<Record<string, string>>)[field] === value) return template;
+  return taskTemplate({
+    ...template,
+    version: allowV2 ? 2 : template.version,
+    fields: { ...template.fields, [field]: value },
+  });
 }
 const trim = (value: string) => value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
 export function compileTaskTemplate(template: TaskTemplate): {
@@ -89,6 +95,8 @@ export function compileTaskTemplate(template: TaskTemplate): {
   const text = (() => {
     switch (template.id) {
       case 'research':
+        if (template.version === 2)
+          return `Research the following topic:\n\n${value('topic')}\n\nSummarize the key findings, with links to sources.`;
         return `Research ${value('topic')} and summarize the key findings, with links to sources.`;
       case 'spreadsheet':
         return `Analyze the spreadsheet at ${value('link')} and point out trends, outliers and what to do next.`;
@@ -97,6 +105,10 @@ export function compileTaskTemplate(template: TaskTemplate): {
       case 'website':
         return `Build a one-page website for ${value('project')} and share a preview link.`;
       case 'code':
+        if (template.version === 2) {
+          const behavior = value('behavior');
+          return `Write a ${value('language')} script for the following task:\n\n${behavior}${/[.!?。！？]$/u.test(behavior) ? '' : '.'}`;
+        }
         return `Write a ${value('language')} script that ${value('behavior')}.`;
     }
   })();

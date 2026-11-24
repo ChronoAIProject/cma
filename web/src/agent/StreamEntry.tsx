@@ -1,5 +1,5 @@
 import { Button } from '../ui/Button';
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 import type { ApprovalDecision } from './controller';
 import { IconRightUpOutline16, IconThinkOutline16, IconWarningOutline16 } from '../ui/icons';
 import { MessageContent } from './MessageContent';
@@ -18,13 +18,18 @@ import { answerProse } from './answerDeliveries';
 import type { ConversationState } from './model';
 import type { TaskAcceptance } from '@cma/client';
 import { taskAcceptanceLabel, taskAcceptanceReason } from './taskAcceptance';
+import type { ExternalApprovalReviewPolicy } from './externalApproval';
 
 function StreamEntryView({
+  retained = false,
   entry,
   approvalBusy,
   approvalReadOnly = false,
   onApproval,
   activeRunId,
+  approvalActive,
+  approvalReviewPolicy,
+  recoveryAction,
   planOutcome,
   taskAcceptance,
   verdictOnAnswer,
@@ -34,12 +39,16 @@ function StreamEntryView({
   feedback,
   continued = false,
 }: {
+  readonly retained?: boolean;
   readonly entry: Entry;
   readonly approvalBusy: boolean;
   readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
   /** Only the active turn can still be running a call. */
   readonly activeRunId?: string;
+  readonly approvalActive?: boolean;
+  readonly approvalReviewPolicy?: ExternalApprovalReviewPolicy;
+  readonly recoveryAction?: ReactNode;
   readonly planOutcome?: NonNullable<ConversationState['turnOutcomes']>[string];
   readonly taskAcceptance?: TaskAcceptance;
   readonly verdictOnAnswer?: boolean;
@@ -73,7 +82,7 @@ function StreamEntryView({
       <article
         className={`message message--${message.role}`}
         aria-label={identity.name}
-        data-streaming={message.status === 'streaming' ? '' : undefined}
+        data-streaming={!retained && message.status === 'streaming' ? '' : undefined}
         data-message-key={`message:${message.id}`}
       >
         <MessageAvatar identity={identity} continued={continued} />
@@ -85,7 +94,10 @@ function StreamEntryView({
           {message.role === 'user' ? (
             <UserMessage content={delivery.content} />
           ) : (
-            <MessageContent content={delivery.content} streaming={message.status === 'streaming'} />
+            <MessageContent
+              content={delivery.content}
+              streaming={!retained && message.status === 'streaming'}
+            />
           )}
           {canDeliver && delivery.references ? (
             <AnswerDeliverables
@@ -115,7 +127,7 @@ function StreamEntryView({
           ) : null}
           <MessageFooter
             id={message.id}
-            showVotes={message.role === 'assistant' && !message.retainedPartial}
+            showVotes={!retained && message.role === 'assistant' && !message.retainedPartial}
             canVote={message.role === 'assistant' && message.finalAnswer === true}
             at={message.at}
             content={delivery.content}
@@ -171,6 +183,7 @@ function StreamEntryView({
           <strong>{notice.title}</strong>
           <p>{notice.detail}</p>
           {notice.nextStep === undefined ? null : <p>{notice.nextStep}</p>}
+          {recoveryAction}
           {notice.technicalDetails === undefined ? null : (
             <details className="agent-event">
               <summary>Technical details</summary>
@@ -196,11 +209,14 @@ function StreamEntryView({
       busy={approvalBusy}
       readOnly={approvalReadOnly}
       onApproval={onApproval}
+      active={approvalActive}
+      reviewPolicy={approvalReviewPolicy}
     />
   );
 }
 
 export const StreamEntry = memo(StreamEntryView, (previous, next) => {
+  if (previous.retained !== next.retained) return false;
   if (previous.entry.kind !== next.entry.kind || previous.entry.item !== next.entry.item)
     return false;
   if (next.entry.kind === 'message')
@@ -214,6 +230,7 @@ export const StreamEntry = memo(StreamEntryView, (previous, next) => {
       previous.continued === next.continued
     );
   if (next.entry.kind === 'tool') return previous.activeRunId === next.activeRunId;
+  if (next.entry.kind === 'recovery') return previous.recoveryAction === next.recoveryAction;
   if (next.entry.kind === 'plan')
     return (
       previous.activeRunId === next.activeRunId &&
@@ -224,6 +241,8 @@ export const StreamEntry = memo(StreamEntryView, (previous, next) => {
     return (
       previous.approvalBusy === next.approvalBusy &&
       previous.approvalReadOnly === next.approvalReadOnly &&
+      previous.approvalActive === next.approvalActive &&
+      previous.approvalReviewPolicy === next.approvalReviewPolicy &&
       previous.onApproval === next.onApproval
     );
   return true;

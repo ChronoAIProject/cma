@@ -1,7 +1,7 @@
 //! One explicitly requested text reply starts the retained root's thread, never another destination.
 use super::{
     intents::{DeliveryOutcome, IntentReceipt},
-    render::{RelayText, Renderer},
+    render::{LiteralText, Renderer},
     send::{refused, unsupported, SendContext, SendEffects, Sender},
 };
 use crate::{
@@ -63,7 +63,7 @@ impl Sender {
         let ReplyAddress::NativeLark(reply) = &event.reply else {
             return unsupported();
         };
-        let (_, rendering) = RelayText.render(message, &Capabilities::native_lark());
+        let (_, rendering) = LiteralText.render(message, &Capabilities::native_lark());
         let reject = |reason: &str| {
             refused(
                 rendering.clone(),

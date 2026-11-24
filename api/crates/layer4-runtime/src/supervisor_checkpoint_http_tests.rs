@@ -37,6 +37,7 @@ async fn fixture(name: &str) -> (RuntimeConfig, Arc<Supervisor>) {
                 operation_id: "checkpoint-http-credential".into(),
                 value: RuntimeCredential::new("test-credential"),
                 custody_generation: Some(1),
+                github_route: None,
             }))
             .await,
         ResponseFrame::Credential(_)
@@ -335,6 +336,7 @@ fn restore_http_disconnect_keeps_gate_and_finishes_phase_transition() {
                     operation_id: "checkpoint-http-restored-credential".into(),
                     value: RuntimeCredential::new("test-credential"),
                     custody_generation: Some(2),
+                    github_route: None,
                 }))
                 .await,
             ResponseFrame::Credential(_)

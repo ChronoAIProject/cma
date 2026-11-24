@@ -189,6 +189,25 @@ impl LiveAgentRegistry {
                 .get(&attachment.agent_id)
                 .is_some_and(|entry| exact_attachment(entry, &attachment));
             if !exact {
+                let opening = state.staged.get(&attachment.agent_id).is_some_and(|entry| {
+                    same_attachment(entry, &attachment)
+                        && !matches!(
+                            entry.input,
+                            super::AttachmentInput::Connected {
+                                activation: Some(_),
+                                ..
+                            }
+                        )
+                });
+                if opening {
+                    super::fence_authority(
+                        &mut state,
+                        &attachment.agent_id,
+                        attachment.runtime_generation,
+                        attachment.authority_fence,
+                    );
+                    state.staged.remove(&attachment.agent_id);
+                }
                 return;
             }
             let owns_current_authority =
@@ -231,8 +250,11 @@ impl super::LiveAgentAttachment {
 }
 
 fn exact_attachment(entry: &RegistryEntry, attachment: &LiveAgentAttachmentIdentity) -> bool {
-    entry.published
-        && entry.conversation_id == attachment.conversation_id
+    entry.published && same_attachment(entry, attachment)
+}
+
+fn same_attachment(entry: &RegistryEntry, attachment: &LiveAgentAttachmentIdentity) -> bool {
+    entry.conversation_id == attachment.conversation_id
         && entry.runtime_generation == attachment.runtime_generation
         && entry.authority_fence == attachment.authority_fence
         && entry.nonce == attachment.nonce
