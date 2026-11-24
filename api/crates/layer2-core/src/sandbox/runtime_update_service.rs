@@ -71,8 +71,8 @@ impl SandboxRuntimeUpdateService {
 
     /// `can_update` against a release the caller already captured.
     pub fn can_update_to(&self, sandbox: &Sandbox, latest: &str) -> bool {
-        if self.recovery.is_some() && sandbox.unpublished_recovery_candidate() {
-            return true;
+        if sandbox.unpublished_recovery_candidate() {
+            return self.recovery.is_some();
         }
         if !sandbox.supports_retained_runtime_update() {
             return false;
@@ -92,6 +92,13 @@ impl SandboxRuntimeUpdateService {
         ) && sandbox
             .retained_runtime_binding()
             .is_some_and(|binding| binding.runtime_version != latest)
+    }
+
+    /// Whether a retry of the pinned target may recover onto the observed release.
+    pub fn retry_uses_latest(&self, sandbox: &Sandbox, pinned: &str, latest: &str) -> bool {
+        self.recovery.is_some()
+            && sandbox.unpublished_recovery_candidate()
+            && recover_on_latest(sandbox, pinned, latest)
     }
 
     pub async fn request(
@@ -212,7 +219,7 @@ impl SandboxRuntimeUpdateService {
                 // A reopen stalled on a superseded pinned runtime cannot succeed there:
                 // the current manager refuses that runtime. Retrying it would park the
                 // Sandbox in the same place again, so recover onto the latest (#2257).
-                let target = if target_version != latest && reopens_conversations(&sandbox) {
+                let target = if recover_on_latest(&sandbox, target_version, &latest) {
                     latest.as_str()
                 } else {
                     target_version
@@ -244,17 +251,18 @@ impl SandboxRuntimeUpdateService {
 }
 
 /// Stalled at reopening conversations on an unpublished runtime, which recovery rebuilds.
-fn reopens_conversations(sandbox: &Sandbox) -> bool {
-    matches!(
-        sandbox.lifecycle.operation,
-        Some(SandboxLifecycleOperation::ImageRotation {
-            phase: SandboxImageRotationPhase::ConversationReopen,
-            ..
-        }) | Some(SandboxLifecycleOperation::Revive {
-            phase: SandboxRevivePhase::ConversationReopen,
-            ..
-        })
-    )
+fn recover_on_latest(sandbox: &Sandbox, requested: &str, latest: &str) -> bool {
+    requested != latest
+        && matches!(
+            sandbox.lifecycle.operation,
+            Some(SandboxLifecycleOperation::ImageRotation {
+                phase: SandboxImageRotationPhase::ConversationReopen,
+                ..
+            }) | Some(SandboxLifecycleOperation::Revive {
+                phase: SandboxRevivePhase::ConversationReopen,
+                ..
+            })
+        )
 }
 
 fn store_error(error: SandboxStoreError) -> SandboxRuntimeUpdateError {

@@ -1,5 +1,5 @@
-//! Frozen Sandbox archive census before detached legal consent storage.
-pub(super) const SHA256: &str = "6b2b5d0c3acf831b048b37d535b5242f65a0094b4e83c793385fc6e449288330";
+//! Archive census in the predecessor before adding legal consent retention.
+pub(super) const SHA256: &str = "c75c5dc57ddbcab6d18543510bf2ddbf5beb4387622c48914909bed80df10a8a";
 pub(super) const COLLECTIONS: &[&str] = &[
     "account_deletions",
     "account_deletion_events",
@@ -126,7 +126,11 @@ pub(super) const COLLECTIONS: &[&str] = &[
     "provider_binding_preparations",
     "provider_tool_opens",
     "provider_tool_relays",
+    "resource_execution_effects_v1",
+    "resource_execution_grants_v1",
+    "resource_execution_records_v1",
     "resource_policies",
+    "resource_revocation_operations_v1",
     "resource_share_commands",
     "resource_shares",
     "sandbox_admissions",

@@ -71,6 +71,7 @@ async fn manifest() -> Manifest {
 async fn frozen_pre_capture_census_requires_new_evidence_namespaces_to_be_empty() {
     for (collections, schema) in [
         (pre_capture::COLLECTIONS, pre_capture::SHA256),
+        (pre_execution::COLLECTIONS, pre_execution::SHA256),
         (
             pre_capture_backups::COLLECTIONS,
             pre_capture_backups::SHA256,
@@ -101,7 +102,10 @@ async fn frozen_pre_capture_census_requires_new_evidence_namespaces_to_be_empty(
         old.database
             .retain(|row| collections.contains(&row.collection.as_str()));
         assert!(matches_current(&old, current.clone()).unwrap());
-        for name in crate::store::sandbox_usage_export::COLLECTIONS {
+        for name in manifest_collections()
+            .iter()
+            .filter(|name| !collections.contains(name))
+        {
             let mut pending = current.clone();
             pending
                 .database

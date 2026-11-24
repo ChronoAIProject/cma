@@ -12,6 +12,7 @@ use layer3_adapter::{permanent_custody::PermanentCustody, HomeVolumePolicy, Home
 mod backup_compatibility_tests;
 #[path = "census_tests.rs"]
 mod census_tests;
+pub(in crate::store) use census_tests::prepare_source;
 #[path = "commit_test_support.rs"]
 mod commit_support;
 #[path = "completion_tests.rs"]

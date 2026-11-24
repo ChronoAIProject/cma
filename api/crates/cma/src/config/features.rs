@@ -62,6 +62,7 @@ pub(crate) struct FeatureFlags {
     pub startup_sibling_hold_enabled: bool,
     pub retained_reopen_enabled: bool,
     pub retained_suspended_reopen_enabled: bool,
+    pub retained_repeat_reopen_enabled: bool,
     pub agent_skill_upgrade_enabled: bool,
     pub shared_runtime_output: bool,
     pub model_budget_writes_enabled: bool,
@@ -114,6 +115,7 @@ pub(crate) struct FeatureFlags {
     pub retained_context_lookup: bool,
     pub context_diagnostics: bool,
     pub event_driven_reconciliation: bool,
+    pub resume_agent_reconciliation: bool,
     pub stale_turn_reconciliation: bool,
     pub stale_turn_terminal: bool,
     pub agent_connection_observations: bool,
@@ -218,6 +220,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_RETAINED_SUSPENDED_REOPEN_ENABLED",
             )?,
+            retained_repeat_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REPEAT_REOPEN_ENABLED")?,
             agent_skill_upgrade_enabled: flag(lookup, "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")?,
             access_snapshot_session: super::access_snapshot::enabled(lookup)?,
             resource_list_batch_reads: flag(lookup, "CHRONO_RESOURCE_LIST_BATCH_READS_ENABLED")?,
@@ -264,6 +267,10 @@ impl FeatureFlags {
             event_driven_reconciliation: flag(
                 lookup,
                 "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
+            )?,
+            resume_agent_reconciliation: flag(
+                lookup,
+                "CHRONO_AGENT_RECONCILIATION_RESUME_ENABLED",
             )?,
             empty_discovery: flag(lookup, "CHRONO_EMPTY_DISCOVERY_COALESCING_ENABLED")?,
             agent_connection_observations: flag(

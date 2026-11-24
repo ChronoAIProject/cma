@@ -25,6 +25,10 @@ fn frozen_account_pre_backup_census_matches_the_exact_develop_descriptor() {
     assert_eq!(
         introduced,
         [
+            "resource_execution_effects_v1",
+            "resource_execution_grants_v1",
+            "resource_execution_records_v1",
+            "resource_revocation_operations_v1",
             crate::store::sandbox_usage_export::CAPTURES,
             crate::store::sandbox_usage_export::EVIDENCE,
             crate::store::sandbox_usage_export::OUTBOX,
