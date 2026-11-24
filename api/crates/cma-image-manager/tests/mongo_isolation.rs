@@ -13,6 +13,8 @@ use mongodb::{
 mod public_images;
 #[path = "support/shared_schema.rs"]
 mod shared_schema;
+#[path = "support/worker_dispatch.rs"]
+mod worker_dispatch;
 #[tokio::test]
 #[ignore = "requires the authenticated image-manager Mongo contract fixture"]
 async fn isolated_credentials_preserve_owner_idempotency_shares_and_build_fences() {

@@ -8,7 +8,9 @@ use mongodb::IndexModel;
 
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 
-const MAX_SESSION_ID_BYTES: usize = 128;
+pub(super) const MAX_SESSION_ID_BYTES: usize = 128;
+pub(super) const EXPIRY_INDEX: &str = "sandbox_session_expiry";
+pub(super) const LEGACY_V1_FIELD_COUNT: usize = 3;
 
 mod exclusive;
 
@@ -142,7 +144,7 @@ impl SandboxSessionStore for MongoSandboxStore {
 
 /// Only the exact unversioned shape written by #1341 is a known v1 lease.
 pub(super) fn is_legacy_v1(document: &Document) -> bool {
-    if document.len() != 3 {
+    if document.len() != LEGACY_V1_FIELD_COUNT {
         return false;
     }
     let (Ok(id), Ok(sandbox_id), Ok(expiry)) = (
@@ -164,7 +166,7 @@ pub(super) async fn ensure_indexes(
                 .keys(doc! { "sandbox_id": 1, "lease_expires_at": 1 })
                 .options(
                     IndexOptions::builder()
-                        .name("sandbox_session_expiry".to_owned())
+                        .name(EXPIRY_INDEX.to_owned())
                         .build(),
                 )
                 .build(),

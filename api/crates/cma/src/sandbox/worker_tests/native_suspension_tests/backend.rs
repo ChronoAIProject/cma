@@ -1,6 +1,8 @@
 //! A provider object keeps its handle while in-memory runtime Pods come and go.
 use super::*;
 mod recovery;
+mod reopen_fixture;
+mod retained_policy;
 mod retirement;
 use layer3_adapter::hosted::{HostedAgentOpenSettings, HostedBackend};
 use layer3_adapter::provider::ProviderSandboxRequest;
@@ -30,6 +32,9 @@ pub(super) struct NativeBackend {
     pub lose_resume: Arc<AtomicBool>,
     pub lose_delete: Arc<AtomicBool>,
     pub reject_reopen: Arc<AtomicBool>,
+    pub fail_reopen_transiently: Arc<AtomicBool>,
+    pub reopen_output: Arc<reopen_fixture::StartupOutput>,
+    pub adoption_pause: Arc<Mutex<Option<Arc<RetirementProbePause>>>>,
     pub hold_reopen: Arc<AtomicBool>,
     pub reopen_entered: Arc<Notify>,
     pub reopen_release: Arc<Notify>,
@@ -85,12 +90,6 @@ impl NativeBackend {
         row.request = request;
         // The retained provider object and failed Pod have not been replaced.
     }
-    pub async fn restart_process(&self) {
-        self.retirement_incarnation.fetch_add(1, Ordering::SeqCst);
-        let rows = self.row.lock().await;
-        let pod = rows.as_ref().unwrap().pod.as_ref().unwrap();
-        self.inner.restart_persistent_process(pod).await.unwrap();
-    }
     pub async fn lose_object(&self) {
         self.row.lock().await.take();
     }
@@ -117,6 +116,12 @@ fn absent() -> layer3_adapter::AdapterError {
 
 #[async_trait::async_trait]
 impl HostedBackend for NativeBackend {
+    fn retained_startup_policy(
+        &self,
+    ) -> Option<&dyn layer3_adapter::hosted::HostedRetainedStartupPolicy> {
+        Some(self)
+    }
+
     async fn run_recovery_command(
         &self,
         handle: &RuntimeHandle,
@@ -232,7 +237,12 @@ impl HostedBackend for NativeBackend {
             .into_iter()
             .find(|row| row.handle == pod)
             .unwrap();
-        observation.handle = RuntimeHandle::new("agent-sandbox:retained-crd:original-uid");
+        observation.handle = RuntimeHandle::new(if self.pools.is_some() {
+            // Match the original native Claim/Sandbox authority returned by Pools.
+            "agent-sandbox:warm-member:member-uid"
+        } else {
+            "agent-sandbox:retained-crd:original-uid"
+        });
         let handle = observation.handle.clone();
         *rows = Some(Row {
             request,
@@ -266,6 +276,11 @@ impl HostedBackend for NativeBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> layer3_adapter::Result<Option<RuntimeObservation>> {
+        let pause = self.adoption_pause.lock().unwrap().take();
+        if let Some(pause) = pause {
+            pause.entered.notify_one();
+            pause.release.notified().await;
+        }
         let rows = self.row.lock().await;
         let Some(row) = rows.as_ref() else {
             return Ok(None);
@@ -398,16 +413,8 @@ impl HostedBackend for NativeBackend {
         settings: HostedAgentOpenSettings,
         updates: tokio::sync::mpsc::Sender<ConversationUpdate>,
     ) -> layer3_adapter::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
-        if resume.is_some() {
-            if self.hold_reopen.swap(false, Ordering::SeqCst) {
-                self.reopen_entered.notify_one();
-                self.reopen_release.notified().await;
-            }
-            if self.reject_reopen.load(Ordering::SeqCst) {
-                return Err(layer3_adapter::AdapterError::Rejected(
-                    "fixture retained conversation rejected".into(),
-                ));
-            }
+        if let Some(native) = &resume {
+            self.before_reopen(native, &updates).await?;
         }
         let (mut channel, receipt) = self
             .inner

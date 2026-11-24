@@ -11,12 +11,14 @@ impl ControlPlaneComposition {
 }
 
 pub(crate) struct ControlPlaneComposition {
+    pub creation_outcomes: Option<Arc<crate::store::creation_outcomes::CreationOutcomes>>,
     // Reserved for document purge/reclaim and account erasure workers, never routes.
     #[allow(dead_code)]
     pub document_blob_maintenance:
         Option<Arc<dyn layer2_core::document_artifacts::DocumentBlobMaintenance>>,
     pub router: Router,
     pub agent_manager: Option<Arc<crate::agent_manager::AgentManager>>,
+    pub agent_relay: Option<Arc<crate::agent_manager::relay::Relay>>,
     pub activity_worker: Option<crate::activity::queue::ActivityWorker>,
     pub workers: crate::worker_supervision::Workers,
     pub worker_observations: crate::store::worker_observations::Observations,
@@ -32,6 +34,7 @@ pub(crate) struct ControlPlaneComposition {
     pub sandbox_control_scheduler: crate::commands::SandboxControlScheduler,
     pub sandbox_lifecycle: SandboxLifecycleComposition,
     pub native_warm_pools: Arc<crate::warm_pools::NativeWarmPools>,
+    pub runtime_pointer: Option<Arc<crate::runtime_pointer::RuntimePointerController>>,
     pub native_prepared: crate::sandbox::native_prepared::NativePreparedWorker,
     pub agent_access_worker: crate::agent_access_worker::AgentAccessWorker,
 }

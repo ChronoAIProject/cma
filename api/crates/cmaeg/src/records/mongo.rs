@@ -1,5 +1,6 @@
 //! Gateway-owned sealed record persistence. No Agent Manager collections.
 use super::{AuthorityGuard, RecordError, RecordHead, RecordKind, RecordValue};
+use crate::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
@@ -256,7 +257,7 @@ impl MongoRecords {
             .session(&mut session)
             .await
             .map_err(failure)?;
-        session.commit_transaction().await.map_err(failure)?;
+        session.commit_guarded().await.map_err(failure)?;
         Ok(1)
     }
     pub(super) async fn put_with_retention(

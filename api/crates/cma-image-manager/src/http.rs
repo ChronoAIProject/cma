@@ -23,6 +23,7 @@ pub struct App {
     pub store: Store,
     pub auth: NyxIdAuth,
     pub executor: Executor,
+    pub registry: ImageRegistry,
 }
 /// The handler annotations register both HTTP methods and OpenAPI operations.
 pub(crate) fn api_router() -> OpenApiRouter<Arc<App>> {
@@ -317,10 +318,11 @@ async fn build(
     let u = actor(&a, &h, p::BUILD).await?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(BuildView::from(
+        Json(BuildView::new(
             a.store
                 .create_build(&u.subject, &id, key(&h)?, input)
                 .await?,
+            &a.registry,
         )),
     ))
 }
@@ -339,7 +341,7 @@ async fn builds(
             .image_builds(&u.subject, &id, false, &q.after)
             .await?,
         |b| &b.id,
-        BuildView::from,
+        |build| BuildView::new(build, &a.registry),
     )))
 }
 #[utoipa::path(get, path = "/v1/images/{id}/versions", operation_id = "image_manager_versions", tag = "versions",
@@ -357,7 +359,7 @@ async fn versions(
             .image_builds(&u.subject, &id, true, &q.after)
             .await?,
         |b| &b.id,
-        VersionView::from,
+        |build| VersionView::new(build, &a.registry),
     )))
 }
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -376,8 +378,9 @@ async fn resolve(
     Json(input): Json<Resolve>,
 ) -> ResponseResult<Json<VersionView>> {
     let u = actor(&a, &h, p::USE).await?;
-    Ok(Json(VersionView::from(
+    Ok(Json(VersionView::new(
         a.store.resolve(&u.subject, &id, &input.version).await?,
+        &a.registry,
     )))
 }
 #[utoipa::path(get, path = "/v1/images/{id}/versions/{version}", operation_id = "image_manager_version", tag = "versions",
@@ -389,8 +392,9 @@ async fn version(
     Path((id, version)): Path<(String, String)>,
 ) -> ResponseResult<Json<VersionView>> {
     let u = actor(&a, &h, p::READ).await?;
-    Ok(Json(VersionView::from(
+    Ok(Json(VersionView::new(
         a.store.version(&u.subject, &id, &version).await?,
+        &a.registry,
     )))
 }
 #[utoipa::path(get, path = "/v1/builds/{id}", operation_id = "image_manager_build_read", tag = "builds",
@@ -402,7 +406,10 @@ async fn build_read(
     Path(id): Path<String>,
 ) -> ResponseResult<Json<BuildView>> {
     let u = actor(&a, &h, p::BUILD_READ).await?;
-    Ok(Json(BuildView::from(a.store.build(&u.subject, &id).await?)))
+    Ok(Json(BuildView::new(
+        a.store.build(&u.subject, &id).await?,
+        &a.registry,
+    )))
 }
 #[utoipa::path(get, path = "/v1/builds/{id}/logs", operation_id = "image_manager_logs", tag = "builds",
     params(("id" = String, Path)),

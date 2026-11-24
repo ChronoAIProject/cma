@@ -211,6 +211,7 @@ fn source_view(source: &Source) -> SourceView {
             topic_creation: _,
             message_events: _,
             channel_posts: _,
+            member_join_chat_ids: _,
             bot_id,
             bot_username,
             admission,

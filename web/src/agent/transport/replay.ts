@@ -1,5 +1,5 @@
 import { rateLimitDelay } from './readRetry';
-import type { V2AgentStreamFrame } from '@cma/client';
+import type { V2AgentStreamFrame, ExternalApprovalProjection } from '@cma/client';
 import { transientReadFailure } from '../loadAgent';
 import type { AgentV2Session } from './client';
 import { ReadinessWake } from '../readinessWait';
@@ -24,6 +24,7 @@ export async function followV2Agent(
   signal: AbortSignal,
   onEvent: (frame: V2AgentStreamFrame) => void,
   onFailure: (message?: string) => void,
+  onExternalApprovalProjection?: (projection: ExternalApprovalProjection) => void,
 ): Promise<void> {
   let cursor = afterCursor;
   let retry = 250;
@@ -52,6 +53,8 @@ export async function followV2Agent(
         const observing = AbortSignal.any([signal, attempt.signal]);
         await v2.authorize(observing);
         await v2.events.events(v2.journal.agentId, {
+          externalApprovals: true,
+          onExternalApprovalProjection,
           afterCursor: cursor,
           messageBindings: true,
           toolOutput: true,

@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import ci_retry
-from ci_tracks.git_comparison import comparison_details, shallow
+from ci_tracks.git_comparison import comparison_details, first_parents, shallow
 from staging_cd_behind_fixture import Develop
 from staging_cd_common import Refusal
 from staging_cd_compatibility import GROUP, RECIPE, VERSION_FILE
@@ -677,6 +677,9 @@ class ReleaseQueueWindowTests(unittest.TestCase):
             self.assertTrue(shallow(clone))
             anchor = repo.commits[2]
             self.assertEqual(comparison_details(clone, {"after": anchor}, "push")[2], "shallow-history")
+            self.assertEqual(first_parents(clone, [anchor]), {anchor: repo.commits[1]})
+            with self.assertRaises(ValueError):
+                first_parents(clone, [repo.commits[0]])
             self.assertEqual(comparison_details(clone, {"after": anchor}, "push", allow_shallow_parent=True),
                              (repo.commits[1], anchor, None))
         selector = (Path(queue.__file__).parent / "ci_tracks/batch_selection.py").read_text()

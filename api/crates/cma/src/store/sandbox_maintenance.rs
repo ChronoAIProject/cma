@@ -1,5 +1,6 @@
 //! Evidence-backed Mongo admission of automatic Sandbox maintenance.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use layer2_core::ids::SandboxId;
 use layer2_core::now_rfc3339;
@@ -24,6 +25,7 @@ mod evidence;
 pub(crate) mod mongo_integration_tests;
 mod policy_fence;
 mod retained_availability;
+pub(crate) mod retained_transition;
 mod retry;
 mod transaction;
 
@@ -161,27 +163,27 @@ async fn schedule(
         {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
         if receipt.event.is_none() {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Ok(receipt.outcome);
         }
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => return Ok(receipt.outcome),
             CommitOutcome::Retry(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
             }
             CommitOutcome::Unknown(error) => {
@@ -237,7 +239,7 @@ async fn preview(
         IntegrityFailurePolicy::ReportOnly,
     )
     .await;
-    let abort = session.abort_transaction().await;
+    let abort = session.abort_guarded().await;
     if result.is_ok() {
         abort.map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
     }

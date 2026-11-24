@@ -30,6 +30,8 @@ import { triggerDispatch } from './public-contract/triggers.js';
 import { experienceDispatch } from './public-contract/experience.js';
 import { agentEventsV2Dispatch } from './public-contract/agent-events-v2.js';
 import { agentBrowserDispatch } from './public-contract/agent-browser.js';
+import { agentReplyPreviewDispatch } from './public-contract/agent-reply-preview.js';
+import { agentOriginalRequestDispatch } from './public-contract/agent-original-request.js';
 import {
   expectation,
   expectedProjection,
@@ -46,6 +48,13 @@ const dispatch: Record<string, Dispatch> = {
   'GET /api/v1/account/deletion': ({ client, options }) => client.accountDeletion.status(options),
   'POST /api/v1/account/deletion': ({ client, body, command }) =>
     client.accountDeletion.request(body, command),
+  'GET /api/v1/account/legal-consent': ({ client, options }) => client.legalConsent.status(options),
+  'PUT /api/v1/account/legal-consent': ({ client, body, options }) =>
+    client.legalConsent.accept(body, options),
+  'GET /api/v1/account/privacy-export': ({ client, query, options }) =>
+    client.privacyExports.inventory('owner-a', query.get('cursor') ?? undefined, options),
+  'GET /api/v1/account/privacy-export/agents/{id}/transcript': ({ client, param, options }) =>
+    client.privacyExports.transcriptPage('owner-a', param('id'), undefined, options),
   ...capacityRecoveryDispatch,
   ...deliverableDispatch(corpus),
   ...usageDispatch,
@@ -60,6 +69,8 @@ const dispatch: Record<string, Dispatch> = {
   ...experienceDispatch,
   ...agentEventsV2Dispatch,
   ...agentBrowserDispatch,
+  ...agentReplyPreviewDispatch,
+  ...agentOriginalRequestDispatch,
 };
 
 function response(fixture: ContractCase): Response {

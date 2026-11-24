@@ -18,7 +18,7 @@ mod pair;
 #[path = "typed_fence/scenarios.rs"]
 mod scenarios;
 use fixture::{assert_attempts, Fixture};
-use scenarios::{Kind, Request};
+use scenarios::{Kind, Outcome, Request};
 
 async fn exercise(kind: Kind, failures: usize, labels: &[&str], stale: bool) {
     let mut f = Fixture::new().await;
@@ -100,15 +100,28 @@ async fn exercise_inner(
         "admission cannot execute a native turn"
     );
     if failures == 1 && !unknown && !stale {
-        result.expect("known-aborted leaf fence must retry in a fresh transaction");
+        assert!(matches!(
+            result.expect("known-aborted leaf fence must retry in a fresh transaction"),
+            Outcome::Reserved | Outcome::QueuedInput(QueuedInputOutcome::Applied(_))
+        ));
         assert_eq!(hits, 1);
         assert_eq!(attempts, 2);
         assert_eq!(after[2].len(), before[2].len() + request.added_commands());
     } else {
-        assert!(
-            result.is_err(),
-            "uncertain/stale/exhausted leaf must not publish"
-        );
+        if stale && matches!(kind, Kind::Edit) {
+            assert!(
+                matches!(
+                    result,
+                    Ok(Outcome::QueuedInput(QueuedInputOutcome::StaleObservation))
+                ),
+                "stale queued edit must retain its typed refusal"
+            );
+        } else {
+            assert!(
+                result.is_err(),
+                "uncertain/stale/exhausted leaf must not publish"
+            );
+        }
         assert_eq!(after, before);
         if unknown {
             assert_eq!((hits, attempts), (1, 1));

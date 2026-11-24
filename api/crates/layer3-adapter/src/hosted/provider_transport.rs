@@ -53,6 +53,7 @@ pub struct ProviderHostedControlTransport {
     bounded_permission_state: bool,
     bounded_update_relay: bool,
     shared_runtime_output: bool,
+    native_close_agent_lane: bool,
 }
 
 #[derive(Clone)]

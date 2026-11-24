@@ -12,6 +12,7 @@ const CLASSES: &[&str] = &[
     "platform_budget_exhausted",
     "agent_log_capacity_exceeded",
     "conversation_output_gap",
+    AGENT_TURN_NO_PROGRESS,
     "runtime_lost",
     SOURCE_DEFERRED_FAILURE,
 ];
@@ -139,4 +140,28 @@ fn deferred_proof_stays_private_and_original_after_visible_failure_projection() 
         assert_eq!(failure.class, SOURCE_DEFERRED_FAILURE);
         assert!(!failure.detail.contains("SENTINEL"));
     }
+}
+#[test]
+fn service_timeout_and_approval_failures_use_only_fixed_public_copy() {
+    for class in [
+        "agent_turn_timeout",
+        "approval_timeout",
+        "approval_denied",
+        "approval_expired",
+        "approval_wait_disconnected",
+    ] {
+        let projected = super::public_agent_turn_failure(&super::TypedFailure {
+            class: class.into(),
+            detail: "PRIVATE_APPROVAL_RECEIPT_SENTINEL".into(),
+        });
+        assert_eq!(projected.class, class);
+        assert!(!projected.detail.contains("SENTINEL"));
+        assert_eq!(super::public_agent_turn_failure(&projected), projected);
+    }
+    let generic = super::public_agent_turn_failure(&super::TypedFailure {
+        class: "agent_turn_timeout".into(),
+        detail: "untrusted".into(),
+    });
+    assert!(!generic.detail.contains("approval"));
+    assert!(!generic.detail.contains("no new progress"));
 }

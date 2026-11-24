@@ -15,7 +15,12 @@ impl SandboxReconciler {
         // The progress lock serializes both lanes, including outer cancellation.
         if self.failed_runtime_recovery.is_some() {
             let mut recovery = self.recovery_schedule.lock().await;
-            if recovery.take_turn() {
+            // A platform spend stop defers automatic recovery, as it defers
+            // managed runtime updates (decision 26): recovery reopens a failed
+            // Sandbox as Active through an image rotation that starts a
+            // runtime. Candidates keep their eligibility and recover after
+            // the lift; the deferred turn goes to the ordinary sweep.
+            if recovery.take_turn() && !self.platform_spend_stop(now).await {
                 recovery.run(self).await?;
                 return Ok(false);
             }

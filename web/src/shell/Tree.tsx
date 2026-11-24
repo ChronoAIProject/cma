@@ -1,12 +1,16 @@
+import { selectAgentAction } from './agentActionDispatch';
 import { useTreeFocus } from './useTreeFocus';
 import { Presence } from '../ui/Presence';
-import { useId, useState } from 'react';
+import { useId } from 'react';
+import { useTreeCollapse } from './useTreeCollapse';
 import {
   sandboxChildrenAvailable,
   sandboxChildrenReadable,
   sandboxChildStatus,
 } from '../sandbox/lifecycle';
 import { sandboxStatusPresentation } from '../sandbox/presentation';
+import { sandboxHasParkedRuntimeUpdate } from '../sandbox/parkedRuntimeUpdate';
+import { taskPresentation } from './taskPresentation';
 import type { AppRoute } from '../routing/routes';
 import { toneDot } from '../ui/Badge';
 import {
@@ -17,12 +21,14 @@ import {
   IconFolderOpenOutline16,
   IconPauseOutline16,
 } from '../ui/icons';
+import type { AgentDetail } from '../api/types';
+import type { RuntimeAttention } from './runtimeAttention';
 import type { NavigationSandbox } from './navigation';
 import { TreeRow } from './TreeRow';
 import { agentActions, sandboxActions, workspaceActions } from './treeActions';
 import { CreationBadge, useTreeCreation } from './treeCreation';
 import './Tree.css';
-import { statusLabel } from '../vocabulary/status';
+import { statusLabel, statusTone } from '../vocabulary/status';
 import { taskActivityOrder } from './taskGroups';
 import { activityLabel, agentSignal, stateMeta, keyboardNavigation } from './treePresentation';
 import { PersonalAgentTree } from './PersonalAgentTree';
@@ -61,6 +67,10 @@ export type TreeAction =
 
 export interface TreeProps {
   readonly currentTask?: CurrentTask;
+  readonly selectedRetired?: AgentDetail;
+  readonly onShowAll?: () => void;
+  readonly attention?: RuntimeAttention;
+  readonly showDeletionProgress?: boolean;
   readonly active?: boolean;
   readonly resourceClient?: ResourceViewsClient;
   readonly viewerId: string;
@@ -79,25 +89,12 @@ export interface TreeProps {
   readonly onAction: (action: TreeAction) => void;
 }
 
-function storageKey(viewerId: string): string {
-  return `cma:tree:${viewerId}:collapsed`;
-}
-
-function restored(viewerId: string): Set<string> {
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(storageKey(viewerId)) ?? '[]');
-    return new Set(
-      Array.isArray(parsed)
-        ? parsed.filter((value): value is string => typeof value === 'string')
-        : [],
-    );
-  } catch {
-    return new Set();
-  }
-}
-
 export function Tree({
   currentTask,
+  selectedRetired,
+  onShowAll,
+  attention,
+  showDeletionProgress = true,
   active = true,
   resourceClient,
   viewerId,
@@ -135,25 +132,18 @@ export function Tree({
   );
   const groupId = useId();
   const focus = useTreeFocus();
-  const [collapsed, setCollapsed] = useState(() => restored(viewerId));
-  const toggle = (node: string) => {
-    setCollapsed((current) => {
-      const next = new Set(current);
-      if (next.has(node)) next.delete(node);
-      else next.add(node);
-      localStorage.setItem(storageKey(viewerId), JSON.stringify([...next]));
-      return next;
-    });
-  };
+  const { collapsed, toggle } = useTreeCollapse(viewerId);
 
   return (
     <div className="resource-tree" {...focus}>
-      <DeletionProgressList
-        sandboxes={deletingItems.map(({ sandbox }) => sandbox)}
-        onViewStatus={(id) =>
-          onViewDeletion ? onViewDeletion(id) : onNavigate({ kind: 'sandbox', sandboxId: id })
-        }
-      />
+      {showDeletionProgress ? (
+        <DeletionProgressList
+          sandboxes={deletingItems.map(({ sandbox }) => sandbox)}
+          onViewStatus={(id) =>
+            onViewDeletion ? onViewDeletion(id) : onNavigate({ kind: 'sandbox', sandboxId: id })
+          }
+        />
+      ) : null}
       <Presence>
         {refreshError === undefined ? null : (
           <p className="resource-tree__notice" role="alert">
@@ -165,6 +155,9 @@ export function Tree({
         <PersonalAgentTree
           viewerId={viewerId}
           currentTask={currentTask}
+          selectedRetired={selectedRetired}
+          onShowAll={onShowAll}
+          attention={attention}
           active={active}
           items={visibleItems}
           statusFilter={statusFilter}
@@ -216,6 +209,7 @@ export function Tree({
                         !sandboxBusy && !refreshError && sandboxChildrenAvailable(sandbox);
                       const sandboxExpanded = childrenAvailable && !collapsed.has(sandboxNode);
                       const presentation = sandboxStatusPresentation(sandbox);
+                      const parked = sandboxHasParkedRuntimeUpdate(sandbox);
                       const paused = presentation.status === 'paused';
                       return (
                         <div className="resource-tree__branch" key={sandbox.id}>
@@ -227,7 +221,10 @@ export function Tree({
                             route={{ kind: 'sandbox', sandboxId: sandbox.id }}
                             selected={route.kind === 'sandbox' && route.sandboxId === sandbox.id}
                             expanded={childrenAvailable ? sandboxExpanded : undefined}
-                            reviving={presentation.status === 'reviving'}
+                            reviving={
+                              presentation.status === 'reviving' &&
+                              presentation.group === 'changing'
+                            }
                             meta={
                               <>
                                 <span className="tree-row__state" data-tone={presentation.tone}>
@@ -287,6 +284,7 @@ export function Tree({
                                 .map((workspace) => {
                                   const workspaceNode = `workspace:${workspace.id}`;
                                   const workspaceReady = workspace.status === 'ready';
+                                  const workspaceFailed = workspace.status === 'failed';
                                   const selectedAgent =
                                     route.kind === 'agent'
                                       ? workspace.agents.find((agent) => agent.id === route.agentId)
@@ -299,6 +297,16 @@ export function Tree({
                                         nodeId={workspaceNode}
                                         parentId={sandboxNode}
                                         level={2}
+                                        route={
+                                          workspaceFailed
+                                            ? { kind: 'workspace', workspaceId: workspace.id }
+                                            : undefined
+                                        }
+                                        selected={
+                                          workspaceFailed &&
+                                          route.kind === 'workspace' &&
+                                          route.workspaceId === workspace.id
+                                        }
                                         label={
                                           selectedAgent?.runtimeMetadata?.workingDirectory?.trim() ||
                                           workspace.path ||
@@ -313,9 +321,14 @@ export function Tree({
                                         }
                                         meta={
                                           <>
-                                            {statusLabel(
-                                              sandboxChildStatus(sandbox, workspace.status),
-                                            )}
+                                            {parked &&
+                                            !['failed', 'removed', 'removing'].includes(
+                                              workspace.status,
+                                            )
+                                              ? presentation.label
+                                              : statusLabel(
+                                                  sandboxChildStatus(sandbox, workspace.status),
+                                                )}
                                             <TreeFactsSummary
                                               channelFacts={channelFacts}
                                               facts={facts}
@@ -358,6 +371,24 @@ export function Tree({
                                                 sandbox,
                                                 agent.status,
                                               );
+                                              const task = parked
+                                                ? taskPresentation(
+                                                    agent,
+                                                    sandbox,
+                                                    refreshError ? 'stale' : 'fresh',
+                                                    currentTask,
+                                                  )
+                                                : undefined;
+                                              const observation =
+                                                task === undefined
+                                                  ? undefined
+                                                  : {
+                                                      label: task.label,
+                                                      tone:
+                                                        task.group === 'Needs attention'
+                                                          ? ('error' as const)
+                                                          : statusTone(agent.status),
+                                                    };
                                               return (
                                                 <TreeRow
                                                   key={agent.id}
@@ -370,6 +401,7 @@ export function Tree({
                                                     agent.id,
                                                     20,
                                                     sandbox.color,
+                                                    observation,
                                                   )}
                                                   route={{ kind: 'agent', agentId: agent.id }}
                                                   selected={
@@ -393,6 +425,7 @@ export function Tree({
                                                         <span>Task time unavailable</span>
                                                       )}
                                                     </>,
+                                                    observation,
                                                   )}
                                                   actions={agentActions(agent.status, permissions, {
                                                     sandbox:
@@ -405,14 +438,14 @@ export function Tree({
                                                   })}
                                                   onNavigate={onNavigate}
                                                   onAction={(kind) =>
-                                                    onAction({
-                                                      kind: kind as
-                                                        | 'stop_agent'
-                                                        | 'delete_agent'
-                                                        | 'export_history'
-                                                        | 'export_retained_conversation',
-                                                      agentId: agent.id,
-                                                    })
+                                                    selectAgentAction(
+                                                      kind,
+                                                      agent.id,
+                                                      onAction,
+                                                      agent.sandboxId === sandbox.id
+                                                        ? sandbox.id
+                                                        : undefined,
+                                                    )
                                                   }
                                                 />
                                               );

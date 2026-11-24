@@ -1,4 +1,5 @@
 //! Shared transaction isolation, error classification and bounded commit retries.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::error::{
     Error, ErrorKind, WriteFailure, TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT,
 };
@@ -8,7 +9,7 @@ use mongodb::ClientSession;
 const COMMIT_ATTEMPTS: usize = 5;
 const DUPLICATE_KEY: i32 = 11_000;
 
-pub(in crate::store) fn is_duplicate_key(error: &Error) -> bool {
+pub(crate) fn is_duplicate_key(error: &Error) -> bool {
     match error.kind.as_ref() {
         ErrorKind::Write(WriteFailure::WriteError(write)) => write.code == DUPLICATE_KEY,
         ErrorKind::Command(command) => command.code == DUPLICATE_KEY,
@@ -24,19 +25,19 @@ pub(in crate::store) fn is_transient(error: &Error) -> bool {
 }
 
 /// A body error with uncertain outcome never permits a new transaction.
-pub(in crate::store) fn is_confirmed_body_retry(error: &Error) -> bool {
+pub(crate) fn is_confirmed_body_retry(error: &Error) -> bool {
     !error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT)
         && (is_transient(error) || is_duplicate_key(error))
 }
 
-pub(in crate::store) enum CommitResolution<E> {
+pub(crate) enum CommitResolution<E> {
     Committed,
     Retry(E),
     Unknown(E),
     Failed(E),
 }
 
-pub(in crate::store) type CommitOutcome = CommitResolution<Error>;
+pub(crate) type CommitOutcome = CommitResolution<Error>;
 
 enum CommitFailure<E> {
     Unknown(E),
@@ -55,7 +56,7 @@ impl CommitOperation for ClientSession {
     type Error = Error;
 
     async fn commit(&mut self) -> Result<(), CommitFailure<Error>> {
-        self.commit_transaction().await.map_err(|error| {
+        self.commit_guarded().await.map_err(|error| {
             if error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) {
                 CommitFailure::Unknown(error)
             } else if is_transient(&error) {
@@ -67,14 +68,21 @@ impl CommitOperation for ClientSession {
     }
 }
 
-pub(in crate::store) async fn start_transaction(session: &mut ClientSession) -> Result<(), Error> {
+pub(crate) async fn start_transaction(session: &mut ClientSession) -> Result<(), Error> {
     session
         .start_transaction()
         .read_concern(ReadConcern::snapshot())
         .write_concern(WriteConcern::majority())
         .await?;
+    // Read before the work-publication fence's Sandbox or Workspace write.
+    if let Err(error) = crate::store::transaction_barrier::open(session).await {
+        if let Err(abort) = session.abort_guarded().await {
+            tracing::warn!(error = %abort, "ordinary work transaction abort was not acknowledged");
+        }
+        return Err(error);
+    }
     if let Err(error) = crate::store::work_publication::fence_current(session).await {
-        if let Err(abort) = session.abort_transaction().await {
+        if let Err(abort) = session.abort_guarded().await {
             tracing::warn!(error = %abort, "ordinary work transaction abort was not acknowledged");
         }
         return Err(error);
@@ -82,9 +90,9 @@ pub(in crate::store) async fn start_transaction(session: &mut ClientSession) -> 
     Ok(())
 }
 
-pub(in crate::store) async fn commit_transaction(session: &mut ClientSession) -> CommitOutcome {
+pub(crate) async fn commit_transaction(session: &mut ClientSession) -> CommitOutcome {
     if let Err(error) = layer2_core::sandbox::store::WorkAuthority::current() {
-        if let Err(abort) = session.abort_transaction().await {
+        if let Err(abort) = session.abort_guarded().await {
             tracing::warn!(error = %abort, "expired work publication abort was not acknowledged");
         }
         return CommitOutcome::Failed(Error::custom(error));
@@ -112,7 +120,7 @@ pub(in crate::store) async fn commit_transaction_with_refusal(
             .await;
         // Close local driver state; this second best-effort abort proves nothing
         // about an uncertain first reply and cannot release the durable marker.
-        if session.abort_transaction().await.is_err() {
+        if session.abort_guarded().await.is_err() {
             tracing::warn!(
                 stage = "precommit_refusal",
                 outcome = "local_abort_failed",

@@ -1,6 +1,6 @@
 //! Verify a fresh, owner-scoped repository snapshot before paid allocation.
 
-use layer1_public::rest::AgentLifecycleRepository;
+use layer1_public::rest::{AgentLifecycleRepository, RepositoryAccessRefusal};
 use layer2_core::profiles::authoring::AuthoringSourceError;
 
 use super::*;
@@ -17,6 +17,13 @@ pub(super) trait RepositoryReadiness: Send + Sync {
 }
 
 impl InlineAgentLifecycle {
+    pub(crate) fn with_managed_repository_preflight(self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        self.managed_repository_preflight
+            .set(enabled)
+            .expect("repository preflight is configured once before use");
+        self
+    }
+
     #[cfg(test)]
     pub(in crate::agent_lifecycle) fn with_repository_preflight(
         self: Arc<Self>,
@@ -35,13 +42,18 @@ impl InlineAgentLifecycle {
         if input.behavior != LifecycleBehavior::PromptRepository
             || input.request.sandbox_id.is_some()
             || input.request.workspace_id.is_some()
-            || input.request.initial_message.is_none()
         {
             return Ok(());
         }
         let Some(repository) = input.request.repository.as_ref() else {
             return Ok(());
         };
+        if self.managed_repository_preflight.get() == Some(&true) {
+            return self.wait_for_managed_repository_access(caller, input).await;
+        }
+        if input.request.initial_message.is_none() {
+            return Ok(());
+        }
         let commit = match retained_commit {
             Some(commit) => valid_commit(commit)?,
             None if input.existing_sandbox_id.is_some() => return Ok(()),
@@ -65,6 +77,37 @@ impl InlineAgentLifecycle {
             repository.reference = Some(commit);
         }
         Ok(())
+    }
+
+    async fn wait_for_managed_repository_access(
+        &self,
+        caller: &Caller,
+        input: &ProvisionInput,
+    ) -> Result<(), AgentLifecycleProvisioningError> {
+        // Both the runtime archive reader and Agent setup use the credentialed
+        // slug. Public metadata can become stale before dispatch, and a retained
+        // commit proves only content identity. Hold until runtime dispatch can
+        // prove the effective grant or enforce anonymous source access.
+        tracing::info!(operation_id = %input.lease.id, "Managed repository access verification paused");
+        let mut content = profiles::inline_sandbox_content(
+            &input.request,
+            input.runtime_image.clone(),
+            input.capacity,
+            input.limits,
+            input.behavior,
+            None,
+        )?;
+        let github = layer2_core::ServiceId::new(crate::trigger::GITHUB_SERVICE);
+        if !content.nyxid_services.contains(&github) {
+            content.nyxid_services.push(github);
+        }
+        let profile = self
+            .repository_connection_profile(caller, input, content)
+            .await?;
+        Err(AgentLifecycleProvisioningError::RepositoryAccessRequired {
+            connection_target: admission::connection_profile_target(&profile),
+            reason: RepositoryAccessRefusal::VerificationUnavailable,
+        })
     }
 
     async fn require_repository_connections(
@@ -94,6 +137,18 @@ impl InlineAgentLifecycle {
         };
         // The wizard needs an owner-authorized profile with these exact services.
         // Leave the real Workspace and Sandbox profile keys free for the pinned ref.
+        let profile = self
+            .repository_connection_profile(caller, input, content)
+            .await?;
+        Err(admission::sandbox_admission_error(error, &profile))
+    }
+
+    async fn repository_connection_profile(
+        &self,
+        caller: &Caller,
+        input: &ProvisionInput,
+        content: SandboxProfileContent,
+    ) -> Result<SandboxProfileRef, AgentLifecycleProvisioningError> {
         let target = self
             .profiles
             .create_sandbox_configured_for_owner(
@@ -108,13 +163,10 @@ impl InlineAgentLifecycle {
             )
             .await
             .map_err(validation::profile_error)?;
-        Err(admission::sandbox_admission_error(
-            error,
-            &SandboxProfileRef {
-                id: SandboxProfileId(target.profile_id.to_string()),
-                revision: target.revision,
-            },
-        ))
+        Ok(SandboxProfileRef {
+            id: SandboxProfileId(target.profile_id.to_string()),
+            revision: target.revision,
+        })
     }
 }
 

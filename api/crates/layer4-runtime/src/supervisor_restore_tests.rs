@@ -53,6 +53,7 @@ fn credential() -> RequestFrame {
         operation_id: "replacement-credential".into(),
         value: RuntimeCredential::new("secret"),
         custody_generation: Some(2),
+        github_route: None,
     })
 }
 

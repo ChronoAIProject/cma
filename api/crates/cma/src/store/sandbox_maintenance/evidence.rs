@@ -9,7 +9,14 @@ use super::super::agent_log_integrity::{scan_complete_log_with_policy, Integrity
 use super::super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::transaction::ApplyError;
 
+pub(super) mod legacy_log_budget;
 pub(super) mod scoped;
+pub(super) mod sessions;
+
+pub(super) struct LogValidation {
+    pub(super) failure_policy: IntegrityFailurePolicy,
+    pub(super) legacy_formats_checked: bool,
+}
 
 // Historical legacy-only fixture entry; production requires captured sources.
 #[cfg(test)]
@@ -25,7 +32,11 @@ pub(super) async fn live_activities(
         session,
         observed_at,
         None,
-        IntegrityFailurePolicy::Quarantine,
+        LogValidation {
+            failure_policy: IntegrityFailurePolicy::Quarantine,
+            legacy_formats_checked: false,
+        },
+        false,
     )
     .await
 }
@@ -36,9 +47,10 @@ pub(super) async fn live_activities_with_sources(
     session: &mut ClientSession,
     observed_at: &str,
     sources: Option<&scoped::CapturedActivities>,
-    failure_policy: IntegrityFailurePolicy,
+    log_validation: LogValidation,
+    sessions_already_clear: bool,
 ) -> Result<Vec<SandboxAgentActivity>, ApplyError> {
-    let open_session = store
+    let open_session = !sessions_already_clear && store
         .sandbox_sessions
         .find_one(doc! {
             "sandbox_id": agents.first().map(|agent| agent.sandbox_id.as_str()).unwrap_or_default(),
@@ -59,14 +71,16 @@ pub(super) async fn live_activities_with_sources(
         if !scoped {
             // This entry has no scoped proof. A v2 envelope refuses before the
             // legacy scan; it cannot silently select a lifetime fallback.
-            capture_segmented(store, agent, session).await?;
+            if !log_validation.legacy_formats_checked {
+                capture_segmented(store, agent, session).await?;
+            }
             scan_complete_log_with_policy(
                 ScanCaller::InactivityProof,
                 store,
                 &agent.id,
                 agent.conversation.last_seq,
                 session,
-                failure_policy,
+                log_validation.failure_policy,
                 |entry| {
                     newest = Some(entry);
                     Ok(())
@@ -91,8 +105,8 @@ pub(super) async fn live_activities_with_sources(
             .await
             .map_err(ApplyError::Driver)?
             .is_some();
-        activity.open_terminal_or_desktop_session =
-            open_session || layer2_core::sandbox::has_open_desktop_session(&agent.sandbox_id);
+        activity.open_terminal_or_desktop_session = !sessions_already_clear
+            && (open_session || layer2_core::sandbox::has_open_desktop_session(&agent.sandbox_id));
         activities.push(activity);
     }
     Ok(activities)

@@ -12,6 +12,8 @@ use crate::{HomeVolumePolicy, HomeVolumeRequest, RuntimeImage};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativePoolSpec {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cold_canary: bool,
     pub image: RuntimeImage,
     pub cpu_millis: u32,
     pub memory_mib: u32,
@@ -22,6 +24,11 @@ impl NativePoolSpec {
     pub fn validate(&self) -> Result<()> {
         crate::runtime_bootstrap::admit_pool_image(&self.image)?;
         self.home.validate()?;
+        if self.cold_canary && !(self.home.is_native_vct() && self.home.mounts_full_home()) {
+            return Err(rejected(
+                "runtime canary pools require native full-home allocation",
+            ));
+        }
         if self.home.mounts_full_home()
             && self
                 .image
