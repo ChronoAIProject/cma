@@ -124,6 +124,7 @@ async fn successor_cannot_store_a_result_using_predecessor_dispatch_custody() {
         .unwrap();
     let material = CredentialMaterial {
         source: Default::default(),
+        github_route: None,
         sandbox_id: fixture.claim.id.clone(),
         owner: fixture.claim.owner.clone(),
         authority: layer2_core::sandbox::SandboxCredentialAuthority {

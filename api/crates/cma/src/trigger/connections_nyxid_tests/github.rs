@@ -91,6 +91,10 @@ async fn verifies_only_the_selected_active_user_service_and_its_live_grant() {
         Err(ServiceConnectionError::Refused)
     ));
     assert!(provider.state.github_proxy_reads.lock().unwrap().is_empty());
+    assert!(matches!(
+        broker.verify_github_repo_connection(&owner, "strong").await,
+        Err(ServiceConnectionError::Unavailable(_))
+    ));
     *provider.state.github_proxy_scopes.lock().unwrap() = Some("read:user".into());
     assert!(matches!(
         broker.verify_github_repo_connection(&owner, "strong").await,
@@ -102,7 +106,7 @@ async fn verifies_only_the_selected_active_user_service_and_its_live_grant() {
         .await
         .unwrap();
     let reads = provider.state.github_proxy_reads.lock().unwrap().clone();
-    assert_eq!(reads, vec![("github-catalog".into(), "strong".into()); 2]);
+    assert_eq!(reads, vec![("github-catalog".into(), "strong".into()); 3]);
 
     let mut inactive = strong.clone();
     inactive["is_active"] = json!(false);

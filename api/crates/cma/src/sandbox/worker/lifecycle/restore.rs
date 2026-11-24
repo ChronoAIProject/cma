@@ -314,7 +314,7 @@ impl SandboxWorker {
             operation_id: operation_id(&sandbox, "deliver_credential")?,
             value: RuntimeCredential::new(material.value.expose()),
             custody_generation: Some(authority.generation),
-            github_route: None,
+            github_route: material.github_route.clone(),
         };
         if let Err(error) = self
             .dependencies

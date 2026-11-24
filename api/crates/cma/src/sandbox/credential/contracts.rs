@@ -12,13 +12,35 @@ pub(crate) struct CredentialMaterial {
     pub owner: SubjectId,
     pub authority: SandboxCredentialAuthority,
     pub value: SecretValue,
+    pub github_route: Option<layer3_adapter::GithubCredentialRoute>,
 }
 
 impl CredentialMaterial {
+    pub(crate) fn matches_connection(&self, sandbox: &Sandbox) -> bool {
+        let expected = sandbox
+            .credential
+            .service_scope
+            .as_ref()
+            .and_then(|scope| scope.connection.as_ref());
+        match (expected, &self.github_route) {
+            (None, None) => true,
+            (Some(selection), Some(route)) => {
+                selection.service.as_str() == crate::trigger::GITHUB_SERVICE
+                    && selection.connection_id == route.service_id
+                    && route.is_valid()
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn matches_source(&self) -> bool {
         use layer2_core::sandbox::SandboxCredentialSource;
         use sha2::{Digest, Sha256};
         self.source.accepts(&self.authority)
+            && self
+                .github_route
+                .as_ref()
+                .is_none_or(|route| self.source.is_managed() && route.is_valid())
             && match &self.source {
                 SandboxCredentialSource::Managed => true,
                 SandboxCredentialSource::Binding { .. } => {

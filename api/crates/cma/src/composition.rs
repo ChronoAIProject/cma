@@ -232,7 +232,8 @@ impl ControlPlaneComposition {
             .map(reqwest::Url::parse)
             .transpose()
             .map_err(|_| "NyxID public origin is invalid".to_string())?;
-        let sandbox_credentials = credentials::sandbox_credentials(config, auth.clone(), &stores);
+        let sandbox_credentials =
+            credentials::sandbox_credentials(config, auth.clone(), &stores, broker.clone());
         let model_routes = routes::models(
             config,
             projections.reads(),

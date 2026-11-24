@@ -17,6 +17,7 @@ pub(crate) fn start_title_scheduler(
     let credentials = Arc::new(Credentials(
         Mutex::new(Some(CredentialMaterial {
             source: Default::default(),
+            github_route: None,
             sandbox_id: sandbox.id.clone(),
             owner: sandbox.owner.clone(),
             authority: sandbox.credential.current.clone().unwrap(),

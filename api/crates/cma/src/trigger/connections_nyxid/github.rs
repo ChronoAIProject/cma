@@ -150,6 +150,7 @@ impl NyxidServiceConnectionBroker {
         Ok((catalog_id, rows))
     }
 
+    #[cfg(test)]
     pub(in crate::trigger) async fn verify_github_repo_connection(
         &self,
         owner: &SubjectId,
@@ -197,12 +198,12 @@ impl NyxidServiceConnectionBroker {
                     Some(deadline),
                 )
                 .await?;
-            if !response
+            let scopes = response
                 .headers()
                 .get("x-oauth-scopes")
                 .and_then(|value| value.to_str().ok())
-                .is_some_and(|scopes| scopes.split(',').any(|scope| scope.trim() == "repo"))
-            {
+                .ok_or_else(|| unavailable("selected GitHub credential scope was not observed"))?;
+            if !scopes.split(',').any(|scope| scope.trim() == "repo") {
                 return Err(ServiceConnectionError::Refused);
             }
             Ok(VerifiedGitHubConnection {

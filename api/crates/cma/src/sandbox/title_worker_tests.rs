@@ -147,6 +147,7 @@ impl Fixture {
         let credentials = Arc::new(Credentials(
             Mutex::new(Some(CredentialMaterial {
                 source: Default::default(),
+                github_route: None,
                 sandbox_id: sandbox.id,
                 owner: sandbox.owner,
                 authority: sandbox.credential.current.unwrap(),
