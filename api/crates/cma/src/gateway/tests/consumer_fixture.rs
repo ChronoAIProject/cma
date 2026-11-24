@@ -116,6 +116,7 @@ impl ConsumerGateway {
             native_whatsapp_media_controls_enabled: false,
             native_whatsapp_reactions_enabled: false,
             native_telegram_received_reactions_enabled: false,
+            native_telegram_member_joins_enabled: false,
             native_discord_received_reactions_enabled: false,
             native_whatsapp_templates_enabled: false,
             native_whatsapp_groups_enabled: false,
