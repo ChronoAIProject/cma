@@ -2,7 +2,7 @@ import { Fragment, useRef, useState } from 'react';
 import type { WarmPoolView } from '@cma/client';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-import { Input } from '../ui/Input';
+import { ValidatedNumberInput } from './ValidatedNumberInput';
 import { TableActions, TableCell, TableNote } from '../ui/Table';
 import type { StatusTone } from '../vocabulary/status';
 import type { OperatorClient } from './client';
@@ -141,9 +141,8 @@ export function WarmPoolRow({
                 if (validPoolNumber(target)) void save(Number(target));
               }}
             >
-              <Input
+              <ValidatedNumberInput
                 aria-label="Ready Sandbox target"
-                type="number"
                 required
                 min={0}
                 max={1000}
