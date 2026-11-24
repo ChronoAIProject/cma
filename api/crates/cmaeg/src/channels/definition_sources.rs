@@ -28,7 +28,10 @@ pub(crate) fn check_github_sources(
     Ok(())
 }
 
-pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationError> {
+pub(super) fn build_sources(
+    sources: &[SourceRequest],
+    current: Option<&ChannelDefinition>,
+) -> Result<Vec<Source>, ValidationError> {
     let mut result = Vec::with_capacity(sources.len());
     for (index, source) in sources.iter().enumerate() {
         let pointer = format!("/sources/{index}");
@@ -112,7 +115,23 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 topic_creation: *topic_creation,
                 message_events: *message_events,
                 channel_posts: *channel_posts,
-                member_join_chat_ids: member_join_chat_ids.clone(),
+                member_join_chat_ids: member_join_chat_ids.clone().unwrap_or_else(|| {
+                    if !message_events {
+                        return Vec::new();
+                    }
+                    current
+                        .and_then(|definition| {
+                            definition.sources.iter().find_map(|source| match source {
+                                Source::Telegram {
+                                    bot_id: saved_bot,
+                                    member_join_chat_ids,
+                                    ..
+                                } if saved_bot == bot_id => Some(member_join_chat_ids.clone()),
+                                _ => None,
+                            })
+                        })
+                        .unwrap_or_default()
+                }),
                 bot_id: bot_id.clone(),
                 bot_username: bot_username.clone(),
                 admission: admission.clone(),

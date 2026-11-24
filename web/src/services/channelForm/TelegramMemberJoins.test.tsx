@@ -49,7 +49,7 @@ it('offers only explicitly allowed groups after discovery and allows clearing a 
   expect(screen.queryByLabelText('Welcome new members in -101')).toBeNull();
   expect(screen.getByLabelText('Welcome new members in -100')).toBeChecked();
   fireEvent.click(screen.getByLabelText('Welcome new members in -100'));
-  expect(onChange).toHaveBeenLastCalledWith(source);
+  expect(onChange).toHaveBeenLastCalledWith({ ...source, member_join_chat_ids: [] });
 });
 
 it('retains a saved opt-in, refuses gated expansion, and checks group admission', () => {

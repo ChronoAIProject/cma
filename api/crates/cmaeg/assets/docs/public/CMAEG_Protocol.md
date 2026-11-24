@@ -2092,7 +2092,8 @@ native Telegram message events contract (maintainer guidance).
 
 Direct native Telegram sources may also set `member_join_chat_ids` to up to 16
 exact Telegram group IDs from the source's chat allowlist. The list defaults
-to empty. Authoring requires the `native_telegram_member_joins_enabled`
+to empty. An update retains the saved list when omitted and clears it with an
+empty list. Disabling message events also clears the opt-in. Authoring requires the `native_telegram_member_joins_enabled`
 capability, retained message events, open senders and group admission set to
 `all`. A supported group join produces one `telegram.group_members_joined`
 CloudEvent per Telegram update. Its `data.members` contains the newly joined

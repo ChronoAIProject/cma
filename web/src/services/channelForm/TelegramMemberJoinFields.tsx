@@ -39,7 +39,7 @@ export function TelegramMemberJoinFields({
           }
           onChange={(checked) => {
             const next = checked ? [...selected, id] : selected.filter((chat) => chat !== id);
-            onChange(optional(value, 'member_join_chat_ids', next.length ? next : undefined));
+            onChange(optional(value, 'member_join_chat_ids', next));
           }}
         />
       ))}

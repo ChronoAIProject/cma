@@ -54,3 +54,35 @@ fn telegram_member_join_source_is_optional_in_legacy_records_and_removal_survive
         );
     }
 }
+
+#[test]
+fn telegram_member_join_public_update_distinguishes_omitted_and_empty_lists() {
+    use crate::channels::{definition_sources::build_sources, SourceRequest};
+
+    let mut input = routing_fixture::routed();
+    let mut source = routing_fixture::telegram();
+    source["message_events"] = true.into();
+    source["admission"] = json!({
+        "type": "scoped", "senders": {"type": "open"},
+        "chats": {"type": "allowlist", "ids": ["-100"]}, "groups": "all",
+    });
+    input["sources"] = json!([source]);
+    input["sources"][0]["member_join_chat_ids"] = json!(["-100"]);
+    let saved = routing_fixture::definition(input);
+    saved.validate().unwrap();
+    let project = |body| {
+        let request: SourceRequest = serde_json::from_value(body).unwrap();
+        build_sources(&[request], Some(&saved)).unwrap()
+    };
+    assert_eq!(project(source.clone()), saved.sources);
+    source["member_join_chat_ids"] = json!([]);
+    assert!(matches!(&project(source.clone())[0],
+        cmaeg_core::channel::Source::Telegram { member_join_chat_ids, .. } if member_join_chat_ids.is_empty()));
+    source
+        .as_object_mut()
+        .unwrap()
+        .remove("member_join_chat_ids");
+    source["message_events"] = false.into();
+    assert!(matches!(&project(source)[0],
+        cmaeg_core::channel::Source::Telegram { member_join_chat_ids, .. } if member_join_chat_ids.is_empty()));
+}

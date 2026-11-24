@@ -109,10 +109,10 @@ pub enum SourceRequest {
         /// Admit native channel posts as non-human channel identities; requires message_events.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         channel_posts: bool,
-        /// Exact Telegram group chat IDs opted into member join events.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        /// Exact opted-in group IDs. Omit to retain the saved list; send an empty list to clear it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schema(max_items = 16)]
-        member_join_chat_ids: Vec<String>,
+        member_join_chat_ids: Option<Vec<String>>,
         bot_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bot_username: Option<String>,
