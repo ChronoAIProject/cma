@@ -15,6 +15,7 @@ use super::sandbox_events::{event_document, read_event};
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::sandboxes::{admitted_sandbox_document, read_sandbox, read_sandbox_admission_replay};
 
+mod canary;
 mod catalogue;
 mod global;
 mod names;
@@ -143,6 +144,7 @@ where
             SandboxStoreError::AccountDeletionInProgress,
         ));
     }
+    let canary_lease = canary::verify(&database, admission, session).await?;
     if catalogue {
         catalogue::admit(&database, &admission.sandbox, session).await?;
     }
@@ -216,7 +218,10 @@ where
     global::admit(store, admission, &ceilings, session).await?;
     let mut sandbox = admission.sandbox.clone();
     sandbox.name = names::choose_name(store, session, owner, &admission.name).await?;
-    let prepared_outcome = if admission.binding.is_none() {
+    let prepared_outcome = if let Some(lease) = canary_lease {
+        canary::bind(&database, &lease, &sandbox.id, session).await?;
+        "miss_runtime_canary_cold_only"
+    } else if admission.binding.is_none() {
         use super::native_prepared::ClaimOutcome;
         // The transaction snapshot already exists. Observe now, so a health
         // completion visible in this snapshot cannot postdate our lease clock.
