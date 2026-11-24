@@ -16,6 +16,7 @@ use super::sandbox_mongo::{
 };
 
 mod acquisition;
+mod binding_diagnostics;
 mod effects;
 mod failure;
 mod membership;

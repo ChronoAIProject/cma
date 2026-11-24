@@ -72,7 +72,7 @@ pub(crate) struct SandboxReconciler {
     failed_runtime_recovery: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
     recovery_schedule: tokio::sync::Mutex<recovery::Schedule>,
     progress: tokio::sync::Mutex<Option<sweep::Progress>>,
-    binding_holds: binding_holds::BindingHolds,
+    binding_holds: Arc<binding_holds::BindingHolds>,
     platform_spend: Option<Arc<dyn platform::PlatformSpendSweep>>,
     platform_schedule: platform::PlatformSpendSchedule,
     background_work: crate::background::BackgroundWork,
@@ -130,9 +130,14 @@ impl SandboxReconciler {
         self
     }
 
-    pub(crate) fn with_binding_hold_metrics(mut self, enabled: bool) -> Self {
-        self.binding_holds = self.binding_holds.with_metrics(enabled);
+    pub(crate) fn with_binding_hold_metrics(self, enabled: bool) -> Self {
+        self.binding_holds.set_metrics(enabled);
         self
+    }
+
+    pub(crate) fn binding_diagnostics(&self) -> Arc<dyn crate::binding_diagnostics::LocalSource> {
+        self.binding_holds.enable_diagnostics();
+        self.binding_holds.clone()
     }
 
     pub(crate) fn with_profile_agents(mut self, agents: Arc<AgentService>) -> Self {

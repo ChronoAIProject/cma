@@ -16,6 +16,7 @@ mod agent_manager;
 mod agent_models;
 mod auth;
 mod background;
+mod binding_diagnostics;
 mod bot_setups;
 mod commands;
 mod composition;

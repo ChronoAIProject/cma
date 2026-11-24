@@ -5,6 +5,7 @@ pub(crate) mod activity;
 mod adapter;
 mod agent_manager;
 pub(crate) mod backend_free;
+mod binding_diagnostics;
 mod bindings;
 mod bots;
 mod capacity_recovery;
@@ -79,9 +80,7 @@ impl ControlPlaneComposition {
         let adapter = adapters.owned;
         let auth =
             credentials::authentication(config, &stores, &users, &activity, settings.clone())?
-                .with_account_standing(standing.clone())
-                .with_account_deletion_enabled(config.account_deletion_enabled)
-                .with_privacy_export_enabled(config.features.privacy_export_enabled);
+                .with_account_standing(standing.clone());
         let credentials::Connections {
             broker,
             browser: browser_connections,
@@ -194,10 +193,7 @@ impl ControlPlaneComposition {
         .with_warm_pools(native_warm_pools.clone())
         .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))
         .with_admission_ceilings(stores::admission_ceilings(&stores, config))
-        .with_admission_control(Arc::new(
-            layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
-                .with_writes_enabled(config.features.admission_control_writes_enabled),
-        ));
+        .with_admission_control(stores::admission_control(&stores, config));
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
             stores.sandbox_profiles.clone(),
@@ -257,6 +253,13 @@ impl ControlPlaneComposition {
             runtime::lifecycle_config(config, worker_holder.clone(), ownership.clone(), &stores),
         )?;
         sandbox_lifecycle.register_inline_lifecycle(lifecycle_drain);
+        let (admin, binding_diagnostics) = binding_diagnostics::compose(
+            config,
+            &agent_manager,
+            &stores,
+            &sandbox_lifecycle,
+            admin,
+        )?;
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
             standing: standing.clone(),
             common_first_messages: config.features.trigger_command_admission,
@@ -469,12 +472,13 @@ impl ControlPlaneComposition {
             ),
             relay.as_ref(),
         );
+        let router = agent_manager::internal_router(&relay, &agent_manager, router);
         Ok(Self {
             activity_worker,
             workers,
             document_blob_maintenance,
             worker_observations,
-            router: agent_manager::internal_router(&relay, &agent_manager, router),
+            router: binding_diagnostics::router(binding_diagnostics, router),
             agent_manager,
             agent_relay: relay,
             auth,

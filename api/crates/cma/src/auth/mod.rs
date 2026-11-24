@@ -135,6 +135,7 @@ pub struct AuthState {
     standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
     account_deletion_enabled: bool,
     privacy_export_enabled: bool,
+    binding_diagnostics_enabled: bool,
     platform_settings: Option<Arc<layer2_core::PlatformSettingsService>>,
     bot_father_username: Option<String>,
     agent_key_service_id: Option<String>,
@@ -219,6 +220,7 @@ impl AuthState {
             standing: Arc::new(layer2_core::account_deletion::AvailableAccounts),
             account_deletion_enabled: false,
             privacy_export_enabled: false,
+            binding_diagnostics_enabled: false,
             platform_settings: None,
             bot_father_username: None,
             bindings: None,
@@ -454,47 +456,4 @@ fn rebase(endpoint: &str, base: &str) -> Result<String, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn trusted_mode_attaches_only_daily_authority() {
-        let auth = AuthState::in_memory(
-            AuthMode::Trusted {
-                subject: "developer".into(),
-            },
-            None,
-        );
-        let resolved = auth
-            .resolve_request(&HeaderMap::new())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(resolved.subject.as_str(), "developer");
-        assert!(resolved.authorization.allows(Capability::UseOwnSandboxes));
-        assert!(!resolved.authorization.allows(Capability::ConfigurePlatform));
-    }
-
-    #[test]
-    fn provider_diagnostics_redact_the_client_secret() {
-        let mode = AuthMode::Provider {
-            base_url: "https://identity.example".into(),
-            client_id: "client".into(),
-            client_secret: "never-print-me".into(),
-            public_url: "https://cma.example".into(),
-        };
-        assert!(!format!("{mode:?}").contains("never-print-me"));
-    }
-
-    #[test]
-    fn endpoint_rebasing_preserves_only_the_provider_path_and_query() {
-        assert_eq!(
-            rebase(
-                "https://public.example/oauth/token?audience=cma",
-                "http://identity.internal:9090"
-            )
-            .unwrap(),
-            "http://identity.internal:9090/oauth/token?audience=cma"
-        );
-    }
-}
+mod tests;
