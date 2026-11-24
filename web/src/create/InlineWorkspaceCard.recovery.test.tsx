@@ -101,3 +101,50 @@ it('unlocks an initially refused Workspace so corrected inputs use a new request
   expect(keys[1]).toEqual(expect.any(String));
   expect(keys[0]).not.toBe(keys[1]);
 });
+
+it('refuses an invalid Workspace repository URL and sends a corrected URL and ref', async () => {
+  const user = userEvent.setup();
+  const transport = restTransport();
+  const onCreated = vi.fn();
+  render(
+    <InlineWorkspaceCard
+      client={createRestWebClient(transport.sdk)}
+      sandboxId="sandbox-1"
+      onCreated={onCreated}
+      onClose={vi.fn()}
+    />,
+  );
+  await user.click(screen.getByRole('button', { name: 'Workspace source' }));
+  await user.click(screen.getByRole('menuitemradio', { name: 'Clone a GitHub repository' }));
+
+  const url = screen.getByLabelText('GitHub repository URL');
+  const submit = screen.getByRole('button', { name: 'Create workspace' });
+  expect(submit).toBeDisabled();
+  await user.type(url, 'not-a-url');
+  await user.tab();
+  expect(url).toHaveAttribute('aria-invalid', 'true');
+  expect(url).toHaveAccessibleDescription('Enter an HTTPS GitHub repository URL.');
+  expect(submit).toBeDisabled();
+  await user.click(submit);
+  expect(transport.fetch).not.toHaveBeenCalled();
+
+  await user.clear(url);
+  await user.type(url, 'https://github.com/example/project');
+  await user.type(screen.getByLabelText('Branch or ref (optional)'), 'feature/docs');
+  expect(url).not.toHaveAttribute('aria-invalid');
+  expect(submit).toBeEnabled();
+  transport.reply(WIRE_WORKSPACE, 201);
+  transport.reply(WIRE_WORKSPACE_DETAIL);
+  await user.click(submit);
+  await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+  const writes = transport.fetch.mock.calls.filter(([, init]) => init?.method === 'POST');
+  expect(writes).toHaveLength(1);
+  expect(JSON.parse(String(writes[0]![1]?.body))).toEqual({
+    name: 'workspace',
+    source: {
+      type: 'git_repository',
+      url: 'https://github.com/example/project',
+      reference: 'feature/docs',
+    },
+  });
+});
