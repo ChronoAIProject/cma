@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it } from 'vitest';
 import { createClient, type StoredPlatformSettings } from '@cma/client';
@@ -181,7 +181,7 @@ it.each([false, undefined])(
 );
 
 it.each([false, undefined])(
-  'keeps retained policy unavailable after loading request availability %s',
+  'keeps clean policy unavailable after refreshing request availability %s',
   async (request) => {
     const local = transport(retained, true, request);
     render(<PlatformSettings client={local.client} />);
@@ -189,13 +189,15 @@ it.each([false, undefined])(
     expect(amount()).toBeDisabled();
     expect(save()).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: 'Refresh settings availability' }));
-    await screen.findByText(/The current revision is 4/);
-    await userEvent.click(screen.getByRole('button', { name: 'Load current values' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Refresh settings availability' })).toBeEnabled(),
+    );
+    expect(screen.queryByText(/Your draft is retained/)).not.toBeInTheDocument();
     expect(save()).toBeDisabled();
     local.gates(true, true);
     await userEvent.click(screen.getByRole('button', { name: 'Refresh settings availability' }));
-    await screen.findByText(/The current revision is 4/);
-    await userEvent.click(screen.getByRole('button', { name: 'Load current values' }));
+    await waitFor(() => expect(amount()).toBeEnabled());
+    expect(screen.queryByText(/Your draft is retained/)).not.toBeInTheDocument();
     expect(amount()).toBeEnabled();
     expect(save()).toBeEnabled();
     expect(local.writes).toHaveLength(0);

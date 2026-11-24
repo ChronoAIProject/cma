@@ -164,6 +164,22 @@ impl MongoActivityStore {
         if let Some(action) = query.action {
             clauses.push(doc! { "record.action": action_bson(action)? });
         }
+        if query.exclude_successful_reads {
+            let reads = [
+                ActivityAction::Read,
+                ActivityAction::List,
+                ActivityAction::GatewayRecordRead,
+            ]
+            .into_iter()
+            .map(action_bson)
+            .collect::<Result<Vec<_>, _>>()?;
+            clauses.push(doc! {
+                "$nor": [{
+                    "record.action": { "$in": reads },
+                    "record.outcome.status": "succeeded",
+                }],
+            });
+        }
         if let Some(cursor) = query.cursor.as_deref() {
             let (recorded_at, id) = decode_cursor(cursor)?;
             clauses.push(doc! {

@@ -41,8 +41,8 @@ it.each(['provisioning', 'installing', 'active'] as const)(
     );
     expect(screen.queryByText(/cancel setup/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('checkbox'));
-    expect(screen.getByRole('button', { name: 'Delete Sandbox' })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'Request deletion' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep environment' }));
     expect(close).toHaveBeenCalledOnce();
     expect(deleteSandbox).not.toHaveBeenCalled();
     expect(deleteAgent).not.toHaveBeenCalled();
@@ -72,7 +72,7 @@ it.each(['checkpoint', 'replacement', 'retiring'] as const)(
     );
     await act(async () => {});
     fireEvent.click(screen.getByRole('checkbox'));
-    expect(screen.getByRole('button', { name: 'Delete Sandbox' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Request deletion' })).toBeEnabled();
     sandbox = {
       ...sandbox,
       status: change === 'retiring' ? 'retiring' : 'installing',
@@ -95,7 +95,7 @@ it.each(['checkpoint', 'replacement', 'retiring'] as const)(
       );
       expect(screen.queryByRole('button', { name: 'Check request' })).not.toBeInTheDocument();
     } else {
-      expect(screen.getByRole('button', { name: 'Delete Sandbox' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Request deletion' })).toBeDisabled();
       expect(screen.getByRole('dialog')).toHaveTextContent(
         'Wait for the current Sandbox operation to finish.',
       );

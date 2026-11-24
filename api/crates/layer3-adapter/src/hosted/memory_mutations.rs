@@ -4,13 +4,17 @@ use super::state::{
 };
 use super::{authority, MemoryRuntime};
 use crate::wire::{
-    AgentCloseReceipt, AgentHomeReceipt, AgentHomeRemoveReceipt, FencedReceipt, FencedRequest,
-    ResponseFrame, WireOperation,
+    AgentHomeReceipt, AgentHomeRemoveReceipt, FencedReceipt, FencedRequest, ResponseFrame,
+    WireOperation,
 };
 use crate::{
-    AgentCloseRequest, AgentHomePlan, AgentHomeRemoveRequest, WorktreeReceipt, WorktreeRef,
-    WorktreeRemoveReceipt, WorktreeRequest,
+    AgentHomePlan, AgentHomeRemoveRequest, WorktreeReceipt, WorktreeRef, WorktreeRemoveReceipt,
+    WorktreeRequest,
 };
+
+#[cfg(test)]
+#[path = "memory_skill_tests.rs"]
+mod skill_tests;
 
 pub(super) fn add_worktree(
     runtime: &mut MemoryRuntime,
@@ -215,63 +219,6 @@ pub(super) fn materialize_home(
     )
 }
 
-pub(super) fn close_agent(
-    runtime: &mut MemoryRuntime,
-    request: FencedRequest<AgentCloseRequest>,
-) -> crate::Result<ResponseFrame> {
-    let operation = WireOperation::CloseAgent;
-    let authority_fence = request.authority_fence;
-    let request = request.request;
-    let expected = format!("agent:{}:close:v1", request.agent_id.as_str());
-    validate(
-        request.has_valid_sha256(),
-        request.operation_id == expected && safe_identity(request.agent_id.as_str()),
-        operation,
-    )?;
-    let payload = fingerprint(&request)?;
-    authority::admit(
-        runtime,
-        authority::ResourceKey::AgentProcess(request.agent_id.clone()),
-        authority::Disposition::Absent,
-        authority_fence,
-        &request.operation_id,
-        &request.request_sha256,
-        &payload,
-        operation,
-    )?;
-    if let Some(response) = replay_operation(
-        runtime,
-        &request.operation_id,
-        &request.request_sha256,
-        &payload,
-        operation,
-    )? {
-        let ResponseFrame::CloseAgent(mut response) = response else {
-            return refused(operation, "operation_replay_mismatch");
-        };
-        response.authority_fence = authority_fence;
-        return Ok(ResponseFrame::CloseAgent(response));
-    }
-    if let Some(agent) = runtime.agents.get_mut(&request.agent_id) {
-        agent.running = false;
-    }
-    let response = ResponseFrame::CloseAgent(FencedReceipt::new(
-        authority_fence,
-        AgentCloseReceipt {
-            operation_id: request.operation_id.clone(),
-            request_sha256: request.request_sha256.clone(),
-            agent_id: request.agent_id,
-        },
-    ));
-    finish(
-        runtime,
-        request.operation_id,
-        request.request_sha256,
-        payload,
-        response,
-    )
-}
-
 pub(super) fn remove_home(
     runtime: &mut MemoryRuntime,
     request: FencedRequest<AgentHomeRemoveRequest>,
@@ -412,9 +359,9 @@ pub(super) fn install_skill(
                     "agent_skill_upgrade_conflict: previous installation differs".into(),
                 ));
             };
+            // Initial home plans may omit display names; the runtime proves archive content.
             if previous.id != upgrade.previous.id
                 || previous.version != upgrade.previous.version
-                || previous.name != upgrade.previous.name
                 || previous.archive_sha256 != upgrade.previous.archive_sha256
             {
                 return Err(crate::AdapterError::OperationIdentityConflict(

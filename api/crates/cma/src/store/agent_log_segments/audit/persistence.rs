@@ -1,6 +1,7 @@
 //! Each evidence batch and its durable progress cursor commit together.
 use super::super::projection;
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use std::collections::BTreeMap;
 
@@ -98,7 +99,7 @@ pub(super) async fn write(
     }
     .await;
     if let Err(error) = result {
-        let _ = session.abort_transaction().await;
+        let _ = session.abort_guarded().await;
         return Err(error);
     }
     commit(&mut session).await?;
@@ -229,11 +230,11 @@ async fn release(
             Ok(())
         }
         Ok(_) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             Err(SandboxStoreError::Conflict)
         }
         Err(error) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             Err(unavailable(error))
         }
     }

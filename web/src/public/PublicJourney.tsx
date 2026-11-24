@@ -386,6 +386,7 @@ function Entry({
         <Landing
           preview={preview}
           anonymous={state.status === 'anonymous'}
+          legalTerms={state.status === 'anonymous' ? state.legalTerms : undefined}
           busy={busy || recoveryBlocked || needsSignIn || state.status === 'checking'}
           onStart={() => start()}
           onRegister={() => start({ screen: 'register' })}

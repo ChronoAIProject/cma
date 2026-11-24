@@ -202,7 +202,14 @@ impl HttpAgentTitleGenerator {
                 }
                 body.extend_from_slice(&chunk);
             }
-            return Err(generation_failure(status, &body));
+            let failure = generation_failure(status, &body);
+            // Status only: the body may echo request content (#2266).
+            tracing::warn!(
+                status = status.as_u16(),
+                permanent = failure.is_permanent(),
+                "agent title provider request refused"
+            );
+            return Err(failure);
         }
         if response.headers().get_all(CONTENT_TYPE).iter().count() != 1
             || response
@@ -323,11 +330,13 @@ fn title_endpoint(base_url: &str) -> Option<Url> {
     {
         return None;
     }
-    Url::parse(&format!(
-        "{}{RESPONSES_PATH}",
-        base.as_str().trim_end_matches('/')
-    ))
-    .ok()
+    let path = base.path().trim_end_matches('/');
+    let suffix = match path {
+        // NyxID's scoped model service uses the same relative path as managed Codex.
+        "/api/v1/proxy/s/chrono-llm-public" | "/api/v1/proxy/s/chrono-llm" => "/responses",
+        _ => RESPONSES_PATH,
+    };
+    Url::parse(&format!("{}{suffix}", base.as_str().trim_end_matches('/'))).ok()
 }
 
 fn nonempty(value: &str) -> Option<&str> {

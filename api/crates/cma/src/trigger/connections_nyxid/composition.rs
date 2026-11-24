@@ -6,7 +6,7 @@ use layer2_core::trigger_domain::{
 };
 use layer2_core::{ServiceId, SubjectId};
 
-use super::{NyxidServiceConnectionBroker, PROVIDER_HTTP_TIMEOUT};
+use super::{NyxidServiceConnectionBroker, VerifiedGitHubConnection, PROVIDER_HTTP_TIMEOUT};
 use crate::auth::{AuthMode, AuthState};
 use crate::connections::{CodexSubscriptions, SubscriptionError};
 use layer3_adapter::codex::CODEX_SUBSCRIPTION_CONNECTION;
@@ -26,6 +26,35 @@ enum BrokerMode {
 }
 
 impl CmaServiceConnectionBroker {
+    pub(crate) async fn github_connections(
+        &self,
+        owner: &SubjectId,
+    ) -> Option<super::GitHubConnections> {
+        match &self.mode {
+            BrokerMode::Provider(broker) => Some(broker.github_connections(owner).await),
+            BrokerMode::Trusted => None,
+        }
+    }
+
+    pub(crate) async fn verify_github_repo_token(
+        &self,
+        credential: &crate::auth::persistence::SecretValue,
+        connection_id: &str,
+    ) -> Result<VerifiedGitHubConnection, ServiceConnectionError> {
+        match &self.mode {
+            BrokerMode::Provider(broker) => {
+                broker
+                    .verify_github_repo_token(
+                        credential,
+                        connection_id,
+                        tokio::time::Instant::now() + PROVIDER_HTTP_TIMEOUT,
+                    )
+                    .await
+            }
+            BrokerMode::Trusted => Err(ServiceConnectionError::Refused),
+        }
+    }
+
     /// Build the broker from the same auth configuration used by request auth.
     #[allow(
         dead_code,

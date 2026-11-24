@@ -36,6 +36,8 @@ for (const viewport of lifecycleViewports) {
     await task.pressSequentially('and this line');
     await expect(task).toHaveValue('Keep this task\nand this line');
     await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Templates', exact: true })).toBeFocused();
+    await page.keyboard.press('Tab');
     await expect(page.getByRole('button', { name: 'Cloud computer', exact: true })).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(page.getByRole('button', { name: 'Add git repo', exact: true })).toBeFocused();

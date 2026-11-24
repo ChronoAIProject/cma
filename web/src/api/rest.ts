@@ -31,6 +31,8 @@ import { agentFilesClient } from './rest/agentFiles';
 import { documentsClient } from './rest/documents';
 import { computerClient } from './rest/computer';
 import { exportRawHistory } from './rest/history';
+import { readReplyPreview } from './rest/replyPreview';
+import { readOriginalRequest } from './rest/originalRequest';
 import { BusinessReadError, readBusinessProblem } from './rest/businessReadProblem';
 
 /** The write succeeded; a failed detail read must not release its command key. */
@@ -79,6 +81,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
   };
   return {
     usageViews: createUsageClient(sdk),
+    legalConsent: sdk.legalConsent,
     deliverables: sdk.agents,
     documents: documentsClient(sdk.documents),
     browser: sdk.agentBrowser,
@@ -118,6 +121,8 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     resourceViews: sdk,
     readTaskTemplateSupport: async (options) =>
       (await sdk.readOpenApi(options))['x-cma-task-templates-v1'] === true,
+    readTaskTemplateV2Support: async (options) =>
+      (await sdk.readOpenApi(options))['x-cma-task-templates-v2'] === true,
     readTaskRepositorySupport: async (options) =>
       (await sdk.readOpenApi(options))['x-cma-task-repository'] === true,
     readTaskTitleModeSupport: async (options) =>
@@ -228,6 +233,9 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         !value ||
         typeof value !== 'object' ||
         value.id !== operationId ||
+        (value.accepted_at !== undefined &&
+          (typeof value.accepted_at !== 'string' ||
+            !Number.isFinite(Date.parse(value.accepted_at)))) ||
         !['queued', 'running', 'waiting_for_connection', 'succeeded', 'failed'].includes(
           value.status,
         ) ||
@@ -238,6 +246,8 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
             typeof value.connection !== 'object' ||
             !Array.isArray(value.connection.services) ||
             !value.connection.services.every((service) => typeof service === 'string') ||
+            (value.connection.repository_access !== undefined &&
+              value.connection.repository_access !== 'verification_unavailable') ||
             !isConnectionTarget(value.connection.target))) ||
         (value.status === 'waiting_for_connection' && value.connection === undefined) ||
         (value.status === 'succeeded' && (typeof value.agent_id !== 'string' || !value.agent_id))
@@ -285,6 +295,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       const page = await sdk.agents.events(id, {
         after: options?.cursor,
         signal: options?.signal,
+        ...(options?.cache === undefined ? {} : { cache: options.cache }),
         toolOutput: true,
       });
       return {
@@ -298,6 +309,8 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       };
     },
     readRetainedOutput: (id, options) => sdk.agents.retainedOutput(id, options),
+    readAgentReplyPreview: (id, options) => readReplyPreview(sdk, id, options),
+    readAgentOriginalRequest: (id, options) => readOriginalRequest(sdk, id, options),
     readAgentTranscript: async (id, options) => {
       const value = await sdk.agents.transcript(id, options);
       return {

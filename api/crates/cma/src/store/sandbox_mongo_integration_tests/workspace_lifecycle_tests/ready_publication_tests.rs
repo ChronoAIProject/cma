@@ -36,6 +36,7 @@ async fn retire(store: &MongoSandboxStore, id: &SandboxId, retired: bool) {
     store
         .commit(SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision,
             sandbox: Box::new(parent.clone()),
             event_at: MINUTE.into(),
@@ -57,6 +58,7 @@ async fn retire(store: &MongoSandboxStore, id: &SandboxId, retired: bool) {
         store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision,
                 sandbox: Box::new(parent),
                 event_at: TWO_MINUTES.into(),

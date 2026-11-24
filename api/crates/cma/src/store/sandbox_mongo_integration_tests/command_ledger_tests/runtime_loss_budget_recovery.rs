@@ -230,6 +230,7 @@ async fn suspended_reopen_closes_saved_turn_in_its_publication_transaction() {
             .unwrap();
         let source = snapshot.suspended_source().unwrap();
         let request = RetainedSuspendedReopenRequest {
+            repeat_authorized: false,
             proof: RetainedSuspendedReopenProof {
                 binding: source.binding.clone(),
                 home_identity: source.home_identity,

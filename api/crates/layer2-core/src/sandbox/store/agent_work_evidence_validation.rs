@@ -275,6 +275,7 @@ pub(super) fn validate_evidence(
         PublicationKind::Stop => matches!(
             mutation.agent_logs.as_slice(),
             [AgentLogKind::Stopped { reason }]
+                | [AgentLogKind::TurnInterrupted { .. }, AgentLogKind::Stopped { reason }]
                 if next.stop_reason.as_ref().is_some_and(|stop| stop.as_str() == reason)
         ),
         PublicationKind::Delete => {

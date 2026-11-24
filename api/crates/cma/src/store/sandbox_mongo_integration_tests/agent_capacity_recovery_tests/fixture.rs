@@ -133,7 +133,10 @@ pub(super) async fn prepare_capacity(store: &MongoSandboxStore, mut agent: Agent
 
 // Adoption must prove the original Created row. The generic worker fixture
 // deliberately starts at ConversationOpened and cannot qualify this contract.
-pub(super) async fn ready_with_created(store: &MongoSandboxStore, suffix: &str) -> Agent {
+pub(in crate::store::sandbox_mongo_integration_tests) async fn ready_with_created(
+    store: &MongoSandboxStore,
+    suffix: &str,
+) -> Agent {
     let (_, worktree, claimed) = claimed_agent_work_fixture(store, suffix).await;
     store
         .append_agent_log(

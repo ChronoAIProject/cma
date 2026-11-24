@@ -246,7 +246,7 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(status, 0)
         layers.assert_called_once()
         [(component, scope, observed, started, env)] = layers.snapshots
-        self.assertEqual((component, scope, observed), ("web", "cma-web", summary))
+        self.assertEqual((component, scope, observed), ("web", "cma-cd-web", summary))
         self.assertGreaterEqual(started, before - 1)
         self.assertEqual(env["CD_COMPONENT"], "web")
         # The ignored export failure no longer reads as a failed Dockerfile step.

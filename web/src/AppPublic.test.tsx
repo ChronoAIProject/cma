@@ -206,6 +206,7 @@ it.each(
       expect(Object.fromEntries(Object.entries(sessionStorage))).toEqual({
         'cma:task-viewer': 'unseen-cma-identity',
         'cma:agent-draft-owner': 'unseen-cma-identity',
+        'cma:preparation-draft-owner': 'unseen-cma-identity',
       });
       if (path === '/' && !visitor) {
         expect(screen.getByRole('textbox', { name: 'Your task' })).toHaveValue('');

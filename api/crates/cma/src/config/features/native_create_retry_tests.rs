@@ -18,3 +18,18 @@ fn native_create_retry_is_strict_independent_and_default_off() {
         );
     }
 }
+
+#[test]
+fn runtime_update_reopen_output_refusal_is_strict_and_default_off() {
+    const KEY: &str = "CHRONO_RUNTIME_UPDATE_REOPEN_OUTPUT_REFUSAL_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == KEY).then_some(value).flatten().map(str::to_owned))
+        })
+        .unwrap();
+        assert_eq!(flags.reopen_output_refusal_enabled, expected);
+    }
+    assert!(
+        FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "1".to_owned()))).is_err()
+    );
+}

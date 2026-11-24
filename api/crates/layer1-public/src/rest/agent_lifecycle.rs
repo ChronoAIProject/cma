@@ -158,6 +158,14 @@ pub struct AgentLifecycleEventView {
 pub struct AgentLifecycleConnectionRequired {
     pub services: Vec<String>,
     pub target: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_access: Option<RepositoryAccessRefusal>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RepositoryAccessRefusal {
+    VerificationUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -169,6 +177,8 @@ pub enum AgentLifecycleFailure {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AgentLifecycleOperationView {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accepted_at: Option<String>,
     pub status: String,
     pub phase: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -248,12 +258,19 @@ pub enum AgentLifecycleProvisioningError {
     SignInRequired,
     #[error("the selected Image Manager image is not accessible to this account")]
     ImageAccessDenied,
+    #[error("new custom image selections are unavailable")]
+    ImageSelectionUnsupported,
     #[error("invalid Agent lifecycle request: {0}")]
     Invalid(String),
     #[error("the selected services need to be connected before provisioning")]
     ConnectionRequired {
         services: Vec<String>,
         connection_target: Value,
+    },
+    #[error("GitHub repository access could not be verified")]
+    RepositoryAccessRequired {
+        connection_target: Value,
+        reason: RepositoryAccessRefusal,
     },
     #[error("Agent lifecycle request conflicts with existing state: {0}")]
     Conflict(String),
@@ -311,6 +328,12 @@ impl IntoResponse for AgentLifecycleProvisioningError {
                 "permission_denied",
                 self.to_string(),
             ),
+            Self::ImageSelectionUnsupported => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "agent-manager-image-selection-unsupported",
+                "image_selection_unsupported",
+                self.to_string(),
+            ),
             Self::Invalid(_) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "agent-manager-invalid-request",
@@ -321,6 +344,12 @@ impl IntoResponse for AgentLifecycleProvisioningError {
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "agent-manager-connection-required",
                 "connection_required",
+                self.to_string(),
+            ),
+            Self::RepositoryAccessRequired { .. } => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent-manager-repository-verification-unavailable",
+                "repository_verification_unavailable",
                 self.to_string(),
             ),
             Self::Conflict(_) => (
@@ -356,6 +385,27 @@ impl IntoResponse for AgentLifecycleProvisioningError {
 /// Provisioning port implemented by the composed Agent Manager.
 #[async_trait]
 pub trait AgentLifecycleProvisioner: Send + Sync {
+    async fn create_with_submission(
+        &self,
+        caller: &Caller,
+        context: Option<&CallerContext>,
+        delegated_credential: Option<&str>,
+        request: AgentLifecycleCreateRequest,
+        idempotency_key: &str,
+        submission: super::creation_outcomes::Submission,
+    ) -> Result<AgentLifecycleCreateReceipt, AgentLifecycleProvisioningError> {
+        if submission.fence.is_some() || submission.replay_operation_id.is_some() {
+            return Err(AgentLifecycleProvisioningError::Unavailable);
+        }
+        self.create(
+            caller,
+            context,
+            delegated_credential,
+            request,
+            idempotency_key,
+        )
+        .await
+    }
     async fn desktop_capability(
         &self,
         _caller: &Caller,

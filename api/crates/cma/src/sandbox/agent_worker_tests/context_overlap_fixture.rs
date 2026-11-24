@@ -24,3 +24,19 @@ pub(crate) async fn parents() -> (Agent, Sandbox, Workspace, layer2_core::sandbo
         .unwrap();
     (agent, sandbox, workspace, worktree)
 }
+
+pub(in crate::sandbox) async fn unbound_worker() -> (Arc<AgentWorker>, Agent) {
+    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let agent = harness.admit("inspection-correlation", vec![]).await;
+    let mut sandbox = harness
+        .store
+        .get_sandbox(&agent.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let expected = sandbox.revision;
+    sandbox.runtime = None;
+    sandbox.revision += 1;
+    harness.store.save_sandbox(expected, sandbox).await.unwrap();
+    (harness.worker, agent)
+}

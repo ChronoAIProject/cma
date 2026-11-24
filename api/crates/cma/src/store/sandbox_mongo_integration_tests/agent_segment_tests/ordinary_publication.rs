@@ -155,7 +155,7 @@ async fn adopted_output_abort_refusal_and_foreign_receipt_cannot_publish_or_ackn
     let mut session = client.start_session().await.unwrap();
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
     let receipt = scoped::apply(
-        crate::store::agent_log_telemetry::ScanCaller::ConversationPublication,
+        scoped::PublicationSource::Conversation,
         &store,
         &mutation,
         None,
@@ -180,7 +180,7 @@ async fn adopted_output_abort_refusal_and_foreign_receipt_cannot_publish_or_ackn
 
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
     let receipt = scoped::apply(
-        crate::store::agent_log_telemetry::ScanCaller::ConversationPublication,
+        scoped::PublicationSource::Conversation,
         &store,
         &mutation,
         None,

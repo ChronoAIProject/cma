@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::{
     resource_access::ResourceAccessStoreError,
     sandbox::store::{ProvenanceBackfillOutcome, ProvenanceBackfillProgress},
@@ -55,17 +56,17 @@ impl MongoSandboxStore {
                     id,
                     reason,
                 }) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return record_exception(self, &database, owner, &control, &id, reason)
                         .await
                         .map(Some);
                 }
                 Err(Failure::Driver(error)) if is_transient(&error) || is_duplicate_key(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     continue;
                 }
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(match error {
                         Failure::Store(error) => error,
                         _ => unavailable(),
@@ -73,7 +74,7 @@ impl MongoSandboxStore {
                 }
             };
             if progress == ProvenanceBackfillProgress::Busy {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(Some(progress));
             }
             match commit_transaction(&mut session).await {
@@ -282,7 +283,7 @@ async fn record_exception(
     }
     .await;
     if result.is_err() {
-        let _ = session.abort_transaction().await;
+        let _ = session.abort_guarded().await;
         return Err(unavailable());
     }
     match commit_transaction(&mut session).await {
@@ -303,9 +304,6 @@ pub(crate) async fn interrupt_for_test(store: &MongoSandboxStore, owner: &str) -
         .await
         .map_err(|_| unavailable())?;
     let result = execute(store, &database, owner, &mut session).await;
-    session
-        .abort_transaction()
-        .await
-        .map_err(|_| unavailable())?;
+    session.abort_guarded().await.map_err(|_| unavailable())?;
     result.map(|_| ()).map_err(|_| unavailable())
 }
