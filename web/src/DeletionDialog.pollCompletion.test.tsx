@@ -43,8 +43,10 @@ function fixture() {
   const deleteAgent = vi.fn();
   const stopAgent = vi.fn();
   const source = agentClient({ readAgent, readSandbox, readAgentEvents, deleteAgent, stopAgent });
+  let currentClient: typeof source;
   function Actions() {
     const observed = useDeletionNoticeReconciliation(source, 'owner', 0, true);
+    currentClient = observed.client;
     const actions = useResourceActions(
       observed.client,
       () => {},
@@ -65,8 +67,40 @@ function fixture() {
       </>
     );
   }
-  return { readAgent, readSandbox, readAgentEvents, deleteAgent, stopAgent, Actions };
+  return {
+    readAgent,
+    readSandbox,
+    readAgentEvents,
+    deleteAgent,
+    stopAgent,
+    Actions,
+    readOutsideDialog: () => currentClient.readAgent(AGENT_DETAIL.id),
+  };
 }
+
+it('shows confirmed deletion when another console read settles the open dialog', async () => {
+  persistDeletion('owner', {
+    action: { kind: 'delete_agent', agentId: AGENT_DETAIL.id },
+    key: 'accepted-delete',
+    accepted: true,
+  });
+  const { readAgent, readOutsideDialog, deleteAgent, stopAgent, Actions } = fixture();
+  render(<Actions />);
+  fireEvent.click(screen.getByRole('button', { name: 'Reopen request' }));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByRole('dialog')).toHaveAccessibleName('Deleting Agent');
+
+  readAgent.mockResolvedValue(terminal);
+  await act(async () => {
+    await readOutsideDialog();
+  });
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+
+  expect(restoreDeletions('owner')).toEqual([]);
+  expect(deleteAgent).not.toHaveBeenCalled();
+  expect(stopAgent).not.toHaveBeenCalled();
+  expect(screen.getByRole('dialog')).toHaveAccessibleName('Agent deleted');
+});
 
 it.each(['successful detail', 'parent refusal', 'history refusal'] as const)(
   'does not recreate a settled unknown receipt after polling returns %s',
