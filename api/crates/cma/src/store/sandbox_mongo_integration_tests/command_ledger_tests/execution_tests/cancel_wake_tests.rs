@@ -152,7 +152,7 @@ async fn periodic_tick_recovers_a_committed_cancel_without_a_wake_after_handoff(
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(discovery, [id.clone()]);
+    assert_eq!(discovery.as_slice(), std::slice::from_ref(&id));
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if store
