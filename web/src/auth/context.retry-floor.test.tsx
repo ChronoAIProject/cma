@@ -152,6 +152,41 @@ it.each([false, true])(
   },
 );
 
+it.each([false, true])(
+  'keeps navigation that starts a deferred outage across recovery checks: %s',
+  async (repeatOutage) => {
+    const { provider, current } = fixture({ status: 'anonymous' });
+    const signInSilently = vi.fn(() => false);
+    provider.signInSilently = signInSilently;
+    mount(provider);
+    await act(async () => {});
+
+    current.mockResolvedValueOnce(outage);
+    await act(async () => {
+      fireEvent(window, new Event('cma:navigate'));
+    });
+    await advance(1000);
+    await hints();
+    if (repeatOutage) current.mockResolvedValueOnce(outage);
+    await advance(88_999);
+    expect(current).toHaveBeenCalledTimes(2);
+    await advance(1);
+    expect(current).toHaveBeenCalledTimes(3);
+    if (repeatOutage) {
+      expect(signInSilently).toHaveBeenCalledOnce();
+      await advance(1000);
+      await hints();
+      await advance(88_999);
+      expect(current).toHaveBeenCalledTimes(3);
+      await advance(1);
+      expect(current).toHaveBeenCalledTimes(4);
+    }
+    expect(signInSilently).toHaveBeenCalledTimes(2);
+    await hints();
+    expect(signInSilently).toHaveBeenCalledTimes(2);
+  },
+);
+
 it.each(['not-a-date', '-1', '0', '2147484', '99999999999999999999'])(
   'keeps the legacy backoff for an invalid Retry-After header %s',
   async (after) => {

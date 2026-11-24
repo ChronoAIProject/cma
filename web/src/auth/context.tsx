@@ -116,7 +116,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         timer = setTimeout(() => refresh(), Math.min(MAX_RETRY_DELAY_MS, Math.ceil(remaining)));
         return;
       }
-      const mayNavigate = requestedNavigation || navigateAfterRetry;
+      const deferredNavigation = navigateAfterRetry;
+      const mayNavigate = requestedNavigation || deferredNavigation;
       navigateAfterRetry = false;
       inFlight = true;
       allowSessionReads(false);
@@ -125,7 +126,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         .current()
         .then((next) => {
           if (live && version === currentRead.current) {
-            retryNotBefore = performance.now() + serverRetryFloor(next);
+            const retryFloor = serverRetryFloor(next);
+            retryNotBefore = performance.now() + retryFloor;
             if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
             else if (next.status === 'anonymous') {
               releaseNavigationGuard();
@@ -153,6 +155,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
             if (next.status === 'authenticated') retainTaskViewer(next.user.id);
             allowSessionReads(next.status === 'authenticated');
             if (next.status === 'error' && next.reason !== undefined) {
+              // Preserve navigation across a server-directed wait and any subsequent recovery.
+              navigateAfterRetry = deferredNavigation || (mayNavigate && retryFloor > 0);
               setOutage(next);
               // Retain mounted views and drafts. This is presentation only;
               // every protected operation still requires server authorization.
