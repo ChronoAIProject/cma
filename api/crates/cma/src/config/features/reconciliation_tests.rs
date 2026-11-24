@@ -116,6 +116,20 @@ fn agent_reconciliation_continuation_is_independent_and_default_off() {
 }
 
 #[test]
+fn command_cancel_wake_is_strict_and_default_off() {
+    const KEY: &str = "CHRONO_COMMAND_CANCEL_WAKE_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.command_cancel_wake, expected);
+        assert!(flags.command_reconcile_pacing);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "1".into()))).is_err());
+}
+
+#[test]
 fn command_reconciliation_pacing_is_independent_strict_and_default_on() {
     const KEY: &str = "CHRONO_COMMAND_RECONCILE_PACING_ENABLED";
     for (value, expected) in [(None, true), (Some("false"), false), (Some("true"), true)] {

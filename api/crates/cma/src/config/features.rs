@@ -43,6 +43,7 @@ pub(crate) struct FeatureFlags {
     pub runtime_loss_bounded_proof_enabled: bool,
     pub native_retirement_finality_enabled: bool,
     pub command_reconcile_pacing: bool,
+    pub command_cancel_wake: bool,
     pub ownership_cleanup_pacing: bool,
     pub batch_ownership_renewal: bool,
     /// Contain one receiver's transient housekeeping failure instead of
@@ -190,6 +191,7 @@ impl FeatureFlags {
                 "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
             )?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
+            command_cancel_wake: flag(lookup, "CHRONO_COMMAND_CANCEL_WAKE_ENABLED")?,
             ownership_cleanup_pacing: flag(lookup, "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED")?,
             batch_ownership_renewal: flag(lookup, "CHRONO_AM_BATCH_OWNERSHIP_RENEWAL")?,
             receiver_housekeeping_containment: flag(
