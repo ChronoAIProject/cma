@@ -136,16 +136,24 @@ pub async fn migrate(db: &Database, issuer: &str) -> Result<(), RecordError> {
             }
         }}
     ]};
-    let create = db.run_command(doc! {
-        "create": CREATE_FENCES, "validator": &fence_validator, "validationLevel": "strict", "validationAction": "error"
-    }).await;
+    let create = db
+        .run_command(doc! {
+            "create": CREATE_FENCES, "validator": &fence_validator,
+            "validationLevel": "strict", "validationAction": "error",
+            "writeConcern": {"w": "majority"}
+        })
+        .await;
     match create {
         Ok(_) => {}
         Err(error) if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(command) if command.code == 48) =>
         {
             db.run_command(doc! {
-                "collMod": CREATE_FENCES, "validator": fence_validator, "validationLevel": "strict", "validationAction": "error"
-            }).await.map_err(failure)?;
+                "collMod": CREATE_FENCES, "validator": fence_validator,
+                "validationLevel": "strict", "validationAction": "error",
+                "writeConcern": {"w": "majority"}
+            })
+            .await
+            .map_err(failure)?;
         }
         Err(error) => return Err(failure(error)),
     }
@@ -168,13 +176,15 @@ pub async fn migrate(db: &Database, issuer: &str) -> Result<(), RecordError> {
         .map_err(failure)?;
     db.run_command(doc! {
         "collMod": RECORDS, "validator": schema::record_validator(true),
-        "validationLevel": "strict", "validationAction": "error"
+        "validationLevel": "strict", "validationAction": "error",
+        "writeConcern": {"w": "majority"}
     })
     .await
     .map_err(failure)?;
     db.run_command(doc! {
         "collMod": MIGRATIONS, "validator": schema::migration_validator(),
-        "validationLevel": "strict", "validationAction": "error"
+        "validationLevel": "strict", "validationAction": "error",
+        "writeConcern": {"w": "majority"}
     })
     .await
     .map_err(failure)?;
