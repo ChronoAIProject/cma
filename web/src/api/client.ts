@@ -352,6 +352,7 @@ export interface CmaWebClient {
   removeWorkspace(id: string, options: CommandOptions): Promise<void>;
   interruptAgent(id: string, options: CommandOptions): Promise<void>;
   stopAgent(id: string, options: CommandOptions): Promise<void>;
+  restartAgent?(id: string, options: CommandOptions): Promise<void>;
   deleteAgent(id: string, options: CommandOptions): Promise<void>;
 }
 

@@ -448,6 +448,7 @@ export function useAgentController(
       (id, key, signal) => client.interruptAgent(id, { idempotencyKey: key, signal }),
       strict,
     );
+  const restartAgent = client.restartAgent;
   return {
     ...retainedInputs,
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
@@ -492,6 +493,10 @@ export function useAgentController(
     interrupt: () => interruptTurn(false),
     stop: () =>
       command('stop', (id, key, signal) => client.stopAgent(id, { idempotencyKey: key, signal })),
+    restart:
+      restartAgent &&
+      (() =>
+        command('restart', (id, key, signal) => restartAgent(id, { idempotencyKey: key, signal }))),
     delete: () =>
       command('delete', (id, key, signal) =>
         client.deleteAgent(id, { idempotencyKey: key, signal }),

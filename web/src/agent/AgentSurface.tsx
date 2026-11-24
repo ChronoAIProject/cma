@@ -115,7 +115,6 @@ export function AgentSurface({
     accessUncertain ||
     (viewerId !== undefined && sandboxOwner !== undefined && viewerId !== sandboxOwner);
   const feedback = useMessageFeedback(agentId, viewerId, !readOnly && state.status === 'ready');
-
   const connection = useAgentConnectionReadiness(
     agentId,
     viewerId,
@@ -411,6 +410,7 @@ export function AgentSurface({
             user={user}
           />
           <Composer
+            onRestart={readOnly || !detail.restartAvailable ? undefined : controller.restart}
             editorRef={editing.editorRef}
             suggestionScope={
               !readOnly && verified && !historyIncomplete ? suggestions?.id : undefined

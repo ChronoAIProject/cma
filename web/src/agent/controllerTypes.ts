@@ -21,7 +21,7 @@ export type AgentResourceState =
   | { readonly status: 'error'; readonly message: string; readonly retryAt?: number }
   | ({ readonly status: 'ready' } & ReadyAgent);
 
-export type AgentCommand = 'send' | 'interrupt' | 'approval' | 'stop' | 'delete';
+export type AgentCommand = 'send' | 'interrupt' | 'approval' | 'stop' | 'delete' | 'restart';
 export type ApprovalDecision = 'allow' | 'deny' | 'abort';
 
 export interface AgentController {
@@ -68,6 +68,7 @@ export interface AgentController {
   ) => Promise<void>;
   readonly approve: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
   readonly stop: () => Promise<void>;
+  readonly restart?: () => Promise<void>;
   readonly delete: () => Promise<void>;
 }
 

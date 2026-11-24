@@ -361,7 +361,10 @@ export function useAgentActions({
       requireStop = false,
     ) => {
       const mayPreemptSend = name === 'interrupt' && actionKindRef.current === 'send';
-      if (currentContext.current !== context || commandsBlocked || currentCommandsBlocked.current) {
+      if (
+        currentContext.current !== context ||
+        (name !== 'restart' && (commandsBlocked || currentCommandsBlocked.current))
+      ) {
         if (requireStop)
           throw new Error('Agent activity is still loading. Try again when it is available.');
         return;
@@ -371,6 +374,15 @@ export function useAgentActions({
         if (requireStop) throw new Error('Another Agent action is still being confirmed.');
         return;
       }
+      const observed = stateRef.current;
+      if (
+        name === 'restart' &&
+        (observed.status !== 'ready' ||
+          observed.detail.id !== agentId ||
+          observed.detail.status !== 'stopped' ||
+          observed.detail.restartAvailable !== true)
+      )
+        return;
       if (name === 'interrupt') actionAbortRef.current?.abort();
       const scope = `agent:${agentId}:${name}`;
       const controller = new AbortController();

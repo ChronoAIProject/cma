@@ -5,7 +5,11 @@ import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { approvalBaselineMessage } from './transport/approvalBaseline';
 import { readableError } from '../vocabulary/errors';
 import { currentAgentStatus } from './status';
-import { STOPPED_AGENT_MESSAGE, STOP_RESPONSE_GUIDANCE } from './stopAgentCopy';
+import {
+  RESTART_AVAILABLE_MESSAGE,
+  STOPPED_AGENT_MESSAGE,
+  STOP_RESPONSE_GUIDANCE,
+} from './stopAgentCopy';
 
 export function errorMessage(error: unknown): string {
   const approval = approvalBaselineMessage(error);
@@ -38,7 +42,9 @@ export function stoppedInputMessage(
     current.detail.id === agentId &&
     currentAgentStatus(current.detail, current.conversation) === 'stopped'
   )
-    return `${STOPPED_AGENT_MESSAGE} ${STOP_RESPONSE_GUIDANCE}`;
+    return current.detail.restartAvailable
+      ? RESTART_AVAILABLE_MESSAGE
+      : `${STOPPED_AGENT_MESSAGE} ${STOP_RESPONSE_GUIDANCE}`;
 }
 
 /** A transient projection failure must not cancel an already admitted send. */
