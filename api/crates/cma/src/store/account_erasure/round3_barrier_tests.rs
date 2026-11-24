@@ -50,6 +50,7 @@ async fn deadline(unreadable: bool, configured: u64) {
         Options {
             allocation_rollups_enabled: Some(false),
             agent_shared_observation: Some(false),
+            retain_legal_consents: false,
             drain_qualification: Some(qualification),
             billing_enabled: false,
             transaction_drain_minimum_secs: configured,
@@ -117,6 +118,7 @@ async fn invalid_configured_deadline_requires_cohort_intervention_without_subjec
         Options {
             allocation_rollups_enabled: Some(false),
             agent_shared_observation: Some(false),
+            retain_legal_consents: false,
             drain_qualification: Some(TransactionDrainQualification::fixture()),
             billing_enabled: false,
             transaction_drain_minimum_secs: u64::MAX,
@@ -161,6 +163,7 @@ async fn invalid_worker_clock_is_retryable_without_attributing_the_first_cohort_
         Options {
             allocation_rollups_enabled: Some(false),
             agent_shared_observation: Some(false),
+            retain_legal_consents: false,
             drain_qualification: Some(TransactionDrainQualification::fixture()),
             billing_enabled: false,
             transaction_drain_minimum_secs: 120,
@@ -209,6 +212,7 @@ async fn server_clock_command_failure_is_retryable_and_a_fresh_attempt_succeeds(
     let options = Options {
         allocation_rollups_enabled: Some(false),
         agent_shared_observation: Some(false),
+        retain_legal_consents: false,
         drain_qualification: Some(TransactionDrainQualification::fixture()),
         billing_enabled: false,
         transaction_drain_minimum_secs: 120,
@@ -260,6 +264,7 @@ async fn lifetime_command_failure_is_retryable_without_installing_a_fence() {
             billing_enabled: false,
             allocation_rollups_enabled: Some(false),
             agent_shared_observation: Some(false),
+            retain_legal_consents: false,
             transaction_drain_minimum_secs: 120,
             drain_qualification: Some(TransactionDrainQualification::fixture()),
         },

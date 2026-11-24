@@ -1,5 +1,6 @@
 //! Production accepted-work entry. Every call obtains fresh resource authority;
 //! an admission switch never cancels receipt lookup or accepted settlement.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::sync::Arc;
 
 use layer2_core::{
@@ -16,8 +17,11 @@ use layer2_core::{
 };
 
 use super::{
-    admission::AdmissionRequest, discovery, preparation, settlement, status, transactions,
-    RecoveryCursor, RecoveryPage, RecoveryStatus, RecoveryStream,
+    admission::AdmissionRequest,
+    discovery,
+    observations::{cohort, Outcome, Stage},
+    preparation, settlement, status, transactions, RecoveryCursor, RecoveryPage, RecoveryStatus,
+    RecoveryStream,
 };
 use crate::store::{
     agent_log_segments::transaction_scope::TransactionScope, sandbox_mongo::MongoSandboxStore,
@@ -93,7 +97,7 @@ impl RecoveryService {
             Ok(activation)
         }
         .await;
-        let _ = scope.release().abort_transaction().await;
+        let _ = scope.release().abort_guarded().await;
         checked.map_err(transactions::error)
     }
     pub(crate) fn new(store: MongoSandboxStore, access: Arc<ResourceAccessService>) -> Self {
@@ -148,10 +152,11 @@ impl RecoveryService {
             id,
             request,
             &layer2_core::now_rfc3339(),
+            self.features.enabled || self.store.segment_adoption_enabled,
             &mut scope,
         )
         .await;
-        let _ = scope.release().abort_transaction().await;
+        let _ = scope.release().abort_guarded().await;
         result.map_err(transactions::error)
     }
 
@@ -176,6 +181,7 @@ impl RecoveryService {
                 eprintln!("capacity recovery original lookup refused: {_error:?}");
             })?
         {
+            cohort(Stage::Admitted, Outcome::Replay);
             return Ok(CommitOutcome::Recorded(*work));
         }
         if !self.features.enabled {

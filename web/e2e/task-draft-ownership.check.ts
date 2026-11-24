@@ -23,7 +23,9 @@ for (const initial of ['legacy-task', 'fresh'] as const) {
         expect(creates).toHaveLength(1);
         expect(creates[0]!.body).toEqual({ name: 'New task', initial_message: 'hello' });
       } else await page.goto(`/agents/${fixture.agent.id}`);
-      await expect(page.getByRole('heading', { name: 'Preparing your Agent' })).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: 'Getting its cloud computer ready' }),
+      ).toBeVisible();
       await newAgent.click();
       await task.fill('An intervening edit');
       await task.fill(text);

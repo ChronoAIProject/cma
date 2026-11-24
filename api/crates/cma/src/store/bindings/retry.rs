@@ -3,6 +3,7 @@ use super::*;
 use crate::store::sandbox_mongo::{
     commit_transaction, is_transient, start_transaction, CommitOutcome, TRANSACTION_ATTEMPTS,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::binding::ProvidedCredential;
 use layer2_core::CoreError;
 
@@ -31,7 +32,7 @@ impl MongoBindingCredentials {
                 Err(error) => return Err(unavailable(error)),
             };
             if let Err(error) = start_transaction(&mut session).await {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if known_abort(&error) {
                     continue;
                 }
@@ -43,24 +44,24 @@ impl MongoBindingCredentials {
             {
                 Ok(next) => next,
                 Err(BindingTransactionError::Driver(error)) if known_abort(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     continue;
                 }
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error.into_core(unavailable));
                 }
             };
             match commit_transaction(&mut session).await {
                 CommitOutcome::Committed => return Ok(next),
                 CommitOutcome::Retry(_) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                 }
                 // Unknown custody cannot authorize a new body, even if a later
                 // acknowledgement looks like a transient transaction failure.
                 CommitOutcome::Unknown(error) => return Err(unavailable(error)),
                 CommitOutcome::Failed(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(unavailable(error));
                 }
             }

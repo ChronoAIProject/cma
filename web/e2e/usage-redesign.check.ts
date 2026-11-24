@@ -448,7 +448,7 @@ test('LOCAL Usage count copy follows applied searches through one, zero and mult
   });
   await page.goto('/usage');
   const surface = page.getByRole('dialog', { name: 'Your usage' });
-  const search = surface.getByRole('searchbox', { name: 'Usage Sandbox search' });
+  const search = surface.getByRole('searchbox', { name: 'Sandbox name or ID starts with' });
   const chart = surface.getByRole('region', { name: 'Allocation comparison chart' });
   await expect(surface.getByText('2 Sandboxes · 0 running', { exact: true })).toBeVisible();
   for (const [query, count, label] of [

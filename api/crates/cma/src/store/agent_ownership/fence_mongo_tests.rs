@@ -145,5 +145,7 @@ async fn ownership_fence_rechecks_member_and_exact_epoch_after_known_abort() {
     assert_eq!(owner.token, successor.token);
 }
 
+#[path = "fence_mongo_cancellation_tests.rs"]
+mod cancellation;
 #[path = "fence_mongo_tests_cases.rs"]
 mod cases;

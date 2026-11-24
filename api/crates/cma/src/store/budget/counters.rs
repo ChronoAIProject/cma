@@ -64,12 +64,15 @@ pub(super) async fn read_one(
     shard: u16,
     session: &mut ClientSession,
 ) -> Result<Counter, ApplyError> {
-    let document = rows
-        .find_one(doc! {"_id": key(start, shard)})
-        .session(session)
-        .await
-        .map_err(ApplyError::Driver)?
-        .ok_or_else(|| domain(BudgetError::Unavailable))?;
+    let document = crate::store::stale_turns::find_with_proof_budget(
+        rows,
+        doc! {"_id": key(start, shard)},
+        session,
+        false,
+    )
+    .await
+    .map_err(ApplyError::Driver)?
+    .ok_or_else(|| domain(BudgetError::Unavailable))?;
     Counter::decode(&document, start)
 }
 

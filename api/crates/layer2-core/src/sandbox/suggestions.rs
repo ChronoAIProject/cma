@@ -100,15 +100,13 @@ pub trait SuggestionStore: Send + Sync {
 }
 
 impl SuggestionWork {
-    pub fn reading(&self, current: bool, now_ms: u64) -> SuggestionReading {
-        let status = if !current {
-            SuggestionStatus::Expired
-        } else if self.status == SuggestionStatus::Running
-            && self.deadline_ms.is_some_and(|deadline| deadline <= now_ms)
-        {
-            SuggestionStatus::Failed
-        } else {
+    pub fn reading(&self, current: bool) -> SuggestionReading {
+        // Deadline settlement belongs to the claim path. A still-running
+        // claim can publish a result, so a read must keep it observable.
+        let status = if current {
             self.status
+        } else {
+            SuggestionStatus::Expired
         };
         SuggestionReading {
             status,
@@ -180,5 +178,49 @@ impl SuggestionService {
         self.store
             .read_suggestions(&caller.subject, agent, scope)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn late_suggestion_read_stays_running_until_claim_settlement() {
+        let mut work = SuggestionWork {
+            id: "suggestion".into(),
+            owner: SubjectId::new("owner"),
+            agent_id: AgentId("agent".into()),
+            scope: AnswerContext {
+                turn_sequence: 1,
+                answer_sequence: 2,
+            },
+            completed_sequence: 3,
+            strategy_version: STRATEGY_VERSION.into(),
+            authority: "authority".into(),
+            status: SuggestionStatus::Pending,
+            context: SuggestionContext {
+                goal: "Compare options".into(),
+                answer: "A comparison".into(),
+                confirmed_resources: Vec::new(),
+            },
+            set: None,
+            created_at_ms: 0,
+            started_at_ms: None,
+            deadline_ms: None,
+            observation: None,
+        };
+
+        assert!(work.claim(true, 0));
+        let deadline = work.deadline_ms.unwrap();
+        assert_eq!(work.reading(true).status, SuggestionStatus::Running);
+        assert_eq!(work.reading(false).status, SuggestionStatus::Expired);
+        assert!(!work.claim(true, deadline));
+        let settled = work.reading(true);
+        assert_eq!(settled.status, SuggestionStatus::Failed);
+        assert_eq!(
+            settled.observation.unwrap().failure,
+            Some(SuggestionFailure::Interrupted)
+        );
     }
 }

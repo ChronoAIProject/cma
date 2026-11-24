@@ -1,0 +1,10 @@
+[package]
+name = "cmaeg-engine"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+cmaeg-core = { path = "../cmaeg-core" }
+serde = { workspace = true }
+utoipa = { workspace = true }

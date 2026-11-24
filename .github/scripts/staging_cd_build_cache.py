@@ -16,11 +16,17 @@ from staging_cd_cache_context import context
 from staging_cd_cargo_artifact import MAX_BUNDLE_BYTES, MAX_EXPANDED_BYTES
 from staging_cd_reservations import validate_reservation
 
-SCOPES = {"am": "cma-am", "eg": "cma-eg", "web": "cma-web",
+SCOPES = {"am": "cma-cd-am", "eg": "cma-cd-eg", "web": "cma-cd-web",
           "runtime": "cma-runtime", "runtime-omarchy": "cma-runtime-omarchy"}
-# CI's runtime index and the CD runtime index share content-addressed build
-# stages with Omarchy. Keep each publisher's export in its own scope.
-EXTRA_IMPORTS = {"runtime": ("runtime",), "runtime-omarchy": ("cma-runtime", "runtime")}
+# The CI image builds export cma-am, cma-eg, cma-web, runtime and
+# runtime-omarchy (ci-images.yml, ci-omarchy.yml). Keep each publisher's
+# export in its own scope and only read the other's. CD builds from a
+# git-archive snapshot whose file modes differ from CI's checkout, so a shared
+# scope made each writer replace the other's index and cost the next build its
+# dependency stages (cargo-chef install and cook, 5-10 min for AM).
+CI_SCOPES = frozenset({"cma-am", "cma-eg", "cma-web", "runtime", "runtime-omarchy"})
+EXTRA_IMPORTS = {"am": ("cma-am",), "eg": ("cma-eg",), "web": ("cma-web",),
+                 "runtime": ("runtime",), "runtime-omarchy": ("cma-runtime", "runtime")}
 RUNTIME_KEYS = ("ACTIONS_RUNTIME_TOKEN", "ACTIONS_RESULTS_URL")
 
 

@@ -92,6 +92,21 @@ class MigrationInventoryTests(unittest.TestCase):
             self.assertEqual(row["old_to_new"], "NOT_RUN")
             self.assertEqual(row["new_to_old"], "NOT_RUN")
 
+    def test_imported_registry_module_does_not_hide_a_new_namespace(self):
+        for files in self.git.files.values():
+            files["store/isolation.rs"] = '''
+use super::retained_consents;
+const COLLECTIONS: &[&str] = &[retained_consents::COLLECTION];
+const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
+'''
+            files["store/retained_consents.rs"] = 'const COLLECTION: &str = "retained_consents";'
+        self.git.files[NEW]["store/isolation.rs"] = self.git.files[NEW]["store/isolation.rs"].replace(
+            "retained_consents::COLLECTION]", "retained_consents::COLLECTION, super::measured::COLLECTION]")
+        self.git.files[NEW]["store/measured.rs"] = 'const COLLECTION: &str = "measured_observations";'
+        rows = inventory.compare(self.source(OLD), self.source())["collections"]
+        self.assertEqual([row["name"] for row in rows if row["old"] is None], ["measured_observations"])
+        self.assertFalse(any(row["new"] is None for row in rows))
+
     def test_unknown_expression_missing_constant_and_duplicate_cannot_drop_a_row(self):
         for expression in ('make_collection!()', 'super::absent::COLLECTION', '"agents", "agents"'):
             with self.subTest(expression=expression):

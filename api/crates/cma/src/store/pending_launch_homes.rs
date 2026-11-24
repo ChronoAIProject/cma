@@ -10,6 +10,7 @@ use super::{
     schema::DOCUMENT_SCHEMA_VERSION,
     settings::SETTINGS,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::{
     admission::{PendingHomesObservation, PendingHomesReconciliation},
     StoreError, SubjectId,
@@ -231,11 +232,11 @@ impl PendingLaunchHomes {
                     }
                 },
                 Err(Error::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(Error::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     if is_transient(&error) || is_duplicate_key(&error) {
                         continue;
                     }

@@ -4,6 +4,19 @@ import { expect, it } from 'vitest';
 import { sandboxLifecycle } from '../instances/lifecycle.js';
 
 const base = { pause: { allowed: false }, revive: { allowed: false } };
+it('accepts the additive parked code with the existing failed result and eligibility contract', () => {
+  const result = {
+    state: 'failed',
+    code: 'runtime_update_parked',
+    continuing: false,
+    operation_id: 'original',
+    started_at: '2026-11-16T00:00:00Z',
+    result_due_at: '2026-11-16T00:01:30Z',
+    actions: ['observe'],
+  };
+  expect(sandboxLifecycle({ ...base, result }).result).toEqual(result);
+  expect(sandboxLifecycle({ ...base, result }).revive.allowed).toBe(false);
+});
 it('accepts older servers and decodes bounded lifecycle results without changing eligibility', () => {
   expect(sandboxLifecycle(base).result).toBeUndefined();
   const result = {

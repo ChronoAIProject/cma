@@ -27,7 +27,7 @@ async fn metadata_unknown_committed_recovers_exact_receipt_without_new_transacti
     let f = Fixture::new(operation).await;
     f.fail("commitTransaction", 5, Some(true), false).await;
     let result = f.run(operation).await;
-    f.clear().await;
+    f.clear_and_settle_commit().await;
     let commands = f.commands();
     let state = f.state().await;
     f.drop_database().await;

@@ -15,6 +15,7 @@ use super::sandbox_mongo::{
 mod claim;
 mod completion;
 mod context;
+mod parent;
 pub(super) use context::enqueue;
 
 pub(super) async fn ensure_indexes(collection: &Collection<Document>) -> Result<(), StoreError> {
@@ -94,10 +95,7 @@ impl SuggestionStore for MongoSandboxStore {
         if work.scope != scope {
             return Err(AgentReadError::NotFound);
         }
-        Ok(work.reading(
-            context::current(self, &work, &mut session, true).await?,
-            unix_millis(),
-        ))
+        Ok(work.reading(context::current(self, &work, &mut session, true).await?))
     }
 
     async fn claim_suggestions(

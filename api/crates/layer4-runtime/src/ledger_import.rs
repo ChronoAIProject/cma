@@ -2,6 +2,7 @@
 //! Inventory is evidence, not proof that a legacy writer has stopped.
 #[cfg(test)]
 mod diagnostics;
+pub(crate) mod evidence;
 pub(crate) mod inventory;
 pub(crate) mod io;
 mod isolation;

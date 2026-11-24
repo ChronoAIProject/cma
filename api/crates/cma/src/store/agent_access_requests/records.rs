@@ -2,7 +2,9 @@ use layer2_core::ids::AgentCommandId;
 use layer2_core::sandbox::agent_access::{AgentAccessError, AgentAccessRequest, AgentAccessStatus};
 use layer2_core::sandbox::agent_access_tool::{AgentAccessProposal, AgentAccessRequester};
 use layer2_core::sandbox::agent_io::AgentAuthorizationRevision;
-use layer2_core::sandbox::{RuntimeBinding, SandboxCredentialAuthority};
+use layer2_core::sandbox::{
+    RuntimeBinding, SandboxCredentialAuthority, ServiceConnectionSelection,
+};
 use layer2_core::ServiceId;
 use mongodb::bson::{doc, Document};
 use serde::{Deserialize, Serialize};
@@ -58,6 +60,8 @@ pub(crate) enum AgentAccessDecision {
     Approved {
         command_key_hash: String,
         services: Vec<ServiceId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        connection: Option<ServiceConnectionSelection>,
         authorization: AgentAuthorizationRevision,
     },
     Denied {
@@ -185,6 +189,13 @@ impl AgentAccessRecord {
         }
     }
 
+    pub(crate) fn approved_connection(&self) -> Option<&ServiceConnectionSelection> {
+        match &self.decision {
+            Some(AgentAccessDecision::Approved { connection, .. }) => connection.as_ref(),
+            _ => None,
+        }
+    }
+
     fn validate(&self) -> Result<(), AgentAccessError> {
         self.proposal.validate()?;
         let identity = &self.requester;
@@ -302,8 +313,15 @@ impl AgentAccessRecord {
             services,
             authorization,
             command_key_hash,
+            connection,
         }) = &self.decision
         {
+            if connection
+                .as_ref()
+                .is_some_and(|selection| !selection.matches_scope(services))
+            {
+                return Err(AgentAccessError::Invalid);
+            }
             let services = services.iter().map(ToString::to_string).collect::<Vec<_>>();
             layer2_core::sandbox::agent_access::validate_access_services(&services)?;
             if command_key_hash.len() != 64

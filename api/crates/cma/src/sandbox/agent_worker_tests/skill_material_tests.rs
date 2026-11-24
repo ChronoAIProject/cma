@@ -463,3 +463,6 @@ mod upgrade_tests;
 
 #[path = "skill_parent_fence_tests/mod.rs"]
 mod parent_fence;
+
+#[path = "skill_resolution_contract_tests.rs"]
+mod resolution_contract_tests;

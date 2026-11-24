@@ -18,14 +18,6 @@ use crate::store::{
     worktrees::read_worktree,
 };
 
-pub(super) async fn snapshot(
-    store: &MongoSandboxStore,
-    id: &SandboxId,
-    session: &mut ClientSession,
-) -> Result<(RetainedReopenSnapshot, u64), ApplyError> {
-    snapshot_with_sources(store, id, session, None, IntegrityFailurePolicy::Quarantine).await
-}
-
 pub(super) async fn snapshot_with_sources(
     store: &MongoSandboxStore,
     id: &SandboxId,

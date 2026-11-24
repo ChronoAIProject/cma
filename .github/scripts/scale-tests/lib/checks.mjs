@@ -34,6 +34,23 @@ export function safeFailure(error) {
     : { status: 'FAIL', code: 'adapter_or_transport_error' };
 }
 
+export async function withinDeadline(run, timeoutMs, code) {
+  const controller = new AbortController();
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = globalThis.setTimeout(() => {
+      const error = new GateError(code);
+      reject(error);
+      controller.abort(error);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([run(controller.signal), deadline]);
+  } finally {
+    globalThis.clearTimeout(timer);
+  }
+}
+
 export async function waitFor(read, accept, { timeoutMs, intervalMs = 250, time = clock }) {
   finite(timeoutMs); finite(intervalMs);
   check(timeoutMs > 0 && intervalMs > 0, 'invalid_poll_budget');

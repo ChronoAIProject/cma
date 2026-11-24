@@ -45,6 +45,38 @@ def require(condition):
         raise ScanError("content-policy-evidence-invalid")
 
 
+# A first-party executable is rebuilt for every publication, so its file digest
+# cannot bind a reviewed row. These rows bind the component, its single
+# first-party executable, the rule and the exact candidate instead: a candidate
+# reviewed as public text stays classified across rebuilds, and any new
+# candidate (a changed layout or a new value) still blocks.
+FIRST_PARTY_BINARIES = {"am": "usr/local/bin/cma", "eg": "usr/local/bin/cmaeg"}
+BINARY_RULES = frozenset({"gitleaks.generic-api-key"})
+BINARY_FIELDS = frozenset({"component", "path", "rule", "candidate_sha256", "classification", "reason"})
+
+
+def binary_entries(catalog):
+    rows = catalog.get("binary_candidates", [])
+    require(isinstance(rows, list) and len(rows) <= 16)
+    observed = set()
+    for row in rows:
+        require(isinstance(row, dict) and set(row) == BINARY_FIELDS
+                and row["component"] in FIRST_PARTY_BINARIES
+                and row["path"] == FIRST_PARTY_BINARIES[row["component"]]
+                and row["rule"] in BINARY_RULES and valid_digest(row["candidate_sha256"])
+                and row["classification"] == "public-material"
+                and isinstance(row["reason"], str) and bool(row["reason"].strip()))
+        key = ("binary", row["component"], path_hash(row["path"]), row["rule"], row["candidate_sha256"])
+        require(key not in observed)
+        observed.add(key)
+        # A reviewed REAL secret anywhere in the component wins over this row.
+        require(not any(exact["classification"] == "REAL" and exact["component"] == row["component"]
+                        and exact["rule"] == row["rule"]
+                        and exact.get("candidate_sha256") == row["candidate_sha256"]
+                        for exact in catalog["entries"]))
+        yield key, row
+
+
 def path_hash(path):
     return "path-sha256:" + hashlib.sha256(path.encode("utf-8", "surrogatepass")).hexdigest()
 
@@ -77,7 +109,8 @@ def validate_detection(report, archive, scanner):
 
 def catalog_index(catalog, report):
     require(catalog.get("schema") in {"cma-image-content-policy-v1", "cma-image-content-policy-v2"})
-    require(catalog["schema"] != "cma-image-content-policy-v1" or "bundle_candidates" not in catalog)
+    require(catalog["schema"] != "cma-image-content-policy-v1"
+            or ("bundle_candidates" not in catalog and "binary_candidates" not in catalog))
     for key in ("scanner_version", "gitleaks_version"):
         require(catalog.get(key) == report.get(key))
     for key in ("allowlist_sha256", "gitleaks_rules_sha256"):
@@ -97,6 +130,8 @@ def catalog_index(catalog, report):
     if catalog["schema"] == "cma-image-content-policy-v2":
         for key, row in bundle_entries(catalog):
             index[key] = [row]
+        for key, row in binary_entries(catalog):
+            index[key] = [row]
     return index
 
 
@@ -112,6 +147,10 @@ def decisions(index, component, findings, identities, contexts=None, headers=Non
         if (not rows and identity and finding.get("scope") == "layer"
                 and finding.get("file_sha256") == identity and finding["finding_id"] in contexts):
             rows = index.get(("bundle", component, contexts[finding["finding_id"]], finding["rule"],
+                              finding.get("candidate_sha256")), [])
+        if (not rows and identity and finding.get("scope") == "layer"
+                and finding.get("file_sha256") == identity):
+            rows = index.get(("binary", component, finding["path"], finding["rule"],
                               finding.get("candidate_sha256")), [])
         if (key not in index and headers is not None and finding["finding_id"] in headers.confirmed
                 and key == ("runtime", "layer", path_hash(runtime_headers.PATH),

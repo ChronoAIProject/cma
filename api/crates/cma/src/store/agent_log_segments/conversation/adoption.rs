@@ -7,6 +7,7 @@ use crate::store::agent_log_segments::{
     writer_bootstrap::BootstrapPlan,
     writer_gate::{self, GateName},
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 impl MongoSandboxStore {
     /// A process-local dispatch switch, never authority to admit a publication.
@@ -38,7 +39,7 @@ pub(in crate::store) async fn prepare(
     let result = selected(store, mutation, checkpoint, &mut scope).await;
     // Domain validation can write transactional fences. They must never escape
     // this preflight; the original root repeats them with the actual publication.
-    scope.release().abort_transaction().await.map_err(driver)?;
+    scope.release().abort_guarded().await.map_err(driver)?;
     let Some((current, operation)) = result.map_err(domain_error)? else {
         return Ok(None);
     };

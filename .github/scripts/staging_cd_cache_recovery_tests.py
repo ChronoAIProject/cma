@@ -6,6 +6,7 @@ import os
 import sys
 import unittest
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
@@ -14,7 +15,7 @@ import yaml
 
 from actions_cache_retention import BUDGET, DEVELOP, Removal, recovery_kind
 from actions_cache_sweep import main
-from staging_cd_cache_retention_tests import CLOCK, ROOT, Inventory, entry, seed
+from staging_cd_cache_retention_tests import CLOCK, OMARCHY, POLICY, ROOT, Inventory, entry, seed
 
 
 def base(i, family="aaa-python-1.2.3"):
@@ -78,7 +79,7 @@ class Recovery(unittest.TestCase):
         for keep in (None, old, base(1), replace(base(3), version="another"),
                      replace(base(3), ref="refs/pull/8/merge"), replace(base(3), size=0),
                      base(3, "aaa-javascript-1.2.3"), seed(3, "am")):
-            self.assertIsNone(recovery_kind(Removal(old, "superseded", keep), CLOCK.date()))
+            self.assertIsNone(recovery_kind(Removal(old, "superseded", keep), CLOCK.date(), POLICY))
         newer = base(3)
         for change in ({"version": "new"}, {"accessed": newer.created}):
             api = Inventory(old, newer)
@@ -86,6 +87,71 @@ class Recovery(unittest.TestCase):
             _, result, *_ = self.execute(api, "--apply-recovery")
             self.assertEqual(result["held_by_reason"]["candidate-or-successor-changed"], old.size)
             api.delete.assert_not_called()
+
+    def test_recovery_reclaims_older_trivy_and_obsolete_omarchy_with_visible_replacements(self):
+        old_trivy = entry(1, "cache-trivy-2025-12-30", size=20)
+        new_trivy = entry(2, "cache-trivy-2025-12-31")
+        old_omarchy = entry(3, OMARCHY + "b" * 64, size=30)
+        new_omarchy = entry(4, POLICY.omarchy)
+        rows = (old_trivy, new_trivy, old_omarchy, new_omarchy,
+                entry(5, "buildkit-blob-opaque", size=BUDGET - 25))
+        api = Inventory(*rows)
+        with patch("actions_cache_sweep.Policies.from_source", return_value=POLICY):
+            code, result, events, *_ = self.execute(api, "--apply-recovery")
+        self.assertEqual((code, result["status"], result["deleted_bytes"]), (0, "recovered", 50))
+        self.assertEqual({(e["id"], e["successor"], e["reason"]) for e in events if e["action"] == "deleted"},
+                         {(1, 2, "superseded-trivy-database"), (3, 4, "superseded-omarchy-archive")})
+        self.assertEqual(set(api.rows), {2, 4, 5})
+
+    def test_live_recovery_rejects_wrong_day_version_or_omarchy_recipe(self):
+        trivy = entry(1, "cache-trivy-2025-12-30")
+        omarchy = entry(1, OMARCHY + "b" * 64)
+        for old, keep in (
+            (trivy, entry(2, "cache-trivy-2026-01-02")),
+            (trivy, entry(2, "cache-trivy-2025-99-99")),
+            (trivy, entry(2, "cache-trivy-2025-12-29")),
+            (trivy, replace(entry(2, "cache-trivy-2025-12-31"), version="different")),
+            (replace(omarchy, key=POLICY.omarchy), entry(2, omarchy.key)),
+            (omarchy, entry(2, OMARCHY + "c" * 64)),
+        ):
+            with self.subTest(old=old.key, keep=keep.key):
+                self.assertIsNone(recovery_kind(Removal(old, "superseded", keep), CLOCK.date(), POLICY))
+
+    def test_rust_ci_recovery_keeps_two_generations_and_requires_a_newer_reader(self):
+        oldest = entry(1, "v0-rust-build-Linux-x64-01234567-aaaaaaaa", size=30)
+        spare = entry(2, "v0-rust-build-Linux-x64-01234567-bbbbbbbb")
+        newest = replace(entry(3, "v0-rust-build-Linux-x64-01234567-cccccccc"),
+                         accessed=CLOCK + timedelta(seconds=10))
+        unrelated = entry(4, "v0-rust-lint-Linux-x64-01234567-dddddddd")
+        full = entry(5, "buildkit-blob-opaque", size=BUDGET - 55)
+        api = Inventory(oldest, spare, newest, unrelated, full)
+        code, result, events, *_ = self.execute(api, "--apply-recovery")
+        self.assertEqual((code, result["status"], result["deleted_bytes"]), (0, "recovered", 30))
+        self.assertEqual([(row["id"], row["successor"], row["reason"]) for row in events if row["action"] == "deleted"],
+                         [(oldest.id, newest.id, "superseded-rust-ci-cache")])
+        self.assertEqual(set(api.rows), {spare.id, newest.id, unrelated.id, full.id})
+        for changed in (replace(newest, accessed=oldest.accessed),
+                        replace(newest, key=newest.key.replace("01234567", "76543210")), unrelated):
+            self.assertIsNone(recovery_kind(Removal(oldest, "superseded", changed, spare),
+                                            CLOCK.date() + timedelta(days=1), POLICY))
+        self.assertIsNone(recovery_kind(Removal(oldest, "superseded", newest, spare), CLOCK.date(), POLICY))
+
+    def test_rust_ci_does_not_delete_when_the_spare_is_empty_or_disappears(self):
+        for family in ("build", "lint"):
+            prefix = f"v0-rust-{family}-Linux-x64-01234567-"
+            oldest = entry(1, prefix + "aaaaaaaa", size=30)
+            spare = entry(2, prefix + "bbbbbbbb")
+            newest = replace(entry(3, prefix + "cccccccc"), accessed=CLOCK + timedelta(seconds=10))
+            for missing in (False, True):
+                with self.subTest(family=family, missing=missing):
+                    api = Inventory(oldest, spare if missing else replace(spare, size=0), newest)
+                    if missing:
+                        api.entries = Mock(side_effect=[list(api.rows.values()), [oldest, newest]])
+                        del api.rows[spare.id]
+                    code, result, *_ = self.execute(api, "--apply-recovery")
+                    self.assertEqual((code, result["deleted_bytes"]), (0, 0))
+                    self.assertIn(oldest.id, api.rows)
+                    api.delete.assert_not_called()
 
     def test_keeps_current_base_shared_layers_and_other_namespaces(self):
         oldest, newest = base(1), base(2)
