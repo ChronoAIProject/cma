@@ -11,6 +11,7 @@ use std::future::IntoFuture;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::store) enum IntegrityFailurePolicy {
     Quarantine,
+    FencedPreparation,
     ReportOnly,
 }
 
@@ -161,14 +162,11 @@ where
         }
         let proof = proof::validate_summary(store, agent, row, caller, session, snapshot).await;
         if let Err(error) = proof {
-            if failure_policy == IntegrityFailurePolicy::Quarantine
-                && matches!(
-                    &error,
-                    TransactionLogError::Domain(SandboxStoreError::Corrupt(_))
-                )
-            {
-                let _ = session.abort_transaction().await;
-                proof::quarantine_row(store, row).await?;
+            if matches!(
+                &error,
+                TransactionLogError::Domain(SandboxStoreError::Corrupt(_))
+            ) {
+                failure_policy.quarantine(store, row, session).await?;
             }
             return Err(error);
         }
@@ -205,7 +203,7 @@ where
         },
     )
     .await;
-    if failure_policy == IntegrityFailurePolicy::Quarantine
+    if failure_policy != IntegrityFailurePolicy::ReportOnly
         && !visitor_failed
         && matches!(
             &result,
@@ -216,9 +214,10 @@ where
             ))
         )
     {
-        let _ = session.abort_transaction().await;
         if let Some(row) = row.as_ref() {
-            proof::quarantine_row(store, row).await?;
+            failure_policy.quarantine(store, row, session).await?;
+        } else {
+            let _ = session.abort_transaction().await;
         }
     }
     result

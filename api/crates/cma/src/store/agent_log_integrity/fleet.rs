@@ -152,8 +152,11 @@ impl MongoSandboxStore {
                     return Ok(Prepared::Reused);
                 }
                 drop(session);
-                preparation::prepare(self, id).await.map_err(|_| ())?;
-                Ok(Prepared::Audited)
+                preparation::prepare(self, id)
+                    .await
+                    .map_err(|_| ())?
+                    .then_some(Prepared::Audited)
+                    .ok_or(())
             })
             .await;
     }

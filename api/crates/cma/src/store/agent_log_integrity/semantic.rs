@@ -7,6 +7,23 @@ pub(in crate::store) async fn audit_checkpoint(
     entries: &[AgentLogEntry],
     session: &mut mongodb::ClientSession,
 ) -> Result<SemanticCheckpoint, TransactionLogError> {
+    audit_checkpoint_with_policy(
+        store,
+        agent,
+        entries,
+        session,
+        IntegrityFailurePolicy::Quarantine,
+    )
+    .await
+}
+
+pub(super) async fn audit_checkpoint_with_policy(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    entries: &[AgentLogEntry],
+    session: &mut mongodb::ClientSession,
+    failure_policy: IntegrityFailurePolicy,
+) -> Result<SemanticCheckpoint, TransactionLogError> {
     let checkpoint = SemanticCheckpoint::from_entries(agent, entries)?;
     if checkpoint.valid {
         return Ok(checkpoint);
@@ -29,8 +46,7 @@ pub(in crate::store) async fn audit_checkpoint(
     });
     if previously_trusted {
         if let Err(corruption) = SemanticCheckpoint::validate_retained_semantics(agent, entries) {
-            let _ = session.abort_transaction().await;
-            proof::quarantine_row(store, &row).await?;
+            failure_policy.quarantine(store, &row, session).await?;
             return Err(corruption.into());
         }
     }
