@@ -200,12 +200,7 @@ impl ControlPlaneComposition {
                 .with_writes_enabled(config.features.admission_control_writes_enabled),
         ));
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
-        let profiles = ProfilesState::new(
-            stores.sandbox_profiles.clone(),
-            Arc::clone(&operations),
-            Arc::clone(&settings),
-            profile_policy,
-        );
+        let profiles = profiles::route_state(&stores, &operations, &settings, profile_policy);
         let hierarchy = HierarchyState::new(
             Arc::clone(&sandbox_service),
             Arc::clone(&workspace_service),

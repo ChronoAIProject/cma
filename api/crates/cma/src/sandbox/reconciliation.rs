@@ -2,14 +2,14 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{
     SandboxMaintenanceStore, SandboxReconciliationStore, SandboxRuntimeLossOutcome,
     SandboxRuntimeLossRequest, SandboxStore, SandboxStoreError,
 };
 use layer2_core::sandbox::{AgentService, Sandbox, SandboxPolicySource, SandboxStatus};
-use layer2_core::{rfc3339_at, seconds_from_rfc3339, SandboxId};
+use layer2_core::{rfc3339_at, SandboxId};
 use layer3_adapter::binding_diagnostics::{adapter_outcome, measure, Outcome, Stage};
 use layer3_adapter::{RuntimeAdoptionRequest, RuntimeObservation, SandboxAdapter};
 
@@ -41,6 +41,7 @@ mod binding_holds;
 mod diagnostics;
 #[path = "reconciliation_loss_observation.rs"]
 mod loss_observation;
+use loss_observation::fresh_recovery_boundary;
 #[path = "reconciliation_pending_homes.rs"]
 mod pending_homes;
 #[path = "reconciliation_platform.rs"]
@@ -472,23 +473,6 @@ impl SandboxReconciler {
             }
         }
         Err(provider_error(error))
-    }
-}
-
-#[derive(Clone, Copy)]
-struct RecoveryBoundary {
-    observed_at: SystemTime,
-    stale: bool,
-}
-
-fn fresh_recovery_boundary(sandbox: &Sandbox, floor: SystemTime) -> RecoveryBoundary {
-    let observed_at = SystemTime::now();
-    let durable = seconds_from_rfc3339(&sandbox.updated_at)
-        .map(|seconds| UNIX_EPOCH + Duration::from_secs(seconds))
-        .unwrap_or(UNIX_EPOCH);
-    RecoveryBoundary {
-        observed_at,
-        stale: floor > observed_at || durable > observed_at,
     }
 }
 

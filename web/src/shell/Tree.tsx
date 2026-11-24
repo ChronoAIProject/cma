@@ -10,7 +10,6 @@ import {
 import { sandboxStatusPresentation } from '../sandbox/presentation';
 import { sandboxHasParkedRuntimeUpdate } from '../sandbox/parkedRuntimeUpdate';
 import { taskPresentation } from './taskPresentation';
-import type { AppRoute } from '../routing/routes';
 import { toneDot } from '../ui/Badge';
 import {
   IconBranchOutline16,
@@ -20,9 +19,6 @@ import {
   IconFolderOpenOutline16,
   IconPauseOutline16,
 } from '../ui/icons';
-import type { AgentDetail } from '../api/types';
-import type { RuntimeAttention } from './runtimeAttention';
-import type { NavigationSandbox } from './navigation';
 import { TreeRow } from './TreeRow';
 import { agentActions, sandboxActions, workspaceActions } from './treeActions';
 import { CreationBadge, useTreeCreation } from './treeCreation';
@@ -32,61 +28,14 @@ import { taskActivityOrder } from './taskGroups';
 import { activityLabel, agentSignal, stateMeta, keyboardNavigation } from './treePresentation';
 import { PersonalAgentTree } from './PersonalAgentTree';
 import { DeletionProgressList } from './DeletionProgressList';
-import type { CurrentTask } from './taskStatus';
 export { activityLabel } from './treePresentation';
-import type { ResourceViewsClient } from '../resources/client';
 import { useChannelFacts } from '../resources/useChannelFacts';
 import { ChannelBadge, TreeFactsSummary, treeAgentIds } from './treeChannel';
 import { agentDisplayTitle } from '../agent/presentation';
 import { sandboxFilterEmpty, sandboxNavigation } from './navigationStatuses';
 
-export interface TreePermissions {
-  readonly createWorkspace: boolean;
-  readonly createAgent: boolean;
-  readonly pauseSandbox: boolean;
-  readonly deleteSandbox: boolean;
-  readonly removeWorkspace: boolean;
-  readonly stopAgent: boolean;
-  readonly deleteAgent: boolean;
-  readonly exportHistory: boolean;
-}
-
-export type TreeAction =
-  | { readonly kind: 'new_workspace'; readonly sandboxId: string }
-  | { readonly kind: 'pause_sandbox'; readonly sandboxId: string }
-  | { readonly kind: 'revive_sandbox'; readonly sandboxId: string }
-  | { readonly kind: 'delete_sandbox'; readonly sandboxId: string }
-  | { readonly kind: 'new_agent'; readonly workspaceId: string }
-  | { readonly kind: 'new_agent'; readonly sandboxId: string }
-  | { readonly kind: 'remove_workspace'; readonly workspaceId: string }
-  | { readonly kind: 'stop_agent'; readonly agentId: string }
-  | { readonly kind: 'delete_agent'; readonly agentId: string }
-  | { readonly kind: 'export_history'; readonly agentId: string }
-  | { readonly kind: 'export_retained_conversation'; readonly agentId: string };
-
-export interface TreeProps {
-  readonly currentTask?: CurrentTask;
-  readonly selectedRetired?: AgentDetail;
-  readonly onShowAll?: () => void;
-  readonly attention?: RuntimeAttention;
-  readonly showDeletionProgress?: boolean;
-  readonly active?: boolean;
-  readonly resourceClient?: ResourceViewsClient;
-  readonly viewerId: string;
-  readonly view?: 'agent' | 'sandbox';
-  readonly statusFilter?: string;
-  readonly items: readonly NavigationSandbox[];
-  readonly refreshError?: string;
-  readonly lifecycleBusy?: boolean;
-  readonly busySandboxIds?: ReadonlySet<string>;
-  readonly deletingSandboxIds?: ReadonlySet<string>;
-  readonly onViewDeletion?: (sandboxId: string) => void;
-  readonly route: AppRoute;
-  readonly permissions: TreePermissions;
-  readonly onNavigate: (route: AppRoute) => void;
-  readonly onAgentIntent?: (agentId: string, active: boolean) => void;
-  readonly onAction: (action: TreeAction) => void;
-}
+import type { TreeProps } from './treeTypes';
+export type { TreeAction, TreePermissions, TreeProps } from './treeTypes';
 
 function storageKey(viewerId: string): string {
   return `cma:tree:${viewerId}:collapsed`;

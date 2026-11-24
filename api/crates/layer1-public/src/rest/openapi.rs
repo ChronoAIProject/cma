@@ -5,33 +5,8 @@ mod composition;
 mod identity;
 mod projections;
 use self::projections::*;
-use super::admin::profiles::{ProfilePageView, ProfileSummaryView};
-use super::admin::sandboxes::{
-    AgentSummaryView, SandboxDetailView, SandboxPageView, SandboxSummaryView, WorkspaceSummaryView,
-};
-use super::admin::settings::{
-    InactivitySettingsBody, MarketplaceSettingsBody, PatchRequest, PlatformDefaultsBody,
-    PlatformLimitsBody, PlatformSettingsBody, ProfileReferenceBody, ReplaceRequest, ResetRequest,
-    RetentionSettingsBody, SettingsView, TriggerSettingsBody, UsageReportingSettingsBody,
-};
-use super::admin::{
-    ActivityActorView, ActivityPageView, ActivityView, RuntimeEntryView, RuntimeInventoryView,
-};
-use super::agent_openapi_shapes::*;
-use super::agent_shared_shapes::*;
-use super::instances_openapi_shapes::{
-    CreateInlineWorkspaceRequest, CreateSandboxRequest, CreateWorkspaceRequest, FailureView,
-    OwnerAgentSummaryView, OwnerSandboxDetailView, OwnerSandboxPageView, OwnerSandboxSummaryView,
-    OwnerWorkspaceSummaryView, ProfileReferenceView, SandboxEventView, SandboxLimitsView,
-    SandboxView, WorkspaceDetailView, WorkspaceListView, WorkspaceSourceView, WorkspaceView,
-    WorktreeListView, WorktreeView,
-};
-use super::launch_events::*;
-use super::problems::ProblemDocument;
-use super::profile_authoring::shapes::*;
-use super::profiles_openapi_shapes::*;
-use super::trigger_openapi_shapes::*;
-#[rustfmt::skip] use super::gateway_records::{GatewayRecordHeadView as GatewayRecordHead, GatewayRecordPageView as GatewayRecordPage, GatewayRecordView as GatewayRecord, PutGatewayRecordRequest as PutGatewayRequest, PutGatewayRecordView as PutGateway};
+mod schemas;
+use self::schemas::*;
 #[derive(OpenApi)]
 #[openapi(
     paths(
