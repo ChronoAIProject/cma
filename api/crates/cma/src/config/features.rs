@@ -1,6 +1,8 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[cfg(test)]
 mod agent_event_page_tests;
+#[cfg(test)]
+mod bounded_inactivity_log_tests;
 pub(super) mod home_backup;
 #[cfg(test)]
 mod home_backup_expiry_tests;
@@ -71,6 +73,7 @@ pub(crate) struct FeatureFlags {
     pub admission_ceilings_writes_enabled: bool,
     pub pending_home_reconciliation: bool,
     pub agent_control_write_coordination: bool,
+    pub bounded_inactivity_legacy_log: bool,
     pub strict_inactivity_session_evidence: bool,
     pub bounded_title_reads: bool,
     pub access_snapshot_session: bool,
@@ -295,6 +298,10 @@ impl FeatureFlags {
             agent_control_write_coordination: flag(
                 lookup,
                 "CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED",
+            )?,
+            bounded_inactivity_legacy_log: flag(
+                lookup,
+                "CHRONO_BOUNDED_INACTIVITY_LEGACY_LOG_ENABLED",
             )?,
             strict_inactivity_session_evidence: flag(
                 lookup,
