@@ -10945,7 +10945,7 @@
             }
           },
           {
-            "description": "1..=256 ASCII bytes; identical creates replay locally for ten minutes",
+            "description": "1..=256 ASCII bytes; identical creates replay locally for ten minutes. For a supplied record_id, replay requires the original channel to remain ready and unretired.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": false,
