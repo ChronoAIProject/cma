@@ -531,10 +531,13 @@ async fn same_image_cold_canary_does_not_block_ordinary_pool_retirement_or_drain
         Some(vec![])
     );
 
-    sandbox.lifecycle.home.as_mut().unwrap().receipt = None;
+    // Without a matching profile pin the cold-pool evidence cannot exclude it.
+    sandbox.profile.content.runtime_image = None;
+    sandbox.profile.digest =
+        layer2_core::profiles::content_digest(&sandbox.profile.content).unwrap();
     sandboxes
         .replace_one(
-            filter,
+            filter.clone(),
             crate::store::sandboxes::sandbox_document(&sandbox, 0).unwrap(),
         )
         .await
@@ -544,5 +547,22 @@ async fn same_image_cold_canary_does_not_block_ordinary_pool_retirement_or_drain
         store.retirement_drain_homes(&old, &image).await.unwrap(),
         None
     );
+
+    // Simulate a damaged active row, which the aggregate writer would reject.
+    sandboxes
+        .update_one(
+            filter,
+            doc! { "$unset": { "record.lifecycle.home.receipt": "" } },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.retirement_homes(&old, &image).await,
+        Err(WarmPoolError::Unavailable)
+    ));
+    assert!(matches!(
+        store.retirement_drain_homes(&old, &image).await,
+        Err(WarmPoolError::Unavailable)
+    ));
     db.drop().await.unwrap();
 }
