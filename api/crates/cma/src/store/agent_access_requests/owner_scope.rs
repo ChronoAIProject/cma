@@ -141,6 +141,7 @@ impl MongoSandboxStore {
                 decision: Some(AgentAccessDecision::Approved {
                     command_key_hash: key_hash.clone(),
                     services: services.clone(),
+                    connection: None,
                     authorization: authorization.clone(),
                 }),
                 lease: None,

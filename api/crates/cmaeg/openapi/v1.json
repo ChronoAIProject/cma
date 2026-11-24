@@ -7492,6 +7492,12 @@
           "relay_raw_verification_writes_enabled": {
             "type": "boolean"
           },
+          "relay_telegram_member_joins_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "response_recovery_providers": {
             "description": "Registered provider slugs with response replay. Configuration, not connection health.",
             "items": {
@@ -8454,6 +8460,14 @@
                   }
                 ]
               },
+              "member_join_chat_ids": {
+                "description": "Exact Telegram relay groups opted into one event per human membership update.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
               "platform": {
                 "$ref": "#/components/schemas/Platform"
               },
@@ -9070,6 +9084,17 @@
                   {
                     "type": "null"
                   }
+                ]
+              },
+              "member_join_chat_ids": {
+                "description": "Exact opted-in Telegram relay group IDs. Omit to retain them; send an empty list to clear them.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": [
+                  "array",
+                  "null"
                 ]
               },
               "platform": {
