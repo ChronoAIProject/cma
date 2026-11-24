@@ -1,5 +1,7 @@
 //! Close an expired publication by proving its preimage and fencing its commit.
 use super::*;
+#[cfg(test)]
+mod maintenance_tests;
 
 pub(in crate::store) async fn retire_expired(
     store: &MongoSandboxStore,
@@ -77,6 +79,13 @@ async fn retire(
         // Completion updates the witness and format in the same transaction.
         // A receipt with an admitted legacy witness cannot authorize replacement.
         return Err(witness::unresolved());
+    }
+    match scope.fence_agent_parent(store, &current).await {
+        Ok(true) => {}
+        Ok(false) | Err(TransactionLogError::Domain(SandboxStoreError::Conflict)) => {
+            return Ok(false);
+        }
+        Err(error) => return Err(error.into()),
     }
     let mut retired = witness.clone();
     retired.state = State::Retired;
