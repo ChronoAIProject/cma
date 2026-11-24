@@ -33,7 +33,6 @@ impl Custody {
             authority: sandbox.credential.current.clone().unwrap(),
             github_route: None,
             value: SecretValue::new("synthetic-skill-authority".into()),
-            github_route: None,
         });
     }
 }
