@@ -175,7 +175,10 @@ export function agentActions(
         (busy
           ? ACTION_BUSY
           : !runtimeAvailable
-            ? (agentDeletionBlock(context) ?? recoveryReason ?? REQUIRES_ACTIVE_SANDBOX)
+            ? (agentDeletionBlock(context) ??
+              recoveryReason ??
+              sandboxStopReason(sandbox) ??
+              REQUIRES_ACTIVE_SANDBOX)
             : undefined),
     });
   if (permissions.deleteAgent) {
@@ -238,6 +241,11 @@ export function agentActions(
     });
   }
   return actions;
+}
+
+function sandboxStopReason(sandbox: SandboxSummary | undefined): string | undefined {
+  if (sandbox?.status === 'paused') return 'The Sandbox is paused.';
+  if (sandbox?.status === 'failed') return 'The Sandbox runtime is unavailable.';
 }
 
 function agentDeletionBlock({ sandbox, stale, busy }: AgentActionContext): string | undefined {

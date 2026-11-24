@@ -215,6 +215,8 @@ it.each([
   'stopped-without-runtime',
   'failed-without-runtime',
   'runtime-unavailable',
+  'sandbox-paused',
+  'sandbox-failed',
   'busy',
   'no-permission',
   'shared',
@@ -237,7 +239,13 @@ it.each([
           sandbox:
             condition === 'runtime-unavailable' || condition.endsWith('without-runtime')
               ? undefined
-              : sandboxFixture(),
+              : sandboxFixture(
+                  condition === 'sandbox-paused'
+                    ? 'paused'
+                    : condition === 'sandbox-failed'
+                      ? 'failed'
+                      : 'active',
+                ),
           busy: condition === 'busy',
         },
       ),
@@ -256,6 +264,9 @@ it.each([
       expect(stop).toHaveTextContent('Another action is still being confirmed.');
     if (condition === 'runtime-unavailable')
       expect(stop).toHaveTextContent('Sandbox status is unavailable. Refresh and try again.');
+    if (condition === 'sandbox-paused') expect(stop).toHaveTextContent('The Sandbox is paused.');
+    if (condition === 'sandbox-failed')
+      expect(stop).toHaveTextContent('The Sandbox runtime is unavailable.');
     await user.click(stop!);
   }
   expect(onMoreAction).not.toHaveBeenCalled();
