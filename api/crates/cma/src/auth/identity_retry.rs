@@ -42,6 +42,18 @@ pub(super) async fn verify_detailed(
     // No queue of distinct-token verifications accumulates during an outage.
     // Local overload is not evidence of provider unavailability and cannot fall back.
     use super::verification_diagnostics::{record, Endpoint, Reason, Stage};
+    let live_key = auth.identity_store.key(token);
+    if auth.identity_store.positive_cache_enabled() {
+        let current_metadata = auth.metadata.read().await;
+        if let Some(verified) = metadata.or(current_metadata.as_ref()).and_then(|metadata| {
+            auth.identity_store
+                .cached_positive(&live_key, metadata, expiry, expected_subject)
+        }) {
+            if super::identity_lifetime::current(auth, &verified) {
+                return Ok(verified);
+            }
+        }
+    }
     let _slot = auth
         .verification_slots
         .try_acquire()
@@ -56,7 +68,6 @@ pub(super) async fn verify_detailed(
             )
         })
         .map_err(|error| VerificationFailure::new(error, VerificationCause::Capacity))?;
-    let live_key = auth.identity_store.key(token);
     let token_epoch = auth.identity_store.token_epoch(&live_key).ok_or_else(|| {
         let error = Error::Unavailable("identity verification fence capacity exhausted".into());
         record(
@@ -139,10 +150,21 @@ pub(super) async fn verify_detailed(
     });
     let result = match result {
         Ok((mut evidence, metadata)) => {
-            let expiry = [expiry, evidence.token_expires_at, evidence.api_expires_at]
-                .into_iter()
-                .flatten()
-                .min();
+            let cache_limit = (auth.identity_store.positive_cache_enabled()
+                && matches!(
+                    &evidence.permissions,
+                    super::permissions::PermissionEvidence::Active(_)
+                ))
+            .then(|| SystemTime::now() + super::identity_flight::POSITIVE_TTL);
+            let expiry = [
+                expiry,
+                evidence.token_expires_at,
+                evidence.api_expires_at,
+                cache_limit,
+            ]
+            .into_iter()
+            .flatten()
+            .min();
             // Reject expired or unrepresentable evidence before publication.
             // Equivalent publications never borrow or refresh another lifetime.
             let lifetime = super::identity_lifetime::VerificationLifetime::new(
@@ -166,8 +188,16 @@ pub(super) async fn verify_detailed(
                         VerificationCause::PublicationEpochChanged,
                     )
                 })?;
-            evidence.verification = Some(lifetime.published(completed));
-            Ok(Arc::new(evidence))
+            evidence.verification = Some(lifetime.published(completed.clone()));
+            let evidence = Arc::new(evidence);
+            auth.identity_store.remember_positive(
+                &live_key,
+                &completed,
+                metadata,
+                expiry,
+                evidence.clone(),
+            );
+            Ok(evidence)
         }
         Err(error) => Err(error),
     };

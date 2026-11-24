@@ -18,6 +18,8 @@ use crate::auth::{permissions::PermissionEvidence, AuthMode};
 mod budget_tests;
 #[path = "bearer_authorization_tests/epoch_tests.rs"]
 mod epoch_tests;
+#[path = "bearer_authorization_tests/positive_cache_tests.rs"]
+mod positive_cache_tests;
 
 struct Gate {
     release: Semaphore,

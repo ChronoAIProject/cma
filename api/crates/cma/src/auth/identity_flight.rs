@@ -1,17 +1,23 @@
-//! Process-local invalidation fences; no verification result is retained here.
+//! Process-local invalidation fences and the opt-in positive-cache prototype.
 use ring::{hmac, rand::SystemRandom};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, Weak},
+    time::{Duration, SystemTime},
 };
+
+use tokio::time::Instant;
 
 use super::{
     identity::VerifiedSubject,
     identity_evidence::{self, EvidenceScope, EvidenceStamp},
     verification_error::ProviderVerificationError,
+    ProviderMetadata,
 };
 
 const CAPACITY: usize = 1024;
+const POSITIVE_CAPACITY: usize = 128;
+pub(super) const POSITIVE_TTL: Duration = Duration::from_secs(30);
 pub(super) type TokenHash = [u8; 32];
 pub(super) type Epoch = Arc<()>;
 
@@ -31,6 +37,27 @@ pub(super) trait IdentityStore: Send + Sync {
         epoch: &Epoch,
         stamp: &EvidenceStamp,
     ) -> Option<Epoch>;
+    fn cached_positive(
+        &self,
+        _key: &TokenHash,
+        _metadata: &ProviderMetadata,
+        _expiry: Option<SystemTime>,
+        _expected_subject: Option<&str>,
+    ) -> Option<Arc<VerifiedSubject>> {
+        None
+    }
+    fn remember_positive(
+        &self,
+        _key: &TokenHash,
+        _epoch: &Epoch,
+        _metadata: ProviderMetadata,
+        _expiry: Option<SystemTime>,
+        _evidence: Arc<VerifiedSubject>,
+    ) {
+    }
+    fn positive_cache_enabled(&self) -> bool {
+        false
+    }
     fn invalidate_token(&self, token: &str);
     fn clear(&self);
     #[cfg(test)]
@@ -40,11 +67,29 @@ pub(super) trait IdentityStore: Send + Sync {
 struct Entry {
     epoch: Weak<()>,
     stamp: Option<EvidenceStamp>,
+    positive: Option<Positive>,
+}
+
+struct Positive {
+    metadata: ProviderMetadata,
+    expires_at: Option<SystemTime>,
+    until: Instant,
+    evidence: Arc<VerifiedSubject>,
+}
+
+impl Positive {
+    fn alive(&self) -> bool {
+        Instant::now() < self.until
+            && self
+                .expires_at
+                .is_none_or(|expiry| SystemTime::now() < expiry)
+    }
 }
 
 pub(super) struct MemoryIdentityStore {
     key: hmac::Key,
     capacity: usize,
+    positive_cache_enabled: bool,
     epochs: Mutex<HashMap<TokenHash, Entry>>,
 }
 
@@ -60,7 +105,16 @@ impl MemoryIdentityStore {
             key: hmac::Key::generate(hmac::HMAC_SHA256, &SystemRandom::new())
                 .expect("operating system randomness is required for identity hashing"),
             capacity,
+            positive_cache_enabled: false,
             epochs: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn positive_cache_prototype() -> Self {
+        Self {
+            positive_cache_enabled: true,
+            ..Self::default()
         }
     }
 }
@@ -75,7 +129,16 @@ impl IdentityStore for MemoryIdentityStore {
 
     fn token_epoch(&self, key: &TokenHash) -> Option<Epoch> {
         let mut epochs = self.epochs.lock().expect("identity fence lock");
-        epochs.retain(|_, entry| entry.epoch.strong_count() > 0);
+        epochs.retain(|_, entry| {
+            if entry
+                .positive
+                .as_ref()
+                .is_some_and(|cached| !cached.alive())
+            {
+                entry.positive = None;
+            }
+            entry.epoch.strong_count() > 0
+        });
         if let Some(epoch) = epochs.get(key).and_then(|entry| entry.epoch.upgrade()) {
             return Some(epoch);
         }
@@ -88,6 +151,7 @@ impl IdentityStore for MemoryIdentityStore {
             Entry {
                 epoch: Arc::downgrade(&epoch),
                 stamp: None,
+                positive: None,
             },
         );
         Some(epoch)
@@ -135,8 +199,67 @@ impl IdentityStore for MemoryIdentityStore {
         *current = Entry {
             epoch: Arc::downgrade(&completed),
             stamp: Some(stamp.clone()),
+            positive: None,
         };
         Some(completed)
+    }
+
+    fn positive_cache_enabled(&self) -> bool {
+        self.positive_cache_enabled
+    }
+
+    fn cached_positive(
+        &self,
+        key: &TokenHash,
+        metadata: &ProviderMetadata,
+        expiry: Option<SystemTime>,
+        expected_subject: Option<&str>,
+    ) -> Option<Arc<VerifiedSubject>> {
+        let epochs = self.epochs.lock().expect("identity fence lock");
+        let cached = epochs.get(key)?.positive.as_ref()?;
+        if !cached.alive()
+            || &cached.metadata != metadata
+            || expiry.is_some_and(|expiry| cached.expires_at.is_none_or(|older| older > expiry))
+            || expected_subject.is_some_and(|subject| cached.evidence.subject.as_str() != subject)
+        {
+            return None;
+        }
+        Some(cached.evidence.clone())
+    }
+
+    fn remember_positive(
+        &self,
+        key: &TokenHash,
+        epoch: &Epoch,
+        metadata: ProviderMetadata,
+        expiry: Option<SystemTime>,
+        evidence: Arc<VerifiedSubject>,
+    ) {
+        use super::permissions::PermissionEvidence;
+        if !self.positive_cache_enabled
+            || !matches!(&evidence.permissions, PermissionEvidence::Active(_))
+        {
+            return;
+        }
+        let mut epochs = self.epochs.lock().expect("identity fence lock");
+        let occupied = epochs
+            .values()
+            .filter(|entry| entry.positive.is_some())
+            .count();
+        let Some(current) = epochs.get_mut(key) else {
+            return;
+        };
+        if !current.epoch.ptr_eq(&Arc::downgrade(epoch))
+            || (occupied >= POSITIVE_CAPACITY && current.positive.is_none())
+        {
+            return;
+        }
+        current.positive = Some(Positive {
+            metadata,
+            expires_at: expiry,
+            until: Instant::now() + POSITIVE_TTL,
+            evidence,
+        });
     }
 
     fn invalidate_token(&self, token: &str) {
