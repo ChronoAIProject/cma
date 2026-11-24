@@ -279,3 +279,45 @@ it.each(['disabled', 'different viewer', 'different client'] as const)(
     expect(screen.queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
   },
 );
+
+it.each(['Agent', 'Sandbox'] as const)(
+  'verified %s settlement enables Done while explicit retry transport remains pending',
+  async (target) => {
+    const f = fixture(target);
+    let resolveCommand!: () => void;
+    const command = target === 'Agent' ? f.deleteAgent : f.deleteSandbox;
+    command.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCommand = resolve;
+        }),
+    );
+    await open(f, { ...f.request, accepted: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Check request' }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(command).toHaveBeenCalledTimes(1);
+    expect(command.mock.calls[0]?.[1]).toMatchObject({ idempotencyKey: f.request.key });
+    persistDeletion('owner', f.request);
+    f.readAgent.mockResolvedValue(terminal);
+    f.readSandbox.mockResolvedValue({ ...sandboxFixture(), owner: 'owner', status: 'retired' });
+    const writes = vi.spyOn(localStorage, 'setItem');
+    await act(async () => {
+      await f.externalRead();
+    });
+    expect(restoreDeletions('owner')).toEqual([]);
+    expect(screen.getByRole('dialog')).toHaveAccessibleName(`${target} deleted`);
+    expect(screen.getByRole('button', { name: 'Done' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Check request' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await act(async () => {
+      resolveCommand();
+    });
+    await act(() => vi.advanceTimersByTimeAsync(15000));
+    expect(command).toHaveBeenCalledTimes(1);
+    expect(f.stopAgent).not.toHaveBeenCalled();
+    expect(writes).not.toHaveBeenCalled();
+    expect(restoreDeletions('owner')).toEqual([]);
+  },
+);
