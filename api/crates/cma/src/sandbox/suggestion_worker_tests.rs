@@ -377,7 +377,9 @@ async fn owner_scope_revision_during_reservation_blocks_the_old_credential() {
             expected_revision: previous_revision,
             sandbox: Box::new(sandbox),
             event_at: at,
-            event: SandboxEventKind::ServiceAccessRevised { scope },
+            event: SandboxEventKind::ServiceAccessRevised {
+                scope: Box::new(scope),
+            },
         })
         .await
         .unwrap();
