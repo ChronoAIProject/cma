@@ -44,13 +44,19 @@ Node versions, writing a new output directory, then compare all three outputs
 with `diff`. There are no timestamps or absolute paths in the drafts. Input
 hashes bind the lockfiles, workspace manifests, tool/policy/catalog and vendored
 files; cached external Cargo manifest hashes bind the metadata declarations.
+Policy and catalog parsing, hashing and report rendering share captured input
+bytes. The policy snapshot is included in `inventory.json`; generation refuses
+an input changed during collection. Every tracked notice filename is read and
+hashed, so a missing tracked notice fails the run instead of disappearing.
 Metadata collection reads the current tracked working tree, including edits,
 so review the diff and use a clean commit for release evidence.
 
 Npm rows count lockfile **locations**, not distinct packages and not an installed
 platform graph. The root project entries are excluded; linked packages remain
 explicit review rows. Cargo workspace members are separate from third-party
-packages, even when their license metadata is absent. Cargo's all-features graph
+packages, even when their license metadata is absent. The inventory uses
+`workspace-license-metadata-missing` for an absent workspace declaration;
+the project license remains Apache-2.0. Cargo's all-features graph
 is not a proof of every package in `Cargo.lock` or of a particular built artifact.
 No target, dev-only, optional or build dependency is silently exempted.
 

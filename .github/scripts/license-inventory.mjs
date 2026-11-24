@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +9,7 @@ import { makeInventory, renderNotices, renderReview } from './license-inventory/
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const CONFIG = '.github/scripts/license-inventory';
+const NOTICE_NAME = /^(?:(?:LICENSE|LICENCE|COPYING|NOTICE)(?:\.(?:txt|md)|[-_].*\.(?:txt|md))?|OFL-.*\.txt|.*-LICENSE)$/i;
 
 export function runCommand(command, args, cwd) {
   const result = spawnSync(command, args, {
@@ -27,19 +27,24 @@ function parseJson(bytes, label) {
   catch { throw new Error(`${label}: invalid JSON`); }
 }
 
-export async function generate({ root = ROOT, offline = false, run = runCommand } = {}) {
-  const files = run('git', ['ls-files', '-z'], root).split('\0').filter(Boolean)
-    .filter((path) => existsSync(resolve(root, path))).sort(compare);
+export async function generate({ root = ROOT, offline = false, run = runCommand, readSource = readFile } = {}) {
+  const files = run('git', ['ls-files', '-z'], root).split('\0').filter(Boolean).sort(compare);
   files.forEach(relativePath);
   const locks = files.filter((path) => basename(path) === 'package-lock.json');
   requireValue(JSON.stringify(locks) === JSON.stringify(NPM_LOCKS), 'npm lock set changed; review and update NPM_LOCKS');
-  const read = (path) => readFile(resolve(root, relativePath(path)));
+  const snapshot = new Map();
+  const read = async (path) => {
+    relativePath(path);
+    if (!snapshot.has(path)) snapshot.set(path, await readSource(resolve(root, path)));
+    return snapshot.get(path);
+  };
   const policy = parseJson(await read(`${CONFIG}/policy.json`), 'policy');
   const catalog = parseJson(await read(`${CONFIG}/vendors.json`), 'vendor catalog');
   const inputHashes = {};
   const inputFiles = files.filter((path) => path === 'api/Cargo.lock' || path === 'api/rust-toolchain.toml' ||
     (path.startsWith('api/') && path.endsWith('/Cargo.toml')) || locks.includes(path) ||
-    path === '.github/scripts/license-inventory.mjs' || path.startsWith(`${CONFIG}/`));
+    path === '.github/scripts/license-inventory.mjs' || path.startsWith(`${CONFIG}/`) ||
+    NOTICE_NAME.test(basename(path)));
   for (const path of inputFiles) inputHashes[path] = sha256(await read(path));
   const pin = (await read('api/rust-toolchain.toml')).toString().match(/^channel\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"\s*$/m)?.[1];
   requireValue(pin, 'expected an exact Rust toolchain pin');
@@ -60,23 +65,22 @@ export async function generate({ root = ROOT, offline = false, run = runCommand 
     inputHashes[key] = sha256(await readFile(pkg.manifest_path));
   }
   const mapped = new Set(catalog.flatMap((entry) => entry.evidence));
-  const noticeName = /^(?:(?:LICENSE|LICENCE|COPYING|NOTICE)(?:\.(?:txt|md)|[-_].*\.(?:txt|md))?|OFL-.*\.txt|.*-LICENSE)$/i;
-  const unmapped = files.filter((path) => noticeName.test(basename(path)) &&
+  const unmapped = files.filter((path) => NOTICE_NAME.test(basename(path)) &&
     !['LICENSE', 'NOTICE'].includes(path) && !mapped.has(path));
   // Catch a concurrent lock/catalog/manifest edit before producing a mixed snapshot.
   for (const [path, digest] of Object.entries(inputHashes).filter(([path]) => !path.startsWith('cargo:'))) {
-    requireValue(sha256(await read(path)) === digest, 'inventory input changed during collection; rerun');
+    requireValue(sha256(await readSource(resolve(root, path))) === digest, 'inventory input changed during collection; rerun');
   }
-  return makeInventory(records, inputHashes, { node: process.versions.node, cargo: cargoVersion, metadataFormat: 1 }, unmapped);
+  return { ...makeInventory(records, inputHashes, { node: process.versions.node, cargo: cargoVersion, metadataFormat: 1 }, unmapped), policy };
 }
 
-export async function writeDrafts(output, inventory, policy) {
+export async function writeDrafts(output, inventory) {
   // An existing directory is refused so stale files cannot masquerade as current output.
   await mkdir(output, { recursive: false, mode: 0o700 });
   for (const [name, content] of [
     ['inventory.json', canonicalJson(inventory)],
     ['THIRD_PARTY_NOTICES.md', renderNotices(inventory)],
-    ['COPYLEFT_REVIEW.md', renderReview(inventory, policy)],
+    ['COPYLEFT_REVIEW.md', renderReview(inventory, inventory.policy)],
   ]) await writeFile(resolve(output, name), content, { flag: 'wx', mode: 0o600 });
 }
 
@@ -91,10 +95,9 @@ export async function main(args, options = {}) {
     'expected --output NEW_DIRECTORY [--offline]');
   console.error('license-inventory: collecting locked source dependencies and vendored notices');
   const inventory = await generate({ ...options, offline });
-  const policy = parseJson(await readFile(resolve(options.root ?? ROOT, CONFIG, 'policy.json')), 'policy');
   const output = resolve(remaining[1]);
-  await writeDrafts(output, inventory, policy);
-  console.error(`license-inventory: wrote draft; ${JSON.stringify(inventory.counts)}; unresolved decisions remain`);
+  await writeDrafts(output, inventory);
+  console.error(`license-inventory: wrote draft; ${JSON.stringify(inventory.counts)}; third-party distribution review remains`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

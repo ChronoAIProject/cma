@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { generate, main, runCommand, writeDrafts } from '../license-inventory.mjs';
 import { NPM_LOCKS } from './collectors.mjs';
-import { canonicalJson } from './model.mjs';
+import { canonicalJson, sha256 } from './model.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const repository = join(directory, '../../..');
@@ -65,7 +65,7 @@ test('end-to-end draft generation is deterministic and binds every lock', async 
   assert.equal(await readFile(join(output, 'inventory.json'), 'utf8'), canonicalJson(first));
   assert.match(await readFile(join(output, 'THIRD_PARTY_NOTICES.md'), 'utf8'), /DRAFT/);
   assert.match(await readFile(join(output, 'COPYLEFT_REVIEW.md'), 'utf8'), /EPL-2.0/);
-  await assert.rejects(writeDrafts(output, first, {}), { code: 'EEXIST' });
+  await assert.rejects(writeDrafts(output, first), { code: 'EEXIST' });
 });
 
 test('generation refuses missing/additional lockfiles and malformed JSON', async (t) => {
@@ -93,6 +93,51 @@ test('generation refuses wrong toolchain or failed Cargo without a partial repor
     if (args[0] === 'metadata') throw new Error('synthetic Cargo failure');
     return setup.run(command, args);
   } }), /synthetic Cargo failure/);
+});
+
+test('tracked missing notice files fail instead of disappearing from the inventory', async (t) => {
+  for (const path of ['other/NOTICE.txt', 'vendor/fixture/LICENSE', 'NOTICE']) {
+    const setup = await fixture(t);
+    if (path === 'NOTICE') setup.state.files.push(path);
+    else await rm(join(setup.root, path));
+    await assert.rejects(generate(setup), { code: 'ENOENT' });
+  }
+});
+
+test('policy and catalog bytes are captured once and checked before returning', async (t) => {
+  for (const filename of ['policy.json', 'vendors.json']) {
+    const setup = await fixture(t);
+    const target = join(setup.root, config, filename);
+    const original = await readFile(target);
+    let reads = 0;
+    await assert.rejects(generate({ ...setup, readSource: async (path) => {
+      if (path !== target) return readFile(path);
+      reads++;
+      return reads === 1 ? original : Buffer.concat([original, Buffer.from(' ')]);
+    } }), /input changed during collection/);
+    assert.equal(reads, 2);
+  }
+});
+
+test('draft rendering uses the captured policy after source files change', async (t) => {
+  const setup = await fixture(t);
+  const reads = new Map();
+  const first = await generate({ ...setup, readSource: async (path) => {
+    reads.set(path, (reads.get(path) ?? 0) + 1);
+    return readFile(path);
+  } });
+  for (const filename of ['policy.json', 'vendors.json']) {
+    const path = `${config}/${filename}`;
+    assert.equal(reads.get(join(setup.root, path)), 2);
+    assert.equal(first.inputHashes.find((item) => item.path === path).sha256,
+      sha256(await readFile(join(setup.root, path))));
+    await writeFile(join(setup.root, path), '{}');
+  }
+  assert.match(first.policy.obligations['EPL-2.0'].summary, /covered source/);
+  const output = join(setup.root, 'captured');
+  await writeDrafts(output, first);
+  assert.match(await readFile(join(output, 'COPYLEFT_REVIEW.md'), 'utf8'), /covered source/);
+  assert.equal(await readFile(join(output, 'inventory.json'), 'utf8'), canonicalJson(first));
 });
 
 test('subprocess adapter fails closed without exposing command diagnostics', () => {
