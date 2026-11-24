@@ -214,7 +214,12 @@ export function registerDeletionStatusCases() {
         await page.clock.runFor(10000);
         await fixture.settled();
         expect(fixture.reads).toHaveLength(reads);
-        await expect(page.getByText('Deleting 1 environment')).toBeVisible();
+        await expect(
+          page.getByRole('region', { name: 'Deletion request', exact: true }),
+        ).toHaveCount(0);
+        expect(
+          await page.evaluate(() => localStorage.getItem('cma:deletion:local-owner')),
+        ).not.toBeNull();
         await page.evaluate(() => {
           localStorage.setItem(
             'cma:deletion-requests:local-owner:synthetic-other-agent',

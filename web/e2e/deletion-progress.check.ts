@@ -1,3 +1,4 @@
+import { deletionProgress, environments, navigation } from './resource-lifecycle.fixture';
 import { registerDeletionStatusCases } from './redesign-deletion.cases';
 import { expect, test, type Page } from '@playwright/test';
 import { LocalAgentV2 } from './agent-v2.fixture';
@@ -95,6 +96,10 @@ for (const [width, theme] of [
       );
       const notice = page.getByRole('region', { name: 'Deletion request', exact: true });
       const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+      await expect(notice).toHaveCount(0);
+      await expect(composer).toBeEnabled();
+      await expect(composer).toBeInViewport();
+      await environments(page);
       await expect(notice).toHaveCount(1);
       await expect(notice).toContainText('Deleting 5 environments');
       await expect(composer).toBeEnabled();
@@ -111,8 +116,13 @@ for (const [width, theme] of [
       await page.keyboard.press('Escape');
       await expect(list).toHaveCount(0);
       await expect(open).toBeFocused();
+      await notice.getByRole('button', { name: 'Dismiss deletion notice' }).click();
+      await expect(notice).toHaveCount(0);
+      await navigation(page, false);
+      await page.reload();
+      await expect(notice).toHaveCount(0);
       for (const [index, request] of requests.entries()) {
-        await open.click();
+        await deletionProgress(page);
         await expect(list.getByText(request.action.sandboxId, { exact: true })).toBeVisible();
         terminal.add(request.action.sandboxId);
         await list
@@ -125,7 +135,12 @@ for (const [width, theme] of [
         await expect(completed).toBeVisible();
         await completed.getByRole('button', { name: 'Done', exact: true }).click();
         const remaining = 4 - index;
-        if (remaining) await expect(notice).toContainText(`Deleting ${remaining} environment`);
+        await expect(notice).toHaveCount(0);
+        if (remaining) {
+          await deletionProgress(page);
+          await expect(list.getByRole('listitem')).toHaveCount(remaining);
+          await page.keyboard.press('Escape');
+        }
       }
       await expect(notice).toHaveCount(0);
       await expect(composer).toBeEnabled();
@@ -209,8 +224,13 @@ for (const restored of [false, true]) {
     await page.clock.pauseAt(anchor);
     await submit.press('Enter');
     const summary = page.getByRole('region', { name: 'Deletion request', exact: true });
-    await expect(summary.getByRole('button', { name: 'View status', exact: true })).toBeEnabled();
-    await summary.getByRole('button', { name: 'View status', exact: true }).press('Enter');
+    if (restored) {
+      await expect(summary).toHaveCount(0);
+      await deletionProgress(page);
+    } else {
+      await expect(summary.getByRole('button', { name: 'View status', exact: true })).toBeEnabled();
+      await summary.getByRole('button', { name: 'View status', exact: true }).press('Enter');
+    }
     const reopen = page.getByRole('button', { name: 'View Agent deletion status (2)' });
     await expect(reopen).toBeEnabled();
     const original = (await receipts()).find(

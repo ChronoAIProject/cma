@@ -1,3 +1,4 @@
+import { deletionProgress } from './resource-lifecycle.fixture';
 import { expect, test } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 
@@ -185,10 +186,7 @@ for (const scenario of [
     expect(deletes[0]!.key).toBeTruthy();
     if (scenario.uncertain) expect(deletes[1]).toEqual(deletes[0]);
     await page.reload();
-    await page
-      .getByRole('region', { name: 'Deletion request', exact: true })
-      .getByRole('button', { name: 'View status', exact: true })
-      .click();
+    await deletionProgress(page);
     await page.getByRole('button', { name: /View Sandbox deletion status/ }).click();
     const progress = page.getByRole('dialog', { name: 'Deleting Sandbox', exact: true });
     await expect(progress).toContainText('still uses one Sandbox slot');

@@ -80,3 +80,13 @@ export async function taskAdmission(page: Page) {
     });
   });
 }
+
+export async function deletionProgress(page: Page) {
+  if (new URL(page.url()).pathname.startsWith('/agents/')) {
+    await page.getByRole('button', { name: 'More Agent actions', exact: true }).press('Enter');
+    await page.getByRole('menuitem', { name: 'View deletion status', exact: true }).press('Enter');
+  } else {
+    await page.getByRole('button', { name: 'View deletion status', exact: true }).press('Enter');
+  }
+  return page.getByRole('dialog', { name: 'Deletion progress', exact: true });
+}

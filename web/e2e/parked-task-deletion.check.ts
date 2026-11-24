@@ -1,6 +1,6 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
-import { navigation, resourceRow } from './resource-lifecycle.fixture';
+import { deletionProgress, navigation, resourceRow } from './resource-lifecycle.fixture';
 
 async function captureThemes(page: Page, info: TestInfo, name: string) {
   for (const dark of [true, false]) {
@@ -147,10 +147,7 @@ for (const purpose of ['image_rotation', 'revive'] as const) {
     expect(deletes[0]!.key).toBeTruthy();
     if (uncertain) expect(deletes[1]).toEqual(deletes[0]);
     await page.reload();
-    await page
-      .getByRole('region', { name: 'Deletion request', exact: true })
-      .getByRole('button', { name: 'View status', exact: true })
-      .click();
+    await deletionProgress(page);
     await page.getByRole('button', { name: /View Sandbox deletion status/ }).click();
     const progress = page.getByRole('dialog', { name: 'Deleting Sandbox', exact: true });
     await expect(progress).toBeVisible();

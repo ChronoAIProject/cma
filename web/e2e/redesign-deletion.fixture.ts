@@ -1,6 +1,11 @@
 import { expect, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
-import { environments, resourceRow, insideViewport } from './resource-lifecycle.fixture';
+import {
+  deletionProgress,
+  environments,
+  resourceRow,
+  insideViewport,
+} from './resource-lifecycle.fixture';
 
 export class RedesignDeletionFixture {
   readonly boundary = new LocalStartup();
@@ -126,10 +131,7 @@ export class RedesignDeletionFixture {
 
   async openStatus(page: Page) {
     await page.goto('/agent-manager');
-    await page
-      .getByRole('region', { name: 'Deletion request', exact: true })
-      .getByRole('button', { name: 'View status', exact: true })
-      .click();
+    await deletionProgress(page);
     await page
       .getByRole('button', { name: 'View Sandbox deletion status (1)', exact: true })
       .click();

@@ -193,6 +193,11 @@ for (const kind of ['Agent', 'Sandbox'] as const)
       await act(async () =>
         fireEvent.click(screen.getByRole('button', { name: 'Open pending request' })),
       );
+      fireEvent.click(
+        within(screen.getByRole('dialog', { name: 'Deletion progress' })).getByRole('button', {
+          name: `View ${kind} deletion status (1)`,
+        }),
+      );
       const status = await screen.findByRole('dialog', { name: `Deleting ${kind}` });
       expect(within(status).getByText(original)).toBeVisible();
       expect(command).toHaveBeenCalledTimes(1);

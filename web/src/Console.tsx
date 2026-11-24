@@ -170,6 +170,7 @@ function ConsoleContent({
     !accessUncertain,
     permissions,
     settlements,
+    { view: routePath(route), environment: route.kind === 'sandbox' },
   );
   const canOpenTriggers = !user.visitor && user.capabilities.includes('publish_triggers');
   const [commandsOpen, setCommandsOpen] = useState(false);
@@ -444,6 +445,7 @@ function ConsoleContent({
                 pending={actions.pending}
                 busySandboxIds={actions.busySandboxIds}
                 deletingSandboxIds={actions.deletingSandboxIds}
+                deletionNotice={actions.environmentNotice}
                 onViewDeletion={actions.viewDeletion}
                 onNavigate={(next) => {
                   if (next.kind !== 'usage') onSidebarNavigate();

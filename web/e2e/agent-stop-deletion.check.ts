@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
-import { navigation, noEffects, resourceRow } from './resource-lifecycle.fixture';
+import { deletionProgress, navigation, noEffects, resourceRow } from './resource-lifecycle.fixture';
 
 for (const source of ['header', 'task row'] as const) {
   test(`LOCAL paused task deletion opens its Sandbox from the ${source} without writing`, async ({
@@ -285,14 +285,15 @@ for (const { combined, uncertain } of [
       await expect.poll(() => deletes.length).toBe(2);
       expect(deletes[1]).toBe(deletes[0]);
     }
-    await expect(page.getByText('Deleting 1 Agent')).toBeVisible();
+    if (combined && uncertain)
+      await expect(page.getByRole('region', { name: 'Deletion request', exact: true })).toHaveCount(
+        0,
+      );
+    else await expect(page.getByText('Deleting 1 Agent')).toBeVisible();
     expect(deletes).toHaveLength(combined && uncertain ? 2 : 1);
     expect(deletes[0]).not.toBe(stops[0]!.key);
     await page.reload();
-    await page
-      .getByRole('region', { name: 'Deletion request', exact: true })
-      .getByRole('button', { name: 'View status', exact: true })
-      .click();
+    await deletionProgress(page);
     await page.getByRole('button', { name: /View Agent deletion status/ }).click();
     await expect(page.getByRole('dialog', { name: 'Deleting Agent', exact: true })).toBeVisible();
     boundary.agent = {

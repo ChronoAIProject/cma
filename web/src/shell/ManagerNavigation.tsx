@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import { NavigationSettingsContext, SidebarContext } from './sidebarContext';
-import { useContext, useLayoutEffect, useRef, useState } from 'react';
+import { useContext, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { SkeletonRows } from '../ui/Skeleton';
 import type { AgentDetail } from '../api/types';
 import type { AppRoute } from '../routing/routes';
@@ -38,6 +38,7 @@ function ViewerNavigation({
   deletingSandboxIds,
   onScope,
   onViewDeletion,
+  deletionNotice,
   onNavigate,
   onRestoreTaskRoute = onNavigate,
   onAgentIntent,
@@ -57,6 +58,7 @@ function ViewerNavigation({
   readonly busySandboxIds: ReadonlySet<string>;
   readonly deletingSandboxIds: ReadonlySet<string>;
   readonly onScope: (scope: string) => void;
+  readonly deletionNotice?: ReactNode;
   readonly onViewDeletion: (id: string) => void;
   readonly onNavigate: (route: AppRoute) => void;
   readonly onRestoreTaskRoute?: (route: AppRoute) => void;
@@ -282,6 +284,7 @@ function ViewerNavigation({
           Filters apply now but cannot be remembered after refresh.
         </p>
       ) : null}
+      {view === 'sandbox' && !sidebar?.collapsed ? deletionNotice : null}
       <div
         ref={scrollport}
         className="manager-navigation__list"
