@@ -359,6 +359,7 @@ impl LifecycleRecord {
         AgentLifecycleOperationView {
             callback_url: None,
             id: self.id.clone(),
+            accepted_at: self.created_at.try_to_rfc3339_string().ok(),
             status: self.status.clone(),
             phase: self.phase.clone(),
             agent_id: self.agent_id.clone(),
