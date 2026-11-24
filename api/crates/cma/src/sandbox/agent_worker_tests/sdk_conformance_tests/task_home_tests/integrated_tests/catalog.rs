@@ -18,19 +18,22 @@ pub(in super::super) fn identity_routes() -> Router {
 }
 
 pub(super) fn router(provider: &str) -> Router {
-    layer1_public::rest::profile_authoring_router(ProfileAuthoringService::new(
-        ProfileCapacityBounds {
-            min_cpu_millis: 100,
-            max_cpu_millis: 8000,
-            min_memory_mib: 128,
-            max_memory_mib: 16384,
-        },
-        Arc::new(Source(crate::auth::keys::KeyIssuer::new(
-            reqwest::Client::new(),
-            provider,
-            DEPLOYMENT_ID,
-        ))),
-    ))
+    layer1_public::rest::profile_authoring_router(
+        ProfileAuthoringService::new(
+            ProfileCapacityBounds {
+                min_cpu_millis: 100,
+                max_cpu_millis: 8000,
+                min_memory_mib: 128,
+                max_memory_mib: 16384,
+            },
+            Arc::new(Source(crate::auth::keys::KeyIssuer::new(
+                reqwest::Client::new(),
+                provider,
+                DEPLOYMENT_ID,
+            ))),
+        ),
+        None,
+    )
 }
 
 #[async_trait::async_trait]
