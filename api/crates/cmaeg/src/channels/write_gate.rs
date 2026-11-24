@@ -55,6 +55,7 @@ pub struct WriteFlags {
     pub native_discord: bool,
     pub telegram_message_events: bool,
     pub telegram_member_joins: bool,
+    pub relay_telegram_member_joins: bool,
     pub discord_thread_history: bool,
     pub telegram_topic_lifecycle: bool,
     pub telegram_topic_creation: bool,
@@ -86,6 +87,7 @@ pub(crate) fn check(
     super::definition_sources::check_github_sources(current, next, flags.github)?;
     super::custom_execution::write_gate(current, next, flags.durable_custom_execution)?;
     super::native_telegram::check_write(current, next, flags)?;
+    super::relay_telegram::check_write(current, next, flags.relay_telegram_member_joins)?;
     if let Some(index) = next.sources.iter().position(|source| {
         matches!(
             source,

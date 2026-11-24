@@ -11,18 +11,19 @@ use crate::wire::{
     AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame, WireFailure,
     WireOperation,
 };
+use crate::AgentProcessAction::Open;
 use crate::{
     AdapterError, AgentHomePlan, AgentLaunch, AgentSlot, CheckpointHoldReceipt,
-    CheckpointHoldRequest, ConversationChannel, ConversationInputSender, ConversationSnapshot,
-    ConversationUpdate, InstallReceipt, RestoreBootstrapReceipt, RuntimeHandle, RuntimeObservation,
-    WorkspaceReceipt, WorktreeReceipt,
+    CheckpointHoldRequest, ConversationChannel, ConversationSnapshot, ConversationUpdate,
+    InstallReceipt, RestoreBootstrapReceipt, RuntimeHandle, RuntimeObservation, WorkspaceReceipt,
+    WorktreeReceipt,
 };
 
 #[path = "memory_state.rs"]
 mod state;
 use state::{
-    digest, fingerprint, memory_observation, refused, remember_operation, replay_operation,
-    require_credential, valid_sha256,
+    channel, digest, fingerprint, memory_observation, refused, remember_operation,
+    replay_operation, require_credential, valid_sha256,
 };
 #[path = "memory_authority.rs"]
 mod authority;
@@ -375,17 +376,18 @@ impl HostedBackend for InMemoryHostedBackend {
         require_credential(runtime, WireOperation::OpenAgent)?;
         let authority_fence = launch.authority_fence;
         let launch = launch.request;
-        let expected = format!("agent:{}:open:v1", launch.agent_id.as_str());
-        if launch.operation_id != expected
-            || !valid_sha256(&launch.request_sha256)
-            || authority_fence == 0
-        {
+        let agent = launch.agent_id.as_str();
+        let Some(incarnation) = Open.incarnation(agent, &launch.operation_id) else {
+            return refused(WireOperation::OpenAgent, "operation_request_invalid");
+        };
+        if !valid_sha256(&launch.request_sha256) || authority_fence == 0 {
             return refused(WireOperation::OpenAgent, "operation_request_invalid");
         }
+        mutations::authorize_process_open(runtime, &launch, incarnation, authority_fence)?;
         let payload = fingerprint(&launch)?;
         authority::admit(
             runtime,
-            authority::ResourceKey::AgentProcess(launch.agent_id.clone()),
+            authority::ResourceKey::AgentProcess(launch.agent_id.clone(), incarnation),
             authority::Disposition::Present,
             authority_fence,
             &launch.operation_id,
@@ -489,12 +491,5 @@ impl HostedBackend for InMemoryHostedBackend {
         let mut retained = self.retained_homes.lock().await;
         home::retain(runtime, &mut retained)?;
         Ok(())
-    }
-}
-
-fn channel(conversation_id: Option<String>) -> ConversationChannel {
-    ConversationChannel {
-        input: ConversationInputSender::spawn(1, |_| async { Ok(()) }),
-        conversation_id,
     }
 }

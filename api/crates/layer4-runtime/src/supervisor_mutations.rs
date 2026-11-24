@@ -47,20 +47,14 @@ impl Supervisor {
                     Operation::remove_agent_home(&request.request),
                 ))
             }
-            RequestFrame::OpenAgent(request) => {
-                agent_validation::open(&request.request)?;
-                Some((
-                    request.authority_fence,
-                    Operation::open_agent(&request.request),
-                ))
-            }
-            RequestFrame::CloseAgent(request) => {
-                agent_validation::close(&request.request)?;
-                Some((
-                    request.authority_fence,
-                    Operation::close_agent(&request.request),
-                ))
-            }
+            RequestFrame::OpenAgent(request) => Some((
+                request.authority_fence,
+                self.authorize_process_open(request).await?,
+            )),
+            RequestFrame::CloseAgent(request) => Some((
+                request.authority_fence,
+                self.authorize_process_close(&request.request).await?,
+            )),
             _ => None,
         };
         let Some((authority_fence, operation)) = fenced else {

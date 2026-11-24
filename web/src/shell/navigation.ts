@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError } from '@cma/client';
+import { useSessionReadSignal } from '../auth/context';
 import type { CmaWebClient } from '../api/client';
 import { readableError } from '../vocabulary/errors';
 import type { SandboxDetail, SandboxSummary, WorkspaceDetail } from '../api/types';
@@ -95,11 +96,16 @@ function messageOf(error: unknown): string {
   return readableError(error, 'The Sandbox hierarchy could not be loaded.');
 }
 
-export function useNavigation(client: CmaWebClient): NavigationState & { refresh: () => void } {
+export function useNavigation(
+  client: CmaWebClient,
+  hierarchyRevision = 0,
+): NavigationState & { refresh: () => void } {
+  const sessionSignal = useSessionReadSignal();
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<NavigationState>({ status: 'loading' });
 
   useEffect(() => {
+    if (sessionSignal?.aborted) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let pending: AbortController | undefined;
@@ -113,7 +119,7 @@ export function useNavigation(client: CmaWebClient): NavigationState & { refresh
         timer = setTimeout(poll, Math.max(0, refreshAfter - Date.now()));
     };
     const poll = () => {
-      if (controller.signal.aborted || pending || document.hidden) return;
+      if (controller.signal.aborted || sessionSignal?.aborted || pending || document.hidden) return;
       if (Date.now() < refreshAfter) {
         schedule();
         return;
@@ -122,7 +128,11 @@ export function useNavigation(client: CmaWebClient): NavigationState & { refresh
       const request = new AbortController();
       pending = request;
       const epoch = visibilityEpoch;
-      const signal = AbortSignal.any([controller.signal, request.signal]);
+      const signal = AbortSignal.any(
+        sessionSignal
+          ? [controller.signal, request.signal, sessionSignal]
+          : [controller.signal, request.signal],
+      );
       void loadNavigation(client, signal)
         .then((items) => {
           if (signal.aborted) return;
@@ -173,7 +183,7 @@ export function useNavigation(client: CmaWebClient): NavigationState & { refresh
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', visibilityChanged);
     };
-  }, [client, revision]);
+  }, [client, hierarchyRevision, sessionSignal, revision]);
 
   const refresh = useCallback(() => {
     setRevision((value) => value + 1);
