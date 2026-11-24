@@ -66,9 +66,18 @@ async fn close_retry_transient_commit_does_not_duplicate_failure_events() {
     let admin = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap())
         .await
         .unwrap();
-    admin.database("admin").run_command(doc! { "configureFailPoint": "failCommand", "mode": { "times": 1 },
-        "data": { "failCommands": ["update"], "appName": &f.app, "errorCode": 112, "errorLabels": ["TransientTransactionError"] }
-    }).await.unwrap();
+    admin
+        .database("admin")
+        .run_command(
+            doc! { "configureFailPoint": "failCommand", "mode": { "times": 1 },
+                "data": { "failCommands": ["update"], "appName": &f.app,
+                    "namespace": format!("{}.sandboxes", f.name),
+                    "errorCode": 112, "errorLabels": ["TransientTransactionError"] }
+            },
+        )
+        .await
+        .unwrap();
+    let start_attempts = f.attempts.load(Ordering::SeqCst);
     let result = f.store.commit_agent_work(retry(&f.agent)).await;
     admin
         .database("admin")
@@ -76,6 +85,7 @@ async fn close_retry_transient_commit_does_not_duplicate_failure_events() {
         .await
         .unwrap();
     result.unwrap();
+    assert_eq!(f.attempts.load(Ordering::SeqCst) - start_attempts, 2);
     assert_eq!(
         f.store
             .agent_log

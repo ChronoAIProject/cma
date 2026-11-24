@@ -19,29 +19,34 @@ async fn repeated_failure_conflict_cache_rechecks_changed_revision_and_integrity
                 .unwrap();
         // Block the known-aborted update after history verification. The peer
         // changes the next snapshot while that exact command remains in flight.
-        admin
-            .database("admin")
+        let commands = admin.database("admin");
+        let configured = commands
             .run_command(
                 doc! {"configureFailPoint": "failCommand", "mode": {"times": 1},
                 "data": {"failCommands": ["update"], "appName": &f.app,
-                    "blockConnection": true, "blockTimeMS": 500, "errorCode": 112,
+                    "namespace": format!("{}.{AGENTS}", f.name),
+                    "blockConnection": true, "blockTimeMS": 2500, "errorCode": 112,
                     "errorLabels": ["TransientTransactionError"]}},
             )
             .await
             .unwrap();
-        let before_updates = f.updates.load(Ordering::SeqCst);
+        let prior_hits = configured
+            .get_i64("count")
+            .or_else(|_| configured.get_i32("count").map(i64::from))
+            .unwrap();
         scans::isolated_test(async {
             let (result, ()) = tokio::join!(
                 f.store
                     .commit_agent_work_repeated_failure(retry.clone(), None),
                 async {
-                    tokio::time::timeout(Duration::from_secs(5), async {
-                        while f.updates.load(Ordering::SeqCst) == before_updates {
-                            tokio::time::sleep(Duration::from_millis(1)).await;
-                        }
-                    })
-                    .await
-                    .unwrap();
+                    commands
+                        .run_command(doc! {
+                            "waitForFailPoint": "failCommand",
+                            "timesEntered": prior_hits + 1,
+                            "maxTimeMS": 5000_i32,
+                        })
+                        .await
+                        .expect("MongoDB must reach the Agent update after history validation");
                     let update = if changed == "revision" {
                         // Keep proof bytes identical so only the Agent comparison
                         // can invalidate the prior attempt's history.

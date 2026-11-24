@@ -13,6 +13,7 @@ async fn selected_retry_retries_a_transaction_conflict_without_double_counting_w
         .run_command(doc! {
             "configureFailPoint": "failCommand", "mode": {"times": 1_i32},
             "data": {"failCommands": ["update"], "appName": &f.app,
+                "namespace": format!("{}.agents", f.name),
                 "errorCode": 112_i32, "errorLabels": ["TransientTransactionError"]}
         })
         .await
