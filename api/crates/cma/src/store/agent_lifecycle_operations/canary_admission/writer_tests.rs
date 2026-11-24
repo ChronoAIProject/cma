@@ -238,6 +238,7 @@ async fn canary_revocation_and_redemption_share_the_same_owner_fence() {
     let revocation = RevokeCanaryGrant {
         owner: owner.clone(),
         lane: request.lane,
+        release_key: request.release.release_key.clone(),
         grant_id: grant.id.clone(),
         revision: grant.revision,
     };

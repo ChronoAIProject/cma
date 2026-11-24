@@ -314,6 +314,7 @@ pub(crate) struct PrepareCanaryGrant {
 pub(crate) struct RevokeCanaryGrant {
     pub(crate) owner: SubjectId,
     pub(crate) lane: CanaryLane,
+    pub(crate) release_key: String,
     pub(crate) grant_id: String,
     pub(crate) revision: i64,
 }
@@ -399,6 +400,7 @@ impl MongoAgentLifecycleStore {
                 .await?
                 .ok_or(CanaryWriteError::Refused)?;
             if current.id != request.grant_id
+                || current.release_key != request.release_key
                 || current.revision != request.revision
                 || current.state != CanaryGrantState::Issued
             {

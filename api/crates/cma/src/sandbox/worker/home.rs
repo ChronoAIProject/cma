@@ -20,9 +20,21 @@ impl SandboxWorker {
             .store
             .canary_runtime_image(sandbox)
             .await?;
+        let native_pool = sandbox
+            .lifecycle
+            .home
+            .as_ref()
+            .and_then(|home| home.native_pool.as_ref());
+        if canary_image.is_none()
+            && native_pool.is_some_and(|pool| pool.request.pool.spec.cold_canary)
+        {
+            return Err(SandboxStoreError::Corrupt(
+                "canary Sandbox is missing its runtime authority".into(),
+            ));
+        }
         if let Some(image) = &canary_image {
             let matches_home = match sandbox.lifecycle.home.as_ref() {
-                Some(home) => home.native_pool.as_ref().is_some_and(|pool| {
+                Some(home) => native_pool.is_some_and(|pool| {
                     pool.request.pool.spec.cold_canary
                         && &pool.request.pool.spec.image == image
                         && home.request.policy.is_native_vct()

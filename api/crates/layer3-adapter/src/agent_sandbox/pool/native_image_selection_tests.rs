@@ -153,7 +153,7 @@ async fn canary_uses_zero_target_distinct_from_the_same_released_image() {
         crate::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL.into(),
         crate::runtime_versions::RUNTIME_HOME_LAYOUT_VERSION.into(),
     );
-    let pools = fixture.client.warm_pools();
+    let pools = &fixture.client;
     let ordinary = pools.configure(&released, 2).await.unwrap();
     let home = crate::HomeVolumeRequest {
         volume_id: "canary-home".into(),

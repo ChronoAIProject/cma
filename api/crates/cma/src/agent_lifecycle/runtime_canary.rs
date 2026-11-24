@@ -105,6 +105,7 @@ impl RuntimeCanaryService for Canaries {
                 &RevokeCanaryGrant {
                     owner: request.owner,
                     lane: lane(release.lane),
+                    release_key: request.release_key,
                     grant_id: request.grant_id,
                     revision: request.expected_revision,
                 },
