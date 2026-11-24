@@ -1,9 +1,75 @@
 use super::*;
-use crate::store::sandbox_maintenance::mongo_integration_tests::{active_sandbox, ready_agent};
-use layer2_core::sandbox::store::AgentStore;
+use crate::store::sandbox_maintenance::mongo_integration_tests::{
+    active_sandbox, insert_agent, ready_agent,
+};
+use layer2_core::sandbox::store::{AgentStore, SandboxStore};
 use layer2_core::sandbox::AgentWorkStep;
 
 const AT: &str = "2026-09-05T00:00:00Z";
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn direct_log_append_conflicts_with_a_held_sandbox() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let client = mongodb::Client::with_uri_str(&uri).await.unwrap();
+    let other = mongodb::Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_log_hold_{}", uuid::Uuid::new_v4().simple());
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let parent = active_sandbox("sbx_direct_log_hold");
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let agent = ready_agent(&parent, "agt_direct_log_hold");
+    insert_agent(&store, &agent, AT).await;
+    let sandboxes = other.database(&name).collection::<Document>("sandboxes");
+    let parent_key = doc! {"_id": parent.id.as_str()};
+    let agent_key = doc! {"_id": agent.id.as_str()};
+    let original = store.agents.find_one(agent_key.clone()).await.unwrap();
+    let logs = store.agent_log(&agent.id, 0, 10).await.unwrap();
+    let kind = AgentLogKind::ConversationGap { frames: 1 };
+    for hold in [
+        mongodb::bson::Bson::Null,
+        mongodb::bson::Bson::Document(doc! {"phase": "requested"}),
+    ] {
+        let installed = sandboxes
+            .update_one(
+                parent_key.clone(),
+                doc! {
+                    "$set": {"ledger_maintenance": hold}
+                },
+            )
+            .write_concern(mongodb::options::WriteConcern::majority())
+            .await
+            .unwrap();
+        assert_eq!(installed.modified_count, 1);
+        let held = sandboxes.find_one(parent_key.clone()).await.unwrap();
+        assert_eq!(
+            store
+                .append_agent_log(&agent.id, AT.into(), kind.clone())
+                .await,
+            Err(SandboxStoreError::Conflict)
+        );
+        assert_eq!(
+            store.agents.find_one(agent_key.clone()).await.unwrap(),
+            original
+        );
+        assert_eq!(store.agent_log(&agent.id, 0, 10).await.unwrap(), logs);
+        assert_eq!(sandboxes.find_one(parent_key.clone()).await.unwrap(), held);
+    }
+    sandboxes
+        .update_one(parent_key, doc! {"$unset": {"ledger_maintenance": ""}})
+        .write_concern(mongodb::options::WriteConcern::majority())
+        .await
+        .unwrap();
+    let appended = store
+        .append_agent_log(&agent.id, AT.into(), kind)
+        .await
+        .unwrap();
+    assert_eq!(appended.seq, agent.conversation.last_seq + 1);
+    assert_eq!(
+        store.agent_log(&agent.id, 0, 10).await.unwrap().last(),
+        Some(&appended)
+    );
+    client.database(&name).drop().await.unwrap();
+}
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
