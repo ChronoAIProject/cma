@@ -4,7 +4,6 @@ import { buildIdentity, buildIdentityEvidence } from './build/identity';
 import { replicaRecoveryEnabled, recoveryEvidence } from './build/recovery';
 import { systemText } from './build/systemText';
 import { devFixtures } from './build/devFixtures';
-import { optionalTopographicImport } from './build/topographicImport';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig(({ command, mode }) => {
@@ -14,7 +13,6 @@ export default defineConfig(({ command, mode }) => {
     // `npm run dev:fixtures` only: answers /auth and /api locally (build/devFixtures.ts).
     plugins: [
       react(),
-      optionalTopographicImport(),
       buildIdentityEvidence(identity),
       recoveryEvidence(identity, recovery),
       ...(command === 'serve' && mode === 'fixtures' ? [devFixtures()] : []),

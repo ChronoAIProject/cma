@@ -13,6 +13,7 @@ export function readAgentJson(
   path: string,
   options: OperationOptions,
   headers?: HeadersInit,
+  onHeaders?: (headers: Headers) => void,
 ): Promise<unknown> {
   return withDeadline(config, options, async (signal, requestId) => {
     const response = await requestResponse(config, path, {
@@ -28,6 +29,12 @@ export function readAgentJson(
       response.body === null
     )
       throw new ProtocolError('Agent read requires an application/json body');
+    try {
+      onHeaders?.(response.headers);
+    } catch (error) {
+      void response.body.cancel().catch(() => undefined);
+      throw error;
+    }
     const length = response.headers.get('content-length');
     if (length !== null && Number(length) > MAX_AGENT_BYTES) {
       void response.body.cancel().catch(() => undefined);

@@ -8,6 +8,8 @@ const { createInterface } = require('node:readline');
 const { setTimeout: delay } = require('node:timers/promises');
 const { test } = require('node:test');
 
+require('./credit_boundary_native.test.cjs');
+
 const evidence = process.env.CMA_EOF_EVIDENCE_ROOT || require('node:os').tmpdir();
 const nativeTarget = process.arch === 'arm64' ? 'codex-linux-arm64/vendor/aarch64-unknown-linux-musl' : 'codex-linux-x64/vendor/x86_64-unknown-linux-musl';
 const binary = process.env.CMA_CODEX_TEST_BINARY || '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/' + nativeTarget + '/bin/codex';

@@ -97,6 +97,22 @@ pub enum AgentEventKind {
         approval_id: String,
         decision: String,
     },
+    ExternalApprovalRequested {
+        approval_id: String,
+        provider: String,
+        turn_sequence: u64,
+        revision: u64,
+        waiting_since: String,
+        deadline_at: String,
+        approve_url: Option<String>,
+    },
+    ExternalApprovalResolved {
+        approval_id: String,
+        provider: String,
+        turn_sequence: u64,
+        revision: u64,
+        resolution: crate::sandbox::ExternalApprovalResolution,
+    },
     DeliveryChanged {
         operation_sequence: u64,
         operation: AgentOperationKind,
@@ -244,6 +260,35 @@ impl From<AgentLogEntry> for AgentEvent {
             } => AgentEventKind::ApprovalResolved {
                 approval_id,
                 decision,
+            },
+            AgentLogKind::ExternalApprovalRequested {
+                approval_id,
+                provider,
+                turn_sequence,
+                revision,
+                waiting_since,
+                deadline_at,
+            } => AgentEventKind::ExternalApprovalRequested {
+                approval_id,
+                provider,
+                turn_sequence,
+                revision,
+                waiting_since,
+                deadline_at,
+                approve_url: None,
+            },
+            AgentLogKind::ExternalApprovalResolved {
+                approval_id,
+                provider,
+                turn_sequence,
+                revision,
+                resolution,
+            } => AgentEventKind::ExternalApprovalResolved {
+                approval_id,
+                provider,
+                turn_sequence,
+                revision,
+                resolution,
             },
             AgentLogKind::OperationDeliveryChanged {
                 operation_sequence,
