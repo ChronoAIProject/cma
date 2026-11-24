@@ -8,7 +8,7 @@ use crate::sandbox::{
 use axum::{http::HeaderMap, routing::post, Json, Router};
 use layer2_core::{
     budget::*,
-    sandbox::store::{AgentStore as _, SandboxStore as _},
+    sandbox::store::{AgentStore as _, SandboxStore as _, SandboxTransactionStore as _},
     sandbox::*,
     *,
 };
@@ -350,14 +350,15 @@ async fn owner_scope_revision_during_reservation_blocks_the_old_credential() {
     let previous_revision = sandbox.revision;
     let old_authority = sandbox.credential.current.clone();
     let owner = sandbox.owner.clone();
-    sandbox
+    let at = now_rfc3339();
+    let scope = sandbox
         .revise_live_service_access(
             &owner,
             &[
                 ServiceId::new("chrono-llm"),
                 ServiceId::new("synthetic-service"),
             ],
-            now_rfc3339(),
+            at.clone(),
         )
         .unwrap();
     assert!(sandbox.needs_service_access_credential());
@@ -371,7 +372,13 @@ async fn owner_scope_revision_during_reservation_blocks_the_old_credential() {
         SecretValue::new(KEY.into())
     );
     f.store
-        .save_sandbox(previous_revision, sandbox)
+        .commit(store::SandboxTransaction::SaveSandboxAndAppend {
+            command_revival: None,
+            expected_revision: previous_revision,
+            sandbox: Box::new(sandbox),
+            event_at: at,
+            event: SandboxEventKind::ServiceAccessRevised { scope },
+        })
         .await
         .unwrap();
 
