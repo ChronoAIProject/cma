@@ -179,7 +179,13 @@ export function MessageStream({
               key={messageStreamKey(entry)}
               entry={entry}
               approvalBusy={approvalBusy}
-              approvalReadOnly={approvalReadOnly}
+              approvalReadOnly={
+                approvalReadOnly ||
+                (entry.kind === 'approval' &&
+                  entry.item.source === 'external' &&
+                  conversation.externalApprovalProjection?.reviewOrigin !== undefined &&
+                  !conversation.externalApprovalProjection.canReview)
+              }
               onApproval={onApproval}
               activeRunId={conversation.activeRunId}
               approvalActive={

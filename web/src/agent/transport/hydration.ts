@@ -45,7 +45,7 @@ export class ConversationHydration extends HydrationEvents {
         this.authoritative.cursor
     )
       return state;
-    const next = foldV2Frame(state, frame, agent);
+    const next = foldHydratingFrame(state, frame, agent, buffering);
     this.incarnation = next.agentIncarnation;
     if (buffering && frame.type !== 'cma.agent.error') {
       const previous = this.frames.at(-1);
@@ -113,7 +113,7 @@ export class ConversationHydration extends HydrationEvents {
         )
           return false;
       }
-      conversation = foldV2Frame(conversation, frame, agent);
+      conversation = foldHydratingFrame(conversation, frame, agent, !complete);
       return true;
     });
     if (complete) {
@@ -123,4 +123,24 @@ export class ConversationHydration extends HydrationEvents {
     }
     return conversation;
   }
+}
+
+/** A head omits older receipts; wait for the fixed prefix before exposing any approval. */
+function foldHydratingFrame(
+  state: ConversationState,
+  frame: V2AgentStreamFrame,
+  agent: string,
+  incomplete: boolean,
+) {
+  if (
+    incomplete &&
+    frame.type === 'cma.agent.event' &&
+    (frame.data.kind?.type === 'external_approval_requested' ||
+      frame.data.kind?.type === 'external_approval_resolved')
+  ) {
+    // Keep the original frame buffered for the complete fold. Identity and cursor
+    // checks still apply now; no receipt or action is inferred from partial history.
+    return foldV2Frame(state, { ...frame, data: { ...frame.data, kind: null } }, agent);
+  }
+  return foldV2Frame(state, frame, agent);
 }

@@ -1,6 +1,7 @@
 import type { AgentStatus, AgentUsage, AgentRuntimeMetadata } from '../api/types';
 import type { SessionCommand } from './slashCommands';
 import type { FailureMessage } from './failureMessage';
+import type { ExternalApprovalProjection } from '../api-client/agent-events-v2/external-approval';
 import type { ExternalApprovalRequest, ExternalApprovalReviewPolicy } from './externalApproval';
 
 export interface ConversationMessage {
@@ -108,6 +109,7 @@ export interface ConversationState {
   readonly toolCalls: readonly ToolCall[];
   readonly reasoning: readonly ReasoningBlock[];
   readonly approvals: readonly ApprovalRequest[];
+  readonly externalApprovalProjection?: ExternalApprovalProjection;
   readonly externalApprovalReviewPolicy?: ExternalApprovalReviewPolicy;
   readonly plans: readonly PlanSnapshot[];
   readonly recovery: readonly RecoveryNotice[];
