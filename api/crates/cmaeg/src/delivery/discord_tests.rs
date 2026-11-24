@@ -173,3 +173,31 @@ async fn native_discord_long_unicode_response_is_split_without_losing_content() 
     assert_eq!(parts.concat(), text);
     assert!(parts.iter().all(|p| p.encode_utf16().count() <= 2000));
 }
+#[tokio::test]
+async fn native_discord_keeps_markdown_links_and_neutralizes_mentions() {
+    let f = Fixture::new().await;
+    let (sender, channel, event) = setup(&f);
+    let text = "([nict.go.jp](https://www.nict.go.jp/en/sts/jst.html?utm_source=openai)) \
+                C:\\qa\\menu_01.txt @everyone <@1>";
+    let message: OutboundMessage = serde_json::from_value(json!({"text":text})).unwrap();
+    let gate = RecordingGate::new(true);
+    let trace = tracing::Span::none();
+    let ctx = SendContext {
+        trace: &trace,
+        channel: &channel,
+        first_send_done: false,
+        gate: &gate,
+    };
+    assert!(matches!(
+        sender.reply(&ctx, &event, &message).await.0.delivery,
+        DeliveryOutcome::Confirmed { .. }
+    ));
+    let calls = f.memory.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let body = serde_json::from_slice::<serde_json::Value>(&calls[0].body).unwrap();
+    assert_eq!(
+        body["content"],
+        "([nict.go.jp](https://www.nict.go.jp/en/sts/jst.html?utm_source=openai)) \
+         C:\\qa\\menu_01.txt @\u{200b}everyone ‹@\u{200b}1›"
+    );
+}

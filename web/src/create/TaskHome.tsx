@@ -13,6 +13,7 @@ import { lifecycleFailureMessage } from './lifecycleFailure';
 import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { TaskCreationStatus } from './TaskCreationStatus';
+import { DiscardWaitingCreation } from './DiscardWaitingCreation';
 import { TaskHomeLayout, type TaskHomeOverview } from './TaskHomeLayout';
 import { TaskTemplatePanel } from './TaskTemplatePanel';
 import { TaskComposer } from './TaskComposer';
@@ -396,6 +397,20 @@ function TaskHomeContent({
               >
                 {continueTask.label}
               </Button>
+            ) : null}
+            {lifecycle.canDiscardWaiting ? (
+              <DiscardWaitingCreation
+                key={intent?.key}
+                label="task"
+                onDiscard={() => {
+                  if (!lifecycle.discardWaiting()) return;
+                  connections.cancel();
+                  connections.clearError();
+                  setRecovering(false);
+                  setValidation(undefined);
+                  requestAnimationFrame(() => input.current?.focus());
+                }}
+              />
             ) : null}
             {failure && intent?.receipt ? (
               <Button

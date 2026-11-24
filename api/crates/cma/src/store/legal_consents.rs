@@ -4,8 +4,9 @@
 //! keyed by subject. Directory readers ignore fields they do not model, and
 //! the sign-in observation merges into the stored row, so neither an older
 //! reader nor a later sign-in refuses or drops them. Account erasure removes
-//! the whole row, so no acceptance outlives its account. Writes never replace
-//! the row, and a row with an unknown schema version is never written.
+//! the whole row. When retention is enabled, the erasure worker preserves
+//! detached acceptances separately. Writes never replace the directory row,
+//! and a row with an unknown schema version is never written.
 //!
 //! Consent never creates the row. A `users` row is registration evidence, so
 //! only the sign-in callback, after its registration decision, may create it.
@@ -45,6 +46,32 @@ struct StoredAcceptance {
     accepted_at: String,
 }
 
+pub(super) fn decode(row: Document) -> Result<Vec<ConsentAcceptance>, StoreError> {
+    let row: ConsentRow = mongodb::bson::deserialize_from_document(row)
+        .map_err(|_| StoreError::Malformed("legal consent record is not readable".into()))?;
+    schema::require_current(row.document_schema_version)?;
+    let mut versions = std::collections::BTreeSet::new();
+    if row.legal_consents.len() > MAX_RETAINED_ACCEPTANCES
+        || row.legal_consents.iter().any(|record| {
+            !valid_version(&record.version)
+                || layer2_core::seconds_from_rfc3339(&record.accepted_at).is_none()
+                || !versions.insert(&record.version)
+        })
+    {
+        return Err(StoreError::Malformed(
+            "legal consent record is not readable".into(),
+        ));
+    }
+    Ok(row
+        .legal_consents
+        .into_iter()
+        .map(|record| ConsentAcceptance {
+            version: record.version,
+            accepted_at: record.accepted_at,
+        })
+        .collect())
+}
+
 pub struct MongoLegalConsentStore {
     users: Collection<Document>,
 }
@@ -67,27 +94,7 @@ impl MongoLegalConsentStore {
         else {
             return Ok(Vec::new());
         };
-        let row: ConsentRow = mongodb::bson::deserialize_from_document(row)
-            .map_err(|_| StoreError::Malformed("legal consent record is not readable".into()))?;
-        schema::require_current(row.document_schema_version)?;
-        if row.legal_consents.len() > MAX_RETAINED_ACCEPTANCES
-            || row.legal_consents.iter().any(|record| {
-                !valid_version(&record.version)
-                    || layer2_core::seconds_from_rfc3339(&record.accepted_at).is_none()
-            })
-        {
-            return Err(StoreError::Malformed(
-                "legal consent record is not readable".into(),
-            ));
-        }
-        Ok(row
-            .legal_consents
-            .into_iter()
-            .map(|record| ConsentAcceptance {
-                version: record.version,
-                accepted_at: record.accepted_at,
-            })
-            .collect())
+        decode(row)
     }
 }
 

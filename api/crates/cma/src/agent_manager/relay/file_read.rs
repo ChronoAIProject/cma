@@ -87,7 +87,7 @@ pub(super) async fn recover(
         if !relay.coordinator.is_ready() {
             return http::unavailable();
         }
-        if let Err(refusal) = http::authorize_public(relay, id, &request, None).await {
+        if let Err(refusal) = http::authorize_public(relay, id, &request, None, false).await {
             return refusal;
         }
         next.run(request).await

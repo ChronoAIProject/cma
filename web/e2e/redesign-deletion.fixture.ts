@@ -127,6 +127,10 @@ export class RedesignDeletionFixture {
   async openStatus(page: Page) {
     await page.goto('/agent-manager');
     await page
+      .getByRole('region', { name: 'Deletion request', exact: true })
+      .getByRole('button', { name: 'View status', exact: true })
+      .click();
+    await page
       .getByRole('button', { name: 'View Sandbox deletion status (1)', exact: true })
       .click();
     const dialog = page.getByRole('dialog', { name: 'Deleting Sandbox', exact: true });

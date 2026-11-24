@@ -1,6 +1,8 @@
 //! Public document projections; durable policy and mutations belong to Layer 2.
 mod reads;
 mod shapes;
+#[cfg(test)]
+mod tests;
 mod writes;
 use super::idempotency::{IdempotencyKey, RequestBody};
 use crate::AuthenticatedCaller;
