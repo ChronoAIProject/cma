@@ -41,6 +41,7 @@ async fn recovery(case: Case, inject: bool, startup: bool) {
                 operation_id: "credential-after-ledger-recovery".into(),
                 value: RuntimeCredential::new("synthetic-recovery-value"),
                 custody_generation: Some(1),
+                github_route: None,
             }))
             .await
         {

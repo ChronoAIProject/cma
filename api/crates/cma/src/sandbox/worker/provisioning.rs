@@ -283,6 +283,7 @@ impl SandboxWorker {
             operation_id: operation_id(&sandbox),
             value: RuntimeCredential::new(material.value.expose()),
             custody_generation: Some(pending.generation),
+            github_route: None,
         };
         layer2_core::sandbox::store::WorkAuthority::current()?;
         if let Err(error) = self

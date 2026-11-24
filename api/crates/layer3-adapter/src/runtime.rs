@@ -367,6 +367,35 @@ pub struct CredentialFrame {
     pub value: RuntimeCredential,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custody_generation: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_route: Option<GithubCredentialRoute>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GithubCredentialRoute {
+    pub service_id: String,
+    pub slug: String,
+}
+
+impl GithubCredentialRoute {
+    pub fn is_valid(&self) -> bool {
+        !self.service_id.is_empty()
+            && self.service_id.len() <= 128
+            && self
+                .service_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+            && !self.slug.is_empty()
+            && self.slug.len() <= 80
+            && !self.slug.starts_with('-')
+            && !self.slug.ends_with('-')
+            && !self.slug.contains("--")
+            && self
+                .slug
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    }
 }
 
 impl std::fmt::Debug for CredentialFrame {

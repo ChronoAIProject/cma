@@ -64,6 +64,7 @@ async fn install(holder: &CredentialHolder, generation: u64) {
             operation_id: format!("github-credential-{generation}"),
             value: RuntimeCredential::new(format!("scoped-fixture-generation-{generation}")),
             custody_generation: Some(generation),
+            github_route: None,
         })
         .await
         .unwrap();
@@ -220,6 +221,47 @@ async fn proxy_preserves_requests_rotates_custody_and_refuses_foreign_hosts() {
             "query { viewer { login } }"
         );
     }
+    let exact = CredentialFrame {
+        operation_id: "replace-github".into(),
+        value: "exact-route-fixture-key".into(),
+        custody_generation: Some(3),
+        github_route: Some(layer3_adapter::GithubCredentialRoute {
+            service_id: "repository-connection".into(),
+            slug: "github-repositories".into(),
+        }),
+    };
+    holder.install(&exact).await.unwrap();
+    for (generation, id) in [(2, "repository-connection"), (3, "other-connection")] {
+        let mut stale = exact.clone();
+        stale.custody_generation = Some(generation);
+        stale.github_route.as_mut().unwrap().service_id = id.into();
+        assert!(holder.install(&stale).await.is_err());
+    }
+    assert_eq!(
+        client
+            .get("http://api.github.com/user?per_page=1")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let (method, uri, headers, _) = received.recv().await.unwrap();
+    assert_eq!(method, "GET");
+    assert_eq!(
+        uri,
+        "/api/v1/proxy/s/github-repositories/user?per_page=1&_nyxid_via=repository-connection"
+    );
+    assert!(headers[header::AUTHORIZATION] == "Bearer exact-route-fixture-key");
+    assert_eq!(
+        client
+            .get("http://api.github.com/user?%5Fnyxid_via=other-connection")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
     for url in [
         "http://untrusted.example/user",
         "http://uploads.github.com/user",
