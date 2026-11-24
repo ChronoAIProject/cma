@@ -1,6 +1,114 @@
 import { test, expect } from '@playwright/test';
-import { LocalAgentV2 } from './agent-v2.fixture';
+import { binding, LocalAgentV2 } from './agent-v2.fixture';
 import { commandStatus } from './agent-v2-command.fixture';
+
+for (const outcome of ['delivered', 'cancelled'] as const) {
+  test(`LOCAL: server resolves a queued ${outcome} message after switching input mode`, async ({
+    page,
+    baseURL,
+  }) => {
+    const fixture = new LocalAgentV2();
+    fixture.queued.enabled = true;
+    fixture.queued.conflict = true;
+    let confirmed = false;
+    const input = 'Check whether the build is still running';
+    fixture.append(
+      { type: 'turn_started', turn_sequence: 1 },
+      { response_id: 'resp_active', command_id: 'cmd_active', turn_sequence: 1 },
+    );
+    try {
+      await fixture.route(page, baseURL!);
+      await page.route('**/api/v2/agents/agt_contract/queued-inputs*', (route) => {
+        if (!confirmed) return route.fallback();
+        if (outcome === 'cancelled')
+          return route.fulfill({
+            status: 503,
+            json: {
+              error: {
+                type: 'server_error',
+                code: 'unavailable',
+                message: 'Queue unavailable',
+                param: null,
+              },
+            },
+          });
+        return route.fulfill({
+          json: {
+            object: 'cma.agent.queued_inputs',
+            agent_id: 'agt_contract',
+            data: [],
+            next_after: null,
+          },
+        });
+      });
+      await page.route('**/api/v2/commands/cmd_1', (route) =>
+        confirmed && outcome === 'cancelled'
+          ? route.fulfill({
+              json: {
+                ...commandStatus(fixture.started),
+                status: 'cancelled',
+                turn_sequence: null,
+                observed_cursor: null,
+                delivery: null,
+              },
+            })
+          : route.fallback(),
+      );
+      await page.goto('/agents/agt_contract');
+      const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+      await composer.fill(input);
+      await page.getByRole('button', { name: 'Queue message', exact: true }).click();
+      const row = page.getByRole('article', { name: 'Queued message 1', exact: true });
+      await expect(row.getByText(input)).toBeVisible();
+
+      await page.getByRole('button', { name: 'Steering mode: Queue', exact: true }).click();
+      await page.getByRole('menuitemradio', { name: /Interrupt/ }).click();
+      await expect(page.getByRole('button', { name: 'Steering mode: Interrupt' })).toBeVisible();
+      await expect(row.getByText(input)).toBeVisible();
+      await row.getByRole('button', { name: 'Remove queued message 1' }).click();
+      const recover = page.getByRole('button', { name: 'Recover request', exact: true });
+      await expect(recover).toBeEnabled();
+      await composer.fill('Keep the draft');
+
+      confirmed = true;
+      if (outcome === 'delivered') {
+        fixture.append({ type: 'turn_completed', turn_sequence: 1 });
+        const turnSequence = fixture.items.length + 1;
+        fixture.append(
+          { type: 'turn_started', turn_sequence: turnSequence },
+          { ...binding, turn_sequence: turnSequence },
+        );
+        fixture.append({ type: 'message', role: 'user', content: input });
+        fixture.append({ type: 'message', role: 'assistant', content: 'The build finished.' });
+        await expect(page.getByText('The build finished.', { exact: true })).toBeVisible();
+      }
+      await expect(recover).toHaveCount(0);
+      await expect(row).toHaveCount(0);
+      await expect(composer).toHaveValue('Keep the draft');
+      await expect(page.getByRole('button', { name: 'Steering mode: Interrupt' })).toBeVisible();
+      if (outcome === 'delivered') {
+        await expect(page.getByText(input, { exact: true })).toHaveCount(1);
+      } else {
+        const cancelled = page.getByText('Cancelled messages (1)', { exact: true });
+        await expect(cancelled).toBeVisible();
+        const visibleInput = page.getByText(input, { exact: true }).filter({ visible: true });
+        await expect(visibleInput).toHaveCount(0);
+        await cancelled.click();
+        await expect(page.getByText('Message was cancelled.', { exact: true })).toBeVisible();
+        await expect(visibleInput).toHaveCount(1);
+        await cancelled.click();
+        await expect(visibleInput).toHaveCount(0);
+      }
+      expect(fixture.writes.filter(({ path }) => path.endsWith('/responses'))).toHaveLength(1);
+      expect(
+        fixture.writes.filter(({ path }) => path.endsWith('/queued-cancellation')),
+      ).toHaveLength(1);
+      expect(fixture.errors).toEqual([]);
+    } finally {
+      await fixture.close(page);
+    }
+  });
+}
 
 for (const theme of ['light', 'dark']) {
   test(`LOCAL ${theme}: cancel a queued message and recover its exact lost receipt`, async ({
@@ -57,7 +165,9 @@ for (const theme of ['light', 'dark']) {
       const recover = page.getByRole('button', { name: 'Recover request', exact: true });
       await expect(recover).toBeEnabled();
       await expect(field).toHaveValue('Keep this editable draft');
-      await expect(page.getByRole('status').filter({ hasText: /^Thinking$/ })).toBeVisible();
+      await expect(
+        page.getByRole('status').filter({ hasText: /^Waiting for a response$/ }),
+      ).toBeVisible();
       fixture.queued.conflict = true;
       await page.reload();
       await expect(recover).toBeEnabled();
@@ -72,7 +182,9 @@ for (const theme of ['light', 'dark']) {
         page.getByRole('article', { name: 'Queued message 1', exact: true }),
       ).toHaveCount(0);
       await expect(recover).toHaveCount(0);
-      await expect(page.getByRole('status').filter({ hasText: /^Thinking$/ })).toBeVisible();
+      await expect(
+        page.getByRole('status').filter({ hasText: /^Waiting for a response$/ }),
+      ).toBeVisible();
       const writes = fixture.writes.filter((write) => write.path.endsWith('/queued-cancellation'));
       expect(writes).toHaveLength(3);
       expect(writes[1]).toEqual(writes[0]);

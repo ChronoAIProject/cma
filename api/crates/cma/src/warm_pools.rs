@@ -1,5 +1,5 @@
 //! Operator-owned native pool targets; Kubernetes observations never replace durable authority.
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use layer1_public::rest::admin::warm_pools::{
@@ -164,23 +164,7 @@ pub(crate) trait PoolTargetStore: Send + Sync {
 /// Build metadata for the deployment-owned pinned CMA runtime, never a user image.
 /// Both cold allocation and administrated warm pools use this same contract.
 pub(crate) fn deployment_image(uri: String) -> RuntimeImage {
-    RuntimeImage {
-        uri,
-        labels: BTreeMap::from([
-            (
-                layer3_adapter::RUNTIME_CONTRACT_LABEL.into(),
-                layer3_adapter::RUNTIME_CONTRACT_VERSION.to_string(),
-            ),
-            (
-                layer3_adapter::runtime_bootstrap::RUNTIME_BOOTSTRAP_LABEL.into(),
-                "1".into(),
-            ),
-            (
-                layer3_adapter::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL.into(),
-                "2".into(),
-            ),
-        ]),
-    }
+    layer3_adapter::released_image(uri)
 }
 
 const SYSTEM_ACTOR: &str = "cma-system";
@@ -244,18 +228,9 @@ impl NativeWarmPools {
         }
         reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing).await
     }
-
-    fn default_config_sha256(&self) -> Option<String> {
-        default_config_sha256(
-            self.adapter.native_pools(),
-            &self.released_images().agent,
-            self.home.as_ref(),
-            &self.default_capacity,
-        )
-    }
 }
 
-fn default_config_sha256(
+pub(super) fn default_config_sha256(
     provider: Option<&dyn layer3_adapter::agent_sandbox::NativePoolControl>,
     image: &RuntimeImage,
     home: Option<&HomeVolumePolicy>,
@@ -277,6 +252,7 @@ impl WarmPoolAdministration for NativeWarmPools {
     async fn list(&self, caller: &Caller) -> Result<WarmPoolList, WarmPoolError> {
         authorize(caller)?;
         let released = self.released_images();
+        let default_config_sha256 = self.default_config_sha256(&released.agent);
         let targets = self.store.list().await?;
         let inventory = match self.adapter.native_pools() {
             Some(provider) if self.home.is_some() => {
@@ -302,7 +278,7 @@ impl WarmPoolAdministration for NativeWarmPools {
             default_image: released.agent.uri,
             default_cpu_millis: self.default_capacity.cpu_millis,
             default_memory_mib: self.default_capacity.memory_mib,
-            default_config_sha256: self.default_config_sha256(),
+            default_config_sha256,
             available,
             machine_image: released.machine.map(|(image, _)| image.uri),
         })

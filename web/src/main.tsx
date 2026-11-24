@@ -18,7 +18,6 @@ import { createTriggerPublisherClient } from './trigger-publisher/client';
 import { createPublicClient } from './public/client';
 import { clearAgentTransport } from './agent/transport/journal';
 import { prepareHistoryDocument } from './routing/historyDocument';
-import { HomeDecorationProvider } from './decoration/HomeDecorationProvider';
 import { ImageManagerRetirement } from './services/ImageManagerRetirement';
 
 /*
@@ -79,11 +78,9 @@ if (prepareHistoryDocument()) {
           publisher={publisher}
           publicClient={publicClient}
         >
-          <HomeDecorationProvider>
-            <ImageManagerRetirement>
-              <App />
-            </ImageManagerRetirement>
-          </HomeDecorationProvider>
+          <ImageManagerRetirement>
+            <App />
+          </ImageManagerRetirement>
         </CmaClientProvider>
       </AuthContextProvider>
     </StrictMode>,

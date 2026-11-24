@@ -292,6 +292,12 @@ impl Supervisor {
                 "credential operation id is empty or too large",
             ));
         }
+        if frame.github_route.is_some() && !self.supports_exact_github_credential_route() {
+            return Err(RuntimeError::rejected(
+                "credential_github_route_unavailable",
+                "runtime does not have a GitHub credential proxy",
+            ));
+        }
         let phase = *self.phase.read().await;
         match phase {
             Phase::Provisioned => {

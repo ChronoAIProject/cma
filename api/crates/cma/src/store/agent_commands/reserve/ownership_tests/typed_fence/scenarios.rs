@@ -9,6 +9,12 @@ pub(super) enum Kind {
     Cancel,
 }
 
+#[derive(Debug)]
+pub(super) enum Outcome {
+    Reserved,
+    QueuedInput(QueuedInputOutcome),
+}
+
 #[derive(Clone)]
 pub(super) enum Request {
     Ordinary(Box<CommandReservation>),
@@ -83,16 +89,28 @@ impl Request {
             1
         }
     }
-    pub async fn run(&self, store: &MongoSandboxStore) -> Result<(), CommandLedgerError> {
+    pub async fn run(&self, store: &MongoSandboxStore) -> Result<Outcome, CommandLedgerError> {
         match self {
-            Self::Ordinary(r) => store.reserve_command(*r.clone()).await.map(|_| ()),
+            Self::Ordinary(r) => store
+                .reserve_command(*r.clone())
+                .await
+                .map(|_| Outcome::Reserved),
             Self::Pair(r) => store
                 .reserve_interrupting_message(*r.clone())
                 .await
-                .map(|_| ()),
-            Self::Targeted(r) => store.reserve_targeted_control(*r.clone()).await.map(|_| ()),
-            Self::Edit(r) => store.edit_queued_input(*r.clone()).await.map(|_| ()),
-            Self::Cancel(r) => store.cancel_queued_response(*r.clone()).await.map(|_| ()),
+                .map(|_| Outcome::Reserved),
+            Self::Targeted(r) => store
+                .reserve_targeted_control(*r.clone())
+                .await
+                .map(|_| Outcome::Reserved),
+            Self::Edit(r) => store
+                .edit_queued_input(*r.clone())
+                .await
+                .map(Outcome::QueuedInput),
+            Self::Cancel(r) => store
+                .cancel_queued_response(*r.clone())
+                .await
+                .map(|_| Outcome::Reserved),
         }
     }
 }
