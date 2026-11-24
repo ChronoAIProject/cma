@@ -13,12 +13,35 @@ fn policy(account: &str, capabilities: &[&str]) -> Arc<TaskExperiencePolicy> {
     )
 }
 
+fn machine_image(digest_digit: &str) -> String {
+    format!("runtime.example/desktop@sha256:{}", digest_digit.repeat(64))
+}
+
 async fn configured_router(
     harness: &Harness<MongoSandboxStore>,
     database: &mongodb::Database,
     client: &mongodb::Client,
     policy: Option<Arc<TaskExperiencePolicy>>,
     can_create: bool,
+) -> (Router, crate::agent_lifecycle::LifecycleDrain) {
+    configured_router_for_image(
+        harness,
+        database,
+        client,
+        policy,
+        can_create,
+        machine_image("a"),
+    )
+    .await
+}
+
+async fn configured_router_for_image(
+    harness: &Harness<MongoSandboxStore>,
+    database: &mongodb::Database,
+    client: &mongodb::Client,
+    policy: Option<Arc<TaskExperiencePolicy>>,
+    can_create: bool,
+    image: String,
 ) -> (Router, crate::agent_lifecycle::LifecycleDrain) {
     router_with_support(
         harness.store.clone(),
@@ -33,7 +56,7 @@ async fn configured_router(
             ),
             adapter: None,
             policy,
-            machine_image: Some(format!("runtime.example/desktop@sha256:{}", "a".repeat(64))),
+            machine_image: Some(image),
         },
     )
     .await
@@ -119,10 +142,7 @@ async fn machine_only_admits_enabled_account_without_task_home_capability() {
         .unwrap();
     assert!(record.input.request.machine_included);
     assert!(record.input.request.initial_message.is_none());
-    assert_eq!(
-        record.input.resolved_image,
-        Some(format!("runtime.example/desktop@sha256:{}", "a".repeat(64)))
-    );
+    assert_eq!(record.input.resolved_image, Some(machine_image("a")));
     database.drop().await.unwrap();
 }
 

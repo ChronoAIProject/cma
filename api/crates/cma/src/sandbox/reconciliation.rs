@@ -130,6 +130,11 @@ impl SandboxReconciler {
         self
     }
 
+    pub(crate) fn with_binding_hold_metrics(mut self, enabled: bool) -> Self {
+        self.binding_holds = self.binding_holds.with_metrics(enabled);
+        self
+    }
+
     pub(crate) fn with_profile_agents(mut self, agents: Arc<AgentService>) -> Self {
         self.profile_agents = Some(agents);
         self

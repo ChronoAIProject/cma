@@ -18,10 +18,10 @@ use super::{durability::majority_collection, schema::initialize_collections};
 
 #[path = "sandbox_mongo_transactions.rs"]
 mod transactions;
-pub(super) use transactions::{
-    commit_transaction, commit_transaction_with_refusal, is_confirmed_body_retry, is_duplicate_key,
-    is_transient, start_transaction, CommitOutcome, PrecommitRefusal,
+pub(crate) use transactions::{
+    commit_transaction, is_confirmed_body_retry, is_duplicate_key, start_transaction, CommitOutcome,
 };
+pub(super) use transactions::{commit_transaction_with_refusal, is_transient, PrecommitRefusal};
 
 pub use super::profile_mongo::MongoProfileStore;
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
