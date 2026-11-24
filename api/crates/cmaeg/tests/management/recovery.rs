@@ -3,6 +3,169 @@ use axum::{http::StatusCode, routing::post, Json, Router};
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[tokio::test]
+async fn recovery_reads_legacy_records_only_for_a_verified_owner_opt_in() {
+    use cmaeg_core::seal::{open_blob, seal_blob};
+
+    let provider = FakeProvider::start(Default::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let state = management_state(&provider, &cma, &nyxid, key_ring(1));
+    let keys = state.master_keys.clone();
+    let (base, stop, task) = serve_app(state.clone()).await;
+    let client = Client::new();
+    let id = "12345678-1234-4234-8123-123456789abc";
+    let mut request = create_body();
+    request["record_id"] = id.into();
+    let provisioned = client
+        .post(format!("{base}/v1/channels"))
+        .bearer_auth("token-alice")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(provisioned.status(), 201);
+    let other = created(&client, &base).await;
+    let record_url = |base: &str| format!("{base}/v1/channel-records/{id}");
+    let get = |url: String, token| client.get(url).bearer_auth(token);
+    let retained = cma.records().remove(id).unwrap();
+    let definition: Value =
+        serde_json::from_slice(&open_blob(&keys, &retained.blob).unwrap().payload).unwrap();
+    let mut legacy = definition.clone();
+    legacy.as_object_mut().unwrap().remove("creation").unwrap();
+    let legacy_blob = seal_blob(&keys, &serde_json::to_vec(&legacy).unwrap()).unwrap();
+    cma.seed(id, "alice", legacy_blob.clone());
+    let opt_in = "?include_legacy=true";
+    problem(
+        get(format!("{}{opt_in}", record_url(&base)), "token-alice")
+            .send()
+            .await
+            .unwrap(),
+        404,
+        "channel_not_found",
+    )
+    .await;
+
+    let mut enabled = state;
+    enabled.legacy_channel_record_read_enabled = true;
+    let (legacy_base, legacy_stop, legacy_task) = serve_app(enabled.clone()).await;
+    let url = record_url(&legacy_base);
+    for (suffix, token) in [("", "token-alice"), (opt_in, "token-bob")] {
+        problem(
+            get(format!("{url}{suffix}"), token).send().await.unwrap(),
+            404,
+            "channel_not_found",
+        )
+        .await;
+    }
+    let recovered = get(format!("{url}{opt_in}"), "token-alice")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(recovered.status(), 200);
+    assert_eq!(recovered.headers()["cache-control"], "no-store");
+    let body: Value = recovered.json().await.unwrap();
+    let page: Value = get(format!("{legacy_base}/v1/channels"), "token-alice")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let listed = page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["record_id"] == id)
+        .unwrap();
+    assert_eq!(body["management_handle"], "missing");
+    let mut expected = listed.clone();
+    expected["management_handle"] = "missing".into();
+    assert_eq!(body, expected);
+    assert!(body.get("channel_id").is_none());
+    assert!(body.get("endpoints").is_none());
+
+    for handle in [json!("cmaeg1.ch.invalid"), other["channel_id"].clone()] {
+        let mut invalid = definition.clone();
+        invalid["creation"]["channel_id"] = handle;
+        cma.seed(
+            id,
+            "alice",
+            seal_blob(&keys, &serde_json::to_vec(&invalid).unwrap()).unwrap(),
+        );
+        problem(
+            get(format!("{url}{opt_in}"), "token-alice")
+                .send()
+                .await
+                .unwrap(),
+            404,
+            "channel_not_found",
+        )
+        .await;
+    }
+    cma.seed(id, "alice", retained.blob.clone());
+    let ordinary = get(url.clone(), "token-alice").send().await.unwrap();
+    let opted_in = get(format!("{url}{opt_in}"), "token-alice")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ordinary.status(), 200);
+    assert_eq!(opted_in.status(), 200);
+    assert_eq!(
+        ordinary.json::<Value>().await.unwrap(),
+        opted_in.json::<Value>().await.unwrap()
+    );
+
+    // Serve the legacy snapshot once, then a recoverable record at the same ID.
+    let snapshots = [legacy_blob, retained.blob];
+    let reads = Arc::new(AtomicUsize::new(0));
+    let observed = reads.clone();
+    let history = Router::new().route(
+        "/api/v1/gateway/channel-records/{id}",
+        axum::routing::get(
+            move |axum::extract::Path(id): axum::extract::Path<String>| {
+                let index = observed.fetch_add(1, Ordering::SeqCst);
+                let blob = base64::engine::general_purpose::STANDARD.encode(&snapshots[index]);
+                async move {
+                    Json(json!({
+                        "record_id": id, "owner": "alice", "blob": blob, "version": index + 1,
+                        "created_at": "now", "updated_at": "now"
+                    }))
+                }
+            },
+        ),
+    );
+    let (history_base, history_stop, history_task) = serve_fixture(history).await;
+    enabled.records = Arc::new(RecordClient::new(&history_base, "cma-service").unwrap());
+    enabled.cma_base_url = history_base;
+    let (racing_base, racing_stop, racing_task) = serve_app(enabled).await;
+    let requests_before = provider.log().len();
+    problem(
+        get(
+            format!("{}{opt_in}", record_url(&racing_base)),
+            "token-alice",
+        )
+        .send()
+        .await
+        .unwrap(),
+        404,
+        "channel_not_found",
+    )
+    .await;
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
+    assert_eq!(provider.log().len(), requests_before);
+
+    for shutdown in [stop, legacy_stop, racing_stop, history_stop] {
+        shutdown.send(()).unwrap();
+    }
+    for server in [task, legacy_task, racing_task, history_task] {
+        server.await.unwrap();
+    }
+    provider.close().await;
+    cma.close().await;
+    nyxid.close().await;
+}
+
 async fn serve_fixture(
     router: Router,
 ) -> (String, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {

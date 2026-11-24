@@ -49,6 +49,14 @@ impl BindingComposition {
             )?,
             None => rest::binding_router(self.service.clone()),
         };
+        let routes = if gateway.is_some_and(|g| g.binding_profile_drift_enabled) {
+            rest::with_binding_profile_drift(
+                routes,
+                Arc::new(crate::agent_lifecycle::guidance::ManagedInstructionPolicy),
+            )
+        } else {
+            routes
+        };
         let routes = routes.merge(rest::binding_conversation_reset_router(
             self.service.clone(),
             gateway.is_some_and(|g| g.conversation_reset_enabled),

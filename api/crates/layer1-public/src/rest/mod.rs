@@ -157,7 +157,7 @@ pub mod worker_credentials;
 pub use bindings::{
     binding_conversation_reset_router, binding_router, binding_router_with_native_tools,
     binding_router_with_native_tools_alias, binding_router_with_native_tools_alias_and_preparation,
-    binding_router_with_native_tools_aliases_and_preparation,
+    binding_router_with_native_tools_aliases_and_preparation, with_binding_profile_drift,
 };
 mod gateway_connections;
 mod gateway_interactions;

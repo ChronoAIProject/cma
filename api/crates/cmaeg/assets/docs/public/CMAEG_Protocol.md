@@ -820,6 +820,13 @@ allocating another. A provider that is not allowlisted is refused with 400
 Deletion releases the reservation; callers must never reuse a retired record UUID
 or race cleanup against an outstanding create attempt.
 
+When legacy record reads are enabled, an owner can send
+`GET /v1/channel-records/{record_id}?include_legacy=true` for a record from
+their channel list. A valid record without creation metadata returns its
+list-item shape with `management_handle: "missing"`. The response omits
+`channel_id` and `endpoints`. A recoverable record returns its ordinary
+channel response in either mode. The legacy response identifies records
+that still need a retirement path.
 
 A channel response has this shape (ellipsis denotes the previously supplied
 profile/policy objects, not a literal JSON value):
@@ -839,13 +846,13 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | --- | --- | --- | --- |
 | `GET /v1/channels` | Optional `after` opaque cursor; no body | 200 `{items:[...],next_cursor}` with up to 50 owner-scoped channel responses | 401 unauthenticated; 503 record store unavailable |
 | `POST /v1/channels` | Complete create body; optional idempotency header and reserved record UUID | 201 channel response | 409 reused key with different content; 503 cache capacity |
-| `GET /v1/channel-records/{record_id}` | No body | 200 recovered channel response | 404 absent, unreserved, or other owner |
+| `GET /v1/channel-records/{record_id}` | Optional `include_legacy` query flag | 200 recovered channel response or, when enabled and requested, legacy record with missing management handle | 404 absent, unreserved, or other owner |
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
 | `GET /v1/channels/{channel_id}/activity` | No body | 200 bounded recent activity snapshot with cursor, retention and truncation | 404 absent or other owner; 503 store unavailable |
 | `GET /v1/channels/{channel_id}/activity/stream` | Optional `Last-Event-ID` or `cursor` | SSE `activity`/`reset` full snapshots; initial snapshot on every connection | 400 invalid cursor; 404 absent or other owner |
 | `GET /v1/channels/{channel_id}/activity/history` | UTC `from`, `until`, optional `limit`, or continuation `cursor` | 200 retained receipts, current summaries, coverage and `next_cursor` | 400 invalid range/cursor; 410 expired export; 501 unsupported backend; 503 disabled/unavailable |
 | `GET /v1/channels/{channel_id}/activity/history/events/{event_id}/details` | Required detail `cursor`; opaque history event ID | 200 sealed-generation detail parts and optional `next_cursor` | 400 invalid cursor; 404 absent or other owner; 410 expired export; 503 unavailable |
-| `GET /v1/channels/{channel_id}/partition` | Required `partition_key`; optional `consumer_id` (default `default`) | 200 retained CMA conversation mapping and current Agent status | 400 unsupported affinity; 404 absent/hidden channel or mapping |
+| `GET /v1/channels/{channel_id}/partition` | Required `partition_key`; optional `consumer_id` (default `default`) | 200 retained CMA conversation mapping, current Agent status, and profile drift when enabled | 400 unsupported affinity; 404 absent/hidden channel or mapping |
 | `POST /v1/channels/{channel_id}/partition/resets` | Required `Idempotency-Key` and owner reset body below | 200 reserved successor receipt; no-store | 409 disabled, ineligible target, changed mapping or reused key; uncertain failures require exact retry |
 | `PUT /v1/channels/{channel_id}` | Complete create policy plus required `expected_version`; optional credential patch | 200 channel response with incremented version | 409 stale version |
 | `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version; 409 `provider_rejected` when the provider refuses to release the binding |
@@ -963,6 +970,12 @@ Inspection never reserves, recreates, deletes, or rebinds an Agent. A 404 can
 mean no mapping exists in the current binding generation. Provider managers
 can also inspect the canonical mapping directly through
 `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` on CMA.
+
+When binding profile drift reads are enabled, partition inspection adds
+`mapping.profile_drift` with `system_prompt` and `skills`. Each field contains
+`match`, `drift`, or `unknown`. Missing or unconfirmed observations, including
+inspection from an older Agent Manager, can yield `unknown`. The states
+describe the mapped Agent's relationship to the current binding profile.
 
 ### Owner repair of a deleted partition Agent
 

@@ -239,6 +239,7 @@ impl Fixture {
             Some(&crate::config::GatewayConfig {
                 binding_preparation_enabled: false,
                 conversation_reset_enabled: false,
+                binding_profile_drift_enabled: false,
                 base_url: gateway,
                 public_url: "https://gateway.example".into(),
                 public_api_url: "https://gateway.example".into(),

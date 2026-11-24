@@ -6,6 +6,21 @@ use cmaeg_core::{
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DriftState {
+    Match,
+    Drift,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, ToSchema)]
+pub struct ProfileDrift {
+    pub system_prompt: DriftState,
+    pub skills: DriftState,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ConversationInspection {
     pub binding_id: String,
@@ -17,6 +32,8 @@ pub struct ConversationInspection {
     pub agent_id: String,
     pub state: String,
     pub agent_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_drift: Option<ProfileDrift>,
 }
 
 impl ProviderClient {

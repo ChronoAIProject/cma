@@ -36,6 +36,7 @@ pub(super) fn external_at(server: &Server, base: &str, public: &str) -> Arc<Gate
             &GatewayConfig {
                 binding_preparation_enabled: false,
                 conversation_reset_enabled: false,
+                binding_profile_drift_enabled: false,
                 base_url: base.into(),
                 public_url: public.into(),
                 public_api_url: public.into(),

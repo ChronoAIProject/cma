@@ -78,6 +78,8 @@ impl ConsumerGateway {
             native_split_text_refs_enabled: false,
             native_telegram_message_events_writes_enabled: false,
             managed_telegram_setup_enabled: true,
+            binding_profile_drift_enabled: false,
+            legacy_channel_record_read_enabled: false,
             native_lark_writes_enabled: false,
         native_lark_intake_enabled: false,
         native_lark_controls_enabled: false,
