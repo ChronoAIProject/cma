@@ -9,9 +9,10 @@ use super::{positive, ScanError};
 
 pub(super) const MAX_ROWS: u64 = 128;
 
-pub(super) fn projection() -> Document {
+pub(in crate::store::stale_turns) fn projection() -> Document {
     doc! {
         "_id": 0,
+        "proof_bytes": {"$bsonSize": "$$ROOT"},
         "seq": 1,
         "at": bounded_string("$record.appended_at", 64),
         "kind": bounded_string("$record.kind.type", 64),
@@ -19,6 +20,7 @@ pub(super) fn projection() -> Document {
         "origin": bounded_string("$record.kind.origin_key", 256),
         "call": bounded_string("$record.kind.call_id", 256),
         "status": bounded_string("$record.kind.status", 64),
+        "approval": bounded_string("$record.kind.approval_id", 256),
     }
 }
 

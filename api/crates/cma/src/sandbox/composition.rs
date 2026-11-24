@@ -54,6 +54,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
+    pub reopen_output_refusal_enabled: bool,
     pub cleanup_continuation_enabled: bool,
     pub bounded_live_fragments: bool,
     pub quiet_output: Option<layer2_core::sandbox::AgentOutputCoalescePolicy>,
@@ -61,9 +62,13 @@ pub(crate) struct SandboxLifecycleConfig {
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub event_driven_reconciliation: bool,
+    pub resume_agent_reconciliation: bool,
     pub stale_turn_reconciliation: bool,
+    pub stale_turn_terminal: bool,
     pub skip_ineligible_reconciliation: bool,
+    pub defer_foreign_reconciliation: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
+    pub sandbox_binding_hold_metrics: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
@@ -125,6 +130,9 @@ impl SandboxLifecycleComposition {
                     dependencies.store.clone(),
                     ownership.clone(),
                     dependencies.registry.clone(),
+                    config
+                        .stale_turn_terminal
+                        .then(|| dependencies.adapter.clone()),
                 )
             })
         } else {
@@ -147,6 +155,7 @@ impl SandboxLifecycleComposition {
             Duration::from_secs(15),
         ))
         .with_background_resumption(config.sandbox_reconciliation_reserved_lane)
+        .with_binding_hold_metrics(config.sandbox_binding_hold_metrics)
         .with_runtime_loss_bounded_proof(config.runtime_loss_bounded_proof_enabled)
         .with_profile_agents(Arc::clone(&dependencies.agents))
         .with_released_runtime(config.released.clone())
@@ -217,6 +226,7 @@ impl SandboxLifecycleComposition {
         .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
         .with_ownership(config.ownership)
         .with_skip_ineligible_reconciliation(config.skip_ineligible_reconciliation)
+        .with_defer_foreign_reconciliation(config.defer_foreign_reconciliation)
         .with_ownership_retry_hints(dependencies.store.ownership_retry_hints())
         .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
         .with_startup_sibling_hold(config.startup_sibling_hold_enabled)
@@ -262,6 +272,7 @@ impl SandboxLifecycleComposition {
         .with_native_create_retry(config.native_create_retry_enabled)
         .with_home_policy(config.home_policy);
         sandbox_config.retirement_finalizer = Some(retirement_finalizer);
+        sandbox_config.reopen_output_refusal_enabled = config.reopen_output_refusal_enabled;
         let sandbox_worker = SandboxWorker::new_with_funding(
             SandboxWorkerDependencies {
                 store: dependencies.store.clone(),
@@ -295,6 +306,7 @@ impl SandboxLifecycleComposition {
             capacity_recovery: None,
             stale_turns,
             agent: AgentScheduler::new(agent_worker, agent_admitted)
+                .with_resumable_reconciliation(config.resume_agent_reconciliation)
                 .with_event_driven_reconciliation(
                     Arc::clone(&dependencies.store.agent_parent_ready),
                     config.event_driven_reconciliation,

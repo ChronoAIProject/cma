@@ -110,6 +110,9 @@ export const publicProfile = (kind: ProfileKind) => ({
 });
 export function operatorClient() {
   const admin = {
+    searchActivityActors: vi
+      .fn<OperatorClient['admin']['searchActivityActors']>()
+      .mockResolvedValue([]),
     listWarmPools: vi.fn<OperatorClient['admin']['listWarmPools']>().mockResolvedValue({
       items: [warmPool],
       default_cpu_millis: 1000,

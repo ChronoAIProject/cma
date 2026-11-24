@@ -124,22 +124,20 @@ for (const purpose of ['image_rotation', 'revive'] as const) {
     await captureThemes(page, info, 'confirmation');
     expect(deletes).toEqual([]);
     expect(boundary.writes).toEqual([]);
-    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await confirmation.getByRole('button', { name: 'Keep environment', exact: true }).click();
     await expect(confirmation).toHaveCount(0);
     expect(deletes).toEqual([]);
     await menu.click();
     await remove.click();
     await confirmation.getByRole('checkbox').check();
-    await confirmation.getByRole('button', { name: 'Delete Sandbox', exact: true }).dblclick();
+    await confirmation.getByRole('button', { name: 'Request deletion', exact: true }).dblclick();
     if (uncertain) {
       const pending = page.getByRole('dialog', { name: 'Deleting Sandbox', exact: true });
       await expect(pending).toContainText('not been confirmed');
       expect(deletes).toHaveLength(1);
       await pending.getByRole('button', { name: 'Check request', exact: true }).click();
     }
-    await expect(
-      page.getByText('Sandbox delete request accepted. Cleanup continues in the background.'),
-    ).toBeVisible();
+    await expect(page.getByText('Deleting 1 environment')).toBeVisible();
     expect(deletes).toHaveLength(uncertain ? 2 : 1);
     expect(deletes[0]).toMatchObject({
       path: `/api/v1/sandboxes/${boundary.sandbox.id}`,
@@ -149,6 +147,10 @@ for (const purpose of ['image_rotation', 'revive'] as const) {
     expect(deletes[0]!.key).toBeTruthy();
     if (uncertain) expect(deletes[1]).toEqual(deletes[0]);
     await page.reload();
+    await page
+      .getByRole('region', { name: 'Deletion request', exact: true })
+      .getByRole('button', { name: 'View status', exact: true })
+      .click();
     await page.getByRole('button', { name: /View Sandbox deletion status/ }).click();
     const progress = page.getByRole('dialog', { name: 'Deleting Sandbox', exact: true });
     await expect(progress).toBeVisible();

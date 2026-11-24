@@ -141,7 +141,11 @@ export interface AgentLifecycleOperationView {
   readonly error?: string;
   readonly failure?: import('@cma/client').AgentLifecycleFailure;
   readonly events: readonly AgentLifecycleOperationEvent[];
-  readonly connection?: { readonly services: readonly string[]; readonly target: ConnectionTarget };
+  readonly connection?: {
+    readonly services: readonly string[];
+    readonly target: ConnectionTarget;
+    readonly repository_access?: 'verification_unavailable';
+  };
 }
 
 export interface AgentLifecycleConnectionRequired {
@@ -238,6 +242,7 @@ export interface CmaWebClient {
   readonly readTaskTitleModeSupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly taskExperience?: import('@cma/client').TaskExperienceClient;
   readonly readTaskTemplateSupport?: (options?: ReadOptions) => Promise<boolean>;
+  readonly readTaskTemplateV2Support?: (options?: ReadOptions) => Promise<boolean>;
   readonly readTaskRepositorySupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly createAgentLifecycle?: (
     input: AgentLifecycleCreateInput,

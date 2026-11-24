@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Presence } from '../ui/Presence';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
@@ -18,14 +18,18 @@ export function useRecords<T>(
   load: (cursor: string | undefined, signal: AbortSignal) => Promise<RecordPage<T>>,
   { retainOnError = true }: { readonly retainOnError?: boolean } = {},
 ) {
-  const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined]);
+  const [pages, setPages] = useState<readonly { cursor: string | undefined; offset: number }[]>([
+    { cursor: undefined, offset: 0 },
+  ]);
   const [reload, setReload] = useState(0);
   const [state, setState] = useState<{
     page?: RecordPage<T>;
     error?: OperatorFailure;
     loading: boolean;
   }>({ loading: true });
-  const cursor = cursors.at(-1);
+  const { cursor, offset } = pages[pages.length - 1]!;
+  const nextCursor = state.page?.next;
+  const nextOffset = offset + (state.page?.items.length ?? 0);
   useEffect(() => {
     const controller = new AbortController();
     load(cursor, controller.signal).then(
@@ -50,18 +54,20 @@ export function useRecords<T>(
   return {
     ...state,
     refresh,
+    pageNumber: pages.length,
+    offset,
     previous:
-      cursors.length > 1
+      pages.length > 1
         ? () => {
             setState({ loading: true });
-            setCursors((value) => value.slice(0, -1));
+            setPages(pages.slice(0, -1));
           }
         : undefined,
     next:
-      state.page?.next && !cursors.includes(state.page.next)
+      nextCursor && !pages.some(({ cursor }) => cursor === nextCursor)
         ? () => {
             setState({ loading: true });
-            setCursors((value) => [...value, state.page?.next ?? undefined]);
+            setPages([...pages, { cursor: nextCursor, offset: nextOffset }]);
           }
         : undefined,
   };
@@ -100,11 +106,13 @@ export function RecordControls({
   refresh,
   previous,
   next,
+  position,
 }: {
   readonly loading: boolean;
   readonly refresh: () => void;
   readonly previous?: () => void;
   readonly next?: () => void;
+  readonly position?: ReactNode;
 }) {
   return (
     <div className="operator-actions">
@@ -132,6 +140,7 @@ export function RecordControls({
         icon={<IconChevronRightOutline14 />}
         onClick={next}
       />
+      {position}
     </div>
   );
 }
@@ -139,13 +148,13 @@ export function RecordControls({
 export function Timestamp({ value }: { readonly value: string }) {
   const date = new Date(value);
   return (
-    <time dateTime={value}>
+    <time dateTime={value} title={value}>
       {Number.isNaN(date.valueOf())
         ? value
         : date.toLocaleString('en-SG', {
             timeZone: 'Asia/Singapore',
             dateStyle: 'medium',
-            timeStyle: 'short',
+            timeStyle: 'medium',
           })}
     </time>
   );

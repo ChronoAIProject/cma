@@ -10,7 +10,6 @@
 //! membership failure, still stops the process exactly as before.
 use layer2_core::agent_ownership::{Authority, OwnershipCoordinator, OwnershipError};
 use layer2_core::AgentId;
-use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     future::Future,
@@ -46,12 +45,11 @@ impl ContainedHandoffs {
         {
             return Err(error);
         }
-        let agent_hash = format!(
-            "{:x}",
-            Sha256::digest(authority.token.agent_id.as_str().as_bytes())
+        authority.log_receiver_handoff_failure(
+            stage,
+            &error,
+            "Receiver handoff unavailable; receiver stays fenced and is retried",
         );
-        tracing::warn!(stage, agent_hash, epoch = authority.token.epoch, error = %error,
-            "Receiver handoff unavailable; receiver stays fenced and is retried");
         self.pending
             .lock()
             .unwrap()

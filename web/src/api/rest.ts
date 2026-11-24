@@ -119,6 +119,8 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     resourceViews: sdk,
     readTaskTemplateSupport: async (options) =>
       (await sdk.readOpenApi(options))['x-cma-task-templates-v1'] === true,
+    readTaskTemplateV2Support: async (options) =>
+      (await sdk.readOpenApi(options))['x-cma-task-templates-v2'] === true,
     readTaskRepositorySupport: async (options) =>
       (await sdk.readOpenApi(options))['x-cma-task-repository'] === true,
     readTaskTitleModeSupport: async (options) =>
@@ -239,6 +241,8 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
             typeof value.connection !== 'object' ||
             !Array.isArray(value.connection.services) ||
             !value.connection.services.every((service) => typeof service === 'string') ||
+            (value.connection.repository_access !== undefined &&
+              value.connection.repository_access !== 'verification_unavailable') ||
             !isConnectionTarget(value.connection.target))) ||
         (value.status === 'waiting_for_connection' && value.connection === undefined) ||
         (value.status === 'succeeded' && (typeof value.agent_id !== 'string' || !value.agent_id))

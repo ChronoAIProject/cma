@@ -120,6 +120,7 @@ const TelegramSourceSchema = object({
   topic_creation: optional(boolean),
   message_events: optional(boolean),
   channel_posts: optional(boolean),
+  member_join_chat_ids: optional(array(text)),
   admission: AdmissionPolicySchema,
   bot_id: text,
   bot_username: optional(nullable(text)),
@@ -168,6 +169,7 @@ export const SourceRequestSchema = tagged(
       verify_raw_event: optional(boolean),
       lark_resources: optional(nullable(LarkResourceBindingSchema)),
       lark_message_effects: optional(nullable(LarkMessageEffectsBindingSchema)),
+      member_join_chat_ids: optional(array(text)),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({
@@ -386,6 +388,7 @@ export const SourceSchema = tagged(
       verify_raw_event: optional(boolean),
       lark_resources: optional(nullable(LarkResourceBindingSchema)),
       lark_message_effects: optional(nullable(LarkMessageEffectsBindingSchema)),
+      member_join_chat_ids: optional(array(text)),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({

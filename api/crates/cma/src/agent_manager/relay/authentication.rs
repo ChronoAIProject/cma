@@ -18,10 +18,43 @@ pub(super) struct Proof {
 }
 
 const REQUEST_ID: &str = "x-request-id";
+// Peers already accept opaque, signed nonces. A prefix negotiates the reply
+// without adding a proof field or trusting a header from the public request.
+const FILE_HANDOFF_NONCE: &str = "file-handoff:";
+const FILE_WRITE_HANDOFF_NONCE: &str = "file-write-handoff:";
+const WRITE_NOT_ENTERED: &[u8] = b"cma-file-write-not-entered-v1\0";
+
+pub(super) struct WriteNotEntered {
+    key: hmac::Key,
+    message: Vec<u8>,
+}
+
+impl WriteNotEntered {
+    pub(super) fn verify(&self, headers: &HeaderMap) -> bool {
+        let mut values = headers.get_all(file_write::NOT_ENTERED_HEADER).iter();
+        let Some(tag) = values.next().filter(|_| values.next().is_none()) else {
+            return false;
+        };
+        URL_SAFE_NO_PAD
+            .decode(tag.as_bytes())
+            .is_ok_and(|tag| hmac::verify(&self.key, &self.message, &tag).is_ok())
+    }
+}
+
+impl Proof {
+    pub(super) fn reports_file_handoff(&self) -> bool {
+        self.nonce.starts_with(FILE_HANDOFF_NONCE)
+    }
+
+    pub(super) fn reports_file_write_handoff(&self) -> bool {
+        self.nonce.starts_with(FILE_WRITE_HANDOFF_NONCE)
+    }
+}
 
 pub(super) struct Authentication {
     key: hmac::Key,
     nonces: Mutex<BTreeMap<String, u64>>,
+    file_write_handoff: std::sync::OnceLock<()>,
 }
 
 impl Authentication {
@@ -29,6 +62,30 @@ impl Authentication {
         Self {
             key,
             nonces: Mutex::default(),
+            file_write_handoff: Default::default(),
+        }
+    }
+
+    pub(super) fn enable_file_write_handoff(&self) {
+        self.file_write_handoff.get_or_init(|| ());
+    }
+
+    pub(super) fn file_write_handoff_enabled(&self) -> bool {
+        self.file_write_handoff.get().is_some()
+    }
+
+    pub(super) fn write_not_entered_tag(&self, proof: &[u8]) -> HeaderValue {
+        let mut context = hmac::Context::with_key(&self.key);
+        context.update(WRITE_NOT_ENTERED);
+        context.update(proof);
+        let encoded = URL_SAFE_NO_PAD.encode(context.sign().as_ref());
+        HeaderValue::from_str(&encoded).expect("base64 header")
+    }
+
+    pub(super) fn write_not_entered_verifier(&self, proof: &[u8]) -> WriteNotEntered {
+        WriteNotEntered {
+            key: self.key.clone(),
+            message: [WRITE_NOT_ENTERED, proof].concat(),
         }
     }
 
@@ -82,10 +139,20 @@ impl Authentication {
         headers: &HeaderMap,
         body: &[u8],
     ) -> Result<String, ()> {
+        let nonce = uuid::Uuid::new_v4();
+        let nonce = if file_read::eligible(uri.path(), method) {
+            format!("{FILE_HANDOFF_NONCE}{nonce}")
+        } else if self.file_write_handoff_enabled()
+            && file_write::eligible(uri.path(), method, body)
+        {
+            format!("{FILE_WRITE_HANDOFF_NONCE}{nonce}")
+        } else {
+            nonce.to_string()
+        };
         let proof = Proof {
             sender: sender.into(),
             owner: owner.clone(),
-            nonce: uuid::Uuid::new_v4().to_string(),
+            nonce,
             until: now()? + 10,
         };
         let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&proof).map_err(|_| ())?);
@@ -192,3 +259,7 @@ fn message(
     ))
     .map_err(|_| ())
 }
+
+#[cfg(test)]
+#[path = "authentication_tests.rs"]
+mod tests;
