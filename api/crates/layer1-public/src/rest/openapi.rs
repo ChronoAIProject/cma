@@ -34,6 +34,10 @@ use super::trigger_openapi_shapes::*;
 #[openapi(
     paths(
         agent_delegations::identity,
+        super::runtime_canary::configure,
+        super::runtime_canary::grant,
+        super::runtime_canary::revoke,
+        super::runtime_canary::redeem,
         agent_delegations::operation,
         super::event_workers::create,
         super::event_workers::list,

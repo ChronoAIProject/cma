@@ -1,5 +1,6 @@
 use super::{policy::*, writer::*, *};
 use crate::store::account_deletions::MongoAccountDeletionStore;
+use futures_util::TryStreamExt;
 use layer2_core::account_deletion::AccountDeletionStore;
 use mongodb::Client;
 
@@ -89,6 +90,45 @@ async fn concurrent_canary_redemption_replays_after_slot_replacement_and_closure
     let peer_database = reader.database(&name);
     let owner = SubjectId::new("canary-owner-fixture");
     let store = MongoAgentLifecycleStore::open(&database).await.unwrap();
+    let indexes: Vec<_> = store
+        .operations
+        .list_indexes()
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    for (name, keys, field) in [
+        (
+            "agent_lifecycle_canary_sandbox_profile",
+            doc! { SANDBOX_PROFILE_ID: 1 },
+            SANDBOX_PROFILE_ID,
+        ),
+        (
+            "agent_lifecycle_canary_manifest_owner",
+            doc! { MANIFEST_DIGEST: 1, "owner": 1 },
+            MANIFEST_DIGEST,
+        ),
+        (
+            "agent_lifecycle_canary_owner_request",
+            doc! { "owner": 1, REQUEST_KEY_DIGEST: 1 },
+            REQUEST_KEY_DIGEST,
+        ),
+    ] {
+        let index = indexes
+            .iter()
+            .find(|index| {
+                index.options.as_ref().and_then(|item| item.name.as_deref()) == Some(name)
+            })
+            .unwrap();
+        let options = index.options.as_ref().unwrap();
+        assert_eq!(index.keys, keys);
+        assert_eq!(options.unique, Some(true));
+        assert_eq!(
+            options.partial_filter_expression,
+            Some(doc! { (field): { "$exists": true } }),
+        );
+    }
     let peer = MongoAgentLifecycleStore::open(&peer_database)
         .await
         .unwrap();
@@ -167,5 +207,61 @@ async fn concurrent_canary_redemption_replays_after_slot_replacement_and_closure
         Err(CanaryWriteError::OwnerUnavailable)
     ));
     assert_eq!(store.operations.count_documents(doc! {}).await.unwrap(), 1);
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn canary_revocation_and_redemption_share_the_same_owner_fence() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let client = Client::with_uri_str(&uri).await.unwrap();
+    let peer_client = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_canary_revoke_{}", uuid::Uuid::new_v4().simple());
+    let database = client.database(&name);
+    let peer_database = peer_client.database(&name);
+    let store = MongoAgentLifecycleStore::open(&database).await.unwrap();
+    let peer = MongoAgentLifecycleStore::open(&peer_database)
+        .await
+        .unwrap();
+    let owner = SubjectId::new("canary-owner-fixture");
+    let request = issue(&owner, release('1', "candidate"), 1, 0);
+    CanaryPolicy::configure(
+        &database,
+        0,
+        true,
+        request.catalog_sha256.clone(),
+        request.owner_scope_sha256.clone(),
+    )
+    .await
+    .unwrap();
+    let grant = store.issue_canary_grant(&database, &request).await.unwrap();
+    let revocation = RevokeCanaryGrant {
+        owner: owner.clone(),
+        lane: request.lane,
+        grant_id: grant.id.clone(),
+        revision: grant.revision,
+    };
+    let (revoked, redeemed) = tokio::join!(
+        store.revoke_canary_grant(&database, &revocation),
+        peer.redeem_canary(&peer_database, redeem(&request, &grant, "race-redemption")),
+    );
+    let rows = store.operations.count_documents(doc! {}).await.unwrap();
+    if revoked.is_ok() {
+        assert!(matches!(redeemed, Err(CanaryWriteError::Refused)));
+        assert_eq!(rows, 0);
+    } else {
+        let id = operation_id(redeemed.unwrap());
+        assert_eq!(rows, 1);
+        assert!(matches!(
+            store.revoke_canary_grant(&database, &revocation).await,
+            Err(CanaryWriteError::Refused)
+        ));
+        let replay = peer
+            .redeem_canary(&peer_database, redeem(&request, &grant, "race-redemption"))
+            .await
+            .unwrap();
+        assert!(matches!(replay, CreateResult::Existing(_)));
+        assert_eq!(operation_id(replay), id);
+    }
     database.drop().await.unwrap();
 }

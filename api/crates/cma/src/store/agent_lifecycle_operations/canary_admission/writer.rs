@@ -210,7 +210,12 @@ impl MongoAgentLifecycleStore {
                 .session(&mut session)
                 .await?;
             let row = row.ok_or(CanaryWriteError::Unresolved)?;
-            row.verify_canary_worker()?.ok_or_else(invalid_authority)?;
+            let expected_key = receipt
+                .record
+                .canary_redemption_key
+                .as_ref()
+                .ok_or(CanaryWriteError::Unresolved)?;
+            exact_replay(&row, request, &expected_key.sha256)?;
             if current.as_ref() == Some(&receipt.slot)
                 && row
                     .canary_admission

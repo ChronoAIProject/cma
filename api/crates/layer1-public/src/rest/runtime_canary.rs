@@ -4,20 +4,21 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::{
-    extract::State,
-    http::{HeaderMap, StatusCode},
+    extract::{rejection::JsonRejection, State},
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::{post, put},
     Extension, Json, Router,
 };
 use layer2_core::{
-    resource_access::{CallerContext, ResourceActor},
+    resource_access::{CallerContext, CredentialSource, ResourceActor},
     Capability, SubjectId,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::{
+    idempotency::IdempotencyKey,
     problems::{problem_document, problem_response},
     AgentLifecycleCreateReceipt,
 };
@@ -120,55 +121,113 @@ pub fn runtime_canary_router(service: Arc<dyn RuntimeCanaryService>) -> Router {
         .with_state(service)
 }
 
-async fn configure(
+#[utoipa::path(
+    put, path = "/api/v1/admin/runtime-canary-policy", tag = "administration", request_body = CanaryPolicyRequest,
+    description = "Set canary admission using the latest policy revision. Revision zero creates the first policy.",
+    responses(
+        (status = 200, body = CanaryPolicyView),
+        (status = 403, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 422, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 401, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+    ),
+)]
+pub(crate) async fn configure(
     State(service): State<Arc<dyn RuntimeCanaryService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Json(request): Json<CanaryPolicyRequest>,
+    body: Result<Json<CanaryPolicyRequest>, JsonRejection>,
 ) -> Result<Json<CanaryPolicyView>, CanaryRefusal> {
     caller
         .require(Capability::ConfigurePlatform)
         .map_err(|_| CanaryRefusal::Forbidden)?;
+    let Json(request) = body.map_err(|_| CanaryRefusal::Invalid)?;
     service.configure(request).await.map(Json)
 }
 
-async fn grant(
+#[utoipa::path(
+    post, path = "/api/v1/admin/runtime-canary-grants", tag = "administration", request_body = CanaryGrantRequest,
+    description = "Issue one time-limited grant for the specified owner and exact catalog release. The consent hash records the owner's approval.",
+    responses(
+        (status = 201, body = CanaryGrantView),
+        (status = 403, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 422, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 401, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+    ),
+)]
+pub(crate) async fn grant(
     State(service): State<Arc<dyn RuntimeCanaryService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Json(request): Json<CanaryGrantRequest>,
+    body: Result<Json<CanaryGrantRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<CanaryGrantView>), CanaryRefusal> {
     caller
         .require(Capability::ConfigurePlatform)
         .map_err(|_| CanaryRefusal::Forbidden)?;
+    let Json(request) = body.map_err(|_| CanaryRefusal::Invalid)?;
     let grant = service.grant(request).await?;
     Ok((StatusCode::CREATED, Json(grant)))
 }
 
-async fn revoke(
+#[utoipa::path(
+    post, path = "/api/v1/admin/runtime-canary-grants/revoke", tag = "administration", request_body = CanaryRevokeRequest,
+    description = "Revoke an unconsumed grant at the expected revision. An accepted redemption keeps running.",
+    responses(
+        (status = 200, body = CanaryGrantView),
+        (status = 403, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 422, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 401, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+    ),
+)]
+pub(crate) async fn revoke(
     State(service): State<Arc<dyn RuntimeCanaryService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Json(request): Json<CanaryRevokeRequest>,
+    body: Result<Json<CanaryRevokeRequest>, JsonRejection>,
 ) -> Result<Json<CanaryGrantView>, CanaryRefusal> {
     caller
         .require(Capability::ConfigurePlatform)
         .map_err(|_| CanaryRefusal::Forbidden)?;
+    let Json(request) = body.map_err(|_| CanaryRefusal::Invalid)?;
     service.revoke(request).await.map(Json)
 }
 
-async fn redeem(
+#[utoipa::path(
+    post, path = "/api/v1/runtime-canary-redemptions", tag = "agents", request_body = CanaryRedeemRequest,
+    description = "Redeem a grant for the authenticated owner. On an uncertain response, retry the same body and key to recover the original operation.",
+    params(("Idempotency-Key" = String, Header, description = "Replay key for this owner's consent")),
+    responses(
+        (status = 400, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 202, body = AgentLifecycleCreateReceipt),
+        (status = 403, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 409, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 422, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+        (status = 401, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
+    ),
+)]
+pub(crate) async fn redeem(
     State(service): State<Arc<dyn RuntimeCanaryService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Extension(context): Extension<CallerContext>,
-    headers: HeaderMap,
-    Json(request): Json<CanaryRedeemRequest>,
-) -> Result<(StatusCode, Json<AgentLifecycleCreateReceipt>), CanaryRefusal> {
+    context: Option<Extension<CallerContext>>,
+    key: IdempotencyKey,
+    body: Result<Json<CanaryRedeemRequest>, JsonRejection>,
+) -> Result<(StatusCode, Json<AgentLifecycleCreateReceipt>), Response> {
     caller
         .require(Capability::UseOwnSandboxes)
-        .map_err(|_| CanaryRefusal::Forbidden)?;
+        .map_err(|_| CanaryRefusal::Forbidden.into_response())?;
     caller
         .require(Capability::CreateSandbox)
-        .map_err(|_| CanaryRefusal::Forbidden)?;
-    if context.caller.subject != caller.subject
+        .map_err(|_| CanaryRefusal::Forbidden.into_response())?;
+    let Extension(context) = context.ok_or_else(|| CanaryRefusal::Forbidden.into_response())?;
+    if context.caller != caller
         || !context.validate_principal()
+        || !matches!(
+            context.credential_source,
+            CredentialSource::Retained | CredentialSource::Independent { .. }
+        )
         || !matches!(
             context.actor,
             ResourceActor::Human { .. }
@@ -178,13 +237,15 @@ async fn redeem(
                 }
         )
     {
-        return Err(CanaryRefusal::Forbidden);
+        return Err(CanaryRefusal::Forbidden.into_response());
     }
-    let key = headers
-        .get("Idempotency-Key")
-        .and_then(|header| header.to_str().ok())
-        .filter(|key| layer2_core::operation::valid_idempotency_key(key.as_bytes()))
-        .ok_or(CanaryRefusal::Invalid)?;
-    let receipt = service.redeem(&context, key, request).await?;
+    let key = key
+        .into_required_value()
+        .map_err(IntoResponse::into_response)?;
+    let Json(request) = body.map_err(|_| CanaryRefusal::Invalid.into_response())?;
+    let receipt = service
+        .redeem(&context, &key, request)
+        .await
+        .map_err(IntoResponse::into_response)?;
     Ok((StatusCode::ACCEPTED, Json(receipt)))
 }
