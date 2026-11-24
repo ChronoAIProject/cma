@@ -177,7 +177,19 @@ const sandboxEvents = {
     },
   },
   checkpoint_sealed: { type: 'checkpoint_sealed', object_reference: 'checkpoint-1' },
+  runtime_recovery_admitted: {
+    type: 'runtime_recovery_admitted',
+    previous_status: 'rotating',
+    target_runtime_version: 'runtime-2',
+  },
+  runtime_recovery_quiesced: { type: 'runtime_recovery_quiesced' },
   revived: { type: 'revived' },
+  home_restored: {
+    type: 'home_restored',
+    restore_id: 'restore-1',
+    backup_id: 'backup-1',
+    restored_to: '2026-09-09T00:00:00Z',
+  },
   rotated: { type: 'rotated', runtime_version: 'runtime-2' },
   failed: { type: 'failed', failure },
 } satisfies Record<SandboxEventKind['type'], SandboxEventKind>;
@@ -200,6 +212,22 @@ describe('closed public event projections', () => {
     expect(
       agentEventKind({ ...agentEvents.approval_requested, runtime_locator: 'private-locator' }),
     ).toEqual(agentEvents.approval_requested);
+  });
+
+  it('projects recovery milestones without retaining provider evidence', () => {
+    for (const type of ['runtime_recovery_admitted', 'runtime_recovery_quiesced'] as const) {
+      expect(
+        sandboxEventKind({
+          ...sandboxEvents[type],
+          proof: { private_canary: 'synthetic-private-recovery' },
+          receipt: { private_canary: 'synthetic-private-recovery' },
+        }),
+      ).toEqual(sandboxEvents[type]);
+    }
+    expect(() =>
+      sandboxEventKind({ ...sandboxEvents.runtime_recovery_admitted, previous_status: 'unknown' }),
+    ).toThrow(ProtocolError);
+    expect(() => sandboxEventKind({ type: 'home_restored' })).toThrow(ProtocolError);
   });
 
   it('rejects malformed, unknown and incomplete events with a field path', () => {

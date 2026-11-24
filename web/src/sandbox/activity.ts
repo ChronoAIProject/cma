@@ -57,7 +57,10 @@ const sandboxKinds = new Set([
   'agent_deleted',
   'credential_changed',
   'checkpoint_sealed',
+  'runtime_recovery_admitted',
+  'runtime_recovery_quiesced',
   'revived',
+  'home_restored',
   'rotated',
   'failed',
 ]);
