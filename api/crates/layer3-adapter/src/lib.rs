@@ -169,7 +169,8 @@ pub use provider_finality::{
     RuntimeProvisionReceipt,
 };
 pub use released_runtime::{
-    PinnedReleasedRuntime, ReleasedRuntime, ReleasedRuntimeSource, StaleReleasedRuntime,
+    released_image, PinnedReleasedRuntime, ReleasedRuntime, ReleasedRuntimeSource,
+    StaleReleasedRuntime,
 };
 pub use runtime::PlatformServiceRoute;
 pub use runtime::{

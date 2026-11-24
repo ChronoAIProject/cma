@@ -35,6 +35,16 @@ impl NativeWarmPools {
         (self.released, self.machine_target) = pinned(agent, machine);
     }
 
+    /// The default plan's identity for the image the caller already captured.
+    pub(super) fn default_config_sha256(&self, image: &RuntimeImage) -> Option<String> {
+        super::default_config_sha256(
+            self.adapter.native_pools(),
+            image,
+            self.home.as_ref(),
+            &self.default_capacity,
+        )
+    }
+
     pub(crate) fn released_images(&self) -> ReleasedImages {
         let released = self.released.snapshot();
         ReleasedImages {
