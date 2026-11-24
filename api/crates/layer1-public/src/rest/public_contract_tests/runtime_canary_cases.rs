@@ -4,11 +4,17 @@ use axum::Extension;
 use layer2_core::{resource_access::CallerContext, Authorization, Capability};
 
 use super::Scenario;
-use crate::rest::runtime_canary::*;
 use crate::rest::AgentLifecycleCreateReceipt;
+use crate::rest::{retained_runtime_transition as retained, runtime_canary::*};
 
 pub(super) fn scenario(name: &str) -> Option<Scenario> {
-    let (caller, outcome) = name.strip_prefix("runtime_canary_")?.split_once(':')?;
+    let retained = name.starts_with("retained_runtime_");
+    let prefix = if retained {
+        "retained_runtime_"
+    } else {
+        "runtime_canary_"
+    };
+    let (caller, outcome) = name.strip_prefix(prefix)?.split_once(':')?;
     let authorization = match caller {
         "operator" => Authorization::new([Capability::ConfigurePlatform]),
         "owner" | "delegated" => {
@@ -25,7 +31,11 @@ pub(super) fn scenario(name: &str) -> Option<Scenario> {
         _ => return None,
     };
     let subject = (caller != "anonymous").then_some("fixture-user");
-    let mut router = runtime_canary_router(Arc::new(Service(error)));
+    let mut router = if retained {
+        retained::router(Arc::new(Service(error)))
+    } else {
+        runtime_canary_router(Arc::new(Service(error)))
+    };
     if let Some(subject) = subject {
         use layer2_core::resource_access::{CredentialSource, ResourceActor};
         let mut context = crate::rest::resource_access_tests::context(subject);
@@ -95,5 +105,54 @@ impl Service {
             None => Ok(value),
             _ => unreachable!("fixture defines only state-dependent refusals"),
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl retained::RetainedRuntimeTransitions for Service {
+    async fn configure(&self, _: CanaryPolicyRequest) -> Result<CanaryPolicyView, CanaryRefusal> {
+        self.result(CanaryPolicyView { revision: 2 })
+    }
+    async fn preview(
+        &self,
+        _: retained::RetainedRuntimeProposal,
+    ) -> Result<retained::RetainedRuntimePreview, CanaryRefusal> {
+        self.result(retained::RetainedRuntimePreview {
+            predecessor_generation: 1,
+            predecessor_image: "registry.example/runtime@sha256:".to_owned() + &"a".repeat(64),
+            predecessor_journal_recovery: false,
+            target_image: "registry.example/runtime@sha256:".to_owned() + &"a".repeat(64),
+            target_journal_recovery: true,
+            plan_sha256: "b".repeat(64),
+        })
+    }
+    async fn grant(
+        &self,
+        operator: &layer2_core::SubjectId,
+        _: retained::RetainedRuntimeGrantRequest,
+    ) -> Result<retained::RetainedRuntimeGrantView, CanaryRefusal> {
+        assert_eq!(operator.as_str(), "fixture-user");
+        self.result(retained::RetainedRuntimeGrantView {
+            grant_id: "fixture-grant".into(),
+        })
+    }
+    async fn abort(
+        &self,
+        _: retained::RetainedRuntimeAbort,
+    ) -> Result<retained::RetainedRuntimeGrantView, CanaryRefusal> {
+        self.result(retained::RetainedRuntimeGrantView {
+            grant_id: "fixture-grant".into(),
+        })
+    }
+    async fn redeem(
+        &self,
+        owner: &layer2_core::SubjectId,
+        _: retained::RetainedRuntimeRedemption,
+    ) -> Result<retained::RetainedRuntimeReceipt, CanaryRefusal> {
+        assert_eq!(owner.as_str(), "fixture-user");
+        self.result(retained::RetainedRuntimeReceipt {
+            operation_id: "fixture-operation".into(),
+            successor_generation: 2,
+        })
     }
 }

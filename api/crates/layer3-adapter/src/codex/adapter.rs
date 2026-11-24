@@ -3,6 +3,10 @@ use crate::{desktop_ownership::DesktopOwnedRuntime, Result};
 
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {
+    fn retained_startup_policy(&self) -> Option<&dyn crate::RetainedStartupPolicyControl> {
+        self.hosted.retained_startup_policy()
+    }
+
     fn startup_binding_headroom(&self, handles: &[RuntimeHandle]) -> Option<usize> {
         self.hosted.startup_binding_headroom(handles)
     }

@@ -228,3 +228,20 @@ pub(super) fn runtime_canaries(
         Arc::new(canaries),
     ))
 }
+
+pub(super) fn retained_runtime_transitions(
+    config: &crate::config::Config,
+    stores: &MongoStores,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+) -> Result<Router, String> {
+    let service = crate::sandbox::retained_runtime_service::RetainedRuntimeService::new(
+        &config.runtime,
+        config.deployment_id.clone(),
+        stores.sandbox_model.clone(),
+        stores.agent_lifecycle.canary_database(),
+        adapter,
+    )?;
+    Ok(layer1_public::rest::retained_runtime_transition::router(
+        Arc::new(service),
+    ))
+}

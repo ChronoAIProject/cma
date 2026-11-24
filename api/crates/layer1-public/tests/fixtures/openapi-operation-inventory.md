@@ -909,5 +909,9 @@ SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both exp
 | `GET /api/v1/agents/{id}/original-request` | Read the current owner’s exact admitted Task request without scanning history. |
 | `GET /api/v1/agents/{id}/reply-preview` | Read a bounded certified preview of the latest persisted assistant message. |
 | `POST /api/v1/sandbox-creation-outcomes/lookup` | Read evidence for an exact owner Sandbox creation. |
-
+| `PUT /api/v1/admin/retained-runtime-policy` | CanaryPolicyRequest | - | 200 CanaryPolicyView; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/retained-runtime-preview` | RetainedRuntimeProposal | - | 200 RetainedRuntimePreview; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/retained-runtime-grants` | RetainedRuntimeGrantRequest | - | 201 RetainedRuntimeGrantView; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/retained-runtime-redemptions` | RetainedRuntimeRedemption | - | 202 RetainedRuntimeReceipt; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/retained-runtime-grants/abort` | RetainedRuntimeAbort | - | 200 RetainedRuntimeGrantView; 401/403/409/422/503 ProblemDocument |
 <!-- openapi-operations:end -->

@@ -87,6 +87,7 @@ pub use agent_provenance::agent_provenance_router;
 mod agent_history;
 mod agent_lifecycle;
 mod desktop_creation;
+pub mod retained_runtime_transition;
 pub mod runtime_canary;
 pub use desktop_creation::DesktopCreationScope;
 #[cfg(test)]
