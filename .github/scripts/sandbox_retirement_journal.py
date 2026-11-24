@@ -126,6 +126,10 @@ class RetirementJournal:
             if self.pending is None or self.pending.member_sha256 != member or self.pending.existing:
                 raise Refused("journal acknowledgement does not match retained intent")
             self.pending = replace(self.pending, existing=True)
+        elif set(record) == {"index", "member_sha256", "unsent"} and record["unsent"] is True:
+            if self.pending is None or self.pending.member_sha256 != member or self.pending.existing:
+                raise Refused("journal unsent record does not match retained intent")
+            self.pending = None
         elif (
             set(record) == {"index", "member_sha256", "outcome", "evidence_sha256"}
             and record["outcome"] in AFTER_INTENT | WITHOUT_INTENT
@@ -155,6 +159,9 @@ class RetirementJournal:
 
     def acknowledge_existing(self, index, member):
         self._record({"index": index, "member_sha256": member, "existing": True})
+
+    def record_unsent(self, index, member):
+        self._record({"index": index, "member_sha256": member, "unsent": True})
 
     def complete(self, index, member, outcome, evidence_sha256):
         self._record({

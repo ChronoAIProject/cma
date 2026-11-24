@@ -211,12 +211,13 @@ class ExecutorTests(unittest.TestCase):
         }
         self.review = json_file(self.directory / "review.json", self.review_body)
 
-    def run_cli(self, *authority):
+    def run_cli(self, *authority, expire_during_reserve=False):
         harness = """
 import json, runpy, sys
+from datetime import datetime, timedelta
 from pathlib import Path
-source, policy_log, approve = sys.argv[1:4]
-sys.argv = [source, *sys.argv[4:]]
+source, policy_log, approve, cross_deadline = sys.argv[1:5]
+sys.argv = [source, *sys.argv[5:]]
 sys.path.insert(0, str(Path(source).parent))
 def consume(request):
     consumed = Path(policy_log + ".consumed")
@@ -228,11 +229,28 @@ def consume(request):
         with consumed.open("a") as log:
             log.write(request["approval"] + "\\n")
     return approved
-raise SystemExit(runpy.run_path(source)["main"](consume))
+main = runpy.run_path(source)["main"]
+if cross_deadline == "yes":
+    journal = main.__globals__["RetirementJournal"]
+    reserve = journal.reserve
+    expired = False
+    class Clock(datetime):
+        @classmethod
+        def now(cls, zone):
+            return datetime.now(zone) + timedelta(minutes=5 if expired else 0)
+    def reserve_and_advance(self, *args):
+        global expired
+        reserved = reserve(self, *args)
+        expired = True
+        return reserved
+    journal.reserve = reserve_and_advance
+    main.__globals__["datetime"] = Clock
+raise SystemExit(main(consume))
 """
         args = [
             sys.executable, "-c", harness, str(SCRIPT), str(self.policy_calls),
             "yes" if self.controller_approves else "no",
+            "yes" if expire_during_reserve else "no",
             "--application", self.app.origin, "--provider", self.provider.origin,
             "--inventory", str(self.inventory), "--review", str(self.review),
             "--state-dir", str(self.directory), "--observe-seconds", "1", *authority,
@@ -432,6 +450,33 @@ raise SystemExit(runpy.run_path(source)["main"](consume))
         )
         grants = self.policy_calls.with_suffix(".consumed").read_text().splitlines()
         self.assertEqual(grants, [APPROVAL, self.approval])
+
+    def test_expiry_during_intent_fsync_sends_no_post_and_allows_fresh_grant(self):
+        self.files()
+        expired = self.run_cli("--execute", expire_during_reserve=True)
+        self.assertEqual(expired.returncode, 1, expired.stderr)
+        self.assertEqual(json.loads(expired.stdout)["completed_members"], 0)
+        self.assertTrue(all(method == "GET" for method, _, _ in self.app.calls))
+        journal = self.directory / f"{self.inventory_sha}.jsonl"
+        records = [json.loads(line) for line in journal.read_text().splitlines()]
+        self.assertIn("guard_sha256", records[-2])
+        self.assertEqual(records[-1], {"index": 0, "member_sha256": self.member_sha, "unsent": True})
+        reused = self.run_cli("--execute")
+        self.assertEqual(reused.returncode, 1, reused.stderr)
+        self.assertTrue(all(method == "GET" for method, _, _ in self.app.calls))
+        self.approval = APPROVAL + "-fresh"
+        new_review = {**self.review_body, "approval_sha256": sha256(self.approval.encode()).hexdigest()}
+        self.review = json_file(self.directory / "review-fresh.json", new_review)
+        dispatched = self.run_cli("--execute")
+        self.assertEqual(dispatched.returncode, 1, dispatched.stderr)
+        self.settle()
+        observed = self.run_cli("--observe-only")
+        self.assertEqual(observed.returncode, 0, observed.stderr)
+        self.assertEqual(json.loads(observed.stdout)["completed_members"], 1)
+        self.assertEqual(
+            [path for method, path, _ in self.app.calls if method == "POST"],
+            [APP + "/retire-reviewed"],
+        )
 
 
 def check_rust_vector():

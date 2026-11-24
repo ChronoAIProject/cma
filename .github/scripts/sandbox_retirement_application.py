@@ -37,14 +37,16 @@ class JsonTransport:
     def read(self, path, timeout):
         return self.request(path, timeout)
 
-    def submit(self, path, body, timeout):
-        return self.request(path, timeout, json.dumps(body, separators=(",", ":")).encode())
+    def submit(self, path, body, timeout, before_send):
+        return self.request(path, timeout, json.dumps(body, separators=(",", ":")).encode(), before_send)
 
-    def request(self, path, timeout, data=None):
+    def request(self, path, timeout, data=None, before_send=None):
         headers = self.headers
         if data is not None:
             headers = {**headers, "Content-Type": "application/json"}
         request = Request(self.origin + path, data=data, headers=headers)
+        if before_send is not None and not before_send():
+            return None
         try:
             with self.client.open(request, timeout=min(timeout, 5)) as response:
                 data = response.read(MAX_RESPONSE + 1)
@@ -203,13 +205,16 @@ class ApplicationRetirement:
         except (KeyError, TypeError, ValueError, OSError):
             return Eligibility.UNKNOWN, None
 
-    def dispatch(self, member):
+    def dispatch(self, member, before_send):
         guard, fingerprint = self.prepared
         self.prepared = None
         if guard["member_sha256"] != member["member_sha256"]:
             raise ValueError("prepared guard does not match the ordered member")
         try:
-            status, reply = self.app.submit(self.path(member) + "/retire-reviewed", guard, self.timeout)
+            response = self.app.submit(self.path(member) + "/retire-reviewed", guard, self.timeout, before_send)
+            if response is None:
+                return Admission.UNSENT, None
+            status, reply = response
             if status != 200:
                 return Admission.UNKNOWN, None
             outcome = reply["status"]

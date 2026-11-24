@@ -16,6 +16,7 @@ class Admission(Enum):
     EXISTING = "existing"
     REFUSED = "refused"
     UNKNOWN = "unknown"
+    UNSENT = "unsent"
 
 
 @dataclass(frozen=True)
@@ -25,7 +26,7 @@ class Observation:
     evidence_sha256: str
 
 
-def execute(members, journal, boundary, dispatch_allowed):
+def execute(members, journal, boundary, approval):
     """Return false when the current member remains unresolved."""
     for index in range(journal.next_index, len(members)):
         member = members[index]
@@ -51,12 +52,15 @@ def execute(members, journal, boundary, dispatch_allowed):
                 return False
             journal.complete(index, identity, "existing_retired", observation.evidence_sha256)
             continue
-        if eligibility is not Eligibility.ELIGIBLE or not dispatch_allowed():
+        if eligibility is not Eligibility.ELIGIBLE or approval is None or not approval():
             return False
 
         if not journal.reserve(index, identity, evidence):
             raise ValueError("retirement intent already exists")
-        admission, response_sha256 = boundary.dispatch(member)
+        admission, response_sha256 = boundary.dispatch(member, approval.before_send)
+        if admission is Admission.UNSENT:
+            journal.record_unsent(index, identity)
+            return False
         if admission is Admission.REFUSED:
             journal.complete(index, identity, "refused", response_sha256)
             continue

@@ -169,6 +169,9 @@ class SingleUseApproval:
                 "approval": self.token, "context": self.context, "origin": self.app.origin,
                 "serving_release": self.release,
             })
+        return self.before_send()
+
+    def before_send(self):
         return self.consumed and datetime.now(timezone.utc) < self.expires
 
 
@@ -196,9 +199,9 @@ def run(args, preflight, consume_approval):
             raise Refused("fresh matching release approval is required")
 
     app = JsonTransport(origins["application"], credential("CMA_RETIREMENT_APP_TOKEN"))
-    dispatch_allowed = (
+    authority = (
         SingleUseApproval(consume_approval, app, approval, review, expires)
-        if args.execute else lambda: False
+        if args.execute else None
     )
     provider = ProviderReads(JsonTransport(origins["provider"], credential("CMA_RETIREMENT_PROVIDER_TOKEN")))
     boundary = ApplicationRetirement(
@@ -209,7 +212,7 @@ def run(args, preflight, consume_approval):
     ) as journal:
         if args.execute and (journal.next_index != resume_index or journal.pending is not None):
             raise Refused("approval does not start at the next unreserved member")
-        finished = execute(members, journal, boundary, dispatch_allowed)
+        finished = execute(members, journal, boundary, authority)
         return {
             "inventory_sha256": inventory_sha256, "completed_members": journal.next_index,
             "outcome": "completed" if finished else "unresolved",
