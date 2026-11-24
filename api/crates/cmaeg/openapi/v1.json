@@ -2558,6 +2558,16 @@
         ],
         "type": "object"
       },
+      "ChannelRecordResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ChannelResponse"
+          },
+          {
+            "$ref": "#/components/schemas/LegacyChannelRecord"
+          }
+        ]
+      },
       "ChannelResponse": {
         "properties": {
           "channel_id": {
@@ -5003,6 +5013,24 @@
         ],
         "type": "string"
       },
+      "LegacyChannelRecord": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ChannelListItem"
+          },
+          {
+            "properties": {
+              "management_handle": {
+                "$ref": "#/components/schemas/ManagementHandle"
+              }
+            },
+            "required": [
+              "management_handle"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "ManageThreadRequest": {
         "additionalProperties": false,
         "properties": {
@@ -5024,6 +5052,12 @@
           "action"
         ],
         "type": "object"
+      },
+      "ManagementHandle": {
+        "enum": [
+          "missing"
+        ],
+        "type": "string"
       },
       "McpAuth": {
         "oneOf": [
@@ -10872,6 +10906,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "include_legacy",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -10879,7 +10921,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChannelResponse"
+                  "$ref": "#/components/schemas/ChannelRecordResponse"
                 }
               }
             },

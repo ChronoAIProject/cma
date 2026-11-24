@@ -165,6 +165,7 @@ pub struct Config {
     pub github_enabled: bool,
     pub managed_telegram_setup_enabled: bool,
     pub binding_profile_drift_enabled: bool,
+    pub legacy_channel_record_read_enabled: bool,
     pub native_bot_mentions_writes_enabled: bool,
     /// Allows new thread contracts only after every reader supports them.
     pub thread_contract_writes_enabled: bool,
@@ -336,6 +337,9 @@ impl Config {
             )?,
             binding_profile_drift_enabled: routing::write_flag(
                 "CMAEG_BINDING_PROFILE_DRIFT_ENABLED",
+            )?,
+            legacy_channel_record_read_enabled: routing::write_flag(
+                "CMAEG_LEGACY_CHANNEL_RECORD_READ_ENABLED",
             )?,
             native_lark_writes_enabled: routing::write_flag("CMAEG_NATIVE_LARK_WRITES_ENABLED")?,
             native_lark_intake_enabled: routing::write_flag("CMAEG_NATIVE_LARK_INTAKE_ENABLED")?,

@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 pub struct ManagementState {
     pub managed_telegram_setup_enabled: bool,
     pub binding_profile_drift_enabled: bool,
+    pub legacy_channel_record_read_enabled: bool,
     pub github_enabled: bool,
     pub github: Arc<OnceLock<Arc<crate::github::Gateway>>>,
     pub native_lark_controls_enabled: bool,
@@ -201,6 +202,7 @@ impl ManagementState {
             telegram: None,
             managed_telegram_setup_enabled: false,
             binding_profile_drift_enabled: false,
+            legacy_channel_record_read_enabled: false,
             native_bot_mentions_writes_enabled: false,
             thread_contract_writes_enabled: false,
             media_enabled: false,

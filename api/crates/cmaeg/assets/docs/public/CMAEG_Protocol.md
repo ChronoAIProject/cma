@@ -820,6 +820,13 @@ allocating another. A provider that is not allowlisted is refused with 400
 Deletion releases the reservation; callers must never reuse a retired record UUID
 or race cleanup against an outstanding create attempt.
 
+When legacy record reads are enabled, an owner can send
+`GET /v1/channel-records/{record_id}?include_legacy=true` for a record from
+their channel list. A valid record without creation metadata returns its
+list-item shape with `management_handle: "missing"`. The response omits
+`channel_id` and `endpoints`. A recoverable record returns its ordinary
+channel response in either mode. The legacy response identifies records
+that still need a retirement path.
 
 A channel response has this shape (ellipsis denotes the previously supplied
 profile/policy objects, not a literal JSON value):
@@ -839,7 +846,7 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | --- | --- | --- | --- |
 | `GET /v1/channels` | Optional `after` opaque cursor; no body | 200 `{items:[...],next_cursor}` with up to 50 owner-scoped channel responses | 401 unauthenticated; 503 record store unavailable |
 | `POST /v1/channels` | Complete create body; optional idempotency header and reserved record UUID | 201 channel response | 409 reused key with different content; 503 cache capacity |
-| `GET /v1/channel-records/{record_id}` | No body | 200 recovered channel response | 404 absent, unreserved, or other owner |
+| `GET /v1/channel-records/{record_id}` | Optional `include_legacy` query flag | 200 recovered channel response or, when enabled and requested, legacy record with missing management handle | 404 absent, unreserved, or other owner |
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
 | `GET /v1/channels/{channel_id}/activity` | No body | 200 bounded recent activity snapshot with cursor, retention and truncation | 404 absent or other owner; 503 store unavailable |
 | `GET /v1/channels/{channel_id}/activity/stream` | Optional `Last-Event-ID` or `cursor` | SSE `activity`/`reset` full snapshots; initial snapshot on every connection | 400 invalid cursor; 404 absent or other owner |
