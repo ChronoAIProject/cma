@@ -1,4 +1,4 @@
-use crate::store::LifecycleBehavior;
+use crate::store::{LifecycleBehavior, LifecycleLease};
 use layer1_public::rest::{
     AgentLifecycleCreateRequest, AgentLifecyclePermissions, AgentLifecycleProfile,
     AgentLifecycleProvisioningError,
