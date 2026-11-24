@@ -69,7 +69,13 @@ describe('Activity summary contract', () => {
   it('retries an old server that refuses the new option', async () => {
     const t = transport();
     const admin = new Administration(t.client.config);
-    t.answer({ title: 'Invalid request', status: 400, code: 'invalid_admin_request' }, 400);
+    t.fetch.mockImplementationOnce(async (url, init) => {
+      t.calls.push({ url: String(url), init: init ?? {} });
+      return Response.json(
+        { title: 'Invalid request', status: 400, code: 'invalid_admin_request' },
+        { status: 400 },
+      );
+    });
     t.answer({ items: [row], next: null });
     expect((await admin.listActivitySummary({ excludeSuccessfulReads: true })).items).toEqual([
       row,
