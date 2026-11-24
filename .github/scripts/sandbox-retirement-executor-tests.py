@@ -397,6 +397,19 @@ raise SystemExit(main(consume))
         self.assertTrue(self.app.calls)
         self.assertTrue(all("/sbx_second" not in path for _, path, _ in self.app.calls))
 
+    def test_recently_active_member_is_skipped_before_dispatching_next(self):
+        self.files(second=True)
+        self.sandbox["last_activity_at"] = CUTOFF
+        result = self.run_cli("--execute")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["completed_members"], 2)
+        posts = [path for method, path, _ in self.app.calls if method == "POST"]
+        self.assertEqual(posts, [APP.replace("sbx_fixture", "sbx_second") + "/retire-reviewed"])
+        journal = self.directory / f"{self.inventory_sha}.jsonl"
+        records = [json.loads(line) for line in journal.read_text().splitlines()]
+        outcomes = [record["outcome"] for record in records if "outcome" in record]
+        self.assertEqual(outcomes, ["skipped", "retired"])
+
     def test_expired_or_altered_inventory_fails_before_outbound_requests(self):
         self.files(expires=datetime.now(timezone.utc) - timedelta(seconds=1))
         expired = self.run_cli("--execute")
