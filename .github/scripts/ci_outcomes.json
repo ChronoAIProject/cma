@@ -1029,6 +1029,24 @@
           "cause": "change",
           "next": "Check the restarted pods' logs (Agent Manager's for a runtime release). \"native warm pool startup readiness failed\" means the new runtime's warm pool was not ready in time, not a broken image; if this change caused it, fix it."
         },
+        "pod-restarts-membership": {
+          "title": "Agent Manager restarted after losing authority",
+          "meaning": "Agent Manager reported lost membership or ownership before the restart.",
+          "cause": "change",
+          "next": "Use the previous Agent Manager container log to investigate membership or ownership renewal."
+        },
+        "pod-restarts-startup-gate": {
+          "title": "Agent Manager restarted at the warm-pool startup gate",
+          "meaning": "The active runtime pool did not reach startup readiness before the Agent Manager stopped.",
+          "cause": "operator",
+          "next": "Check active warm-pool readiness, provider capacity and quota for the Sandbox namespace."
+        },
+        "pod-restarts-panic": {
+          "title": "A release container restarted after a panic",
+          "meaning": "The previous container log recorded a panic before the restart.",
+          "cause": "change",
+          "next": "Open the restarted container's previous log and inspect the panic."
+        },
         "rollout-ownership": {
           "title": "Rollout ownership unproven",
           "meaning": "The rollout could not be attributed to this deployment.",
