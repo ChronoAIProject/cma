@@ -109,7 +109,11 @@ async fn measured_preview_keeps_one_snapshot_across_concurrent_dispute_and_get_m
         "configureFailPoint": "failCommand", "mode": {"times": 1},
         "data": {"failCommands": ["getMore"], "appName": &name, "blockConnection": true, "blockTimeMS": 10_000},
     }).await.unwrap();
-    let entered = configured.get_i64("count").unwrap() + 1;
+    let entered = configured
+        .get_i64("count")
+        .or_else(|_| configured.get_i32("count").map(i64::from))
+        .unwrap()
+        + 1;
     let window = Range { from: 21, to: 40 };
     let in_progress = tokio::spawn({
         let anchor = anchor.clone();
