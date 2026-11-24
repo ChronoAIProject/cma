@@ -646,6 +646,7 @@ name = "cmaeg-execution"
 version = "0.1.0"
 dependencies = [
  "cmaeg-core",
+ "cmaeg-engine",
  "dashmap",
  "metrics",
  "metrics-exporter-prometheus",

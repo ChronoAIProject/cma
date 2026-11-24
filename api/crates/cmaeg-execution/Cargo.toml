@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 cmaeg-core = { path = "../cmaeg-core" }
+cmaeg-engine = { path = "../cmaeg-engine" }
 dashmap = { workspace = true }
 metrics = { workspace = true }
 sha2 = { workspace = true }
