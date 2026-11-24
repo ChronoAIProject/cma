@@ -16,11 +16,10 @@ async fn wait_binding_rebuilds_after_a_concurrent_workspace_revision() {
         .unwrap()
         .unwrap();
     fixture.trace.bodies.store(0, Ordering::SeqCst);
-    *fixture
-        .trace
-        .workspace_revision_before_transaction
-        .lock()
-        .unwrap() = Some(workspace.id.clone());
+    *fixture.trace.workspace_advance.lock().unwrap() = Some(WorkspaceAdvance {
+        id: workspace.id.clone(),
+        transaction: 1,
+    });
 
     let result = h
         .worker
@@ -53,7 +52,17 @@ async fn exhausted_wait_binding_releases_the_lease_and_is_discovered_again() {
         .await
         .unwrap()
         .unwrap();
+    let original_workspace = h
+        .store
+        .get_workspace(&claimed.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
     fixture.transient(doc! {"times": 5_i32}.into()).await;
+    *fixture.trace.workspace_advance.lock().unwrap() = Some(WorkspaceAdvance {
+        id: original_workspace.id.clone(),
+        transaction: 6,
+    });
 
     let result = h
         .worker
@@ -61,7 +70,7 @@ async fn exhausted_wait_binding_releases_the_lease_and_is_discovered_again() {
         .await;
     fixture.disable().await;
     result.unwrap();
-    assert_eq!(fixture.trace.bodies.load(Ordering::SeqCst), 6);
+    assert_eq!(fixture.trace.bodies.load(Ordering::SeqCst), 7);
     assert_eq!(fixture.trace.commits.load(Ordering::SeqCst), 1);
     let queued = h.stored(&claimed.id).await;
     assert_eq!(queued.work.step, AgentWorkStep::WaitForWorkspace);
@@ -86,23 +95,40 @@ async fn exhausted_wait_binding_releases_the_lease_and_is_discovered_again() {
     assert_eq!(ready_at, published_at + 1);
     assert!(queued.work.ready_at < claimed.work.lease.as_ref().unwrap().expires_at);
     let due = SystemTime::UNIX_EPOCH + Duration::from_secs(ready_at);
-    assert!(!h
-        .worker
+    let store = Arc::new(
+        MongoSandboxStore::open(&fixture.admin, &fixture.database)
+            .await
+            .unwrap(),
+    );
+    let registry = Arc::new(LiveAgentRegistry::default());
+    let successor = AgentWorker::new(
+        AgentWorkerDependencies {
+            store: store.clone(),
+            adapter: h.adapter.clone(),
+            skills: Arc::new(EmptyAgentSkillResolver),
+            registry: registry.clone(),
+            updates: DurableAgentUpdateRecorder::new(store.clone()),
+            operations: AgentOperationService::new(store, registry),
+        },
+        AgentWorkerConfig::new("bootstrap-successor", DEPLOYMENT_ID),
+    );
+    assert!(!successor
         .run_one(&claimed.id, due - Duration::from_secs(1))
         .await
         .unwrap());
     assert_eq!(h.stored(&claimed.id).await, queued);
     assert_eq!(
-        h.worker.due_work(due, 10).await.unwrap(),
+        successor.due_work(due, 10).await.unwrap(),
         vec![claimed.id.clone()]
     );
-    assert!(h.worker.run_one(&claimed.id, due).await.unwrap());
+    assert!(successor.run_one(&claimed.id, due).await.unwrap());
     let workspace = h
         .store
         .get_workspace(&claimed.workspace_id)
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(workspace.revision, original_workspace.revision + 1);
     assert_bound(&fixture, &claimed, &workspace, requests_before).await;
     let advanced = h.stored(&claimed.id).await;
     assert_eq!(advanced.work.next_fence, claimed.work.next_fence + 1);

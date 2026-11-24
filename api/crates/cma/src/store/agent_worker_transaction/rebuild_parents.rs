@@ -34,23 +34,30 @@ pub(super) async fn fence(
             }
         }
     };
-    let binding_workspace = agent.work.step == AgentWorkStep::WaitForWorkspace
-        && mutation.agent.work.step == AgentWorkStep::AddWorktree
-        && parents.lineage == AgentWorkPublicationLineage::Authorized;
+    let delayed_workspace_retry = mutation.agent.work.step == AgentWorkStep::WaitForWorkspace
+        && mutation.agent.work.ready_at > mutation.appended_at
+        && mutation.agent.work.lease.is_none()
+        && mutation.agent_logs.is_empty()
+        && mutation.worktree.is_none()
+        && mutation.sandbox_event.is_none();
+    let refresh_workspace_wait = agent.work.step == AgentWorkStep::WaitForWorkspace
+        && agent.has_no_runtime_effects()
+        && parents.lineage == AgentWorkPublicationLineage::Authorized
+        && (mutation.agent.work.step == AgentWorkStep::AddWorktree || delayed_workspace_retry);
     for (collection, id, revision, owner, refresh) in [
         (
             &store.sandboxes,
             agent.sandbox_id.as_str(),
             parents.sandbox_revision,
             owner.clone(),
-            binding_workspace,
+            refresh_workspace_wait,
         ),
         (
             &store.workspaces,
             agent.workspace_id.as_str(),
             parents.workspace_revision,
             workspace_owner,
-            binding_workspace,
+            refresh_workspace_wait,
         ),
         (
             &store.worktrees,
