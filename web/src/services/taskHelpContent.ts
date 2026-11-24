@@ -52,9 +52,9 @@ export const TASK_GUIDES: Record<HelpTopic, TaskGuide> = {
       },
       {
         title: 'Delete a task in a paused Sandbox',
-        state: 'A stopped or failed Agent can be deleted after its Sandbox returns to Active.',
+        state: 'A stopped or failed Agent can be deleted after its Sandbox returns to Live.',
         action:
-          'From the task menu, choose Open Sandbox to resume. Choose Resume if the Sandbox offers it. After it becomes Active, return to the task and choose Delete.',
+          'From the task menu, choose Open Sandbox to resume. Choose Resume if the Sandbox offers it. After it becomes Live, return to the task and choose Delete.',
         completion:
           'Task deletion removes this Agent and its Worktree. The separate Delete action on the Sandbox removes the environment and all its Workspaces and Agents after its own confirmation.',
       },

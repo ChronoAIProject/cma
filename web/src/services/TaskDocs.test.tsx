@@ -62,3 +62,11 @@ it('opens the Event Gateway documentation from the Docs index using application 
     view: 'event_gateway_protocol',
   });
 });
+
+it('uses the visible Sandbox status in the paused task deletion guide', () => {
+  render(<DocsPage view="environments-and-capacity" onNavigate={vi.fn()} />);
+  const heading = screen.getByRole('heading', { name: 'Delete a task in a paused Sandbox' });
+  const scenario = within(heading.closest('section')!);
+  expect(scenario.getByText(/Sandbox returns to Live/)).toBeVisible();
+  expect(scenario.getByText(/Choose Resume.*becomes Live.*choose Delete/)).toBeVisible();
+});
