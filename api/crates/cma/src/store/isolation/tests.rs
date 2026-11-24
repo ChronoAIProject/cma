@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "transaction_opening_tests.rs"]
+mod real_transaction_opening;
+
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn real_erasure_optional_authority_preserves_disabled_deployments() {
