@@ -108,6 +108,7 @@ pub(super) fn lifecycle_config(
         native_create_retry_enabled: config.features.native_create_retry_enabled,
         reopen_output_refusal_enabled: config.features.reopen_output_refusal_enabled,
         cleanup_continuation_enabled: config.features.cleanup_continuation_enabled,
+        owner_stop_settlement_enabled: config.features.owner_stop_settlement_enabled,
         bounded_live_fragments: config.features.bounded_live_fragments,
         coordinated_ingress: config.features.coordinated_ingress,
         quiet_output: config.features.quiet_output,

@@ -123,6 +123,22 @@ impl Store {
             None => v1::find_operation(&self.config, &operation_id, &operation.subject),
         }
     }
+    pub(crate) async fn has_process_writer(
+        &self,
+        agent_id: &str,
+        incarnation: u64,
+    ) -> Result<bool> {
+        use crate::mutation_authority::{self, ResourceKey};
+        let key = ResourceKey::AgentProcess {
+            agent_id: agent_id.to_owned(),
+            incarnation: Some(incarnation),
+        };
+        match &self.ledger {
+            Some(ledger) => ledger.has_process_writer(key).await,
+            None => mutation_authority::has_process_writer(&self.config, &key),
+        }
+    }
+
     pub(crate) async fn begin<T: DeserializeOwned>(
         &self,
         operation: &Operation,

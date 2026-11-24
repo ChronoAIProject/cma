@@ -210,6 +210,10 @@ pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crat
                 && receipt.receipt.request_sha256 == request.request.request_sha256
                 && receipt.receipt.agent_id == request.request.agent_id
         }
+        (
+            RequestFrame::ProveAgentProcessClosed(request),
+            ResponseFrame::ProveAgentProcessClosed(proof),
+        ) => request == proof,
         (RequestFrame::CaptureAgent(_), ResponseFrame::CaptureAgent(snapshot)) => {
             !snapshot.conversation_id.is_empty()
                 && valid_sha256(&snapshot.archive_sha256)

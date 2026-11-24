@@ -221,3 +221,182 @@ async fn agent_work_consumes_only_the_exact_durable_stop_intent() {
 
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn owner_stop_settlement_fences_parents_and_retains_partial_output() {
+    use layer2_core::sandbox::store::{
+        AgentWorkPublication, AgentWorkPublicationLineage, AgentWorkPublicationParents,
+    };
+
+    let (client, name) = database("owner_stop_settlement").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let mut agent = ready_conversation_fixture(&store, "stop_settlement").await;
+    store
+        .agent_log
+        .delete_many(doc! {"agent_id": agent.id.as_str()})
+        .await
+        .unwrap();
+    let history = vec![
+        AgentLogKind::Created {
+            workspace_id: agent.workspace_id.clone(),
+            worktree_id: agent.worktree_id.clone(),
+        },
+        AgentLogKind::ConversationOpened {
+            conversation_id: agent.conversation.conversation_id.clone().unwrap(),
+            runtime_generation: 1,
+        },
+        AgentLogKind::TurnStarted {
+            turn_sequence: 3,
+            origin_key: None,
+            model: None,
+        },
+        AgentLogKind::OwnerMessage {
+            content: "owner prompt".into(),
+        },
+        AgentLogKind::AgentMessage {
+            content: "partial response".into(),
+        },
+    ];
+    store
+        .agent_log
+        .insert_many(history.iter().enumerate().map(|(index, kind)| {
+            log_document(&AgentLogEntry {
+                agent_id: agent.id.clone(),
+                seq: (index + 1) as u64,
+                appended_at: NOW.into(),
+                kind: kind.clone(),
+            })
+            .unwrap()
+        }))
+        .await
+        .unwrap();
+    agent.status = AgentStatus::Working;
+    agent.work.schedule(AgentWorkStep::None, NOW.into());
+    agent.conversation.active_turn = Some(3);
+    agent.conversation.last_seq = history.len() as u64;
+    agent.revision += 1;
+    let mut fields = agent_replacement_fields(&agent).unwrap();
+    fields.insert("last_seq", agent.conversation.last_seq as i64);
+    store.agents.update_one(
+        doc! {"_id": agent.id.as_str()},
+        doc! {"$set": fields, "$unset": {(crate::store::agent_log_integrity::INTEGRITY_FIELD): ""}},
+    ).await.unwrap();
+
+    let mut stopping = store
+        .schedule_agent_stop(AgentStopRequest {
+            target: AgentControlTarget::from(&agent),
+            reason: AgentStopReason::Owner,
+            requested_at: NOW.into(),
+        })
+        .await
+        .unwrap()
+        .into_agent();
+    stopping
+        .work
+        .schedule(AgentWorkStep::PublishStopped, NOW.into());
+    stopping.work.receipts.push(AgentWorkReceipt {
+        step: AgentWorkStep::CloseProcess,
+        operation_id: format!("agent:{}:close:v1", agent.id),
+        request_sha256: "a".repeat(64),
+        completed_at: NOW.into(),
+    });
+    replace_agent_fixture(&store, &stopping).await;
+    let claimed = store
+        .claim_agent_work(&agent.id, "worker", NOW.into(), MINUTE.into())
+        .await
+        .unwrap()
+        .unwrap();
+    let fence = claimed.work.lease.as_ref().unwrap().fence;
+    assert!(store.has_owner_stop_receipt(&claimed).await.unwrap());
+
+    let mut stopped = claimed.clone();
+    let interrupted = stopped.settle_owner_stop_turn().unwrap();
+    stopped
+        .work
+        .advance("worker", fence, AgentWorkStep::None, NOW.into())
+        .unwrap();
+    stopped
+        .transition(
+            AgentStatus::Stopped,
+            NOW.into(),
+            Some(AgentStopReason::Owner),
+        )
+        .unwrap();
+    stopped.conversation.last_seq += 2;
+    let proposal = AgentWorkMutation {
+        expected_agent_revision: claimed.revision,
+        holder: "worker".into(),
+        fence,
+        agent: stopped.clone(),
+        worktree: None,
+        appended_at: NOW.into(),
+        sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+            agent_id: agent.id.clone(),
+            from: AgentStatus::Working,
+            to: AgentStatus::Stopped,
+        }),
+        agent_logs: vec![
+            interrupted,
+            AgentLogKind::Stopped {
+                reason: "owner".into(),
+            },
+        ],
+    };
+    let sandbox = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
+    let workspace = store
+        .get_workspace(&agent.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let worktree = store
+        .get_worktree(&agent.worktree_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let observed = AgentWorkPublicationParents {
+        sandbox_revision: sandbox.revision,
+        workspace_revision: workspace.revision,
+        worktree_revision: worktree.revision,
+        lineage: AgentWorkPublicationLineage::Authorized,
+    };
+    assert_eq!(
+        store.commit_agent_work(proposal.clone()).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    let stale = AgentWorkPublicationParents {
+        sandbox_revision: observed.sandbox_revision + 1,
+        ..observed
+    };
+    assert_eq!(
+        store.try_publish_agent_work(proposal.clone(), stale).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(claimed));
+    assert_eq!(
+        store
+            .try_publish_agent_work(proposal, observed)
+            .await
+            .unwrap(),
+        AgentWorkPublication::Published,
+    );
+    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(stopped));
+    let actual: Vec<_> = store
+        .agent_log(&agent.id, 0, 20)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.kind)
+        .collect();
+    assert_eq!(&actual[..history.len()], history);
+    assert_eq!(
+        &actual[history.len()..],
+        &[
+            AgentLogKind::TurnInterrupted { turn_sequence: 3 },
+            AgentLogKind::Stopped {
+                reason: "owner".into()
+            },
+        ]
+    );
+    client.database(&name).drop().await.unwrap();
+}

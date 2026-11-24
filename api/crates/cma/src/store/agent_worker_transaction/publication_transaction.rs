@@ -61,6 +61,21 @@ pub(super) async fn commit(
     }
 }
 
+pub(in crate::store) async fn commit_repeated_failure(
+    store: &MongoSandboxStore,
+    retry: &layer2_core::sandbox::store::AgentRepeatedFailure,
+) -> Result<(), SandboxStoreError> {
+    commit(
+        store,
+        retry.mutation.clone(),
+        None,
+        Some(&retry.marker),
+        None,
+    )
+    .await
+    .map(|_| ())
+}
+
 pub(super) async fn try_publish(
     store: &MongoSandboxStore,
     mutation: AgentWorkMutation,
