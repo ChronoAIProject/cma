@@ -12,5 +12,6 @@ pub use store::usage_reports::{
 
 pub mod metric_bindings;
 pub mod metric_rollups;
+pub mod pool;
 
 pub use store::allocation_buckets;
