@@ -102,6 +102,7 @@ pub trait RenewalHook: Send + Sync {
     async fn renew_selected(
         &self,
         authority: &std::sync::Arc<crate::agent_ownership::Authority>,
+        window: crate::agent_ownership::RenewalWindow,
     ) -> Option<
         Result<crate::agent_ownership::OwnershipLease, crate::agent_ownership::OwnershipError>,
     >;

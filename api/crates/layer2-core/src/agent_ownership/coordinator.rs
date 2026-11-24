@@ -27,7 +27,7 @@ mod heartbeat;
 #[path = "coordinator_qualification.rs"]
 mod qualification;
 #[cfg(feature = "qualification-hooks")]
-pub use qualification::{qualification_owner_digest, CapturedOwner};
+pub use qualification::{qualification_owner_digest, CapturedOwner, RenewalWindow};
 #[path = "coordinator_renewal.rs"]
 mod renewal;
 #[cfg(test)]
