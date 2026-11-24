@@ -9,8 +9,8 @@ mod store {
 
 pub use store::usage_reports::{
     chart_documents, decode, encode, expires, read_owner_page, read_row, read_row_page,
-    read_series, unavailable, validate_owner_page, Admission, AdmissionBudget, AdmissionRequest,
-    CONTROL, JOBS,
+    read_series, report_membership_pipeline, unavailable, validate_owner_page, Admission,
+    AdmissionBudget, AdmissionRequest, CONTROL, JOBS,
 };
 
 pub mod metric_bindings;

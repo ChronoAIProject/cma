@@ -3,10 +3,12 @@ pub use admission::{Admission, AdmissionBudget, AdmissionRequest, CONTROL, JOBS}
 mod chart_encoding;
 mod charts;
 mod owners;
+mod reports;
 mod rows;
 
 pub use charts::{chart_documents, read_series};
 pub use owners::{read_owner_page, validate_owner_page};
+pub use reports::report_membership_pipeline;
 pub use rows::{read_row, read_row_page};
 
 use layer2_core::sandbox_metrics::{MetricsError, Result};

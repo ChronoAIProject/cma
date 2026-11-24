@@ -1,24 +1,11 @@
 use super::*;
 use crate::store::transaction_scope as tx;
-use layer2_core::sandbox_metrics::{query_hash, Report, ReportQuery, ReportStatus, Scope};
+use layer2_core::sandbox_metrics::{query_hash, Report, ReportQuery, Scope};
 impl ReportingStore {
     pub(super) async fn admit(&self, scope: Scope, query: ReportQuery, at: u64) -> Result<Report> {
         self.check_circuit(at)?;
         let hash = query_hash(&scope, &query, at / 60)?;
-        if let Some(d) = self
-            .collection(JOBS)
-            .find_one(doc! {"query_hash":&hash})
-            .max_time(DB_DEADLINE)
-            .await
-            .map_err(unavailable)?
-        {
-            let report: Report = decode(&d)?;
-            if report.status == ReportStatus::Failed {
-                return Err(MetricsError::Unavailable);
-            }
-            if report.expires_at <= at {
-                return Err(MetricsError::Expired);
-            }
+        if let Some(report) = self.persistence.read_admitted_report(&hash, at).await? {
             return Ok(report);
         }
         self.admit_new(scope, query, at, hash, None).await
