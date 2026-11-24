@@ -29,6 +29,9 @@ pub(super) async fn response(
     status.agent_resource_preparation =
         accepts(layer3_adapter::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE);
     status.agent_browser = accepts(layer3_adapter::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE);
+    status.exact_github_credential_route =
+        accepts(layer3_adapter::wire::GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE)
+            && supervisor.supports_exact_github_credential_route();
     if accepts(RUNTIME_LEDGER_STATUS_MEDIA_TYPE) {
         return match supervisor.ledger_observation(status).await {
             Ok(observation) => (

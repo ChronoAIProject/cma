@@ -1,0 +1,191 @@
+{
+  "response_headers": {
+    "Preference-Applied": "cma-external-approval-v1",
+    "CMA-Approval-Review-Origin": "https://identity.example.test",
+    "CMA-External-Approval-Action": "review"
+  },
+  "waiting_snapshot": {
+    "object": "cma.agent.event_page",
+    "schema_version": 1,
+    "agent_id": "agt_approval_fixture",
+    "incarnation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "through_cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.9",
+    "items": [
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.1",
+        "sequence": 1,
+        "appended_at": "2026-01-01T00:00:00.000Z",
+        "kind": {
+          "type": "created",
+          "workspace_id": "wsp_fixture",
+          "worktree_id": "wkt_fixture"
+        },
+        "response_binding": null
+      },
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.2",
+        "sequence": 2,
+        "appended_at": "2026-01-01T00:00:00.000Z",
+        "kind": {
+          "type": "conversation_available"
+        },
+        "response_binding": null
+      },
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.3",
+        "sequence": 3,
+        "appended_at": "2026-01-01T00:00:00.000Z",
+        "kind": {
+          "type": "turn_started",
+          "turn_sequence": 3
+        },
+        "response_binding": {
+          "command_id": "cmd_approval_fixture",
+          "response_id": "resp_approval_fixture",
+          "turn_sequence": 3
+        }
+      },
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.4",
+        "sequence": 4,
+        "appended_at": "2026-01-01T00:00:00.000Z",
+        "kind": {
+          "type": "message",
+          "role": "user",
+          "content": "Synthetic original task input."
+        },
+        "response_binding": null
+      },
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.5",
+        "sequence": 5,
+        "appended_at": "2026-01-01T00:00:00.000Z",
+        "kind": {
+          "type": "message",
+          "role": "assistant",
+          "content": "Synthetic retained partial output."
+        },
+        "response_binding": null
+      },
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.6",
+        "sequence": 6,
+        "appended_at": "2026-01-01T00:00:00.000Z",
+        "kind": {
+          "type": "status_changed",
+          "from": "ready",
+          "to": "working"
+        },
+        "response_binding": null
+      },
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.7",
+        "sequence": 7,
+        "appended_at": "2026-01-01T00:00:00.000Z",
+        "kind": {
+          "type": "turn_metadata",
+          "turn_sequence": 3,
+          "metadata": {}
+        },
+        "response_binding": null
+      },
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.8",
+        "sequence": 8,
+        "appended_at": "2026-01-01T00:00:00.000Z",
+        "kind": {
+          "type": "status_changed",
+          "from": "working",
+          "to": "waiting_approval"
+        },
+        "response_binding": null
+      },
+      {
+        "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.9",
+        "sequence": 9,
+        "appended_at": "2026-01-01T00:00:05.000Z",
+        "kind": {
+          "type": "external_approval_requested",
+          "approval_id": "ea_11111111111111111111111111111111",
+          "provider": "nyxid",
+          "turn_sequence": 3,
+          "revision": 1,
+          "waiting_since": "2026-01-01T00:00:01.000Z",
+          "deadline_at": "2026-01-01T00:05:01.000Z",
+          "approve_url": "https://identity.example.test/assistant/approvals"
+        },
+        "response_binding": null
+      }
+    ],
+    "next_page_cursor": null
+  },
+  "live_requested": {
+    "type": "cma.agent.event",
+    "data": {
+      "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.9",
+      "sequence": 9,
+      "appended_at": "2026-01-01T00:00:05.000Z",
+      "kind": {
+        "type": "external_approval_requested",
+        "approval_id": "ea_11111111111111111111111111111111",
+        "provider": "nyxid",
+        "turn_sequence": 3,
+        "revision": 1,
+        "waiting_since": "2026-01-01T00:00:01.000Z",
+        "deadline_at": "2026-01-01T00:05:01.000Z",
+        "approve_url": "https://identity.example.test/assistant/approvals"
+      },
+      "response_binding": null,
+      "agent_id": "agt_approval_fixture",
+      "incarnation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "live_resolved": {
+    "type": "cma.agent.event",
+    "data": {
+      "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.10",
+      "sequence": 10,
+      "appended_at": "2026-01-01T00:01:00.000Z",
+      "kind": {
+        "type": "external_approval_resolved",
+        "approval_id": "ea_11111111111111111111111111111111",
+        "provider": "nyxid",
+        "turn_sequence": 3,
+        "revision": 2,
+        "resolution": "approved"
+      },
+      "response_binding": null,
+      "agent_id": "agt_approval_fixture",
+      "incarnation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "live_terminal": {
+    "type": "cma.agent.event",
+    "data": {
+      "cursor": "ag1.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.10",
+      "sequence": 10,
+      "appended_at": "2026-01-01T00:05:01.000Z",
+      "kind": {
+        "type": "turn_failed",
+        "turn_sequence": 3,
+        "failure": {
+          "class": "approval_timeout",
+          "detail": "The approval wait timed out. This turn has ended."
+        }
+      },
+      "response_binding": null,
+      "agent_id": "agt_approval_fixture",
+      "incarnation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "late_gap": {
+    "type": "cma.agent.live_gap",
+    "data": {
+      "agent_id": "agt_approval_fixture",
+      "incarnation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "turn_sequence": 3,
+      "reason": "reconnected",
+      "frames": null
+    }
+  }
+}

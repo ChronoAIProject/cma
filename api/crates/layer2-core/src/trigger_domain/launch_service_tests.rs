@@ -1954,6 +1954,7 @@ fn agent(profiles: &ResolvedTriggerProfiles, trigger_id: &TriggerId, status: Age
         capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
         status,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),

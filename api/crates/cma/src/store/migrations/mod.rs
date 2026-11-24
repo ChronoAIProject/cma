@@ -20,6 +20,7 @@ pub(in crate::store) mod measured_custody;
 pub(in crate::store) mod opening_index;
 mod sandbox_usage_capture;
 mod steps;
+mod turn_policy_index;
 use steps::Step;
 mod authority;
 mod ledger;

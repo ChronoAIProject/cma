@@ -11,6 +11,7 @@ pub struct CloudBuild {
     pub location: String,
     pub service_account: String,
     pub builder_image: String,
+    pub registry: ImageRegistry,
     token_file: Option<std::path::PathBuf>,
 }
 
@@ -34,13 +35,16 @@ impl CloudBuild {
         location: String,
         service_account: String,
         builder_image: String,
+        registry: ImageRegistry,
         token_file: Option<std::path::PathBuf>,
     ) -> Result<Self> {
-        if project != "example-project-02"
-            || location != "asia-northeast1"
-            || !service_account.starts_with("projects/example-project-02/serviceAccounts/")
-            || !service_account.ends_with("@example-project-02.iam.gserviceaccount.com")
-            || service_account.chars().any(char::is_whitespace)
+        let account = service_account
+            .strip_prefix(&format!("projects/{project}/serviceAccounts/"))
+            .and_then(|value| value.strip_suffix(&format!("@{project}.iam.gserviceaccount.com")));
+        if !project_id(&project)
+            || !resource_segment(&location)
+            || registry.project() != project
+            || !account.is_some_and(project_id)
             || !builder_image.rsplit_once('@').is_some_and(|(image, d)| {
                 image == "gcr.io/cloud-builders/docker" && valid_digest(d)
             })
@@ -59,6 +63,7 @@ impl CloudBuild {
             location,
             service_account,
             builder_image,
+            registry,
             token_file,
         })
     }
@@ -106,14 +111,14 @@ impl CloudBuild {
                     encoded
                 )]
             }));
-            steps.push(json!({"name":self.builder_image,"volumes":volumes,"args":["build","--file","/cma-import/Dockerfile","--tag",build.destination(),build.source.context]}));
+            steps.push(json!({"name":self.builder_image,"volumes":volumes,"args":["build","--file","/cma-import/Dockerfile","--tag",self.registry.destination(build),build.source.context]}));
         } else {
-            steps.push(json!({"name":self.builder_image,"args":["build","--file",dockerfile,"--tag",build.destination(),build.source.context]}));
+            steps.push(json!({"name":self.builder_image,"args":["build","--file",dockerfile,"--tag",self.registry.destination(build),build.source.context]}));
         }
         Ok(json!({
             "source":{"gitSource":{"url":build.source.repository,"revision":build.source.commit}},
             "steps":steps,
-            "images":[build.destination()],"tags":[format!("cma-im-{}",build.id)],
+            "images":[self.registry.destination(build)],"tags":[format!("cma-im-{}",build.id)],
             "serviceAccount":self.service_account,"timeout":"1800s",
             "options":{"logging":"CLOUD_LOGGING_ONLY"}
         }))
@@ -148,7 +153,7 @@ impl CloudBuild {
                 .ok_or(Error::Unavailable)?;
             let result = images
                 .iter()
-                .find(|v| v["name"] == build.destination())
+                .find(|v| v["name"] == self.registry.destination(build))
                 .ok_or(Error::Conflict)?;
             Some(
                 result["digest"]
@@ -297,10 +302,14 @@ async fn read_json(mut response: reqwest::Response) -> Result<Value> {
 pub type Executor = Arc<dyn BuildExecutor>;
 
 #[cfg(test)]
+#[path = "cloud_config_tests.rs"]
+mod config_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    fn fixture() -> (CloudBuild, Build) {
-        let executor=CloudBuild::new("example-project-02".into(),"asia-northeast1".into(),"projects/example-project-02/serviceAccounts/test-build@example-project-02.iam.gserviceaccount.com".into(),format!("gcr.io/cloud-builders/docker@sha256:{}","a".repeat(64)),None).unwrap();
+    pub(super) fn fixture() -> (CloudBuild, Build) {
+        let executor=CloudBuild::new("example-project-02".into(),"asia-northeast1".into(),"projects/example-project-02/serviceAccounts/test-build@example-project-02.iam.gserviceaccount.com".into(),format!("gcr.io/cloud-builders/docker@sha256:{}","a".repeat(64)),ImageRegistry::parse("asia-southeast1-docker.pkg.dev/example-project-02/example-registry-01".into()).unwrap(),None).unwrap();
         let build = Build {
             id: id("bld"),
             schema_version: DOCUMENT_VERSION,
@@ -331,7 +340,7 @@ mod tests {
         let mut response = executor.request(&build).unwrap();
         response["id"] = json!(uuid::Uuid::new_v4());
         response["status"] = json!("SUCCESS");
-        response["results"] = json!({"images":[{"name":build.destination(),"digest":format!("sha256:{}","b".repeat(64))}]});
+        response["results"] = json!({"images":[{"name":executor.registry.destination(&build),"digest":format!("sha256:{}","b".repeat(64))}]});
         let result = executor.observation(&build, &response).unwrap();
         assert_eq!(result.phase, BuildPhase::Succeeded);
         for field in [
@@ -360,7 +369,7 @@ mod tests {
         assert!(executor.observation(&build, &wrong_registry).is_err());
         build.digest = result.digest;
         assert_eq!(
-            build.reference(),
+            executor.registry.reference(&build),
             Some(format!(
                 "{registry}/{}@sha256:{}",
                 build.image_id,
@@ -415,7 +424,8 @@ mod tests {
         );
         let digest = format!("sha256:{}", "b".repeat(64));
         response["status"] = json!("SUCCESS");
-        response["results"] = json!({"images":[{"name":build.destination(),"digest":digest}]});
+        response["results"] =
+            json!({"images":[{"name":executor.registry.destination(&build),"digest":digest}]});
         let observed = executor.observation(&build, &response).unwrap();
         assert_eq!(observed.phase, BuildPhase::Succeeded);
         assert_eq!(observed.digest.as_deref(), Some(digest.as_str()));

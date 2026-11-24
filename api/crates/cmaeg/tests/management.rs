@@ -1,3 +1,6 @@
+// Fixtures drive the raw driver as independent writers; the gateway's own
+// commit and abort go through its guarded wrapper (#3299).
+#![allow(clippy::disallowed_methods)]
 #[path = "support/database.rs"]
 mod database;
 #[path = "fake_cma.rs"]

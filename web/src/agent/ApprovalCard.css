@@ -91,6 +91,14 @@
   text-transform: capitalize;
 }
 
+.approval__review {
+  align-self: flex-start;
+  color: var(--dsw-alias-state-warn-label);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font: var(--dsw-font-xs-strong-13);
+}
+
 @media (max-width: 30rem) {
   .approval__choice > .button {
     min-height: 44px;

@@ -148,6 +148,7 @@ async fn catalogue_hits_still_refuse_missing_mismatched_expired_or_rotated_custo
     root.validate().unwrap();
     let valid = CredentialMaterial {
         source: root.credential.source.clone(),
+        github_route: None,
         sandbox_id: root.id.clone(),
         owner: root.owner.clone(),
         authority: root.credential.current.clone().unwrap(),

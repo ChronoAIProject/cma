@@ -23,6 +23,7 @@ export interface ThinkingActivity {
 }
 
 interface ThinkingProps {
+  readonly waitingForResponse?: boolean;
   readonly progressKey?: string;
   readonly text?: string;
   readonly activities?: readonly ThinkingActivity[];
@@ -46,7 +47,13 @@ export function activitySummary(activity: ThinkingActivity): string {
 }
 
 /** Active-turn liveness, with a clock anchored to the public turn record rather than mount. */
-export function Thinking({ text = '', activities = [], startedAt, progressKey }: ThinkingProps) {
+export function Thinking({
+  text = '',
+  activities = [],
+  startedAt,
+  progressKey,
+  waitingForResponse = false,
+}: ThinkingProps) {
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(Date.now);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -77,7 +84,7 @@ export function Thinking({ text = '', activities = [], startedAt, progressKey }:
       <div className="thinking__key">
         <span className="thinking__logo" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
         <span className="thinking__title" role="status">
-          Thinking
+          {waitingForResponse ? 'Waiting for a response' : 'Thinking'}
         </span>
         {seconds === undefined ? null : (
           <span className="thinking__elapsed">{elapsedTime(seconds * 1000)}</span>
@@ -93,6 +100,16 @@ export function Thinking({ text = '', activities = [], startedAt, progressKey }:
           View activity
         </button>
       </div>
+      <p className="message__delivery">
+        Still waiting for this turn to finish.{' '}
+        {Number.isFinite(start) ? (
+          <>
+            Turn started <time dateTime={startedAt}>{new Date(start).toLocaleString()}</time>.
+          </>
+        ) : (
+          'Its start time is unavailable.'
+        )}
+      </p>
       <ThinkingProgress key={progressKey ?? JSON.stringify([text, activities])} />
       {open ? (
         <div className="thinking__body" id={bodyId} ref={bodyRef}>
