@@ -14,6 +14,7 @@ import {
   failDesktopAttempt,
   newDesktopReconnect,
   startDesktopAttempt,
+  type DesktopReconnect,
   type DesktopStop,
 } from './desktopReconnect';
 
@@ -133,6 +134,14 @@ export function useDesktopConnection(
     let retry: ReturnType<typeof setTimeout> | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let stable: ReturnType<typeof setTimeout> | undefined;
+    // The budget before the attempt now in progress began. An attempt that a
+    // rebuild or a hidden tab supersedes has not failed: restoring this keeps
+    // its restart from being spent as an automatic retry (#3295).
+    let unsettled: DesktopReconnect | undefined;
+    const supersede = () => {
+      if (unsettled) session.policy = unsettled;
+      unsettled = undefined;
+    };
     const hidden = () => document.hidden || document.visibilityState === 'hidden';
     const release = () => {
       // Invalidate callbacks before disconnect (noVNC may emit synchronously).
@@ -166,6 +175,7 @@ export function useDesktopConnection(
     };
     const failed = (message: string, cause?: unknown, refused = false) => {
       if (disposed) return;
+      unsettled = undefined;
       release();
       session.policy = failDesktopAttempt(session.policy, Date.now(), cause, refused);
       if (stopped()) return;
@@ -181,8 +191,10 @@ export function useDesktopConnection(
     };
     const begin = async () => {
       if (disposed || session.policy.terminal || hidden() || request) return;
-      session.policy = startDesktopAttempt(session.policy);
+      const before = session.policy;
+      session.policy = startDesktopAttempt(before);
       if (stopped()) return;
+      unsettled = before;
       const current = ++version;
       const valid = () => !disposed && current === version && !hidden();
       request = new AbortController();
@@ -231,7 +243,9 @@ export function useDesktopConnection(
             setPhase('ready');
             // Short-lived connections must not reset an ongoing failure storm.
             stable = setTimeout(() => {
-              if (valid()) session.policy = newDesktopReconnect(0, true);
+              if (!valid()) return;
+              unsettled = undefined;
+              session.policy = newDesktopReconnect(0, true);
             }, desktopStableMs);
             stopWatching = watchDesktopDisplay(
               target,
@@ -265,6 +279,7 @@ export function useDesktopConnection(
     const visibility = () => {
       if (session.policy.terminal) return;
       if (hidden()) {
+        supersede();
         release();
         setPhase('recovering');
       } else schedule();
@@ -273,6 +288,7 @@ export function useDesktopConnection(
     schedule();
     return () => {
       disposed = true;
+      supersede();
       release();
       document.removeEventListener('visibilitychange', visibility);
     };

@@ -148,6 +148,44 @@ async fn attempts_keep_identity_elapsed_and_bounded_continuations_without_cross_
 }
 
 #[test]
+fn claim_details_are_closed_and_preserve_the_original_store_error() {
+    let attempt = LifecycleAttempt::new(Phase::Execution, None);
+    let error = SandboxStoreError::Unavailable("private-claim-detail".into());
+    for (detail, code) in [
+        (
+            AgentWorkClaimDetail::RetryExhausted,
+            "claim_retry_exhausted",
+        ),
+        (AgentWorkClaimDetail::Read, "claim_read_failed"),
+        (AgentWorkClaimDetail::Driver, "claim_driver_failed"),
+        (
+            AgentWorkClaimDetail::PublicationCustody,
+            "claim_publication_custody_failed",
+        ),
+    ] {
+        let failure = attempt.claim(AgentWorkClaimError::with_detail(error.clone(), detail));
+        let observation = &failure.observation;
+        assert_eq!(observation.origin, Origin::Claim);
+        assert_eq!(observation.cause_class, CauseClass::StoreUnavailable);
+        assert_eq!(observation.detail_code.as_str(), code);
+        assert!(observation.detail_retained && !observation.detail_suppressed);
+        let json = serde_json::to_string(observation).unwrap();
+        assert!(json.contains(code));
+        assert!(!json.contains("private-claim-detail"));
+        assert!(!format!("{failure:?}").contains("private-claim-detail"));
+        assert_eq!(failure.into_compatibility(), error);
+    }
+    let untyped = attempt.claim(error.into());
+    assert_eq!(untyped.observation.detail_code, DetailCode::Suppressed);
+    let conflict = attempt.claim(AgentWorkClaimError::with_detail(
+        SandboxStoreError::Conflict,
+        AgentWorkClaimDetail::Read,
+    ));
+    assert_eq!(conflict.observation.cause_class, CauseClass::StoreConflict);
+    assert_eq!(conflict.observation.detail_code, DetailCode::NotApplicable);
+}
+
+#[test]
 fn every_closed_combination_fits_the_two_kib_field_budget() {
     let attempt = LifecycleAttempt::new(
         Phase::Reconciliation,
@@ -184,6 +222,10 @@ fn every_closed_combination_fits_the_two_kib_field_budget() {
                     DetailCode::DiscoveryDeadline,
                     DetailCode::OwnershipDeadline,
                     DetailCode::ReceiverRevocationUnconfirmed,
+                    DetailCode::ClaimRetryExhausted,
+                    DetailCode::ClaimReadFailed,
+                    DetailCode::ClaimDriverFailed,
+                    DetailCode::ClaimPublicationCustodyFailed,
                 ] {
                     let mut value = attempt.observe(origin, cause, detail);
                     value.phase = phase;

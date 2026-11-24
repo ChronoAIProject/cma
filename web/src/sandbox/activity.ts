@@ -80,8 +80,23 @@ export function activityEntry(
         ? (kind.step as { kind?: unknown }).kind
         : kind.step;
     const label = known(steps, step);
-    if (label !== undefined)
-      message = `${label}: ${kind.type === 'work_step_completed' ? 'completed' : 'needs attention'}`;
+    if (label !== undefined) {
+      const failure = kind.failure;
+      const provisioningRetry =
+        source === 'sandbox' &&
+        step === 'provision_runtime' &&
+        typeof failure === 'object' &&
+        failure !== null &&
+        'class' in failure &&
+        failure.class === 'retryable_transient';
+      const status =
+        kind.type === 'work_step_completed'
+          ? 'completed'
+          : provisioningRetry
+            ? 'retry scheduled'
+            : 'needs attention';
+      message = `${label}: ${status}`;
+    }
   } else if (
     kind.type === 'status_changed' ||
     (source === 'sandbox' && kind.type === 'agent_status_changed')

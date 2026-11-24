@@ -1,4 +1,8 @@
 {
+  "agent_manager::relay::tests::mongo::preferences::process_recovery::child::preferences_replica_child": {
+    "kind": "helper",
+    "reason": "Invoked only by rename_replays_after_owner_process_loss with its owned Mongo fixture and pipe protocol."
+  },
   "auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure": {
     "kind": "fixture",
     "reason": "Requires enforced Mongo authorization; selected exactly by image-manager-mongo-contract.sh am on its owned authenticated replica set."
@@ -94,6 +98,10 @@
   "store::isolation::tests::real_progress_grants_cannot_delete_receipts_or_access_another_service": {
     "kind": "fixture",
     "reason": "Requires authenticated disposable service Mongo fixture."
+  },
+  "store::isolation::tests::real_transaction_barrier_is_authorized_by_the_exact_runtime_grant": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture; selected by image-manager-mongo-contract.sh."
   },
   "store::migrations::tests::segments_runtime::canonical_migrator_and_isolated_runtime_cover_controls_and_format2_work": {
     "kind": "fixture",

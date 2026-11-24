@@ -2,6 +2,8 @@ use super::*;
 use layer2_core::budget::{BudgetError, ModelRequest, RequestBudget, RequestScope, RequestUsage};
 use layer3_adapter::{ConversationUpdate, PromptResponse, TurnStopReason};
 
+#[path = "request_budget_tests/ordinary_parent.rs"]
+mod ordinary_parent;
 #[path = "request_budget_tests/settlement_tests.rs"]
 mod settlement_tests;
 

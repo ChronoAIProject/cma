@@ -1,6 +1,6 @@
 // @vitest-environment node
-import { expect, it } from 'vitest';
-import { ProtocolError, ValidationError } from '../index.js';
+import { expect, it, vi } from 'vitest';
+import { createClient, ProtocolError, ValidationError } from '../index.js';
 import { command, now, transport } from './resource-fixtures.js';
 
 const request = { command: 'pause', expected_revision: 7 } as const;
@@ -13,6 +13,84 @@ const queued = {
   revision: 1,
   state: { status: 'queued' },
 };
+
+function barrier() {
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { wait, release };
+}
+
+it('sends the submitted command when the caller edits it before encoding', async () => {
+  const body = { command: 'pause' as 'pause' | 'revive', expected_revision: 7 };
+  const resolvingRequestId = barrier();
+  const requestId = barrier();
+  const requestIdProvider = vi.fn(async () => {
+    resolvingRequestId.release();
+    await requestId.wait;
+    return 'held-request';
+  });
+  const fetch = vi.fn<typeof globalThis.fetch>(async (_url, options) => {
+    const received = JSON.parse(String(options?.body)) as typeof body;
+    return Response.json({ ...queued, ...received }, { status: 202 });
+  });
+  const client = createClient({ baseUrl: 'https://cma.example.test', fetch, requestIdProvider });
+  const submitted = { idempotencyKey: command.idempotencyKey };
+  const result = client.sandboxes.submitCommand('sandbox-1', body, submitted);
+  await resolvingRequestId.wait;
+  expect(requestIdProvider).toHaveBeenCalledOnce();
+  expect(fetch).not.toHaveBeenCalled();
+
+  body.command = 'revive';
+  body.expected_revision = 8;
+  submitted.idempotencyKey = 'changed-key';
+  requestId.release();
+  const receipt = await result;
+
+  expect(fetch).toHaveBeenCalledOnce();
+  const options = fetch.mock.calls[0]?.[1];
+  expect(options?.method).toBe('POST');
+  expect(JSON.parse(String(options?.body))).toEqual(request);
+  expect(new Headers(options?.headers).get('Idempotency-Key')).toBe(command.idempotencyKey);
+  expect(receipt).toEqual(queued);
+});
+
+it.each([
+  { name: 'the submitted Pause', receipt: queued, matches: true },
+  {
+    name: 'the edited Revive',
+    receipt: { ...queued, command: 'revive', expected_revision: 8 },
+    matches: false,
+  },
+])(
+  'checks the receipt for $name against the intent sent before the caller edit',
+  async ({ receipt, matches }) => {
+    const body = { command: 'pause' as 'pause' | 'revive', expected_revision: 7 };
+    const posted = barrier();
+    const response = barrier();
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => {
+      posted.release();
+      await response.wait;
+      return Response.json(receipt, { status: 202 });
+    });
+    const client = createClient({ baseUrl: 'https://cma.example.test', fetch });
+    const result = client.sandboxes.submitCommand('sandbox-1', body, command);
+    await posted.wait;
+
+    body.command = 'revive';
+    body.expected_revision = 8;
+    response.release();
+    if (matches) await expect(result).resolves.toEqual(queued);
+    else await expect(result).rejects.toBeInstanceOf(ProtocolError);
+
+    expect(fetch).toHaveBeenCalledOnce();
+    const options = fetch.mock.calls[0]?.[1];
+    expect(options?.method).toBe('POST');
+    expect(JSON.parse(String(options?.body))).toEqual(request);
+    expect(new Headers(options?.headers).get('Idempotency-Key')).toBe(command.idempotencyKey);
+  },
+);
 
 it('submits and recovers the original receipt and terminal states with the same key and precondition', async () => {
   const test = transport();
@@ -82,6 +160,18 @@ it('rejects invalid revision preconditions locally', async () => {
     expect(() =>
       test.client.sandboxes.submitCommand('sandbox-1', { ...request, expected_revision }, command),
     ).toThrow(ValidationError);
+  expect(test.calls).toHaveLength(0);
+});
+
+it('refuses a JSON encoder that changes the validated command', () => {
+  const test = transport();
+  const body = {
+    ...request,
+    toJSON: () => ({ command: 'revive', expected_revision: 8 }),
+  };
+  expect(() => test.client.sandboxes.submitCommand('sandbox-1', body, command)).toThrow(
+    ValidationError,
+  );
   expect(test.calls).toHaveLength(0);
 });
 

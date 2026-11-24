@@ -173,7 +173,8 @@ impl Sandbox {
 
     /// Cheap preselection only; complete child and native proof is still required.
     pub fn unpublished_recovery_candidate(&self) -> bool {
-        if !self.supports_retained_runtime_update()
+        if !(self.supports_retained_runtime_update()
+            || self.supports_retained_custom_runtime_recovery())
             || self.unpublished_recovery_binding().is_none()
             || self.work.lease.is_some()
             || (self.work.step != SandboxWorkStep::None

@@ -26,10 +26,16 @@ use shapes::{
     RepositoryResolutionView, ResolveRepositoryRequest, SkillCatalogParameters,
 };
 
-pub fn profile_authoring_router(service: Arc<ProfileAuthoringService>) -> Router {
+pub fn profile_authoring_router(
+    service: Arc<ProfileAuthoringService>,
+    nyxid_public_origin: Option<url::Url>,
+) -> Router {
     Router::new()
+        .route(
+            "/api/v1/profile-authoring/services",
+            get(services).layer(Extension(nyxid_public_origin)),
+        )
         .route("/api/v1/profile-authoring/bounds", get(bounds))
-        .route("/api/v1/profile-authoring/services", get(services))
         .route("/api/v1/profile-authoring/skills", get(skills))
         .route(
             "/api/v1/profile-authoring/repositories/resolve",
@@ -60,6 +66,7 @@ pub(super) async fn bounds(
     (status = 503, description = "profile_services_unavailable", body = super::ProblemDocument, content_type = "application/problem+json")))]
 pub(super) async fn services(
     State(service): State<Arc<ProfileAuthoringService>>,
+    Extension(nyxid_public_origin): Extension<Option<url::Url>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     credential: Option<Extension<DelegatedCredential>>,
 ) -> Result<Json<Vec<AuthoringServiceView>>, AuthoringProblem> {
@@ -71,7 +78,7 @@ pub(super) async fn services(
             .services(&caller, credential.as_ref())
             .await?
             .into_iter()
-            .map(Into::into)
+            .map(|entry| AuthoringServiceView::new(entry, nyxid_public_origin.as_ref()))
             .collect(),
     ))
 }
