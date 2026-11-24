@@ -3,6 +3,10 @@ use super::{policy::*, *};
 use crate::store::{commit_transaction, is_confirmed_body_retry, start_transaction, CommitOutcome};
 use mongodb::{bson::Timestamp, ClientSession};
 
+#[cfg(test)]
+#[path = "writer_proof_tests.rs"]
+mod proof_tests;
+
 const TRANSACTION_ATTEMPTS: usize = 8;
 
 pub(crate) struct PreparedCanaryRedemption {

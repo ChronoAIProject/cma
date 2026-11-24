@@ -4,7 +4,7 @@ use futures_util::TryStreamExt;
 use layer2_core::account_deletion::AccountDeletionStore;
 use mongodb::Client;
 
-fn release(digit: char, key: &str) -> FrozenRelease {
+pub(super) fn release(digit: char, key: &str) -> FrozenRelease {
     FrozenRelease {
         release_key: key.into(),
         image: RuntimeImage {
@@ -21,7 +21,7 @@ fn release(digit: char, key: &str) -> FrozenRelease {
     }
 }
 
-fn issue(
+pub(super) fn issue(
     owner: &SubjectId,
     release: FrozenRelease,
     policy_revision: i64,
@@ -40,7 +40,7 @@ fn issue(
     }
 }
 
-fn redeem(
+pub(super) fn redeem(
     issue: &PrepareCanaryGrant,
     grant: &CanaryGrantSlot,
     key: &str,
