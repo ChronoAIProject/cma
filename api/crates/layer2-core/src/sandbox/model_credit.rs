@@ -148,7 +148,9 @@ pub trait ReservationAuthority: Send + Sync {
         page: &PageRequest,
     ) -> Result<Page<AgentCommandId>, FundingError>;
     /// Fence a reserved request only while eligible. Expiration must never
-    /// settle a dispatched effect.
+    /// settle a dispatched effect. Expired proves this exact checkpoint is
+    /// still Reserved and cannot issue a permit; other errors leave the begin
+    /// outcome unconfirmed.
     async fn begin(&self, expected: &Checkpoint) -> Result<Checkpoint, FundingError>;
     /// Accept certified effects from InFlight. A never-started Reserved hold
     /// can be settled only with NotStarted, and must compete atomically with begin.
@@ -230,7 +232,8 @@ impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> Model
         selected: &CredentialBinding,
         request: G::Request,
     ) -> Result<Checkpoint, FundingError> {
-        let held = self.check_dispatch(id, None, selected, &request).await?;
+        let held = self.read_dispatch(id, None, &request).await?;
+        self.check_binding(&held, selected).await?;
         self.dispatch_held(held, request).await
     }
 
@@ -242,8 +245,15 @@ impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> Model
         if matches!(held.state, PhaseState::Settled(_)) {
             return Ok(held);
         }
-        let permit = self.authority.begin(&held).await?;
-        require_transition(&held, &permit, PhaseState::InFlight)?;
+        let permit = self.authority.begin(&held).await.map_err(|error| {
+            if error == FundingError::Expired {
+                error
+            } else {
+                FundingError::ReconciliationRequired
+            }
+        })?;
+        require_transition(&held, &permit, PhaseState::InFlight)
+            .map_err(|_| FundingError::ReconciliationRequired)?;
         let effect = self
             .gateway
             .execute(&permit, request)
@@ -254,19 +264,15 @@ impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> Model
             .map_err(|_| FundingError::ReconciliationRequired)
     }
 
-    async fn check_dispatch(
+    async fn read_dispatch(
         &self,
         id: &PhaseId,
         command: Option<&FundedCommandIdentity>,
-        selected: &CredentialBinding,
         request: &G::Request,
     ) -> Result<Checkpoint, FundingError> {
         let held = self.authority.read(id).await?;
         if held.reservation.id != *id || held.reservation.command.as_ref() != command {
             return Err(FundingError::CheckpointChanged);
-        }
-        if held.reservation.binding != self.binding(selected).await? {
-            return Err(FundingError::BindingChanged);
         }
         if held.reservation.request_digest != self.gateway.digest(request) {
             return Err(FundingError::CheckpointChanged);
@@ -275,6 +281,17 @@ impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> Model
             return Err(FundingError::ReconciliationRequired);
         }
         Ok(held)
+    }
+
+    async fn check_binding(
+        &self,
+        held: &Checkpoint,
+        selected: &CredentialBinding,
+    ) -> Result<(), FundingError> {
+        if held.reservation.binding != self.binding(selected).await? {
+            return Err(FundingError::BindingChanged);
+        }
+        Ok(())
     }
 
     pub async fn reconcile(&self, id: &PhaseId) -> Result<Checkpoint, FundingError> {

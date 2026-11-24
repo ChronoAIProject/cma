@@ -1,6 +1,7 @@
 //! Snapshot transactions for agent-title claims and durable completion.
 
 use crate::store::agent_log_telemetry::ScanCaller;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
@@ -153,20 +154,20 @@ async fn run_title_mutation(
         };
         let receipt = match applied {
             Ok(TitleApply::Settled(outcome)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(outcome);
             }
             Ok(TitleApply::Written(receipt)) => receipt,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 continue;
             }
             Err(ApplyError::Driver(_)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(AgentTitleStoreError::Unavailable);
             }
         };

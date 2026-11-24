@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use layer2_core::profiles::{ProfileVisibility, SandboxProfileSnapshot};
 use layer2_core::sandbox::{
@@ -51,12 +52,12 @@ impl MongoSandboxStore {
             {
                 Ok(()) => (),
                 Err(PlanError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     tokio::task::yield_now().await;
                     continue;
                 }
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(match error {
                         PlanError::Domain(error) => error,
                         PlanError::Driver(error) => unavailable(error),

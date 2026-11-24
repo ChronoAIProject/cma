@@ -55,8 +55,8 @@ impl AgentWorker {
                     return Ok(false);
                 }
             }
-            let Some(authority) = coordinator
-                .acquire(id)
+            let Some(authority) = self
+                .acquire_pending_work(coordinator, id)
                 .await
                 .map_err(|error| attempt.ownership(Origin::OwnershipAcquire, error))?
             else {
@@ -117,14 +117,14 @@ impl AgentWorker {
         let Some(agent) = self
             .dependencies
             .store
-            .claim_agent_work(
+            .claim_agent_work_observed(
                 id,
                 &self.config.holder,
                 rfc3339_at(now),
                 rfc3339_at(now + self.config.lease_duration),
             )
             .await
-            .map_err(|error| attempt.store(Origin::Claim, error))?
+            .map_err(|error| attempt.claim(error))?
         else {
             return Ok(false);
         };

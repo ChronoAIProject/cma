@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::body::Body;
 use axum::http::{header, HeaderMap, StatusCode};
+use axum::response::IntoResponse as _;
 use axum::routing::any;
 use layer3_adapter::{CredentialFrame, RuntimeCredential};
 use tokio::sync::mpsc;
@@ -64,6 +65,7 @@ async fn install(holder: &CredentialHolder, generation: u64) {
             operation_id: format!("github-credential-{generation}"),
             value: RuntimeCredential::new(format!("scoped-fixture-generation-{generation}")),
             custody_generation: Some(generation),
+            github_route: None,
         })
         .await
         .unwrap();
@@ -157,7 +159,8 @@ async fn socket_and_configuration_are_private_recoverable_and_not_replaced_while
 async fn proxy_preserves_requests_rotates_custody_and_refuses_foreign_hosts() {
     let (sent, mut received) = mpsc::channel(8);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let fixture = Fixture::new(&format!("http://{}", listener.local_addr().unwrap()));
+    let listener_addr = listener.local_addr().unwrap();
+    let fixture = Fixture::new(&format!("http://{listener_addr}"));
     let upstream = tokio::spawn(async move {
         let app = axum::Router::new().fallback(any(move |request: axum::extract::Request| {
             let sent = sent.clone();
@@ -220,6 +223,112 @@ async fn proxy_preserves_requests_rotates_custody_and_refuses_foreign_hosts() {
             "query { viewer { login } }"
         );
     }
+    let exact = CredentialFrame {
+        operation_id: "replace-github".into(),
+        value: "exact-route-fixture-key".into(),
+        custody_generation: Some(3),
+        github_route: Some(layer3_adapter::GithubCredentialRoute {
+            service_id: "repository-connection".into(),
+            catalog_id: "github-catalog".into(),
+            other_services: vec![layer3_adapter::PlatformServiceRoute {
+                service_id: "skill-connection".into(),
+                slug: "ornn-api".into(),
+                catalog_id: None,
+            }],
+        }),
+    };
+    holder.install(&exact).await.unwrap();
+    for (generation, id) in [(2, "repository-connection"), (3, "other-connection")] {
+        let mut stale = exact.clone();
+        stale.custody_generation = Some(generation);
+        stale.github_route.as_mut().unwrap().service_id = id.into();
+        assert!(holder.install(&stale).await.is_err());
+    }
+    let mut changed_catalog = exact.clone();
+    changed_catalog.github_route.as_mut().unwrap().catalog_id = "other-catalog".into();
+    assert!(holder.install(&changed_catalog).await.is_err());
+    assert_eq!(
+        client
+            .get("http://api.github.com/user?per_page=1")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let (method, uri, headers, _) = received.recv().await.unwrap();
+    assert_eq!(method, "GET");
+    assert_eq!(
+        uri,
+        "/api/v1/proxy/github-catalog/user?per_page=1&_nyxid_via=repository-connection"
+    );
+    assert!(headers[header::AUTHORIZATION] == "Bearer exact-route-fixture-key");
+    let platform_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let platform_addr = platform_listener.local_addr().unwrap();
+    let platform_router = crate::upstream::router(
+        crate::upstream_target::TargetBase::parse(&format!("http://{}", listener_addr)).unwrap(),
+        holder.clone(),
+        None,
+    );
+    let platform = tokio::spawn(async move {
+        axum::serve(platform_listener, platform_router)
+            .await
+            .unwrap()
+    });
+    let platform_client = reqwest::Client::new();
+    for (request, forwarded) in [
+        (
+            "/api/v1/proxy/s/api-github/user",
+            "/api/v1/proxy/github-catalog/user?_nyxid_via=repository-connection",
+        ),
+        (
+            "/proxy/github-catalog/user",
+            "/api/v1/proxy/github-catalog/user?_nyxid_via=repository-connection",
+        ),
+        (
+            "/api/v1/proxy/s/ornn-api/skills",
+            "/api/v1/proxy/s/ornn-api/skills?_nyxid_via=skill-connection",
+        ),
+    ] {
+        assert_eq!(
+            platform_client
+                .get(format!("http://{platform_addr}{request}"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        let (_, uri, headers, _) = received.recv().await.unwrap();
+        assert_eq!(uri, forwarded);
+        assert!(headers[header::AUTHORIZATION] == "Bearer exact-route-fixture-key");
+    }
+    for request in [
+        "/api/v1/proxy/s/github-sibling/user",
+        "/api/v1/proxy/s/api-github/user?_nyxid_via=sibling-connection",
+        "/api/v1/proxy/sibling-connection/user",
+    ] {
+        assert_eq!(
+            platform_client
+                .get(format!("http://{platform_addr}{request}"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    platform.abort();
+    let _ = platform.await;
+    assert_eq!(
+        client
+            .get("http://api.github.com/user?%5Fnyxid_via=other-connection")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
     for url in [
         "http://untrusted.example/user",
         "http://uploads.github.com/user",
@@ -325,7 +434,7 @@ async fn github_response_cannot_return_scoped_credentials() {
 
 #[tokio::test]
 #[ignore = "requires the pinned genuine gh executable"]
-async fn genuine_cli_uses_managed_socket_for_rest_and_graphql() {
+async fn genuine_cli_status_rest_and_graphql_share_the_current_grant() {
     let executable = std::env::var("CMA_GH_CONTRACT_EXECUTABLE").expect("explicit gh executable");
     let version = tokio::process::Command::new(&executable)
         .arg("--version")
@@ -354,10 +463,12 @@ async fn genuine_cli_uses_managed_socket_for_rest_and_graphql() {
                 if granted {
                     (
                         StatusCode::OK,
+                        [("x-oauth-scopes", "public_repo, read:user")],
                         axum::Json(serde_json::json!({
                             "login":"viewer", "data":{"viewer":{"login":"viewer"}}
                         })),
                     )
+                        .into_response()
                 } else {
                     (
                         StatusCode::FORBIDDEN,
@@ -365,6 +476,7 @@ async fn genuine_cli_uses_managed_socket_for_rest_and_graphql() {
                             "message":"service not granted"
                         })),
                     )
+                        .into_response()
                 }
             }
         }));
@@ -419,6 +531,35 @@ async fn genuine_cli_uses_managed_socket_for_rest_and_graphql() {
                 format!("Bearer scoped-fixture-generation-{generation}")
             );
         }
+        let status = tokio::process::Command::new(&executable)
+            .env_clear()
+            .envs(&fixture.environment)
+            .env("HOME", &fixture.root)
+            .args(["auth", "status", "--hostname", "github.com"])
+            .output()
+            .await
+            .unwrap();
+        assert_eq!(
+            status.status.success(),
+            generation == 2,
+            "unexpected gh auth status: {}",
+            String::from_utf8_lossy(&status.stderr)
+        );
+        let expected_paths = if generation == 2 {
+            assert!(String::from_utf8_lossy(&status.stdout).contains("account viewer"));
+            &["graphql", ""][..]
+        } else {
+            &["graphql"][..]
+        };
+        for path in expected_paths {
+            let (observed_path, credential) = received.try_recv().unwrap();
+            assert_eq!(observed_path, format!("/api/v1/proxy/s/api-github/{path}"));
+            assert_eq!(
+                credential,
+                format!("Bearer scoped-fixture-generation-{generation}")
+            );
+        }
+        assert!(received.try_recv().is_err());
     }
     let output = tokio::process::Command::new(&executable)
         .env_clear()

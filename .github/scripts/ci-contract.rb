@@ -61,7 +61,20 @@ module CIContract
       "path" => "${{ runner.temp }}/ci-native-image/",
       "if-no-files-found" => "error", "compression-level" => 0, "retention-days" => 1,
     }, "native images must remain exact, required and short-lived")
-    order(images, ["Vulnerability scan", "Require passing runtime image evidence", "Export tested native image", "Retain tested native image"])
+    # The exported CI image gets the staging publication secret scan before it
+    # is retained, so a blocking finding fails the pull request or merge group.
+    scan_if = "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
+    install = step(images, "Install pinned image secret scanner",
+      "bash .github/scripts/staging_cd_transport.sh\nbash .github/scripts/install-image-gitleaks.sh\n", scan_if)
+    require!(install["timeout-minutes"] == 5 && install["env"] == {
+      "CD_COMPONENT" => "${{ matrix.component == 'api' && 'am' || matrix.component == 'cmaeg' && 'eg' || matrix.component }}",
+    }, "image scanner install must keep its component and bound")
+    scan = step(images, "Scan tested image as staging publication does",
+      'python3 -B .github/scripts/ci_image_secret_scan.py "$IMAGE_COMPONENT" "$RUNNER_TEMP/ci-native-image" "$GITHUB_SHA"', scan_if)
+    require!(scan["timeout-minutes"] == 30 && scan["env"] == { "IMAGE_COMPONENT" => "${{ matrix.component }}" },
+      "CI image secret scan must keep its component and bound")
+    order(images, ["Vulnerability scan", "Require passing runtime image evidence", "Export tested native image",
+      "Install pinned image secret scanner", "Scan tested image as staging publication does", "Retain tested native image"])
   end
 
   def self.api_cargo_cache(ci, images)

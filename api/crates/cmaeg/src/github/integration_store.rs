@@ -1,4 +1,5 @@
 use super::*;
+use crate::transaction_terminal::GuardedTerminal as _;
 
 pub(in crate::github) struct RecordUpdate {
     id: String,
@@ -83,10 +84,7 @@ impl Store {
             .session(&mut session)
             .await
             .map_err(transaction_error)?;
-        session
-            .commit_transaction()
-            .await
-            .map_err(transaction_error)?;
+        session.commit_guarded().await.map_err(transaction_error)?;
         Ok(())
     }
 }

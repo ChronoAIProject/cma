@@ -1,6 +1,6 @@
 //! Public projections and sanitized management refusals.
 use super::{
-    management::{ChannelListItem, ChannelResponse, EndpointResponse, ProviderResponse},
+    management::{ChannelListItem, ChannelResponse, ProviderResponse},
     problems::{no_store, problem},
 };
 use crate::channels::management::{ManagementError, ManagementState};
@@ -31,39 +31,7 @@ pub(super) fn channel_response(
         record_id: record_id.to_string(),
         version,
         provider,
-        endpoints: EndpointResponse {
-            native_lark_webhook_url: definition
-                .sources
-                .iter()
-                .any(|s| matches!(s, cmaeg_core::channel::Source::NativeLark(_)))
-                .then(|| {
-                    format!(
-                        "{}/v1/native-lark/{}",
-                        state.advertised_api_url(),
-                        channel_id
-                    )
-                }),
-            whatsapp_webhook_url: definition
-                .sources
-                .iter()
-                .any(|source| matches!(source, cmaeg_core::channel::Source::Whatsapp { .. }))
-                .then(|| format!("{}/v1/whatsapp/{}", state.advertised_api_url(), channel_id)),
-            nyxid_callback_url: format!(
-                "{}/v1/callbacks/{}",
-                state.advertised_api_url(),
-                channel_id
-            ),
-            telegram_webhook_url: definition
-                .sources
-                .iter()
-                .any(|source| matches!(source, cmaeg_core::channel::Source::Telegram { .. }))
-                .then(|| format!("{}/v1/telegram/{}", state.advertised_api_url(), channel_id)),
-            custom_event_url: format!(
-                "{}/v1/channels/{}/events",
-                state.advertised_api_url(),
-                channel_id
-            ),
-        },
+        endpoints: super::channel_endpoints::channel_endpoints(state, channel_id, definition),
         definition: super::schema::PublicChannelDefinition::new(definition, version),
     })
 }
@@ -185,10 +153,33 @@ pub(super) fn provider_failure_detail(error: &crate::providers::ProviderError) -
     format!("provider request failed: {reason}")
 }
 
+/// Name the provider's answer without echoing arbitrary provider text.
+fn release_refused_detail(status: u16, code: &str) -> String {
+    let named = !code.is_empty()
+        && code.len() <= 64
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+    let answer = if named {
+        format!("HTTP {status} {code}")
+    } else {
+        format!("HTTP {status}")
+    };
+    format!(
+        "The provider refused to release this channel's binding ({answer}). The channel was not deleted and keeps its version. A channel whose creation never became ready cannot process events. The provider must release the binding, or report it absent with 404, before deletion can complete."
+    )
+}
+
+#[cfg(test)]
+#[path = "management_release_tests.rs"]
+mod release_tests;
+
 pub(super) fn management_error(error: ManagementError) -> Response {
     use crate::telemetry::http_failure::FailureStage;
     let stage = match &error {
-        ManagementError::Provider(_) => FailureStage::ChannelProvider,
+        ManagementError::Provider(_) | ManagementError::ReleaseRefused { .. } => {
+            FailureStage::ChannelProvider
+        }
         ManagementError::Record(_) | ManagementError::NotFound => FailureStage::ChannelRecord,
         ManagementError::Invalid(_) => FailureStage::RequestValidation,
         _ => FailureStage::ChannelOperation,
@@ -275,6 +266,11 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             StatusCode::CONFLICT,
             ProblemCode::Conflict,
             format!("expected version {expected}, actual {actual:?}"),
+        ),
+        ManagementError::ReleaseRefused { status, code } => (
+            StatusCode::CONFLICT,
+            ProblemCode::ProviderRejected,
+            release_refused_detail(status, &code),
         ),
         ManagementError::Unauthorized => (
             StatusCode::UNAUTHORIZED,

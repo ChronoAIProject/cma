@@ -2,6 +2,7 @@ use super::*;
 use crate::store::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 pub(super) async fn request(
     store: &MongoAccountDeletionStore,
@@ -38,11 +39,11 @@ pub(super) async fn request(
         let record = match result {
             Ok(record) => record,
             Err(AttemptError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(AttemptError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if is_transient(&error) {
                     continue;
                 }

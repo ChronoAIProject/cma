@@ -38,6 +38,8 @@ use super::{
     CodexSubscriptions,
 };
 
+mod repository_access;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ConnectionError {
     Forbidden,
@@ -151,6 +153,7 @@ pub(crate) struct BrowserConnections {
     targets: Arc<dyn ConnectionTargets>,
     broker: Arc<dyn ServiceConnectionBroker>,
     subscriptions: Arc<CodexSubscriptions>,
+    repository_access: Option<Arc<crate::trigger::CmaServiceConnectionBroker>>,
 }
 
 impl BrowserConnections {
@@ -159,11 +162,13 @@ impl BrowserConnections {
         policy: Arc<dyn SandboxPolicySource>,
         broker: Arc<dyn ServiceConnectionBroker>,
         subscriptions: Arc<CodexSubscriptions>,
+        repository_access: Option<Arc<crate::trigger::CmaServiceConnectionBroker>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             targets: Arc::new(StoredConnectionTargets { stores, policy }),
             broker,
             subscriptions,
+            repository_access,
         })
     }
 
@@ -369,6 +374,10 @@ impl BrowserConnections {
 pub(crate) fn router(state: Arc<BrowserConnections>, auth: Arc<AuthState>) -> Router {
     Router::new()
         .route("/auth/connections/check", post(check))
+        .route(
+            "/auth/connections/repository-access",
+            post(repository_access::report),
+        )
         .route("/auth/connections/start", post(start))
         .route("/auth/connections/cancel", post(cancel))
         .route(

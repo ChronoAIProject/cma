@@ -25,7 +25,7 @@ use futures_util::{stream, StreamExt};
 use serde_json::{json, Value};
 use tokio::{
     net::TcpListener,
-    sync::{oneshot, Semaphore},
+    sync::{oneshot, Notify, Semaphore},
     time::sleep,
 };
 
@@ -36,6 +36,7 @@ pub struct FakeProviderConfig {
     pub inspection_agent: Option<(String, String)>,
     pub response_delay: Duration,
     pub terminal_delay: Duration,
+    pub terminal_gate: Option<Arc<Semaphore>>,
     pub header_delay: Duration,
     /// A header delay for turns whose input carries an attachment block only,
     /// so a test can hold media turns while text turns answer at once.
@@ -54,6 +55,7 @@ pub struct FakeProviderConfig {
     pub malformed_frame: bool,
     pub disconnect_after: Option<usize>,
     pub reject_binding: bool,
+    pub binding_pause: Option<Arc<BindingPause>>,
     /// Exact binding PUT refusals by zero-based attempt; other attempts succeed.
     pub binding_failures: std::collections::BTreeMap<usize, (u16, Value)>,
     pub text: String,
@@ -70,6 +72,12 @@ pub struct FakeProviderConfig {
     pub context_steps: Vec<(Duration, Option<u16>, Option<String>)>,
 }
 
+#[derive(Debug)]
+pub struct BindingPause {
+    pub accepted: Notify,
+    pub release: Semaphore,
+}
+
 impl Default for FakeProviderConfig {
     fn default() -> Self {
         Self {
@@ -78,6 +86,7 @@ impl Default for FakeProviderConfig {
             inspection_agent: None,
             response_delay: Duration::ZERO,
             terminal_delay: Duration::ZERO,
+            terminal_gate: None,
             header_delay: Duration::ZERO,
             attachment_delay: Duration::ZERO,
             attachment_gate: None,
@@ -92,6 +101,7 @@ impl Default for FakeProviderConfig {
             malformed_frame: false,
             disconnect_after: None,
             reject_binding: false,
+            binding_pause: None,
             binding_failures: std::collections::BTreeMap::new(),
             text: "hello".into(),
             unknown_event: false,
@@ -253,6 +263,10 @@ async fn bind(
             Json(json!({"code":"profile_refused"})),
         )
             .into_response();
+    }
+    if let Some(pause) = &state.config.binding_pause {
+        pause.accepted.notify_one();
+        pause.release.acquire().await.unwrap().forget();
     }
     Json(json!({"binding_id":binding_id,"level":"l3","honoured":["profile"],"refused":[{"field":"context.mcp_servers","reason":"not supported"}]}))
         .into_response()
@@ -427,17 +441,25 @@ async fn responses(
     }
     let delay = state.config.response_delay;
     let terminal_delay = state.config.terminal_delay;
+    let terminal_gate = state.config.terminal_gate.clone();
     let last = frames.len().saturating_sub(1);
-    let stream =
-        stream::iter(frames.into_iter().enumerate()).then(move |(index, frame)| async move {
+    let stream = stream::iter(frames.into_iter().enumerate()).then(move |(index, frame)| {
+        let terminal_gate = terminal_gate.clone();
+        async move {
             if index == 0 && !delay.is_zero() {
                 sleep(delay).await;
             }
-            if index == last && !terminal_delay.is_zero() {
-                sleep(terminal_delay).await;
+            if index == last {
+                if !terminal_delay.is_zero() {
+                    sleep(terminal_delay).await;
+                }
+                if let Some(gate) = terminal_gate {
+                    gate.acquire().await.unwrap().forget();
+                }
             }
             Ok::<Bytes, Infallible>(Bytes::from(frame))
-        });
+        }
+    });
     Response::builder()
         .status(StatusCode::OK)
         .header("content-type", "text/event-stream")

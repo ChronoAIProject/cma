@@ -162,9 +162,14 @@ for (const width of [1440, 390]) {
       await expect(confirm).toBeVisible();
       expect(deletes).toEqual([]);
       await confirm.getByRole('checkbox').check();
-      await confirm.getByRole('button', { name: `Delete ${kind}`, exact: true }).click();
+      await confirm
+        .getByRole('button', {
+          name: kind === 'Sandbox' ? 'Request deletion' : `Delete ${kind}`,
+          exact: true,
+        })
+        .click();
       await expect(
-        page.getByText(`${kind} delete request accepted. Cleanup continues in the background.`, {
+        page.getByText(`Deleting 1 ${kind === 'Sandbox' ? 'environment' : kind}`, {
           exact: true,
         }),
       ).toBeVisible();
@@ -183,6 +188,10 @@ for (const width of [1440, 390]) {
         );
       await expect.poll(stored).toMatchObject({ key: deletes[0], accepted: true });
       await navigation(page, false);
+      await page
+        .getByRole('region', { name: 'Deletion request', exact: true })
+        .getByRole('button', { name: 'View status', exact: true })
+        .click();
       await page
         .getByRole('button', { name: `View ${kind} deletion status (1)`, exact: true })
         .click();
@@ -205,6 +214,10 @@ for (const width of [1440, 390]) {
       await expect(page.getByRole('dialog')).toHaveCount(0);
       await expect.poll(stored).toMatchObject({ key: deletes[0], accepted: true });
       await navigation(page, false);
+      await page
+        .getByRole('region', { name: 'Deletion request', exact: true })
+        .getByRole('button', { name: 'View status', exact: true })
+        .click();
       await page
         .getByRole('button', { name: `View ${kind} deletion status (1)`, exact: true })
         .click();

@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::SubjectId;
 use layer2_core::trigger_domain::{
     PublicTrigger, TriggerId, TriggerReferenceError, TriggerStoreError,
@@ -46,23 +47,23 @@ pub(super) async fn publish(
             match publish_once(store, id, owner, expected, &published_at, &mut session).await {
                 Ok(published) => published,
                 Err(AttemptError::Retry(reason)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(reason.into());
                     continue;
                 }
                 Err(AttemptError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(AttemptError::Driver(error))
                     if is_transient(&error) || is_duplicate_key(&error) =>
                 {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(AttemptError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(unavailable("write Trigger publication", error));
                 }
             };

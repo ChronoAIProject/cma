@@ -1,23 +1,46 @@
 use super::super::support::bump_log_sequence;
 use super::*;
+use layer2_core::sandbox::{Sandbox, Workspace, Worktree};
 use layer2_core::{rfc3339_at, sandbox::store::AgentWorkMutation};
 
+pub(in crate::sandbox::agent_worker) enum CleanupPreflightError {
+    Read(SandboxStoreError),
+    ArchivePending,
+}
+
+impl From<SandboxStoreError> for CleanupPreflightError {
+    fn from(error: SandboxStoreError) -> Self {
+        Self::Read(error)
+    }
+}
+
+pub(in crate::sandbox::agent_worker) struct RetiredCleanupParents {
+    sandbox: Sandbox,
+    workspace: Workspace,
+    worktree: Worktree,
+    unstarted: bool,
+}
+
 impl AgentWorker {
-    pub(super) async fn complete_retired_cleanup(
+    // Keep this phase read-only so a transient error can safely requeue the
+    // claim. Inventory, failure publication and progress use the step path.
+    pub(in crate::sandbox::agent_worker) async fn prepare_retired_cleanup(
         &self,
         agent: &Agent,
-        now: SystemTime,
-    ) -> Result<bool, SandboxStoreError> {
+    ) -> Result<Option<RetiredCleanupParents>, CleanupPreflightError> {
         let sandbox = self
             .dependencies
             .store
             .get_sandbox(&agent.sandbox_id)
             .await?
             .ok_or(SandboxStoreError::NotFound)?;
+        if sandbox.retirement_archive_pending() {
+            return Err(CleanupPreflightError::ArchivePending);
+        }
         let unstarted = agent.has_no_runtime_effects()
             && matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed);
         if !unstarted && !retired_sandbox_cleanup_is_absent(agent, &sandbox) {
-            return Ok(false);
+            return Ok(None);
         }
         let workspace = self
             .dependencies
@@ -25,15 +48,34 @@ impl AgentWorker {
             .get_workspace(&agent.workspace_id)
             .await?
             .ok_or(SandboxStoreError::NotFound)?;
-        let mut worktree = self
+        let worktree = self
             .dependencies
             .store
             .get_worktree(&agent.worktree_id)
             .await?
             .ok_or(SandboxStoreError::NotFound)?;
+        Ok(Some(RetiredCleanupParents {
+            sandbox,
+            workspace,
+            worktree,
+            unstarted,
+        }))
+    }
+
+    pub(in crate::sandbox::agent_worker) async fn complete_retired_cleanup(
+        &self,
+        agent: &Agent,
+        parents: RetiredCleanupParents,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let RetiredCleanupParents {
+            sandbox,
+            workspace,
+            mut worktree,
+            unstarted,
+        } = parents;
         if let Err(failure) = validate_lineage(agent, &sandbox, &workspace, &worktree) {
-            self.handle_failure(agent.clone(), failure, now).await?;
-            return Ok(true);
+            return self.handle_failure(agent.clone(), failure, now).await;
         }
         if !unstarted {
             match self.dependencies.adapter.runtime_inventory().await {
@@ -42,21 +84,21 @@ impl AgentWorker {
                         .iter()
                         .all(|runtime| runtime.sandbox_id != sandbox.id.as_str()) => {}
                 Ok(_) => {
-                    self.handle_failure(
-                        agent.clone(),
-                        WorkerFailure::retryable(
-                            "retired_runtime_present",
-                            "runtime cleanup is not yet confirmed by the provider",
-                        ),
-                        now,
-                    )
-                    .await?;
-                    return Ok(true);
+                    return self
+                        .handle_failure(
+                            agent.clone(),
+                            WorkerFailure::retryable(
+                                "retired_runtime_present",
+                                "runtime cleanup is not yet confirmed by the provider",
+                            ),
+                            now,
+                        )
+                        .await;
                 }
                 Err(error) => {
-                    self.handle_failure(agent.clone(), cleanup_failure(error), now)
-                        .await?;
-                    return Ok(true);
+                    return self
+                        .handle_failure(agent.clone(), cleanup_failure(error), now)
+                        .await;
                 }
             }
         }
@@ -90,8 +132,7 @@ impl AgentWorker {
             }
         });
         self.progress(agent.clone(), next, now, None, Vec::new(), versioned, event)
-            .await?;
-        Ok(true)
+            .await
     }
 
     pub(in super::super) async fn publish_deleted(

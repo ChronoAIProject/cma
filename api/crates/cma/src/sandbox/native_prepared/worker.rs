@@ -32,6 +32,9 @@ impl NativePreparedWorker {
         adapter: Arc<dyn SandboxAdapter>,
         config: &Config,
     ) -> Result<Self, String> {
+        // These prototypes pin the home and profile policy. Each refill
+        // supplies both images from one captured release.
+        let released = store.released_runtime();
         let target = config.runtime.native_prepared_target;
         let machine_target = config.runtime.native_machine_prepared_target;
         let mut desired = if target == 0 && machine_target == 0 {
@@ -68,7 +71,7 @@ impl NativePreparedWorker {
                     },
                     crate::agent_lifecycle::prepared_default_agent_profile()?,
                     reaches,
-                    config.runtime.sandbox_image.clone(),
+                    released.agent.clone(),
                     config.execution,
                     config
                         .runtime
@@ -81,9 +84,8 @@ impl NativePreparedWorker {
         };
         let machine_desired = if machine_target > 0 {
             let prototype = desired.as_ref().ok_or("prepared prototype missing")?;
-            let image = config
-                .runtime
-                .machine_sandbox_image
+            let image = released
+                .machine
                 .clone()
                 .ok_or("prepared machine image missing")?;
             let mut sandbox = prototype.warm.profile.content.clone();
@@ -124,6 +126,33 @@ impl NativePreparedWorker {
         })
     }
 
+    async fn reconcile_targets(&self) -> Result<(), SandboxStoreError> {
+        let release = self.store.released_runtime();
+        let agent = self
+            .desired
+            .as_ref()
+            .map(|plan| plan.for_runtime(&release.agent))
+            .transpose()?;
+        let machine = match (&self.machine_desired, &release.machine) {
+            (Some(plan), Some(image)) => Some(plan.for_runtime(image)?),
+            (Some(_), None) => return Err(SandboxStoreError::Conflict),
+            (None, _) => None,
+        };
+        let now = now_rfc3339();
+        self.store
+            .reconcile_native_prepared_release(agent.as_ref(), self.target, &now, false, &release)
+            .await?;
+        self.store
+            .reconcile_native_prepared_release(
+                machine.as_ref(),
+                self.machine_target,
+                &now,
+                true,
+                &release,
+            )
+            .await
+    }
+
     pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
         tokio::spawn(async move {
             let worker = Arc::new(self);
@@ -148,12 +177,8 @@ impl NativePreparedWorker {
                         }
                     }
                     _ = super::refill::changed(&mut ticker, &worker.store.native_prepared_changed) => {
-                        if let Err(error) = worker.store.reconcile_native_prepared_target(worker.desired.as_ref(), worker.target, &now_rfc3339()).await {
+                        if let Err(error) = worker.reconcile_targets().await {
                             tracing::warn!(%error, "native preparation target reconciliation deferred");
-                            continue;
-                        }
-                        if let Err(error) = worker.store.reconcile_native_prepared_class(worker.machine_desired.as_ref(), worker.machine_target, &now_rfc3339(), true).await {
-                            tracing::warn!(%error, "native machine preparation reconciliation deferred");
                             continue;
                         }
                     },
