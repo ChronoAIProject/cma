@@ -121,6 +121,35 @@ fn absent() -> layer3_adapter::AdapterError {
 
 #[async_trait::async_trait]
 impl HostedBackend for NativeBackend {
+    async fn inspect_retained_startup_policy(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &layer3_adapter::HomeVolumeAttachment,
+    ) -> layer3_adapter::Result<layer3_adapter::RetainedStartupPolicyPredecessor> {
+        self.calls.push("inspect-retained-predecessor");
+        let rows = self.row.lock().await;
+        let row = rows.as_ref().ok_or_else(absent)?;
+        if row.observation.handle != *handle || row.request != *request || row.pod.is_some() {
+            return Err(absent());
+        }
+        Ok(layer3_adapter::RetainedStartupPolicyPredecessor {
+            uid: home
+                .receipt
+                .native_authority
+                .as_ref()
+                .unwrap()
+                .sandbox_uid
+                .clone(),
+            resource_version: self.proof_revision.load(Ordering::SeqCst).to_string(),
+            request_sha256: layer3_adapter::provider_request_digest(request)?,
+            home_identity: home.identity()?,
+            image: request.image.uri.clone(),
+            generation: row.observation.generation,
+            journal_recovery: false,
+        })
+    }
+
     async fn run_recovery_command(
         &self,
         handle: &RuntimeHandle,

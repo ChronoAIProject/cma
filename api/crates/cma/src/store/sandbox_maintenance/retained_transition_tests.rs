@@ -106,7 +106,7 @@ async fn retained_runtime_grant_same_image_reserves_once_and_replays_after_polic
     let mut foreign = request.clone();
     foreign.owner = layer2_core::SubjectId("foreign".into());
     assert!(store
-        .redeem_retained_runtime_grant(&db, foreign, Some(fresh()))
+        .redeem_retained_runtime_grant(&db, foreign.clone(), Some(fresh()))
         .await
         .is_err());
     let before = store.get_sandbox(&sandbox.id).await.unwrap().unwrap();
@@ -156,5 +156,42 @@ async fn retained_runtime_grant_same_image_reserves_once_and_replays_after_polic
         store.get_sandbox(&sandbox.id).await.unwrap(),
         Some(admitted)
     );
+
+    assert!(store
+        .abort_retained_runtime_grant(&db, &foreign.owner, &grant.request.grant_id)
+        .await
+        .is_err());
+    for _ in 0..2 {
+        store
+            .abort_retained_runtime_grant(&db, &sandbox.owner, &grant.request.grant_id)
+            .await
+            .unwrap();
+    }
+    let aborted = store.get_sandbox(&sandbox.id).await.unwrap().unwrap();
+    assert_eq!(aborted.status, SandboxStatus::Paused);
+    assert!(aborted.admitted_retained_runtime_transition().is_none());
+    assert_eq!(aborted.lifecycle.home, sandbox.lifecycle.home);
+    assert_eq!(
+        aborted.lifecycle.suspended_runtime,
+        sandbox.lifecycle.suspended_runtime
+    );
+    assert_eq!(
+        aborted.lifecycle.runtime_generation_high_water,
+        receipt.successor_generation
+    );
+    let stored = store
+        .read_retained_runtime_grant(&sandbox.owner, &grant.request.grant_id)
+        .await
+        .unwrap();
+    assert!(stored.aborted_at.is_some());
+    assert_eq!(stored.receipt, Some(receipt.clone()));
+    assert_eq!(
+        store
+            .redeem_retained_runtime_grant(&db, grant.request, None)
+            .await
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(store.get_sandbox(&sandbox.id).await.unwrap(), Some(aborted));
     db.drop().await.unwrap();
 }

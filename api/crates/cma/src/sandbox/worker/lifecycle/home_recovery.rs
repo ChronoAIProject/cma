@@ -91,6 +91,7 @@ impl SandboxWorker {
                     .as_ref()
                     .is_none_or(|binding| binding.runtime_id != observation.handle.0)
         };
+        let retained = sandbox.admitted_retained_runtime_transition();
         for observation in self
             .dependencies
             .adapter
@@ -100,6 +101,11 @@ impl SandboxWorker {
             .iter()
             .filter(|observation| old(observation))
         {
+            if retained.is_some() {
+                return Err(WorkerFailure::retryable(
+                    "another runtime exists for the admitted retained home",
+                ));
+            }
             // Older recovery records can lack a retained binding. Their original
             // storage-owning object must never become process cleanup.
             if observation.handle.as_str().starts_with("agent-sandbox:") {
@@ -134,6 +140,26 @@ impl SandboxWorker {
                     &self.config.deployment_id,
                 )
                 .map_err(adapter_failure)?;
+                if let Some(transition) = retained {
+                    // The grant already required a stopped predecessor. A new
+                    // suspension could change provider state after that proof expired.
+                    let predecessor = self
+                        .dependencies
+                        .adapter
+                        .inspect_retained_startup_policy(&request)
+                        .await
+                        .map_err(|_| {
+                            WorkerFailure::retryable(
+                                "the admitted stopped predecessor could not be verified",
+                            )
+                        })?;
+                    if predecessor != transition.request.predecessor {
+                        return Err(WorkerFailure::retryable(
+                            "the admitted stopped predecessor has changed",
+                        ));
+                    }
+                    return volumes.verify(&attachment).await.map_err(adapter_failure);
+                }
                 if sandbox
                     .lifecycle
                     .unpublished_recovery
