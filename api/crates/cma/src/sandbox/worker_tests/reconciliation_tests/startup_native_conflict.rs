@@ -208,6 +208,59 @@ async fn startup_native_changed_binding_is_deferred_without_adopting_new_targets
 }
 
 #[tokio::test]
+async fn missing_native_home_defers_only_a_superseded_binding() {
+    for binding_changed in [false, true] {
+        let fixture = NativeStartup::new(false, false).await;
+        fixture
+            .control
+            .hold_next_home_check
+            .store(true, Ordering::SeqCst);
+        let startup = fixture.reconciler.initialize_before_workers(fixture.now);
+        tokio::pin!(startup);
+        until(&mut startup, fixture.control.home_check_entered.notified()).await;
+        let mut current = fixture.original.clone();
+        current.revision += 1;
+        current.name = "updated while checking the home".into();
+        if binding_changed {
+            current
+                .runtime
+                .as_mut()
+                .unwrap()
+                .runtime_id
+                .push_str("-successor");
+        }
+        current.validate().unwrap();
+        fixture
+            .store
+            .inner
+            .save_sandbox(fixture.original.revision, current.clone())
+            .await
+            .unwrap();
+        fixture.control.api.lock().unwrap().rows.remove(api::VOLUME);
+        fixture.control.other_gate.add_permits(8);
+        fixture.control.home_check_gate.add_permits(1);
+        let result = tokio::time::timeout(Duration::from_secs(10), startup)
+            .await
+            .unwrap();
+        if binding_changed {
+            result.unwrap();
+            assert!(fixture.reconciler.binding_is_held(&current.id));
+        } else {
+            assert!(
+                matches!(result, Err(SandboxStoreError::Unavailable(message))
+                if message.contains("native home identity changed or disappeared"))
+            );
+        }
+        assert_eq!(
+            fixture.store.inner.get_sandbox(&current.id).await.unwrap(),
+            Some(current)
+        );
+        fixture.control.assert_no_cleanup();
+        assert_retained(&fixture);
+    }
+}
+
+#[tokio::test]
 async fn startup_native_refreshes_first_attempt_after_authority_advanced_past_startup_time() {
     let fixture = NativeStartup::new(false, false).await;
     let durable_at = stamp_time(&fixture.original.updated_at);
