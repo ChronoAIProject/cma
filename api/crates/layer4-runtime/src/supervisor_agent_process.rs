@@ -6,6 +6,10 @@ use crate::failure::{Result, RuntimeError};
 use crate::mutation_journal::{Operation, Status, Subject};
 
 impl Supervisor {
+    pub(crate) fn agent_process_restart_enabled(&self) -> bool {
+        self.config.agent_process_restart_enabled
+    }
+
     pub(super) async fn authorize_process_open(
         &self,
         request: &FencedRequest<AgentLaunch>,
@@ -15,6 +19,23 @@ impl Supervisor {
         if incarnation == 1 {
             return Ok(operation);
         }
+        let writer = request.restart_runtime.as_ref().ok_or_else(|| {
+            RuntimeError::rejected(
+                "agent_process_restart_runtime_missing",
+                "Agent restart requires the observed runtime identity",
+            )
+        })?;
+        if writer.runtime.sandbox_id != self.config.sandbox_id
+            || writer.runtime.generation != self.config.generation
+            || Some(&writer.runtime.home_identity) != self.config.home_identity.as_ref()
+            || writer.boot_id != self.boot_id
+        {
+            return Err(RuntimeError::rejected(
+                "agent_process_restart_runtime_changed",
+                "the observed runtime changed before Agent restart",
+            ));
+        }
+        self.require_credentialed().await?;
         let replay = self.mutations.admitted(&operation).await?;
         if !self.config.agent_process_restart_enabled && !replay {
             return Err(RuntimeError::rejected(

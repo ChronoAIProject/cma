@@ -319,15 +319,22 @@ impl MongoAgentLifecycleStore {
         error: &str,
         failure: Option<layer1_public::rest::AgentLifecycleFailure>,
     ) -> Result<(), StoreError> {
-        let mut fields = doc! { "status": "failed", "phase": "failed", "error": error,
-        "lease_token": Bson::Null, "lease_expires_at": Bson::Null, "updated_at": DateTime::now() };
-        if let Some(failure) = failure {
-            fields.insert(
-                "failure",
-                mongodb::bson::serialize_to_bson(&failure)
-                    .map_err(|error| StoreError::Malformed(error.to_string()))?,
-            );
-        }
-        self.write(lease, doc! {"$set": fields}).await
+        self.write(lease, failure_update(error, failure)?).await
     }
+}
+
+pub(super) fn failure_update(
+    error: &str,
+    failure: Option<layer1_public::rest::AgentLifecycleFailure>,
+) -> Result<Document, StoreError> {
+    let mut fields = doc! { "status": "failed", "phase": "failed", "error": error,
+    "lease_token": Bson::Null, "lease_expires_at": Bson::Null, "updated_at": DateTime::now() };
+    if let Some(failure) = failure {
+        fields.insert(
+            "failure",
+            mongodb::bson::serialize_to_bson(&failure)
+                .map_err(|error| StoreError::Malformed(error.to_string()))?,
+        );
+    }
+    Ok(doc! {"$set": fields})
 }

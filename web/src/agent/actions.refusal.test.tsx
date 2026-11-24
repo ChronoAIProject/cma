@@ -111,5 +111,6 @@ it('retains the server guidance for a temporarily unavailable Agent', async () =
   await act(() => view.result.current.run('Keep my draft'));
   expect(input.setActionError).toHaveBeenLastCalledWith(
     'ApiError: Wait for this Agent to become ready.',
+    undefined,
   );
 });

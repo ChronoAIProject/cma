@@ -72,8 +72,11 @@ def label_level(pr):
     require(isinstance(labels, list) and all(isinstance(label, dict) and isinstance(label.get("name"), str)
                                           for label in labels), "Version labels are malformed")
     upgrades = [label["name"] for label in labels if label["name"].startswith("version-upgrade:")]
+    # A merged PR can bypass the pre-merge label gate. Publish a patch in that case.
+    if not upgrades:
+        return "patch"
     require(len(upgrades) == 1 and upgrades[0] in LEVELS,
-            "Merged PR must carry exactly one supported version-upgrade label")
+            "Merged PR has conflicting or unsupported version-upgrade labels")
     return LEVELS[upgrades[0]]
 
 
