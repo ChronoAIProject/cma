@@ -217,3 +217,14 @@ pub(super) fn tools(
         config.gateway.as_ref(),
     )?))
 }
+
+pub(super) fn runtime_canaries(
+    config: &crate::config::Config,
+    lifecycle: Arc<crate::agent_lifecycle::InlineAgentLifecycle>,
+) -> Result<Router, String> {
+    let canaries =
+        crate::agent_lifecycle::runtime_canary::Canaries::new(&config.runtime, lifecycle)?;
+    Ok(layer1_public::rest::runtime_canary::runtime_canary_router(
+        Arc::new(canaries),
+    ))
+}

@@ -160,12 +160,7 @@ impl ControlPlaneComposition {
         .with_session_guidance_v4(config.features.session_guidance_v4)
         .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
         .with_managed_repository_preflight(config.features.github_repository_preflight);
-        let runtime_canary_routes = rest::runtime_canary::runtime_canary_router(Arc::new(
-            crate::agent_lifecycle::runtime_canary::Canaries::new(
-                &config.runtime,
-                inline_lifecycle.clone(),
-            )?,
-        ));
+        let runtime_canary_routes = routes::runtime_canaries(config, inline_lifecycle.clone())?;
         let lifecycle_drain = inline_lifecycle.drain_handle();
         if let Some(manager) = &agent_manager {
             manager.register_lifecycle(lifecycle_drain.clone())?;

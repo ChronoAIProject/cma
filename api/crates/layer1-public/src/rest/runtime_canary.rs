@@ -250,3 +250,13 @@ pub(super) async fn redeem(
         .map_err(IntoResponse::into_response)?;
     Ok((StatusCode::ACCEPTED, Json(receipt)))
 }
+
+pub(super) fn document() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi as _;
+
+    #[derive(utoipa::OpenApi)]
+    #[openapi(paths(configure, grant, revoke, redeem))]
+    struct RuntimeCanaryApi;
+
+    RuntimeCanaryApi::openapi()
+}

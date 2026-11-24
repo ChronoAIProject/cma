@@ -474,21 +474,8 @@ impl HostedBackend for AgentSandboxBackend {
     }
 }
 
-#[async_trait::async_trait]
-impl super::CapacityRecoveryNativeTransport for AgentSandboxBackend {
-    async fn reattach_existing(
-        &self,
-        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
-        updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::agent_capacity_recovery::CapacityRecoveryResult<(
-        ConversationChannel,
-        crate::agent_capacity_recovery::CapacityRecoveryConfirmation,
-    )> {
-        self.transport
-            .reattach_existing_capacity_recovery(request, updates)
-            .await
-    }
-}
+#[path = "agent_sandbox_backend_capacity_recovery.rs"]
+mod capacity_recovery;
 
 #[path = "runtime_routing_backend.rs"]
 mod routing;
