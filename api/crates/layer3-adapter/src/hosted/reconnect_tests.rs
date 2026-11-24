@@ -166,6 +166,33 @@ async fn reconnect_never_reinterprets_general_rejection_or_ambiguous_response() 
 }
 
 #[tokio::test]
+async fn restart_conflict_preserves_runtime_pin_without_legacy_retry() {
+    use std::sync::atomic::Ordering;
+
+    let (backend, adapter, handle, mut request) = fixture(false).await;
+    request.operation_id = "agent:agent-restored:open:2:v1".into();
+    let runtime = crate::AgentRestartRuntime {
+        runtime: crate::RuntimeStatusRequest {
+            sandbox_id: SANDBOX.into(),
+            generation: 1,
+            home_identity: "a".repeat(43),
+        },
+        boot_id: "b".repeat(32),
+    };
+    *backend.restart_conflict.lock().unwrap() = Some(runtime.clone());
+    request.restart_runtime = Some(runtime);
+    let before = backend.opens.load(Ordering::SeqCst);
+    let (updates, _receiver) = mpsc::channel(4);
+    assert!(matches!(
+        adapter
+            .reconnect_agent(&handle, 3, &request, CONVERSATION, updates)
+            .await,
+        Err(AdapterError::OperationIdentityConflict(_))
+    ));
+    assert_eq!(backend.opens.load(Ordering::SeqCst), before + 1);
+}
+
+#[tokio::test]
 async fn alternate_reconnect_requires_exact_options_conversation_and_receipt() {
     for corruption in ["options", "conversation", "receipt"] {
         let (backend, adapter, handle, mut original) = fixture(true).await;

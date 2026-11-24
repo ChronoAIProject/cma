@@ -47,6 +47,7 @@ struct CorruptingBackend {
     next: Arc<Mutex<Option<Corruption>>>,
     expected_reconnect: Arc<Mutex<Option<String>>>,
     opens: Arc<std::sync::atomic::AtomicUsize>,
+    restart_conflict: Arc<Mutex<Option<crate::AgentRestartRuntime>>>,
     opened_access: Arc<Mutex<Option<super::HostedAccessToolBinding>>>,
 }
 
@@ -149,6 +150,12 @@ impl HostedBackend for CorruptingBackend {
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
         self.opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Some(expected) = self.restart_conflict.lock().unwrap().take() {
+            assert_eq!(launch.restart_runtime.as_ref(), Some(&expected));
+            return Err(AdapterError::OperationIdentityConflict(
+                "restart fixture conflict".into(),
+            ));
+        }
         *self.opened_access.lock().unwrap() = settings.access_tool.clone();
         if let Some(expected) = self.expected_reconnect.lock().unwrap().as_deref() {
             assert_eq!(resume_conversation.as_deref(), Some(expected));
