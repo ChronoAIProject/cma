@@ -276,8 +276,10 @@ async fn hotpath_marketplace_fork_tolerates_a_source_use_counter_change() {
     let fired = AtomicBool::new(false);
     options.command_event_handler = Some(EventHandler::callback(move |event| {
         if let CommandEvent::Started(event) = event {
+            // The fork transaction's first profile read. Every store transaction
+            // now opens with a barrier read, so this is no longer its first command.
             if event.command.get_str("find").ok() == Some("sandbox_profiles")
-                && event.command.get_bool("startTransaction").ok() == Some(true)
+                && event.command.get_bool("autocommit").ok() == Some(false)
                 && !fired.swap(true, Ordering::SeqCst)
             {
                 notify.notify_one();

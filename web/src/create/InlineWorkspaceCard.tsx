@@ -35,10 +35,11 @@ export function InlineWorkspaceCard({
   const command = useCreationCommand(onCreated);
   const connections = useConnectionGate();
   const repositoryUrl = url.trim();
-  const repositoryValid =
+  // The Workspace API checks the raw authority before URL normalization.
+  const repositoryReady =
     repositoryUrl.startsWith('https://github.com/') && validRepository(repositoryUrl);
-  const repositoryError = repositoryTouched && repositoryUrl !== '' && !repositoryValid;
-  const ready = sourceType === GIT_SOURCE ? repositoryValid : name.trim().length > 0;
+  const repositoryError = repositoryTouched && !repositoryReady;
+  const ready = sourceType === GIT_SOURCE ? repositoryReady : name.trim().length > 0;
 
   const submit = () => {
     if (!ready) return;
@@ -137,11 +138,11 @@ export function InlineWorkspaceCard({
                 placeholder="https://github.com/org/repository"
                 required
               />
-              {repositoryError && (
+              {repositoryError ? (
                 <p id="inline-workspace-url-error" className="field__error" role="alert">
                   Enter an HTTPS GitHub repository URL.
                 </p>
-              )}
+              ) : null}
             </div>
             <div className="create-form__field">
               <label htmlFor="inline-workspace-reference">Branch or ref (optional)</label>

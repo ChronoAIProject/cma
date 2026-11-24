@@ -129,41 +129,44 @@ it('does not replace a missing creator name with their subject ID', async () => 
   expect(screen.queryByText('creator-private-subject')).not.toBeInTheDocument();
 });
 
-it('shows granted service names for a paused Sandbox without relying on Agent reads', async () => {
-  render(
-    <NamedReferences>
-      <SandboxPage
-        client={agentClient({
-          readSandbox: async () => ({
-            ...sandboxFixture('paused'),
-            nyxidServices: ['github', 'storage'],
-            workspaces: [],
-          }),
-          readAgent: async () => {
-            throw new Error('Agent unavailable');
-          },
-        })}
-        sandboxId="sbx_1"
-        revision={0}
-        permissions={permissions}
-        busy={false}
-        onAction={vi.fn()}
-        onNavigate={vi.fn()}
-      />
-    </NamedReferences>,
-  );
-  fireEvent.click(await screen.findByRole('tab', { name: 'Access' }));
-  expect(await screen.findByRole('link', { name: 'Chrono Storage' })).toHaveAttribute(
-    'href',
-    'https://nyxid.ai/services/catalog-storage',
-  );
-  expect(screen.getByRole('link', { name: 'GitHub' })).toHaveAttribute(
-    'href',
-    'https://nyxid.ai/services/catalog-github',
-  );
-  expect(screen.queryByText('Access not yet confirmed')).not.toBeInTheDocument();
-  expect(screen.queryByText('Requested services')).not.toBeInTheDocument();
-});
+it.each(['https://catalog.example.test', 'https://second.example.test'])(
+  'links a paused Sandbox’s services through %s without relying on Agent reads',
+  async (catalogOrigin) => {
+    render(
+      <NamedReferences catalogOrigin={catalogOrigin}>
+        <SandboxPage
+          client={agentClient({
+            readSandbox: async () => ({
+              ...sandboxFixture('paused'),
+              nyxidServices: ['github', 'storage'],
+              workspaces: [],
+            }),
+            readAgent: async () => {
+              throw new Error('Agent unavailable');
+            },
+          })}
+          sandboxId="sbx_1"
+          revision={0}
+          permissions={permissions}
+          busy={false}
+          onAction={vi.fn()}
+          onNavigate={vi.fn()}
+        />
+      </NamedReferences>,
+    );
+    fireEvent.click(await screen.findByRole('tab', { name: 'Access' }));
+    expect(await screen.findByRole('link', { name: 'Chrono Storage' })).toHaveAttribute(
+      'href',
+      `${catalogOrigin}/services/catalog-storage`,
+    );
+    expect(screen.getByRole('link', { name: 'GitHub' })).toHaveAttribute(
+      'href',
+      `${catalogOrigin}/services/catalog-github`,
+    );
+    expect(screen.queryByText('Access not yet confirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText('Requested services')).not.toBeInTheDocument();
+  },
+);
 
 it('explains persistent PV storage in Technical details and exposes no snapshot controls', async () => {
   const sandbox = savingSandbox('capture');
