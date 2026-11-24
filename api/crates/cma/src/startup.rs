@@ -16,7 +16,7 @@ use crate::{
     agent_manager,
     composition::{self, ControlPlaneComposition},
     config::{Config, StartupConfig},
-    read_telemetry,
+    image_manager_retirement, read_telemetry,
     shutdown::{self, signalled, ShutdownCoordinator},
     startup_timing::{observe, Phase},
     telemetry, with_cors, with_request_context,
@@ -46,9 +46,13 @@ pub(crate) async fn serve() -> Result<(), String> {
         |_| None,
     )
     .await?;
-    let app = with_request_context(with_cors(
+    let router = with_cors(
         std::mem::take(&mut composition.router),
         std::mem::take(&mut config.cors_origins),
+    );
+    let app = with_request_context(image_manager_retirement::mount(
+        router,
+        config.features.image_manager_retirement,
     ))
     .layer(axum::Extension(telemetry::http::ContextDiagnosticsEnabled(
         config.features.context_diagnostics,
