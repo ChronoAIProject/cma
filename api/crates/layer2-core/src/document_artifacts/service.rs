@@ -74,12 +74,11 @@ impl DocumentService {
             return creation_replay(caller, existing, &fingerprint);
         }
         let now = crate::now_rfc3339();
-        let sha256 = digest(body.markdown.as_bytes());
-        let object_key = object_key(caller.subject.as_str(), &id, &sha256);
         if let Some(guard) = guard {
             guard.validate(None).await?;
         }
-        self.upload(caller.subject.as_str(), &id, body.markdown.as_bytes())
+        let source = self
+            .upload(caller.subject.as_str(), &id, body.markdown.as_bytes())
             .await?;
         let metadata = DocumentView {
             id,
@@ -87,8 +86,8 @@ impl DocumentService {
             title: body.title.clone(),
             revision: 1,
             source_revision: 1,
-            sha256,
-            size_bytes: body.markdown.len() as u64,
+            sha256: source.sha256.clone(),
+            size_bytes: source.bytes,
             created_at: now.clone(),
             updated_at: now.clone(),
             origin_agent_id: body.origin_agent_id,
@@ -106,7 +105,7 @@ impl DocumentService {
                     created_at: now,
                     author_subject: caller.subject.to_string(),
                 },
-                object_key,
+                object_key: source.object_key(),
             }],
             metadata: metadata.clone(),
             shares: vec![],
@@ -119,7 +118,7 @@ impl DocumentService {
             guard.validate(Some(&record)).await?;
         }
         self.validate_write(&record, false)?;
-        if self.store.insert(&record).await? {
+        if self.store.insert_source(&record, &source).await? {
             return Ok(metadata);
         }
         creation_replay(
@@ -326,7 +325,7 @@ impl DocumentService {
         owner: &str,
         id: &str,
         bytes: &[u8],
-    ) -> Result<(), DocumentError> {
+    ) -> Result<DocumentSourceReservation, DocumentError> {
         let source = DocumentSourceReservation::new(owner, id, bytes);
         source.validate()?;
         if let Some(quota) = &self.quota {
@@ -337,7 +336,8 @@ impl DocumentService {
             self.blobs.put(&source.object_key(), bytes.to_vec()),
         )
         .await
-        .map_err(|_| DocumentError::Unavailable)?
+        .map_err(|_| DocumentError::Unavailable)??;
+        Ok(source)
     }
 }
 pub(super) fn access(
