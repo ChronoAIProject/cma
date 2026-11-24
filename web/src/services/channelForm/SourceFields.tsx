@@ -80,7 +80,10 @@ export function SourceFields({
               }))}
               onChange={(platform) => {
                 const updated = {
-                  ...without(value, platform !== value.platform ? ['lark_resources'] : []),
+                  ...without(
+                    value,
+                    platform !== value.platform ? ['lark_resources', 'member_join_chat_ids'] : [],
+                  ),
                   platform,
                   ...(['discord', 'whatsapp'].includes(platform) &&
                   !value.trust_normalized &&
@@ -189,6 +192,9 @@ export function SourceFields({
                 This explicitly trusts NyxID's normalized message fields instead of checking the
                 original platform event.
               </p>
+            ) : null}
+            {value.platform === 'telegram' ? (
+              <TelegramMemberJoinFields value={value} onChange={onChange} />
             ) : null}
             <RelaySetupGuidance platform={String(value.platform)} />
           </>

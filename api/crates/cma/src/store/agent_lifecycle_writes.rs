@@ -3,7 +3,7 @@ use super::*;
 use mongodb::bson::Document;
 
 impl LifecycleLease {
-    fn filter(&self) -> Document {
+    pub(super) fn filter(&self) -> Document {
         doc! { "_id": &self.id, "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "status": "running", "lease_token": &self.token,
         "$expr": { "$and": [
@@ -201,15 +201,16 @@ impl MongoAgentLifecycleStore {
         lease: &LifecycleLease,
         sandbox_id: &str,
     ) -> Result<(), StoreError> {
-        // This links the admitted creation input to one Sandbox across claims.
-        // A fresh lease may repeat the recorded association.
+        // Ordinary operations can bind once. Canary admission has already
+        // bound its Sandbox, so either kind can only repeat an existing ID.
         let mut filter = lease.filter();
+        filter.insert("sandbox_id", doc! { "$not": { "$type": "array" } });
         filter.insert(
-            "sandbox_id",
-            doc! {
-                "$in": [Bson::Null, Bson::String(sandbox_id.into())],
-                "$not": { "$type": "array" },
-            },
+            "$or",
+            [
+                doc! { "sandbox_id": sandbox_id },
+                doc! { "canary_admission": { "$exists": false }, "sandbox_id": Bson::Null },
+            ],
         );
         self.write_matching(
             filter,
