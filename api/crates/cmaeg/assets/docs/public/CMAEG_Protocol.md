@@ -42,10 +42,10 @@ flowchart TB
 | Downstream agent provider | Implement Agent Card, binding, conversation, Responses SSE, durable idempotency and authenticated event-context reads | [Flow F](#flow-f-implement-a-downstream-agent-provider) and [§9](#9-provider-contract) |
 | Channel owner / operator | Reconcile versions and uncertain mutations; manage credentials and lifecycle within the correct authority | [Flow G](#flow-g-update-policy-rotate-credentials-and-delete), [Flow H](#flow-h-replica-restart-and-recovery-boundaries) and [§5](#5-management-api) |
 
-The REST base is `https://gateway.example.com/event-gateway/v1`. Through the globally
-auto-connected NyxID service, use
-`https://gateway.example.com/api/v1/proxy/s/cmaeg` and append the same relative
-path, without another `/v1`. Native MCP uses the separate gateway `/mcp` endpoint.
+Find the direct REST base in the served OpenAPI document's `servers` entry.
+Through the globally auto-connected NyxID service, use the
+`/api/v1/proxy/s/cmaeg` path on your NyxID API origin and append the same relative
+path without another `/v1`. Native MCP uses the separate gateway `/mcp` endpoint.
 
 ### Flow A — Create, inspect and test a channel
 
@@ -2566,6 +2566,14 @@ Native Telegram, interactive/edit and legacy relay chunking preserves UTF-16
 boundaries and complete escape atoms. Complete ordinary relay rendering applies
 the same escaping and block degradation without chunking.
 
+Lark, Feishu and Discord text, native or through `nyxid_relay`, keeps Markdown
+punctuation and backslashes literal instead of escaping them: Lark and Feishu
+show plain text, and Discord parses its own Markdown, so link labels and URL
+destinations arrive intact. Mention neutralization (`@` followed by a zero-width
+space, `<` and `>` replaced by `‹` and `›`) and control/bidi filtering still
+apply; inside an `http(s)://` destination an `@` stays literal unless it starts
+`@everyone` or `@here`. Chunking and block degradation are unchanged.
+
 A reply/update receipt is `{message_ref?,rendering,delivery}`. Rendering is
 `{outcome:"rendered|degraded|unsupported",blocks:[{index,outcome}]}`, where each
 block outcome is `{type:"exact"}`, `{type:"degraded",how}` or
@@ -2843,11 +2851,9 @@ at expires_at; run it in your workspace` and `download`:
 | `authorization` | `{scheme:"Bearer",token:"<link>"}` for clients that cannot execute shell text. The token is scoped to this event attachment and is accepted once. |
 | `curl` | `curl -fsSL -H 'Authorization: Bearer <link>' -o '<name>' '<url>'`, a compatibility command carrying the same link; `<name>` is the safe file name described below. |
 
-With `CMAEG_ADVERTISE_PUBLIC_API_URL=true`, the base is `CMAEG_PUBLIC_API_URL`;
-otherwise it is `CMAEG_PUBLIC_URL`. The checked-in deployment advertises
-`https://gateway.example.com/event-gateway/v1/media/content`. Clients pin the base from
-operator configuration and compare it with the returned URL before sending the
-capability. This configuration is not evidence that a particular image is live.
+With `CMAEG_ADVERTISE_PUBLIC_API_URL=true`, the base is `CMAEG_PUBLIC_API_URL`.
+Otherwise, the base is `CMAEG_PUBLIC_URL`. Clients pin the base from operator
+configuration and compare it with the returned URL before sending the capability.
 
 The REST twin returns the same view. When the media response budget defers an
 MCP result, the deferred `pending` view carries no `download`, so a link never
@@ -3596,6 +3602,11 @@ Native Telegram, other relay platforms and initiated messages keep their
 existing contracts. This switch takes precedence over the legacy/complete
 ordinary Telegram rendering choices below.
 
+The independent `CMAEG_NYXID_COMMONMARK_LARK_FEISHU_DISCORD_ENABLED` switch
+selects CommonMark for Lark, Feishu and Discord relay replies and text updates.
+It defaults off. Enable it only after verifying the corresponding NyxID routes
+on every receiving replica. Negotiated thread replies keep their thread target.
+
 Ordinary and keyboard updates use `/api/v1/channel-relay/reply/update/commonmark`
 with the retained exact outbound/platform identifiers. CommonMark source length
 is bounded by the request budget, while NyxID validates converted platform
@@ -3612,8 +3623,8 @@ deployed counterpart checks (maintainer guidance).
 With CommonMark disabled, `CMAEG_NYXID_COMPLETE_REPLIES` selects the ordinary
 relay deployment mode:
 
-- **`false` (default, legacy compatibility).** CMAEG escapes and chunks ordinary
-  relay text at 4000 UTF-16 units and sends each part independently. A bare 429
+- **`false` (default, legacy compatibility).** CMAEG escapes (Lark, Feishu and
+  Discord: keeps literal, as above) and chunks ordinary relay text at 4000 UTF-16 units and sends each part independently. A bare 429
   can be retried once with the channel key after a bounded wait. This preserves
   existing behavior, including its limitations: a URL may cross parts, a
   reply-token-only route cannot send later parts, and NyxID cannot detect absent

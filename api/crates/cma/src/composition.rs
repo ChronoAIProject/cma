@@ -154,6 +154,7 @@ impl ControlPlaneComposition {
         )
         .with_released_runtime(stores.released_runtime.clone())
         .with_task_experience(config.task_experience.clone())
+        .with_session_guidance_v4(config.features.session_guidance_v4)
         .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
         .with_managed_repository_preflight(config.features.github_repository_preflight);
         let lifecycle_drain = inline_lifecycle.drain_handle();
