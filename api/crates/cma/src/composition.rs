@@ -223,7 +223,8 @@ impl ControlPlaneComposition {
         ));
         let (recorder, activity_worker) = activity::compose(config, &activity, &stores);
         let profile_authoring = profiles::authoring_router(config, &auth, authoring_bounds)?;
-        let sandbox_credentials = credentials::sandbox_credentials(config, auth.clone(), &stores);
+        let sandbox_credentials =
+            credentials::sandbox_credentials(config, auth.clone(), &stores, broker.clone());
         let model_routes = routes::models(
             config,
             projections.reads(),

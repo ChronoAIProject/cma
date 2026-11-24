@@ -1,6 +1,7 @@
 //! Serial, bounded preparation before an explicit cohort can use trusted reads.
 use super::*;
 use crate::store::sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome};
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::time::Duration;
 
 impl MongoSandboxStore {
@@ -64,7 +65,7 @@ pub(super) async fn prepare(store: &MongoSandboxStore, id: &AgentId) -> Result<(
     let semantic = match audit_checkpoint(store, &agent, &entries, &mut session).await {
         Ok(semantic) if semantic.valid => semantic,
         _ => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err("preparation semantic checkpoint unavailable".into());
         }
     };
@@ -85,7 +86,7 @@ pub(super) async fn prepare(store: &MongoSandboxStore, id: &AgentId) -> Result<(
         .await
         .map_err(|_| "preparation CAS unavailable")?;
     if result.matched_count != 1 {
-        let _ = session.abort_transaction().await;
+        let _ = session.abort_guarded().await;
         return Err("preparation conflicted with an Agent writer".into());
     }
     match commit_transaction(&mut session).await {

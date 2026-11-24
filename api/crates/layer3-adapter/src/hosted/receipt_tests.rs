@@ -200,6 +200,7 @@ async fn ready_runtime(
                 operation_id: format!("credential-{workspace}"),
                 value: RuntimeCredential::new("opaque-runtime-credential"),
                 custody_generation: Some(1),
+                github_route: None,
             },
         )
         .await
@@ -332,6 +333,7 @@ async fn hosted_adapter_rejects_semantically_corrupt_runtime_receipts() {
                     operation_id: "credential-receipt-validation".into(),
                     value: RuntimeCredential::new("opaque-runtime-credential"),
                     custody_generation: Some(1),
+                    github_route: None,
                 },
             )
             .await,

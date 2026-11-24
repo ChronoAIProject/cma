@@ -1,5 +1,6 @@
 //! Evidence-backed Mongo admission of automatic Sandbox maintenance.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use layer2_core::ids::SandboxId;
 use layer2_core::now_rfc3339;
@@ -207,28 +208,28 @@ async fn schedule_owned(
         {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
         if receipt.event.is_none() {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Ok(receipt);
         }
         if let Some(basis) = request.basis() {
             if let Err(error) =
                 basis.validate_at(layer2_core::sandbox::store::runtime_migration_now_ms()?)
             {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
         }
@@ -246,7 +247,7 @@ async fn schedule_owned(
                 if let Some(custody) = &mut custody {
                     custody.confirmed();
                 }
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
             }
             CommitOutcome::Unknown(error) => {
@@ -315,7 +316,7 @@ async fn preview(
         IntegrityFailurePolicy::ReportOnly,
     )
     .await;
-    let abort = session.abort_transaction().await;
+    let abort = session.abort_guarded().await;
     if result.is_ok() {
         abort.map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
     }

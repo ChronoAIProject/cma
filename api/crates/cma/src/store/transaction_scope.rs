@@ -1,4 +1,5 @@
 //! Complete each reporting transaction before returning or opening a fresh snapshot.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::future::BoxFuture;
 use layer2_core::sandbox_metrics::MetricsError;
 use mongodb::{
@@ -108,10 +109,10 @@ pub(super) trait Transaction: Send {
 #[async_trait::async_trait]
 impl Transaction for ClientSession {
     async fn commit(&mut self) -> mongodb::error::Result<()> {
-        self.commit_transaction().await
+        self.commit_guarded().await
     }
     async fn abort(&mut self) -> mongodb::error::Result<()> {
-        self.abort_transaction().await
+        self.abort_guarded().await
     }
 }
 
