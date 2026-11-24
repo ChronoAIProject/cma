@@ -1,6 +1,6 @@
 use super::*;
 use axum::{
-    body::{to_bytes, Body},
+    body::{to_bytes, Body, HttpBody as _},
     extract::{Request, State},
     http::{header, StatusCode},
     middleware::Next,
@@ -94,7 +94,14 @@ async fn route_request(
     if !relay.coordinator.is_ready() && !draining_file_peer {
         return unavailable_with(environment.as_ref(), Refusal::CoordinatorNotReady);
     }
-    let body_limit = body_limit(request.uri().path());
+    let mut body_limit = body_limit(request.uri().path());
+    if write_handoff_route {
+        // Reserve the same bound that the collector enforces. A small framed
+        // edit need not reserve the maximum upload size for the entire hop.
+        if let Some(exact) = request.body().size_hint().exact() {
+            body_limit = exact.min(body_limit as u64) as usize;
+        }
+    }
     let Ok(_body_budget) = relay
         .body_budget
         .clone()
