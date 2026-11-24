@@ -34,6 +34,7 @@ const LATER: &str = "2026-09-05T00:30:00Z";
 mod availability;
 mod contention_completion;
 mod contention_tests;
+mod desktop_evidence_tests;
 mod idle_tests;
 mod legacy_log_budget_tests;
 mod operator_audit_tests;

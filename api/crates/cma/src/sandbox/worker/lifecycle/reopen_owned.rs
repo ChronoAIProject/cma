@@ -1,6 +1,6 @@
 //! Reopen under the owner epoch and activate only after durable publication.
 use super::super::SandboxWorker;
-use super::reopen_output::drain;
+use super::reopen_output::{drain, output_refused};
 use crate::sandbox::{live_agents::LiveAgentAttachment, runtime_capabilities, runtime_options};
 use layer2_core::{
     agent_ownership::execution_authority,
@@ -156,7 +156,7 @@ impl SandboxWorker {
             if !authority.is_current() || Instant::now() >= claim.expires() {
                 return Err(refuse_at(id, "reconnect_authority"));
             }
-            let channel = claim
+            let reconnect = claim
                 .follow(drain(
                     self.dependencies.adapter.reconnect_agent(
                         &runtime,
@@ -169,9 +169,17 @@ impl SandboxWorker {
                     self.dependencies.updates.as_ref(),
                     id,
                     &guard,
+                    self.reopen_output_refusal_enabled(&sandbox),
                 ))
-                .await
-                .map_err(reopen_failed(id, "reconnect"))?;
+                .await;
+            if reconnect.as_ref().is_err_and(output_refused) {
+                let parent = claim.read().await?;
+                claim.observe(&parent)?;
+                if !authority.is_current() || !self.reopen_output_refusal_enabled(&parent) {
+                    return Err(refuse_at(id, "refusal_authority"));
+                }
+            }
+            let channel = reconnect.map_err(reopen_failed(id, "reconnect"))?;
             if channel.conversation_id.as_deref() != Some(&conversation) {
                 return Err(reopen_failed(id, "conversation_mismatch")(
                     AdapterError::Rejected(
@@ -190,6 +198,7 @@ impl SandboxWorker {
                         self.dependencies.updates.as_ref(),
                         id,
                         &guard,
+                        false,
                     ))
                     .await
                     .map_err(reopen_failed(id, "settings"))?;

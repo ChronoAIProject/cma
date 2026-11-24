@@ -18,6 +18,15 @@ pub(super) struct Proof {
 }
 
 const REQUEST_ID: &str = "x-request-id";
+// Peers already accept opaque, signed nonces. A prefix negotiates the reply
+// without adding a proof field or trusting a header from the public request.
+const FILE_HANDOFF_NONCE: &str = "file-handoff:";
+
+impl Proof {
+    pub(super) fn reports_file_handoff(&self) -> bool {
+        self.nonce.starts_with(FILE_HANDOFF_NONCE)
+    }
+}
 
 pub(super) struct Authentication {
     key: hmac::Key,
@@ -82,10 +91,16 @@ impl Authentication {
         headers: &HeaderMap,
         body: &[u8],
     ) -> Result<String, ()> {
+        let nonce = uuid::Uuid::new_v4();
+        let nonce = if file_read::eligible(uri.path(), method) {
+            format!("{FILE_HANDOFF_NONCE}{nonce}")
+        } else {
+            nonce.to_string()
+        };
         let proof = Proof {
             sender: sender.into(),
             owner: owner.clone(),
-            nonce: uuid::Uuid::new_v4().to_string(),
+            nonce,
             until: now()? + 10,
         };
         let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&proof).map_err(|_| ())?);

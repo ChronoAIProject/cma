@@ -175,6 +175,24 @@ async fn apply_with_sources(
                     outcome: SandboxMaintenanceOutcome::NotEligible,
                 });
             }
+            let strict_sessions = store.strict_inactivity_session_evidence
+                && request.auto_pause_enabled
+                && !platform_stop;
+            if strict_sessions
+                && !super::evidence::sessions::clear(
+                    store,
+                    &current.id,
+                    &request.requested_at,
+                    session,
+                )
+                .await?
+            {
+                return Ok(MaintenanceReceipt {
+                    sandbox: current,
+                    event: None,
+                    outcome: SandboxMaintenanceOutcome::NotEligible,
+                });
+            }
             let activities = live_activities_with_sources(
                 store,
                 &agents,
@@ -185,9 +203,11 @@ async fn apply_with_sources(
                     failure_policy,
                     legacy_formats_checked: bounded_legacy_log,
                 },
+                strict_sessions,
             )
             .await?;
-            if activities.is_empty()
+            if !strict_sessions
+                && activities.is_empty()
                 && open_session(store, &current, &request.requested_at, session).await?
             {
                 return Ok(MaintenanceReceipt {

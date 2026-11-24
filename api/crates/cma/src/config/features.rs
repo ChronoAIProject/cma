@@ -17,6 +17,8 @@ mod resource_list_tests;
 mod segmentation_tests;
 #[cfg(test)]
 mod stale_turn_tests;
+#[cfg(test)]
+mod strict_inactivity_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
     pub am_startup_health_serving: bool,
@@ -69,6 +71,7 @@ pub(crate) struct FeatureFlags {
     pub pending_home_reconciliation: bool,
     pub agent_control_write_coordination: bool,
     pub bounded_inactivity_legacy_log: bool,
+    pub strict_inactivity_session_evidence: bool,
     pub bounded_title_reads: bool,
     pub access_snapshot_session: bool,
     pub resource_list_batch_reads: bool,
@@ -102,6 +105,7 @@ pub(crate) struct FeatureFlags {
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
+    pub reopen_output_refusal_enabled: bool,
     pub cleanup_continuation_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
@@ -239,6 +243,10 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED",
             )?,
+            reopen_output_refusal_enabled: flag(
+                lookup,
+                "CHRONO_RUNTIME_UPDATE_REOPEN_OUTPUT_REFUSAL_ENABLED",
+            )?,
             cleanup_continuation_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_CLEANUP_CONTINUATION_ENABLED",
@@ -288,6 +296,10 @@ impl FeatureFlags {
             bounded_inactivity_legacy_log: flag(
                 lookup,
                 "CHRONO_BOUNDED_INACTIVITY_LEGACY_LOG_ENABLED",
+            )?,
+            strict_inactivity_session_evidence: flag(
+                lookup,
+                "CHRONO_STRICT_INACTIVITY_SESSION_EVIDENCE_ENABLED",
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
