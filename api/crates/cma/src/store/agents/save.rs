@@ -4,13 +4,20 @@ use super::super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, start_transaction, CommitOutcome, TRANSACTION_ATTEMPTS,
 };
 use super::*;
+use crate::store::agent_log_integrity::TransactionLogError;
 use crate::store::agent_ownership::FenceError;
 use layer2_core::SandboxId;
 
-pub(super) async fn save(
+pub(in crate::store) enum Purpose {
+    Ordinary,
+    ConnectionRecovery,
+}
+
+pub(in crate::store) async fn save(
     store: &MongoSandboxStore,
     expected_revision: u64,
     agent: Agent,
+    purpose: Purpose,
 ) -> Result<(), SandboxStoreError> {
     if agent.revision
         != expected_revision
@@ -68,7 +75,19 @@ pub(super) async fn save(
     )?;
     let new_obligation =
         native_retirement_action::adds_obligation(&current, &agent).then_some(&current.sandbox_id);
-    let result = update(store, &agent.id, filter, fields, new_obligation).await?;
+    let maintenance_parent = match purpose {
+        Purpose::Ordinary => None,
+        Purpose::ConnectionRecovery => Some(&current),
+    };
+    let result = update(
+        store,
+        &agent.id,
+        filter,
+        fields,
+        new_obligation,
+        maintenance_parent,
+    )
+    .await?;
     if result.matched_count == 1 {
         Ok(())
     } else {
@@ -82,11 +101,13 @@ async fn update(
     filter: Document,
     fields: Document,
     new_obligation: Option<&SandboxId>,
+    maintenance_parent: Option<&Agent>,
 ) -> Result<mongodb::results::UpdateResult, SandboxStoreError> {
     let update = doc! {"$set": fields};
     let owner_scoped = store.agent_ownership.is_some()
         && layer2_core::agent_ownership::execution_owner().is_some();
-    if new_obligation.is_none() && !owner_scoped {
+    let fence_owner = new_obligation.is_some() || owner_scoped;
+    if maintenance_parent.is_none() && !fence_owner {
         return store
             .agents
             .update_one(filter, update)
@@ -106,7 +127,12 @@ async fn update(
             }
             return Err(driver(error));
         }
-        if let Err(error) = store.fence_agent_effect_transaction(id, &mut session).await {
+        let ownership = if fence_owner {
+            store.fence_agent_effect_transaction(id, &mut session).await
+        } else {
+            Ok(())
+        };
+        if let Err(error) = ownership {
             let _ = session.abort_transaction().await;
             match error {
                 FenceError::Driver(error)
@@ -116,6 +142,29 @@ async fn update(
                 }
                 FenceError::Driver(error) => return Err(driver(error)),
                 FenceError::Domain(error) => return Err(error),
+            }
+        }
+        if let Some(current) = maintenance_parent {
+            match crate::store::work_publication::agent::fence_parent(store, current, &mut session)
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    let _ = session.abort_transaction().await;
+                    return Err(SandboxStoreError::Conflict);
+                }
+                Err(error) => {
+                    let _ = session.abort_transaction().await;
+                    match error {
+                        TransactionLogError::Driver(error)
+                            if native_retirement_action::retryable_body_error(&error) =>
+                        {
+                            continue;
+                        }
+                        TransactionLogError::Driver(error) => return Err(driver(error)),
+                        TransactionLogError::Domain(error) => return Err(error),
+                    }
+                }
             }
         }
         if let Some(sandbox) = new_obligation {
@@ -138,6 +187,10 @@ async fn update(
             .session(&mut session)
             .await
         {
+            Ok(result) if result.matched_count == 0 && maintenance_parent.is_some() => {
+                session.abort_transaction().await.map_err(driver)?;
+                return Ok(result);
+            }
             Ok(result) => result,
             Err(error) if native_retirement_action::retryable_body_error(&error) => {
                 let _ = session.abort_transaction().await;

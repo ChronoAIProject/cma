@@ -65,9 +65,93 @@ async fn live_connection_scan_and_recovery_cas_are_complete_and_idempotent() {
     assert_eq!(scanned, expected);
 
     let request = connection_recovery_request(&working);
-    let left = store.schedule_agent_connection_recovery(request.clone());
-    let right = store.schedule_agent_connection_recovery(request);
-    let (left, right) = tokio::join!(left, right);
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let maintenance_client = Client::with_uri_str(&uri).await.unwrap();
+    let sandboxes = maintenance_client
+        .database(&name)
+        .collection::<Document>("sandboxes");
+    let parent_key = doc! {"_id": working.sandbox_id.as_str()};
+    let missing_parent_key = doc! {"_id": ready.sandbox_id.as_str()};
+    assert_eq!(
+        sandboxes
+            .delete_one(missing_parent_key)
+            .await
+            .unwrap()
+            .deleted_count,
+        1
+    );
+    assert_eq!(
+        store
+            .schedule_agent_connection_recovery(connection_recovery_request(&ready))
+            .await
+            .unwrap(),
+        AgentConnectionRecoveryOutcome::Superseded
+    );
+    assert_eq!(store.get_agent(&ready.id).await.unwrap(), Some(ready));
+    sandboxes
+        .update_one(
+            parent_key.clone(),
+            doc! {"$set": {"ledger_maintenance": Bson::Null}},
+        )
+        .write_concern(mongodb::options::WriteConcern::majority())
+        .await
+        .unwrap();
+    let held_parent = sandboxes.find_one(parent_key.clone()).await.unwrap();
+    assert_eq!(
+        store
+            .schedule_agent_connection_recovery(request.clone())
+            .await
+            .unwrap(),
+        AgentConnectionRecoveryOutcome::Superseded
+    );
+    assert_eq!(
+        store.get_agent(&working.id).await.unwrap(),
+        Some(working.clone())
+    );
+    assert_eq!(
+        sandboxes.find_one(parent_key.clone()).await.unwrap(),
+        held_parent
+    );
+    sandboxes
+        .update_one(
+            parent_key.clone(),
+            doc! {"$unset": {"ledger_maintenance": ""}},
+        )
+        .write_concern(mongodb::options::WriteConcern::majority())
+        .await
+        .unwrap();
+    let counter = "agent_work_publication_fence";
+    let before = sandboxes
+        .find_one(parent_key.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let before = before.get_i64(counter).unwrap();
+    let successor = MongoSandboxStore::open(&maintenance_client, &name)
+        .await
+        .unwrap();
+    let eligible_reads = Arc::new(tokio::sync::Barrier::new(2));
+    use crate::store::agent_worker_store::CONNECTION_RECOVERY_BEFORE_SAVE;
+    let (left, right) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::join!(
+            CONNECTION_RECOVERY_BEFORE_SAVE.scope(
+                eligible_reads.clone(),
+                store.schedule_agent_connection_recovery(request.clone()),
+            ),
+            CONNECTION_RECOVERY_BEFORE_SAVE.scope(
+                eligible_reads,
+                successor.schedule_agent_connection_recovery(request.clone()),
+            ),
+        )
+    })
+    .await
+    .expect("both scheduling operations must reach the eligible save");
+    let after = sandboxes
+        .find_one(parent_key.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.get_i64(counter).unwrap(), before + 1);
     let outcomes = [left.unwrap(), right.unwrap()];
     assert_eq!(
         outcomes
@@ -88,6 +172,24 @@ async fn live_connection_scan_and_recovery_cas_are_complete_and_idempotent() {
     assert_eq!(scheduled.conversation, working.conversation);
     assert_eq!(scheduled.work.step, AgentWorkStep::PublishConnection);
     assert_eq!(scheduled.revision, working.revision + 1);
+    sandboxes
+        .update_one(
+            parent_key.clone(),
+            doc! {"$set": {"ledger_maintenance": {"phase": "requested"}}},
+        )
+        .write_concern(mongodb::options::WriteConcern::majority())
+        .await
+        .unwrap();
+    let held_parent = sandboxes.find_one(parent_key.clone()).await.unwrap();
+    assert_eq!(
+        store
+            .schedule_agent_connection_recovery(request)
+            .await
+            .unwrap(),
+        AgentConnectionRecoveryOutcome::AlreadyScheduled
+    );
+    assert_eq!(store.get_agent(&working.id).await.unwrap(), Some(scheduled));
+    assert_eq!(sandboxes.find_one(parent_key).await.unwrap(), held_parent);
 
     client.database(&name).drop().await.unwrap();
 }

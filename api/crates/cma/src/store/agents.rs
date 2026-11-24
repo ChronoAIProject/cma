@@ -15,7 +15,7 @@ use super::sandbox_mongo::{
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 
-mod save;
+pub(super) mod save;
 
 pub(super) const LIVE_STATUSES: &[&str] =
     &["starting", "ready", "working", "waiting_approval", "paused"];
@@ -339,7 +339,7 @@ impl AgentStore for MongoSandboxStore {
         expected_revision: u64,
         agent: Agent,
     ) -> Result<(), SandboxStoreError> {
-        save::save(self, expected_revision, agent).await
+        save::save(self, expected_revision, agent, save::Purpose::Ordinary).await
     }
 
     async fn list_agents(
