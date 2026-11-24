@@ -25,7 +25,7 @@ export function validateRelayAuthoring(
   const oldSources = records(previous?.sources);
   if (records(next.sources).filter((source) => source.type === 'native_lark').length > 1)
     throw new Error('A channel can have only one direct Lark / Feishu producer.');
-  for (const source of records(next.sources)) {
+  for (const [index, source] of records(next.sources).entries()) {
     const unchanged = oldSources.some((old) => canonical(old) === canonical(source));
     if (source.type === 'native_lark') {
       if (
@@ -62,7 +62,9 @@ export function validateRelayAuthoring(
           'Enter the exact Lark / Feishu region, app ID (cli_), tenant key and bot open ID (ou_).',
         );
       if (source.separate_app !== true)
-        throw new Error('Confirm that this is a separate app with its own webhook.');
+        throw new Error(
+          `/sources/${index}/separate_app: Confirm that this is a separate app with its own webhook.`,
+        );
       if (object(source.admission).bot_messages === 'native_mentions')
         throw new Error('Direct Lark / Feishu receives human messages only.');
       if (object(next.reply).thread_contract != null)

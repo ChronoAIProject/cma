@@ -1,7 +1,7 @@
 //! Text and bounded media replies through the retained app/chat, with durable confirmed target receipts.
 use super::{
     intents::{DeliveryOutcome, IntentReceipt},
-    render::{RelayText, Renderer},
+    render::{LiteralText, Renderer},
     send::{unsupported, SendContext, SendEffects, Sender},
 };
 use crate::{
@@ -69,7 +69,7 @@ impl Sender {
         let Some(consumer) = ctx.channel.consumer(event.consumer.as_ref()) else {
             return (rejected("native_lark_consumer_unavailable"), effects);
         };
-        let (parts, rendering) = RelayText.render(message, &Capabilities::native_lark());
+        let (parts, rendering) = LiteralText.render(message, &Capabilities::native_lark());
         let editable = !media && !sticker && parts.len() == 1;
         let mut result = IntentReceipt {
             message_parts: vec![],
