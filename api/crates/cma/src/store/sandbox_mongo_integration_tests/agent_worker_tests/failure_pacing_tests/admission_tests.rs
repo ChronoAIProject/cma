@@ -158,3 +158,59 @@ async fn failure_pacing_admission_racing_publication_cannot_reinstall_old_hold()
         client.database(&name).drop().await.unwrap();
     }
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn late_failure_pacing_write_skips_a_held_sandbox() {
+    let (client, name) = database("failure_pacing_held").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let agent = ready_conversation_fixture(&store, "pacing_held").await;
+    let observed = observation(&store, &agent).await;
+    let mutation = fail(&store, &agent.id, 0, None, CLASS).await;
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let independent = Client::with_uri_str(&uri).await.unwrap();
+    let sandboxes = independent
+        .database(&name)
+        .collection::<Document>("sandboxes");
+    let parent_key = doc! {"_id": agent.sandbox_id.as_str()};
+    let agent_key = doc! {"_id": agent.id.as_str()};
+    let original = store
+        .agents
+        .find_one(agent_key.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!original.contains_key(FIELD));
+    let installed = sandboxes
+        .update_one(
+            parent_key.clone(),
+            doc! {
+                "$set": {"ledger_maintenance": mongodb::bson::Bson::Null}
+            },
+        )
+        .write_concern(mongodb::options::WriteConcern::majority())
+        .await
+        .unwrap();
+    assert_eq!(installed.modified_count, 1);
+    let held = sandboxes.find_one(parent_key.clone()).await.unwrap();
+
+    crate::store::agent_failure_pacing::record(&store, &mutation, &observed)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.agents.find_one(agent_key).await.unwrap(),
+        Some(original)
+    );
+    assert_eq!(sandboxes.find_one(parent_key.clone()).await.unwrap(), held);
+
+    sandboxes
+        .update_one(parent_key, doc! {"$unset": {"ledger_maintenance": ""}})
+        .write_concern(mongodb::options::WriteConcern::majority())
+        .await
+        .unwrap();
+    crate::store::agent_failure_pacing::record(&store, &mutation, &observed)
+        .await
+        .unwrap();
+    assert_eq!(until(&store, &agent.id).await, stamp(30));
+    client.database(&name).drop().await.unwrap();
+}

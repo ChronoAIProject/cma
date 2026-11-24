@@ -6,7 +6,11 @@ use layer2_core::sandbox::{Agent, AgentLogKind, AgentWorkStep};
 use mongodb::bson::{doc, Bson, Document};
 use serde::{Deserialize, Serialize};
 
-use super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
+use super::agent_log_integrity::TransactionLogError;
+use super::sandbox_mongo::{
+    commit_transaction, is_transient, signed, start_transaction, CommitOutcome, MongoSandboxStore,
+    DOCUMENT_SCHEMA_VERSION,
+};
 
 pub(super) mod discovery;
 pub(in crate::store) mod ownership;
@@ -151,16 +155,60 @@ pub(super) async fn record_with_marker(
     };
     let mut filter = super::agent_capacity_recovery::source::envelope_filter(next, &row)?;
     filter.insert(FIELD, row.get(FIELD).cloned().unwrap_or(Bson::Null));
-    store
+    let update = doc! {"$set": {FIELD: mongodb::bson::serialize_to_bson(&pacing)
+    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?}};
+    let mut session = store.client.start_session().await.map_err(unavailable)?;
+    if let Err(error) = start_transaction(&mut session).await {
+        return optional_write_error(error);
+    }
+    match super::work_publication::agent::fence_parent(store, next, &mut session).await {
+        Ok(true) => {}
+        Ok(false) | Err(TransactionLogError::Domain(SandboxStoreError::Conflict)) => {
+            let _ = session.abort_transaction().await;
+            return Ok(());
+        }
+        Err(error) => {
+            let _ = session.abort_transaction().await;
+            return match error {
+                TransactionLogError::Domain(error) => Err(error),
+                TransactionLogError::Driver(error) => optional_write_error(error),
+            };
+        }
+    }
+    let saved = store
         .agents
-        .update_one(
-            filter,
-            doc! {"$set": {FIELD: mongodb::bson::serialize_to_bson(&pacing)
-            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?}},
+        .update_one(filter, update)
+        .session(&mut session)
+        .await;
+    match saved {
+        Ok(result) if result.modified_count == 1 => {}
+        other => {
+            let _ = session.abort_transaction().await;
+            return other.map(|_| ()).or_else(optional_write_error);
+        }
+    }
+    optional_commit_result(commit_transaction(&mut session).await)
+}
+
+fn optional_commit_result(outcome: CommitOutcome) -> Result<(), SandboxStoreError> {
+    match outcome {
+        CommitOutcome::Committed | CommitOutcome::Retry(_) => Ok(()),
+        CommitOutcome::Failed(error) => optional_write_error(error),
+        CommitOutcome::Unknown(error) => Err(unavailable(error)),
+    }
+}
+
+fn optional_write_error(error: mongodb::error::Error) -> Result<(), SandboxStoreError> {
+    if is_transient(&error)
+        || matches!(
+            error.get_custom::<SandboxStoreError>(),
+            Some(SandboxStoreError::Conflict)
         )
-        .await
-        .map_err(unavailable)?;
-    Ok(())
+    {
+        Ok(())
+    } else {
+        Err(unavailable(error))
+    }
 }
 
 pub(super) enum Decision {
@@ -228,4 +276,15 @@ pub(super) async fn decision(
 
 fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
     SandboxStoreError::Unavailable(error.to_string())
+}
+
+#[cfg(test)]
+#[test]
+fn retry_hint_preserves_publication_on_known_refusal_but_reports_unknown_commit() {
+    let conflict = || mongodb::error::Error::custom(SandboxStoreError::Conflict);
+    assert!(optional_commit_result(CommitOutcome::Failed(conflict())).is_ok());
+    assert!(matches!(
+        optional_commit_result(CommitOutcome::Unknown(conflict())),
+        Err(SandboxStoreError::Unavailable(_))
+    ));
 }
