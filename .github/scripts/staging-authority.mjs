@@ -1,4 +1,4 @@
-import { externalCleanupActions, validateExternalAccountCleanup } from './external-account-cleanup.mjs';
+import { externalCleanupActions, validateSignupCleanup } from './external-account-cleanup.mjs';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -93,6 +93,8 @@ const commitInput = (action) => commandInput(() => {
   return value;
 });
 
+export const signupCase = 'J0 new account returns to the same Trigger and reaches ready after one CMA click';
+
 export const requiredCases = [
   'SMOKE public discovery and landing are read-only',
   'SECURITY anonymous badge sets no cookie and references no credentials',
@@ -103,7 +105,7 @@ export const requiredCases = [
   connectionCaseTitles['FAULT-popup-blocked'],
   connectionCaseTitles['FAULT-handoff-response'],
   connectionCaseTitles['FAULT-nyxid'],
-  'J0 new account returns to the same Trigger and reaches ready after one CMA click',
+  signupCase,
   'J1 always-new creates distinct visitor-owned Sandboxes',
   'J2 reuse Sandbox creates a new Workspace each time',
   'J3 reuse both supports ask resume, ask new and resume-existing',
@@ -273,7 +275,7 @@ function attest(output) {
   withPhase('attestation_output', () => writeFileSync(output, JSON.stringify({ request, receipt }), { flag: 'wx', mode: 0o600 }));
 }
 
-export function validateCampaign(results, journal, cleanupAuthority) {
+export function validateCampaign(results, journal, cleanupAuthority, fixtureOwner) {
   withPhase('campaign_results', () => {
     keys(results, ['status', 'cases']);
     assert.equal(results.status, 'passed');
@@ -281,7 +283,12 @@ export function validateCampaign(results, journal, cleanupAuthority) {
     for (const row of results.cases) {
       const current = [currentJourneyCases.j5, currentJourneyCases.j6].includes(row.case);
       const connection = Object.values(connectionCaseTitles).includes(row.case);
-      keys(row, ['case', 'status', 'durationMs', ...(current ? ['proof'] : []), ...(connection ? ['connectionProof'] : [])]);
+      keys(row, [
+        'case', 'status', 'durationMs',
+        ...(current ? ['proof'] : []),
+        ...(connection ? ['connectionProof'] : []),
+        ...(row.case === signupCase ? ['signupCleanup'] : []),
+      ]);
       assert.equal(row.status, 'passed');
       assert.ok(Number.isFinite(row.durationMs) && row.durationMs >= 0);
     }
@@ -289,7 +296,8 @@ export function validateCampaign(results, journal, cleanupAuthority) {
   withPhase('cleanup_journal', () => {
     assert.ok(Array.isArray(journal));
     assert.ok(journal.length > 0);
-    validateExternalAccountCleanup(journal, cleanupAuthority);
+    const signup = results.cases.find((row) => row.case === signupCase);
+    validateSignupCleanup(signup.signupCleanup, journal, cleanupAuthority, fixtureOwner);
     assert.ok(journal.some((row) => row.action === 'created'));
     assert.ok(!journal.some((row) => ['cleanup_refused', 'cleanup_blocked', 'cleanup_read_failed', 'cleanup_failed', 'cleanup_pending', 'stop_pending'].includes(row.action)));
     const identity = (row) => JSON.stringify([row.run, row.kind, row.id, row.subject]);
@@ -386,7 +394,7 @@ function audit(directory, beforePath, afterPath) {
   const results = withPhase('campaign_results', () => JSON.parse(readFileSync(join(directory, 'results.json'), 'utf8')));
   const journal = withPhase('cleanup_journal', () => readFileSync(join(directory, 'cleanup.ndjson'), 'utf8').trim().split('\n').map((line) => JSON.parse(line)));
   const cleanupAuthority = withPhase('cleanup_journal', () => loadCleanupAuthority(after.request.expected.origin));
-  validateCampaign(results, journal, cleanupAuthority);
+  validateCampaign(results, journal, cleanupAuthority, process.env.CMA_E2E_FIXTURE_OWNER);
   const connectionProofs = withPhase('connection_fixtures', () => {
     const fixture = JSON.parse(privateFile(process.env.CMA_E2E_FIXTURE_FILE));
     const proofs = validateConnectionCases(results, journal);

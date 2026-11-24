@@ -7,10 +7,10 @@ import { campaignFixture } from './public-journey-evidence.fixture.mjs';
 test('current campaign has 33 distinct cases including independent historical compatibility', () => {
   assert.equal(requiredCases.length, 33);
   assert.equal(new Set(requiredCases).size, 33);
-  const { results, journal } = campaignFixture(requiredCases);
-  validateCampaign(results, journal);
+  const { results, journal, cleanupAuthority, fixtureOwner } = campaignFixture(requiredCases);
+  validateCampaign(results, journal, cleanupAuthority, fixtureOwner);
   for (const name of Object.values(currentJourneyCases)) {
-    assert.throws(() => validateCampaign({ ...results, cases: results.cases.filter((row) => row.case !== name) }, journal));
+    assert.throws(() => validateCampaign({ ...results, cases: results.cases.filter((row) => row.case !== name) }, journal, cleanupAuthority, fixtureOwner));
   }
   const old = structuredClone(results);
   old.cases.find((row) => row.case === currentJourneyCases.j6).case = 'J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and rotation preserve work';
@@ -45,9 +45,9 @@ for (const [name, change] of [
   ['missing placement count', (p) => { p.publications[0].stats.after.placements[0].agents_ready_total = 0; }],
   ['unsafe extra detail', (p) => { p.publications[0].rawResponse = 'unreviewed-content'; }],
 ]) test(`J5 audit rejects ${name}`, () => {
-  const { results, journal } = campaignFixture(requiredCases);
+  const { results, journal, cleanupAuthority, fixtureOwner } = campaignFixture(requiredCases);
   change(results.cases.find((row) => row.case === currentJourneyCases.j5).proof);
-  assert.throws(() => validateCampaign(results, journal));
+  assert.throws(() => validateCampaign(results, journal, cleanupAuthority, fixtureOwner));
 });
 
 for (const [name, change] of [
@@ -63,15 +63,15 @@ for (const [name, change] of [
   ['rotation unchanged', (p) => { p.after[2].snapshot.imageReferenceHash = p.before.imageReferenceHash; }],
   ['deleted sibling', (p) => { p.survivingAgentId = p.deletedAgentId; }],
 ]) test(`J6 audit rejects ${name}`, () => {
-  const { results, journal } = campaignFixture(requiredCases);
+  const { results, journal, cleanupAuthority, fixtureOwner } = campaignFixture(requiredCases);
   change(results.cases.find((row) => row.case === currentJourneyCases.j6).proof);
-  assert.throws(() => validateCampaign(results, journal));
+  assert.throws(() => validateCampaign(results, journal, cleanupAuthority, fixtureOwner));
 });
 
 test('passed proofs cannot substitute for owned resource and terminal cleanup records', () => {
-  const { results, journal } = campaignFixture(requiredCases);
+  const { results, journal, cleanupAuthority, fixtureOwner } = campaignFixture(requiredCases);
   for (const removed of journal.filter((row) => row.action === 'created')) {
     const without = journal.filter((row) => row.kind !== removed.kind || row.id !== removed.id);
-    assert.throws(() => validateCampaign(results, without));
+    assert.throws(() => validateCampaign(results, without, cleanupAuthority, fixtureOwner));
   }
 });

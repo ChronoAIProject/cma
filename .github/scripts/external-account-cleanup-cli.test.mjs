@@ -1,24 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { existsSync, readFileSync } from 'node:fs';
-import { externalCleanupFixture } from './external-account-cleanup.fixture.mjs';
-import { hash, canaries, line, harness } from './staging-authority-cli.fixture.mjs';
+import { canaries, line, harness } from './staging-authority-cli.fixture.mjs';
 
-for (const mode of ['confirmed', 'pending', 'untrusted', 'tampered', 'legacy', 'cma-incomplete']) {
+for (const mode of ['confirmed', 'missing', 'pending', 'untrusted', 'tampered', 'legacy', 'cma-incomplete', 'wrong-fixture']) {
   test(`CLI external cleanup ${mode} preserves private diagnostics and pending history`, (t) => {
     const h = harness(t);
-    const f = externalCleanupFixture();
-    const trust = JSON.stringify(f.authority.trust);
-    h.write('cleanup-trust.json', trust);
-    h.env.CMA_E2E_CLEANUP_TRUST_FILE = h.path('cleanup-trust.json');
-    h.env.CMA_E2E_CLEANUP_TRUST_SHA256 = hash(trust);
+    const f = h.cleanup;
     if (mode === 'untrusted') {
       delete h.env.CMA_E2E_CLEANUP_TRUST_FILE;
       delete h.env.CMA_E2E_CLEANUP_TRUST_SHA256;
     }
     if (mode === 'tampered') f.confirmed.receipt.payload.receiptId = canaries[3];
     if (mode === 'legacy') delete f.pending.schema;
-    const journal = [...(mode === 'cma-incomplete' ? h.journal.slice(1) : h.journal), f.pending, ...(mode === 'pending' ? [] : [f.confirmed])];
+    if (mode === 'wrong-fixture') h.env.CMA_E2E_FIXTURE_OWNER = 'other-fixture-owner';
+    let journal = h.journal;
+    if (mode === 'cma-incomplete') journal = journal.slice(1);
+    if (mode === 'pending') journal = journal.filter((row) => row !== f.confirmed);
+    if (mode === 'missing') journal = journal.filter((row) => row !== f.pending && row !== f.confirmed);
     const bytes = journal.map((row) => JSON.stringify(row)).join('\n');
     h.write('cleanup.ndjson', bytes);
     const result = h.run('audit');

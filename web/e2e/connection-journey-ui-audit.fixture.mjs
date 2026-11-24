@@ -26,7 +26,7 @@ try {
   ];
   audit.fixture.visitors[proof.caseId] = input.fixture.visitor;
   assert.deepEqual(audit.fixture.connectionJourneys, input.fixture.connectionJourneys);
-  validateCampaign(audit.results, journal);
+  validateCampaign(audit.results, journal, audit.cleanup.authority, audit.fixture.fixtureOwner);
   assert.equal(
     missingConnectionCoverage(
       audit.results.cases.flatMap((entry) =>

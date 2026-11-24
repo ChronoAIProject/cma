@@ -8,8 +8,8 @@ import { requiredCases, validateCampaign } from './staging-authority.mjs';
 import { harness, line } from './staging-authority-cli.fixture.mjs';
 
 test('six connection proofs bind to owned Launches and independent fixture context but cannot qualify the matrix', () => {
-  const { results, journal, connectionFixture } = campaignFixture(requiredCases);
-  validateCampaign(results, journal);
+  const { results, journal, connectionFixture, cleanupAuthority, fixtureOwner } = campaignFixture(requiredCases);
+  validateCampaign(results, journal, cleanupAuthority, fixtureOwner);
   const proofs = validateConnectionCases(results, journal);
   bindConnectionFixtures(proofs, connectionFixture, connectionFixture.provenance.nyxidCommit);
   assert.equal(proofs.length, 6);
@@ -30,9 +30,9 @@ for (const [caseId, title] of Object.entries(connectionCaseTitles)) {
       (row) => { row.connectionProof.ownerDigest = '0'.repeat(64); },
       (row) => { row.proof = row.connectionProof; delete row.connectionProof; },
     ]) {
-      const { results, journal } = campaignFixture(requiredCases);
+      const { results, journal, cleanupAuthority, fixtureOwner } = campaignFixture(requiredCases);
       update(results.cases.find((row) => row.case === title));
-      assert.throws(() => validateCampaign(results, journal));
+      assert.throws(() => validateCampaign(results, journal, cleanupAuthority, fixtureOwner));
     }
   });
 }

@@ -7,7 +7,7 @@ import test from 'node:test';
 import { cleanupReceiptBytes, validateExternalAccountCleanup } from './external-account-cleanup.mjs';
 import { externalCleanupFixture } from './external-account-cleanup.fixture.mjs';
 import { campaignFixture } from './public-journey-evidence.fixture.mjs';
-import { loadCleanupAuthority, requiredCases, validateCampaign } from './staging-authority.mjs';
+import { loadCleanupAuthority, requiredCases, signupCase, validateCampaign } from './staging-authority.mjs';
 
 const validate = (fixture, rows = [fixture.pending, fixture.confirmed]) => validateExternalAccountCleanup(rows, fixture.authority, fixture.now);
 
@@ -21,18 +21,30 @@ test('pending history and identical receipts are retained with deterministic ide
   assert.deepEqual(cleanupReceiptBytes(reordered), cleanupReceiptBytes(f.payload));
 });
 
-test('all 33 cases and complete CMA cleanup still fail while the new identity is pending', () => {
-  const { results, journal } = campaignFixture(requiredCases);
+test('complete case results require both J0 evidence and its signed terminal cleanup', () => {
   const f = externalCleanupFixture();
-  validateCampaign(results, journal);
-  assert.throws(() => validateCampaign(results, [...journal, f.pending]));
-  assert.throws(() => validateCampaign(results, [...journal, f.pending], f.authority));
-  assert.throws(() => validateCampaign(results, [...journal, f.pending, f.confirmed]));
-  validateCampaign(results, [...journal, f.pending, f.confirmed], f.authority);
-  assert.throws(() => validateCampaign(results, [...journal.slice(1), f.pending, f.confirmed], f.authority));
-  const incomplete = journal.filter((row, index) => index !== 1);
-  assert.throws(() => validateCampaign(results, [...incomplete, f.pending, f.confirmed], f.authority));
+  const { results, journal, fixtureOwner } = campaignFixture(requiredCases, f);
+  const check = (rows = journal) => validateCampaign(results, rows, f.authority, fixtureOwner);
+  check();
+  assert.throws(() => check(journal.slice(0, -2)));
+  assert.throws(() => check(journal.slice(0, -1)));
+  assert.throws(() => check(journal.slice(1)));
+  assert.throws(() => validateCampaign(results, journal, undefined, fixtureOwner));
+  assert.throws(() => validateCampaign(results, journal, f.authority, 'different-fixture'));
+  delete results.cases.find((row) => row.case === signupCase).signupCleanup;
+  assert.throws(() => check());
 });
+
+for (const key of ['run', 'requestId', 'subject']) {
+  test(`a valid terminal receipt for a different signup ${key} does not resolve J0`, () => {
+    const f = externalCleanupFixture();
+    const { results, journal, fixtureOwner } = campaignFixture(requiredCases, f);
+    const pending = { ...f.pending, [key]: 'different-value' };
+    const confirmed = { ...f.confirmed, run: pending.run, receipt: f.signed({ ...f.payload, [key]: pending[key] }) };
+    validate(f, [pending, confirmed]);
+    assert.throws(() => validateCampaign(results, [...journal.slice(0, -2), pending, confirmed], f.authority, fixtureOwner));
+  });
+}
 
 for (const [name, change] of [
   ['other run', (p) => { p.run = 'other-run'; }],

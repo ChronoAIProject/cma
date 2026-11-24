@@ -12,7 +12,9 @@ const time = (value) => {
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const lifetime = 15 * 60 * 1000;
 export const externalCleanupActions = Object.freeze(['external_account_cleanup_required', 'external_account_cleanup_confirmed']);
-const pendingFields = ['run', 'at', 'action', 'schema', 'requestId', 'fixtureOwner', 'subject', 'originHash'];
+const signupFields = ['run', 'requestId', 'fixtureOwner', 'subject'];
+const bindingFields = [...signupFields, 'originHash'];
+const pendingFields = ['at', 'action', 'schema', ...bindingFields];
 const receiptFields = ['schema', 'receiptId', 'issuer', 'keyId', 'run', 'requestId', 'fixtureOwner', 'subject', 'originHash', 'state', 'completedAt', 'issuedAt', 'expiresAt'];
 
 // Fixed field order is the signature wire contract; raw JSON whitespace is not authority.
@@ -50,7 +52,7 @@ function trustedKeys(authority, now) {
 /** Pending history remains append-only. Only a scoped, signed terminal receipt resolves it. */
 export function validateExternalAccountCleanup(journal, authority, now = Date.now()) {
   const rows = journal.filter((row) => externalCleanupActions.includes(row.action));
-  if (!rows.length) return;
+
   const pending = new Map();
   const scopes = new Map();
   for (const row of rows) {
@@ -61,7 +63,7 @@ export function validateExternalAccountCleanup(journal, authority, now = Date.no
     assert.match(row.originHash, /^[a-f0-9]{64}$/);
     const requestedAt = time(row.at);
     assert.ok(requestedAt <= now + 5000);
-    const binding = ['run', 'requestId', 'fixtureOwner', 'subject', 'originHash'].map((key) => row[key]);
+    const binding = bindingFields.map((key) => row[key]);
     const scope = JSON.stringify([row.run, row.fixtureOwner, row.subject, row.originHash]);
     assert.ok(!scopes.has(scope) || scopes.get(scope) === row.requestId);
     scopes.set(scope, row.requestId);
@@ -90,7 +92,7 @@ export function validateExternalAccountCleanup(journal, authority, now = Date.no
     assert.equal(row.run, payload.run);
     assert.ok(seenPending.has(payload.requestId), 'Confirmation must follow the recorded request');
     const request = pending.get(payload.requestId);
-    assert.deepEqual(['run', 'requestId', 'fixtureOwner', 'subject', 'originHash'].map((key) => payload[key]), request.binding);
+    assert.deepEqual(bindingFields.map((key) => payload[key]), request.binding);
     assert.equal(payload.state, 'deleted');
     const completed = time(payload.completedAt), issued = time(payload.issuedAt), expires = time(payload.expiresAt);
     assert.ok(completed >= request.requestedAt && completed <= issued);
@@ -109,4 +111,17 @@ export function validateExternalAccountCleanup(journal, authority, now = Date.no
     request.confirmed = true;
   }
   assert.ok([...pending.values()].every((request) => request.confirmed), 'External account cleanup remains pending');
+  return pending;
+}
+
+export function validateSignupCleanup(signup, journal, authority, fixtureOwner) {
+  keys(signup, signupFields);
+  for (const key of signupFields) id(signup[key]);
+  id(fixtureOwner);
+  assert.equal(signup.fixtureOwner, fixtureOwner);
+  const pending = validateExternalAccountCleanup(journal, authority);
+  const request = pending.get(signup.requestId);
+  assert.ok(request?.confirmed, 'J0 needs a matching terminal cleanup receipt');
+  const binding = { ...signup, originHash: authority.trust.originHash };
+  assert.deepEqual(request.binding, bindingFields.map((key) => binding[key]));
 }

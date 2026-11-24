@@ -126,26 +126,26 @@ for (const outcome of ['success', 'child failure', 'invalid JSON', 'invalid rece
 }
 
 test('full campaign evidence refuses discovery, skips, owner-only runs and any unsettled cleanup', () => {
-  const { results, journal: proofJournal } = campaignFixture(requiredCases);
+  const { results, journal: proofJournal, cleanupAuthority, fixtureOwner } = campaignFixture(requiredCases);
   const identity = { run: 'run-test', at: new Date().toISOString(), kind: 'sandboxes', id: 'sbx_test', subject: 'owner' };
   const journal = [{ ...identity, action: 'created' }, { ...identity, action: 'cleanup_complete' }, ...proofJournal];
-  validateCampaign(results, journal);
-  assert.throws(() => validateCampaign({ status: 'passed', cases: [] }, journal));
-  assert.throws(() => validateCampaign({ status: 'passed', cases: [{ case: 'OWNER partial', status: 'passed' }] }, journal));
-  assert.throws(() => validateCampaign({ ...results, cases: results.cases.map((row, index) => index ? row : { ...row, status: 'skipped' }) }, journal));
-  for (const removed of requiredCases) assert.throws(() => validateCampaign({ ...results, cases: results.cases.filter((row) => row.case !== removed) }, journal), removed);
-  assert.throws(() => validateCampaign({ ...results, cases: [...results.cases, results.cases[0]] }, journal));
-  assert.throws(() => validateCampaign(results, [journal[0]]));
-  assert.throws(() => validateCampaign(results, [...journal].reverse()));
-  assert.throws(() => validateCampaign(results, []));
-  assert.throws(() => validateCampaign(results, [{ action: 'created' }, { action: 'cleanup_complete' }]));
-  assert.throws(() => validateCampaign(results, [journal[0], journal[0], journal[1]]));
-  assert.throws(() => validateCampaign(results, [journal[0], { ...journal[1], subject: 'other' }]));
-  for (const action of ['cleanup_failed', 'cleanup_pending', 'cleanup_blocked', 'external_account_cleanup_required']) assert.throws(() => validateCampaign(results, [...journal, { action }]));
+  validateCampaign(results, journal, cleanupAuthority, fixtureOwner);
+  assert.throws(() => validateCampaign({ status: 'passed', cases: [] }, journal, cleanupAuthority, fixtureOwner));
+  assert.throws(() => validateCampaign({ status: 'passed', cases: [{ case: 'OWNER partial', status: 'passed' }] }, journal, cleanupAuthority, fixtureOwner));
+  assert.throws(() => validateCampaign({ ...results, cases: results.cases.map((row, index) => index ? row : { ...row, status: 'skipped' }) }, journal, cleanupAuthority, fixtureOwner));
+  for (const removed of requiredCases) assert.throws(() => validateCampaign({ ...results, cases: results.cases.filter((row) => row.case !== removed) }, journal, cleanupAuthority, fixtureOwner), removed);
+  assert.throws(() => validateCampaign({ ...results, cases: [...results.cases, results.cases[0]] }, journal, cleanupAuthority, fixtureOwner));
+  assert.throws(() => validateCampaign(results, [journal[0]], cleanupAuthority, fixtureOwner));
+  assert.throws(() => validateCampaign(results, [...journal].reverse(), cleanupAuthority, fixtureOwner));
+  assert.throws(() => validateCampaign(results, [], cleanupAuthority, fixtureOwner));
+  assert.throws(() => validateCampaign(results, [{ action: 'created' }, { action: 'cleanup_complete' }], cleanupAuthority, fixtureOwner));
+  assert.throws(() => validateCampaign(results, [journal[0], journal[0], journal[1]], cleanupAuthority, fixtureOwner));
+  assert.throws(() => validateCampaign(results, [journal[0], { ...journal[1], subject: 'other' }], cleanupAuthority, fixtureOwner));
+  for (const action of ['cleanup_failed', 'cleanup_pending', 'cleanup_blocked', 'external_account_cleanup_required']) assert.throws(() => validateCampaign(results, [...journal, { action }], cleanupAuthority, fixtureOwner));
 });
 
 test('task cleanup requires an owned terminal operation and its discovered Agent cleanup', () => {
-  const { results, journal: proofJournal } = campaignFixture(requiredCases);
+  const { results, journal: proofJournal, cleanupAuthority, fixtureOwner } = campaignFixture(requiredCases);
   const operation = { run: 'run-test', at: new Date().toISOString(), kind: 'agent-lifecycle', id: 'operation-test', subject: 'owner' };
   const agent = { ...operation, kind: 'agents', id: 'agent-test' };
   const journal = [
@@ -155,14 +155,14 @@ test('task cleanup requires an owned terminal operation and its discovered Agent
     { ...agent, action: 'cleanup_complete' },
     ...proofJournal,
   ];
-  validateCampaign(results, journal);
+  validateCampaign(results, journal, cleanupAuthority, fixtureOwner);
   for (const state of ['queued', 'running', 'waiting_for_connection'])
-    assert.throws(() => validateCampaign(results, journal.map((row, index) => index === 2 ? { ...row, state } : row)));
-  assert.throws(() => validateCampaign(results, journal.filter((_, index) => index !== 2)));
-  assert.throws(() => validateCampaign(results, journal.filter((_, index) => index !== 3)));
-  assert.throws(() => validateCampaign(results, journal.map((row, index) => index === 2 ? { ...row, agent_id: 'other-agent' } : row)));
-  assert.throws(() => validateCampaign(results, journal.map((row, index) => index === 2 ? { ...row, subject: 'other-owner' } : row)));
-  validateCampaign(results, [journal[0], { ...operation, action: 'lifecycle_observed', state: 'failed' }, ...proofJournal]);
+    assert.throws(() => validateCampaign(results, journal.map((row, index) => index === 2 ? { ...row, state } : row), cleanupAuthority, fixtureOwner));
+  assert.throws(() => validateCampaign(results, journal.filter((_, index) => index !== 2), cleanupAuthority, fixtureOwner));
+  assert.throws(() => validateCampaign(results, journal.filter((_, index) => index !== 3), cleanupAuthority, fixtureOwner));
+  assert.throws(() => validateCampaign(results, journal.map((row, index) => index === 2 ? { ...row, agent_id: 'other-agent' } : row), cleanupAuthority, fixtureOwner));
+  assert.throws(() => validateCampaign(results, journal.map((row, index) => index === 2 ? { ...row, subject: 'other-owner' } : row), cleanupAuthority, fixtureOwner));
+  validateCampaign(results, [journal[0], { ...operation, action: 'lifecycle_observed', state: 'failed' }, ...proofJournal], cleanupAuthority, fixtureOwner);
 });
 
 test('both attestations are validated with a bounded three-hour campaign window', () => {
@@ -352,12 +352,12 @@ test('phase metadata belongs to each error across nested and successive exported
   assert.equal(capture(() => withPhase('audit_output', () => { throw nested; })), nested);
 
   const h = harness(t);
-  const campaign = capture(() => validateCampaign({ status: 'passed', cases: [] }, h.journal));
+  const campaign = capture(() => validateCampaign({ status: 'passed', cases: [] }, h.journal, h.cleanup.authority, h.fixture.fixtureOwner));
   const observe = (execute) => runObserver(h.env.CMA_ATTESTATION_VERIFIER, h.env.VERIFIER_SHA256, h.env.CMA_ATTESTATION_CONFIG, h.env.CONFIG_SHA256, h.before.request, execute);
   const receipt = capture(() => observe(() => canaries[4]));
   const observer = capture(() => observe(() => { throw { code: 'ETIMEDOUT' }; }));
   assert.deepEqual(observe(() => JSON.stringify(h.before.receipt)), h.before.receipt);
-  validateCampaign(h.results, h.journal);
+  validateCampaign(h.results, h.journal, h.cleanup.authority, h.fixture.fixtureOwner);
   assert.equal(formatRefusal(receipt, 'attest', 'attestation'), line('attest', 'receipt'));
   assert.equal(formatRefusal(campaign, 'audit', 'audit'), line('audit', 'campaign_results', 'campaign_results', 'audit'));
   assert.equal(formatRefusal(observer, 'attest', 'attestation'), line('attest', 'observer', 'observer_timeout'));

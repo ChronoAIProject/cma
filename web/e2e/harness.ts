@@ -65,6 +65,7 @@ export class Harness {
   private identityFlow = false;
   private journeyProof?: Record<string, unknown>;
   private connectionProof?: ConnectionProof;
+  private signupCleanup?: { run: string; requestId: string; fixtureOwner: string; subject: string };
   constructor(
     readonly browser: Browser,
     readonly operators: Hooks,
@@ -158,12 +159,17 @@ export class Harness {
             )
           )
             throw new Error('J0 returned an existing fixture identity');
-          account.subject = identity.subject;
-          this.journal.requireExternalAccountCleanup(
+          const { subject } = identity;
+          const { fixtureOwner } = this.fixture;
+          const requestId = this.journal.requireExternalAccountCleanup(
             this.config.baseURL,
-            this.fixture.fixtureOwner,
-            account.subject,
+            fixtureOwner,
+            subject,
           );
+          const signupCleanup = { run: this.journal.run, requestId, fixtureOwner, subject };
+          assertCredentialFree(JSON.stringify(signupCleanup), this.forbidden);
+          this.signupCleanup = signupCleanup;
+          account.subject = subject;
         }
         this.journal.observe(
           url.pathname,
@@ -209,6 +215,11 @@ export class Harness {
     if (this.connectionProof)
       await info.attach('connection-journey-proof', {
         body: JSON.stringify(this.connectionProof),
+        contentType: 'application/json',
+      });
+    if (this.caseId === 'J0' && this.signupCleanup)
+      await info.attach('signup-cleanup', {
+        body: JSON.stringify(this.signupCleanup),
         contentType: 'application/json',
       });
   }

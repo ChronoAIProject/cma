@@ -1,5 +1,7 @@
 import { currentJourneyCases } from './public-journey-evidence.mjs';
 import { connectionCampaignFixture } from './connection-campaign.fixture.mjs';
+import { externalCleanupFixture } from './external-account-cleanup.fixture.mjs';
+import { signupCase } from './staging-authority.mjs';
 
 // Synthetic receipts exercise the auditor; they are never remote journey evidence.
 export function journeyEvidenceFixture() {
@@ -60,15 +62,19 @@ export function journeyEvidenceFixture() {
   return { proofs: { [currentJourneyCases.j5]: j5, [currentJourneyCases.j6]: j6 }, journal };
 }
 
-export function campaignFixture(cases) {
+export function campaignFixture(cases, cleanup = externalCleanupFixture()) {
   const { proofs, journal } = journeyEvidenceFixture();
   const connections = connectionCampaignFixture();
   return {
     results: { status: 'passed', cases: cases.map((title) => ({
       case: title, status: 'passed', durationMs: 1,
+      ...(title === signupCase ? { signupCleanup: cleanup.signupCleanup } : {}),
       ...(proofs[title] ? { proof: proofs[title] } : {}),
       ...(connections.proofs[title] ? { connectionProof: connections.proofs[title] } : {}),
     })) },
-    journal: [...journal, ...connections.journal], connectionFixture: connections.fixture,
+    journal: [...journal, ...connections.journal, cleanup.pending, cleanup.confirmed],
+    connectionFixture: connections.fixture,
+    cleanupAuthority: cleanup.authority,
+    fixtureOwner: cleanup.signupCleanup.fixtureOwner,
   };
 }

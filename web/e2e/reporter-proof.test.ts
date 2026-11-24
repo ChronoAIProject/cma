@@ -14,6 +14,7 @@ afterEach(() => {
 for (const [name, field, other] of [
   ['public-journey-proof', 'proof', 'connectionProof'],
   ['connection-journey-proof', 'connectionProof', 'proof'],
+  ['signup-cleanup', 'signupCleanup', 'proof'],
 ] as const)
   for (const mode of ['one', 'invalid', 'duplicate', 'wrong-media', 'file-only', 'none'])
     it(`reporter preserves a separate ${name} channel and refuses ambiguous attachments: ${mode}`, () => {
