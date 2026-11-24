@@ -149,9 +149,26 @@ async fn title_effect_failure_survives_off_and_arbitrarily_later_claims() {
             )
             .await
             .unwrap(),
+        AgentTitleOutcome::Fallback
+    );
+    // The fallback sends nothing: the effect stays unresolved, with no redispatch (#2266).
+    assert!(off.agent_title_effect(&id).await.unwrap().unknown());
+    assert_eq!(
+        off.agent_title(&id).await.unwrap().unwrap().source,
+        AgentTitleSource::Fallback
+    );
+    assert_eq!(
+        successor
+            .generate_agent_title_at(
+                &id,
+                Some(&context()),
+                Some(&generator),
+                std::time::SystemTime::now() + std::time::Duration::from_secs(2_000_000)
+            )
+            .await
+            .unwrap(),
         AgentTitleOutcome::Skipped
     );
-    assert!(off.agent_title_effect(&id).await.unwrap().unknown());
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 #[tokio::test]
@@ -176,7 +193,7 @@ async fn title_effect_cancellation_retains_uncertainty_without_redispatch() {
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     assert!(store.agent_title_effect(&id).await.unwrap().unknown());
-    let next = AgentTitleService::new(store, "next").unwrap();
+    let next = AgentTitleService::new(store.clone(), "next").unwrap();
     let generator = Generator {
         calls: calls.clone(),
         fail: false,
@@ -191,8 +208,9 @@ async fn title_effect_cancellation_retains_uncertainty_without_redispatch() {
         )
         .await
         .unwrap(),
-        AgentTitleOutcome::Skipped
+        AgentTitleOutcome::Fallback
     );
+    assert!(store.agent_title_effect(&id).await.unwrap().unknown());
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 #[tokio::test]

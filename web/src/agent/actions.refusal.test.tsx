@@ -1,5 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
+import { ApiError } from '@cma/client';
 import { CommandKeys } from '../api/client';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, agentClient } from '../test/agent';
 import { workspaceFixture } from '../test/hierarchy';
@@ -100,3 +101,15 @@ it.each(['send', 'steer', 'interrupt', 'approval'] as const)(
     expect(input.setPending).not.toHaveBeenCalled();
   },
 );
+
+it('retains the server guidance for a temporarily unavailable Agent', async () => {
+  const input = options();
+  vi.mocked(input.client.runAgent).mockRejectedValue(
+    new ApiError(409, 'Wait for this Agent to become ready.', 'agent_not_ready'),
+  );
+  const view = renderHook(() => useAgentActions(input));
+  await act(() => view.result.current.run('Keep my draft'));
+  expect(input.setActionError).toHaveBeenLastCalledWith(
+    'ApiError: Wait for this Agent to become ready.',
+  );
+});

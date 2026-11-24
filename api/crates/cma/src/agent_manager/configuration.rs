@@ -8,26 +8,22 @@ impl AgentManager {
         settings: &AgentManagerReplicas,
         features: &FeatureFlags,
     ) -> Result<Arc<Self>, String> {
-        if features.am_failure_containment_enabled {
-            return Self::register_with_policy(
-                store,
-                registry,
-                settings.relay_address.clone(),
-                settings.max_owned_agents,
-                features.ownership_cleanup_pacing,
-                MaintenancePolicy::ContainFailures,
-            )
-            .await;
-        }
-        let manager = Self::register(
+        let policy = if features.am_failure_containment_enabled {
+            MaintenancePolicy::ContainFailures
+        } else {
+            MaintenancePolicy::Legacy
+        };
+        let manager = Self::register_with_policy_options(
             store,
             registry,
             settings.relay_address.clone(),
             settings.max_owned_agents,
             features.ownership_cleanup_pacing,
+            policy,
+            features.batch_ownership_renewal,
         )
         .await?;
-        if features.receiver_housekeeping_containment {
+        if features.receiver_housekeeping_containment && !features.am_failure_containment_enabled {
             manager.enable_receiver_containment();
         }
         Ok(manager)

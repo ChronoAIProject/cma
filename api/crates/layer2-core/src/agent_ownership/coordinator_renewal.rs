@@ -1,6 +1,14 @@
 use super::super::authority::ReceiverCancellation;
 use super::*;
 
+#[cfg(test)]
+type BeforeRenewalDeadline = Box<dyn Fn(&Authority, &'static str) + Send>;
+
+#[cfg(test)]
+tokio::task_local! {
+    pub(super) static BEFORE_RENEWAL_DEADLINE: BeforeRenewalDeadline;
+}
+
 impl OwnershipCoordinator {
     pub(super) async fn renew_owned(
         &self,
@@ -126,6 +134,97 @@ impl OwnershipCoordinator {
             }
         }
     }
+
+    pub(super) fn apply_renewal(
+        &self,
+        authority: &Authority,
+        started: Instant,
+        now_ms: i64,
+        lease: &OwnershipLease,
+    ) -> Result<(), OwnershipError> {
+        let fatal = |stage, error| self.maintenance_error(stage, Some(authority), error);
+        require_same_token(&authority.token, lease)
+            .map_err(|error| fatal("owner_same_token", error))?;
+        let until = deadline(started, now_ms, lease.expires_at_ms)
+            .map_err(|error| fatal("owner_store_deadline", error))?;
+        if self
+            .live_renewal_deadline(authority, "owner_result_deadline")?
+            .is_none()
+        {
+            return Ok(());
+        }
+        match authority.renew_until(until) {
+            Ok(()) => Ok(()),
+            Err(_) if self.is_ready() && renewal_obsolete(authority) => Ok(()),
+            Err(error) => Err(fatal("owner_local_renew", error)),
+        }
+    }
+
+    pub(super) fn live_renewal_deadline(
+        &self,
+        authority: &Authority,
+        stage: &'static str,
+    ) -> Result<Option<Instant>, OwnershipError> {
+        if renewal_obsolete(authority) {
+            return Ok(None);
+        }
+        #[cfg(test)]
+        let _ = BEFORE_RENEWAL_DEADLINE.try_with(|hook| hook(authority, stage));
+        let deadline = authority
+            .established_deadline()
+            .filter(|until| *until > Instant::now());
+        let stale = || self.maintenance_error(stage, Some(authority), OwnershipError::Stale);
+        if !self.is_ready() {
+            return Err(stale());
+        }
+        if renewal_obsolete(authority) {
+            return Ok(None);
+        }
+        deadline.map(Some).ok_or_else(stale)
+    }
+
+    pub(super) fn contain_unavailable_renewal(
+        &self,
+        authority: &Authority,
+        reason: &'static str,
+    ) -> Result<(), OwnershipError> {
+        let fatal = |stage, error| self.maintenance_error(stage, Some(authority), error);
+        if renewal_obsolete(authority) {
+            return Ok(());
+        }
+        if !self.is_ready() {
+            return Err(fatal("member_before_containment", OwnershipError::Stale));
+        }
+        let outcome = authority.cancel_receiver();
+        if !self.is_ready() {
+            return Err(fatal("member_after_containment", OwnershipError::Stale));
+        }
+        match outcome {
+            ReceiverCancellation::CancelledWhileLive => {
+                use sha2::{Digest, Sha256};
+                let agent_sha256 = format!(
+                    "{:x}",
+                    Sha256::digest(authority.token.agent_id.as_str().as_bytes())
+                );
+                let instance_sha256 = format!("{:x}", Sha256::digest(self.instance_id.as_bytes()));
+                tracing::warn!(scope = "agent", stage = "owner_store_renew", reason,
+                    outcome = "cancelled_while_live", %agent_sha256, %instance_sha256,
+                    epoch = authority.token.epoch, "Unavailable renewal cancelled one Agent authority");
+                Ok(())
+            }
+            ReceiverCancellation::AlreadySafelyCancelled => Ok(()),
+            ReceiverCancellation::NotLive if authority.retiring.load(Ordering::Acquire) => Ok(()),
+            ReceiverCancellation::NotLive => {
+                Err(fatal("owner_containment_deadline", OwnershipError::Stale))
+            }
+        }
+    }
+}
+
+pub(super) fn renewal_obsolete(authority: &Authority) -> bool {
+    authority.retiring.load(Ordering::Acquire)
+        || authority.receiver_cancelled()
+        || authority.retirement_pending()
 }
 
 pub(super) fn error_reason(error: &OwnershipError) -> &'static str {

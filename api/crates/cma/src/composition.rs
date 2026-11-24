@@ -153,8 +153,9 @@ impl ControlPlaneComposition {
             profile_scanner.clone(),
             stores.agent_lifecycle.clone(),
             Some(stores.sandbox_model.clone()),
-            Some(adapter::desktop_creation(config, adapter.clone())?),
+            Some(adapter::desktop_creation(config, adapter.clone(), &stores)?),
         )
+        .with_released_runtime(stores.released_runtime.clone())
         .with_task_experience(config.task_experience.clone())
         .with_failure_metadata(config.lifecycle_failure_metadata_enabled);
         let lifecycle_drain = inline_lifecycle.drain_handle();
@@ -253,7 +254,7 @@ impl ControlPlaneComposition {
                 skills: agent_skills,
                 funding: runtime::funding(config, &stores, adapter.clone())?,
             },
-            runtime::lifecycle_config(config, worker_holder.clone(), ownership.clone()),
+            runtime::lifecycle_config(config, worker_holder.clone(), ownership.clone(), &stores),
         )?;
         sandbox_lifecycle.register_inline_lifecycle(lifecycle_drain);
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
@@ -443,7 +444,6 @@ impl ControlPlaneComposition {
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
         let worker_observations = runtime::worker_observations(config, &stores);
         let workers = crate::worker_supervision::Workers::new();
-        let health = crate::health::router_with_workers(stores.clone(), workers.clone());
         let relay = agent_manager::relay(
             config,
             &agent_manager,
@@ -465,7 +465,7 @@ impl ControlPlaneComposition {
             recorder,
             (limits, config),
             (
-                health,
+                crate::health::router_with_workers(stores.clone(), workers.clone()),
                 tool_routes.merge(service_portal::router(
                     auth.clone(),
                     config.gateway.as_ref(),
@@ -480,6 +480,7 @@ impl ControlPlaneComposition {
             worker_observations,
             router: agent_manager::internal_router(&relay, &agent_manager, router),
             agent_manager,
+            agent_relay: relay,
             auth,
             bindings,
             bots,

@@ -8,6 +8,8 @@ mod support;
 use support::{Fixture, Reply};
 #[path = "coordinator_heartbeat_containment_tests.rs"]
 mod containment;
+#[path = "coordinator_batch_renewal_tests.rs"]
+mod batch;
 #[path = "coordinator_renewal_diagnostic_tests.rs"]
 mod diagnostics;
 #[path = "coordinator_heartbeat_tests.rs"]

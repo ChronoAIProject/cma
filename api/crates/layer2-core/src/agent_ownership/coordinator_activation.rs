@@ -27,9 +27,22 @@ impl OwnershipCoordinator {
         cleanup_pacing: bool,
         policy: MaintenancePolicy,
     ) -> Arc<Self> {
+        Self::prepare_with_policy_options(store, member, cleanup_pacing, policy, false)
+    }
+
+    /// Prepare membership with both the failure policy and optional batch renewal.
+    pub fn prepare_with_policy_options(
+        store: Arc<dyn OwnershipStore>,
+        member: Member,
+        cleanup_pacing: bool,
+        policy: MaintenancePolicy,
+        batch_renewal: bool,
+    ) -> Arc<Self> {
         let capacity = member.max_owned_agents as usize;
         Arc::new(Self {
             instance_id: member.instance_id.clone(),
+            batch_maintenance: (batch_renewal && store.supports_batch_renewal())
+                .then(Mutex::default),
             store,
             policy,
             capacity,
@@ -51,6 +64,22 @@ impl OwnershipCoordinator {
             registration: std::sync::Mutex::new(Some(member)),
             registered: AtomicBool::new(false),
         })
+    }
+
+    /// Develop's batch-renewal entry point retains the legacy failure policy.
+    pub fn prepare_with_options(
+        store: Arc<dyn OwnershipStore>,
+        member: Member,
+        cleanup_pacing: bool,
+        batch_renewal: bool,
+    ) -> Arc<Self> {
+        Self::prepare_with_policy_options(
+            store,
+            member,
+            cleanup_pacing,
+            MaintenancePolicy::Legacy,
+            batch_renewal,
+        )
     }
 
     pub fn is_registered(&self) -> bool {

@@ -52,14 +52,16 @@ impl AgentManager {
         address: String,
         capacity: u32,
         cleanup_pacing: bool,
+        batch_renewal: bool,
     ) -> Result<Arc<Self>, String> {
-        Self::register_with_policy(
+        Self::register_with_policy_options(
             store,
             registry,
             address,
             capacity,
             cleanup_pacing,
             MaintenancePolicy::Legacy,
+            batch_renewal,
         )
         .await
     }
@@ -72,7 +74,28 @@ impl AgentManager {
         cleanup_pacing: bool,
         policy: MaintenancePolicy,
     ) -> Result<Arc<Self>, String> {
-        let coordinator = OwnershipCoordinator::prepare_with_policy(
+        Self::register_with_policy_options(
+            store,
+            registry,
+            address,
+            capacity,
+            cleanup_pacing,
+            policy,
+            false,
+        )
+        .await
+    }
+
+    pub async fn register_with_policy_options(
+        store: Arc<MongoSandboxStore>,
+        registry: Arc<LiveAgentRegistry>,
+        address: String,
+        capacity: u32,
+        cleanup_pacing: bool,
+        policy: MaintenancePolicy,
+        batch_renewal: bool,
+    ) -> Result<Arc<Self>, String> {
+        let coordinator = OwnershipCoordinator::prepare_with_policy_options(
             store
                 .agent_ownership
                 .clone()
@@ -91,6 +114,7 @@ impl AgentManager {
             },
             cleanup_pacing,
             policy,
+            batch_renewal,
         );
         registry.install_ownership(coordinator.clone());
         let manager = Arc::new(Self {

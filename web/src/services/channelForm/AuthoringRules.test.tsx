@@ -113,6 +113,11 @@ it('does not promise automatic answers once the last reply destination is remove
   fireEvent.change(screen.getByLabelText('Provider agent key'), { target: { value: 'agent' } });
   choose('Producer 1 connection type', 'Custom event');
   fireEvent.change(screen.getByLabelText('HMAC key ID'), { target: { value: 'events' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add HMAC credential' }));
+  fireEvent.change(screen.getByLabelText('HMAC 1 key ID'), { target: { value: 'events' } });
+  fireEvent.change(screen.getByLabelText('HMAC 1 secret'), {
+    target: { value: btoa('synthetic event material') },
+  });
   fireEvent.click(screen.getByRole('button', { name: 'Remove destination 1' }));
   const review = within(screen.getByRole('group', { name: 'Review' }));
   expect(review.queryByText('Final answers sent automatically')).not.toBeInTheDocument();
@@ -162,7 +167,7 @@ it('refuses repeated and missing reply destinations, but keeps a saved empty lis
 it('drops HMAC replacement controls and credentials when a Custom source uses an agent key', () => {
   newChannel();
   choose('Producer 1 connection type', 'Custom event');
-  fireEvent.click(screen.getByLabelText('Replace HMAC credentials'));
+  expect(screen.queryByLabelText('Replace HMAC credentials')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Add HMAC credential' })).toBeVisible();
   choose('Authentication method', 'NyxID agent key');
   expect(screen.queryByLabelText('Replace HMAC credentials')).not.toBeInTheDocument();

@@ -151,6 +151,10 @@ impl Authority {
         observed
     }
 
+    pub(super) fn established_deadline(&self) -> Option<Instant> {
+        self.observe_validity().deadline()
+    }
+
     pub fn renew_until(&self, next: Instant) -> Result<(), OwnershipError> {
         let mut renewed = false;
         self.validity.send_modify(|state| {

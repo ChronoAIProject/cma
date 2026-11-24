@@ -7,7 +7,7 @@ from staging_cd_common import require
 from staging_cd_compatibility import GROUP
 from staging_cd_component_admission import REASONS as ADMISSION_REASONS, validate_failures
 from staging_cd_deploy_result import STATES
-from staging_cd_set import OVERTAKEN, document
+from staging_cd_set import OVERTAKEN, RETRY_PENDING, document
 from staging_cd_targets import TARGETS
 
 CONCLUSIONS = {"success", "failure", "skipped", "cancelled"}
@@ -18,7 +18,7 @@ DISPOSITIONS = frozenset({"reservation_superseded", "source_already_final"})
 UNSUCCESSFUL = ("failure", "skipped", "cancelled", "unknown")
 # Every code a row or a run-level line can explain, from the component-report catalogue family.
 CODES = frozenset({"allocation-incomplete", "evidence-invalid", *DISPOSITIONS, OVERTAKEN, "superseded-peer",
-                   "finalize-incomplete", "admit-skipped", "admit-unknown", "controller-unreported",
+                   "finalize-incomplete", "admit-skipped", "admit-unknown", "controller-unreported", "retry-not-run",
                    *("publish-" + value for value in UNSUCCESSFUL), *("deploy-" + value for value in UNSUCCESSFUL)})
 HEADER = ["| Component | Publish + finalize | Admit | Deploy job | Controller outcome | Reason | Likely cause | Next step |",
           "|---|---|---|---|---|---|---|---|"]
@@ -38,6 +38,8 @@ def diagnosis(publish, admit, deploy, state):
         return "admission", admit
     if admit != "admitted":
         return "component-report", "admit-" + admit
+    if deploy == RETRY_PENDING:
+        return "component-report", "retry-not-run"
     if deploy != "success":
         return "component-report", "deploy-" + deploy
     if state in ("withheld", "unverified"):
@@ -109,7 +111,20 @@ def summarize(env):
         states = payload["components"] if payload is not None else {}
         require(isinstance(states, dict) and states.keys() <= set(admitted), "Unexpected controller outcome")
         disposition = outputs.get("deploy_disposition") or ""
-        require(disposition in ("", OVERTAKEN), "Unknown deployment disposition")
+        require(disposition in ("", OVERTAKEN, RETRY_PENDING), "Unknown deployment disposition")
+        if outputs.get("retried") == "true":
+            # The promotion's outputs are its automatic retry's own attempt.
+            lines.append(f"{lane}: the first deployment was refused for a transient reason before any "
+                         "change; the rows below are its automatic re-admission and retry.")
+        if disposition == RETRY_PENDING:
+            # The first attempt handed over to one re-admission that never reported.
+            require(outputs.get("retried") != "true", "Retry outcome conflicts with its evidence")
+            for c in sorted(selected | reported):
+                publish = outcome(env["CD_PUBLISH_" + c.upper().replace("-", "_")]) if c in selected else "retained"
+                admit = failures.get(c) or ("admitted" if c in admitted else missing)
+                lines.append(row(c, publish, admit, RETRY_PENDING, "unreported"))
+            passed = False
+            continue
         if disposition:
             # The deploy job found a newer final at a later source for every
             # admitted member and deployed nothing. Its run owns the release.

@@ -68,7 +68,7 @@ pub(crate) struct SandboxReconciler {
     policy: Arc<dyn SandboxPolicySource>,
     deployment_id: String,
     profile_agents: Option<Arc<AgentService>>,
-    runtime_version: Option<String>,
+    released: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
     failed_runtime_recovery: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
     recovery_schedule: tokio::sync::Mutex<recovery::Schedule>,
     progress: tokio::sync::Mutex<Option<sweep::Progress>>,
@@ -100,7 +100,7 @@ impl SandboxReconciler {
             policy,
             deployment_id,
             profile_agents: None,
-            runtime_version: None,
+            released: None,
             failed_runtime_recovery: None,
             recovery_schedule: tokio::sync::Mutex::new(recovery::Schedule::default()),
             progress: tokio::sync::Mutex::new(None),
@@ -135,8 +135,20 @@ impl SandboxReconciler {
         self
     }
 
-    pub(crate) fn with_runtime_version(mut self, runtime_version: String) -> Self {
-        self.runtime_version = Some(runtime_version);
+    #[cfg(test)]
+    pub(crate) fn with_runtime_version(self, runtime_version: String) -> Self {
+        self.with_released_runtime(Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+            runtime_version,
+            None,
+        )))
+    }
+
+    /// Daily updates target the source's agent-lane release, read per Sandbox.
+    pub(crate) fn with_released_runtime(
+        mut self,
+        released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
+    ) -> Self {
+        self.released = Some(released);
         self
     }
 

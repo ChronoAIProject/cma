@@ -23,6 +23,8 @@ mod activation;
 mod custody;
 #[path = "coordinator_handoff.rs"]
 mod handoff;
+#[path = "coordinator_batch_renewal.rs"]
+mod batch;
 #[path = "coordinator_heartbeat.rs"]
 mod heartbeat;
 #[path = "coordinator_legacy_acquire.rs"]
@@ -64,6 +66,7 @@ pub struct OwnershipCoordinator {
     lifecycle: watch::Sender<Lifecycle>,
     retry: Mutex<super::heartbeat_retry::RetryState>,
     failed: watch::Sender<bool>,
+    batch_maintenance: Option<Mutex<()>>,
     pub(super) cleanup_pacing: super::cleanup_pacing::CleanupPacing,
     registration: std::sync::Mutex<Option<Member>>,
     registered: AtomicBool,
@@ -168,6 +171,10 @@ impl OwnershipCoordinator {
     }
 
     async fn maintain_legacy(&self) -> Result<Vec<Arc<Authority>>, OwnershipError> {
+        let _batch_guard = match &self.batch_maintenance {
+            Some(lock) => Some(lock.lock().await),
+            None => None,
+        };
         let result = self.maintain_inner().await;
         if result.is_err() {
             self.fail().await;
@@ -225,19 +232,30 @@ impl OwnershipCoordinator {
             .values()
             .filter_map(|slot| slot.authority.clone())
             .collect();
-        let renewals = stream::iter(owned.clone())
-            .map(|authority| async move {
-                self.renew_owned(&authority, started, membership.now_ms)
-                    .await
-            })
-            .buffer_unordered(4)
-            .try_collect::<Vec<_>>();
-        tokio::select! {
-            biased;
-            _ = tokio::time::sleep_until(member_deadline) => {
-                return Err(self.maintenance_error("member_batch_deadline", None, OwnershipError::Stale));
+        if self.batch_maintenance.is_some() {
+            let mut heartbeat = heartbeat::RenewalHeartbeat {
+                started,
+                membership: membership.clone(),
+                member_deadline,
+            };
+            if !self.renew_in_batches(&owned, &mut heartbeat).await? {
+                return Ok(Vec::new());
             }
-            result = renewals => { result?; }
+        } else {
+            let renewals = stream::iter(owned.clone())
+                .map(|authority| async move {
+                    self.renew_owned(&authority, started, membership.now_ms)
+                        .await
+                })
+                .buffer_unordered(4)
+                .try_collect::<Vec<_>>();
+            tokio::select! {
+                biased;
+                _ = tokio::time::sleep_until(member_deadline) => {
+                    return Err(self.maintenance_error("member_batch_deadline", None, OwnershipError::Stale));
+                }
+                result = renewals => { result?; }
+            }
         }
         if !self.is_ready() {
             return Err(self.maintenance_error("member_completion", None, OwnershipError::Stale));
