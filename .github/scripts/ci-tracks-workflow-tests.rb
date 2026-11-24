@@ -2,12 +2,107 @@
 require 'yaml'
 require 'json'
 require 'date'
+require 'open3'
 require_relative 'omarchy-ci-contract'
 root = File.expand_path('../..', __dir__)
 
 
 def require_check(value, message)
   raise message unless value
+end
+
+def require_repo_secret_shards(documents)
+  jobs = documents.fetch('ci-repo').fetch('jobs')
+  secrets, shards, gate = jobs.values_at('secrets', 'scanner-tests', 'result')
+  require_check([secrets, shards, gate].all?, 'Repo requires secret policy, scanner shards and result jobs')
+  require_check([secrets, shards, gate].none? { |job| job.key?('continue-on-error') }, 'Repo secret checks must propagate failure')
+  require_check(!secrets.key?('if') && !secrets.key?('needs') &&
+    shards['needs'] == ['secrets'] && !shards.key?('if'), 'scanner shards must wait for successful secret policy')
+  require_check(shards['strategy'] == {'fail-fast' => false, 'matrix' => {'shard' => [0, 1]}},
+    'both scanner shards must run independently')
+  require_check(gate['if'] == 'always()' && gate['needs'] == %w[structure secrets scanner-tests],
+    'Repo result must always check every child')
+
+  checkout = {
+    'uses' => 'actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09',
+    'with' => {'ref' => '${{ github.sha }}'}
+  }
+  history_checkout = checkout.merge('with' => checkout['with'].merge('fetch-depth' => 0))
+  require_check(secrets['steps'].first == history_checkout &&
+    shards['steps'].first == checkout && gate['steps'].first == checkout,
+    'secret policy, shards and gate must check out the same candidate SHA with full history for the history scan')
+  history, policy = secrets['steps'].drop(1)
+  require_check(secrets['steps'].size == 3 && history['name'] == 'gitleaks' &&
+    !history.key?('if') && !history.key?('continue-on-error') &&
+    history['run'].lines.last(2).map(&:strip) == [
+      'bash .github/scripts/scan-secret-history-tests.sh "$RUNNER_TEMP/gitleaks"',
+      'bash .github/scripts/scan-secret-history.sh "$RUNNER_TEMP/gitleaks"'
+    ] && policy == {
+      'name' => 'Verify frozen image scanner and reject repository bypasses',
+      'run' => <<~BASH
+        python3 -B .github/scripts/image-scanner-policy-tests.py
+        python3 -B .github/scripts/image_scanner_policy.py
+      BASH
+    }, 'history scan and frozen policy must succeed before either shard runs')
+
+  outputs = {
+    'shard_0' => '${{ steps.tests.outputs.shard_0 }}',
+    'shard_1' => '${{ steps.tests.outputs.shard_1 }}'
+  }
+  install = {
+    'name' => 'Install pinned image secret scanner', 'timeout-minutes' => 5,
+    'run' => 'bash .github/scripts/install-image-gitleaks.sh'
+  }
+  run_shard = {
+    'id' => 'tests', 'name' => 'Run frozen image scanner test shard',
+    'working-directory' => '.github/scripts/image-secret-scanner', 'shell' => 'bash',
+    'env' => {'SHARD' => '${{ matrix.shard }}'},
+    'run' => <<~'BASH'
+      umask 077
+      python3 -B ../ci_tracks/repo_secrets.py --shard "$SHARD"
+      printf 'shard_%s=%s\n' "$SHARD" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+    BASH
+  }
+  require_check(shards['outputs'] == outputs && shards['steps'] == [checkout, install, run_shard],
+    'each scanner shard must publish its own candidate SHA only after successful testing')
+  validate_results = {
+    'name' => 'Validate repository job results',
+    'env' => {'NEEDS' => '${{ toJSON(needs) }}'},
+    'run' => 'python3 -B .github/scripts/ci_tracks/repo_secrets.py --check-gate'
+  }
+  require_check(gate['steps'] == [checkout, validate_results], 'Repo result must validate all child outcomes and shard SHAs')
+  caller = documents.fetch('ci').fetch('jobs')
+  require_check(caller.fetch('repo')['uses'] == './.github/workflows/ci-repo.yml' &&
+    !caller['repo'].key?('if') && !caller['repo'].key?('continue-on-error') &&
+    caller.fetch('gate-repo')['steps'].last['run'] == 'python3 -B .github/scripts/ci_tracks/gate.py repo',
+    'CI / Repo must require the reusable Repo workflow result')
+end
+
+def check_repo_secret_gate(root)
+  sha = 'f' * 40
+  success = {'structure' => {'result' => 'success'}, 'secrets' => {'result' => 'success'},
+    'scanner-tests' => {'result' => 'success', 'outputs' => {'shard_0' => sha, 'shard_1' => sha}}}
+  command = ['python3', '-B', File.join(root, '.github/scripts/ci_tracks/repo_secrets.py'), '--check-gate']
+  accepts = lambda do |needs|
+    _, _, status = Open3.capture3({'NEEDS' => JSON.generate(needs), 'GITHUB_SHA' => sha}, *command)
+    status.success?
+  end
+  require_check(accepts.call(success), 'Repo gate refused the complete successful run')
+  success.each_key do |job|
+    %w[failure cancelled skipped missing].each do |outcome|
+      needs = Marshal.load(Marshal.dump(success))
+      outcome == 'missing' ? needs.delete(job) : needs[job]['result'] = outcome
+      require_check(!accepts.call(needs), "Repo gate accepted #{job} with outcome #{outcome}")
+    end
+  end
+  %w[shard_0 shard_1].each do |shard|
+    [nil, '', 'a' * 40].each do |receipt|
+      needs = Marshal.load(Marshal.dump(success))
+      outputs = needs['scanner-tests']['outputs']
+      receipt.nil? ? outputs.delete(shard) : outputs[shard] = receipt
+      require_check(!accepts.call(needs), "Repo gate accepted an absent or mismatched SHA for #{shard}")
+    end
+  end
 end
 
 def require_runtime_inventory(documents)
@@ -277,6 +372,7 @@ def check_flaky_tracker(workflows)
 end
 
 def validate(documents, actions)
+  require_repo_secret_shards(documents)
   require_runtime_inventory(documents)
   require_image_secret_scan(documents)
   require_runtime_vulnerability_gate(documents)
@@ -568,6 +664,7 @@ actions = Dir.glob(File.join(root, '.github/actions/**/action.{yml,yaml}')).to_h
   ["./#{File.dirname(file).delete_prefix(root + '/')}", YAML.load_file(file)]
 end
 validate(documents, actions)
+check_repo_secret_gate(root)
 workflows = Dir.glob(File.join(root, '.github/workflows/*.{yml,yaml}')).to_h do |file|
   [File.basename(file, File.extname(file)), YAML.load_file(file)]
 end
@@ -858,6 +955,20 @@ documents['ci-images']['jobs']['images']['steps'].each_with_index do |step, inde
   mutations << ->(d) { d['ci-images']['jobs']['images']['steps'][index]['with'].delete('package-manager-cache') }
   mutations << ->(d) { d['ci-images']['jobs']['images']['steps'][index]['with']['cache'] = 'npm' }
 end
+repo_jobs = ->(d) { d['ci-repo']['jobs'] }
+mutations.concat([
+  ->(d) { repo_jobs.call(d)['secrets']['steps'].first['with']['fetch-depth'] = 1 },
+  ->(d) { repo_jobs.call(d)['secrets']['steps'].pop },
+  ->(d) { repo_jobs.call(d)['scanner-tests'].delete('needs') },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['steps'].first['with'].delete('ref') },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['strategy']['fail-fast'] = true },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['strategy']['matrix']['shard'].pop },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['outputs'].delete('shard_1') },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['steps'].last['continue-on-error'] = true },
+  ->(d) { repo_jobs.call(d)['result'].delete('if') },
+  ->(d) { repo_jobs.call(d)['result']['needs'].delete('scanner-tests') },
+  ->(d) { repo_jobs.call(d)['result']['steps'].last['run'] = 'true' }
+])
 mutations.each do |mutate|
   copy = Marshal.load(Marshal.dump(documents))
   mutate.call(copy)

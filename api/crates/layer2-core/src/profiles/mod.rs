@@ -16,6 +16,7 @@ mod public_values;
 pub mod references;
 mod sandbox;
 pub use availability::SandboxProfileAvailability;
+pub(crate) use sandbox::valid_runtime_image;
 mod validation;
 mod workspace;
 

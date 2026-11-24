@@ -55,8 +55,8 @@ impl AgentWorker {
                     return Ok(false);
                 }
             }
-            let Some(authority) = coordinator
-                .acquire(id)
+            let Some(authority) = self
+                .acquire_pending_work(coordinator, id)
                 .await
                 .map_err(|error| attempt.ownership(Origin::OwnershipAcquire, error))?
             else {

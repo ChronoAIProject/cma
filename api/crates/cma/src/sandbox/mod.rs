@@ -58,10 +58,12 @@ pub(crate) use credential::{
 pub(crate) use live_agents::record_update_for_test;
 pub(crate) use live_agents::{LiveAgentRegistry, LiveAgentTarget};
 #[cfg(test)]
-pub(crate) use model_request_budget::tests::assert_metered_title_refusal;
+pub(crate) use model_request_budget::tests::assert_metered_auxiliary_refusal;
 pub(crate) use policy::LiveSandboxPolicy;
 pub(crate) use runtime_mapping::{runtime_capabilities, runtime_options};
 pub(crate) use title_worker::PlatformTitleEndpoint;
+#[cfg(test)]
+pub(crate) use title_worker::{scheduled_title_fixture, start_title_scheduler};
 pub(crate) use unavailable_credentials::UnavailableSandboxCredentials;
 
 #[cfg(test)]
@@ -81,7 +83,9 @@ pub(crate) mod legacy_credentials;
 #[cfg(test)]
 pub(crate) mod binding_lifecycle_test_support {
     pub(crate) use super::agent_skills::EmptyAgentSkillResolver;
-    pub(crate) use super::agent_worker::{AgentWorker, AgentWorkerConfig, AgentWorkerDependencies};
+    pub(crate) use super::agent_worker::{
+        AgentWorker, AgentWorkerConfig, AgentWorkerDependencies, ConnectionSweep,
+    };
     pub(crate) use super::agent_worker::{
         CapacityRecoveryReconnect, ReconnectAction, RecoveryReconnect,
     };

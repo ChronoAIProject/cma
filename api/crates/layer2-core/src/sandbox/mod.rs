@@ -168,8 +168,9 @@ mod retained_reopen_service;
 mod retained_reopen_tests;
 mod retained_suspended_reopen;
 pub use retained_reopen::{
-    apply_retained_reopen, RetainedReopenAccepted, RetainedReopenProof, RetainedReopenReceipt,
-    RetainedReopenReplay, RetainedReopenRequest, RetainedReopenSnapshot, RetainedReopenVerifier,
+    apply_retained_reopen, RetainedReopenAccepted, RetainedReopenHistory, RetainedReopenProof,
+    RetainedReopenReceipt, RetainedReopenReplay, RetainedReopenRequest, RetainedReopenSnapshot,
+    RetainedReopenVerifier,
 };
 pub use retained_reopen_service::{RetainedReopenError, RetainedReopenPath, RetainedReopenService};
 pub use retained_suspended_reopen::{
@@ -185,6 +186,10 @@ pub use retained_recovery::{
     RetainedRecoveryAssessment, RetainedRecoveryDisposition, RetainedRecoveryError,
     RetainedRecoveryInspector, RetainedRecoveryService, RetainedRecoverySnapshot,
     RetainedRecoverySource,
+};
+mod custom_runtime;
+pub use custom_runtime::{
+    SandboxCustomRuntimeMigration, SandboxCustomRuntimeOrigin, SandboxCustomRuntimeState,
 };
 mod runtime_update;
 mod runtime_update_resume;

@@ -18,10 +18,10 @@ use super::{durability::majority_collection, schema::initialize_collections};
 
 #[path = "sandbox_mongo_transactions.rs"]
 mod transactions;
-pub(super) use transactions::{
-    commit_transaction, commit_transaction_with_refusal, is_confirmed_body_retry, is_duplicate_key,
-    is_transient, start_transaction, CommitOutcome, PrecommitRefusal,
+pub(crate) use transactions::{
+    commit_transaction, is_confirmed_body_retry, is_duplicate_key, start_transaction, CommitOutcome,
 };
+pub(super) use transactions::{commit_transaction_with_refusal, is_transient, PrecommitRefusal};
 
 pub use super::profile_mongo::MongoProfileStore;
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
@@ -114,6 +114,7 @@ pub struct MongoSandboxStore {
     pub(super) sandbox_sessions: Collection<Document>,
     pub(super) strict_inactivity_session_evidence: bool,
     pub(super) workspaces: Collection<Document>,
+    pub(super) bounded_inactivity_legacy_log: bool,
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
     pub(super) agent_writes: std::sync::Arc<super::agent_write_coordination::AgentWrites>,
@@ -225,6 +226,11 @@ impl MongoSandboxStore {
         self
     }
 
+    pub(crate) fn with_bounded_inactivity_legacy_log(mut self, enabled: bool) -> Self {
+        self.bounded_inactivity_legacy_log = enabled;
+        self
+    }
+
     pub(crate) fn with_strict_inactivity_session_evidence(mut self, enabled: bool) -> Self {
         self.strict_inactivity_session_evidence = enabled;
         self
@@ -306,6 +312,7 @@ impl MongoSandboxStore {
             sandbox_sessions: majority_collection(&database, SANDBOX_SESSIONS),
             strict_inactivity_session_evidence: false,
             workspaces: majority_collection(&database, WORKSPACES),
+            bounded_inactivity_legacy_log: false,
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
             agent_writes: Default::default(),
