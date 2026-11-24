@@ -1,13 +1,13 @@
 //! Read-only point/range queries: terminal history is never recovery work.
 use std::sync::Arc;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 use super::{authority, invalid, journal, storage_error, Ledger};
 use crate::failure::Result;
 use crate::mutation_authority as v1;
-use crate::mutation_journal::{Operation, Record, Subject};
+use crate::mutation_journal::{Operation, Record, Status, Subject};
 
 pub(super) const STARTED_PAGE: &str = "SELECT identity,record FROM operations INDEXED BY outstanding WHERE scope=? AND status IN (0,1) AND status=1 AND operation_id>? ORDER BY operation_id LIMIT 64";
 
@@ -34,13 +34,58 @@ pub(crate) struct Snapshot {
 
 impl Ledger {
     pub(crate) async fn admitted(&self, operation: Operation) -> Result<bool> {
+        Ok(self.read_status(operation).await?.is_some())
+    }
+
+    pub(crate) async fn completed(&self, operation: Operation) -> Result<bool> {
+        Ok(self.read_status(operation).await? == Some(Status::Completed))
+    }
+
+    pub(crate) async fn find_operation(
+        &self,
+        operation_id: String,
+        scope_subject: Subject,
+    ) -> Result<Option<Record>> {
+        self.verify()?;
+        let config = Arc::clone(&self.config);
+        self.storage
+            .call(move |db| {
+                let scope = crate::mutation_scope::generation(&config, &scope_subject)
+                    .unwrap_or(0)
+                    .to_be_bytes();
+                let identity: Option<Vec<u8>> = db.query_row(
+                "SELECT identity FROM operations WHERE scope=? AND operation_id=? AND status>0",
+                params![scope.as_slice(), operation_id], |row| row.get(0),
+            ).optional().map_err(|_| storage_error())?;
+                let Some(identity) = identity else {
+                    return Ok(None);
+                };
+                if identity.len() > 65536 {
+                    return Err(invalid());
+                }
+                let operation: Operation =
+                    serde_json::from_slice(&identity).map_err(|_| invalid())?;
+                if operation.operation_id != operation_id
+                    || journal::scope(&config, &operation) != scope
+                {
+                    return Err(invalid());
+                }
+                let record =
+                    journal::load(db, &config, &operation)?.and_then(|stored| stored.record);
+                Ok(Some(record.ok_or_else(invalid)?))
+            })
+            .await
+    }
+
+    async fn read_status(&self, operation: Operation) -> Result<Option<Status>> {
         self.verify()?;
         crate::mutation_journal::validate_operation(&self.config, &operation)?;
         let config = Arc::clone(&self.config);
         self.storage
             .call(move |db| {
                 Ok(journal::load(db, &config, &operation)?
-                    .is_some_and(|stored| stored.record.is_some()))
+                    .and_then(|stored| stored.record)
+                    .map(|record| record.status()))
             })
             .await
     }
