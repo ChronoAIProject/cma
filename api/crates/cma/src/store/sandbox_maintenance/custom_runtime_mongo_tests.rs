@@ -315,3 +315,71 @@ async fn custom_migration_mongo_unknown_commit_reconciles_one_admission() {
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn paused_custom_admission_requires_settled_controls_and_valid_expired_desktop_evidence() {
+    let (client, name, mut store) = database().await;
+    store.runtime_migration_enabled = true;
+    let original = paused("sbx_custom_activity_guard");
+    store.create_sandbox(original.clone()).await.unwrap();
+    let request = admission(&original);
+    install_policy(&mut store, &request);
+    store
+        .sandbox_controls
+        .insert_one(
+            doc! {"_id": "fixture-control", "sandbox_id": original.id.as_str(), "queued": true},
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.admit_custom_runtime_migration(request.clone()).await,
+        Err(SandboxStoreError::Conflict)
+    ));
+    store
+        .sandbox_controls
+        .update_one(
+            doc! {"_id": "fixture-control"},
+            doc! {"$set": {"queued": false}},
+        )
+        .await
+        .unwrap();
+    let expiry = std::time::SystemTime::now() - std::time::Duration::from_secs(90);
+    let displayed = layer2_core::rfc3339_at(expiry);
+    let expires_ms =
+        i64::try_from(layer2_core::seconds_from_rfc3339(&displayed).unwrap()).unwrap() * 1000;
+    store
+        .sandbox_sessions
+        .insert_one(doc! {
+            "_id": "fixture-desktop", "sandbox_id": original.id.as_str(),
+            "document_schema_version": crate::store::sandbox_mongo::DOCUMENT_SCHEMA_VERSION,
+            "lease_expires_at": displayed.as_str(),
+            "runtime_id": "fixture-runtime", "boot_id": mongodb::bson::Bson::Null, "epoch": 1_i64,
+            "issued_at_ms": expires_ms - 10_000, "expires_at_ms": expires_ms + 1000,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.admit_custom_runtime_migration(request.clone()).await,
+        Err(SandboxStoreError::Conflict)
+    ));
+    assert_eq!(
+        store.get_sandbox(&original.id).await.unwrap(),
+        Some(original.clone())
+    );
+    store
+        .sandbox_sessions
+        .update_one(
+            doc! {"_id": "fixture-desktop"},
+            doc! {"$set": {"expires_at_ms": expires_ms}},
+        )
+        .await
+        .unwrap();
+    let admitted = store.admit_custom_runtime_migration(request).await.unwrap();
+    assert_eq!(admitted.lifecycle.home, original.lifecycle.home);
+    assert_eq!(
+        admitted.admitted_runtime_update_target(),
+        Some(image('b').as_str())
+    );
+    client.database(&name).drop().await.unwrap();
+}

@@ -84,6 +84,9 @@ pub(super) fn record(row: &Document, active: bool) -> Result<RuntimeActivityReco
             row.get(field).map(|_| number(row, field)).transpose()?,
         );
     }
+    if row.contains_key("resource_share_guard") {
+        number(row, "resource_share_guard")?;
+    }
     let result = RuntimeActivityRecord {
         id: text(row, "_id")?.into(),
         metadata_sha256,

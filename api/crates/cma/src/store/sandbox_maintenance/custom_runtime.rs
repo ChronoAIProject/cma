@@ -146,7 +146,15 @@ pub(super) async fn validate_admission(
         }
         _ => return Err(ApplyError::Domain(SandboxStoreError::Conflict)),
     }
-    if super::evidence::open_session(store, current, &layer2_core::now_rfc3339(), session).await? {
+    if super::evidence::queued_control(store, &current.id, session, false).await?
+        || !super::evidence::sessions::clear(
+            store,
+            &current.id,
+            &layer2_core::now_rfc3339(),
+            session,
+        )
+        .await?
+    {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
     // Idle Agent projections can lag durable command admission. Check all

@@ -6,11 +6,11 @@ use serde::Deserialize;
 
 use super::{records::*, *};
 use crate::store::sandbox_mongo::{
-    AGENTS, AGENT_COMMANDS, AGENT_COMMAND_ORDERS, AGENT_LOG, SANDBOXES, SANDBOX_SESSIONS,
-    WORKSPACES,
+    AGENTS, AGENT_COMMANDS, AGENT_COMMAND_ORDERS, AGENT_LOG, SANDBOXES, SANDBOX_CONTROLS,
+    SANDBOX_SESSIONS, WORKSPACES,
 };
 
-pub(super) const COLLECTIONS: [&str; 8] = [
+pub(super) const COLLECTIONS: [&str; 9] = [
     SANDBOXES,
     WORKSPACES,
     AGENTS,
@@ -19,6 +19,7 @@ pub(super) const COLLECTIONS: [&str; 8] = [
     AGENT_LOG,
     crate::store::agent_log_segments::HEADS,
     SANDBOX_SESSIONS,
+    SANDBOX_CONTROLS,
 ];
 const MAX_METADATA_BYTES: usize = 32_768;
 

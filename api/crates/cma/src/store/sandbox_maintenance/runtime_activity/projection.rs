@@ -15,6 +15,7 @@ pub(super) fn sandbox() -> Document {
         "agent_conversation_reopen_fence",
         "workspace_admission_fence",
         "sandbox_maintenance_fence",
+        "resource_share_guard",
         "record.id",
         "record.created_at",
         "record.updated_at",
@@ -211,15 +212,6 @@ pub(super) fn head() -> Document {
         "projection_through",
         "migration_id",
         "required_reader",
-    ])
-}
-
-pub(super) fn session() -> Document {
-    fields(&[
-        "_id",
-        "sandbox_id",
-        "document_schema_version",
-        "lease_expires_at",
     ])
 }
 

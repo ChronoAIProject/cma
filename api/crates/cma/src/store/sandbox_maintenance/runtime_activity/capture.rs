@@ -1,4 +1,5 @@
 use super::{records::*, *};
+use crate::store::sandbox_maintenance::evidence::{queued_control, sessions};
 
 pub(super) struct Captured {
     pub vector: RuntimeActivityVector,
@@ -57,7 +58,8 @@ pub(super) async fn current(
     let root = roots
         .pop()
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    let sandbox = aggregate(&root, id, false)?;
+    let mut sandbox = aggregate(&root, id, false)?;
+    sandbox.active |= queued_control(store, id, session, snapshot_read).await?;
     if sandbox.last_seq.is_none() {
         return Err(invalid());
     }
@@ -100,29 +102,18 @@ pub(super) async fn current(
     let leases = bounded_find(
         &store.sandbox_sessions,
         doc! {"sandbox_id":id.as_str()},
-        projection::session(),
+        sessions::projection(),
         session,
         snapshot_read,
     )
     .await?;
     for mut lease in leases {
-        if text(&lease, "sandbox_id")? != id.as_str()
-            || !(crate::store::sandbox_mongo::require_version(&lease).is_ok()
-                || crate::store::sandbox_sessions::is_legacy_v1(&lease))
-        {
-            return Err(invalid());
-        }
-        let expiry = layer2_core::seconds_from_rfc3339(text(&lease, "lease_expires_at")?)
-            .ok_or_else(invalid)?;
+        let expired = sessions::expired(&lease, id, started).ok_or_else(invalid)?;
         let key =
             layer2_core::profiles::content_digest(&text(&lease, "_id")?).map_err(|_| invalid())?;
         lease.insert("_id", key);
-        let active = i64::try_from(expiry)
-            .ok()
-            .and_then(|at| at.checked_mul(1000))
-            .ok_or_else(invalid)?
-            > started;
-        vector.desktop_leases.push(record(&lease, active)?);
+        lease.remove("database_now");
+        vector.desktop_leases.push(record(&lease, !expired)?);
     }
     for rows in [
         &mut vector.command_orders,

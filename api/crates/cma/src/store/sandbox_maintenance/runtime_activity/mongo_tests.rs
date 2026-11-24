@@ -9,6 +9,7 @@ use mongodb::Client;
 use super::*;
 
 mod generation;
+mod lease;
 use crate::store::sandbox_maintenance::mongo_integration_tests::{
     database as base_database, fixture,
 };
@@ -415,5 +416,76 @@ async fn unsupported_context_corrupt_log_and_overflow_stay_unknown() {
             .unwrap(),
         RuntimeActivityObservation::Unknown(RuntimeActivityUnknownReason::IncompleteCoverage)
     ));
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn control_reservation_is_visible_even_if_the_control_settles_between_samples() {
+    let (client, name, store) = database().await;
+    let (sandbox, agent) = fixture(&store, "sbx_activity_control").await;
+    let before = observe(&store, &sandbox.id).await;
+    assert!(!before.has_activity());
+    let root = store
+        .sandboxes
+        .find_one(doc! {"_id": sandbox.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Model the durable projection of a reservation and its parent fence.
+    let mut reserved = client.start_session().await.unwrap();
+    reserved.start_transaction().await.unwrap();
+    store
+        .sandbox_controls
+        .insert_one(
+            doc! {"_id": "fixture-control", "sandbox_id": sandbox.id.as_str(), "queued": true},
+        )
+        .session(&mut reserved)
+        .await
+        .unwrap();
+    store
+        .sandboxes
+        .update_one(
+            doc! {"_id": sandbox.id.as_str()},
+            doc! {"$inc": {"resource_share_guard": 1_i64}},
+        )
+        .session(&mut reserved)
+        .await
+        .unwrap();
+    reserved.commit_transaction().await.unwrap();
+    assert!(observe(&store, &sandbox.id).await.has_activity());
+    let proof = fixture_proof(before.clone());
+    let mut admission = transaction(&store, &proof).await;
+    assert!(validate_for_admission(
+        &store,
+        &root,
+        std::slice::from_ref(&agent),
+        &proof,
+        now_ms().unwrap(),
+        &mut admission,
+    )
+    .await
+    .is_err());
+    admission.abort_transaction().await.unwrap();
+
+    store
+        .sandbox_controls
+        .update_one(
+            doc! {"_id": "fixture-control"},
+            doc! {"$set": {"queued": false}},
+        )
+        .await
+        .unwrap();
+    let after = observe(&store, &sandbox.id).await;
+    assert!(!after.has_activity());
+    assert_eq!(
+        after.vector.sandbox.revision,
+        before.vector.sandbox.revision
+    );
+    assert_ne!(after.vector, before.vector);
+    let mut proof = fixture_proof(after);
+    proof.initial.vector = before.vector;
+    assert!(proof.validate_at(now_ms().unwrap()).is_err());
     client.database(&name).drop().await.unwrap();
 }
