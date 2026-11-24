@@ -2,13 +2,26 @@ use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::{Sandbox, SandboxStoreError};
-use layer3_adapter::{RuntimeHandle, RuntimeStatus, RuntimeStatusRequest};
+use layer3_adapter::{
+    RetainedStartupPolicyControl, RuntimeHandle, RuntimeStatus, RuntimeStatusRequest,
+};
 
 use super::super::support::{adapter_failure, WorkerFailure};
 use super::super::SandboxWorker;
 use super::support::{lifecycle_lease, model_error};
 
 impl SandboxWorker {
+    pub(super) fn retained_startup_policy(
+        &self,
+    ) -> Result<&dyn RetainedStartupPolicyControl, WorkerFailure> {
+        self.dependencies
+            .adapter
+            .retained_startup_policy()
+            .ok_or_else(|| {
+                WorkerFailure::retryable("retained runtime startup policy is unavailable")
+            })
+    }
+
     pub(super) async fn verify_lifecycle_home(
         &self,
         sandbox: Sandbox,
@@ -144,8 +157,7 @@ impl SandboxWorker {
                     // The grant already required a stopped predecessor. A new
                     // suspension could change provider state after that proof expired.
                     let predecessor = self
-                        .dependencies
-                        .adapter
+                        .retained_startup_policy()?
                         .inspect_retained_startup_policy(&request)
                         .await
                         .map_err(|_| {
@@ -264,8 +276,7 @@ impl SandboxWorker {
             generation: transition.successor_generation,
             home_identity: transition.request.predecessor.home_identity.clone(),
         };
-        self.dependencies
-            .adapter
+        self.retained_startup_policy()?
             .verify_retained_startup_policy(
                 handle,
                 &layer3_adapter::RetainedStartupPolicyReadback {

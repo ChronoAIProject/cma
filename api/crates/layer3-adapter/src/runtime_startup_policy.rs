@@ -1,6 +1,9 @@
 //! Read back the effective startup policy from an identified Supervisor process.
 
-use crate::{wire::ResponseFrame, AdapterError, Result, RuntimeStatus, RuntimeStatusRequest};
+use crate::{
+    wire::ResponseFrame, AdapterError, Result, RuntimeAdoptionRequest, RuntimeHandle,
+    RuntimeProvisionRequest, RuntimeStatus, RuntimeStatusRequest,
+};
 use serde::{Deserialize, Serialize};
 
 pub const RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE: &str =
@@ -73,4 +76,26 @@ pub(crate) fn running_image_matches(running_image: &str, manifest: &str, config:
         .or_else(|| running_image.strip_prefix("docker://"))
         .unwrap_or(running_image);
     observed_manifest == manifest || observed_config == config
+}
+
+/// Inspect and replace one retained runtime under its admitted startup policy.
+#[async_trait::async_trait]
+pub trait RetainedStartupPolicyControl: Send + Sync {
+    async fn inspect_retained_startup_policy(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> Result<RetainedStartupPolicyPredecessor>;
+
+    async fn upgrade_retained_runtime_policy(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        next: &RuntimeProvisionRequest,
+        admission: &RetainedStartupPolicyUpgrade<'_>,
+    ) -> Result<RuntimeHandle>;
+
+    async fn verify_retained_startup_policy(
+        &self,
+        handle: &RuntimeHandle,
+        readback: &crate::RetainedStartupPolicyReadback<'_>,
+    ) -> Result<RuntimeStartupPolicyObservation>;
 }

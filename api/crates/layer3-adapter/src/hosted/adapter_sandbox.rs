@@ -109,23 +109,6 @@ impl SandboxAdapter for HostedAdapter {
         self.provision_exact(spec, 1, None).await
     }
 
-    async fn upgrade_retained_runtime_policy(
-        &self,
-        request: &RuntimeAdoptionRequest,
-        next: &crate::RuntimeProvisionRequest,
-        admission: &crate::RetainedStartupPolicyUpgrade<'_>,
-    ) -> Result<RuntimeHandle> {
-        self.upgrade_retained_exact(request, next, admission).await
-    }
-    async fn verify_retained_startup_policy(
-        &self,
-        handle: &RuntimeHandle,
-        readback: &crate::RetainedStartupPolicyReadback<'_>,
-    ) -> Result<crate::RuntimeStartupPolicyObservation> {
-        self.backend
-            .verify_retained_startup_policy(handle, readback)
-            .await
-    }
     async fn provision_runtime_receipted(
         &self,
         request: &RuntimeProvisionRequest,
@@ -154,11 +137,8 @@ impl SandboxAdapter for HostedAdapter {
     async fn verify_suspended_runtime(&self, request: &RuntimeAdoptionRequest) -> Result<()> {
         self.suspend_exact(request, true).await
     }
-    async fn inspect_retained_startup_policy(
-        &self,
-        request: &RuntimeAdoptionRequest,
-    ) -> Result<crate::RetainedStartupPolicyPredecessor> {
-        self.inspect_retained_exact(request).await
+    fn retained_startup_policy(&self) -> Option<&dyn crate::RetainedStartupPolicyControl> {
+        Some(self)
     }
     async fn resume_runtime(
         &self,

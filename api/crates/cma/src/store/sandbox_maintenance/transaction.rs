@@ -8,14 +8,12 @@ use layer2_core::sandbox::{
     RetainedRuntimeTransition, RetainedRuntimeTransitionRequest, Sandbox, SandboxEvent,
 };
 use mongodb::bson::{doc, Bson};
-use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 
 use super::super::agent_log_integrity::{IntegrityFailurePolicy, TransactionLogError};
 use super::super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
 use super::super::sandbox_events::{
-    append_in_transaction, reconcile_event_with_snapshot_session, validate_in_transaction,
-    TransactionEventError,
+    append_in_transaction, validate_in_transaction, TransactionEventError,
 };
 use super::super::sandbox_mongo::{signed, unsigned, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
@@ -24,7 +22,9 @@ use super::evidence::{
     LogValidation,
 };
 
+mod reconciliation;
 mod scoped;
+pub(super) use reconciliation::reconcile;
 pub(super) use scoped::attempt;
 
 pub(super) enum MaintenanceRequest {
@@ -481,39 +481,4 @@ async fn fence_policy(
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
     Ok(false)
-}
-
-pub(super) async fn reconcile(
-    store: &MongoSandboxStore,
-    receipt: &MaintenanceReceipt,
-    snapshot_time: mongodb::bson::Timestamp,
-) -> Result<bool, SandboxStoreError> {
-    let mut session = store
-        .client
-        .start_session()
-        .snapshot(true)
-        .snapshot_time(snapshot_time)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let actual = store
-        .sandboxes
-        .find_one(doc! { "_id": receipt.sandbox.id.as_str() })
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(read_sandbox)
-        .transpose()?;
-    if actual.as_ref() != Some(&receipt.sandbox) {
-        return Ok(false);
-    }
-    match &receipt.event {
-        Some(event) => Ok(
-            reconcile_event_with_snapshot_session(store, event, &mut session)
-                .await?
-                .is_some(),
-        ),
-        None => Ok(false),
-    }
 }

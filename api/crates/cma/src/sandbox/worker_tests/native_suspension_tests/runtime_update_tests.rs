@@ -63,6 +63,8 @@ async fn retained_transition_worker_never_suspends_a_restarted_predecessor() {
             .unwrap();
     let predecessor = f
         .adapter(&runtime_image())
+        .retained_startup_policy()
+        .unwrap()
         .inspect_retained_startup_policy(&request)
         .await
         .unwrap();

@@ -91,6 +91,20 @@ pub(crate) fn desktop_canary_config(cpu: u32, memory: u32, enabled: bool) -> Run
     .unwrap()
 }
 
+pub(crate) fn retained_runtime_config(image: &str, owner: &str) -> RuntimeConfig {
+    let mut candidate = agent();
+    candidate["image"]["uri"] = json!(image);
+    let owners = json!([owner]).to_string();
+    native_runtime_with(
+        Some(&json!([candidate]).to_string()),
+        &[
+            ("CHRONO_RETAINED_RUNTIME_TRANSITIONS_ENABLED", "true"),
+            ("CHRONO_RETAINED_RUNTIME_TRANSITION_OWNERS", &owners),
+        ],
+    )
+    .unwrap()
+}
+
 #[test]
 fn catalog_is_empty_by_default_and_does_not_select_releases_or_spares() {
     let absent = native_runtime(None).unwrap();

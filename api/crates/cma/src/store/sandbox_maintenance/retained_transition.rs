@@ -399,4 +399,4 @@ fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
 
 #[cfg(test)]
 #[path = "retained_transition_tests.rs"]
-mod tests;
+pub(crate) mod tests;

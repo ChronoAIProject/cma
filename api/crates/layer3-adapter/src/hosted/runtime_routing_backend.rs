@@ -314,15 +314,8 @@ impl HostedBackend for RuntimeBackends {
             .verify_suspended(handle, request)
             .await
     }
-    async fn inspect_retained_startup_policy(
-        &self,
-        handle: &RuntimeHandle,
-        request: &ProviderSandboxRequest,
-        home: &crate::HomeVolumeAttachment,
-    ) -> Result<crate::RetainedStartupPolicyPredecessor> {
-        self.for_handle(handle)?
-            .inspect_retained_startup_policy(handle, request, home)
-            .await
+    fn retained_startup_policy(&self) -> Option<&dyn crate::hosted::HostedRetainedStartupPolicy> {
+        Some(self)
     }
     async fn resume(
         &self,
@@ -354,27 +347,6 @@ impl HostedBackend for RuntimeBackends {
     ) -> Result<()> {
         self.for_handle(handle)?
             .upgrade_with_home(handle, previous, next, home)
-            .await
-    }
-    async fn upgrade_retained_policy_with_home(
-        &self,
-        handle: &RuntimeHandle,
-        previous: &ProviderSandboxRequest,
-        next: &ProviderSandboxRequest,
-        home: &crate::HomeVolumeAttachment,
-        admission: &crate::RetainedStartupPolicyUpgrade<'_>,
-    ) -> Result<()> {
-        self.for_handle(handle)?
-            .upgrade_retained_policy_with_home(handle, previous, next, home, admission)
-            .await
-    }
-    async fn verify_retained_startup_policy(
-        &self,
-        handle: &RuntimeHandle,
-        readback: &crate::RetainedStartupPolicyReadback<'_>,
-    ) -> Result<crate::RuntimeStartupPolicyObservation> {
-        self.for_handle(handle)?
-            .verify_retained_startup_policy(handle, readback)
             .await
     }
     async fn provision_receipted(
@@ -513,3 +485,6 @@ impl HostedBackend for RuntimeBackends {
 #[cfg(test)]
 #[path = "runtime_routing_backend_ingress_tests.rs"]
 mod ingress_tests;
+
+#[path = "retained_startup_policy_routing.rs"]
+mod retained_policy;

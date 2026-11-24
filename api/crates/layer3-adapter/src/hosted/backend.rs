@@ -244,15 +244,8 @@ pub trait HostedBackend: Send + Sync {
             "provider suspension observation is unavailable".into(),
         ))
     }
-    async fn inspect_retained_startup_policy(
-        &self,
-        _handle: &RuntimeHandle,
-        _request: &ProviderSandboxRequest,
-        _home: &crate::HomeVolumeAttachment,
-    ) -> Result<crate::RetainedStartupPolicyPredecessor> {
-        Err(crate::AdapterError::Unsupported(
-            "retained runtime policy inspection is unavailable".into(),
-        ))
+    fn retained_startup_policy(&self) -> Option<&dyn super::HostedRetainedStartupPolicy> {
+        None
     }
     async fn resume(
         &self,
@@ -283,27 +276,6 @@ pub trait HostedBackend: Send + Sync {
     ) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "native runtime upgrades are unavailable".into(),
-        ))
-    }
-    async fn upgrade_retained_policy_with_home(
-        &self,
-        _handle: &RuntimeHandle,
-        _previous: &ProviderSandboxRequest,
-        _next: &ProviderSandboxRequest,
-        _home: &crate::HomeVolumeAttachment,
-        _admission: &crate::RetainedStartupPolicyUpgrade<'_>,
-    ) -> Result<()> {
-        Err(crate::AdapterError::Unsupported(
-            "retained runtime policy upgrades are unavailable".into(),
-        ))
-    }
-    async fn verify_retained_startup_policy(
-        &self,
-        _handle: &RuntimeHandle,
-        _readback: &crate::RetainedStartupPolicyReadback<'_>,
-    ) -> Result<crate::RuntimeStartupPolicyObservation> {
-        Err(crate::AdapterError::Unsupported(
-            "retained startup policy readback is unavailable".into(),
         ))
     }
     async fn provision_receipted(
