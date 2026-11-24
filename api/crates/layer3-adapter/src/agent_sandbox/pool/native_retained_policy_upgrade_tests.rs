@@ -1,13 +1,14 @@
 use super::*;
-use crate::agent_sandbox::RetainedStartupPolicyUpgrade;
+use crate::agent_sandbox::{RetainedStartupPolicyPredecessor, RetainedStartupPolicyUpgrade};
 
-fn predecessor(fixture: &Resume) -> (String, String) {
-    let state = fixture.fixture.state.lock().unwrap();
-    let metadata = &state.rows[MEMBER]["metadata"];
-    (
-        metadata["uid"].as_str().unwrap().into(),
-        metadata["resourceVersion"].as_str().unwrap().into(),
-    )
+async fn predecessor(fixture: &Resume) -> crate::Result<RetainedStartupPolicyPredecessor> {
+    client(&fixture.fixture, true)
+        .observe_retained_startup_policy_predecessor(
+            &fixture.handle,
+            &fixture.previous,
+            &fixture.home,
+        )
+        .await
 }
 
 async fn dispatch(
@@ -27,11 +28,15 @@ async fn dispatch(
 #[tokio::test]
 async fn retained_policy_upgrade_rejects_a_changed_predecessor_version() {
     let fixture = Resume::new().await;
-    let (uid, version) = predecessor(&fixture);
+    let observed = predecessor(&fixture).await.unwrap();
+    assert_eq!(observed.generation, 1);
+    assert_eq!(observed.image, fixture.previous.image.uri);
+    assert_eq!(observed.home_identity, fixture.home.identity().unwrap());
+    assert!(!observed.journal_recovery);
+    fixture.no_writes();
     let admission = RetainedStartupPolicyUpgrade {
         operation_id: "retained-policy-operation",
-        predecessor_resource_version: &version,
-        predecessor_uid: &uid,
+        predecessor: &observed,
         target_image: &fixture.previous.image.uri,
         successor_generation: 2,
         journal_recovery: true,
@@ -53,11 +58,10 @@ async fn retained_policy_upgrade_rejects_a_changed_predecessor_version() {
 #[tokio::test]
 async fn retained_policy_upgrade_replays_an_exact_lost_ack_after_version_advance() {
     let fixture = Resume::new().await;
-    let (uid, version) = predecessor(&fixture);
+    let observed = predecessor(&fixture).await.unwrap();
     let mut admission = RetainedStartupPolicyUpgrade {
         operation_id: "retained-policy-operation",
-        predecessor_resource_version: &version,
-        predecessor_uid: &uid,
+        predecessor: &observed,
         target_image: &fixture.previous.image.uri,
         successor_generation: 2,
         journal_recovery: true,
@@ -87,18 +91,97 @@ async fn retained_policy_upgrade_replays_an_exact_lost_ack_after_version_advance
         assert_eq!(proof["retained_policy"]["journal_recovery"], true);
         assert_eq!(
             proof["retained_policy"]["predecessor_resource_version"],
-            version
+            observed.resource_version
         );
         row["metadata"]["resourceVersion"] = json!("42");
         state.calls.clear();
     }
     dispatch(&fixture, &admission).await.unwrap();
     fixture.no_writes();
-    admission.predecessor_resource_version = "42";
+    let mut other_predecessor = observed.clone();
+    other_predecessor.resource_version = "42".into();
+    admission.predecessor = &other_predecessor;
     assert!(dispatch(&fixture, &admission).await.is_err());
     fixture.no_writes();
-    admission.predecessor_resource_version = &version;
+    admission.predecessor = &observed;
     admission.operation_id = "different-operation";
     assert!(dispatch(&fixture, &admission).await.is_err());
+    fixture.no_writes();
+}
+
+#[tokio::test]
+async fn retained_policy_observation_refuses_an_owned_pod_and_a_concurrent_member_edit() {
+    use super::super::read_fixture::Effects;
+    use crate::agent_sandbox::pods::{name_hash, TRACKING_LABEL};
+
+    const PODS: &str = "/api/v1/namespaces/cma-test/pods";
+    const POD: &str = "/api/v1/namespaces/cma-test/pods/warm-pod";
+    let fixture = Resume::new().await;
+    let observed = predecessor(&fixture).await.unwrap();
+    fixture.fixture.state.lock().unwrap().rows.insert(
+        POD.into(),
+        json!({"apiVersion":"v1","kind":"Pod","metadata":{
+            "name":"warm-pod","namespace":"cma-test",
+            "labels":{(TRACKING_LABEL): name_hash("warm-member")},
+            "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1",
+                "kind":"Sandbox","name":"warm-member","uid":observed.uid}]
+        }}),
+    );
+    let error = predecessor(&fixture).await.unwrap_err();
+    assert!(matches!(error, crate::AdapterError::Unavailable(message)
+        if message == "Sandbox suspension is waiting for Pod removal"));
+    fixture.no_writes();
+    fixture.fixture.state.lock().unwrap().rows.remove(POD);
+
+    let gate = Gate::new();
+    let effects = Effects::new(
+        &fixture.fixture,
+        BTreeMap::from([(PODS.into(), gate.clone())]),
+    );
+    let adapter = AgentSandboxClient::new(
+        effects.client.clone(),
+        fixture.fixture.client.config.clone(),
+        "fixture",
+    )
+    .unwrap();
+    let observe = adapter.observe_retained_startup_policy_predecessor(
+        &fixture.handle,
+        &fixture.previous,
+        &fixture.home,
+    );
+    let edit = async {
+        gate.wait().await;
+        fixture
+            .fixture
+            .state
+            .lock()
+            .unwrap()
+            .rows
+            .get_mut(MEMBER)
+            .unwrap()["metadata"]["resourceVersion"] = json!("42");
+        gate.respond();
+    };
+    let (result, ()) = tokio::join!(observe, edit);
+    let error = result.unwrap_err();
+    assert!(matches!(error, crate::AdapterError::Unavailable(message)
+        if message == "stopped Sandbox changed during observation"));
+    effects.assert_read_only();
+}
+
+#[tokio::test]
+async fn retained_policy_upgrade_refuses_a_different_frozen_request() {
+    let fixture = Resume::new().await;
+    let mut observed = predecessor(&fixture).await.unwrap();
+    observed.request_sha256 = "a".repeat(64);
+    let admission = RetainedStartupPolicyUpgrade {
+        operation_id: "retained-policy-operation",
+        predecessor: &observed,
+        target_image: &fixture.previous.image.uri,
+        successor_generation: 2,
+        journal_recovery: true,
+    };
+    let error = dispatch(&fixture, &admission).await.unwrap_err();
+    assert!(matches!(error, crate::AdapterError::Rejected(message)
+        if message == "retained startup policy predecessor differs from admission"));
     fixture.no_writes();
 }

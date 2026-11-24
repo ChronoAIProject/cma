@@ -197,30 +197,7 @@ impl AgentSandboxClient {
                     .await?
                     .ok_or_else(|| unavailable("Suspended Sandbox is absent"))?;
                 self.matches(&actual, desired)?;
-                let pods = self
-                    .pods
-                    .list(
-                        &ListParams::default()
-                            .labels(&pods::selector(name))
-                            .limit(100),
-                    )
-                    .await
-                    .map_err(api_error)?;
-                if pods
-                    .metadata
-                    .continue_
-                    .is_some_and(|cursor| !cursor.is_empty())
-                {
-                    return Err(unavailable(
-                        "Sandbox suspension Pod inventory is incomplete",
-                    ));
-                }
-                if !pods.items.iter().any(|pod| {
-                    pod.metadata
-                        .owner_references
-                        .as_ref()
-                        .is_some_and(|owners| owners.iter().any(|owner| owner.uid == uid))
-                }) {
+                if self.suspension_pods_absent(name, uid).await? {
                     return Ok(());
                 }
                 tokio::time::sleep(super::observation::refresh_delay(started.elapsed())).await;
@@ -228,6 +205,33 @@ impl AgentSandboxClient {
         })
         .await
         .map_err(|_| unavailable("Sandbox suspension is waiting for Pod removal"))?
+    }
+
+    pub(super) async fn suspension_pods_absent(&self, name: &str, uid: &str) -> Result<bool> {
+        let pods = self
+            .pods
+            .list(
+                &ListParams::default()
+                    .labels(&pods::selector(name))
+                    .limit(100),
+            )
+            .await
+            .map_err(api_error)?;
+        if pods
+            .metadata
+            .continue_
+            .is_some_and(|cursor| !cursor.is_empty())
+        {
+            return Err(unavailable(
+                "Sandbox suspension Pod inventory is incomplete",
+            ));
+        }
+        Ok(!pods.items.iter().any(|pod| {
+            pod.metadata
+                .owner_references
+                .as_ref()
+                .is_some_and(|owners| owners.iter().any(|owner| owner.uid == uid))
+        }))
     }
 }
 
