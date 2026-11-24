@@ -21,15 +21,25 @@ impl ControlOperation {
 /// Immutable selector for one subject and original idempotency request.
 /// Qualification transport receives only the versioned digest.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ControlContext([u8; 32]);
+pub struct ControlContext {
+    digest: [u8; 32],
+    agent_digest: [u8; 32],
+}
 
 impl ControlContext {
-    pub fn from_digest(digest: [u8; 32]) -> Self {
-        Self(digest)
+    pub fn from_digests(digest: [u8; 32], agent_digest: [u8; 32]) -> Self {
+        Self {
+            digest,
+            agent_digest,
+        }
     }
 
     pub fn digest(&self) -> [u8; 32] {
-        self.0
+        self.digest
+    }
+
+    pub fn agent_digest(&self) -> [u8; 32] {
+        self.agent_digest
     }
 
     /// The public handler supplies only its newly acquired claim.
@@ -52,7 +62,10 @@ impl ControlContext {
             encoder.update((field.len() as u64).to_be_bytes());
             encoder.update(field);
         }
-        Some(Self(encoder.finalize().into()))
+        Some(Self::from_digests(
+            encoder.finalize().into(),
+            agent_digest(agent),
+        ))
     }
 }
 
@@ -72,4 +85,11 @@ pub struct ControlSchedule {
 #[async_trait::async_trait]
 pub trait ControlCheckpoint: Send + Sync {
     async fn after_schedule(&self, context: ControlContext, outcome: ControlSchedule);
+}
+
+pub(crate) fn agent_digest(agent: &AgentId) -> [u8; 32] {
+    let mut encoder = Sha256::new();
+    encoder.update(b"cma-qualification/agent/v1\0");
+    encoder.update(agent.as_str().as_bytes());
+    encoder.finalize().into()
 }

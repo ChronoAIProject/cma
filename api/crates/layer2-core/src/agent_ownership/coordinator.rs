@@ -23,6 +23,11 @@ mod activation;
 mod batch;
 #[path = "coordinator_heartbeat.rs"]
 mod heartbeat;
+#[cfg(feature = "qualification-hooks")]
+#[path = "coordinator_qualification.rs"]
+mod qualification;
+#[cfg(feature = "qualification-hooks")]
+pub use qualification::CapturedOwner;
 #[path = "coordinator_renewal.rs"]
 mod renewal;
 #[cfg(test)]

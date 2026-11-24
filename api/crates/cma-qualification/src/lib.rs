@@ -1,6 +1,9 @@
 //! Local qualification checkpoints selected by immutable operation digests.
 
-use layer2_core::qualification::{ControlCheckpoint, ControlContext, ControlSchedule};
+use layer2_core::{
+    agent_ownership::CapturedOwner,
+    qualification::{ControlCheckpoint, ControlContext, ControlSchedule},
+};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -38,6 +41,8 @@ pub enum ArmError {
     AlreadyArmed,
     #[error("qualification checkpoint capacity reached")]
     AtCapacity,
+    #[error("captured authority belongs to a different Agent")]
+    WrongAgent,
 }
 
 impl Registry {
@@ -80,9 +85,24 @@ impl Registry {
                 generation,
             },
             reached: Some(reached),
+            captured_owner: None,
             release,
             expires_at,
         })
+    }
+
+    pub fn arm_with_owner(
+        &self,
+        context: ControlContext,
+        lifetime: Duration,
+        owner: CapturedOwner,
+    ) -> Result<ArmedControl, ArmError> {
+        if context.agent_digest() != owner.agent_digest() {
+            return Err(ArmError::WrongAgent);
+        }
+        let mut arm = self.arm(context, lifetime)?;
+        arm.captured_owner = Some(owner);
+        Ok(arm)
     }
 
     fn take_checkpoint(
@@ -146,12 +166,19 @@ impl Drop for Registration {
 pub struct ArmedControl {
     registration: Registration,
     reached: Option<oneshot::Receiver<ControlSchedule>>,
+    captured_owner: Option<CapturedOwner>,
     release: oneshot::Sender<()>,
     expires_at: Instant,
 }
 
+/// Proof that the exact associated request reached this arm's barrier.
+pub struct ReachedControl {
+    generation: Arc<()>,
+    pub schedule: ControlSchedule,
+}
+
 impl ArmedControl {
-    pub async fn reached(&mut self) -> Option<ControlSchedule> {
+    pub async fn reached(&mut self) -> Option<ReachedControl> {
         let receiver = self.reached.as_mut()?;
         if Instant::now() >= self.expires_at {
             self.reached = None;
@@ -159,7 +186,27 @@ impl ArmedControl {
         }
         let outcome = timeout_at(self.expires_at, receiver).await;
         self.reached = None;
-        outcome.ok()?.ok()
+        let schedule = outcome.ok()?.ok()?;
+        if Instant::now() >= self.expires_at {
+            return None;
+        }
+        Some(ReachedControl {
+            generation: self.registration.generation.clone(),
+            schedule,
+        })
+    }
+
+    /// Consume the capture only while its linked request is still at the barrier.
+    pub fn cancel_owner(&mut self, reached: &ReachedControl) -> bool {
+        if !Arc::ptr_eq(&reached.generation, &self.registration.generation)
+            || Instant::now() >= self.expires_at
+            || self.release.is_closed()
+        {
+            return false;
+        }
+        self.captured_owner
+            .take()
+            .is_some_and(CapturedOwner::cancel)
     }
 
     /// Release only the barrier owned by this arm.

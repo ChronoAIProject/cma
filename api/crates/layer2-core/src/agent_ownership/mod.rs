@@ -13,6 +13,8 @@ mod observations;
 mod receiver_binding;
 pub mod receiver_diagnostics;
 mod transport;
+#[cfg(feature = "qualification-hooks")]
+pub use coordinator::CapturedOwner;
 pub use coordinator::{bounded, OwnershipCoordinator};
 pub use observations::{observe_transport, observed_transport, transport_observation_scope};
 

@@ -34,7 +34,10 @@ fn select(
 fn selectors_bind_exact_operation_target_subject_key_and_fingerprint() {
     let exact = claim("agent:stop:agent-a", "subject-a", "key-a", [1; 32]);
     let expected = select(ControlOperation::Stop, "agent-a", &exact).unwrap();
-    assert_eq!(ControlContext::from_digest(expected.digest()), expected);
+    assert_eq!(
+        ControlContext::from_digests(expected.digest(), expected.agent_digest()),
+        expected
+    );
     assert!(select(ControlOperation::Stop, "agent-b", &exact).is_none());
     assert!(select(ControlOperation::Delete, "agent-a", &exact).is_none());
     let delete = claim("agent:delete:agent-a", "subject-a", "key-a", [1; 32]);
@@ -57,8 +60,8 @@ fn selectors_bind_exact_operation_target_subject_key_and_fingerprint() {
 #[tokio::test(start_paused = true)]
 async fn reaches_only_the_selected_checkpoint_and_only_once() {
     let registry = Registry::default();
-    let selected = ControlContext::from_digest([1; 32]);
-    let other = ControlContext::from_digest([2; 32]);
+    let selected = ControlContext::from_digests([1; 32], [0; 32]);
+    let other = ControlContext::from_digests([2; 32], [0; 32]);
     let mut arm = registry.arm(selected, LIFETIME).unwrap();
     assert!(matches!(
         registry.arm(selected, LIFETIME),
@@ -69,8 +72,8 @@ async fn reaches_only_the_selected_checkpoint_and_only_once() {
         let registry = registry.clone();
         async move { registry.after_schedule(selected, OUTCOME).await }
     });
-    assert_eq!(arm.reached().await, Some(OUTCOME));
-    assert_eq!(arm.reached().await, None);
+    assert_eq!(arm.reached().await.unwrap().schedule, OUTCOME);
+    assert!(arm.reached().await.is_none());
     assert!(!work.is_finished());
     registry.after_schedule(selected, OUTCOME).await;
     assert!(!work.is_finished());
@@ -81,14 +84,14 @@ async fn reaches_only_the_selected_checkpoint_and_only_once() {
 #[tokio::test(start_paused = true)]
 async fn expiry_and_disconnect_resume_the_original_call() {
     let registry = Registry::default();
-    let selected = ControlContext::from_digest([1; 32]);
+    let selected = ControlContext::from_digests([1; 32], [0; 32]);
     for disconnected in [false, true] {
         let mut arm = registry.arm(selected, LIFETIME).unwrap();
         let work = tokio::spawn({
             let registry = registry.clone();
             async move { registry.after_schedule(selected, OUTCOME).await }
         });
-        assert_eq!(arm.reached().await, Some(OUTCOME));
+        assert_eq!(arm.reached().await.unwrap().schedule, OUTCOME);
         if disconnected {
             drop(arm);
         } else {
@@ -101,17 +104,17 @@ async fn expiry_and_disconnect_resume_the_original_call() {
 #[tokio::test(start_paused = true)]
 async fn removing_an_expired_arm_does_not_disarm_its_replacement() {
     let registry = Registry::default();
-    let selected = ControlContext::from_digest([1; 32]);
+    let selected = ControlContext::from_digests([1; 32], [0; 32]);
     let mut old = registry.arm(selected, LIFETIME).unwrap();
     tokio::time::advance(LIFETIME).await;
-    assert_eq!(old.reached().await, None);
+    assert!(old.reached().await.is_none());
     let mut replacement = registry.arm(selected, LIFETIME).unwrap();
     drop(old);
     let work = tokio::spawn({
         let registry = registry.clone();
         async move { registry.after_schedule(selected, OUTCOME).await }
     });
-    assert_eq!(replacement.reached().await, Some(OUTCOME));
+    assert_eq!(replacement.reached().await.unwrap().schedule, OUTCOME);
     replacement.release();
     work.await.unwrap();
 }
@@ -123,11 +126,11 @@ async fn dropping_a_pending_checkpoint_releases_capacity() {
     for index in 0..MAX_ARMS as u8 {
         arms.push(
             registry
-                .arm(ControlContext::from_digest([index; 32]), LIFETIME)
+                .arm(ControlContext::from_digests([index; 32], [0; 32]), LIFETIME)
                 .unwrap(),
         );
     }
-    let another = ControlContext::from_digest([255; 32]);
+    let another = ControlContext::from_digests([255; 32], [0; 32]);
     assert!(matches!(
         registry.arm(another, Duration::ZERO),
         Err(ArmError::InvalidLifetime)
@@ -138,4 +141,74 @@ async fn dropping_a_pending_checkpoint_releases_capacity() {
     ));
     arms.pop();
     registry.arm(another, LIFETIME).unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancellation_consumes_only_the_original_owner_and_its_linked_receipt() {
+    use layer2_core::agent_ownership::{
+        test_support::MemoryOwnershipStore, Member, OwnershipCoordinator, OwnershipStore,
+        PROTOCOL_VERSION,
+    };
+    let store = MemoryOwnershipStore::default();
+    let coordinator = OwnershipCoordinator::register(
+        store.client(),
+        Member {
+            instance_id: "fixture-instance".into(),
+            protocol: PROTOCOL_VERSION,
+            relay_address: "http://127.0.0.1:8080".into(),
+            expires_at_ms: 0,
+            draining: false,
+            owned_agents: 0,
+            max_owned_agents: 2,
+        },
+    )
+    .await
+    .unwrap();
+    let agent = AgentId("agent-a".into());
+    let authority = coordinator.acquire(&agent).await.unwrap().unwrap();
+    let durable = store.owner(&agent).await.unwrap().unwrap();
+    let mut wrong_epoch = authority.token.clone();
+    wrong_epoch.epoch += 1;
+    assert!(coordinator
+        .capture_qualification_owner(&wrong_epoch)
+        .await
+        .is_none());
+    let capture = coordinator
+        .capture_qualification_owner(&authority.token)
+        .await
+        .unwrap();
+
+    let selected = select(
+        ControlOperation::Stop,
+        agent.as_str(),
+        &claim("agent:stop:agent-a", "subject-a", "key-a", [0; 32]),
+    )
+    .unwrap();
+    let registry = Registry::default();
+    let other = ControlContext::from_digests([99; 32], selected.agent_digest());
+    let mut arm = registry
+        .arm_with_owner(selected, LIFETIME, capture)
+        .unwrap();
+    let mut other_arm = registry.arm(other, LIFETIME).unwrap();
+    let worker = |context| {
+        let registry = registry.clone();
+        tokio::spawn(async move { registry.after_schedule(context, OUTCOME).await })
+    };
+    let other_work = worker(other);
+    let unrelated_receipt = other_arm.reached().await.unwrap();
+    assert!(!arm.cancel_owner(&unrelated_receipt));
+    assert!(authority.is_current());
+
+    let work = worker(selected);
+    let receipt = arm.reached().await.unwrap();
+    assert!(arm.cancel_owner(&receipt));
+    assert!(!arm.cancel_owner(&receipt));
+    assert!(authority.receiver_cancelled());
+    assert_eq!(store.owner(&agent).await.unwrap(), Some(durable));
+    assert!(!work.is_finished());
+
+    arm.release();
+    other_arm.release();
+    work.await.unwrap();
+    other_work.await.unwrap();
 }
