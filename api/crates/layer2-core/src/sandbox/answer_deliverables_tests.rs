@@ -760,7 +760,15 @@ async fn agent_deliverable_paths_resolve_within_the_agents_own_worktree() {
             crate::sandbox::agent_filesystem::AgentFileError::NotFound
         ))
     ));
-    for refused in ["/etc/hosts", "../report.docx", "", "./", "/home/cma/"] {
+    for refused in [
+        "/etc/hosts",
+        "../report.docx",
+        "",
+        ".",
+        "./",
+        "/home/cma",
+        "/home/cma/",
+    ] {
         assert!(
             matches!(
                 describe(refused).await,

@@ -176,6 +176,7 @@ async fn unknown_request_commit_never_returns_another_send_permit() {
         .await
         .unwrap();
     assert_eq!(result, Err(BudgetError::Unavailable));
+    crate::store::test_visibility::majority_barrier(&admin, &name).await;
     let reopened = MongoSandboxStore::open(&admin, &name).await.unwrap();
     assert_eq!(
         reopened.reserve_request(&scope, &request).await,
