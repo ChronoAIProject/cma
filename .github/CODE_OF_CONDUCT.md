@@ -24,8 +24,8 @@ project. It applies to contributors and maintainers alike.
 
 ## Private reporting and enforcement
 
-- Private conduct reporting channel: **[PENDING: approved, tested private URL]**.
-- Responsible maintainers and backup: **[PENDING: public roles]**.
+- Private conduct reporting channel: **[PENDING: owner-approved private channel]**.
+- Responsible maintainers and backup: **[PENDING: owner-approved public roles]**.
 - Independent escalation for conflicts of interest: **[PENDING: private channel
   and reviewer role]**.
 - Acknowledgement and appeal process: **[PENDING: response windows and procedure]**.

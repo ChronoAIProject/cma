@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +28,8 @@ function parseJson(bytes, label) {
 }
 
 export async function generate({ root = ROOT, offline = false, run = runCommand } = {}) {
-  const files = run('git', ['ls-files', '-z'], root).split('\0').filter(Boolean).sort(compare);
+  const files = run('git', ['ls-files', '-z'], root).split('\0').filter(Boolean)
+    .filter((path) => existsSync(resolve(root, path))).sort(compare);
   files.forEach(relativePath);
   const locks = files.filter((path) => basename(path) === 'package-lock.json');
   requireValue(JSON.stringify(locks) === JSON.stringify(NPM_LOCKS), 'npm lock set changed; review and update NPM_LOCKS');
@@ -59,7 +61,8 @@ export async function generate({ root = ROOT, offline = false, run = runCommand 
   }
   const mapped = new Set(catalog.flatMap((entry) => entry.evidence));
   const noticeName = /^(?:(?:LICENSE|LICENCE|COPYING|NOTICE)(?:\.(?:txt|md)|[-_].*\.(?:txt|md))?|OFL-.*\.txt|.*-LICENSE)$/i;
-  const unmapped = files.filter((path) => noticeName.test(basename(path)) && !mapped.has(path));
+  const unmapped = files.filter((path) => noticeName.test(basename(path)) &&
+    !['LICENSE', 'NOTICE'].includes(path) && !mapped.has(path));
   // Catch a concurrent lock/catalog/manifest edit before producing a mixed snapshot.
   for (const [path, digest] of Object.entries(inputHashes).filter(([path]) => !path.startsWith('cargo:'))) {
     requireValue(sha256(await read(path)) === digest, 'inventory input changed during collection; rerun');

@@ -70,16 +70,12 @@ notice paths and unpinned origins stay visible. Additional license/notice
 filenames are listed for review, but filename discovery cannot find all embedded
 third-party code, native bundled libraries, media or generated derivatives.
 Review those separately and extend the catalog with public provenance only.
-The [ReactDrops inventory](REACTDROPS.md) records the exact derived files and
-their integration boundaries pending an owner decision.
-The [replacement behavior specification](REACTDROPS-REPLACEMENT.md) describes
-an independent candidate without implementing or removing any effect.
 
 ## Release boundary
 
-This draft does not license CMA or authorize redistribution. Resolve the project
-license and rights holder, ReactDrops disposition, and selected release scope
-before finalizing notices. For each distributed source archive, browser bundle,
+The root `LICENSE` grants Apache-2.0 for the approved first-party source scope;
+this draft does not approve third-party redistribution. For each distributed
+source archive, browser bundle,
 binary or image, verify actual contents and gather the applicable license texts,
 copyright/NOTICE material and covered-source or relinking instructions. Runtime
 OS packages, downloaded tools, image layers and build-time fetches need separate

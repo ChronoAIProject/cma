@@ -59,7 +59,7 @@ test('triage retains whole expressions and never selects a permissive alternativ
   assert.deepEqual(assessLicense('Apache-2.0 WITH LLVM-exception', policy).flags, []);
   assert.ok(assessLicense('Unfamiliar-1.0', policy).flags.includes('unrecognized-license-review'));
   assert.ok(assessLicense('()', policy).flags.includes('unrecognized-license-review'));
-  assert.ok(assessLicense('LicenseRef-ReactDrops-RCL-1.0', policy).flags.includes('custom-license-review'));
+  assert.ok(assessLicense('LicenseRef-Example-1.0', policy).flags.includes('custom-license-review'));
   assert.equal(assessLicense('SEE LICENSE IN a-file', policy).license, 'NOASSERTION');
   assert.equal(assessLicense('https://example.invalid/license', policy).license, 'NOASSERTION');
   assert.equal(assessLicense('UNLICENSED', policy).license, 'NOASSERTION');

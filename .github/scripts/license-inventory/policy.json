@@ -1,11 +1,6 @@
 {
   "recognized": ["0BSD", "MIT", "MIT-0", "Apache-2.0", "LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Unicode-3.0", "Unlicense", "CC0-1.0", "BSL-1.0", "BlueOak-1.0.0", "Python-2.0", "IJG", "CDLA-Permissive-2.0"],
   "obligations": {
-    "LicenseRef-ReactDrops-RCL-1.0": {
-      "category": "restricted-redistribution",
-      "summary": "RCL permits integration in End Products but restricts redistribution as reusable components, source-code bundles and templates. Modification does not remove restrictions. Retain the exact license and notices; owner decision on replacement, written permission or exclusion is pending, including the derived SVG files.",
-      "source": "web/src/decoration/vendor/reactdrops-topographic/LICENSE"
-    },
     "MPL-2.0": {
       "category": "weak-copyleft",
       "summary": "For distributed covered files, retain notices and provide covered source, including modifications, under MPL. Tell recipients how to obtain that source when distributing executable form. Identify covered files in browser bundles.",

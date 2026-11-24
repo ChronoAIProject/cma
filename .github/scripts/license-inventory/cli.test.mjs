@@ -70,6 +70,8 @@ test('end-to-end draft generation is deterministic and binds every lock', async 
 
 test('generation refuses missing/additional lockfiles and malformed JSON', async (t) => {
   const setup = await fixture(t);
+  await mkdir(join(setup.root, 'extra'), { recursive: true });
+  await writeFile(join(setup.root, 'extra/package-lock.json'), '{}');
   setup.state.files.push('extra/package-lock.json');
   await assert.rejects(generate(setup), /lock set changed/);
   setup.state.files.pop(); setup.state.files.pop();

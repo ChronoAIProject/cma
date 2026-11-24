@@ -251,24 +251,6 @@ jobs:
           retention-days: 1
           if-no-files-found: "error"
       -
-        name: "Default-off production gate mechanics"
-        timeout-minutes: 5
-        run: "node --test ../.github/scripts/p7-default-off-ci.test.mjs"
-      -
-        name: "Default-off Home and landing production contracts"
-        id: p7_default_off
-        timeout-minutes: 10
-        run: "node ../.github/scripts/p7-default-off-ci.mjs"
-      -
-        name: "Default-off production failure evidence"
-        if: "failure() && steps.p7_default_off.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-        with:
-          name: "p7-default-off-failure"
-          path: "${{ runner.temp }}/cma-p7-default-off"
-          retention-days: 1
-          if-no-files-found: "error"
-      -
         name: "Local Agent v2 contracts"
         id: agent_v2
         timeout-minutes: 5

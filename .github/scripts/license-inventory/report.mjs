@@ -35,8 +35,8 @@ export function renderNotices(inventory) {
   const thirdParty = inventory.records.filter((record) => record.ecosystem !== 'workspace');
   return [
     '# THIRD_PARTY_NOTICES — DRAFT', '',
-    'This source inventory does not grant a project license or approve redistribution.',
-    'Project license, copyright authority, ReactDrops handling and release scope remain pending.',
+    'The first-party source scope is licensed under Apache-2.0 and the first OSS release is source-only.',
+    'This inventory does not approve third-party redistribution or substitute for artifact-specific review.',
     'Third-party materials retain their own terms. License alternatives have not been selected.', '',
     `Input SHA-256: ${inventory.inputDigest}`, '',
     '## Scope and limitations', '',

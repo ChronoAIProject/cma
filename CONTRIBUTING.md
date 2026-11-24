@@ -6,21 +6,36 @@
 
 ## Decisions required before opening community contributions
 
-| Topic | Draft placeholder |
+| Topic | Decision/status |
 | --- | --- |
-| Project license and copyright authority | **[PENDING: approved license, rights holder and contribution rights review]** |
-| Contribution agreement | **[PENDING: DCO or CLA, exact terms and verification workflow]** |
-| Restricted third-party materials | **[PENDING: ReactDrops replacement, written permission or defined exclusion]** |
-| Release and support scope | **[PENDING: source-only or named binaries/images; supported versions and environments]** |
+| Project license and copyright authority | Apache License 2.0; first-party source scope is covered by `LICENSE` and `NOTICE`; third-party material keeps its own terms. |
+| Contribution agreement | Developer Certificate of Origin 1.1; contributors sign off each commit as described below. |
+| Restricted third-party materials | The restricted decoration and derived SVGs were removed from the source tree. No replacement is included. |
+| Release and support scope | The first OSS release is source-only. Binaries, images and hosted-service support are outside this release. |
 | Review responsibility | **[PENDING: public maintainer roles for ordinary, CI and security-sensitive changes]** |
 
-Use the [pending-decision checklist](.github/COMMUNITY_DECISIONS.md) to reconcile
-these placeholders with the security, conduct and intake drafts before adoption.
+The [community decision checklist](.github/COMMUNITY_DECISIONS.md) records the
+remaining governance decisions and their acceptance evidence.
 
 Do not infer reuse or redistribution permission from the repository being public.
-Do not add sign-off requirements or claim a CLA is accepted until the contribution
-agreement is approved. Preserve third-party copyright and license notices; a
-future CMA license must not be applied indiscriminately to vendored material.
+Do not apply the project license to third-party material. Preserve each
+third-party copyright, license and NOTICE requirement.
+
+## Developer Certificate of Origin
+
+Contributions use the [Developer Certificate of Origin 1.1](https://developercertificate.org/).
+By adding a `Signed-off-by` trailer, the contributor certifies that they have the
+right to submit the work under the project's terms and that they understand the
+contribution is provided under the Apache License 2.0. Add the trailer to every
+commit in the contribution:
+
+```text
+Signed-off-by: Your Name <your-public-account-address>
+```
+
+Use a public account address that is appropriate to disclose in commit history;
+do not put private contact details, credentials or personal data in commits.
+The maintainer review process checks the trailer before accepting a contribution.
 
 ## Proposing a change
 
@@ -31,9 +46,9 @@ PR to its issue; use a closing keyword only when its full acceptance scope is me
 Use synthetic examples and remove credentials, personal data and private system
 details from code, logs, screenshots and issue text.
 
-For vulnerabilities, read the [security reporting draft](.github/SECURITY.md)
-before sharing any technical detail. Community participation expectations and
-pending private reporting contacts are in the [code of conduct draft](.github/CODE_OF_CONDUCT.md).
+For vulnerabilities, read the [security reporting policy](.github/SECURITY.md)
+before sharing any technical detail. Community participation expectations remain
+in the [code of conduct draft](.github/CODE_OF_CONDUCT.md).
 
 For dependency or vendored-asset changes, run the
 [source license inventory](.github/scripts/license-inventory/README.md), review

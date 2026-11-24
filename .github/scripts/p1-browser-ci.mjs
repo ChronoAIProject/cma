@@ -37,7 +37,7 @@ export function argumentsFor(args, env) {
 }
 
 export function configure(original, options) {
-  const { suite, web, origin, output, setup, server, p7 } = options;
+  const { suite, web, origin, output, setup, server } = options;
   assert.equal(original.workers, 1, "Browser suites must use one worker");
   assert.equal(original.retries, 0, "Browser suites cannot retry");
   assert.equal(original.forbidOnly, true, "Browser suites must forbid only");
@@ -73,12 +73,6 @@ export function configure(original, options) {
   if (suite === "design") {
     assert.equal(original.webServer?.reuseExistingServer, false, "Design must own its server");
     assert.match(original.webServer.command, /^npm run dev -- --host 127\.0\.0\.1 --port \d+ --strictPort$/);
-    if (p7)
-      assert.equal(
-        original.webServer.env?.VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED,
-        "true",
-        "P7 design coverage must explicitly enable the effect",
-      );
     result.webServer = {
       ...original.webServer,
       command: [process.execPath, server].map((arg) => "'" + arg.replaceAll("'", "'\\''") + "'").join(" "),
@@ -147,12 +141,11 @@ export function verifyResults(discovery, execution) {
   return expected;
 }
 
-export async function verifyDevIdentity(origin, revision, p7) {
+export async function verifyDevIdentity(origin, revision) {
   const modules = [];
   for (const path of [
     "/src/shell/build.ts",
     "/@vite/env",
-    ...(p7 ? ["/src/decoration/topographicFeature.ts"] : []),
   ]) {
     const response = await fetch(origin + path, {
       signal: AbortSignal.timeout(4000),
@@ -166,12 +159,6 @@ export async function verifyDevIdentity(origin, revision, p7) {
     modules[1].text.match(/"__CHRONO_BUILD_SHA__"\s*:\s*"([^"]+)"/)?.[1] === revision,
     "Development server revision does not match checkout",
   );
-  if (p7)
-    assert.match(
-      modules[2].text,
-      /"VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED"\s*:\s*"true"/,
-      "Development server has not enabled P7",
-    );
   return { revision, modules };
 }
 
@@ -307,19 +294,11 @@ export async function runSuite(suite, { repository = root, env = process.env, si
       CHRONO_BUILD_ARTIFACT: "local",
       CMA_SOURCE_SHA: source.revision,
     };
-    delete childEnv.VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED;
     const port = await freePort();
     const origin = `http://127.0.0.1:${port}`;
     receipt.port = port;
     const helper = pathToFileURL(fileURLToPath(import.meta.url)).href;
     const original = pathToFileURL(join(web, "e2e", `${suites[suite].config}.config.ts`)).href;
-    const p7 = await readFile(join(web, "src/decoration/topographicFeature.ts")).then(
-      () => true,
-      (error) => {
-        if (error.code === "ENOENT") return false;
-        throw error;
-      },
-    );
     const server = join(output, "server.mjs");
     await writeFile(
       server,
@@ -328,12 +307,12 @@ export async function runSuite(suite, { repository = root, env = process.env, si
     const setup = join(output, "identity.mjs");
     await writeFile(
       setup,
-      `import {verifyDevIdentity} from ${JSON.stringify(helper)};\nimport {writeFile} from 'node:fs/promises';\nexport default async()=>writeFile(${JSON.stringify(join(output, "identity.json"))},JSON.stringify(await verifyDevIdentity(${JSON.stringify(origin)},${JSON.stringify(source.revision)},${p7}),null,2));\n`,
+      `import {verifyDevIdentity} from ${JSON.stringify(helper)};\nimport {writeFile} from 'node:fs/promises';\nexport default async()=>writeFile(${JSON.stringify(join(output, "identity.json"))},JSON.stringify(await verifyDevIdentity(${JSON.stringify(origin)},${JSON.stringify(source.revision)}),null,2));\n`,
     );
     const config = join(output, "config.mts");
     await writeFile(
       config,
-      `import original from ${JSON.stringify(original)};\nimport {configure} from ${JSON.stringify(helper)};\nexport default configure(original,${JSON.stringify({ suite, web, origin, output, setup, server, p7 })});\n`,
+      `import original from ${JSON.stringify(original)};\nimport {configure} from ${JSON.stringify(helper)};\nexport default configure(original,${JSON.stringify({ suite, web, origin, output, setup, server })});\n`,
     );
     receipt.configSha256 = hash(await readFile(config));
     if (suite !== "design") preview = await startProductionPreview(web, port, source.revision);

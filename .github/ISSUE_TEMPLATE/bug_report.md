@@ -6,10 +6,10 @@ labels: "type:bug"
 assignees: ""
 ---
 
-<!-- Draft community intake; support scope and maintainers await owner decisions.
-For suspected vulnerabilities, STOP: read .github/SECURITY.md and use a verified
-private channel. Do not include exploit details, credentials, personal data,
-internal hosts or unredacted logs here. -->
+<!-- Community intake for the first source-only OSS release. For suspected
+vulnerabilities, STOP: read .github/SECURITY.md and use GitHub private reporting.
+Do not include exploit details, credentials, personal data, internal hosts or
+unredacted logs here. -->
 
 ## Problem
 
@@ -31,5 +31,5 @@ Link existing reports you searched before filing this one.
 
 ## Support scope
 
-**[PENDING: owner-approved versions, distributions and support commitments]**.
-Filing this report does not imply a response or fix SLA.
+The first OSS release is source-only; packaged artifacts and support commitments
+are outside this intake. Filing this report does not imply a response or fix SLA.

@@ -1,11 +1,10 @@
-import { useContext, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { NavigationState } from '../shell/navigation';
 import type { AppRoute } from '../routing/routes';
 import type { TaskTemplate } from './taskTemplateModel';
 import { CharacterAvatar } from '../character/CharacterAvatar';
 import { DocsLink } from '../services/DocsLink';
 import { TaskCrew, taskCrewCards } from './TaskCrew';
-import { TaskHomeDecorationContext } from './TaskHomeDecoration';
 
 export interface TaskHomeOverview {
   readonly navigation?: NavigationState;
@@ -33,7 +32,6 @@ export function TaskHomeLayout({
   readonly onNavigate: (route: AppRoute) => void;
   readonly children: ReactNode;
 }) {
-  const decoration = useContext(TaskHomeDecorationContext);
   const [hour] = useState(() => new Date().getHours());
   const personal = !home?.scope;
   const navigation = personal ? home?.navigation : undefined;
@@ -76,9 +74,6 @@ export function TaskHomeLayout({
           {first && !template && !submitted ? (
             <>
               <div className="task-home__first-mascot">
-                <div className="task-home__decoration" aria-hidden="true">
-                  {decoration}
-                </div>
                 <CharacterAvatar pose="idle" size={104} still />
               </div>
               <span className="task-home__eyebrow">Your first agent starts here</span>

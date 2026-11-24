@@ -1,7 +1,6 @@
-<!-- Community contribution terms are a draft. Do not assume a project license,
-DCO/CLA requirement, security contact or release scope has been approved.
-Vulnerability details belong only in a verified private reporting channel;
-read .github/SECURITY.md before including potentially sensitive information. -->
+<!-- The first OSS release is source-only, uses Apache-2.0 and accepts DCO
+contributions. Vulnerability details belong only in the private GitHub reporting
+channel; read .github/SECURITY.md before including potentially sensitive data. -->
 
 ## Change
 
@@ -55,10 +54,12 @@ Do not imply that merge authorizes production writes or closes the issue.
   provenance and retained notices, or explain why this change has none.
 - **License inventory:** For affected materials, describe the source inventory
   result and unresolved declarations; keep private evidence outside the PR.
-- **Project license / DCO or CLA:** **[PENDING: owner-approved terms and checks]**.
-  Do not assert acceptance of terms that have not been published.
-- **Release scope and restricted materials:** **[PENDING: owner decision]**.
-  Identify any ReactDrops-derived material touched without claiming relicensing.
+- **Project license / DCO:** Apache-2.0 applies to the first-party source scope;
+  every commit from a contributor carries the DCO `Signed-off-by` trailer.
+- **Release scope and restricted materials:** The first release is source-only;
+  the restricted decoration and derived SVGs were removed and no
+  replacement is included. Identify any other third-party material touched and
+  preserve its terms.
 - **Review:** **[PENDING: designated maintainer roles]**. The proposed community
   process requires a non-author approval and designated review of CI/security
   changes; this template does not assert that branch rules enforce it today.

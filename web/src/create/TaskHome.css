@@ -185,11 +185,6 @@
   height: 104px;
   overflow: hidden;
 }
-.task-home__decoration {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
 .task-home[data-first-visit] {
   max-width: 900px;
   padding-top: var(--space-8);

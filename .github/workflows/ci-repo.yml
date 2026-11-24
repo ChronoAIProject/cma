@@ -79,7 +79,7 @@ jobs:
       -
         name: "Root contains only permitted entries"
         run: |
-          allowed=".git .github api web CLAUDE.md AGENTS.md CONTRIBUTING.md README.md .gitignore .dockerignore"
+          allowed=".git .github api web CLAUDE.md AGENTS.md CONTRIBUTING.md README.md LICENSE NOTICE .gitignore .dockerignore"
           fail=0
           shopt -s dotglob nullglob
           for entry in *; do

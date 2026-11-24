@@ -6,9 +6,9 @@ labels: "type:feature"
 assignees: ""
 ---
 
-<!-- Draft community intake. Keep private data, credentials and infrastructure
-details out of this issue. Project license and contribution terms are pending;
-this template does not grant rights to contributed or third-party material. -->
+<!-- Community intake for a source-only Apache-2.0 release with DCO
+contributions. Keep private data, credentials and infrastructure details out of
+this issue; third-party material retains its own terms. -->
 
 ## Problem and audience
 
@@ -32,4 +32,5 @@ license. Preserve alternatives and restrictions; do not assume compatibility.
 Link similar requests and explain the distinct scope. If applicable, describe
 dependencies using `Depends on #N`, `Blocks #N` or `Related to #N`.
 
-**[PENDING: owner-approved release scope and DCO/CLA process]**.
+The first OSS release is source-only. Contributions use the DCO described in
+`CONTRIBUTING.md`; this issue does not grant rights to third-party material.

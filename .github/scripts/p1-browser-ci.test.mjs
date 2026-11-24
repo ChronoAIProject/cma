@@ -34,7 +34,6 @@ const options = {
   origin: "http://127.0.0.1:4311",
   output: "/synthetic/output",
   setup: "/synthetic/setup.mjs",
-  p7: true,
   server: "/synthetic/server.mjs",
 };
 const original = () => ({
@@ -51,7 +50,6 @@ const original = () => ({
   webServer: {
     command: "npm run dev -- --host 127.0.0.1 --port 4644 --strictPort",
     reuseExistingServer: false,
-    env: { VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED: "true" },
   },
 });
 
@@ -80,7 +78,6 @@ test("wrapper preserves full design, future registrations, projects, timeouts an
   assert.deepEqual(config.testMatch, input.testMatch);
   assert.deepEqual(config.projects, input.projects);
   assert.equal(config.timeout, input.timeout);
-  assert.equal(config.webServer.env.VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED, "true");
   assert.equal(config.webServer.cwd, options.web);
   assert.match(config.webServer.command, /server.mjs/);
   assert.deepEqual(JSON.parse(config.webServer.env.CMA_P1_DEV_ARGS), [
@@ -114,7 +111,6 @@ test("configuration mutations cannot remove coverage or reuse a server", () => {
     (c) => (c.forbidOnly = false),
     (c) => (c.webServer.reuseExistingServer = true),
     (c) => (c.webServer.command = c.webServer.command.replace("--strictPort", "")),
-    (c) => (c.webServer.env = {}),
     ...["grep", "grepInvert", "shard", "testIgnore", "globalSetup", "globalTeardown"].map(
       (key) => (c) => (c[key] = "override"),
     ),
@@ -265,7 +261,7 @@ const exists = (path) =>
 async function closed(port) {
   await assert.rejects(fetch(`http://127.0.0.1:${port}`, { signal: AbortSignal.timeout(1000) }));
 }
-test("dev identity rejects a wrong checkout, HTML fallback and missing enabled flag", async (t) => {
+test("dev identity rejects a wrong checkout and HTML fallback", async (t) => {
   let mode = "valid";
   const server = createServer((req, res) => {
     res.end(
@@ -276,15 +272,14 @@ test("dev identity rejects a wrong checkout, HTML fallback and missing enabled f
           : req.url === "/@vite/env"
             ? JSON.stringify({ __CHRONO_BUILD_SHA__: mode === "stale" ? "old" : "checkout" }, null, 2)
             : JSON.stringify({
-                VITE_HOME_TOPOGRAPHIC_FLOW_ENABLED: mode === "off" ? "false" : "true",
               }),
     );
   });
   const port = await listen(server);
   t.after(() => new Promise((done) => server.close(done)));
-  await verifyDevIdentity(`http://127.0.0.1:${port}`, "checkout", true);
-  for (mode of ["stale", "html", "off"])
-    await assert.rejects(verifyDevIdentity(`http://127.0.0.1:${port}`, "checkout", true));
+  await verifyDevIdentity(`http://127.0.0.1:${port}`, "checkout");
+  for (mode of ["stale", "html"])
+    await assert.rejects(verifyDevIdentity(`http://127.0.0.1:${port}`, "checkout"));
 });
 
 async function fixture(t, body) {
