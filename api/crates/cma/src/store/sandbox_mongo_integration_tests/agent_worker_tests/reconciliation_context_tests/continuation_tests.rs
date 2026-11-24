@@ -190,6 +190,107 @@ async fn agent_reconciliation_continuation_survives_cancellation_and_wraps() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn agent_reconciliation_continuation_revisits_prefix_after_repeated_stalls() {
+    let (client, name) = database("connection_continuation_stall").await;
+    let fixture = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (store, owner) = manager(&fixture, "continuation-stall-owner").await;
+    let registry = Arc::new(LiveAgentRegistry::default());
+    let worker = worker(store, owner.clone(), registry.clone(), true);
+    let first = attached_prefix(&fixture, "001_first").await;
+    let blocked = attached_prefix(&fixture, "002_blocked").await;
+    paused_rows(&fixture, 32).await;
+    let tail = idle_connection_fixture(&fixture, "900_tail", AgentStatus::Ready).await;
+    let first_probe = Arc::new(PrefixProbe::default());
+    let blocked_probe = Arc::new(PrefixProbe::default());
+    blocked_probe.blocked.store(true, Ordering::Relaxed);
+    let _senders = [(&first, &first_probe), (&blocked, &blocked_probe)].map(|(agent, probe)| {
+        attach(
+            &registry,
+            agent,
+            0,
+            true,
+            ConversationInputSender::spawn(1, |_| async { Ok(()) })
+                .with_settings_support(probe.clone()),
+        )
+    });
+    let budget = BackgroundBudget::with_concurrency(1);
+    let mut sweep = ConnectionSweep::default();
+    let work = sliced_work(budget.clone(), Duration::from_secs(1));
+    assert!(work
+        .run_resumable(|| worker.reconcile_connection_slice(SystemTime::now(), &mut sweep))
+        .await
+        .is_err());
+    assert_eq!(first_probe.visits.load(Ordering::Relaxed), 1);
+    let inserted = idle_connection_fixture(&fixture, "000_inserted", AgentStatus::Ready).await;
+
+    for expected in 2..=3 {
+        owner.maintain().await.unwrap();
+        let started = tokio::time::Instant::now();
+        let next = work.next_run_at();
+        assert!(started < next, "a stalled admission must retain backoff");
+        assert!(work
+            .run_resumable(|| worker.reconcile_connection_slice(SystemTime::now(), &mut sweep))
+            .await
+            .is_err());
+        assert!(tokio::time::Instant::now() >= next);
+        assert_eq!(first_probe.visits.load(Ordering::Relaxed), 1);
+        assert_eq!(blocked_probe.visits.load(Ordering::Relaxed), expected);
+        assert_eq!(
+            fixture.get_agent(&inserted.id).await.unwrap().as_ref(),
+            Some(&inserted)
+        );
+    }
+
+    owner.maintain().await.unwrap();
+    assert!(work
+        .run_resumable(|| worker.reconcile_connection_slice(SystemTime::now(), &mut sweep))
+        .await
+        .is_err());
+    assert_eq!(first_probe.visits.load(Ordering::Relaxed), 2);
+    assert_eq!(blocked_probe.visits.load(Ordering::Relaxed), 4);
+    let saved = fixture.get_agent(&inserted.id).await.unwrap().unwrap();
+    assert_eq!(saved.revision, inserted.revision + 1);
+    assert_eq!(saved.work.step, AgentWorkStep::PublishConnection);
+    let owner = client
+        .database(&name)
+        .collection::<Document>(crate::store::agent_ownership::OWNERS)
+        .find_one(doc! {"_id": inserted.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(owner.get_i64("effect_revision").unwrap(), 1);
+    assert_eq!(
+        fixture.get_agent(&tail.id).await.unwrap().as_ref(),
+        Some(&tail)
+    );
+
+    blocked_probe.blocked.store(false, Ordering::Relaxed);
+    let resume = sliced_work(budget, Duration::from_secs(2));
+    assert_eq!(
+        resume
+            .run_resumable(|| worker.reconcile_connection_slice(SystemTime::now(), &mut sweep))
+            .await
+            .unwrap(),
+        Some(false)
+    );
+    assert_eq!(
+        resume
+            .run_resumable(|| worker.reconcile_connection_slice(SystemTime::now(), &mut sweep))
+            .await
+            .unwrap(),
+        Some(true)
+    );
+    assert_eq!(
+        fixture.get_agent(&tail.id).await.unwrap().unwrap().revision,
+        tail.revision + 1
+    );
+    assert_eq!(fixture.get_agent(&inserted.id).await.unwrap(), Some(saved));
+    eprintln!("stalled_admissions=2 prefix_recoveries_while_blocked=1 blocker_visits=4 tail_recoveries_after_release=1");
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn agent_reconciliation_continuation_fences_one_tail_recovery_across_managers() {
     let (client, name) = database("connection_continuation_race").await;
     let fixture = MongoSandboxStore::open(&client, &name).await.unwrap();

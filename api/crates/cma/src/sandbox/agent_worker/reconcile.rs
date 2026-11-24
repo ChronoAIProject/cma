@@ -19,6 +19,7 @@ const SLICE_PAGE_SIZE: u16 = 32;
 // Check between candidates. The background deadline still bounds a single slow
 // operation and its cancellation must leave the cursor at the preceding Agent.
 const SLICE_BUDGET: Duration = Duration::from_secs(1);
+const MAX_STALLED_ADMISSIONS: u8 = 2;
 
 /// Per Scheduler progress. Durable reads and ownership are revalidated on each
 /// admission. Restarting with no cursor safely begins at the first Agent.
@@ -28,6 +29,8 @@ pub(crate) struct ConnectionSweep {
     started: Option<Instant>,
     pages: u64,
     candidates: u64,
+    stalled_admissions: u8,
+    rewinds: u64,
     counts: ReconcileCounts,
 }
 
@@ -37,6 +40,19 @@ impl ConnectionSweep {
         (self.pages, self.candidates)
     }
 
+    fn start_slice(&mut self) {
+        if self.stalled_admissions == MAX_STALLED_ADMISSIONS {
+            // Revisit earlier IDs without skipping the interrupted Agent or
+            // starting a new sweep with a fresh migration allowance.
+            self.cursor = None;
+            self.stalled_admissions = 0;
+            self.rewinds += 1;
+        }
+        if self.cursor.is_some() {
+            self.stalled_admissions += 1;
+        }
+    }
+
     fn finish(&mut self) -> usize {
         let sweep = std::mem::take(self);
         let counts = sweep.counts;
@@ -44,6 +60,7 @@ impl ConnectionSweep {
             parent: None,
             pages = sweep.pages,
             candidates = sweep.candidates,
+            rewinds = sweep.rewinds,
             ownership_attempted = counts.ownership_attempted,
             ownership_skipped = counts.ownership_skipped,
             recovery_deferred = counts.recovery_deferred,
@@ -80,6 +97,7 @@ impl AgentWorker {
         now: SystemTime,
         sweep: &mut ConnectionSweep,
     ) -> Result<bool, SandboxStoreError> {
+        sweep.start_slice();
         if self
             .reconcile_page(now, sweep, SLICE_PAGE_SIZE, Some(SLICE_BUDGET))
             .await?
@@ -115,8 +133,9 @@ impl AgentWorker {
             self.reconcile_candidate_with_ownership(candidate, now, &mut sweep.counts)
                 .await?;
             // Resume from the last settled item, including after timeout or cancellation.
-            if cursor.is_some() {
-                sweep.cursor = cursor;
+            if let Some(cursor) = cursor {
+                sweep.cursor = Some(cursor);
+                sweep.stalled_admissions = 0;
             }
             if candidates.peek().is_some()
                 && budget.is_some_and(|budget| started.elapsed() >= budget)
