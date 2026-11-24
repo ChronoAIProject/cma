@@ -249,13 +249,19 @@ async fn assert_missing_home_respects_durable_binding(status_in_flight: bool) {
             .save_sandbox(fixture.original.revision, current.clone())
             .await
             .unwrap();
+        if status_in_flight {
+            // Let the provider finish validating the status exchange before
+            // removing the PVC at the follow-up hosted home verification.
+            fixture
+                .control
+                .hold_next_home_check
+                .store(true, Ordering::SeqCst);
+            fixture.control.status_gate.add_permits(1);
+            until(&mut startup, fixture.control.home_check_entered.notified()).await;
+        }
         fixture.control.api.lock().unwrap().rows.remove(api::VOLUME);
         fixture.control.other_gate.add_permits(8);
-        if status_in_flight {
-            fixture.control.status_gate.add_permits(1);
-        } else {
-            fixture.control.home_check_gate.add_permits(1);
-        }
+        fixture.control.home_check_gate.add_permits(1);
         let result = tokio::time::timeout(Duration::from_secs(10), startup)
             .await
             .unwrap();
@@ -263,9 +269,11 @@ async fn assert_missing_home_respects_durable_binding(status_in_flight: bool) {
             result.unwrap();
             assert!(fixture.reconciler.binding_is_held(&current.id));
         } else {
+            let error = result.unwrap_err();
             assert!(
-                matches!(result, Err(SandboxStoreError::Unavailable(message))
-                if message.contains("native home identity changed or disappeared"))
+                matches!(&error, SandboxStoreError::Unavailable(message)
+                if message.contains("native home identity changed or disappeared")),
+                "{error}"
             );
         }
         assert_eq!(
