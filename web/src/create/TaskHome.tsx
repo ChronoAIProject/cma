@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { TaskHomeProps } from './TaskHome.types';
 export type { TaskHomeProps } from './TaskHome.types';
 import { Button } from '../ui/Button';
-import { taskSubmission, submitTaskOnShortcut } from './taskSubmission';
+import { taskSubmission, submitTaskOnShortcut, taskTemplateForSubmission } from './taskSubmission';
 import { useTaskCreationSupport } from './useTaskCreationSupport';
 import { useTaskTemplateAvailability } from './TaskTemplateFields';
 import type { TemplateIssue } from './taskTemplateModel';
@@ -80,7 +80,6 @@ function TaskHomeContent({
     };
   }, []);
   const [manual, setManual] = useState(false);
-  const [recovering, setRecovering] = useState(false);
   const titleId = useId();
   const errorId = useId();
   const templateV1Availability = useTaskTemplateAvailability(client);
@@ -88,10 +87,11 @@ function TaskHomeContent({
   const allowTemplateV2 =
     policy.confirmed && policy.task_home_admission && templateV2Availability === 'supported';
   const draft = useTaskDraft(viewerId, workspaceId, sandboxId, allowTemplateV2);
+  const template = taskTemplateForSubmission(draft.template, templateV2Availability);
   const input = useRef<HTMLTextAreaElement>(null);
   const [validation, setValidation] = useState<TemplateIssue>();
   const templateAvailability =
-    draft.template?.version === 2 ? templateV2Availability : templateV1Availability;
+    template?.version === 2 ? templateV2Availability : templateV1Availability;
   const templateSupported =
     templateAvailability === 'checking' ? undefined : templateAvailability === 'supported';
   const form = useRef<HTMLFormElement>(null);
@@ -115,9 +115,7 @@ function TaskHomeContent({
   const capacityUnavailable =
     !contextual && (!capacity.value || Boolean(capacity.error) || capacity.value.available === 0);
   const canCreate = Boolean(viewerId && (workspaceId || sandboxId || canCreateSandbox));
-  const machineIncludedAvailable = Boolean(
-    viewerId && !workspaceId && !sandboxId && canCreateSandbox,
-  );
+  const machineIncludedAvailable = Boolean(viewerId && !contextual && canCreateSandbox);
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
   const connections = useConnectionGate(Boolean(viewerId), client);
   const { intent, operation } = lifecycle;
@@ -166,20 +164,14 @@ function TaskHomeContent({
     handoff();
     onCreated({ kind: 'agent', agentId: agent.id });
   }, [agent, handoff, lifecycle, onCreated, operation, preparationDraft]);
-  const preparationStatus = operation?.status ?? intent?.receipt?.status;
-  const preparing =
-    (!recovering || Boolean(intent?.receipt)) &&
-    !failure &&
-    !lifecycle.connection &&
-    preparationStatus !== 'failed' &&
-    preparationStatus !== 'waiting_for_connection' &&
-    preparationStatus !== 'succeeded' &&
-    (lifecycle.pending || Boolean(intent?.receipt));
-  const submission = taskSubmission(draft, {
-    machine: machineIncludedAvailable,
-    repository: repositorySupported,
-    template: templateSupported,
-  });
+  const submission = taskSubmission(
+    { ...draft, template },
+    {
+      machine: machineIncludedAvailable,
+      repository: repositorySupported,
+      template: templateSupported,
+    },
+  );
   const submissionDisabled =
     !policy.task_home_admission ||
     capacityUnavailable ||
@@ -268,7 +260,7 @@ function TaskHomeContent({
               target?.focus();
               return;
             }
-            const draftRevision = draft.persist();
+            const draftRevision = draft.persist(template);
             if (!draftRevision) return;
             if (!contextual) {
               setCheckingCapacity(true);
@@ -277,10 +269,9 @@ function TaskHomeContent({
               setCheckingCapacity(false);
               if (!current || current.available === 0) return;
             }
-            setRecovering(false);
             void lifecycle.submit(
               taskCreateRequest(
-                { ...draft, text: submission.text },
+                { ...draft, template, text: submission.text },
                 { workspaceId, sandboxId },
                 titleModeSupported,
               ),
@@ -392,7 +383,18 @@ function TaskHomeContent({
         operation={operation}
         failure={failure}
         pending={lifecycle.pending}
-        preparing={preparing}
+        hasFollowUp={Boolean(preparationDraft.text || preparationDraft.error)}
+        onDiscardWaiting={
+          lifecycle.canDiscardWaiting
+            ? () => {
+                if (!lifecycle.discardWaiting()) return;
+                connections.cancel();
+                connections.clearError();
+                setValidation(undefined);
+                requestAnimationFrame(() => input.current?.focus());
+              }
+            : undefined
+        }
         resolvedCommit={agent?.workspace.resolvedCommit}
         recovery={
           <>
@@ -401,10 +403,7 @@ function TaskHomeContent({
                 variant="outline"
                 placement="task-home__action"
                 disabled={lifecycle.pending || lifecycle.blocked}
-                onClick={() => {
-                  setRecovering(true);
-                  void lifecycle.submit();
-                }}
+                onClick={() => void lifecycle.submit()}
               >
                 {recoverTask.label}
               </Button>

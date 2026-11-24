@@ -1,7 +1,21 @@
 import type { KeyboardEvent } from 'react';
+import type { TaskTemplateAvailability } from './TaskTemplateFields';
 import { validRepository, validRepositoryRef } from './repository';
 import { spreadsheetLinkIssue } from './spreadsheetLinkValidation';
 import { compileTaskTemplate, type TaskTemplate, type TemplateIssue } from './taskTemplateModel';
+
+export function taskTemplateForSubmission(
+  template: TaskTemplate | undefined,
+  availability: TaskTemplateAvailability,
+): TaskTemplate | undefined {
+  if (
+    template?.id === 'code' &&
+    template.version === 1 &&
+    (availability === 'checking' || availability === 'supported')
+  )
+    return { ...template, version: 2 };
+  return template;
+}
 
 export function taskSubmission(
   draft: {
