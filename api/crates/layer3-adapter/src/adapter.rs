@@ -143,6 +143,26 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<RuntimeHandle> {
         Err(unsupported("native runtime upgrades are unavailable"))
     }
+    /// Apply the exact admitted retained startup policy and resume its successor.
+    async fn upgrade_retained_runtime_policy(
+        &self,
+        _request: &RuntimeAdoptionRequest,
+        _next: &RuntimeProvisionRequest,
+        _admission: &crate::RetainedStartupPolicyUpgrade<'_>,
+    ) -> Result<RuntimeHandle> {
+        Err(unsupported(
+            "retained runtime policy upgrades are unavailable",
+        ))
+    }
+    async fn verify_retained_startup_policy(
+        &self,
+        _handle: &RuntimeHandle,
+        _readback: &crate::RetainedStartupPolicyReadback<'_>,
+    ) -> Result<crate::RuntimeStartupPolicyObservation> {
+        Err(unsupported(
+            "retained startup policy readback is unavailable",
+        ))
+    }
     /// Exactly one creation dispatch; failures cannot be upgraded by name-only recovery.
     async fn provision_runtime_receipted(
         &self,

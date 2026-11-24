@@ -18,6 +18,7 @@ pub struct RetainedRuntimeTransitionRequest {
     pub policy_revision: u64,
     pub predecessor: RetainedStartupPolicyPredecessor,
     pub target_image: String,
+    pub target_config_digest: String,
     pub journal_recovery: bool,
 }
 
@@ -27,6 +28,13 @@ pub struct RetainedRuntimeTransition {
     pub request: RetainedRuntimeTransitionRequest,
     pub successor_generation: u64,
     pub operation_id: String,
+}
+
+/// Authenticated startup state credited to the exact bound replacement boot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetainedRuntimePolicyBinding {
+    pub observation: layer3_adapter::RuntimeStartupPolicyObservation,
 }
 
 impl RetainedRuntimeTransition {
@@ -72,6 +80,50 @@ impl Sandbox {
             .retained_transition
             .as_deref()
             .filter(|transition| transition.operation_id == authority.operation_id)
+    }
+
+    /// Release a transition before the provisioning phase receives a reservation.
+    /// The generation floor and original suspended storage authority survive.
+    pub fn abort_unstarted_retained_runtime_transition(
+        &mut self,
+        operation_id: &str,
+        at: String,
+    ) -> Result<(), SandboxModelError> {
+        self.validate()?;
+        if self
+            .admitted_retained_runtime_transition()
+            .is_none_or(|transition| transition.operation_id != operation_id)
+            || !matches!(
+                self.lifecycle.operation,
+                Some(SandboxLifecycleOperation::ImageRotation {
+                    phase: super::SandboxImageRotationPhase::CheckpointVerification
+                        | super::SandboxImageRotationPhase::RuntimeProvisioning,
+                    ..
+                })
+            )
+            || self.lifecycle.runtime_provision.is_some()
+            || self.lifecycle.suspended_runtime.is_none()
+            || self.work.lease.is_some()
+            || crate::seconds_from_rfc3339(&at).is_none()
+        {
+            return Err(invalid());
+        }
+        let mut next = self.clone();
+        let mut recovery = next.lifecycle.home_recovery.take().ok_or_else(invalid)?;
+        let notice = recovery.resume_pause.take().and_then(|pause| pause.notice);
+        next.lifecycle.cancel_operation();
+        next.lifecycle.home_recovery = Some(recovery);
+        next.lifecycle.paused_notice = notice;
+        next.lifecycle
+            .runtime_update
+            .as_mut()
+            .ok_or_else(invalid)?
+            .request = None;
+        next.transition(SandboxStatus::Paused, at.clone(), None)?;
+        next.work.schedule(super::SandboxWorkStep::None, at);
+        next.validate()?;
+        *self = next;
+        Ok(())
     }
 
     /// The store must validate and consume the scoped grant and fence the complete
@@ -121,6 +173,10 @@ impl Sandbox {
             || !crate::profiles::valid_runtime_image(&predecessor.image)
             || !super::store::valid_admission_fingerprint(&predecessor.request_sha256)
             || !valid_resource_version(&predecessor.resource_version)
+            || !request
+                .target_config_digest
+                .strip_prefix("sha256:")
+                .is_some_and(super::store::valid_admission_fingerprint)
             || request.target_image.len() > 512
             || !crate::profiles::valid_runtime_image(&request.target_image)
             || (predecessor.image == request.target_image
@@ -237,6 +293,7 @@ mod tests {
                 journal_recovery: false,
             },
             target_image: image,
+            target_config_digest: format!("sha256:{}", "3".repeat(64)),
             journal_recovery: true,
         };
         (sandbox, request)
@@ -299,6 +356,38 @@ mod tests {
             sandbox.admitted_retained_runtime_transition(),
             Some(&admitted)
         );
+    }
+
+    #[test]
+    fn retained_transition_abort_preserves_its_generation_floor_and_original_home() {
+        let (mut sandbox, request) = candidate();
+        let original = sandbox.clone();
+        let admitted = sandbox
+            .begin_retained_runtime_transition(request.clone(), &[], NOW.into())
+            .unwrap();
+        assert!(sandbox.begin_retirement(NOW.into()).is_err());
+        assert!(sandbox
+            .abort_unstarted_retained_runtime_transition("another-operation", NOW.into(),)
+            .is_err());
+        sandbox
+            .abort_unstarted_retained_runtime_transition(&admitted.operation_id, NOW.into())
+            .unwrap();
+        assert_eq!(sandbox.status, SandboxStatus::Paused);
+        assert_eq!(
+            sandbox.lifecycle.suspended_runtime,
+            original.lifecycle.suspended_runtime
+        );
+        assert_eq!(sandbox.lifecycle.home, original.lifecycle.home);
+        assert_eq!(
+            sandbox.lifecycle.runtime_generation_high_water,
+            admitted.successor_generation
+        );
+        let mut retry = request;
+        retry.expected_revision = sandbox.revision;
+        let admitted_again = sandbox
+            .begin_retained_runtime_transition(retry, &[], NOW.into())
+            .unwrap();
+        assert!(admitted_again.successor_generation > admitted.successor_generation);
     }
 
     #[test]

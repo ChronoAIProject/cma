@@ -207,6 +207,8 @@ pub struct SandboxLifecycleState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_update: Option<super::SandboxRuntimeUpdateState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_startup_policy: Option<Box<super::RetainedRuntimePolicyBinding>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_runtime: Option<Box<super::SandboxCustomRuntimeState>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unpublished_recovery: Option<Box<super::SandboxUnpublishedRecoveryState>>,
@@ -246,6 +248,7 @@ impl Default for SandboxLifecycleState {
             paused_notice: None,
             rotation: SandboxRotationAccounting::default(),
             runtime_update: None,
+            retained_startup_policy: None,
             custom_runtime: None,
             unpublished_recovery: None,
             unpublished_recovery_attempted: false,

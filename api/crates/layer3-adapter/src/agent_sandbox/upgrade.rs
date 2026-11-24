@@ -3,18 +3,10 @@ use super::pool::runtime_upgrade::{RetainedStartupPolicyProof, RuntimeUpgradePro
 use super::*;
 use crate::{
     provider::ProviderSandboxRequest, HomeVolumeAttachment, RetainedStartupPolicyPredecessor,
+    RetainedStartupPolicyUpgrade,
 };
 use kube::api::{Patch, PatchParams};
 use serde_json::json;
-
-/// Exact intent frozen by the retained-home admission transaction.
-pub struct RetainedStartupPolicyUpgrade<'a> {
-    pub operation_id: &'a str,
-    pub predecessor: &'a RetainedStartupPolicyPredecessor,
-    pub target_image: &'a str,
-    pub successor_generation: u64,
-    pub journal_recovery: bool,
-}
 
 impl AgentSandboxClient {
     /// Observe the exact stopped member and original home without admitting work.

@@ -284,6 +284,33 @@ impl HostedBackend for AgentSandboxBackend {
         }
         self.bind_resumed(handle, next).await
     }
+    async fn upgrade_retained_policy_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        admission: &crate::RetainedStartupPolicyUpgrade<'_>,
+    ) -> Result<()> {
+        self.client
+            .upgrade_retained_startup_policy(handle, previous, home, admission)
+            .await?;
+        if let Some(until) = next.funded_until {
+            self.client
+                .set_runtime_deadline(handle, next, until)
+                .await?;
+        }
+        self.bind_resumed(handle, next).await
+    }
+    async fn verify_retained_startup_policy(
+        &self,
+        handle: &RuntimeHandle,
+        readback: &crate::RetainedStartupPolicyReadback<'_>,
+    ) -> Result<crate::RuntimeStartupPolicyObservation> {
+        self.transport
+            .verify_retained_startup_policy(handle, readback)
+            .await
+    }
     async fn provision_receipted(
         &self,
         request: ProviderSandboxRequest,

@@ -194,7 +194,7 @@ pub use custom_runtime::{
 };
 mod retained_runtime_transition;
 pub use retained_runtime_transition::{
-    next_replacement_runtime_generation, RetainedRuntimeTransition,
+    next_replacement_runtime_generation, RetainedRuntimePolicyBinding, RetainedRuntimeTransition,
     RetainedRuntimeTransitionRequest,
 };
 mod runtime_update;

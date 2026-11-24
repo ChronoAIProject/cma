@@ -194,8 +194,8 @@ pub use runtime_recovery::{
 };
 pub use runtime_startup::{RuntimeStartupFailure, RuntimeStartupFailureClass, RuntimeStartupProbe};
 pub use runtime_startup_policy::{
-    RetainedStartupPolicyPredecessor, RuntimeStartupPolicyObservation,
-    RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE,
+    RetainedStartupPolicyPredecessor, RetainedStartupPolicyReadback, RetainedStartupPolicyUpgrade,
+    RuntimeStartupPolicyObservation, RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE,
 };
 pub use runtime_status::{
     valid_home_identity, AgentRestartRuntime, RuntimeStatus, RuntimeStatusRequest,

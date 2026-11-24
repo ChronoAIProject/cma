@@ -119,7 +119,7 @@ impl HostedAdapter {
         request: &RuntimeAdoptionRequest,
         successor: &crate::RuntimeProvisionRequest,
     ) -> crate::Result<RuntimeHandle> {
-        self.transition_exact(request, successor, false).await
+        self.transition_exact(request, successor, false, None).await
     }
 
     pub(super) async fn upgrade_exact(
@@ -127,7 +127,17 @@ impl HostedAdapter {
         request: &RuntimeAdoptionRequest,
         successor: &crate::RuntimeProvisionRequest,
     ) -> crate::Result<RuntimeHandle> {
-        self.transition_exact(request, successor, true).await
+        self.transition_exact(request, successor, true, None).await
+    }
+
+    pub(super) async fn upgrade_retained_exact(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        successor: &crate::RuntimeProvisionRequest,
+        admission: &crate::RetainedStartupPolicyUpgrade<'_>,
+    ) -> crate::Result<RuntimeHandle> {
+        self.transition_exact(request, successor, true, Some(admission))
+            .await
     }
 
     async fn transition_exact(
@@ -135,9 +145,21 @@ impl HostedAdapter {
         request: &RuntimeAdoptionRequest,
         successor: &crate::RuntimeProvisionRequest,
         upgrade: bool,
+        retained: Option<&crate::RetainedStartupPolicyUpgrade<'_>>,
     ) -> crate::Result<RuntimeHandle> {
         let mut allowed = request.spec.clone();
-        allowed.reaches.clone_from(&successor.spec.reaches);
+        if let Some(admission) = retained {
+            if successor.generation != admission.successor_generation
+                || successor.spec.runtime_image.as_deref() != Some(admission.target_image)
+            {
+                return Err(AdapterError::Rejected(
+                    "retained runtime successor differs from its admission".into(),
+                ));
+            }
+            allowed.retained_journal_recovery = Some(admission.journal_recovery);
+        } else {
+            allowed.reaches.clone_from(&successor.spec.reaches);
+        }
         if upgrade {
             if successor.spec.runtime_image.is_none()
                 || request.expected_image.is_none()
@@ -171,6 +193,18 @@ impl HostedAdapter {
                 .clone_from(&successor.spec.runtime_image);
         }
         let mut next = self.retained_request(&resumed, successor.generation)?;
+        if let Some(admission) = retained {
+            let frozen_successor = previous.retained_startup_policy_successor(
+                admission.target_image,
+                admission.successor_generation,
+                admission.journal_recovery,
+            )?;
+            if next != frozen_successor {
+                return Err(AdapterError::Rejected(
+                    "rendered retained successor changes its admitted specification".into(),
+                ));
+            }
+        }
         next.funded_until = successor.funded_until;
         self.backend
             .validate_funding(&next, Some(&request.handle))
@@ -193,7 +227,17 @@ impl HostedAdapter {
         let home = request.spec.home_volume.as_deref().ok_or_else(|| {
             AdapterError::Rejected("runtime transition requires its persisted home".into())
         })?;
-        if upgrade {
+        if let Some(admission) = retained {
+            self.backend
+                .upgrade_retained_policy_with_home(
+                    &request.handle,
+                    &previous,
+                    &next,
+                    home,
+                    admission,
+                )
+                .await?;
+        } else if upgrade {
             self.backend
                 .upgrade_with_home(&request.handle, &previous, &next, home)
                 .await?;

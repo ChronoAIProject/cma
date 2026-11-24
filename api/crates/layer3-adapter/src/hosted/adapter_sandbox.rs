@@ -109,6 +109,23 @@ impl SandboxAdapter for HostedAdapter {
         self.provision_exact(spec, 1, None).await
     }
 
+    async fn upgrade_retained_runtime_policy(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        next: &crate::RuntimeProvisionRequest,
+        admission: &crate::RetainedStartupPolicyUpgrade<'_>,
+    ) -> Result<RuntimeHandle> {
+        self.upgrade_retained_exact(request, next, admission).await
+    }
+    async fn verify_retained_startup_policy(
+        &self,
+        handle: &RuntimeHandle,
+        readback: &crate::RetainedStartupPolicyReadback<'_>,
+    ) -> Result<crate::RuntimeStartupPolicyObservation> {
+        self.backend
+            .verify_retained_startup_policy(handle, readback)
+            .await
+    }
     async fn provision_runtime_receipted(
         &self,
         request: &RuntimeProvisionRequest,

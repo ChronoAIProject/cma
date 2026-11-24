@@ -227,6 +227,37 @@ impl SandboxWorker {
         Ok(status)
     }
 
+    pub(super) async fn verify_retained_policy_readback(
+        &self,
+        handle: &RuntimeHandle,
+        transition: &layer2_core::sandbox::RetainedRuntimeTransition,
+        boot_id: &str,
+    ) -> Result<layer3_adapter::RuntimeStartupPolicyObservation, WorkerFailure> {
+        let runtime = RuntimeStatusRequest {
+            sandbox_id: transition.request.sandbox_id.to_string(),
+            generation: transition.successor_generation,
+            home_identity: transition.request.predecessor.home_identity.clone(),
+        };
+        self.dependencies
+            .adapter
+            .verify_retained_startup_policy(
+                handle,
+                &layer3_adapter::RetainedStartupPolicyReadback {
+                    runtime: &runtime,
+                    boot_id,
+                    image: &transition.request.target_image,
+                    config_digest: &transition.request.target_config_digest,
+                    journal_recovery: transition.request.journal_recovery,
+                },
+            )
+            .await
+            .map_err(|_| {
+                WorkerFailure::retryable(
+                    "retained runtime startup policy could not be confirmed on the admitted boot",
+                )
+            })
+    }
+
     pub(super) async fn accept_lifecycle_home(
         &self,
         sandbox: Sandbox,

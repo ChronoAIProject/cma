@@ -171,6 +171,16 @@ impl HostedDeployment {
         if spec.home_volume.is_some() {
             env.insert("TMPDIR".into(), super::home::TRANSFER_ROOT.into());
         }
+        if let Some(journal_recovery) = spec.retained_journal_recovery {
+            if spec.home_volume.as_ref().is_none_or(|home| {
+                !home.request.policy.is_native_vct() || home.receipt.native_authority.is_none()
+            }) {
+                return Err(AdapterError::Rejected(
+                    "retained startup policy requires an original home attachment".into(),
+                ));
+            }
+            env.insert(super::JOURNAL_RECOVERY.into(), journal_recovery.to_string());
+        }
         if let Some(endpoint) = &spec.tool_proxy_url {
             env.insert("CHRONO_TOOL_PROXY_URL".into(), endpoint.clone());
         }

@@ -110,12 +110,33 @@ impl SandboxWorker {
         };
         let mut request = RuntimeProvisionRequest::new(generation, spec);
         request.funded_until = funded_until;
+        let retained_transition = sandbox.admitted_retained_runtime_transition();
         let provisioned = if let Some(binding) = sandbox.lifecycle.suspended_runtime.as_deref() {
             match crate::sandbox::runtime_attachment::recovery_runtime_request(
                 &sandbox,
                 binding,
                 &self.config.deployment_id,
             ) {
+                Ok(retained) if retained_transition.is_some() => {
+                    let transition = retained_transition.expect("retained transition was matched");
+                    if !self.lifecycle_state_matches(&sandbox).await? {
+                        return Err(SandboxStoreError::Conflict);
+                    }
+                    let admission = layer3_adapter::RetainedStartupPolicyUpgrade {
+                        operation_id: &transition.operation_id,
+                        predecessor: &transition.request.predecessor,
+                        target_image: &transition.request.target_image,
+                        successor_generation: transition.successor_generation,
+                        journal_recovery: transition.request.journal_recovery,
+                    };
+                    request.spec = retained.spec.clone();
+                    request.spec.runtime_image = Some(admission.target_image.into());
+                    request.spec.retained_journal_recovery = Some(admission.journal_recovery);
+                    self.dependencies
+                        .adapter
+                        .upgrade_retained_runtime_policy(&retained, &request, &admission)
+                        .await
+                }
                 Ok(retained)
                     if sandbox
                         .admitted_runtime_update_target()
@@ -194,6 +215,20 @@ impl SandboxWorker {
             }
         };
 
+        let policy = if let (Some(transition), Some(status)) =
+            (retained_transition, native_status.as_ref())
+        {
+            match self
+                .verify_retained_policy_readback(&handle, transition, &status.boot_id)
+                .await
+            {
+                Ok(observation) => Some(observation),
+                Err(failure) => return self.handle_lifecycle_failure(sandbox, failure, now).await,
+            }
+        } else {
+            None
+        };
+
         let stamp = rfc3339_at(now);
         let lease = lifecycle_lease(&sandbox, &self.config.holder)?;
         // Bind the same process whose generation, home, installation and empty
@@ -220,21 +255,27 @@ impl SandboxWorker {
             }
         };
         let mut next = sandbox.clone();
-        next.bind_lifecycle_runtime(
-            RuntimeBinding {
-                boot_id,
-                provision_generation: Some(generation),
-                runtime_id: handle.0,
-                runtime_version: replacement_runtime_version(
-                    &sandbox,
-                    &self.config.default_version(self.config.release().as_ref()),
-                ),
-                bound_at: stamp.clone(),
-            },
-            &lease.holder,
-            lease.fence,
-            stamp.clone(),
-        )
+        let binding = RuntimeBinding {
+            boot_id,
+            provision_generation: Some(generation),
+            runtime_id: handle.0,
+            runtime_version: replacement_runtime_version(
+                &sandbox,
+                &self.config.default_version(self.config.release().as_ref()),
+            ),
+            bound_at: stamp.clone(),
+        };
+        if let Some(observation) = policy {
+            next.bind_retained_lifecycle_runtime(
+                binding,
+                observation,
+                &lease.holder,
+                lease.fence,
+                stamp.clone(),
+            )
+        } else {
+            next.bind_lifecycle_runtime(binding, &lease.holder, lease.fence, stamp.clone())
+        }
         .map_err(model_error)?;
         let committed = self
             .complete_sandbox_only_phase(sandbox, next.clone(), stamp)
@@ -369,6 +410,24 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if let Some(transition) = sandbox.admitted_retained_runtime_transition() {
+            let binding = sandbox.runtime.as_ref().ok_or_else(|| {
+                SandboxStoreError::Corrupt("admitted runtime binding is missing".into())
+            })?;
+            let boot = binding.boot_id.as_deref().ok_or_else(|| {
+                SandboxStoreError::Corrupt("admitted runtime boot is missing".into())
+            })?;
+            let handle = layer3_adapter::RuntimeHandle::new(&binding.runtime_id);
+            if let Err(failure) = self
+                .verify_retained_policy_readback(&handle, transition, boot)
+                .await
+            {
+                return self.handle_lifecycle_failure(sandbox, failure, now).await;
+            }
+            if !self.lifecycle_state_matches(&sandbox).await? {
+                return Err(SandboxStoreError::Conflict);
+            }
+        }
         match self
             .dependencies
             .credentials

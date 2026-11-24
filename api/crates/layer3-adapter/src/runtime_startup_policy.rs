@@ -20,6 +20,24 @@ pub struct RetainedStartupPolicyPredecessor {
     pub journal_recovery: bool,
 }
 
+/// Exact intent frozen by the retained-home admission transaction.
+pub struct RetainedStartupPolicyUpgrade<'a> {
+    pub operation_id: &'a str,
+    pub predecessor: &'a RetainedStartupPolicyPredecessor,
+    pub target_image: &'a str,
+    pub successor_generation: u64,
+    pub journal_recovery: bool,
+}
+
+/// Exact running image and Supervisor state required by a retained transition.
+pub struct RetainedStartupPolicyReadback<'a> {
+    pub runtime: &'a RuntimeStatusRequest,
+    pub boot_id: &'a str,
+    pub image: &'a str,
+    pub config_digest: &'a str,
+    pub journal_recovery: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeStartupPolicyObservation {
@@ -44,4 +62,15 @@ impl RuntimeStartupPolicyObservation {
             "runtime startup policy observation is invalid".into(),
         ))
     }
+}
+
+pub(crate) fn running_image_matches(running_image: &str, manifest: &str, config: &str) -> bool {
+    let observed_manifest = running_image
+        .strip_prefix("docker-pullable://")
+        .unwrap_or(running_image);
+    let observed_config = running_image
+        .strip_prefix("containerd://")
+        .or_else(|| running_image.strip_prefix("docker://"))
+        .unwrap_or(running_image);
+    observed_manifest == manifest || observed_config == config
 }

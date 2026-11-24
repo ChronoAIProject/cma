@@ -122,6 +122,24 @@ impl Sandbox {
         {
             return Err(invalid());
         }
+        if let Some(transition) = self.admitted_retained_runtime_transition() {
+            let matching = self
+                .lifecycle
+                .retained_startup_policy
+                .as_ref()
+                .zip(self.runtime.as_ref())
+                .is_some_and(|(evidence, binding)| {
+                    evidence.observation.legacy_journal_recovery_enabled
+                        == transition.request.journal_recovery
+                        && evidence.observation.runtime.generation
+                            == transition.successor_generation
+                        && binding.boot_id.as_deref()
+                            == Some(evidence.observation.runtime.boot_id.as_str())
+                });
+            if !matching {
+                return Err(invalid());
+            }
+        }
         self.validate_custom_runtime()?;
         if let Some(state) = self
             .lifecycle

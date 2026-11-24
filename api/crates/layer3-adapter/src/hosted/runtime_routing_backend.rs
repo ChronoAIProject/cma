@@ -356,6 +356,27 @@ impl HostedBackend for RuntimeBackends {
             .upgrade_with_home(handle, previous, next, home)
             .await
     }
+    async fn upgrade_retained_policy_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        admission: &crate::RetainedStartupPolicyUpgrade<'_>,
+    ) -> Result<()> {
+        self.for_handle(handle)?
+            .upgrade_retained_policy_with_home(handle, previous, next, home, admission)
+            .await
+    }
+    async fn verify_retained_startup_policy(
+        &self,
+        handle: &RuntimeHandle,
+        readback: &crate::RetainedStartupPolicyReadback<'_>,
+    ) -> Result<crate::RuntimeStartupPolicyObservation> {
+        self.for_handle(handle)?
+            .verify_retained_startup_policy(handle, readback)
+            .await
+    }
     async fn provision_receipted(
         &self,
         request: ProviderSandboxRequest,

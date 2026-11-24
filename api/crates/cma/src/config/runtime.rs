@@ -63,6 +63,7 @@ pub(crate) struct RuntimeConfig {
     pub machine_sandbox_image: Option<String>,
     pub(crate) runtime_canary_releases: canary::Catalog,
     pub(crate) runtime_canary_writes: canary::WriteScope,
+    pub(crate) retained_runtime_writes: canary::WriteScope,
     pub sandbox_namespace: String,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub agent_sandbox_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
@@ -163,6 +164,11 @@ impl RuntimeConfig {
             .filter(|_| allocate_agent_sandbox && agent_sandbox.is_some());
         let runtime_canary_releases = canary::Catalog::from_lookup(lookup, canary_home)?;
         let runtime_canary_writes = canary::WriteScope::from_lookup(
+            lookup,
+            allocate_agent_sandbox,
+            &runtime_canary_releases,
+        )?;
+        let retained_runtime_writes = canary::WriteScope::retained_from_lookup(
             lookup,
             allocate_agent_sandbox,
             &runtime_canary_releases,
@@ -304,6 +310,7 @@ impl RuntimeConfig {
             machine_sandbox_image,
             runtime_canary_releases,
             runtime_canary_writes,
+            retained_runtime_writes,
             sandbox_namespace,
             home_policy,
             agent_sandbox_home_policy,

@@ -285,6 +285,27 @@ pub trait HostedBackend: Send + Sync {
             "native runtime upgrades are unavailable".into(),
         ))
     }
+    async fn upgrade_retained_policy_with_home(
+        &self,
+        _handle: &RuntimeHandle,
+        _previous: &ProviderSandboxRequest,
+        _next: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+        _admission: &crate::RetainedStartupPolicyUpgrade<'_>,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "retained runtime policy upgrades are unavailable".into(),
+        ))
+    }
+    async fn verify_retained_startup_policy(
+        &self,
+        _handle: &RuntimeHandle,
+        _readback: &crate::RetainedStartupPolicyReadback<'_>,
+    ) -> Result<crate::RuntimeStartupPolicyObservation> {
+        Err(crate::AdapterError::Unsupported(
+            "retained startup policy readback is unavailable".into(),
+        ))
+    }
     async fn provision_receipted(
         &self,
         _request: ProviderSandboxRequest,

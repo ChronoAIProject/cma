@@ -1,7 +1,55 @@
 {
   "version": 1,
-  "openapi_operations": 317,
+  "openapi_operations": 322,
   "operations": {
+    "PUT /api/v1/admin/retained-runtime-policy": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/retained_runtime_transition.rs",
+      "required_problems": [
+        "not_authenticated",
+        "runtime_canary_closed",
+        "runtime_canary_conflict",
+        "runtime_canary_forbidden",
+        "runtime_canary_invalid",
+        "runtime_canary_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/retained-runtime-preview": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/retained_runtime_transition.rs",
+      "required_problems": [
+        "not_authenticated",
+        "runtime_canary_closed",
+        "runtime_canary_conflict",
+        "runtime_canary_forbidden",
+        "runtime_canary_invalid",
+        "runtime_canary_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/retained-runtime-grants": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/retained_runtime_transition.rs",
+      "required_problems": [
+        "not_authenticated",
+        "runtime_canary_closed",
+        "runtime_canary_conflict",
+        "runtime_canary_forbidden",
+        "runtime_canary_invalid",
+        "runtime_canary_unavailable"
+      ]
+    },
+    "POST /api/v1/retained-runtime-redemptions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/retained_runtime_transition.rs",
+      "required_problems": [
+        "not_authenticated",
+        "runtime_canary_closed",
+        "runtime_canary_conflict",
+        "runtime_canary_forbidden",
+        "runtime_canary_invalid",
+        "runtime_canary_unavailable"
+      ]
+    },
     "PUT /api/v1/admin/runtime-canary-policy": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/runtime_canary.rs# Compare-and-set of admission policy by a platform operator.",
@@ -4289,6 +4337,17 @@
         "invalid_json",
         "json_content_type_required",
         "store_failed"
+      ]
+    },
+    "POST /api/v1/admin/retained-runtime-grants/abort": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/retained_runtime_transition.rs",
+      "required_problems": [
+        "not_authenticated",
+        "runtime_canary_conflict",
+        "runtime_canary_forbidden",
+        "runtime_canary_invalid",
+        "runtime_canary_unavailable"
       ]
     }
   },

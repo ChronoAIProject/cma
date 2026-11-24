@@ -1,10 +1,12 @@
 use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::{
-    apply_image_rotation, apply_proved_inactivity_pause, SandboxImageRotationRequest,
-    SandboxInactivityPauseRequest, SandboxMaintenanceApplication, SandboxMaintenanceOutcome,
-    SandboxStoreError,
+    apply_image_rotation, apply_proved_inactivity_pause, apply_retained_runtime_abort,
+    apply_retained_runtime_transition, SandboxImageRotationRequest, SandboxInactivityPauseRequest,
+    SandboxMaintenanceApplication, SandboxMaintenanceOutcome, SandboxStoreError,
 };
-use layer2_core::sandbox::{Sandbox, SandboxEvent};
+use layer2_core::sandbox::{
+    RetainedRuntimeTransition, RetainedRuntimeTransitionRequest, Sandbox, SandboxEvent,
+};
 use mongodb::bson::{doc, Bson};
 use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
@@ -28,6 +30,14 @@ pub(super) use scoped::attempt;
 pub(super) enum MaintenanceRequest {
     Inactivity(SandboxInactivityPauseRequest),
     Rotation(SandboxImageRotationRequest),
+    RetainedTransition {
+        request: Box<RetainedRuntimeTransitionRequest>,
+        requested_at: String,
+    },
+    RetainedTransitionAbort {
+        receipt: Box<RetainedRuntimeTransition>,
+        requested_at: String,
+    },
 }
 
 impl MaintenanceRequest {
@@ -35,6 +45,8 @@ impl MaintenanceRequest {
         match self {
             Self::Inactivity(request) => &request.sandbox_id,
             Self::Rotation(request) => &request.sandbox_id,
+            Self::RetainedTransition { request, .. } => &request.sandbox_id,
+            Self::RetainedTransitionAbort { receipt, .. } => &receipt.request.sandbox_id,
         }
     }
 
@@ -42,6 +54,8 @@ impl MaintenanceRequest {
         match self {
             Self::Inactivity(request) => &request.requested_at,
             Self::Rotation(request) => &request.requested_at,
+            Self::RetainedTransition { requested_at, .. }
+            | Self::RetainedTransitionAbort { requested_at, .. } => requested_at,
         }
     }
 }
@@ -101,7 +115,7 @@ pub(super) async fn apply(
     .await
 }
 
-async fn apply_with_sources(
+pub(super) async fn apply_with_sources(
     store: &MongoSandboxStore,
     request: &MaintenanceRequest,
     session: &mut ClientSession,
@@ -237,6 +251,26 @@ async fn apply_with_sources(
             apply_proved_inactivity_pause(&current, &activities, request, agentless_idle)
         }
         MaintenanceRequest::Rotation(request) => apply_image_rotation(&current, &agents, request),
+        MaintenanceRequest::RetainedTransition {
+            request,
+            requested_at,
+        } => {
+            if super::evidence::queued_control(store, &current.id, session).await?
+                || !super::evidence::agentless_commands_clear(store, &agents, session).await?
+                || open_session(store, &current, requested_at, session).await?
+            {
+                return Ok(MaintenanceReceipt {
+                    sandbox: current,
+                    event: None,
+                    outcome: SandboxMaintenanceOutcome::NotEligible,
+                });
+            }
+            apply_retained_runtime_transition(&current, &agents, request, requested_at)
+        }
+        MaintenanceRequest::RetainedTransitionAbort {
+            receipt,
+            requested_at,
+        } => apply_retained_runtime_abort(&current, receipt, requested_at),
     }
     .map_err(ApplyError::Domain)?;
     let (expected_revision, sandbox, event) = match application {
@@ -302,7 +336,10 @@ async fn apply_with_sources(
     validate_in_transaction(store, &current.id, last_seq, session).await?;
     // Snapshot isolation needs actual writes to prevent a concurrent Agent turn
     // from committing after the evidence read without conflicting with admission.
-    if matches!(request, MaintenanceRequest::Rotation(_)) {
+    if matches!(
+        request,
+        MaintenanceRequest::Rotation(_) | MaintenanceRequest::RetainedTransition { .. }
+    ) {
         if !super::evidence::fence_idle_workspaces(store, &current, session).await? {
             return Ok(MaintenanceReceipt {
                 sandbox: current,
