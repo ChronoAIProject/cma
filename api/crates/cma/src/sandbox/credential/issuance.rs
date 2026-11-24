@@ -135,7 +135,7 @@ impl ManagedSandboxCredentials {
                 })?;
             let route = layer3_adapter::GithubCredentialRoute {
                 service_id: proof.id().to_owned(),
-                slug: proof.slug().to_owned(),
+                catalog_id: proof.catalog_id().to_owned(),
             };
             if !route.is_valid() {
                 return Err(CredentialError::Security(

@@ -375,26 +375,18 @@ pub struct CredentialFrame {
 #[serde(deny_unknown_fields)]
 pub struct GithubCredentialRoute {
     pub service_id: String,
-    pub slug: String,
+    pub catalog_id: String,
 }
 
 impl GithubCredentialRoute {
     pub fn is_valid(&self) -> bool {
-        !self.service_id.is_empty()
-            && self.service_id.len() <= 128
-            && self
-                .service_id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-            && !self.slug.is_empty()
-            && self.slug.len() <= 80
-            && !self.slug.starts_with('-')
-            && !self.slug.ends_with('-')
-            && !self.slug.contains("--")
-            && self
-                .slug
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        [&self.service_id, &self.catalog_id].into_iter().all(|id| {
+            !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        })
     }
 }
 

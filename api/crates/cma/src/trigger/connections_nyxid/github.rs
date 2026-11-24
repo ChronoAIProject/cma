@@ -7,7 +7,7 @@ const MAX_CHOICES: usize = 12;
 
 pub(crate) struct VerifiedGitHubConnection {
     connection_id: String,
-    slug: String,
+    catalog_id: String,
 }
 
 impl VerifiedGitHubConnection {
@@ -15,8 +15,8 @@ impl VerifiedGitHubConnection {
         &self.connection_id
     }
 
-    pub(crate) fn slug(&self) -> &str {
-        &self.slug
+    pub(crate) fn catalog_id(&self) -> &str {
+        &self.catalog_id
     }
 }
 
@@ -208,7 +208,7 @@ impl NyxidServiceConnectionBroker {
             }
             Ok(VerifiedGitHubConnection {
                 connection_id: detail.id,
-                slug: row.slug.clone(),
+                catalog_id,
             })
         })
         .await

@@ -238,7 +238,7 @@ async fn retained_runtime_without_github_route_support_receives_no_new_credentia
         custody_generation: Some(1),
         github_route: Some(crate::GithubCredentialRoute {
             service_id: "repository-connection".into(),
-            slug: "api-github-repository".into(),
+            catalog_id: "github-catalog".into(),
         }),
     };
     assert!(matches!(

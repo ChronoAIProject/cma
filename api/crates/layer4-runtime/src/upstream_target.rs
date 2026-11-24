@@ -53,11 +53,11 @@ impl TargetBase {
     ) -> Result<url::Url> {
         let prefix = self
             .base_path
-            .strip_suffix("/api-github")
+            .strip_suffix("/s/api-github")
             .ok_or_else(invalid)?;
         let selected = Self {
             url: self.url.clone(),
-            base_path: format!("{prefix}/{}", route.slug),
+            base_path: format!("{prefix}/{}", route.catalog_id),
         };
         let mut target = selected.join(uri)?;
         if target.query_pairs().any(|(key, _)| key == "_nyxid_via") {

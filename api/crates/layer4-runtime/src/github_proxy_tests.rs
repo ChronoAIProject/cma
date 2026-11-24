@@ -227,7 +227,7 @@ async fn proxy_preserves_requests_rotates_custody_and_refuses_foreign_hosts() {
         custody_generation: Some(3),
         github_route: Some(layer3_adapter::GithubCredentialRoute {
             service_id: "repository-connection".into(),
-            slug: "github-repositories".into(),
+            catalog_id: "github-catalog".into(),
         }),
     };
     holder.install(&exact).await.unwrap();
@@ -237,6 +237,9 @@ async fn proxy_preserves_requests_rotates_custody_and_refuses_foreign_hosts() {
         stale.github_route.as_mut().unwrap().service_id = id.into();
         assert!(holder.install(&stale).await.is_err());
     }
+    let mut changed_catalog = exact.clone();
+    changed_catalog.github_route.as_mut().unwrap().catalog_id = "other-catalog".into();
+    assert!(holder.install(&changed_catalog).await.is_err());
     assert_eq!(
         client
             .get("http://api.github.com/user?per_page=1")
@@ -250,7 +253,7 @@ async fn proxy_preserves_requests_rotates_custody_and_refuses_foreign_hosts() {
     assert_eq!(method, "GET");
     assert_eq!(
         uri,
-        "/api/v1/proxy/s/github-repositories/user?per_page=1&_nyxid_via=repository-connection"
+        "/api/v1/proxy/github-catalog/user?per_page=1&_nyxid_via=repository-connection"
     );
     assert!(headers[header::AUTHORIZATION] == "Bearer exact-route-fixture-key");
     assert_eq!(

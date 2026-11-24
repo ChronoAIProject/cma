@@ -101,10 +101,12 @@ async fn verifies_only_the_selected_active_user_service_and_its_live_grant() {
         Err(ServiceConnectionError::Refused)
     ));
     *provider.state.github_proxy_scopes.lock().unwrap() = Some("read:user, repo".into());
-    broker
+    let proof = broker
         .verify_github_repo_connection(&owner, "strong")
         .await
         .unwrap();
+    assert_eq!(proof.id(), "strong");
+    assert_eq!(proof.catalog_id(), "github-catalog");
     let reads = provider.state.github_proxy_reads.lock().unwrap().clone();
     assert_eq!(reads, vec![("github-catalog".into(), "strong".into()); 3]);
 
