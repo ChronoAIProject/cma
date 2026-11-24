@@ -12,7 +12,10 @@ async function choose(page: Page, picker: string, option: string) {
   await page.getByRole('menuitemradio', { name: option, exact: true }).click();
 }
 async function environments(page: Page) {
-  await page.getByRole('button', { name: 'Environments', exact: true }).click();
+  await page
+    .getByRole('group', { name: 'Navigation view' })
+    .getByRole('button', { name: 'Environments', exact: true })
+    .click();
   await filters(page);
 }
 function noEffects(fixture: LocalSandboxFilters) {
@@ -24,7 +27,7 @@ function noEffects(fixture: LocalSandboxFilters) {
 
 for (const [width, height, entry] of [
   [1440, 900, 'pointer'],
-  [1280, 800, 'settings'],
+  [1280, 800, 'collapsed keyboard'],
   [800, 600, 'keyboard'],
   [390, 844, 'pointer'],
 ] as const) {
@@ -96,11 +99,12 @@ for (const [width, height, entry] of [
     });
     expect(scroll).toBeGreaterThan(0);
     await mode.screenshot({ path: info.outputPath('tasks.png') });
-    if (entry === 'settings') {
+    if (entry === 'collapsed keyboard') {
       await navigation(page, false);
       await expect(mode).toBeHidden();
-      await page.getByRole('button', { name: 'Settings', exact: true }).press('Enter');
-      await page.getByRole('menuitem', { name: 'Manage environments', exact: true }).press('Enter');
+      await page.getByRole('button', { name: 'Show navigation', exact: true }).press('Enter');
+      await expect(mode).toBeVisible();
+      await environments.press('Enter');
     } else if (entry === 'keyboard') await environments.press('Enter');
     else await environments.click();
     await expect(environments).toBeFocused();
@@ -408,7 +412,7 @@ for (const scope of ['Personal', 'Shared', 'Synthetic research (Organization)'])
     ).toContainText('credential_rotating fixture');
     await expect(page.getByText('retired fixture', { exact: true })).toHaveCount(0);
     await page
-      .getByText('Deletion progress (1)', { exact: true })
+      .getByText('Cleaning up 1 sandboxes', { exact: true })
       .filter({ visible: true })
       .click();
     await expect(
@@ -507,7 +511,10 @@ test('LOCAL observed lifecycle transitions move a focused Sandbox exactly once w
   fixture.sandboxes[index] = { ...fixture.sandboxes[index]!, status: 'retiring' };
   await page.clock.runFor(15_100);
   await expect(row).toHaveCount(0);
-  await page.getByText('Deletion progress (2)', { exact: true }).filter({ visible: true }).click();
+  await page
+    .getByText('Cleaning up 2 sandboxes', { exact: true })
+    .filter({ visible: true })
+    .click();
   await expect(page.getByRole('button', { name: 'View status for Moving fixture' })).toBeVisible();
   noEffects(fixture);
 });

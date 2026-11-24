@@ -11,6 +11,26 @@ use super::{
 };
 
 impl AgentSandboxPools {
+    /// Prove absence by immutable owner UID. Pod labels can change without
+    /// updating the owning member's resource version.
+    pub(in crate::agent_sandbox) async fn prove_member_pods_absent(&self, uid: &str) -> Result<()> {
+        for pod in complete(&self.pods).await? {
+            if pod.namespace().as_deref() != Some(&self.config.namespace) {
+                return Err(rejected("native Pod is outside its namespace"));
+            }
+            if pod
+                .metadata
+                .owner_references
+                .iter()
+                .flatten()
+                .any(|owner| owner.uid == uid)
+            {
+                return Err(unavailable("native member Pods remain present"));
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn cleanup_member(
         &self,
         member: &DynamicObject,

@@ -116,6 +116,10 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/admin/profiles` | - | kind, visibility, owner, cursor, limit | 200 ProfilePageView |
 | `POST /api/v1/admin/profiles/{kind}/{id}/retire` | - | - | 200 ProfileSummaryView |
 | `GET /api/v1/admin/runtime-inventory` | - | - | 200 RuntimeInventoryView |
+| `GET /api/v1/admin/runtime-binding-holds` | - | - | 200 BindingHoldOverviewView; 403/503 ProblemDocument; 404 when diagnostics are disabled |
+| `PUT /api/v1/admin/runtime-canary-policy` | CanaryPolicyRequest | - | 200 CanaryPolicyView; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/runtime-canary-grants` | CanaryGrantRequest | - | 201 CanaryGrantView; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/runtime-canary-grants/revoke` | CanaryRevokeRequest | - | 200 CanaryGrantView; 401/403/409/422/503 ProblemDocument |
 | `GET /api/v1/admin/sandboxes` | - | owner, status, runtime_version, cursor, limit | 200 SandboxPageView |
 | `GET /api/v1/admin/sandboxes/{id}` | - | - | 200 SandboxDetailView |
 | `POST /api/v1/admin/sandboxes/{id}/always-on` | AdminAlwaysOnRequest | - | 200 SandboxView |
@@ -195,6 +199,7 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/desktop-capability` | - | workspace_id, sandbox_id | 200 DesktopCapabilityView |
 | `POST /api/v1/agents` | AgentLifecycleCreateRequest; key | - | 202 AgentLifecycleCreateReceipt |
 | `GET /api/v1/agent-lifecycle/{id}` | - | - | 200 AgentLifecycleOperationView |
+| `POST /api/v1/runtime-canary-redemptions` | CanaryRedeemRequest; Idempotency-Key | - | 202 AgentLifecycleCreateReceipt; 400/401/403/409/422/503 ProblemDocument |
 | `GET /api/v1/agents` | - | organization, sandbox, workspace, status, cursor, limit | 200 AccessibleAgentPageView |
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `GET /api/v1/agents/{id}/capacity-recovery/dry-run` | - | - | 200 authorized recovery metadata |
@@ -903,5 +908,8 @@ SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both exp
 | `PATCH /api/v1/agents/{id}/preferences` | UpdateAgentPreferencesRequest; key | - | 200 AgentPreferencesView |
 
 | `POST /api/v1/telemetry/browser` | Anonymous, bounded browser diagnostic category; no durable receipt. |
+| `GET /api/v1/agents/{id}/original-request` | Read the current owner’s exact admitted Task request without scanning history. |
+| `GET /api/v1/agents/{id}/reply-preview` | Read a bounded certified preview of the latest persisted assistant message. |
 | `POST /api/v1/sandbox-creation-outcomes/lookup` | Read evidence for an exact owner Sandbox creation. |
+
 <!-- openapi-operations:end -->

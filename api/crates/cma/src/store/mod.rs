@@ -130,6 +130,7 @@ mod marketplace_mutations;
 mod marketplace_query;
 mod marketplace_support;
 mod marketplace_visibility;
+pub(crate) mod measured_capture;
 mod message_feedback;
 pub(crate) mod migrations;
 pub mod mongo;
@@ -231,6 +232,7 @@ pub use admission_control::MongoAdmissionControlStore;
 #[cfg(test)]
 pub(crate) use agent_access_tools::fixtures as agent_access_fixtures;
 pub(crate) use agent_access_tools::MongoAgentAccessToolSource;
+pub(crate) use agent_lifecycle_operations::canary_admission as runtime_canary;
 pub(crate) use agent_lifecycle_operations::canary_key;
 #[cfg(test)]
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;

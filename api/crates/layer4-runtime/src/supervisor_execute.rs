@@ -158,6 +158,7 @@ impl Supervisor {
                 self.resources.sample(std::time::Instant::now()).into(),
             )),
             RequestFrame::ProveAgentProcessClosed(_)
+            | RequestFrame::FenceAgentRestart(_)
             | RequestFrame::WorkspaceRemovalSupport(_)
             | RequestFrame::ReconcileWorkspaceRemoval(_)
             | RequestFrame::RuntimeStatus(_)

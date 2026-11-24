@@ -22,6 +22,7 @@ const selections = [
   ['package(=cmaeg) and kind(test) and binary(=mongo_isolation)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=management) and test(~github_integrations::)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=management) and test(~organization_channels::)', 'only', true],
+  ['package(=cmaeg) and kind(test) and binary(=management) and test(=record_management::mongo_legacy_read_is_owned_and_read_only)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=github_source)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~tools::threads::ledger::mongo_tests::)', 'only', true],
   ['package(=cma) and (test(~store::isolation::tests::real_) or test(~store::migrations::tests::segments_runtime::))', 'only', false],

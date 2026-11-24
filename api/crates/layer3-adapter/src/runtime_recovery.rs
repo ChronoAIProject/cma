@@ -69,6 +69,17 @@ pub trait RuntimeRecovery: Send + Sync {
         ))
     }
 
+    /// Fence a delayed numbered Open on the exact boot before it can start.
+    async fn fence_agent_restart(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::wire::AgentRestartFence,
+    ) -> Result<()> {
+        Err(AdapterError::Unsupported(
+            "native Agent restart fencing is unavailable".into(),
+        ))
+    }
+
     /// Read-only proof for reopening already restored, idle conversations.
     /// Requires complete settled history and no Agent/unowned process. This
     /// grants no authority to stop a process or suspend the retained runtime.

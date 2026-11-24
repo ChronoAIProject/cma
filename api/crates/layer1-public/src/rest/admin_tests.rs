@@ -158,6 +158,17 @@ pub(crate) fn fixture_with_pools(
     fixture_with_configure(inventory, pools, |state, _| state)
 }
 
+fn fixture_with_options(
+    inventory: bool,
+    pools: Option<Arc<dyn warm_pools::WarmPoolAdministration>>,
+    diagnostics: Option<Arc<layer2_core::binding_diagnostics::BindingDiagnosticsService>>,
+) -> Fixture {
+    fixture_with_configure(inventory, pools, |state, _| match diagnostics {
+        Some(service) => state.with_binding_diagnostics(service),
+        None => state,
+    })
+}
+
 pub(crate) fn fixture_with_configure(
     inventory: bool,
     pools: Option<Arc<dyn warm_pools::WarmPoolAdministration>>,
@@ -205,6 +216,9 @@ pub(crate) fn fixture_with_configure(
         names,
     }
 }
+
+#[path = "admin/binding_holds_tests.rs"]
+pub(in crate::rest) mod binding_holds_tests;
 
 fn request(
     method: Method,

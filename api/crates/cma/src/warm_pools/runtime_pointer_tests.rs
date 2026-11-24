@@ -180,6 +180,7 @@ impl Fixture {
     fn plan(&self, lane: Lane, release: char, size: SandboxCapacity) -> NativePoolConfiguration {
         self.provider
             .plan(&NativePoolSpec {
+                cold_canary: false,
                 image: deployment_image(image(lane, release)),
                 cpu_millis: size.cpu_millis,
                 memory_mib: size.memory_mib,
