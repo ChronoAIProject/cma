@@ -18,7 +18,7 @@ pub use delivery_receipt::{
 };
 pub use execution_attribution::ExecutionAttribution;
 pub use recovery::{ExecutionError, Phase, RecoverySupport};
-pub use scheduler::{Disposition, ScheduleConfig, ScheduleReport};
+pub use scheduler::{Disposition, ScheduleConfig, ScheduleReport, WorkSelection};
 pub use stored_receipt::{PartsManifest, StoredReceipt};
 pub use turn_outcome::TurnOutcome;
 

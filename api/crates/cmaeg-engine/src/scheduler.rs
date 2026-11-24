@@ -45,3 +45,8 @@ pub struct ScheduleReport {
     pub aborted: usize,
     pub recovery_failed: bool,
 }
+/// Stable admission and serialization identities for a durable wake-up.
+pub trait WorkSelection: Clone + Send + 'static {
+    fn key(&self) -> (String, String);
+    fn serial_key(&self) -> (String, String);
+}
