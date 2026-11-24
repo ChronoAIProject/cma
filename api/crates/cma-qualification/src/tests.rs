@@ -146,8 +146,8 @@ async fn dropping_a_pending_checkpoint_releases_capacity() {
 #[tokio::test(start_paused = true)]
 async fn cancellation_consumes_only_the_original_owner_and_its_linked_receipt() {
     use layer2_core::agent_ownership::{
-        test_support::MemoryOwnershipStore, Member, OwnershipCoordinator, OwnershipStore,
-        PROTOCOL_VERSION,
+        qualification_owner_digest, test_support::MemoryOwnershipStore, Member,
+        OwnershipCoordinator, OwnershipStore, PROTOCOL_VERSION,
     };
     let store = MemoryOwnershipStore::default();
     let coordinator = OwnershipCoordinator::register(
@@ -177,6 +177,22 @@ async fn cancellation_consumes_only_the_original_owner_and_its_linked_receipt() 
         .capture_qualification_owner(&authority.token)
         .await
         .unwrap();
+    let mut wrong_process = authority.token.clone();
+    wrong_process.instance_id = "other-fixture-instance".into();
+    assert!(coordinator
+        .capture_qualification_owner_digest(
+            capture.agent_digest(),
+            qualification_owner_digest(&wrong_process)
+        )
+        .await
+        .is_none());
+    assert!(coordinator
+        .capture_qualification_owner_digest(
+            capture.agent_digest(),
+            qualification_owner_digest(&wrong_epoch)
+        )
+        .await
+        .is_none());
 
     let selected = select(
         ControlOperation::Stop,
@@ -186,10 +202,16 @@ async fn cancellation_consumes_only_the_original_owner_and_its_linked_receipt() 
     .unwrap();
     let registry = Registry::default();
     let other = ControlContext::from_digests([99; 32], selected.agent_digest());
+    let stale_capture = coordinator
+        .capture_qualification_owner(&authority.token)
+        .await
+        .unwrap();
     let mut arm = registry
         .arm_with_owner(selected, LIFETIME, capture)
         .unwrap();
-    let mut other_arm = registry.arm(other, LIFETIME).unwrap();
+    let mut other_arm = registry
+        .arm_with_owner(other, LIFETIME, stale_capture)
+        .unwrap();
     let worker = |context| {
         let registry = registry.clone();
         tokio::spawn(async move { registry.after_schedule(context, OUTCOME).await })
@@ -207,6 +229,23 @@ async fn cancellation_consumes_only_the_original_owner_and_its_linked_receipt() 
     assert_eq!(store.owner(&agent).await.unwrap(), Some(durable));
     assert!(!work.is_finished());
 
+    coordinator
+        .handoff(&authority, async { Ok(()) })
+        .await
+        .unwrap();
+    let successor = coordinator.acquire(&agent).await.unwrap().unwrap();
+    assert!(successor.token.epoch > authority.token.epoch);
+    assert!(coordinator
+        .capture_qualification_owner_digest(
+            selected.agent_digest(),
+            qualification_owner_digest(&authority.token)
+        )
+        .await
+        .is_none());
+    assert!(!other_arm.cancel_owner(&unrelated_receipt));
+    assert!(successor.is_current());
+    assert!(!successor.receiver_cancelled());
+
     arm.release();
     other_arm.release();
     work.await.unwrap();
@@ -215,6 +254,15 @@ async fn cancellation_consumes_only_the_original_owner_and_its_linked_receipt() 
 
 #[tokio::test(start_paused = true)]
 async fn selected_renewal_withholds_only_the_capture_and_records_the_callers_timeout() {
+    assert_withheld_renewal(false).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn disarming_after_commit_keeps_the_renewal_reply_withheld() {
+    assert_withheld_renewal(true).await;
+}
+
+async fn assert_withheld_renewal(disarm_after_commit: bool) {
     use layer2_core::agent_ownership::{
         test_support::MemoryOwnershipStore, Member, OwnershipCoordinator, OwnershipStore,
         PROTOCOL_VERSION,
@@ -253,7 +301,7 @@ async fn selected_renewal_withholds_only_the_capture_and_records_the_callers_tim
         .arm_renewal(capture, store.client(), LIFETIME)
         .unwrap();
     tokio::time::advance(Duration::from_millis(10)).await;
-    let task = tokio::spawn({
+    let mut task = tokio::spawn({
         let coordinator = coordinator.clone();
         async move { coordinator.maintain().await }
     });
@@ -280,8 +328,17 @@ async fn selected_renewal_withholds_only_the_capture_and_records_the_callers_tim
             > original.expires_at_ms
     );
 
-    task.await.unwrap().unwrap();
-    assert!(armed.evidence().caller_dropped);
+    if disarm_after_commit {
+        armed.disarm();
+        assert!(tokio::time::timeout(Duration::from_millis(100), &mut task)
+            .await
+            .is_err());
+        assert!(selected.is_current());
+        task.await.unwrap().unwrap();
+    } else {
+        task.await.unwrap().unwrap();
+        assert!(armed.evidence().caller_dropped);
+    }
     assert!(selected.receiver_cancelled());
     assert!(healthy.is_current());
     assert!(coordinator.is_ready());

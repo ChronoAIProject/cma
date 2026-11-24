@@ -115,6 +115,76 @@ async fn local_socket_replays_exact_commands_and_disconnect_releases_the_handler
     assert!(!handler.is_finished());
     drop(peer);
     timeout(IO_TIMEOUT, handler).await.unwrap().unwrap();
+    let mut reconnected = UnixStream::connect(fixture.socket()).await.unwrap();
+    assert_eq!(
+        request(&mut reconnected, digest, 0, "arm").await["status"],
+        "refused"
+    );
     drop(server);
     assert!(!fixture.socket().exists());
+}
+
+#[tokio::test]
+async fn command_frames_refuse_oversized_and_ambiguous_input() {
+    let digest = serde_json::to_string(&[1_u8; 32].as_slice()).unwrap();
+    let ambiguous =
+        format!(r#"{{"plan_digest":{digest},"sequence":0,"action":"arm","action":"release"}}"#);
+    let (mut sender, mut reader) = UnixStream::pair().unwrap();
+    sender.write_u32((MAX_FRAME + 1) as u32).await.unwrap();
+    assert_eq!(
+        read_request(&mut reader).await.unwrap_err().kind(),
+        io::ErrorKind::InvalidData
+    );
+    sender.write_u32(ambiguous.len() as u32).await.unwrap();
+    sender.write_all(ambiguous.as_bytes()).await.unwrap();
+    assert_eq!(
+        read_request(&mut reader).await.unwrap_err().kind(),
+        io::ErrorKind::InvalidData
+    );
+}
+
+#[tokio::test]
+async fn changed_replay_closes_the_connection_and_releases_the_checkpoint() {
+    let fixture = Fixture::new();
+    let plan = Plan::parse(&serde_json::to_vec(&plan()).unwrap(), BUILD).unwrap();
+    let digest = plan.digest;
+    let context = plan.context;
+    let registry = Registry::default();
+    let _server =
+        ControlServer::bind(fixture.socket(), plan, registry.clone(), None, None).unwrap();
+    let mut peer = UnixStream::connect(fixture.socket()).await.unwrap();
+    assert_eq!(
+        request(&mut peer, digest, 0, "arm").await["status"],
+        "armed"
+    );
+    let handler = tokio::spawn(async move {
+        registry
+            .after_schedule(
+                context,
+                ControlSchedule {
+                    agent_revision: 4,
+                    effect: ScheduleEffect::Scheduled,
+                },
+            )
+            .await;
+    });
+    assert_eq!(
+        request(&mut peer, digest, 1, "wait").await["status"],
+        "reached"
+    );
+    let changed = serde_json::to_vec(&json!({
+        "plan_digest": digest, "sequence": 1, "action": "release"
+    }))
+    .unwrap();
+    peer.write_u32(changed.len() as u32).await.unwrap();
+    peer.write_all(&changed).await.unwrap();
+    assert_eq!(
+        timeout(IO_TIMEOUT, peer.read_u8())
+            .await
+            .unwrap()
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::UnexpectedEof
+    );
+    timeout(IO_TIMEOUT, handler).await.unwrap().unwrap();
 }
