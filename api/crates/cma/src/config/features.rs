@@ -114,6 +114,7 @@ pub(crate) struct FeatureFlags {
     pub retained_context_lookup: bool,
     pub context_diagnostics: bool,
     pub event_driven_reconciliation: bool,
+    pub resume_agent_reconciliation: bool,
     pub stale_turn_reconciliation: bool,
     pub stale_turn_terminal: bool,
     pub agent_connection_observations: bool,
@@ -264,6 +265,10 @@ impl FeatureFlags {
             event_driven_reconciliation: flag(
                 lookup,
                 "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
+            )?,
+            resume_agent_reconciliation: flag(
+                lookup,
+                "CHRONO_AGENT_RECONCILIATION_RESUME_ENABLED",
             )?,
             empty_discovery: flag(lookup, "CHRONO_EMPTY_DISCOVERY_COALESCING_ENABLED")?,
             agent_connection_observations: flag(
