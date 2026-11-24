@@ -135,16 +135,16 @@ pub(in crate::store) async fn read_initiation_fence(
     launch
         .validate()
         .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
+    let expiry = launch
+        .work
+        .lease
+        .as_ref()
+        .and_then(|lease| layer2_core::seconds_from_rfc3339(&lease.expires_at))
+        .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
     let now = layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339());
     if launch.initiation.as_ref() != Some(expected)
         || launch.resolution.workspace.id() != Some(&admission.workspace_id)
-        || launch
-            .work
-            .lease
-            .as_ref()
-            .and_then(|lease| layer2_core::seconds_from_rfc3339(&lease.expires_at))
-            .zip(now)
-            .is_none_or(|(expires, now)| expires <= now)
+        || now.is_none_or(|now| expiry <= now)
         || launch.work.effect.as_ref().is_none_or(|effect| {
             effect.kind != LaunchEffectKind::CreateAgent
                 || !matches!(
@@ -158,9 +158,15 @@ pub(in crate::store) async fn read_initiation_fence(
     let record = document
         .get("record")
         .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
+    let deadline = expiry
+        .checked_mul(1_000)
+        .and_then(|millis| i64::try_from(millis).ok())
+        .map(mongodb::bson::DateTime::from_millis)
+        .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
     let filter = doc! {
         "_id":expected.launch_id().as_str(), "record":record.clone(),
         "launch_initiation":record_bson(expected).map_err(|_|ApplyError::Domain(SandboxStoreError::Conflict))?,
+        "$expr": {"$gt": [deadline, "$$NOW"]},
     };
     Ok(InitiationFence { launches, filter })
 }

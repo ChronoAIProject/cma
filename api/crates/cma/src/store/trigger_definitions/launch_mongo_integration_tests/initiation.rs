@@ -15,6 +15,7 @@ use layer2_core::{
 mod common_execution;
 mod connection;
 mod input_protocol;
+mod maintenance_tests;
 mod publisher_erasure;
 use connection::Connected;
 
@@ -429,52 +430,7 @@ async fn trigger_initiation_agent_creation_is_atomic_with_original_human_or_api_
         assert!(
             matches!(&before.creation_origin, AgentCreationOrigin::Trigger { launching_actor: Some(actor), .. } if actor == &f.identity.actor)
         );
-        use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
-        assert!(launch.input_protocol.is_none());
-        let launch_rows = f
-            .seed
-            .client
-            .database(&f.seed.database)
-            .collection::<Document>(LAUNCHES);
-        let launch_filter = doc! {"_id": launch.id.as_str()};
-        let before_replay = launch_rows
-            .find_one(launch_filter.clone())
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(before_replay.contains_key("agent_initiation_fence"));
-        let parent_filter = doc! {"_id": f.parent.id.as_str()};
-        let held = f
-            .resources
-            .sandboxes
-            .update_one(
-                parent_filter.clone(),
-                doc! {"$set": {LEDGER_MAINTENANCE_FIELD: null}},
-            )
-            .await
-            .unwrap();
-        assert_eq!(held.matched_count, 1);
-        assert_eq!(
-            f.resources
-                .admit_agent_with_trigger_initiator(request, initiation, false)
-                .await
-                .unwrap()
-                .creation()
-                .agent,
-            *agent
-        );
-        assert_eq!(
-            launch_rows.find_one(launch_filter).await.unwrap(),
-            Some(before_replay)
-        );
-        f.resources
-            .sandboxes
-            .update_one(
-                parent_filter,
-                doc! {"$unset": {LEDGER_MAINTENANCE_FIELD: ""}},
-            )
-            .await
-            .unwrap();
+        maintenance_tests::assert_held_legacy_replay(&f, &launch, request, initiation, agent).await;
         assert_eq!(
             f.resources
                 .agent_provenance_snapshot(&agent.id)
