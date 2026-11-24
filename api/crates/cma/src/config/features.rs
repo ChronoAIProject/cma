@@ -35,6 +35,7 @@ pub(crate) struct FeatureFlags {
     pub am_startup_health_serving: bool,
     pub visitor_launch_admission: bool,
     pub usage_signed_cursors_enabled: bool,
+    pub usage_snapshot_cursors_enabled: bool,
     pub usage_strict_cursors_enabled: bool,
     pub visitor_two_sandbox_defaults: bool,
     pub admin_runtime_inventory: bool,
@@ -156,6 +157,7 @@ impl FeatureFlags {
             )?,
             visitor_launch_admission: flag(lookup, "CHRONO_VISITOR_LAUNCH_ADMISSION_ENABLED")?,
             usage_signed_cursors_enabled: flag(lookup, "CHRONO_USAGE_SIGNED_CURSORS_ENABLED")?,
+            usage_snapshot_cursors_enabled: flag(lookup, "CHRONO_USAGE_SNAPSHOT_CURSORS_ENABLED")?,
             usage_strict_cursors_enabled: flag(lookup, "CHRONO_USAGE_STRICT_CURSORS_ENABLED")?,
             visitor_two_sandbox_defaults: flag(
                 lookup,
@@ -349,12 +351,7 @@ impl FeatureFlags {
             silent_sign_in: tail.silent_sign_in,
             document_revocation_reserve: tail.document_revocation_reserve,
         };
-        if flags.usage_strict_cursors_enabled && !flags.usage_signed_cursors_enabled {
-            return Err(
-                "CHRONO_USAGE_STRICT_CURSORS_ENABLED requires CHRONO_USAGE_SIGNED_CURSORS_ENABLED"
-                    .into(),
-            );
-        }
+        usage_cursors::validate(&flags)?;
         if flags.agent_shared_observation && !flags.agui_bounded_replay {
             return Err("CHRONO_AGENT_SHARED_OBSERVATION_ENABLED requires CHRONO_AGUI_BOUNDED_REPLAY_ENABLED".into());
         }
@@ -443,6 +440,7 @@ mod tests;
 mod transcript_tests;
 #[cfg(test)]
 mod usage_cursor_tests;
+mod usage_cursors;
 #[cfg(test)]
 mod work_retry_tests;
 
