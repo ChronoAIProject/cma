@@ -100,6 +100,25 @@ class MigrationInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing source module"):
             self.source().collections()
 
+    def test_nested_test_import_does_not_replace_a_registry_binding(self):
+        files = self.git.files[NEW]
+        files["store/isolation.rs"] = """
+use super::usage;
+const COLLECTIONS: &[&str] = &[usage::COLLECTION];
+const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
+const NOTE: &str = r#"the delimiter { is part of a string"#;
+/* Block comment with a nested /* } */ brace. */
+#[cfg(test)]
+mod tests {
+use crate::fixtures::usage;
+}
+"""
+        files["fixtures/usage.rs"] = 'const COLLECTION: &str = "fixture_usage";'
+        rows = self.source().collections()
+        self.assertNotIn("fixture_usage", rows)
+        definition = rows["sandbox_usage"]["definition"]
+        self.assertEqual(definition["path"], inventory.ROOT + "store/usage.rs")
+
     def test_added_and_removed_collections_are_retained_in_both_direction_plan(self):
         self.git.files[NEW]["store/usage.rs"] = 'const COLLECTION: &str = "new_usage";'
         rows = {r["name"]: r for r in inventory.compare(self.source(OLD), self.source())["collections"]}

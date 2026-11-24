@@ -46,12 +46,40 @@ class Source:
 
     @staticmethod
     def imports(source):
+        tokens = re.compile(
+            r'//[^\n]*|/\*|\b(?:br|cr|r)(?P<hashes>#*)"(?s:.*?)"(?P=hashes)'
+            r'|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])\''
+            r'|\buse\s+(?P<path>[\w:]+)::(?:\{(?P<members>[^}]+)\}|(?P<name>\w+))\s*;'
+            r'|[{}]'
+        )
+        comment_tokens = re.compile(r'/\*|\*/')
         imports = {}
-        for use in re.finditer(r'\buse\s+([\w:]+)::(?:\{([^}]+)\}|(\w+))\s*;', source):
-            for name in (use[2] or use[3]).split(","):
-                name = name.strip()
-                if re.fullmatch(r'\w+', name):
-                    imports[name] = use[1] + "::" + name
+        position = depth = 0
+        while (token := tokens.search(source, position)) is not None:
+            position = token.end()
+            if token[0] == "/*":
+                comments = 1
+                while comments:
+                    end = comment_tokens.search(source, position)
+                    if end is None:
+                        raise ValueError("unterminated comment in collection source")
+                    position = end.end()
+                    comments += 1 if end[0] == "/*" else -1
+            elif token[0] == "{":
+                depth += 1
+            elif token[0] == "}":
+                depth -= 1
+            elif depth == 0 and token["path"]:
+                for name in (token["members"] or token["name"]).split(","):
+                    name = name.strip()
+                    if not re.fullmatch(r'\w+', name):
+                        continue
+                    target = token["path"] + "::" + name
+                    if name in imports and imports[name] != target:
+                        raise ValueError("ambiguous collection source import: " + name)
+                    imports[name] = target
+        if depth != 0:
+            raise ValueError("unbalanced braces in collection source")
         return imports
 
     def module(self, name):
