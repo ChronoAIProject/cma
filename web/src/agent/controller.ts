@@ -18,10 +18,14 @@ export { loadAgent, type ReadyAgent } from './loadAgent';
 import type { CmaWebClient } from '../api/client';
 import { CommandKeys } from '../api/client';
 import type { AgentLiveEvent } from '../api/types';
-import { useSandboxInput } from './sandboxInput';
+import { accessCheckedInputAvailability, useSandboxInput } from './sandboxInput';
 import { ConversationHydration } from './transport/hydration';
 import { useRetainedAgentState } from './retainedState';
 import { reopenAgent } from './reopenAgent';
+import {
+  observeApprovalProjection,
+  approvalProjectionView,
+} from './transport/approvalProjectionObserver';
 import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
@@ -364,6 +368,7 @@ export function useAgentController(
               setState({ ...current, conversation });
             },
             setStreamError,
+            observeApprovalProjection(v2, agentId, controller.signal, stateRef, setState),
           );
     void replay.catch((error: unknown) => {
       if (controller.signal.aborted || onIdentityChange(error)) return;
@@ -421,7 +426,7 @@ export function useAgentController(
     onIdentityChange,
     options,
   });
-  const presented = usePresentedAgent(state, summary);
+  const presented = usePresentedAgent(approvalProjectionView(state), summary);
   const legacy = client.agentTransport?.legacySession(
     suspended ? undefined : agentId,
     options.viewerId,
@@ -455,13 +460,7 @@ export function useAgentController(
         state.conversation.responseBinding === undefined),
     recoverPending: v2 === undefined && legacy === undefined ? undefined : recoverPending,
     state: presented,
-    inputAvailability: suspended
-      ? {
-          allowed: false,
-          notice:
-            'Checking Agent access. Your conversation and draft are retained; actions are unavailable until access is verified.',
-        }
-      : inputAvailability,
+    inputAvailability: accessCheckedInputAvailability(inputAvailability, suspended),
     resourceAvailability: suspended
       ? { state: 'unavailable', notice: 'Agent access is being checked. Live resources are held.' }
       : resourceAvailability,
