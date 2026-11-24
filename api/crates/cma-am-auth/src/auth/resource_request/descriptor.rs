@@ -4,7 +4,7 @@ use serde::Serialize;
 const EMPTY_BODY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 #[derive(Serialize)]
-pub struct Descriptor {
+pub(super) struct Descriptor {
     pub version: u8,
     pub method: String,
     pub path_and_query: String,
@@ -14,7 +14,11 @@ pub struct Descriptor {
 }
 
 impl Descriptor {
-    pub fn from_request(method: &Method, uri: &Uri, headers: &HeaderMap) -> Result<Self, ()> {
+    pub(super) fn from_request(
+        method: &Method,
+        uri: &Uri,
+        headers: &HeaderMap,
+    ) -> Result<Self, ()> {
         if !matches!(*method, Method::GET | Method::HEAD) || !read_route(uri.path()) {
             return Err(());
         }

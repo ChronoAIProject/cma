@@ -18,8 +18,17 @@ use layer2_core::{
 
 use super::{profile::Profile, AuthMode, AuthState};
 
-pub mod descriptor;
+mod descriptor;
 mod verification;
+
+#[cfg(feature = "test-support")]
+pub fn request_descriptor(
+    method: &axum::http::Method,
+    uri: &axum::http::Uri,
+    headers: &axum::http::HeaderMap,
+) -> Option<impl serde::Serialize> {
+    descriptor::Descriptor::from_request(method, uri, headers).ok()
+}
 
 pub const HEADER: &str = "x-nyxid-resource-request";
 

@@ -35,9 +35,9 @@ pub use super::cookie_authorization::{
 };
 pub use super::flow::code_challenge as authorization_code_challenge;
 pub use super::refresh::refresh_if_needed;
-pub use super::resource_request::{
-    descriptor as request_descriptor, HEADER as RESOURCE_REQUEST_HEADER,
-};
+#[cfg(feature = "test-support")]
+pub use super::resource_request::request_descriptor;
+pub use super::resource_request::HEADER as RESOURCE_REQUEST_HEADER;
 pub use super::worker_credentials::matches_path as matches_worker_credentials_path;
 
 pub mod identity {

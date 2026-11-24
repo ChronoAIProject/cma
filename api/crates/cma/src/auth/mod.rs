@@ -52,7 +52,7 @@ mod resource_request {
         middleware::Next,
         Json,
     };
-    use cma_am_auth::auth::test_support::request_descriptor as descriptor;
+    use cma_am_auth::auth::test_support::request_descriptor;
     pub(super) use cma_am_auth::auth::test_support::RESOURCE_REQUEST_HEADER as HEADER;
     use layer2_core::{
         resource_access::{CallerContext, CredentialContext, CredentialSource, ResourceActor},
