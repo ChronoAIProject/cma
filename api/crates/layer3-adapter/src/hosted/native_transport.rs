@@ -252,7 +252,7 @@ impl ProviderHostedControlTransport {
             .header(
                 http::header::ACCEPT,
                 format!(
-                    "{}, {}, {}, {}",
+                    "{}, {}, {}, {}, {}",
                     crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
                     crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
                     crate::wire::AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE,

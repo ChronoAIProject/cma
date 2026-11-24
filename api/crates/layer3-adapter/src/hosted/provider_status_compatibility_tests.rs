@@ -22,7 +22,7 @@ async fn status_accept_extension_keeps_retained_runtime_request_and_response_com
     provider.await.unwrap();
     let received = request_text(runtime.await.unwrap());
     assert!(received.to_ascii_lowercase().contains(&format!(
-        "accept: {}, {}, {}, {}",
+        "accept: {}, {}, {}, {}, {}",
         crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
         crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
         crate::wire::AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE,
