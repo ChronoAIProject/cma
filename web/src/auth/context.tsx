@@ -86,6 +86,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     let suspended = false;
     let last: AuthState = { status: 'checking' };
     let pendingNavigation = false;
+    let navigateAfterRetry = false;
     let leaving: ReturnType<typeof setTimeout> | undefined;
 
     suspendRecoveryRef.current = () => {
@@ -96,6 +97,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
       retryNotBefore = 0;
       failures = 0;
       pendingNavigation = false;
+      navigateAfterRetry = false;
       last = { status: 'checking' };
       return (next) => {
         if (next !== undefined) {
@@ -105,17 +107,17 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         suspended = false;
       };
     };
-    const refresh = (mayNavigate = false) => {
+    const refresh = (requestedNavigation = false) => {
       if (!live || inFlight || suspended || leaving !== undefined) return;
       clearTimeout(timer);
       const remaining = retryNotBefore - performance.now();
       if (remaining > 0) {
-        timer = setTimeout(
-          () => refresh(mayNavigate),
-          Math.min(MAX_RETRY_DELAY_MS, Math.ceil(remaining)),
-        );
+        navigateAfterRetry ||= requestedNavigation;
+        timer = setTimeout(() => refresh(), Math.min(MAX_RETRY_DELAY_MS, Math.ceil(remaining)));
         return;
       }
+      const mayNavigate = requestedNavigation || navigateAfterRetry;
+      navigateAfterRetry = false;
       inFlight = true;
       allowSessionReads(false);
       const version = ++currentRead.current;

@@ -121,6 +121,37 @@ it('coalesces completed-request hints without shortening or extending the monoto
   expect(screen.getByText('verified')).toBeInTheDocument();
 });
 
+it.each([false, true])(
+  'retains navigation intent through background hints during Retry-After: %s',
+  async (navigate) => {
+    const anonymous: AuthState = { status: 'anonymous' };
+    const { provider, current } = fixture(anonymous);
+    const signInSilently = vi.fn(() => false);
+    provider.signInSilently = signInSilently;
+    mount(provider);
+    await act(async () => {});
+    expect(signInSilently).toHaveBeenCalledOnce();
+
+    current.mockResolvedValueOnce(outage);
+    await act(async () => {
+      fireEvent(window, new Event('focus'));
+    });
+    await advance(1000);
+    if (navigate) {
+      await act(async () => {
+        fireEvent(window, new Event('cma:navigate'));
+      });
+    }
+    await hints();
+    await advance(88_999);
+    expect(current).toHaveBeenCalledTimes(2);
+    expect(signInSilently).toHaveBeenCalledOnce();
+    await advance(1);
+    expect(current).toHaveBeenCalledTimes(3);
+    expect(signInSilently).toHaveBeenCalledTimes(navigate ? 2 : 1);
+  },
+);
+
 it.each(['not-a-date', '-1', '0', '2147484', '99999999999999999999'])(
   'keeps the legacy backoff for an invalid Retry-After header %s',
   async (after) => {
