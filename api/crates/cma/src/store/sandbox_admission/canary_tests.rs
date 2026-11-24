@@ -58,6 +58,7 @@ async fn canary_profile_requires_its_exact_owner_revision_and_lifecycle_origin()
         let name = SandboxAdmissionName::Allocate(sandbox.name.clone());
         SandboxAdmission::new(sandbox, name, 4, NOW.into()).unwrap()
     };
+    let stale = record.lease().unwrap();
     let mut manual = sandbox.clone();
     manual.origin = SandboxOrigin::Manual;
     let mut trigger = sandbox.clone();
@@ -82,7 +83,9 @@ async fn canary_profile_requires_its_exact_owner_revision_and_lifecycle_origin()
         changed_content,
     ] {
         assert!(matches!(
-            admission_store.admit_sandbox(admission_for(altered)).await,
+            admission_store
+                .admit_sandbox(admission_for(altered).with_lifecycle_lease(&stale.token))
+                .await,
             Err(SandboxStoreError::SandboxOriginConflict)
         ));
     }
@@ -109,12 +112,13 @@ async fn canary_profile_requires_its_exact_owner_revision_and_lifecycle_origin()
         ));
         copied.profile.digest = content_digest(&copied.profile.content).unwrap();
         assert!(matches!(
-            admission_store.admit_sandbox(admission_for(copied)).await,
+            admission_store
+                .admit_sandbox(admission_for(copied).with_lifecycle_lease(&stale.token))
+                .await,
             Err(SandboxStoreError::SandboxOriginConflict)
         ));
     }
 
-    let stale = record.lease().unwrap();
     db.collection::<mongodb::bson::Document>("agent_lifecycle_operations")
         .update_one(
             doc! {"_id": &id},
@@ -208,11 +212,12 @@ async fn canary_profile_requires_its_exact_owner_revision_and_lifecycle_origin()
         .unwrap();
     assert!(replay_store.get_sandbox(&first.id).await.unwrap().is_none());
 
+    peer_operations.renew(&current).await.unwrap();
     let mut retry = exact.sandbox;
     retry.id = SandboxId("sbx_retried_canary".into());
     assert!(matches!(
         replay_store
-            .admit_sandbox(admission_for(retry.clone()))
+            .admit_sandbox(admission_for(retry.clone()).with_lifecycle_lease(&current.token))
             .await,
         Err(SandboxStoreError::SandboxOriginConflict)
     ));
