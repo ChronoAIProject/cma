@@ -25,6 +25,7 @@ mod context_goal;
 mod control_correlation;
 mod credit_error_json;
 mod deployment;
+mod deployment_request;
 mod home;
 #[cfg(test)]
 mod home_tests;
@@ -44,6 +45,8 @@ mod provider_endpoint;
 mod provider_http;
 mod provider_tools;
 mod provider_transport;
+#[cfg(test)]
+mod released_selection_tests;
 mod reply;
 mod retained_json;
 mod runtime_decode;

@@ -287,3 +287,47 @@ it.each([
     });
   },
 );
+
+it.each([true, false])(
+  'keeps the code preview and submission in sync when v2 support resolves to %s after typing',
+  async (supportsV2) => {
+    let finishDiscovery!: (supported: boolean) => void;
+    const { create } = setup({
+      readTaskTemplateV2Support: () =>
+        new Promise<boolean>((resolve) => {
+          finishDiscovery = resolve;
+        }),
+    });
+    await ready();
+    fireEvent.click(screen.getByRole('button', { name: 'Write code' }));
+    const behavior = 'Create a small accessible page on a new branch.';
+    fill('Language', 'JavaScript');
+    fill('What should the code do?', behavior);
+    const preview = screen.getByRole('region', { name: 'Task preview · read-only' });
+    const start = screen.getByRole('button', { name: 'Start task' });
+    const corrected = `Write a JavaScript script for the following task:\n\n${behavior}`;
+    expect(preview).toHaveTextContent(corrected.replace(/\s+/g, ' '));
+    expect(start).toBeDisabled();
+    fireEvent.submit(start.closest('form')!);
+    expect(create).not.toHaveBeenCalled();
+
+    await act(async () => finishDiscovery(supportsV2));
+    const expected = supportsV2 ? corrected : `Write a JavaScript script that ${behavior}.`;
+    expect(preview).toHaveTextContent(expected.replace(/\s+/g, ' '));
+    expect(start).toBeEnabled();
+    expect(JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!).template.version).toBe(
+      1,
+    );
+    fireEvent.click(start);
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    const template = {
+      id: 'code',
+      version: supportsV2 ? 2 : 1,
+      fields: { language: 'JavaScript', behavior },
+    };
+    expect(create.mock.calls[0]![0]).toMatchObject({ initial_message: expected, template });
+    expect(JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!).template).toEqual(
+      template,
+    );
+  },
+);

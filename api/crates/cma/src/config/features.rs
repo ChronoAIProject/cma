@@ -3,6 +3,8 @@
 mod agent_event_page_tests;
 #[cfg(test)]
 mod bounded_inactivity_log_tests;
+#[cfg(test)]
+mod failure_containment_tests;
 pub(super) mod home_backup;
 #[cfg(test)]
 mod home_backup_expiry_tests;
@@ -49,6 +51,7 @@ pub(crate) struct FeatureFlags {
     pub command_cancel_wake: bool,
     pub ownership_cleanup_pacing: bool,
     pub batch_ownership_renewal: bool,
+    pub am_failure_containment_enabled: bool,
     /// Contain one receiver's transient housekeeping failure instead of
     /// stopping the process (#3069). Default off until staging verifies it.
     pub receiver_housekeeping_containment: bool,
@@ -205,6 +208,10 @@ impl FeatureFlags {
             command_cancel_wake: flag(lookup, "CHRONO_COMMAND_CANCEL_WAKE_ENABLED")?,
             ownership_cleanup_pacing: flag(lookup, "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED")?,
             batch_ownership_renewal: flag(lookup, "CHRONO_AM_BATCH_OWNERSHIP_RENEWAL")?,
+            am_failure_containment_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED",
+            )?,
             receiver_housekeeping_containment: flag(
                 lookup,
                 "CHRONO_RECEIVER_HOUSEKEEPING_CONTAINMENT_ENABLED",
@@ -382,6 +389,9 @@ impl FeatureFlags {
                 && flags.bounded_live_fragments)
         {
             return Err("CHRONO_INGRESS_COORDINATOR_ENABLED requires JSON retention, raw output, permission and live fragment bounds".into());
+        }
+        if flags.am_startup_health_serving && flags.am_failure_containment_enabled {
+            return Err("CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED cannot be combined with CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED".into());
         }
         Ok(flags)
     }

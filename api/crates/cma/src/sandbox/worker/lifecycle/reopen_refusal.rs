@@ -32,7 +32,8 @@ impl SandboxWorker {
                     && request.completed_at.is_none()
                     && request.target_version == *target_runtime_version
             })
-            && self.config.released.snapshot().agent == *target_runtime_version
+            && self.config.default_version(self.config.release().as_ref())
+                == *target_runtime_version
     }
 
     pub(super) async fn reopen_refusal_fence(
