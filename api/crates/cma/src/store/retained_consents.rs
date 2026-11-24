@@ -69,9 +69,6 @@ async fn remove_and_retain(
     else {
         return Ok(false);
     };
-    if !row.contains_key(legal_consents::FIELD) {
-        return Ok(true);
-    }
     let acceptances = legal_consents::decode(row).map_err(|_| Error::InvalidRecord(USERS))?;
     if acceptances.is_empty() {
         return Ok(true);

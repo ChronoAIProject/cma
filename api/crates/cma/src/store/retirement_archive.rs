@@ -22,6 +22,8 @@ mod completion;
 mod export;
 mod schema;
 pub(crate) use export::capture;
+#[cfg(test)]
+pub(crate) use schema::manifest_collections;
 pub(crate) use schema::{matches_current, schema_sha256, validate_manifest_census};
 #[cfg(test)]
 mod tests;

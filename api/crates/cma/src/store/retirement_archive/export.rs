@@ -52,22 +52,24 @@ pub(crate) async fn capture(
     let mut external = Vec::new();
     let mut total = 0;
     let mut document_count = 0;
+    let optional: Vec<_> = super::schema::manifest_collections()
+        .iter()
+        .copied()
+        .filter(|name| super::super::isolation::OPTIONAL_COLLECTIONS.contains(name))
+        .collect();
     let present_optional = store
         .database
         .list_collection_names()
-        .filter(doc! {"name":{"$in":super::super::isolation::OPTIONAL_COLLECTIONS}})
+        .filter(doc! {"name":{"$in":&optional}})
         .await
         .map_err(|_| REFUSED)?;
-    for name in super::super::isolation::COLLECTIONS {
+    for name in super::schema::manifest_collections() {
         // Disabled features have no collection or grants. An absent optional
         // namespace contributes an explicit empty inventory without reading it.
-        // The legal receipt namespace is outside Sandbox ownership and its
-        // writer has no read grant, even when the collection is populated.
-        if *name == super::super::retained_consents::COLLECTION
-            || (super::super::isolation::OPTIONAL_COLLECTIONS.contains(name)
-                && !present_optional
-                    .iter()
-                    .any(|present| present.as_str() == *name))
+        if optional.contains(name)
+            && !present_optional
+                .iter()
+                .any(|present| present.as_str() == *name)
         {
             records.push(DatabaseRecord {
                 collection: (*name).into(),

@@ -91,7 +91,6 @@ async fn fixture_on(database: Database) -> (Temp, ArchiveStore, Request, Vec<u8>
 }
 
 pub(in crate::store) async fn verify_legal_consent_census(admin: &Database, runtime: &Database) {
-    use crate::store::retained_consents::COLLECTION;
     let (_temp, admin_store, request, bytes) = fixture_on(admin.clone()).await;
     admin_store.admit(&request, &bytes).await.unwrap();
     let store = ArchiveStore {
@@ -102,18 +101,23 @@ pub(in crate::store) async fn verify_legal_consent_census(admin: &Database, runt
     let current = export::build(&store, &request, &bytes, &custody, None)
         .await
         .unwrap();
-    let row = current
+    // These are the exact schema and names accepted by the predecessor.
+    assert_eq!(
+        current.schema_sha256,
+        super::schema::PRE_LEGAL_CONSENT_SHA256
+    );
+    let names: std::collections::BTreeSet<_> = current
         .database
         .iter()
-        .find(|row| row.collection == COLLECTION)
-        .unwrap();
-    assert_eq!((row.documents, row.bytes), (0, 0));
-    assert_eq!(row.sha256, digest(&[]));
-    assert!(row.objects.is_empty());
-    let mut old = current.clone();
-    old.schema_sha256 = super::schema::PRE_LEGAL_CONSENT_SHA256.into();
-    old.database.retain(|row| row.collection != COLLECTION);
-    assert!(super::matches_current(&old, current).unwrap());
+        .map(|row| row.collection.as_str())
+        .collect();
+    let predecessor: std::collections::BTreeSet<_> = super::schema::PRE_LEGAL_CONSENT_COLLECTIONS
+        .iter()
+        .copied()
+        .collect();
+    assert_eq!(names, predecessor);
+    assert_eq!(names.len(), current.database.len());
+    assert!(super::matches_current(&current, current.clone()).unwrap());
 }
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]

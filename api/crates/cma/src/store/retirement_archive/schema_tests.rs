@@ -7,29 +7,13 @@ use layer3_adapter::permanent_custody::PermanentCustody;
 
 #[tokio::test]
 async fn frozen_census_before_legal_receipts_still_matches() {
-    use crate::store::retained_consents::COLLECTION;
-    let audit: Vec<_> = super::super::census_catalog::AUDIT
-        .iter()
-        .copied()
-        .filter(|(name, _)| *name != COLLECTION)
-        .collect();
-    let names: Vec<_> = crate::store::isolation::COLLECTIONS
-        .iter()
-        .copied()
-        .filter(|name| *name != COLLECTION)
-        .collect();
-    assert_eq!(names, pre_legal_consent::COLLECTIONS);
-    assert_eq!(
-        digest(format!("archive-census-v2\n{audit:?}\n{}", names.join("\n")).as_bytes()),
-        pre_legal_consent::SHA256
-    );
+    assert_eq!(manifest_collections(), pre_legal_consent::COLLECTIONS);
+    assert_eq!(schema_sha256(), pre_legal_consent::SHA256);
     let current = manifest().await;
-    let mut old = current.clone();
-    old.schema_sha256 = pre_legal_consent::SHA256.into();
-    old.database.retain(|row| row.collection != COLLECTION);
-    assert!(matches_current(&old, current).unwrap());
-    old.database.pop();
-    assert!(validate_manifest_census(&old).is_err());
+    assert!(matches_current(&current, current.clone()).unwrap());
+    let mut missing = current;
+    missing.database.pop();
+    assert!(validate_manifest_census(&missing).is_err());
 }
 
 #[test]
@@ -39,7 +23,7 @@ fn frozen_legacy_census_matches_the_exact_pre_allocation_descriptor() {
         .copied()
         .filter(|(name, _)| legacy::COLLECTIONS.contains(name))
         .collect();
-    let names: Vec<_> = crate::store::isolation::COLLECTIONS
+    let names: Vec<_> = crate::store::retirement_archive::manifest_collections()
         .iter()
         .copied()
         .filter(|name| legacy::COLLECTIONS.contains(name))
@@ -70,7 +54,7 @@ async fn manifest() -> Manifest {
         schema_sha256: schema_sha256(),
         external: vec![],
         files: vec![],
-        database: crate::store::isolation::COLLECTIONS
+        database: crate::store::retirement_archive::manifest_collections()
             .iter()
             .map(|name| DatabaseRecord {
                 collection: (*name).into(),
@@ -101,7 +85,7 @@ async fn frozen_pre_capture_census_requires_new_evidence_namespaces_to_be_empty(
             .copied()
             .filter(|(name, _)| collections.contains(name))
             .collect();
-        let names: Vec<_> = crate::store::isolation::COLLECTIONS
+        let names: Vec<_> = crate::store::retirement_archive::manifest_collections()
             .iter()
             .copied()
             .filter(|name| collections.contains(name))
@@ -159,7 +143,7 @@ async fn exact_current_and_legacy_censuses_refuse_unknown_duplicate_and_missing_
     mismatched.schema_sha256 = schema_sha256();
     assert!(validate_manifest_census(&mismatched).is_err());
     assert!(matches_current(&old, current.clone()).unwrap());
-    for name in crate::store::isolation::COLLECTIONS
+    for name in crate::store::retirement_archive::manifest_collections()
         .iter()
         .filter(|name| !legacy::COLLECTIONS.contains(name))
     {

@@ -11,6 +11,17 @@ use mongodb::{
 const ORIGINAL: &str = "2026-11-10T12:00:00Z";
 const LATEST: &str = "2026-11-13T12:00:00Z";
 
+fn retention_options() -> Options {
+    Options {
+        billing_enabled: false,
+        allocation_rollups_enabled: Some(false),
+        agent_shared_observation: Some(false),
+        retain_legal_consents: true,
+        transaction_drain_minimum_secs: 120,
+        drain_qualification: Some(TransactionDrainQualification::fixture()),
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn concurrent_acceptance_and_erasure_follow_the_committed_order() {
@@ -98,14 +109,7 @@ async fn erasure_retains_only_version_time_and_detached_random_identity() {
             inventory: &inventory,
         },
     ];
-    let options = Options {
-        billing_enabled: false,
-        allocation_rollups_enabled: Some(false),
-        agent_shared_observation: Some(false),
-        retain_legal_consents: true,
-        transaction_drain_minimum_secs: 120,
-        drain_qualification: Some(TransactionDrainQualification::fixture()),
-    };
+    let options = retention_options();
     let mut cursor = Cursor {
         test_drain_seconds: Some(0),
         ..Default::default()
@@ -174,6 +178,73 @@ async fn erasure_retains_only_version_time_and_detached_random_identity() {
         3,
         "the archive must not encode a stable owner identifier"
     );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn directory_erasure_validates_empty_and_duplicate_histories() {
+    let db = database().await;
+    retained_consents::prepare(&db).await.unwrap();
+    put(
+        &db,
+        "users",
+        doc! { "_id": "acct:empty", "document_schema_version": 1_i64 },
+    )
+    .await;
+    assert!(retained_consents::erase_user(&db, "acct:empty")
+        .await
+        .unwrap());
+    let entry = catalog::ERASURE
+        .iter()
+        .find(|entry| entry.collection == "users")
+        .unwrap();
+    let users = db.collection::<Document>("users");
+    for (subject, row) in [
+        (
+            "acct:future",
+            doc! { "_id": "acct:future", "document_schema_version": 2_i64 },
+        ),
+        (
+            "acct:duplicate",
+            doc! {
+                "_id": "acct:duplicate", "document_schema_version": 1_i64,
+                "legal_consents": [
+                    { "version": "2026-11-10", "accepted_at": ORIGINAL },
+                    { "version": "2026-11-10", "accepted_at": LATEST },
+                ],
+            },
+        ),
+    ] {
+        put(&db, "users", row.clone()).await;
+        let page = batches::DeletePage {
+            rows: std::slice::from_ref(&row),
+            ids: &[subject.into()],
+        };
+        let mut batch = Batch::default();
+        let error = batches::remove(&db, entry, page, &[], NOW, retention_options(), &mut batch)
+            .await
+            .unwrap_err();
+        let Error::Blocked(block) = error else {
+            panic!("unexpected error: {error:?}");
+        };
+        assert_eq!(
+            block.subject_hash,
+            layer2_core::document_artifacts::digest(subject.as_bytes())
+        );
+        assert_eq!(
+            block.reason,
+            ErasureBlock::CorruptRecord {
+                collection: "users".into()
+            }
+        );
+        assert!(batch.deleted.is_empty());
+        assert_eq!(
+            users.find_one(doc! { "_id": subject }).await.unwrap(),
+            Some(row)
+        );
+    }
+    assert_eq!(count(&db, retained_consents::COLLECTION).await, 0);
     db.drop().await.unwrap();
 }
 
@@ -260,6 +331,7 @@ async fn two_erasers_and_a_lost_commit_acknowledgement_publish_exactly_once() {
         .await
         .unwrap();
     assert!(matches!(result, Err(Error::Store(_))), "{result:?}");
+    crate::store::test_visibility::majority_barrier(peer.client(), peer.name()).await;
     assert!(!retained_consents::erase_user(&peer, "acct:uncertain")
         .await
         .unwrap());
