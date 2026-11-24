@@ -14,6 +14,11 @@ use std::time::Duration;
 use super::child_writer_claims::{persist_observed, ChildWriterClaim};
 use super::sandbox_mongo::{MongoSandboxStore, TRANSACTION_ATTEMPTS};
 
+#[cfg(test)]
+tokio::task_local! {
+    pub(super) static CONNECTION_RECOVERY_BEFORE_SAVE: std::sync::Arc<tokio::sync::Barrier>;
+}
+
 #[async_trait::async_trait]
 impl AgentWorkerStore for MongoSandboxStore {
     async fn agent_create_admission(
@@ -241,6 +246,10 @@ impl AgentWorkerStore for MongoSandboxStore {
         match apply_agent_connection_recovery(&current, &request)? {
             AgentConnectionRecoveryApplication::Complete(outcome) => Ok(outcome),
             AgentConnectionRecoveryApplication::Persist(agent) => {
+                #[cfg(test)]
+                if let Ok(barrier) = CONNECTION_RECOVERY_BEFORE_SAVE.try_with(Clone::clone) {
+                    barrier.wait().await;
+                }
                 let saved = super::agents::save::save(
                     self,
                     current.revision,

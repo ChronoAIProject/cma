@@ -35,46 +35,6 @@ fn connection_recovery_request(agent: &Agent) -> AgentConnectionRecoveryRequest 
     }
 }
 
-async fn connection_recovery_participant(
-    uri: &str,
-    name: &str,
-    agent: &Agent,
-    eligible_reads: Arc<tokio::sync::Barrier>,
-) -> MongoSandboxStore {
-    use std::sync::atomic::AtomicBool;
-
-    let namespace = format!("{name}.agents");
-    let id = agent.id.to_string();
-    let revision = i64::try_from(agent.revision).unwrap();
-    let armed = Arc::new(AtomicBool::new(false));
-    let gate = armed.clone();
-    let mut options = ClientOptions::parse(uri).await.unwrap();
-    options.command_event_handler = Some(EventHandler::async_callback(move |event| {
-        let wait = matches!(event, CommandEvent::Succeeded(event) if event.command_name == "find"
-            && event.reply.get_document("cursor").is_ok_and(|cursor| {
-                cursor.get_str("ns").ok() == Some(namespace.as_str())
-                    && cursor.get_array("firstBatch").is_ok_and(|rows| {
-                        rows.first().and_then(Bson::as_document).is_some_and(|row| {
-                            row.get_str("_id").ok() == Some(id.as_str())
-                                && row.get_i64("revision").ok() == Some(revision)
-                        })
-                    })
-            })
-            && gate.swap(false, Ordering::SeqCst));
-        let eligible_reads = eligible_reads.clone();
-        Box::pin(async move {
-            if wait {
-                eligible_reads.wait().await;
-            }
-        })
-    }));
-    let store = MongoSandboxStore::open(&Client::with_options(options).unwrap(), name)
-        .await
-        .unwrap();
-    armed.store(true, Ordering::SeqCst);
-    store
-}
-
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn live_connection_scan_and_recovery_cas_are_complete_and_idempotent() {
@@ -167,19 +127,25 @@ async fn live_connection_scan_and_recovery_cas_are_complete_and_idempotent() {
         .unwrap()
         .unwrap();
     let before = before.get_i64(counter).unwrap();
+    let successor = MongoSandboxStore::open(&maintenance_client, &name)
+        .await
+        .unwrap();
     let eligible_reads = Arc::new(tokio::sync::Barrier::new(2));
-    let (left, right) = tokio::join!(
-        connection_recovery_participant(&uri, &name, &working, eligible_reads.clone()),
-        connection_recovery_participant(&uri, &name, &working, eligible_reads),
-    );
+    use crate::store::agent_worker_store::CONNECTION_RECOVERY_BEFORE_SAVE;
     let (left, right) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         tokio::join!(
-            left.schedule_agent_connection_recovery(request.clone()),
-            right.schedule_agent_connection_recovery(request.clone()),
+            CONNECTION_RECOVERY_BEFORE_SAVE.scope(
+                eligible_reads.clone(),
+                store.schedule_agent_connection_recovery(request.clone()),
+            ),
+            CONNECTION_RECOVERY_BEFORE_SAVE.scope(
+                eligible_reads,
+                successor.schedule_agent_connection_recovery(request.clone()),
+            ),
         )
     })
     .await
-    .expect("both participants must read the eligible Agent before scheduling");
+    .expect("both scheduling operations must reach the eligible save");
     let after = sandboxes
         .find_one(parent_key.clone())
         .await
