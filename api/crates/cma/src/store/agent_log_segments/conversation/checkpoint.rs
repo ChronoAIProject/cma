@@ -97,6 +97,9 @@ pub(in crate::store) async fn apply(
         if actual_agent != *current || actual.as_ref() != previous || !current.status.is_live() {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
+        if guard.is_none() {
+            fence_quiet_checkpoint(store, &actual_agent, scope).await?;
+        }
         write_from_row(store, current, &row, Some(next), scope.session()).await?;
         return Ok((next.outcome.clone(), None));
     }
@@ -150,6 +153,9 @@ pub(in crate::store) async fn apply(
         {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
+        if guard.is_none() {
+            fence_quiet_checkpoint(store, &actual_agent, scope).await?;
+        }
         current
     };
     if matches!(authority, Authority::StaleTurn) {
@@ -174,4 +180,15 @@ pub(in crate::store) async fn apply(
         .await?;
     }
     Ok((next.outcome.clone(), publication))
+}
+
+async fn fence_quiet_checkpoint(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    scope: &mut TransactionScope<'_>,
+) -> Result<(), ApplyError> {
+    if !scope.fence_agent_parent(store, agent).await? {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
+    Ok(())
 }
