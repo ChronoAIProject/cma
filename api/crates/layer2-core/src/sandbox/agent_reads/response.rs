@@ -5,6 +5,13 @@ use crate::sandbox::{store::AgentResponseLogWindow, AgentLogKind};
 #[path = "response_indexed.rs"]
 pub mod indexed;
 
+/// A supported indexed result never falls back, even when its projection
+/// requires pagination. Legacy snapshots retain complete source validation.
+pub enum AgentResponseObservation<T> {
+    Indexed(T),
+    Legacy(AgentEventStreamSnapshot),
+}
+
 impl AgentReadService {
     pub fn with_response_logs(
         self: &Arc<Self>,
@@ -57,9 +64,9 @@ impl AgentReadService {
             self.validate_event_stream(authorization).await?;
             return result;
         }
-        let Some(reader) = &self.response_logs else {
+        if self.response_logs.is_none() {
             return self.event_stream_snapshot(authorization).await;
-        };
+        }
         let result = authorization
             .bounded(async {
                 let snapshot = self.current_event_stream_snapshot(authorization).await?;
@@ -67,58 +74,8 @@ impl AgentReadService {
                     .lineage
                     .agent
                     .ok_or_else(|| corrupt("authorized response has no Agent"))?;
-                let flight = match &self.observation {
-                    Some(service) => service
-                        .output_flight(&agent, turn_sequence)
-                        .await
-                        .map_err(log_store_error)?,
-                    None => None,
-                };
-                if let Some(window) = flight
-                    .as_ref()
-                    .and_then(|flight| flight.get::<AgentResponseLogWindow>(b"window"))
-                {
-                    let mut snapshot = project_window(
-                        &agent,
-                        turn_sequence,
-                        (*window).clone(),
-                        authorization.resource().2,
-                    )?;
-                    snapshot.source_generation = flight.as_ref().map(|flight| flight.identity());
-                    return Ok(Some(snapshot));
-                }
-                let previous = flight.as_ref().and_then(|flight| flight.previous_window());
-                let suffix = match previous.as_ref() {
-                    Some(previous) if previous.through < agent.conversation.last_seq => reader
-                        .agent_response_log_suffix(&agent, previous)
-                        .await
-                        .map_err(log_store_error)?,
-                    _ => None,
-                };
-                let window = match suffix {
-                    Some(window) => Some(window),
-                    None => reader
-                        .agent_response_log_window(&agent, turn_sequence)
-                        .await
-                        .map_err(log_store_error)?,
-                };
-                window
-                    .map(|window| {
-                        let mut snapshot = project_window(
-                            &agent,
-                            turn_sequence,
-                            window.clone(),
-                            authorization.resource().2,
-                        )?;
-                        snapshot.source_generation =
-                            flight.as_ref().map(|flight| flight.identity());
-                        if let Some(flight) = &flight {
-                            flight.remember_window(window.clone());
-                            flight.insert(b"window", window);
-                        }
-                        Ok(snapshot)
-                    })
-                    .transpose()
+                self.read_response_window(&agent, turn_sequence, authorization.resource().2)
+                    .await
             })
             .await;
         // Also fence dependency errors and fallback decisions before releasing
@@ -128,6 +85,103 @@ impl AgentReadService {
             Some(snapshot) => Ok(snapshot),
             None => self.event_stream_snapshot(authorization).await,
         }
+    }
+
+    /// Select one command-bound source under a single nonrenewing IO budget.
+    /// The final authority check also gates private source/projection errors.
+    pub async fn with_response_observation<T: Send, F>(
+        &self,
+        authorization: &AgentEventStreamAuthorization,
+        turn: u64,
+        operation: F,
+    ) -> Result<AgentResponseObservation<T>, AgentReadError>
+    where
+        F: Send
+            + for<'a, 'b> FnOnce(
+                &'a mut indexed::AgentOutputObservation<'b>,
+            ) -> indexed::OutputReadFuture<'a, T>,
+    {
+        authorization
+            .bounded(async {
+                let result = async {
+                    let current = self.current_event_stream_snapshot(authorization).await?;
+                    let agent = current
+                        .lineage
+                        .agent
+                        .ok_or_else(|| corrupt("authorized response has no Agent"))?;
+                    let personal = authorization.resource().2;
+                    if let Some(result) = self
+                        .read_output_observation(&agent, Some(turn), personal, operation)
+                        .await?
+                    {
+                        return Ok(AgentResponseObservation::Indexed(result));
+                    }
+                    let snapshot = match self
+                        .read_response_window(&agent, Some(turn), personal)
+                        .await?
+                    {
+                        Some(snapshot) => snapshot,
+                        None => self.complete_event_stream_snapshot(agent, personal).await?,
+                    };
+                    Ok(AgentResponseObservation::Legacy(snapshot))
+                }
+                .await;
+                self.current_event_stream_snapshot(authorization).await?;
+                result
+            })
+            .await
+    }
+
+    async fn read_response_window(
+        &self,
+        agent: &Agent,
+        turn_sequence: Option<u64>,
+        personal: bool,
+    ) -> Result<Option<AgentEventStreamSnapshot>, AgentReadError> {
+        let Some(reader) = &self.response_logs else {
+            return Ok(None);
+        };
+        let flight = match &self.observation {
+            Some(service) => service
+                .output_flight(agent, turn_sequence)
+                .await
+                .map_err(log_store_error)?,
+            None => None,
+        };
+        if let Some(window) = flight
+            .as_ref()
+            .and_then(|flight| flight.get::<AgentResponseLogWindow>(b"window"))
+        {
+            let mut snapshot = project_window(agent, turn_sequence, (*window).clone(), personal)?;
+            snapshot.source_generation = flight.as_ref().map(|flight| flight.identity());
+            return Ok(Some(snapshot));
+        }
+        let previous = flight.as_ref().and_then(|flight| flight.previous_window());
+        let suffix = match previous.as_ref() {
+            Some(previous) if previous.through < agent.conversation.last_seq => reader
+                .agent_response_log_suffix(agent, previous)
+                .await
+                .map_err(log_store_error)?,
+            _ => None,
+        };
+        let window = match suffix {
+            Some(window) => Some(window),
+            None => reader
+                .agent_response_log_window(agent, turn_sequence)
+                .await
+                .map_err(log_store_error)?,
+        };
+        window
+            .map(|window| {
+                let mut snapshot = project_window(agent, turn_sequence, window.clone(), personal)?;
+                snapshot.source_generation = flight.as_ref().map(|flight| flight.identity());
+                if let Some(flight) = &flight {
+                    flight.remember_window(window.clone());
+                    flight.insert(b"window", window);
+                }
+                Ok(snapshot)
+            })
+            .transpose()
     }
 }
 

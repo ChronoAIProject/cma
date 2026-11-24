@@ -13,6 +13,7 @@ pub(super) fn worker_observations(
 }
 
 pub(super) struct RuntimeServices {
+    pub migrations: Arc<layer2_core::sandbox::SandboxCustomRuntimeMigrationService>,
     pub warm_pools: Arc<NativeWarmPools>,
     pub pointer: Option<Arc<crate::runtime_pointer::RuntimePointerController>>,
     pub updates: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
@@ -21,6 +22,19 @@ pub(super) struct RuntimeServices {
 }
 
 impl RuntimeServices {
+    pub fn attach_admin(
+        &self,
+        admin: layer1_public::rest::admin::AdminState,
+        stores: &MongoStores,
+    ) -> layer1_public::rest::admin::AdminState {
+        admin
+            .with_runtime_updates(self.updates.clone())
+            .with_runtime_migrations(
+                self.migrations.clone(),
+                stores.sandbox_model.runtime_migration_verifier(),
+            )
+    }
+
     pub fn new(
         config: &Config,
         stores: &MongoStores,
@@ -52,7 +66,15 @@ impl RuntimeServices {
             stores,
             warm_pools.clone(),
         )?;
+        let mut migrations = layer2_core::sandbox::SandboxCustomRuntimeMigrationService::new(
+            stores.sandbox_model.clone(),
+            stores.sandbox_model.clone(),
+        );
+        if let Some(authority) = stores.sandbox_model.runtime_migration_authority() {
+            migrations = migrations.with_authority(authority, config.runtime.migration.enabled);
+        }
         Ok(Self {
+            migrations: Arc::new(migrations),
             reopen: Arc::new(
                 layer2_core::sandbox::RetainedReopenService::new(
                     stores.sandbox_model.clone(),

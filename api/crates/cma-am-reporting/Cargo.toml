@@ -1,0 +1,15 @@
+[package]
+name = "cma-am-reporting"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+futures-util = { workspace = true }
+layer2-core = { workspace = true }
+mongodb = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

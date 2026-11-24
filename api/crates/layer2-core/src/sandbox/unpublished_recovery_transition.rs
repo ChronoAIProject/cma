@@ -15,6 +15,11 @@ impl Sandbox {
         at: &str,
     ) -> Result<Self, SandboxModelError> {
         let invalid = || SandboxModelError::invalid_value("sandbox.unpublished_runtime_recovery");
+        // Explicit scoped restart needs a new activity admission. Existing
+        // automatic settlement keeps its exact target and once-only checks.
+        if !automatic && self.lifecycle.runtime_migration_admission.is_some() {
+            return Err(invalid());
+        }
         self.validate_custom_recovery_target(target)?;
         let mut next = self.clone();
         let previous = next
@@ -76,6 +81,7 @@ impl Sandbox {
                 started_at: Some(at.into()),
                 completed_at: None,
                 failure: None,
+                retained_transition: None,
             }),
         });
         next.preserve_custom_recovery_request(self)?;

@@ -1,9 +1,15 @@
 //! The Sandbox -> Workspace -> Worktree -> Agent domain hierarchy.
 
 mod desktop;
+mod runtime_migration_guard;
 pub use desktop::{
     DesktopAdmission, DesktopAuthorization, DesktopConnection, DesktopError, DesktopFrame,
     DesktopService,
+};
+pub use runtime_migration_guard::{
+    runtime_desktop_activity_snapshot, runtime_desktop_process_incarnation,
+    try_acquire_runtime_migration_guard, RuntimeDesktopActivitySnapshot, RuntimeMigrationBusy,
+    RuntimeMigrationGuard,
 };
 mod admin;
 mod auto_pause_operator;
@@ -190,9 +196,16 @@ pub use retained_recovery::{
     RetainedRecoveryInspector, RetainedRecoveryService, RetainedRecoverySnapshot,
     RetainedRecoverySource,
 };
+mod runtime_migration;
+pub use runtime_migration::*;
 mod custom_runtime;
 pub use custom_runtime::{
     SandboxCustomRuntimeMigration, SandboxCustomRuntimeOrigin, SandboxCustomRuntimeState,
+};
+mod retained_runtime_transition;
+pub use retained_runtime_transition::{
+    next_replacement_runtime_generation, RetainedRuntimePolicyBinding, RetainedRuntimeTransition,
+    RetainedRuntimeTransitionRequest,
 };
 mod runtime_update;
 mod runtime_update_resume;
@@ -284,9 +297,9 @@ pub use agent_reads::{
     AgentEventStreamAuthorization, AgentEventStreamHeader, AgentEventStreamSnapshot,
     AgentHistoryCursor, AgentHistoryReading, AgentOriginalRequest, AgentOutputObservation,
     AgentReadService, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
-    AgentRetainedOutput, AgentRetainedOutputAvailability, AgentRetainedOutputPage,
-    AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail,
-    SharedAgentOrigin, RETAINED_OUTPUT_CHUNK_BYTES,
+    AgentResponseObservation, AgentRetainedOutput, AgentRetainedOutputAvailability,
+    AgentRetainedOutputPage, AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry,
+    SharedAgentDetail, SharedAgentOrigin, RETAINED_OUTPUT_CHUNK_BYTES,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,

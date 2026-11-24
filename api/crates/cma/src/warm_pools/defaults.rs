@@ -68,6 +68,7 @@ impl NativeWarmPools {
         let home = self.home.clone().ok_or(WarmPoolError::Unavailable)?;
         provider
             .plan(&NativePoolSpec {
+                cold_canary: false,
                 image: image.clone(),
                 cpu_millis: self.default_capacity.cpu_millis,
                 memory_mib: self.default_capacity.memory_mib,

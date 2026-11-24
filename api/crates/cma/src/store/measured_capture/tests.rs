@@ -9,6 +9,15 @@ use mongodb::{
 };
 
 fn observation(owner: &str, mapping_revision: u64, value: f64) -> MeasuredObservation {
+    observation_at(owner, mapping_revision, 30_001, value)
+}
+
+pub(super) fn observation_at(
+    owner: &str,
+    mapping_revision: u64,
+    timestamp_ms: u64,
+    value: f64,
+) -> MeasuredObservation {
     let selection = Selection {
         cluster: "synthetic".into(),
         namespace: "runtime".into(),
@@ -24,7 +33,7 @@ fn observation(owner: &str, mapping_revision: u64, value: f64) -> MeasuredObserv
             "metrics_path": selection.metric.metrics_path(), "persistentvolumeclaim": "home",
             "pvc_uid": "pvc-synthetic",
         },
-        "timestamps": [30_001], "values": [value],
+        "timestamps": [timestamp_ms], "values": [value],
     });
     let source = decode_raw_export(raw.to_string().as_bytes(), &selection).unwrap();
     let binding = fixture_binding(owner);

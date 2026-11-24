@@ -104,6 +104,7 @@ impl Sandbox {
                 started_at: None,
                 completed_at: None,
                 failure: None,
+                retained_transition: None,
             }),
         });
         next.lifecycle.custom_runtime = Some(Box::new(SandboxCustomRuntimeState {
@@ -111,6 +112,7 @@ impl Sandbox {
             migration: request,
             source_generation,
             completed_at: None,
+            admission_basis: None,
         }));
         next.touch_custom_runtime(at)?;
         tracing::info!(

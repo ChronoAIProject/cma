@@ -26,13 +26,32 @@ use crate::{
 const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(660);
 
 pub(crate) async fn serve() -> Result<(), String> {
+    serve_inner(
+        #[cfg(feature = "qualification-hooks")]
+        None,
+    )
+    .await
+}
+
+#[cfg(feature = "qualification-hooks")]
+pub(crate) async fn serve_qualified(options: crate::qualification::Options) -> Result<(), String> {
+    serve_inner(Some(options)).await
+}
+
+async fn serve_inner(
+    #[cfg(feature = "qualification-hooks")] qualification: Option<crate::qualification::Options>,
+) -> Result<(), String> {
     let startup_started = Instant::now();
     let config = StartupConfig::from_env()
         .map_err(|error| format!("configuration is not usable: {error}"))?;
     let mut config = match config {
         StartupConfig::Execution(config) => *config,
         StartupConfig::BackendFree(config) => {
-            return composition::backend_free::serve(*config).await
+            #[cfg(feature = "qualification-hooks")]
+            if qualification.is_some() {
+                return Err("qualification requires an execution daemon".into());
+            }
+            return composition::backend_free::serve(*config).await;
         }
     };
     if std::env::args().nth(1).as_deref() == Some("--agent-manager-drain") {
@@ -40,12 +59,36 @@ pub(crate) async fn serve() -> Result<(), String> {
     }
     let recorder = telemetry::install()?;
     let _metrics_server = telemetry::server::Server::start(config.metrics_bind, recorder).await?;
+    #[cfg(feature = "qualification-hooks")]
+    let qualification =
+        qualification.map(|options| (options, cma_qualification::Registry::default()));
     let mut composition = observe(
         "composition",
-        ControlPlaneComposition::build(&config),
+        ControlPlaneComposition::build(
+            &config,
+            #[cfg(feature = "qualification-hooks")]
+            qualification.as_ref().map(|(_, registry)| registry.clone()),
+        ),
         |_| None,
     )
     .await?;
+    #[cfg(feature = "qualification-hooks")]
+    let _qualification_server = if let Some((options, registry)) = qualification {
+        Some(
+            options
+                .bind(
+                    registry,
+                    composition
+                        .agent_manager
+                        .as_ref()
+                        .map(|manager| manager.coordinator.clone()),
+                    &config,
+                )
+                .await?,
+        )
+    } else {
+        None
+    };
     let router = with_cors(
         std::mem::take(&mut composition.router),
         std::mem::take(&mut config.cors_origins),

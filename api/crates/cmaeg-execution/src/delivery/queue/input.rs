@@ -18,13 +18,13 @@ impl<C> From<Receiver<C>> for Input<C> {
     }
 }
 impl<C> Input<C> {
-    pub(in crate::delivery) async fn recv(&mut self) -> Option<C> {
+    pub async fn recv(&mut self) -> Option<C> {
         match &mut self.0 {
             Inner::Raw(receiver) => receiver.recv().await,
             Inner::Measured(receiver) => receiver.recv().await,
         }
     }
-    pub(in crate::delivery) fn close(&mut self) {
+    pub fn close(&mut self) {
         match &mut self.0 {
             Inner::Raw(receiver) => receiver.close(),
             Inner::Measured(receiver) => receiver.close(),
