@@ -338,6 +338,54 @@ async fn authority_change_during_reservation_refuses_dispatch_and_retains_the_ho
 }
 
 #[tokio::test]
+async fn owner_scope_revision_during_reservation_blocks_the_old_credential() {
+    let f = Fixture::new().await;
+    let task = f.start().await;
+    let mut sandbox = f
+        .store
+        .get_sandbox(&records::sandbox().id)
+        .await
+        .unwrap()
+        .unwrap();
+    let previous_revision = sandbox.revision;
+    let old_authority = sandbox.credential.current.clone();
+    let owner = sandbox.owner.clone();
+    sandbox
+        .revise_live_service_access(
+            &owner,
+            &[
+                ServiceId::new("chrono-llm"),
+                ServiceId::new("synthetic-service"),
+            ],
+            now_rfc3339(),
+        )
+        .unwrap();
+    assert!(sandbox.needs_service_access_credential());
+    assert_eq!(sandbox.credential.current, old_authority);
+    assert_eq!(
+        authority_digest(&records::agent(), &sandbox),
+        f.work.authority
+    );
+    assert_eq!(
+        f.credentials.0.lock().unwrap().as_ref().unwrap().value,
+        SecretValue::new(KEY.into())
+    );
+    f.store
+        .save_sandbox(previous_revision, sandbox)
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        f.complete(task).await,
+        Err(SuggestionFailure::Unavailable)
+    ));
+    assert!(f.requests.lock().unwrap().is_empty());
+    assert_eq!(f.budget.held.lock().unwrap().len(), 1);
+    assert_eq!(f.budget.settled.load(Ordering::SeqCst), 0);
+    f.stop().await;
+}
+
+#[tokio::test]
 async fn unchanged_authority_dispatches_once_and_settles_the_reserved_request() {
     let f = Fixture::new().await;
     let task = f.start().await;
