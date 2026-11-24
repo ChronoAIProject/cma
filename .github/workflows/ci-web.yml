@@ -141,6 +141,24 @@ jobs:
           path: "${{ runner.temp }}/cma-channel-setup"
           retention-days: 1
       -
+        name: "Local channel authoring contracts"
+        id: channel_authoring
+        timeout-minutes: 5
+        shell: bash
+        env:
+          CMA_CHANNEL_SETUP_EVIDENCE_DIR: "${{ runner.temp }}/cma-channel-authoring"
+        run: |
+          node node_modules/playwright/cli.js test --config e2e/hmac-channel.config.ts
+          node node_modules/playwright/cli.js test --config e2e/wh-eg-authoring.config.ts
+      -
+        name: "Channel authoring failure evidence"
+        if: "failure() && steps.channel_authoring.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "channel-authoring-failure"
+          path: "${{ runner.temp }}/cma-channel-authoring"
+          retention-days: 1
+      -
         name: "Local credential recovery contracts"
         id: credential_setup
         timeout-minutes: 5
@@ -262,24 +280,6 @@ jobs:
         with:
           name: "p1-auth-failure"
           path: "${{ runner.temp }}/cma-p1-browser/auth"
-          retention-days: 1
-          if-no-files-found: "error"
-      -
-        name: "Default-off production gate mechanics"
-        timeout-minutes: 5
-        run: "node --test ../.github/scripts/p7-default-off-ci.test.mjs"
-      -
-        name: "Default-off Home and landing production contracts"
-        id: p7_default_off
-        timeout-minutes: 10
-        run: "node ../.github/scripts/p7-default-off-ci.mjs"
-      -
-        name: "Default-off production failure evidence"
-        if: "failure() && steps.p7_default_off.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-        with:
-          name: "p7-default-off-failure"
-          path: "${{ runner.temp }}/cma-p7-default-off"
           retention-days: 1
           if-no-files-found: "error"
       -

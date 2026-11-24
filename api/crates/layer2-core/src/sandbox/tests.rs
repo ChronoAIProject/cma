@@ -169,6 +169,7 @@ pub(super) fn agent() -> Agent {
         capabilities: crate::RuntimeCapabilities::new([crate::RuntimeCapability::Conversation]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),
@@ -334,6 +335,7 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
         (AgentStatus::Working, AgentStatus::WaitingApproval),
         (AgentStatus::Working, AgentStatus::Paused),
         (AgentStatus::WaitingApproval, AgentStatus::Working),
+        (AgentStatus::WaitingApproval, AgentStatus::Ready),
         (AgentStatus::WaitingApproval, AgentStatus::Paused),
         (AgentStatus::Paused, AgentStatus::Ready),
         (AgentStatus::Stopped, AgentStatus::Deleted),

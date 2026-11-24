@@ -443,7 +443,12 @@ async fn replica(client: &Client, name: &str) -> Arc<MongoSandboxStore> {
     )
 }
 
-async fn adopt(client: &Client, name: &str, store: &MongoSandboxStore, agent: &Agent) {
+pub(in crate::store) async fn adopt(
+    client: &Client,
+    name: &str,
+    store: &MongoSandboxStore,
+    agent: &Agent,
+) {
     let db = client.database(name);
     segments::schema::migrate(&db).await.unwrap();
     crate::store::migrations::agent_log_source_keys::prepare_for_test(&db).await;

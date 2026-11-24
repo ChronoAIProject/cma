@@ -330,6 +330,19 @@ async fn purge_in_transaction(
         return Err(PurgeError::Conflict);
     }
     let sandbox = read_sandbox(&aggregate).map_err(|_| PurgeError::Conflict)?;
+    if store
+        .agents
+        .find_one(doc! {
+            "sandbox_id": id.as_str(),
+            "record.conversation.turn_timeout": {"$exists": true}
+        })
+        .session(&mut *session)
+        .await
+        .map_err(PurgeError::Driver)?
+        .is_some()
+    {
+        return Err(PurgeError::Conflict);
+    }
     if sandbox.retirement_archive_pending()
         || sandbox.status != SandboxStatus::Retired
         || sandbox.runtime.is_some()

@@ -25,6 +25,15 @@ export interface AgentTransportOptions {
 }
 
 export class AgentV2Session {
+  private approvalProjectionInvalidated = false;
+
+  invalidateApprovalProjection() {
+    this.approvalProjectionInvalidated = true;
+  }
+  get approvalProjectionAvailable() {
+    return !this.approvalProjectionInvalidated;
+  }
+
   readonly events: Cma['agentEventsV2'];
   readonly responses: Cma['responsesV2'];
   private entryHandoff?: () => boolean;
