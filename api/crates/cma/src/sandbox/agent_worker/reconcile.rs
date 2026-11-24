@@ -31,8 +31,23 @@ impl AgentWorker {
                 .await?;
             for candidate in page.items {
                 candidates += 1;
-                let operation = self.reconcile_candidate(candidate.clone(), now, &mut counts);
+                let target = LiveAgentTarget {
+                    agent_id: candidate.agent_id.clone(),
+                    conversation_id: candidate.conversation_id.clone(),
+                    runtime_generation: candidate.runtime_generation,
+                };
                 if let Some(coordinator) = &self.config.ownership {
+                    // Discovery proves recovery ineligibility for this observation.
+                    // Only a matching attachment can still need maintenance.
+                    if self.config.skip_ineligible_reconciliation
+                        && !candidate.recovery_eligible
+                        && !self.dependencies.registry.target_is_attached(&target)
+                    {
+                        counts.ownership_skipped += 1;
+                        counts.recovery_deferred += 1;
+                        continue;
+                    }
+                    counts.ownership_attempted += 1;
                     let Some(authority) = coordinator
                         .acquire(&candidate.agent_id)
                         .await
@@ -41,11 +56,12 @@ impl AgentWorker {
                         continue;
                     };
                     authority
-                        .run(operation)
+                        .run(self.reconcile_candidate(candidate, &target, now, &mut counts))
                         .await
                         .map_err(|_| SandboxStoreError::Conflict)??;
                 } else {
-                    operation.await?;
+                    self.reconcile_candidate(candidate, &target, now, &mut counts)
+                        .await?;
                 }
             }
             let Some(next) = page.next else {
@@ -54,6 +70,8 @@ impl AgentWorker {
                 tracing::info!(
                     parent: None,
                     candidates,
+                    ownership_attempted = counts.ownership_attempted,
+                    ownership_skipped = counts.ownership_skipped,
                     recovery_deferred = counts.recovery_deferred,
                     context_runtime_deferred = counts.context_runtime_deferred,
                     context_current = counts.context_current,
@@ -73,15 +91,11 @@ impl AgentWorker {
     async fn reconcile_candidate(
         &self,
         candidate: layer2_core::sandbox::store::AgentConnectionRecoveryCandidate,
+        target: &LiveAgentTarget,
         now: SystemTime,
         counts: &mut ReconcileCounts,
     ) -> Result<(), SandboxStoreError> {
-        let target = LiveAgentTarget {
-            agent_id: candidate.agent_id.clone(),
-            conversation_id: candidate.conversation_id.clone(),
-            runtime_generation: candidate.runtime_generation,
-        };
-        if self.dependencies.registry.target_is_attached(&target) {
+        if self.dependencies.registry.target_is_attached(target) {
             // The scan already validated this monotonic applied revision.
             // Skip completed maintenance without rereading the entire Agent.
             // Pending refreshes still reread and fence all mutable authority.
@@ -199,6 +213,8 @@ impl AgentWorker {
 
 #[derive(Default)]
 struct ReconcileCounts {
+    ownership_attempted: u64,
+    ownership_skipped: u64,
     scheduled: usize,
     context_runtime_deferred: u64,
     recovery_deferred: u64,

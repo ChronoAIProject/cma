@@ -197,7 +197,15 @@ it.each([false, true])(
       expires_at: pending.expires_at,
     }));
     vi.spyOn(window, 'open').mockReturnValue(null);
-    render(<ReviewCard client={client} record={record} onChanged={vi.fn()} onClose={vi.fn()} />);
+    render(
+      <ReviewCard
+        expectedSubject="owner"
+        client={client}
+        record={record}
+        onChanged={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
     await act(async () => undefined);
     expect(
       screen.getByRole('dialog', { name: 'NyxID Service Connection Verification' }),

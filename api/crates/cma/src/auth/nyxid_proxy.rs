@@ -20,6 +20,43 @@ pub(crate) mod commands;
 pub(crate) mod jwt;
 pub(super) use jwt::HEADER;
 
+/// Record, without any claim or token content, why CMA did not accept a
+/// proxied NyxID identity. The request still continues to the other
+/// authentication lanes, so an unaccepted assertion otherwise leaves no trace
+/// behind its eventual `401`.
+fn note_unaccepted(stage: &'static str, reason: &'static str) {
+    let context = layer2_core::diagnostic_context::DiagnosticContext::current();
+    let span = tracing::warn_span!(
+        target: crate::diagnostic_format::PROVIDER_IDENTITY_TARGET,
+        parent: None,
+        "identity_verification"
+    );
+    if span.is_disabled() {
+        return;
+    }
+    let _entered = span.enter();
+    tracing::warn!(
+        target: crate::diagnostic_format::PROVIDER_IDENTITY_TARGET,
+        parent: &span,
+        event = "identity_verification_failure",
+        request_hash = context.request_hash.as_ref(),
+        endpoint = "identity_proxy",
+        stage,
+        reason,
+        disposition = "rejected",
+        "NyxID proxy identity was not accepted"
+    );
+}
+
+/// A NyxID identity assertion reached a CMA whose proxy lane is disabled.
+pub(super) fn note_disabled() {
+    note_unaccepted("configuration", "proxy_disabled");
+}
+
+#[cfg(test)]
+#[path = "nyxid_proxy/diagnostic_tests.rs"]
+mod diagnostic_tests;
+
 /// Immutable admitted proxy authority, containing no access/refresh token.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -125,14 +162,25 @@ impl AuthState {
     ) -> Result<Option<RequestAuth>, StoreError> {
         let token = match jwt::identity_token(headers) {
             Ok(Some(token)) => token,
-            Ok(None) | Err(_) => return Ok(None),
+            Ok(None) => return Ok(None),
+            Err(jwt::VerifyError::Rejected(reason)) => {
+                note_unaccepted("header", reason);
+                return Ok(None);
+            }
+            Err(jwt::VerifyError::Unavailable(_)) => {
+                note_unaccepted("header", "unreadable");
+                return Ok(None);
+            }
         };
         let Some(verifier) = &self.identity_proxy else {
             return Ok(None);
         };
         let identity = match verifier.verify(token).await {
             Ok(identity) => identity,
-            Err(jwt::VerifyError::Rejected(_)) => return Ok(None),
+            Err(jwt::VerifyError::Rejected(reason)) => {
+                note_unaccepted("assertion", reason);
+                return Ok(None);
+            }
             Err(jwt::VerifyError::Unavailable(_)) => {
                 return Err(StoreError::Unavailable(
                     "NyxID signing keys unavailable".into(),

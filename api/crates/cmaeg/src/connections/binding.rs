@@ -95,6 +95,9 @@ pub async fn expand_create(
     {
         return Err(invalid("connection is already bound to another channel"));
     }
+    if connection.channel_record.is_none() && !state.managed_telegram_setup_enabled {
+        return Err(invalid("managed_telegram_setup_disabled"));
+    }
     let material = connection.material.as_ref().ok_or_else(failed)?;
     request.sources = vec![source(material, request.connection_admission.clone())?];
     request.credentials.telegram_bot_token = Some(Secret::new(material.token.clone()));

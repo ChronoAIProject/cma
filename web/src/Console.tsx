@@ -49,20 +49,27 @@ import { scopeValue } from './resources/scope';
 import { useNavigationScope } from './resources/NavigationScope';
 import { useConsoleScope } from './resources/useConsoleScope';
 import { OwnerViewsProvider } from './resources/retainedOwnerViews';
-import { coalesceDetailReads } from './api/detailReads';
+import { useDeletionNoticeReconciliation } from './useDeletionNoticeReconciliation';
 import { DocsPage } from './services/DocsPage';
 import { useReportOwner } from './usage/metrics/reportOwner';
 import { OperationsRoute } from './operator/OperationsRoute';
-
 export function Console(props: ConsoleProps) {
+  const { client, settlements } = useDeletionNoticeReconciliation(
+    useCmaClient(),
+    props.user.id,
+    props.authEpoch ?? 0,
+    !useIdentityUncertain(),
+  );
   return (
-    <OwnerViewsProvider key={props.user.id} viewerId={props.user.id}>
-      <ConsoleContent {...props} />
-    </OwnerViewsProvider>
+    <CmaReadScope client={client}>
+      <OwnerViewsProvider key={props.user.id} viewerId={props.user.id}>
+        <ConsoleContent {...props} settlements={settlements} />
+      </OwnerViewsProvider>
+    </CmaReadScope>
   );
 }
-
 function ConsoleContent({
+  settlements,
   user,
   authEpoch = 0,
   visible = true,
@@ -74,7 +81,7 @@ function ConsoleContent({
   sidebarCollapsed: sharedCollapsed,
   onSidebarCollapsedChange,
   onServiceNavigate,
-}: ConsoleProps) {
+}: ConsoleProps & Pick<ReturnType<typeof useDeletionNoticeReconciliation>, 'settlements'>) {
   const surfaceRef = useViewArrival(routePath(route), true, false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const selectedAgent = route.kind === 'agent' ? route.agentId : undefined;
@@ -83,10 +90,7 @@ function ConsoleContent({
   const viewPosition = useMemo(() => positions.forAgent(selectedAgent), [positions, selectedAgent]);
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
   const [revision, setRevision] = useState(0);
-  const sourceClient = useCmaClient();
-  const reads = useMemo(() => coalesceDetailReads(sourceClient), [sourceClient]);
-  useEffect(() => () => reads.dispose(), [reads]);
-  const client = reads.client;
+  const client = useCmaClient();
   const computerObservation = useMemo(
     () =>
       new AgentComputerObservation(
@@ -151,7 +155,9 @@ function ConsoleContent({
   useEffect(() => {
     if (!accessUncertain && agent.state.status === 'ready')
       agent.state.v2?.journal.reconcileDraft();
-  }, [accessUncertain, agent.state]);
+  }, [accessUncertain, agent.state, draft.recoveryBlocked]);
+  const { canStartNewAgent, canCreateInScope, newAgentUnavailable, permissions } =
+    consoleCreationAccess(user, navigationScope, scopeReady, accessUncertain, Boolean(onCreate));
   const actions = useResourceActions(
     client,
     (target) => {
@@ -162,27 +168,20 @@ function ConsoleContent({
     user.id,
     onNavigate,
     !accessUncertain,
+    permissions,
+    settlements,
   );
-  const { canStartNewAgent, canCreateInScope, newAgentUnavailable, permissions } =
-    consoleCreationAccess(
-      user,
-      navigationScope,
-      scopeReady,
-      accessUncertain,
-      onCreate !== undefined,
-    );
   const canOpenTriggers = !user.visitor && user.capabilities.includes('publish_triggers');
   const [commandsOpen, setCommandsOpen] = useState(false);
   const newAgent = useCallback(() => onCreate?.({ kind: 'new_agent' }), [onCreate]);
+  const hasAgent = personalAgentId !== undefined || shared !== undefined;
   useDocumentTitle(
     route.kind === 'home' || route.kind === 'agent_manager'
       ? 'Agent Manager'
       : route.kind === 'not_found'
         ? 'Page not found'
         : undefined,
-    route.kind === 'agent' && (personalAgentId !== undefined || shared !== undefined)
-      ? 'inherit'
-      : 'product',
+    route.kind === 'agent' && hasAgent ? 'inherit' : 'product',
   );
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
   const content =
@@ -235,9 +234,7 @@ function ConsoleContent({
         onDetailsOpenChange={setDetailsOpen}
         onNavigate={onNavigate}
       />
-    ) : route.kind === 'agent' &&
-      client.resourceViews !== undefined &&
-      personalAgentId === undefined ? (
+    ) : selectedAgent !== undefined && client.resourceViews && personalAgentId === undefined ? (
       <AgentAccessPending state={agentAccess.state} onRetry={agentAccess.reload} />
     ) : route.kind === 'agent' ? (
       <CharacterColorContext value={located?.sandbox.color}>
@@ -274,7 +271,6 @@ function ConsoleContent({
         onNavigate={onNavigate}
         personal={(accessUncertain) => (
           <SandboxPage
-            key={route.sandboxId}
             client={client}
             sandboxId={route.sandboxId}
             viewerId={user.id}
@@ -343,13 +339,19 @@ function ConsoleContent({
         user={user}
         route={route}
         canCreate={canCreateInScope}
+        home={{
+          navigation: scopeReady && navigationScope === '' ? navigation : undefined,
+          scope: navigationScope,
+          onRetry: refreshNavigation,
+          onNavigate,
+        }}
         onCreated={(target) => {
           setRevision((value) => value + 1);
           onNavigate(target);
         }}
       />
     );
-  const frame = (
+  return (
     <ComputerContext value={computerObservation}>
       <AppFrame
         previewScope={`${user.id}:${selectedAgent}:${accessUncertain}`}
@@ -357,11 +359,7 @@ function ConsoleContent({
         phoneTitle="Agent Manager"
         taskLayout
         workspaceDetails={panel !== 'details'}
-        detailsOpen={
-          !accessUncertain &&
-          (personalAgentId !== undefined || shared !== undefined) &&
-          panel !== undefined
-        }
+        detailsOpen={!accessUncertain && hasAgent && panel !== undefined}
         compactDetailsOverlay
         onDetailsClose={() => setPanel(undefined)}
         details={
@@ -494,5 +492,4 @@ function ConsoleContent({
       />
     </ComputerContext>
   );
-  return <CmaReadScope client={client}>{frame}</CmaReadScope>;
 }

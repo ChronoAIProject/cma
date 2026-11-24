@@ -1,8 +1,11 @@
+import { ConnectionReturnPage } from './connections/ConnectionReturnPage';
 import { Console } from './Console';
 import { useAuth } from './auth/context';
 import { BrandLoading } from './landing/LandingCharacter';
 import { ShellLoading } from './ui/Skeleton';
 import { SignInLanding } from './landing/SignInLanding';
+import { legalTermsOf } from './auth/types';
+import { LegalConsentDialog } from './auth/LegalConsentDialog';
 import { parseRoute, useAppRouter } from './routing/routes';
 import './styles/tokens.css';
 import './styles/design-platform.css';
@@ -41,7 +44,7 @@ const AUTHENTICATED_HOME_ROUTE: AppRoute = { kind: 'agent_manager' };
 
 export function App() {
   const browserRouter = useAppRouter();
-  const { state: identity } = useAuth();
+  const { state: identity, signOut } = useAuth();
   const identityScope =
     identity.status === 'authenticated'
       ? JSON.stringify([identity.user.id, [...identity.user.capabilities].sort()])
@@ -75,6 +78,18 @@ export function App() {
           onClose={() => browserRouter.closeUsage?.()}
         />
       </Suspense>
+    ) : null;
+  const legalTerms = identity.status === 'authenticated' ? identity.user.legalTerms : undefined;
+  const legalConsent =
+    identity.status === 'authenticated' &&
+    legalTerms !== undefined &&
+    client.legalConsent !== undefined ? (
+      <LegalConsentDialog
+        key={`${identity.user.id}:${legalTerms.version}`}
+        terms={legalTerms}
+        client={client.legalConsent}
+        onSignOut={() => void signOut()}
+      />
     ) : null;
   const redirectHome = identity.status === 'authenticated' && browserRouter.route.kind === 'home';
   useLayoutEffect(() => {
@@ -142,6 +157,7 @@ export function App() {
         <IdentityNotice />
         <AgentApp router={router} authEpoch={authEpoch} />
         {usageDialog}
+        {legalConsent}
       </div>
     );
   const navigateService = (next: AppRoute) =>
@@ -150,6 +166,7 @@ export function App() {
     <div className="service-shell">
       <IdentityNotice />
       {usageDialog}
+      {legalConsent}
       {home ? (
         <ServiceBody>
           <PortalFrame route={router.route} onNavigate={navigateService} {...sidebar}>
@@ -191,6 +208,7 @@ function HomeLanding({ router }: { readonly router: AppRouter }) {
   if (state.status === 'checking') return <BrandLoading />;
   return (
     <SignInLanding
+      legalTerms={legalTermsOf(state)}
       onSignIn={async (returnTo = '/agent-manager') => {
         if (state.status === 'authenticated') router.navigate(parseRoute(returnTo));
         else {
@@ -226,10 +244,8 @@ function AgentApp({
   }>();
   const [hierarchyRevision, setHierarchyRevision] = useState(0);
 
-  // NyxID hosted connection links redirect their popup here after the
-  // credential is saved. The main CMA window is already polling the durable
-  // connection state. Keep its child window available for the next service;
-  // the main window closes it only after the entire sequence is verified.
+  // Callback parameters never prove readiness. The original target verifies
+  // the durable connection after a popup or explicit same-tab return.
   if (window.location.pathname === '/connection-return') {
     return <ConnectionReturnPage />;
   }
@@ -265,6 +281,7 @@ function AgentApp({
         landing
       >
         <SignInLanding
+          legalTerms={state.legalTerms}
           onSignIn={async (returnTo) => {
             retainFatherDraftForSignIn();
             await signIn(
@@ -337,20 +354,5 @@ function AgentApp({
         )}
       </Presence>
     </ReferenceProvider>
-  );
-}
-
-function ConnectionReturnPage() {
-  return (
-    <main className="app-error">
-      <h1 className="app-error__title">Returning to CMA</h1>
-      <p className="app-error__next">
-        CMA is checking your connection. Your next sign-in will open here, or this window will close
-        when all services are ready. If nothing happens, return to the CMA window to continue.
-      </p>
-      <button type="button" onClick={() => window.close()}>
-        Close this window
-      </button>
-    </main>
   );
 }

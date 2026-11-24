@@ -1,8 +1,12 @@
 import { test, expect } from '@playwright/test';
+import { registerUsageRedesignCases } from './redesign-usage.cases';
+
 import { LocalStartup } from './agent-startup-fixtures';
 import { LocalUsageMetrics } from './usage-metrics.fixture';
 import { LocalUsageFilterOptions } from './usage-filter-options.fixture';
 import { asOf, metricRow } from '../src/usage/metrics/fixtures.test-support';
+
+registerUsageRedesignCases();
 
 for (const admin of [false, true]) {
   test(`LOCAL allocated sorting keeps API pagination and confirmed missing intervals for admin=${admin}`, async ({

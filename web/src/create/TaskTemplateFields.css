@@ -1,5 +1,6 @@
 .task-template-fields {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
   min-width: 0;
   border: 0;
@@ -9,4 +10,20 @@
   display: grid;
   gap: var(--space-1);
   min-width: 0;
+  grid-column: 1 / -1;
+}
+.task-template-fields > p {
+  grid-column: 1 / -1;
+  color: var(--dsw-alias-label-secondary);
+}
+.task-template-fields legend {
+  font-weight: 600;
+}
+.task-template-fields[data-template='document'] .task-template-fields__field:not(:first-of-type) {
+  grid-column: auto;
+}
+@media (max-width: 600px) {
+  .task-template-fields {
+    grid-template-columns: 1fr;
+  }
 }

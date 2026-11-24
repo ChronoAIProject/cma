@@ -9,6 +9,7 @@ mod activity_page_index;
 mod agent_log_segments;
 pub(in crate::store) mod agent_log_source_keys;
 mod agent_owner_index;
+mod billing_authority;
 mod binding_indexes;
 mod collection_indexes;
 pub(in crate::store) mod home_backup_catalog;
@@ -57,6 +58,9 @@ pub(crate) async fn run_command_line(arguments: &[String]) {
 }
 
 pub(crate) async fn command(arguments: &[String]) -> Result<Value> {
+    if let Some(result) = billing_authority::command(arguments) {
+        return result;
+    }
     if let Some(result) = home_backup_catalog::command(arguments) {
         return result;
     }
@@ -221,4 +225,6 @@ pub(in crate::store) fn missing_activity_indexes(
 }
 
 #[cfg(test)]
-pub(in crate::store) use tests::startup_ddl::prepare_bindings_for_test;
+pub(in crate::store) use tests::startup_ddl::{
+    apply_binding_indexes_for_test, prepare_bindings_for_test,
+};

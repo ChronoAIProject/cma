@@ -1,6 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 import { LocalDocuments, documentId } from './documents.fixture';
 import { LocalUsageMetrics } from './usage-metrics.fixture';
+import { registerDocumentRedesignCases } from './redesign-document.cases';
+
+registerDocumentRedesignCases();
 
 test('LOCAL unsaved title uses native refresh and tab-close confirmation after user input', async ({
   page,

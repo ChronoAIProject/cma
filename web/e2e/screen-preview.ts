@@ -17,21 +17,24 @@ export async function captureSingleBrowserFrame(page: Page, path?: string) {
       ),
     )
     .toBe(true);
+  const measured: { bounds?: NonNullable<Awaited<ReturnType<typeof frame.boundingBox>>> } = {};
   await expect
     .poll(async () => {
-      const image = (await frame.boundingBox())!;
-      const container = (await panel.boundingBox())!;
-      return (
+      const image = await frame.boundingBox();
+      const container = await panel.boundingBox();
+      if (!image || !container) return false;
+      const fits =
         image.x >= container.x - 1 &&
         image.y >= container.y - 1 &&
         image.x + image.width <= container.x + container.width + 1 &&
         image.y + image.height <= container.y + container.height + 1 &&
         Math.abs(image.width - container.width) < 1 &&
-        Math.abs(image.height - (image.width * 9) / 16) < 1
-      );
+        Math.abs(image.height - (image.width * 9) / 16) < 1;
+      if (fits) measured.bounds = image;
+      return fits;
     })
     .toBe(true);
-  const bounds = (await frame.boundingBox())!;
+  const bounds = measured.bounds!;
   const screenshot = await page.screenshot({ path });
   // Check the viewport capture, not a separate element capture which could repaint it.
   // A duplicated/clipped top strip in the footer is grey/text instead of this white margin.

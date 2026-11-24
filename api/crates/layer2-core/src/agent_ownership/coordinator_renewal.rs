@@ -1,6 +1,14 @@
 use super::super::authority::ReceiverCancellation;
 use super::*;
 
+#[cfg(test)]
+type BeforeRenewalDeadline = Box<dyn Fn(&Authority, &'static str) + Send>;
+
+#[cfg(test)]
+tokio::task_local! {
+    pub(super) static BEFORE_RENEWAL_DEADLINE: BeforeRenewalDeadline;
+}
+
 impl OwnershipCoordinator {
     pub(super) async fn renew_owned(
         &self,
@@ -8,14 +16,13 @@ impl OwnershipCoordinator {
         started: Instant,
         now_ms: i64,
     ) -> Result<(), OwnershipError> {
-        let obsolete =
-            || authority.retiring.load(Ordering::Acquire) || authority.receiver_cancelled();
+        let obsolete = || renewal_obsolete(authority);
         let fatal = |stage, error| self.maintenance_error(stage, Some(authority), error);
-        if obsolete() {
+        if self
+            .live_renewal_deadline(authority, "owner_dispatch_deadline")?
+            .is_none()
+        {
             return Ok(());
-        }
-        if !self.is_ready() || !authority.is_current() {
-            return Err(fatal("owner_dispatch_deadline", OwnershipError::Stale));
         }
         let renewal = tokio::time::timeout(
             Duration::from_millis(STORE_DEADLINE_MS),
@@ -39,27 +46,70 @@ impl OwnershipCoordinator {
             Ok(Err(OwnershipError::Unavailable(_))) => "renewal_store_unavailable",
             Ok(Err(OwnershipError::Stale)) if obsolete() => return Ok(()),
             Ok(Err(error)) => return Err(fatal("owner_store_renew", error)),
-            Ok(Ok(lease)) => {
-                // A different token is an invariant failure, not a late success
-                // for this captured authority, even if it has since retired.
-                require_same_token(&authority.token, &lease)
-                    .map_err(|error| fatal("owner_same_token", error))?;
-                let until = deadline(started, now_ms, lease.expires_at_ms)
-                    .map_err(|error| fatal("owner_store_deadline", error))?;
-                if obsolete() {
-                    return Ok(());
-                }
-                if !self.is_ready() || !authority.is_current() {
-                    return Err(fatal("owner_result_deadline", OwnershipError::Stale));
-                }
-                return match authority.renew_until(until) {
-                    Ok(()) => Ok(()),
-                    Err(_) if obsolete() => Ok(()),
-                    Err(error) => Err(fatal("owner_local_renew", error)),
-                };
-            }
+            Ok(Ok(lease)) => return self.apply_renewal(authority, started, now_ms, &lease),
         };
-        if obsolete() {
+        self.contain_unavailable_renewal(authority, reason)
+    }
+
+    pub(super) fn apply_renewal(
+        &self,
+        authority: &Authority,
+        started: Instant,
+        now_ms: i64,
+        lease: &OwnershipLease,
+    ) -> Result<(), OwnershipError> {
+        let fatal = |stage, error| self.maintenance_error(stage, Some(authority), error);
+        // Even a retired capture must never accept a result for another token.
+        require_same_token(&authority.token, lease)
+            .map_err(|error| fatal("owner_same_token", error))?;
+        let until = deadline(started, now_ms, lease.expires_at_ms)
+            .map_err(|error| fatal("owner_store_deadline", error))?;
+        if self
+            .live_renewal_deadline(authority, "owner_result_deadline")?
+            .is_none()
+        {
+            return Ok(());
+        }
+        match authority.renew_until(until) {
+            Ok(()) => Ok(()),
+            Err(_) if self.is_ready() && renewal_obsolete(authority) => Ok(()),
+            Err(error) => Err(fatal("owner_local_renew", error)),
+        }
+    }
+
+    pub(super) fn live_renewal_deadline(
+        &self,
+        authority: &Authority,
+        stage: &'static str,
+    ) -> Result<Option<Instant>, OwnershipError> {
+        if renewal_obsolete(authority) {
+            return Ok(None);
+        }
+        #[cfg(test)]
+        let _ = BEFORE_RENEWAL_DEADLINE.try_with(|hook| hook(authority, stage));
+
+        let deadline = authority
+            .established_deadline()
+            .filter(|until| *until > Instant::now());
+        let stale = || self.maintenance_error(stage, Some(authority), OwnershipError::Stale);
+        if !self.is_ready() {
+            return Err(stale());
+        }
+        // Cancellation and handoff publish their cause before clearing the
+        // deadline. Reclassify after observing the deadline under its lock.
+        if renewal_obsolete(authority) {
+            return Ok(None);
+        }
+        deadline.map(Some).ok_or_else(stale)
+    }
+
+    pub(super) fn contain_unavailable_renewal(
+        &self,
+        authority: &Authority,
+        reason: &'static str,
+    ) -> Result<(), OwnershipError> {
+        let fatal = |stage, error| self.maintenance_error(stage, Some(authority), error);
+        if renewal_obsolete(authority) {
             return Ok(());
         }
         if !self.is_ready() {
@@ -93,6 +143,10 @@ impl OwnershipCoordinator {
             }
         }
     }
+}
+
+pub(super) fn renewal_obsolete(authority: &Authority) -> bool {
+    authority.retiring.load(Ordering::Acquire) || authority.receiver_cancelled()
 }
 
 pub(super) fn error_reason(error: &OwnershipError) -> &'static str {

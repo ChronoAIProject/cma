@@ -51,7 +51,7 @@ it('confirms a freshly read parked update using the existing deletion command', 
   );
   const actor = userEvent.setup();
   await actor.click(await screen.findByRole('checkbox'));
-  const confirm = screen.getByRole('button', { name: 'Delete Sandbox' });
+  const confirm = screen.getByRole('button', { name: 'Request deletion' });
   expect(confirm).toBeEnabled();
   expect(screen.getByText(/stop the paused runtime update/)).toHaveTextContent(
     'This cannot be undone.',
@@ -73,7 +73,7 @@ it.each(['updating', 'checkpoint', 'unavailable', 'foreign-id'] as const)(
     show(agentClient({ readSandbox, deleteSandbox }));
     await act(async () => {});
     fireEvent.click(screen.getByRole('checkbox'));
-    expect(screen.getByRole('button', { name: 'Delete Sandbox' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Request deletion' })).toBeEnabled();
     if (condition === 'unavailable')
       readSandbox.mockRejectedValue(new ApiError(503, 'Unavailable'));
     else
@@ -93,7 +93,7 @@ it.each(['updating', 'checkpoint', 'unavailable', 'foreign-id'] as const)(
         },
       });
     await act(() => vi.advanceTimersByTimeAsync(1500));
-    const confirm = screen.getByRole('button', { name: 'Delete Sandbox' });
+    const confirm = screen.getByRole('button', { name: 'Request deletion' });
     expect(confirm).toBeDisabled();
     fireEvent.click(confirm);
     expect(deleteSandbox).not.toHaveBeenCalled();
@@ -116,7 +116,7 @@ it.each(['retiring', 'retired'] as const)(
         name: status === 'retiring' ? 'Deleting Sandbox' : 'Sandbox deleted',
       }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Delete Sandbox' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Request deletion' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Check request' })).not.toBeInTheDocument();
     expect(deleteSandbox).not.toHaveBeenCalled();
     if (status === 'retiring') {
@@ -137,7 +137,7 @@ it.each([
   show(agentClient({ readSandbox, deleteSandbox, updateSandboxRuntime }));
   const actor = userEvent.setup();
   await actor.click(await screen.findByRole('checkbox'));
-  await actor.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
+  await actor.click(screen.getByRole('button', { name: 'Request deletion' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(failure.message);
   expect(restoreDeletion('owner')).toEqual(initial);
   expect(deleteSandbox).toHaveBeenCalledOnce();

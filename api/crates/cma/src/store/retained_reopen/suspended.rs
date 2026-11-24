@@ -264,6 +264,8 @@ async fn apply(
         retain_runtime: true,
         interruption_cause: SandboxInterruptionCause::RuntimeUnavailable,
         observed_at: request.requested_at.clone(),
+        // A suspended reopen is not a native retirement.
+        native_retirement_finality: false,
     };
     let session = settle_reopen_agents(
         store,

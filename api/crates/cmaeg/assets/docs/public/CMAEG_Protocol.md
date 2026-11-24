@@ -815,7 +815,8 @@ start above one because reservation and binding completion are separate writes.
 channel, including its exact callback URL, after a lost response. Other owners
 receive 404. Failed or uncertain provider calls retain their pending reservation
 for explicit retry or deletion; the caller must reconcile that identity before
-allocating another. This is management recovery, not durable event delivery.
+allocating another. A provider that is not allowlisted is refused with 400
+`invalid_request` before any reservation is written. This is management recovery, not durable event delivery.
 Deletion releases the reservation; callers must never reuse a retired record UUID
 or race cleanup against an outstanding create attempt.
 
@@ -847,7 +848,7 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channels/{channel_id}/partition` | Required `partition_key`; optional `consumer_id` (default `default`) | 200 retained CMA conversation mapping and current Agent status | 400 unsupported affinity; 404 absent/hidden channel or mapping |
 | `POST /v1/channels/{channel_id}/partition/resets` | Required `Idempotency-Key` and owner reset body below | 200 reserved successor receipt; no-store | 409 disabled, ineligible target, changed mapping or reused key; uncertain failures require exact retry |
 | `PUT /v1/channels/{channel_id}` | Complete create policy plus required `expected_version`; optional credential patch | 200 channel response with incremented version | 409 stale version |
-| `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version |
+| `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version; 409 `provider_rejected` when the provider refuses to release the binding |
 | `POST /v1/channels/{channel_id}/test` | No body | 200 `{"accepted_after_ms":42,"first_text":"...","level":"l1"}` | Provider refusal, timeout or no usable result |
 | `POST /v1/channels/{channel_id}/rekey` | CMA service bearer; no body | 200 `{"kid":1}` | 401 service authentication failure |
 | `GET /v1/permissions` | No body; creator bearer | 200 `{"subject":"...","roles":[...]}` for the authenticated creator | 401 unauthenticated |
@@ -867,7 +868,9 @@ reconciles the provider binding, including when credentials are retained. This
 repairs a previous update that changed the provider but failed to save the record;
 a GET alone does not establish the provider's credential state.
 Delete unbinds the provider before removing the record; an unbind failure
-preserves the record and is returned to the caller. Rekey re-encrypts the record under the
+preserves the record and is returned to the caller. A definite provider refusal
+other than 404 returns 409 `provider_rejected` naming the provider's HTTP status;
+the record and its version are unchanged, and nothing proves the binding absent. Rekey re-encrypts the record under the
 current master key and retains `channel_id`; operators must retain keys needed
 to open existing channel pointers. A channel pointer also seals the record URL
 under the CMA origin its issuing gateway was configured with. When a gateway
@@ -3197,6 +3200,15 @@ exact nested error code and error type (`invalid_request_error` for 403/422,
 malformed/truncated bodies and contradictory admission headers remain `Unknown`
 and use existing uncertain-submission recovery; they never authorize a blind
 transport retry. The provider transport itself never retries a POST.
+
+A 400 is a definite pre-admission refusal in two dialects only. One is CMA's
+`invalid_json`, which stays `invalid_json`. The other is NyxID's documented
+validation refusal, which is recorded as `provider_validation_refused`. NyxID
+answers an event it cannot accept with a body of exactly `error:
+"validation_error"`, `error_code: 1008` and a string `message`, as
+`application/json` and with no `x-cma-response-id`. Either refusal settles the
+consumer as refused, so the conversation's next queued event can start. Any
+other 400 remains `Unknown`.
 
 Exact replay of admitted input never contacts the gateway. CMA compares the
 complete request, including its ExternalEvent, to the retained command using

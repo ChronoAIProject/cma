@@ -97,9 +97,10 @@ export function WherePicker({
         );
         timer = setTimeout(
           () => void refresh(),
-          detail.workspaces.some((item) => item.status === 'preparing')
-            ? 1500
-            : sandboxRefreshDelay(detail),
+          sandboxRefreshDelay(
+            detail,
+            detail.workspaces.some((item) => item.status === 'preparing'),
+          ),
         );
       } catch {
         if (!request.signal.aborted) {

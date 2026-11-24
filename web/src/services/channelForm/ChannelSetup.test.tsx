@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
+import { RelayCapabilitiesContext } from '../RelayCapabilities';
 import { ChannelEditor } from '../ChannelEditor';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -49,13 +50,50 @@ it('reveals a newly added required expert field and preserves the draft across d
 
 it('retains HMAC credential editing for managed connections with webhook replies', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [] }))));
-  render(<ChannelEditor ownerSubject="local-owner" onDone={vi.fn()} denied={vi.fn()} />);
+  render(
+    <RelayCapabilitiesContext value={{ status: 'ready', managedTelegramSetup: true }}>
+      <ChannelEditor ownerSubject="local-owner" onDone={vi.fn()} denied={vi.fn()} />
+    </RelayCapabilitiesContext>,
+  );
   fireEvent.click(screen.getByLabelText('Use an existing CMA-managed Telegram connection'));
   await screen.findByText(/No saved CMA connections/);
   fireEvent.click(screen.getByRole('button', { name: 'Destination 1 type' }));
   fireEvent.click(screen.getByRole('menuitemradio', { name: 'Result webhook' }));
-  expect(screen.getByLabelText('Replace HMAC credentials')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Add HMAC credential' })).toBeVisible();
+  expect(screen.queryByLabelText('Replace HMAC credentials')).not.toBeInTheDocument();
   expect(screen.getByLabelText('Provider agent key')).toBeRequired();
   expect(screen.queryByLabelText('Telegram bot token')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('NyxID channel key')).not.toBeInTheDocument();
+});
+
+it.each(['loading', 'legacy', 'failed', 'ready'] as const)(
+  'hides new managed setup until explicitly advertised (%s)',
+  (status) => {
+    const fetcher = vi.fn();
+    vi.stubGlobal('fetch', fetcher);
+    render(
+      <RelayCapabilitiesContext value={{ status }}>
+        <ChannelEditor ownerSubject="local-owner" onDone={vi.fn()} denied={vi.fn()} />
+      </RelayCapabilitiesContext>,
+    );
+    expect(
+      screen.queryByLabelText('Use an existing CMA-managed Telegram connection'),
+    ).not.toBeInTheDocument();
+    expect(fetcher).not.toHaveBeenCalled();
+  },
+);
+
+it('retains a selected managed draft when the capability becomes unavailable', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [] }))));
+  const view = (enabled: boolean) => (
+    <RelayCapabilitiesContext value={{ status: 'ready', managedTelegramSetup: enabled }}>
+      <ChannelEditor ownerSubject="local-owner" onDone={vi.fn()} denied={vi.fn()} />
+    </RelayCapabilitiesContext>
+  );
+  const mounted = render(view(true));
+  fireEvent.click(screen.getByLabelText('Use an existing CMA-managed Telegram connection'));
+  await screen.findByText(/No saved CMA connections/);
+  mounted.rerender(view(false));
+  expect(screen.getByLabelText('Use an existing CMA-managed Telegram connection')).toBeChecked();
+  expect(screen.getByRole('button', { name: 'Saved Telegram connection' })).toBeVisible();
 });

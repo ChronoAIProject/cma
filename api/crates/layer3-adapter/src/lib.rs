@@ -17,6 +17,7 @@ mod browser;
 mod browser_control;
 pub mod file_read_diagnostics;
 pub mod permanent_custody;
+pub mod stale_turn;
 pub use browser::{
     BrowserAdapter, BrowserFrame, BrowserObservation, BrowserOperation, BrowserReceipt,
     BrowserRequest, BrowserState,
@@ -55,6 +56,7 @@ pub mod ingress_budget;
 mod prompt_identity;
 mod provider_finality;
 pub mod recovery_diagnostics;
+mod released_runtime;
 pub mod resource_execution_protocol;
 mod runtime;
 pub mod runtime_bootstrap;
@@ -163,6 +165,9 @@ pub use provider_finality::{
     provider_request_digest, RuntimeFinalityReceipt, RuntimeProviderIncarnation,
     RuntimeProvisionReceipt,
 };
+pub use released_runtime::{
+    PinnedReleasedRuntime, ReleasedRuntime, ReleasedRuntimeSource, StaleReleasedRuntime,
+};
 pub use runtime::{
     CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,
     RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeInspection, RuntimeLifecycle,
@@ -209,6 +214,9 @@ pub use agent_filesystem::{
 };
 pub mod owner_control;
 pub mod owner_protocol;
+pub mod receiver_failure;
+mod runtime_retirement;
+pub use runtime_retirement::{RetirementPod, RuntimeRetirement};
 pub mod sandbox_metrics;
 
 // Shared immutable archive locator; core persistence and runtime use one shape.

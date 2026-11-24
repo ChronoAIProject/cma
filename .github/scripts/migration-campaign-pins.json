@@ -1,0 +1,26 @@
+{
+  "schema": "cma-migration-campaign-pins-v1",
+  "readers": [
+    {
+      "role": "old",
+      "release": "cma-agent-manager/v0.20.0",
+      "image": "ghcr.io/chronoaiproject/cma-agent-manager@sha256:21e745d2de6ccd94717ad3acd899970f6ae264693b33cc6cf2364db37b185de4",
+      "config": "sha256:e8ae76b96dc326fb3aa1f1a2040654a980b1b95d62912c3738660456210e3f35",
+      "source": "21319d1c41cffe031c946d10bd7b9beebc6bd47b"
+    },
+    {
+      "role": "new",
+      "release": "cma-agent-manager/v0.22.0",
+      "image": "ghcr.io/chronoaiproject/cma-agent-manager@sha256:7bb27ca9620ffad382d4e4ec74055c3fec1bc0a38660100a3d8411ca31e939e1",
+      "config": "sha256:b9eba1d300db84335fb03c9cbd47ebcc72c1287359f5433a241851f11143e06e",
+      "source": "b66b3d4d060a5cc84f3639200be17d336df37ab9"
+    }
+  ],
+  "kind": {
+    "version": "v0.30.0",
+    "linux_amd64_sha256": "517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889",
+    "node": "docker.io/kindest/node@sha256:7416a61b42b1662ca6ca89f02028ac133a309a2a30ba309614e8ec94d976dc5a"
+  },
+  "mongo": "docker.io/library/mongo@sha256:42545cf0629db918d1a24a2df8bbca6926ed87bfabf59afc85008dd948448cc7",
+  "identity": "docker.io/library/python@sha256:48d884813cf44e927cf64c5529dd630dd3b18338c6dc727991eef9b71e934a20"
+}
