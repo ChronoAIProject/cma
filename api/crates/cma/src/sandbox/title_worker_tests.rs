@@ -147,6 +147,7 @@ impl Fixture {
         let credentials = Arc::new(Credentials(
             Mutex::new(Some(CredentialMaterial {
                 source: Default::default(),
+                github_route: None,
                 sandbox_id: sandbox.id,
                 owner: sandbox.owner,
                 authority: sandbox.credential.current.unwrap(),
@@ -561,7 +562,7 @@ fn snapshot_identity_binds_owner_lineage_runtime_and_credential() {
 }
 
 #[path = "title_worker_tests/fixtures.rs"]
-pub(super) mod fixtures;
+pub(in crate::sandbox) mod fixtures;
 use fixtures::{agent, sandbox};
 
 #[tokio::test]

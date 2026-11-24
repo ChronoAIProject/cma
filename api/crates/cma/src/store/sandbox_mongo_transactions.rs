@@ -1,4 +1,5 @@
 //! Shared transaction isolation, error classification and bounded commit retries.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::error::{
     Error, ErrorKind, WriteFailure, TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT,
 };
@@ -55,7 +56,7 @@ impl CommitOperation for ClientSession {
     type Error = Error;
 
     async fn commit(&mut self) -> Result<(), CommitFailure<Error>> {
-        self.commit_transaction().await.map_err(|error| {
+        self.commit_guarded().await.map_err(|error| {
             if error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) {
                 CommitFailure::Unknown(error)
             } else if is_transient(&error) {
@@ -75,13 +76,13 @@ pub(crate) async fn start_transaction(session: &mut ClientSession) -> Result<(),
         .await?;
     // Read before the work-publication fence's Sandbox or Workspace write.
     if let Err(error) = crate::store::transaction_barrier::open(session).await {
-        if let Err(abort) = session.abort_transaction().await {
+        if let Err(abort) = session.abort_guarded().await {
             tracing::warn!(error = %abort, "ordinary work transaction abort was not acknowledged");
         }
         return Err(error);
     }
     if let Err(error) = crate::store::work_publication::fence_current(session).await {
-        if let Err(abort) = session.abort_transaction().await {
+        if let Err(abort) = session.abort_guarded().await {
             tracing::warn!(error = %abort, "ordinary work transaction abort was not acknowledged");
         }
         return Err(error);
@@ -91,7 +92,7 @@ pub(crate) async fn start_transaction(session: &mut ClientSession) -> Result<(),
 
 pub(crate) async fn commit_transaction(session: &mut ClientSession) -> CommitOutcome {
     if let Err(error) = layer2_core::sandbox::store::WorkAuthority::current() {
-        if let Err(abort) = session.abort_transaction().await {
+        if let Err(abort) = session.abort_guarded().await {
             tracing::warn!(error = %abort, "expired work publication abort was not acknowledged");
         }
         return CommitOutcome::Failed(Error::custom(error));
@@ -119,7 +120,7 @@ pub(in crate::store) async fn commit_transaction_with_refusal(
             .await;
         // Close local driver state; this second best-effort abort proves nothing
         // about an uncertain first reply and cannot release the durable marker.
-        if session.abort_transaction().await.is_err() {
+        if session.abort_guarded().await.is_err() {
             tracing::warn!(
                 stage = "precommit_refusal",
                 outcome = "local_abort_failed",

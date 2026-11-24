@@ -1,6 +1,7 @@
 //! Atomic Mongo persistence for runtime conversation updates.
 
 use crate::store::agent_log_telemetry::ScanCaller;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{
     AgentConversationMutation, AgentConversationStore, SandboxStoreError,
@@ -115,16 +116,16 @@ async fn commit_conversation_inner(
         let receipt = match applied {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };

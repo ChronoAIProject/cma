@@ -157,7 +157,9 @@ export function DesktopPanel({
                         : 'Unavailable'
                       : phase === 'waiting'
                         ? 'Waiting'
-                        : 'Connecting'}
+                        : phase === 'recovering'
+                          ? 'Reconnecting…'
+                          : 'Connecting'}
                 </span>
               </div>
               <p role="status">
@@ -166,7 +168,7 @@ export function DesktopPanel({
                   : phase === 'connecting'
                     ? 'Connecting to your machine…'
                     : phase === 'recovering'
-                      ? error || 'Restoring the desktop display…'
+                      ? `Reconnecting…${error ? ` ${error}` : ''}`
                       : phase === 'loading'
                         ? 'Loading the desktop screen…'
                         : phase === 'error'
