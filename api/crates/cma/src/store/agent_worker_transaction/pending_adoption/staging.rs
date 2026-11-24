@@ -93,6 +93,9 @@ async fn admit(
     if lease.expires_at <= now {
         return Err(witness::unresolved());
     }
+    if !crate::store::work_publication::agent::fence_parent(store, current, session).await? {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
     let (admission, fresh) = if previous.as_ref() == Some(witness) {
         let admission = writer_admission::read(&database, current, &operation, session)
             .await?

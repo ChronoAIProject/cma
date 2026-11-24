@@ -24,7 +24,6 @@ use super::sandbox_mongo::{
 use super::worktrees::{read_worktree, worktree_replacement_fields};
 
 mod contention;
-mod maintenance;
 pub(super) mod pending_adoption;
 #[cfg(test)]
 pub(crate) use pending_adoption::test_hooks as adoption_probe;
@@ -202,7 +201,8 @@ async fn apply_publication_observed(
         )
         .await?;
     }
-    maintenance::fence_parent(store, &current, &mut scope).await?;
+    // Legacy ordinary settlement also supports an already absent parent.
+    scope.fence_agent_parent(store, &current).await?;
     let segmented = if let Some(prepared) = guards.adoption {
         Some(
             segmented::publish_adopted(

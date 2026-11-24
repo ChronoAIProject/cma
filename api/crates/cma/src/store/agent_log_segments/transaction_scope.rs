@@ -43,6 +43,14 @@ impl<'session> TransactionScope<'session> {
         crate::store::work_publication::fence_transaction(store, self.session).await
     }
 
+    pub(in crate::store) async fn fence_agent_parent(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        agent: &layer2_core::sandbox::Agent,
+    ) -> Result<bool, TransactionLogError> {
+        crate::store::work_publication::agent::fence_parent(store, agent, self.session).await
+    }
+
     pub(in crate::store) async fn live_agents(
         &mut self,
         store: &crate::store::MongoSandboxStore,

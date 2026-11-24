@@ -6,6 +6,7 @@ use mongodb::bson::{doc, Document};
 use super::sandbox_mongo::MongoSandboxStore;
 use super::work_claim_authority::without_ledger_maintenance;
 
+pub(super) mod agent;
 pub(super) mod workspace;
 
 pub(super) fn sandbox(filter: Document, id: &str) -> Result<Document, SandboxStoreError> {

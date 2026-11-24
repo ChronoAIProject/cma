@@ -5,6 +5,8 @@ use std::time::Duration;
 
 const WITNESS: &str = "pending_worker_log_adoption_v1";
 
+mod hold_tests;
+
 async fn selected(app: Option<String>) -> (Fixture, Agent) {
     let fixture = Fixture::with_adoption(app, true).await;
     let full = initialize_connection(&fixture).await;
