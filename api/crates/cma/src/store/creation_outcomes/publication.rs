@@ -1,5 +1,4 @@
 use super::*;
-use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::{store::SandboxAdmission, SandboxOrigin};
 use mongodb::bson::Bson;
 
