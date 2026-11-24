@@ -196,7 +196,7 @@ impl SandboxWorker {
             if !self.reopen_output_refusal_enabled(&sandbox) {
                 return Err(SandboxStoreError::Conflict);
             }
-            return self
+            let result = self
                 .dependencies
                 .store
                 .park_sandbox_reopen_refusal(
@@ -211,6 +211,12 @@ impl SandboxWorker {
                     *refusal,
                 )
                 .await;
+            if result == Err(SandboxStoreError::Conflict) {
+                if let Some(source) = &self.config.released {
+                    source.refresh_after_stale().await;
+                }
+            }
+            return result;
         }
         self.commit_lifecycle_phase(
             &sandbox,

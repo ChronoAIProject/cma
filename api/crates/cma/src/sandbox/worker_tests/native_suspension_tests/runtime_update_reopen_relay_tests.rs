@@ -9,7 +9,11 @@ use axum::{
     middleware::{from_fn, Next},
     response::Response,
 };
-use layer2_core::sandbox::store::WorktreeStore;
+use layer2_core::sandbox::store::{SandboxEventStore, WorktreeStore};
+
+#[path = "runtime_update_reopen_release_race.rs"]
+mod release_race;
+use release_race::ReleaseRace;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Caller {
@@ -17,6 +21,8 @@ enum Caller {
     FlagOff,
     DifferentRelease,
     BeforeCursorRefusal,
+    DurableCurrent,
+    PromotedBeforeParking,
 }
 
 pub(crate) async fn exercise_runtime_update_reopen_http() {
@@ -25,6 +31,8 @@ pub(crate) async fn exercise_runtime_update_reopen_http() {
         Caller::DifferentRelease,
         Caller::BeforeCursorRefusal,
         Caller::Enabled,
+        Caller::DurableCurrent,
+        Caller::PromotedBeforeParking,
     ] {
         exercise(mode).await;
     }
@@ -35,6 +43,21 @@ async fn exercise(mode: Caller) {
     *fixture.backend.reopen_output.cursors.lock().unwrap() = vec![2];
 
     let (mongo, database_name, store) = database().await;
+    let race = if matches!(mode, Caller::DurableCurrent | Caller::PromotedBeforeParking) {
+        Some(Arc::new(ReleaseRace::new(&mongo, &database_name).await))
+    } else {
+        None
+    };
+    let store = match &race {
+        Some(race) => crate::store::open_pointer_fixture_sandbox_store(
+            &mongo.database(&database_name),
+            TARGET.into(),
+            race.source.clone(),
+        )
+        .await
+        .unwrap(),
+        None => store,
+    };
     let store = Arc::new(
         store
             .enable_agent_ownership("reopen-http-test".into())
@@ -63,8 +86,9 @@ async fn exercise(mode: Caller) {
     let owners = store.agent_ownership.as_ref().unwrap();
     let instances = cluster_with_store(2, owners.clone(), |router| {
         let codes = problem_codes.clone();
+        let race = race.clone();
         router.layer(from_fn(move |request: Request, next: Next| {
-            observe_reopen_response(request, next, codes.clone(), mode)
+            observe_reopen_response(request, next, codes.clone(), mode, race.clone())
         }))
     })
     .await;
@@ -75,13 +99,21 @@ async fn exercise(mode: Caller) {
     } else {
         TARGET.into()
     };
-    let _owner = worker(&fixture, &instances[owner], store.clone(), TARGET, true);
+    let _owner = worker(
+        &fixture,
+        &instances[owner],
+        store.clone(),
+        TARGET,
+        true,
+        None,
+    );
     let worker = worker(
         &fixture,
         &instances[caller],
         store.clone(),
         &caller_image,
-        matches!(mode, Caller::Enabled | Caller::DifferentRelease),
+        !matches!(mode, Caller::FlagOff | Caller::BeforeCursorRefusal),
+        race.as_deref(),
     );
 
     let result = worker
@@ -122,7 +154,8 @@ async fn exercise(mode: Caller) {
     assert!(after.work.lease.is_none());
 
     let failure = after.runtime_update_request().unwrap().failure.as_ref();
-    if mode == Caller::Enabled {
+    let parked = matches!(mode, Caller::Enabled | Caller::DurableCurrent);
+    if parked {
         assert_eq!(after.work.step, SandboxWorkStep::None);
         assert_eq!(
             failure.unwrap().detail,
@@ -137,6 +170,23 @@ async fn exercise(mode: Caller) {
         );
         assert!(failure.is_none(), "{mode:?}");
     }
+    if let Some(race) = race {
+        use layer3_adapter::ReleasedRuntimeSource;
+        let expected = if parked { TARGET } else { release_race::NEXT };
+        assert_eq!(race.source.snapshot().agent, expected);
+        let events = store.sandbox_events(&parent.id, 0, 100).await.unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    &event.kind,
+                    layer2_core::sandbox::SandboxEventKind::WorkStepFailed { failure, .. }
+                    if failure.class == "terminal_validation"
+                ))
+                .count(),
+            usize::from(parked),
+        );
+    }
     drop(instances);
     mongo.database(&database_name).drop().await.unwrap();
 }
@@ -147,6 +197,7 @@ fn worker(
     store: Arc<MongoSandboxStore>,
     released: &str,
     enabled: bool,
+    race: Option<&ReleaseRace>,
 ) -> Arc<SandboxWorker> {
     let registry = Arc::new(LiveAgentRegistry::default());
     registry.install_ownership(instance.coordinator.clone());
@@ -157,6 +208,9 @@ fn worker(
         fixture.harness.policy.clone(),
     );
     config.reopen_output_refusal_enabled = enabled;
+    if let Some(race) = race {
+        config = config.with_released_runtime(race.source.clone());
+    }
     let worker = SandboxWorker::new(
         SandboxWorkerDependencies {
             store: store.clone(),
@@ -183,6 +237,7 @@ async fn observe_reopen_response(
     next: Next,
     codes: Arc<Mutex<Vec<String>>>,
     mode: Caller,
+    race: Option<Arc<ReleaseRace>>,
 ) -> Response {
     let reopen = request.uri().path().ends_with("/reopen");
     let response = next.run(request).await;
@@ -194,6 +249,10 @@ async fn observe_reopen_response(
     let problem: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let code = problem["code"].as_str().unwrap();
     codes.lock().unwrap().push(code.to_owned());
+    if mode == Caller::PromotedBeforeParking {
+        assert_eq!(code, "owner_reopen_output_discontinuity");
+        race.unwrap().promote_after_refusal().await;
+    }
     // The #3265 caller recognizes precisely this one conflict code. Every
     // other 409 yields the same unavailable result as a 503.
     if mode == Caller::BeforeCursorRefusal && code != "owner_reopen_rejected" {

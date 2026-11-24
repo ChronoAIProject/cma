@@ -349,7 +349,13 @@ impl MongoReleasedRuntimes {
             )
             .session(session)
             .await
-            .map_err(unavailable)?;
+            .map_err(|error| {
+                if super::sandbox_mongo::is_transient(&error) {
+                    SandboxStoreError::Conflict
+                } else {
+                    unavailable(error)
+                }
+            })?;
         if result.matched_count == 1 {
             Ok(())
         } else {
