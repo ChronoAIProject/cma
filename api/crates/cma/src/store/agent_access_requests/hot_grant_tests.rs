@@ -109,6 +109,77 @@ async fn mongo_hot_scope_is_atomic_restart_durable_and_replay_does_not_rotate_ag
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn mongo_hot_scope_binds_connection_to_original_approval_and_generation() {
+    use layer2_core::sandbox::ServiceConnectionSelection;
+    let service = ServiceId::new("github");
+    let connection = ServiceConnectionSelection {
+        service: service.clone(),
+        connection_id: "repository-connection".into(),
+    };
+    let (client, name, store, record) =
+        super::super::tests::approved_fixture_with_connection(Some(connection.clone())).await;
+    let lease = record.lease.as_ref().unwrap();
+    let authority = match record.decision.as_ref().unwrap() {
+        AgentAccessDecision::Approved { authorization, .. } => authorization.clone(),
+        _ => panic!("expected approved fixture"),
+    };
+    let granted = store
+        .grant_live_access_request_services(lease)
+        .await
+        .unwrap();
+    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let after = sandbox(&reopened, &record).await;
+    let scope = after.credential.service_scope.as_ref().unwrap();
+    assert_eq!(scope.connection.as_ref(), Some(&connection));
+    assert_eq!(
+        Some(scope.credential_generation_floor),
+        granted.progress.grant_generation_floor
+    );
+    assert_eq!(scope.authorized_by, record.requester.owner);
+    assert_eq!(scope.services, vec![service.clone()]);
+    assert_eq!(
+        reopened
+            .approve_agent_access_with_connection(
+                &record.requester.owner,
+                &record.requester.agent_id,
+                &record.id,
+                vec![service.clone()],
+                Some(connection.clone()),
+                &[],
+                authority.clone(),
+                "approve-fixture",
+            )
+            .await,
+        Ok(granted.clone())
+    );
+    assert_eq!(
+        reopened
+            .approve_agent_access_with_connection(
+                &record.requester.owner,
+                &record.requester.agent_id,
+                &record.id,
+                vec![service],
+                Some(ServiceConnectionSelection {
+                    connection_id: "other-connection".into(),
+                    ..connection
+                }),
+                &[],
+                authority,
+                "approve-fixture",
+            )
+            .await,
+        Err(AgentAccessError::Conflict)
+    );
+    assert_eq!(
+        reopened.grant_live_access_request_services(lease).await,
+        Ok(granted)
+    );
+    assert_eq!(sandbox(&reopened, &record).await, after);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn mongo_hot_scope_refuses_expired_claim_paused_runtime_and_missing_event_authority() {
     let (client, name, store, record) = super::super::tests::approved_fixture().await;
     let lease = record.lease.as_ref().unwrap();
