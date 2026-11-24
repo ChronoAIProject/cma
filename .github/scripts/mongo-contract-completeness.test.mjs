@@ -104,20 +104,37 @@ const baselineListing = () => listing(executable(cmaBinary, 'cma', {
   ...control, [mongoCase]: mongo, [ordinaryCase]: ordinary,
 }));
 
-function compare(base, candidate, changes = {}) {
+function compare(base, candidate, changes = {}, {
+  basePrefixes = ['storage::'], candidatePrefixes = ['storage::'], dedicated, omitRegistries = false,
+} = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'cma inventory '));
   try {
-    const suites = join(dir, 'suites');
-    mkdirSync(suites);
-    writeFileSync(join(suites, 'storage.json'), JSON.stringify({prefix: 'storage::'}));
+    const baseSuites = join(dir, 'base suites');
+    const candidateSuites = join(dir, 'candidate suites');
+    for (const [suites, prefixes] of [[baseSuites, basePrefixes], [candidateSuites, candidatePrefixes]]) {
+      mkdirSync(suites);
+      for (const [index, prefix] of prefixes.entries()) {
+        writeFileSync(join(suites, `suite-${index}.json`), JSON.stringify({prefix}));
+      }
+    }
     const [before, after, plan] = ['base.json', 'candidate.json', 'changes.json'].map(file => join(dir, file));
     writeFileSync(before, JSON.stringify(base));
     writeFileSync(after, typeof candidate === 'string' ? candidate : JSON.stringify(candidate));
     writeFileSync(plan, JSON.stringify(changes));
-    return spawnSync('python3', [
+    const args = [
       fileURLToPath(new URL('mongo-contract-completeness.py', import.meta.url)),
-      '--compare', before, after, '--changes', plan, '--base-suites', suites, '--candidate-suites', suites,
-    ], {encoding: 'utf8'});
+      '--compare', before, after, '--changes', plan,
+    ];
+    if (!omitRegistries) args.push('--base-suites', baseSuites, '--candidate-suites', candidateSuites);
+    if (dedicated) {
+      const [mode, beforeMode, afterMode] = dedicated;
+      const baseFile = join(dir, 'base mode.json');
+      const candidateFile = join(dir, 'candidate mode.json');
+      writeFileSync(baseFile, JSON.stringify(beforeMode));
+      writeFileSync(candidateFile, JSON.stringify(afterMode));
+      args.push('--dedicated', mode, baseFile, candidateFile);
+    }
+    return spawnSync('python3', args, {encoding: 'utf8'});
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
@@ -166,6 +183,41 @@ test('inventory refuses a duplicate test key before JSON decoding can overwrite 
   const result = compare(before, duplicate);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Duplicate JSON key: storage::mongo/);
+});
+
+test('inventory compares both revision registries when a broader prefix still selects the case', () => {
+  const nested = 'storage::scope::';
+  const before = listing(executable(cmaBinary, 'cma', {[nested + 'mongo']: mongo}));
+  const mismatched = compare(before, before, {}, {
+    basePrefixes: ['storage::', nested], candidatePrefixes: ['storage::'],
+  });
+  assert.equal(mismatched.status, 1);
+  assert.match(mismatched.stderr, /Changed case coverage:\n  cma::bin\/cma storage::scope::mongo/);
+  const unspecified = compare(before, before, {}, {omitRegistries: true});
+  assert.equal(unspecified.status, 2);
+  assert.match(unspecified.stderr, /required.*--base-suites.*--candidate-suites/);
+});
+
+test('the scale case moves only when the destination is selected by its dedicated mode', () => {
+  const scale = 'store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages';
+  const excluded = {kind: 'test', ...caseMetadata(false)};
+  const before = listing(executable(cmaBinary, 'cma', {...control, [scale]: excluded}));
+  const moved = executable(storageBinary, 'storage', {[scale]: excluded});
+  const after = listing(executable(cmaBinary, 'cma', control), moved);
+  const changes = {moves: [{from: [cmaBinary, scale], to: [storageBinary, scale]}]};
+  const beforeScale = listing(executable(cmaBinary, 'cma', {[scale]: mongo}));
+  const oldSelector = listing(
+    executable(cmaBinary, 'cma', {}),
+    {...moved, status: 'skipped', testcases: {}},
+  );
+  const updatedSelector = listing(executable(storageBinary, 'storage', {[scale]: mongo}));
+  assert.match(compare(before, after, changes).stderr, /requires dedicated selector evidence/);
+  const lost = compare(before, after, changes, {dedicated: ['scale', beforeScale, oldSelector]});
+  assert.equal(lost.status, 1);
+  assert.match(lost.stderr, /Changed scale selection: missing.*storage::bin\/storage/);
+  const retained = compare(before, after, changes, {dedicated: ['scale', beforeScale, updatedSelector]});
+  assert.equal(retained.status, 0, retained.stderr);
+  assert.match(retained.stdout, /Dedicated Mongo selectors compared: scale/);
 });
 
 test('metadata completeness accepts selected contracts and reports exact helper exclusions', () => {

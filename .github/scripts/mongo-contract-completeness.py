@@ -108,7 +108,41 @@ def case_identity(value):
     return tuple(value)
 
 
-def compare_inventory(base, candidate, base_prefixes, candidate_prefixes, changes):
+def selected_cases(metadata, cases):
+    selected = set()
+    for binary, suite in metadata["rust-suites"].items():
+        if suite["binary-id"] != binary:
+            raise ValueError(f"Invalid executable in dedicated listing: {binary}")
+        if suite["status"] == "skipped" and not suite.get("testcases"):
+            continue
+        if suite["status"] != "listed":
+            raise ValueError(f"Invalid suite status in dedicated listing: {binary}")
+        for name, ignored, matches in case_states(suite):
+            if matches:
+                identity = binary, name
+                if not ignored or identity not in cases or not cases[identity][1]:
+                    raise ValueError(f"Dedicated selection must match an ignored case in the inventory: {identity}")
+                selected.add(identity)
+    return selected
+
+
+def compare_dedicated_modes(modes, before, after, moves, additions):
+    proven = set()
+    for mode, base_listing, candidate_listing in modes:
+        base_selection = selected_cases(base_listing, before)
+        candidate_selection = selected_cases(candidate_listing, after)
+        expected = {moves.get(identity, identity) for identity in base_selection}
+        missing = expected - candidate_selection
+        unexpected = candidate_selection - expected - additions
+        if missing or unexpected:
+            raise ValueError(f"Changed {mode} selection: missing {sorted(missing)}; unexpected {sorted(unexpected)}")
+        proven.update(base_selection)
+    unproved = {source for source in moves if before[source][1] and not before[source][2] and source not in proven}
+    if unproved:
+        raise ValueError(f"Ignored package move requires dedicated selector evidence: {sorted(unproved)}")
+
+
+def compare_inventory(base, candidate, base_prefixes, candidate_prefixes, changes, modes):
     base_executables, before = inventory(base, base_prefixes)
     candidate_executables, after = inventory(candidate, candidate_prefixes)
     if (not isinstance(changes, dict) or set(changes) - {"additions", "moves"}
@@ -162,10 +196,13 @@ def compare_inventory(base, candidate, base_prefixes, candidate_prefixes, change
             problems.append(label + ":\n  " + "\n  ".join(sorted(names)))
     if problems:
         raise ValueError("\n".join(problems))
-    print(f"Nextest inventories agree: {len(before)} base cases; {len(after)} candidate cases; "
+    compare_dedicated_modes(modes, before, after, moves, additions)
+    print(f"Nextest case and ordinary Mongo inventories agree: {len(before)} base cases; {len(after)} candidate cases; "
           f"{len(additions)} additions; {len(moves)} package moves; "
           f"{sum(case[2] for case in before.values())} base and "
-          f"{sum(case[2] for case in after.values())} candidate Mongo selections", flush=True)
+          f"{sum(case[2] for case in after.values())} candidate ordinary Mongo selections", flush=True)
+    if modes:
+        print("Dedicated Mongo selectors compared: " + ", ".join(mode for mode, _, _ in modes), flush=True)
 
 
 def compare_cli(argv):
@@ -174,14 +211,18 @@ def compare_cli(argv):
     parser.add_argument("candidate", type=Path)
     parser.add_argument("--changes", type=Path, help="JSON object with exact additions and package moves")
     registry_script = Path(__file__).with_name("mongo-contract-registry.py")
-    default_suites = registry_script.with_name("mongo-contract-suites")
-    parser.add_argument("--base-suites", type=Path, default=default_suites)
-    parser.add_argument("--candidate-suites", type=Path, default=default_suites)
+    parser.add_argument("--base-suites", type=Path, required=True, help="Base revision's Mongo suite registry directory")
+    parser.add_argument("--candidate-suites", type=Path, required=True, help="Candidate revision's Mongo suite registry directory")
+    parser.add_argument("--dedicated", nargs=3, action="append", default=[], metavar=("MODE", "BASE", "CANDIDATE"),
+                        help="Nextest lists for the same dedicated Mongo selector, one file per revision")
     args = parser.parse_args(argv)
+    if len({mode for mode, _, _ in args.dedicated}) != len(args.dedicated):
+        parser.error("each dedicated mode requires a single listing pair")
+    modes = [(mode, read_json(Path(base)), read_json(Path(candidate))) for mode, base, candidate in args.dedicated]
     load_prefixes = runpy.run_path(str(registry_script))["load_prefixes"]
     compare_inventory(read_json(args.base), read_json(args.candidate),
                       load_prefixes(args.base_suites), load_prefixes(args.candidate_suites),
-                      read_json(args.changes) if args.changes else {})
+                      read_json(args.changes) if args.changes else {}, modes)
 
 
 if __name__ == "__main__":
