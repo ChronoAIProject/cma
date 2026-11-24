@@ -163,7 +163,31 @@ impl SandboxStore for InMemorySandboxStore {
         &self,
         id: &SandboxId,
     ) -> Result<Option<crate::sandbox::RetainedReopenReceipt>, SandboxStoreError> {
-        Ok(self.lock().retained_reopen_receipts.get(id).cloned())
+        Ok(self
+            .lock()
+            .retained_reopen_receipts
+            .get(id)
+            .and_then(|receipts| receipts.first())
+            .cloned())
+    }
+
+    async fn retained_reopen_history(
+        &self,
+        id: &SandboxId,
+        key_sha256: Option<&str>,
+    ) -> Result<crate::sandbox::RetainedReopenHistory, SandboxStoreError> {
+        let state = self.lock();
+        let Some(receipts) = state.retained_reopen_receipts.get(id) else {
+            return Ok(crate::sandbox::RetainedReopenHistory::default());
+        };
+        Ok(crate::sandbox::RetainedReopenHistory {
+            latest_revision: receipts.last().map(|receipt| receipt.accepted.revision),
+            replay: receipts
+                .iter()
+                .find(|receipt| key_sha256 == Some(receipt.key_sha256.as_str()))
+                .cloned()
+                .map(Into::into),
+        })
     }
 
     async fn admit_retained_reopen(

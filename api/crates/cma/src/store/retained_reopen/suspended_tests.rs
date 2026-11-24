@@ -31,6 +31,9 @@ const AT: &str = "2026-09-05T00:30:00Z";
 #[path = "suspended_assessment_tests.rs"]
 mod assessment;
 
+#[path = "repeat_tests.rs"]
+mod repeat;
+
 async fn live(store: &MongoSandboxStore, id: &str, active: bool) -> Agent {
     let original = super::super::mongo_fixtures::reopen_fixture(store, id).await;
     let mut agent = original.snapshot.retained.agents[0].clone();
@@ -409,11 +412,13 @@ async fn suspended_receipt_pair_survives_failed_revive_and_reconciliation() {
     };
     let mut session = client.start_session().await.unwrap();
     let scope = TransactionScope::start(&mut session).await.unwrap();
-    let Applied::Commit(receipt, event) = apply(&store, &request, scope).await.unwrap() else {
+    let Applied::Commit(receipt, event, repeat) = apply(&store, &request, scope).await.unwrap()
+    else {
         panic!("expected atomic settlement")
     };
     session.commit_transaction().await.unwrap();
     let time = session.operation_time().unwrap();
+    assert!(!repeat);
     let committed = row(&store, id).await;
     assert_eq!(pair(&committed).unwrap().as_ref(), Some(receipt.as_ref()));
 
@@ -438,17 +443,16 @@ async fn suspended_receipt_pair_survives_failed_revive_and_reconciliation() {
     for field in [FIELD, SUSPENDED_FIELD] {
         assert_eq!(failed.get(field), committed.get(field));
     }
-    reconcile(&store, &receipt, &event, time).await.unwrap();
+    reconcile(&store, &receipt, &event, time, repeat)
+        .await
+        .unwrap();
     let exact = store.admit_suspended_reopen(request.clone()).await.unwrap();
     assert_eq!(exact, receipt.accepted);
-    let snapshot = store.retained_reopen_snapshot(id).await.unwrap();
-    for key in [request.key_sha256.clone(), "f".repeat(64)] {
-        let legacy = legacy_request(snapshot.clone(), key);
-        assert!(matches!(
-            store.admit_retained_reopen(legacy).await,
-            Err(SandboxStoreError::Corrupt(_))
-        ));
-    }
+    // The predecessor's ordinary reader still refuses the suspended marker.
+    assert!(matches!(
+        transaction::read_receipt(&failed),
+        Err(SandboxStoreError::Corrupt(_))
+    ));
     assert_eq!(row(&store, id).await, failed);
     assert_eq!(store.sandbox_events(id, 0, 10).await.unwrap().len(), 2);
     let control =

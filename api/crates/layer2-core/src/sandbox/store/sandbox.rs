@@ -67,6 +67,18 @@ pub trait SandboxStore: Send + Sync {
         Ok(self.retained_reopen_receipt(id).await?.map(Into::into))
     }
 
+    async fn retained_reopen_history(
+        &self,
+        id: &SandboxId,
+        key_sha256: Option<&str>,
+    ) -> Result<crate::sandbox::RetainedReopenHistory, SandboxStoreError> {
+        let receipt = self.retained_reopen_replay(id).await?;
+        Ok(crate::sandbox::RetainedReopenHistory {
+            latest_revision: receipt.as_ref().map(|receipt| receipt.accepted.revision),
+            replay: receipt.filter(|receipt| key_sha256 == Some(receipt.key_sha256.as_str())),
+        })
+    }
+
     async fn retained_suspended_reopen_snapshot(
         &self,
         _id: &SandboxId,

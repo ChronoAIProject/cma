@@ -31,6 +31,7 @@ pub struct RetainedReopenService {
     verifier: Arc<dyn RetainedReopenVerifier>,
     enabled: bool,
     suspended_enabled: bool,
+    repeat_enabled: bool,
     permits: tokio::sync::Semaphore,
 }
 
@@ -56,6 +57,7 @@ impl RetainedReopenService {
             verifier,
             enabled,
             suspended_enabled: false,
+            repeat_enabled: false,
             permits: tokio::sync::Semaphore::new(1),
         }
     }
@@ -65,8 +67,21 @@ impl RetainedReopenService {
         self
     }
 
+    pub fn with_repeat_admission(mut self, enabled: bool) -> Self {
+        self.repeat_enabled = enabled;
+        self
+    }
+
     fn enabled(&self) -> bool {
         self.enabled || self.suspended_enabled
+    }
+
+    fn permits_revision(&self, parent: &super::Sandbox, latest_revision: Option<u64>) -> bool {
+        latest_revision.is_none_or(|latest| {
+            self.repeat_enabled
+                && parent.status == super::SandboxStatus::Failed
+                && parent.revision > latest
+        })
     }
 
     pub(super) async fn assess_admission(
@@ -146,15 +161,15 @@ impl RetainedReopenService {
                 D::AuthorityChanged,
             )));
         }
-        let admission_enabled = self
+        let history = self
             .store
-            .retained_reopen_replay(id)
+            .retained_reopen_history(id, None)
             .await
-            .map_err(store_error)?
-            .is_none();
+            .map_err(store_error)?;
         Ok(Some(RetainedRecoveryAssessment {
             disposition,
-            admission_enabled,
+            admission_enabled: self
+                .permits_revision(&current.retained.sandbox, history.latest_revision),
         }))
     }
 
@@ -217,12 +232,12 @@ impl RetainedReopenService {
                 .map_err(map_error)?
                 .filter(|parent| parent.owner == caller.subject)
                 .ok_or(E::NotFound)?;
-            if let Some(receipt) = self
+            let history = self
                 .store
-                .retained_reopen_replay(id)
+                .retained_reopen_history(id, Some(&key_sha256))
                 .await
-                .map_err(map_error)?
-            {
+                .map_err(map_error)?;
+            if let Some(receipt) = history.replay {
                 if receipt.owner != caller.subject {
                     return Err(E::NotFound);
                 }
@@ -233,6 +248,9 @@ impl RetainedReopenService {
                 }
                 // Disabling new admission does not revoke an accepted request.
                 return Ok(Err(receipt.accepted));
+            }
+            if !self.permits_revision(&parent, history.latest_revision) {
+                return Err(E::Conflict);
             }
             if !self.enabled() {
                 return Err(E::Unavailable);

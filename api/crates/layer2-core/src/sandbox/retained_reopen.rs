@@ -222,6 +222,12 @@ pub struct RetainedReopenReplay {
     pub accepted: RetainedReopenAccepted,
 }
 
+#[derive(Default)]
+pub struct RetainedReopenHistory {
+    pub latest_revision: Option<u64>,
+    pub replay: Option<RetainedReopenReplay>,
+}
+
 /// Stored outside the serialized Sandbox record. Old readers ignore this receipt;
 /// old $set aggregate saves preserve it. It never authorizes an old worker effect.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -53,11 +53,13 @@ fn router(
     store: &Arc<MongoSandboxStore>,
     idle: bool,
     suspended: bool,
+    repeat: bool,
 ) -> Router {
     hierarchy_router(
         state.clone().with_retained_reopening(Arc::new(
             RetainedReopenService::new(store.clone(), Arc::new(RuntimeProof), idle)
-                .with_suspended_admission(suspended),
+                .with_suspended_admission(suspended)
+                .with_repeat_admission(repeat),
         )),
     )
 }
@@ -148,7 +150,7 @@ async fn owner_assessment_offers_only_the_verified_path_and_replays_after_disabl
     )));
 
     for (idle_on, suspended_on) in [(false, false), (true, false), (false, true), (true, true)] {
-        let app = router(&state, &store, idle_on, suspended_on);
+        let app = router(&state, &store, idle_on, suspended_on, false);
         let live_disposition = if suspended_on {
             D::ExactSuspendedRuntime
         } else {
@@ -177,7 +179,7 @@ async fn owner_assessment_offers_only_the_verified_path_and_replays_after_disabl
     }
     assert_eq!(store.get_agent(&child.id).await.unwrap().unwrap(), child);
 
-    let app = router(&state, &store, false, true);
+    let app = router(&state, &store, false, true, false);
     let mut current = parent.clone();
     current.revision += 1;
     current.name = "updated-name".into();
@@ -217,7 +219,7 @@ async fn owner_assessment_offers_only_the_verified_path_and_replays_after_disabl
         1
     );
     let persisted = row(&store, &current.id).await;
-    let off = router(&state, &store, false, false);
+    let off = router(&state, &store, false, false, false);
     assert_eq!(
         response(
             &off,
@@ -229,5 +231,46 @@ async fn owner_assessment_offers_only_the_verified_path_and_replays_after_disabl
         accepted,
     );
     assert_eq!(row(&store, &current.id).await, persisted);
+    save_failed_revival(&store, &current.id).await;
+    let later = store.get_sandbox(&current.id).await.unwrap().unwrap();
+    assert!(later.revision > current.revision + 1);
+    let key2 = "approved-later-recovery";
+    for (idle, repeat, enabled) in [
+        (true, false, false),
+        (false, true, false),
+        (true, true, true),
+    ] {
+        let app = router(&state, &store, idle, false, repeat);
+        let assessment = response(&app, &later.owner, &later.id, None).await;
+        assert_eq!(assessment.0, StatusCode::OK);
+        assert_eq!(assessment.1["admission_enabled"], enabled);
+        let answer = response(&app, &later.owner, &later.id, Some((later.revision, key2))).await;
+        if !enabled {
+            assert!(matches!(
+                answer.0,
+                StatusCode::CONFLICT | StatusCode::SERVICE_UNAVAILABLE
+            ));
+            assert_eq!(
+                store.get_sandbox(&later.id).await.unwrap().as_ref(),
+                Some(&later)
+            );
+            continue;
+        }
+        assert_eq!(answer.0, StatusCode::ACCEPTED);
+        assert_eq!(answer.1["revision"], later.revision + 1);
+        assert_ne!(answer.1["operation_id"], accepted.1["operation_id"]);
+        assert_eq!(
+            response(&off, &later.owner, &later.id, Some((later.revision, key2))).await,
+            answer
+        );
+        assert_eq!(
+            response(&off, &later.owner, &later.id, Some((current.revision, key))).await,
+            accepted
+        );
+    }
+    let repeated = row(&store, &later.id).await;
+    for field in [FIELD, SUSPENDED_FIELD] {
+        assert_eq!(repeated.get(field), persisted.get(field));
+    }
     client.database(&name).drop().await.unwrap();
 }
