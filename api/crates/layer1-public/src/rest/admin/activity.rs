@@ -89,6 +89,66 @@ pub(crate) struct ActivityPageView {
     next: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ActorSearch {
+    q: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ActivityActorView {
+    subject: String,
+    display_name: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/activity/actors",
+    tag = "administration",
+    params(("q" = String, Query, description = "Literal display name or subject search")),
+    responses(
+        (status = 200, body = [ActivityActorView]),
+        (status = 400, body = crate::rest::ProblemDocument),
+        (status = 401, body = crate::rest::ProblemDocument),
+        (status = 403, body = crate::rest::ProblemDocument),
+        (status = 503, body = crate::rest::ProblemDocument)
+    )
+)]
+pub(crate) async fn activity_actors(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    params: Result<Query<ActorSearch>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Vec<ActivityActorView>>, CollectionProblem> {
+    caller.require(Capability::ReadActivityLog)?;
+    caller.require(Capability::ReadUserDirectory)?;
+    let Query(params) = params.map_err(|_| CollectionProblem::InvalidRequest)?;
+    let text = params.q.trim();
+    if !(2..=128).contains(&text.len()) || text.chars().any(char::is_control) {
+        return Err(CollectionProblem::InvalidRequest);
+    }
+    let query = layer2_core::DirectoryQuery {
+        page: layer2_core::PageRequest::new(20, None)?,
+        text: Some(text.to_owned()),
+    };
+    let users = state.users.as_ref().ok_or(CollectionProblem::Unavailable)?;
+    let page = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        users.list(&caller, &query),
+    )
+    .await
+    .map_err(|_| CollectionProblem::Unavailable)??;
+    Ok(Json(
+        page.items
+            .into_iter()
+            .take(20)
+            .map(|user| ActivityActorView {
+                subject: user.identity.subject.0,
+                display_name: user.identity.display_name,
+            })
+            .collect(),
+    ))
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/admin/activity",
