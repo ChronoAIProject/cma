@@ -264,6 +264,7 @@ fn request_capacity_class(request: &RequestFrame) -> RuntimeWorkloadClass {
         | RequestFrame::ListAgentFiles(_)
         | RequestFrame::ReadAgentFile(_)
         | RequestFrame::CaptureAgent(_)
+        | RequestFrame::ProveAgentProcessClosed(_)
         | RequestFrame::OpenAgent(_)
         | RequestFrame::BrowserControl(_)
         | RequestFrame::Browser(_)

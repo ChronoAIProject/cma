@@ -121,6 +121,7 @@ pub(crate) struct FeatureFlags {
     pub native_create_retry_enabled: bool,
     pub reopen_output_refusal_enabled: bool,
     pub cleanup_continuation_enabled: bool,
+    pub owner_stop_settlement_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
     pub context_diagnostics: bool,
@@ -133,30 +134,10 @@ pub(crate) struct FeatureFlags {
     pub sandbox_reconciliation_reserved_lane: bool,
     pub sandbox_binding_hold_metrics: bool,
 }
-/// Rollout gates graduated to default-on after their rollout completed in
-/// every environment. Unset means enabled; an explicit `false` remains the
-/// emergency off-switch, and any other value keeps the strict-boolean error.
-/// No startup validation ties these gates to another setting.
-pub(super) const GRADUATED: &[&str] = &[
-    "CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED",
-    "CHRONO_COMMAND_RECONCILE_PACING_ENABLED",
-    "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED",
-    "CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED",
-    "CHRONO_V2_UI_TRANSPORT_ENABLED",
-];
-
-/// Read one strict boolean rollout gate. Unset is off unless it graduated.
-pub(super) fn flag(
-    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
-    key: &str,
-) -> Result<bool, String> {
-    match lookup(key)?.as_deref() {
-        None => Ok(GRADUATED.contains(&key)),
-        Some("false") => Ok(false),
-        Some("true") => Ok(true),
-        _ => Err(format!("{key} must be true or false")),
-    }
-}
+mod gates;
+pub(super) use gates::flag;
+#[cfg(test)]
+pub(super) use gates::GRADUATED;
 
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -281,6 +262,10 @@ impl FeatureFlags {
             cleanup_continuation_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_CLEANUP_CONTINUATION_ENABLED",
+            )?,
+            owner_stop_settlement_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_OWNER_STOP_SETTLEMENT_ENABLED",
             )?,
             agent_log_scan_cooperative_enabled: flag(
                 lookup,
