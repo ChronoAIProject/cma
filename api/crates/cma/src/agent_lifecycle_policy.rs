@@ -2,6 +2,25 @@ use super::*;
 use layer2_core::sandbox::task_experience::{TaskExperienceCapability, TaskExperiencePolicy};
 
 impl InlineAgentLifecycle {
+    /// Share the process's released-default authority for machine images.
+    pub(crate) fn with_released_runtime(
+        self: Arc<Self>,
+        released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
+    ) -> Arc<Self> {
+        self.released
+            .set(released)
+            .expect("released runtime is configured once before use");
+        self
+    }
+
+    /// The machine image admitted now; it is recorded with the operation.
+    pub(super) fn released_machine_image(&self) -> Option<String> {
+        match self.released.get() {
+            Some(released) => released.snapshot().machine,
+            None => self.machine_sandbox_image.clone(),
+        }
+    }
+
     pub(crate) fn with_task_experience(
         self: Arc<Self>,
         policy: Arc<TaskExperiencePolicy>,

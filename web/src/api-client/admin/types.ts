@@ -126,6 +126,7 @@ const activityFields = {
   at: text,
   actor: nullable(text),
   actor_name: optional(nullable(text)),
+  actor_reference: optional(text),
   target_name: optional(nullable(text)),
   action: activityAction,
   target: nullable(activityTarget),

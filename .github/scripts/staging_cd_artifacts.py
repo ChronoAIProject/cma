@@ -20,6 +20,14 @@ MAX_ARTIFACT = 8 * 1024 * 1024 * 1024
 REUSE_SECONDS = 900
 DOWNLOAD_SECONDS = 600
 QUEUE_EVENT = "merge_group"
+POST_MERGE_WORKFLOW = ".github/workflows/ci.yml"
+PR_IMAGE_WORKFLOWS = {
+    "api": ".github/workflows/ci-pr-am.yml",
+    "runtime": ".github/workflows/ci-pr-am.yml",
+    "runtime-omarchy": ".github/workflows/ci-pr-am.yml",
+    "cmaeg": ".github/workflows/ci-pr-eg.yml",
+    "web": ".github/workflows/ci-pr-web.yml",
+}
 
 
 def qualifies(metadata, expected, run):
@@ -78,13 +86,17 @@ def download(artifact, destination, token, *, deadline=None, retry=None):
     require("sha256:" + digest.hexdigest() == artifact["digest"], "CI artifact checksum differs")
 
 
-def successful_runs(api, event, head, deadline):
-    data = api.request(f"actions/workflows/ci.yml/runs?event={event}&head_sha={head}&status=success&per_page=100",
+def successful_runs(api, event, head, deadline, *, component=None):
+    endpoint = "actions/workflows/ci.yml/runs" if component is None else "actions/runs"
+    paths = {POST_MERGE_WORKFLOW}
+    if component is not None:
+        paths.add(PR_IMAGE_WORKFLOWS[component])
+    data = api.request(f"{endpoint}?event={event}&head_sha={head}&status=success&per_page=100",
                        deadline=deadline)
     require(isinstance(data, dict) and isinstance(data.get("workflow_runs"), list), "CI run inventory is malformed")
     return [run for run in data["workflow_runs"] if run.get("event") == event
             and run.get("status") == "completed" and run.get("conclusion") == "success"
-            and run.get("head_sha") == head and run.get("path") == ".github/workflows/ci.yml"
+            and run.get("head_sha") == head and run.get("path") in paths
             and type(run.get("id")) is int and type(run.get("run_attempt")) is int
             and run.get("repository", {}).get("full_name") == REPOSITORY]
 
@@ -103,8 +115,9 @@ def queue_run(expected, pr, api, deadline):
     return max(runs, key=lambda item: (item["id"], item["run_attempt"])) if runs else None
 
 
-def pull_request_run(pr, api, deadline):
-    runs = successful_runs(api, "pull_request", pr["head"]["sha"], deadline)
+def pull_request_run(expected, pr, api, deadline):
+    component = deployable_registry()[DEPLOYABLES[expected["component"]]]["component"]
+    runs = successful_runs(api, "pull_request", pr["head"]["sha"], deadline, component=component)
     return max(runs, key=lambda item: (item["id"], item["run_attempt"])) if runs else None
 
 
@@ -129,7 +142,8 @@ def fetch(expected, api, archive, token, downloader, deadline):
     require(pr.get("merged") is True and pr.get("merge_commit_sha") == expected["source"]
             and isinstance(pr.get("head"), dict) and matches(r"[0-9a-f]{40}", pr["head"].get("sha")),
             "PR artifact source cannot be established")
-    lookups = (lambda: queue_run(expected, pr, api, deadline), lambda: pull_request_run(pr, api, deadline))
+    lookups = (lambda: queue_run(expected, pr, api, deadline),
+               lambda: pull_request_run(expected, pr, api, deadline))
     for lookup in lookups:
         run = lookup()
         artifact = None if run is None else native_artifact(expected, run, api, deadline)

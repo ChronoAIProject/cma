@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use layer3_adapter::AgentProcessAction;
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuntimeConfig;
@@ -19,10 +20,22 @@ pub(super) const MAX_AUTHORITY_RECORDS: usize = 4_096;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum ResourceKey {
-    Worktree { workspace: String, name: String },
-    AgentHome { agent_id: String },
-    AgentSkill { agent_id: String, skill_id: String },
-    AgentProcess { agent_id: String },
+    Worktree {
+        workspace: String,
+        name: String,
+    },
+    AgentHome {
+        agent_id: String,
+    },
+    AgentSkill {
+        agent_id: String,
+        skill_id: String,
+    },
+    AgentProcess {
+        agent_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        incarnation: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -388,17 +401,26 @@ pub(crate) fn resource_operation(operation: &Operation) -> (ResourceKey, Disposi
             Disposition::Absent,
         ),
         Subject::OpenAgent { agent_id, .. } => (
-            ResourceKey::AgentProcess {
-                agent_id: agent_id.clone(),
-            },
+            process_resource(agent_id, operation, AgentProcessAction::Open),
             Disposition::Present,
         ),
         Subject::CloseAgent { agent_id } => (
-            ResourceKey::AgentProcess {
-                agent_id: agent_id.clone(),
-            },
+            process_resource(agent_id, operation, AgentProcessAction::Close),
             Disposition::Absent,
         ),
+    }
+}
+
+fn process_resource(
+    agent_id: &str,
+    operation: &Operation,
+    action: AgentProcessAction,
+) -> ResourceKey {
+    ResourceKey::AgentProcess {
+        agent_id: agent_id.into(),
+        incarnation: action
+            .incarnation(agent_id, &operation.operation_id)
+            .filter(|n| *n > 1),
     }
 }
 

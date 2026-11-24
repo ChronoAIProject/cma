@@ -28,6 +28,7 @@ const selections = [
   ['package(=cmaeg) and kind(test) and binary(=relay_ingress) and test(~runner_binary::)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=replica_admission_mongo)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~replicas::partition_discovery::)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(=records::mongo::replica_schema::tests::replica_migration_recovers_after_second_index_conflict)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~turns::routed::replica_tool_tests::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~turns::routed::replica_legacy_tool_tests::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~turns::routed::compatibility_mongo_tests::)', 'only', true],
@@ -50,7 +51,8 @@ function fixture(reuse, scenario = 'success') {
   const metadata = join(root, 'api/target/nextest');
   mkdirSync(scripts, {recursive: true});
   mkdirSync(metadata, {recursive: true});
-  for (const name of ['image-manager-mongo-contract.sh', 'authenticated-mongo-readiness.js', 'backend-nextest.sh']) {
+  for (const name of ['image-manager-mongo-contract.sh', 'authenticated-mongo-readiness.js', 'backend-nextest.sh',
+    'pull-pinned-image.sh']) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name));
   }
   writeFileSync(join(metadata, 'cargo-metadata.json'), JSON.stringify({workspace_root: join(root, 'api'), target_directory: join(root, 'api/target')}));
@@ -95,7 +97,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 31);
+      assert.equal(selections.length, 32);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];

@@ -219,13 +219,10 @@ it('lets an owner delete a parked update and retains asynchronous cleanup status
   await actor.click(
     await screen.findByRole('checkbox', { name: 'I understand this Sandbox will be deleted.' }),
   );
-  await actor.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
+  await actor.click(screen.getByRole('button', { name: 'Request deletion' }));
   await waitFor(() => expect(deleteSandbox).toHaveBeenCalledOnce());
-  expect(
-    await screen.findByText(
-      'Sandbox delete request accepted. Cleanup continues in the background.',
-    ),
-  ).toBeInTheDocument();
+  expect(await screen.findByText('Deleting 1 environment')).toBeInTheDocument();
+  await actor.click(screen.getByRole('button', { name: 'View status' }));
   await actor.click(screen.getByRole('button', { name: /View Sandbox deletion status/ }));
   expect(await screen.findByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
   expect(screen.queryByRole('dialog', { name: 'Sandbox deleted' })).not.toBeInTheDocument();
@@ -297,6 +294,6 @@ it('submits Delete after an owner Resume is accepted but conversation reopening 
   await actor.click(
     await screen.findByRole('checkbox', { name: 'I understand this Sandbox will be deleted.' }),
   );
-  await actor.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
+  await actor.click(screen.getByRole('button', { name: 'Request deletion' }));
   await waitFor(() => expect(deleteSandbox).toHaveBeenCalledOnce());
 });

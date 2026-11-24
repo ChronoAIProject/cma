@@ -1,8 +1,8 @@
 use super::*;
 use axum::{
-    body::{to_bytes, Body},
+    body::{to_bytes, Body, HttpBody as _},
     extract::{Request, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -37,6 +37,7 @@ async fn route_request(
     }
     let private = request.uri().path().starts_with(PREFIX);
     let proof = request.headers().get(PROOF).cloned();
+    let file_read = !private && file_read::eligible(request.uri().path(), request.method());
     let cancellation = queued_cancellation::agent_id(&request);
     let is_cancellation = cancellation.is_some();
     if let Some(id) = cancellation.as_ref().filter(|_| proof.is_none()) {
@@ -49,13 +50,13 @@ async fn route_request(
             next.run(request).await
         };
     };
-    if settings && relay.settings_owner_routing.get().is_none() {
+    // With owner routing disabled, a Settings write still needs the owner's
+    // authority: without it the ownership fence refuses every commit. Serve it
+    // under a local owner and never forward it to a peer (#2267).
+    let local_settings = settings && relay.settings_owner_routing.get().is_none();
+    if local_settings && proof.is_some() {
         // An enabled ingress can reach a replica with this rollout still disabled.
-        return if proof.is_some() {
-            StatusCode::FORBIDDEN.into_response()
-        } else {
-            next.run(request).await
-        };
+        return StatusCode::FORBIDDEN.into_response();
     }
     // Route operations whose publication or runtime effects require execution-owner authority.
     if !private
@@ -82,10 +83,25 @@ async fn route_request(
     let Ok(slot) = relay.acquire(class) else {
         return capacity::refused(observer);
     };
-    if !relay.coordinator.is_ready() {
+    // A draining receiver must authenticate the signed hop before reporting
+    // handoff. Public ingress and unrelated coordinator failures still refuse.
+    let write_handoff_route = relay.authentication.file_write_handoff_enabled()
+        && !private
+        && request.method() == axum::http::Method::POST
+        && request.uri().path().ends_with("/files");
+    let draining_file_peer =
+        (file_read || write_handoff_route) && proof.is_some() && relay.coordinator.is_draining();
+    if !relay.coordinator.is_ready() && !draining_file_peer {
         return unavailable_with(environment.as_ref(), Refusal::CoordinatorNotReady);
     }
-    let body_limit = body_limit(request.uri().path());
+    let mut body_limit = body_limit(request.uri().path());
+    if write_handoff_route {
+        // Reserve the same bound that the collector enforces. A small framed
+        // edit need not reserve the maximum upload size for the entire hop.
+        if let Some(exact) = request.body().size_hint().exact() {
+            body_limit = exact.min(body_limit as u64) as usize;
+        }
+    }
     let Ok(_body_budget) = relay
         .body_budget
         .clone()
@@ -101,35 +117,25 @@ async fn route_request(
         _ => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
     };
     let mut request = Request::from_parts(parts, Body::from(bytes.clone()));
-    if !private && !is_cancellation {
-        let Some(access) = relay.public_access.get() else {
-            return unavailable_with(environment.as_ref(), Refusal::AuthorizationUnavailable);
-        };
-        let Some(context) = request
-            .extensions()
-            .get::<layer2_core::resource_access::CallerContext>()
-        else {
-            return StatusCode::UNAUTHORIZED.into_response();
-        };
-        let credential = request
-            .extensions()
-            .get::<layer1_public::DelegatedCredential>()
-            .map(layer1_public::DelegatedCredential::value);
-        if let Err(status) = access
-            .authorize(public_access::PublicRequest {
-                id: &id,
-                method: request.method(),
-                uri: request.uri(),
-                headers: ingress::headers(&request),
-                context,
-                credential,
-            })
-            .await
+    let file_write =
+        write_handoff_route && file_write::eligible(request.uri().path(), request.method(), &bytes);
+    let write_target = if !private && !is_cancellation {
+        match authorize_public(
+            &relay,
+            &id,
+            &request,
+            environment.as_ref(),
+            file_write && proof.is_none(),
+        )
+        .await
         {
-            return public_access::refusal(status);
+            Ok(target) => target,
+            Err(refusal) => return refusal,
         }
-    }
-    let destination = if let Some(raw) = proof {
+    } else {
+        None
+    };
+    let (destination, reports_handoff) = if let Some(raw) = proof {
         if request.headers().get_all(PROOF).iter().count() != 1 {
             return StatusCode::FORBIDDEN.into_response();
         }
@@ -174,6 +180,14 @@ async fn route_request(
             }
             return StatusCode::FORBIDDEN.into_response();
         }
+        let reports_handoff = file_read && verified.reports_file_handoff();
+        let reports_file_write = file_write && verified.reports_file_write_handoff();
+        if reports_file_write && relay.coordinator.is_draining() {
+            return file_write::refusal(&relay, raw.as_bytes());
+        }
+        if reports_handoff && relay.coordinator.is_draining() {
+            return file_read::refusal(Refusal::CoordinatorNotReady);
+        }
         let destination = match if private
             && request
                 .uri()
@@ -188,6 +202,22 @@ async fn route_request(
             relay.destination(&id).await
         } {
             Ok(value) => value,
+            Err(
+                Refusal::OwnerMissing | Refusal::OwnerMemberUnavailable | Refusal::AuthorityChanged,
+            ) if reports_file_write => {
+                return file_write::refusal(&relay, raw.as_bytes());
+            }
+            Err(Refusal::OwnerMissing) if reports_handoff => {
+                return file_read::refusal(Refusal::OwnerMissing);
+            }
+            Err(Refusal::OwnerMemberUnavailable) if reports_handoff => {
+                return file_read::refusal(Refusal::OwnerMemberUnavailable);
+            }
+            Err(Refusal::CoordinatorNotReady)
+                if reports_handoff && relay.coordinator.is_draining() =>
+            {
+                return file_read::refusal(Refusal::CoordinatorNotReady);
+            }
             Err(reason) => return unavailable_with(environment.as_ref(), reason),
         };
         if destination.token != verified.owner
@@ -199,7 +229,14 @@ async fn route_request(
                     .starts_with("/internal/agent-manager/v1/control/")
                 && destination.token.instance_id == verified.owner.instance_id)
         {
-            return unavailable_with(environment.as_ref(), Refusal::AuthorityChanged);
+            if reports_file_write {
+                return file_write::refusal(&relay, raw.as_bytes());
+            }
+            return if reports_handoff {
+                file_read::refusal(Refusal::AuthorityChanged)
+            } else {
+                unavailable_with(environment.as_ref(), Refusal::AuthorityChanged)
+            };
         }
         request.headers_mut().remove(PROOF);
         request.extensions_mut().insert(VerifiedPeer);
@@ -208,13 +245,13 @@ async fn route_request(
                 .extensions_mut()
                 .insert(queued_cancellation::Charged);
         }
-        destination
+        (destination, reports_handoff)
     } else {
         if private {
             return StatusCode::FORBIDDEN.into_response();
         }
         match relay.destination(&id).await {
-            Ok(value) => value,
+            Ok(value) => (value, false),
             Err(reason) if serves_without_owner(request.uri().path(), reason) => {
                 // A stopped Agent holds no owner, and a draining owner cannot
                 // accept new work. Runtime file operations do not depend on
@@ -229,28 +266,84 @@ async fn route_request(
             .authority
             .run(next.run(request))
             .await
-            .unwrap_or_else(|_| unavailable_with(environment.as_ref(), Refusal::AuthorityChanged));
+            .unwrap_or_else(|_| {
+                if reports_handoff {
+                    file_read::refusal(Refusal::AuthorityChanged)
+                } else {
+                    unavailable_with(environment.as_ref(), Refusal::AuthorityChanged)
+                }
+            });
         // One admission covers the owner response body, including live streams.
         return retain(response, slot);
     }
-    if private {
+    if private || local_settings {
+        // A retryable typed refusal: the caller may land on the owner next.
         return unavailable();
     }
-    forward(
+    let deadline = forward::deadline();
+    let forwarded = forward::send(
         &relay,
         destination,
-        request,
+        &request,
         bytes.as_ref(),
-        slot,
-        environment,
+        deadline,
+        environment.as_mut(),
     )
-    .await
+    .await;
+    if matches!(forwarded, Err(forward::Failure::WriteNotEntered)) {
+        if let Some(target) = write_target {
+            return file_write::recover(&relay, &id, request, next, slot, deadline, target).await;
+        }
+    }
+    match forward::handoff(&forwarded) {
+        Some(reason) if file_read => {
+            file_read::recover(&relay, &id, request, next, slot, deadline, reason).await
+        }
+        _ => forward::finish(forwarded, slot, deadline, environment.as_ref()),
+    }
+}
+
+pub(super) fn authorize_public<'a>(
+    relay: &'a Relay,
+    id: &'a AgentId,
+    request: &'a Request,
+    environment: Option<&'a EnvironmentRead>,
+    capture_write_target: bool,
+) -> impl std::future::Future<
+    Output = Result<Option<layer2_core::sandbox::agent_filesystem::FileWriteTarget>, Response>,
+> + use<'a> {
+    let access = relay.public_access.get();
+    let context = request
+        .extensions()
+        .get::<layer2_core::resource_access::CallerContext>();
+    let credential = request
+        .extensions()
+        .get::<layer1_public::DelegatedCredential>()
+        .map(layer1_public::DelegatedCredential::value);
+    let input = context.map(|context| public_access::PublicRequest {
+        id,
+        method: request.method(),
+        uri: request.uri(),
+        headers: ingress::headers(request),
+        context,
+        credential,
+        capture_write_target,
+    });
+    async move {
+        let access = access
+            .ok_or_else(|| unavailable_with(environment, Refusal::AuthorizationUnavailable))?;
+        let input = input.ok_or_else(|| StatusCode::UNAUTHORIZED.into_response())?;
+        access
+            .authorize(input)
+            .await
+            .map_err(public_access::refusal)
+    }
 }
 
 #[derive(Clone)]
 pub(super) struct VerifiedPeer;
 
-fn agent_path(path: &str, private: bool) -> Option<AgentId> {
+pub(super) fn agent_path(path: &str, private: bool) -> Option<AgentId> {
     let prefix = if private {
         if path.starts_with("/internal/agent-manager/v1/control/") {
             "/internal/agent-manager/v1/control/"
@@ -334,98 +427,17 @@ pub(super) async fn forward(
     permit: capacity::Permit,
     mut environment: Option<EnvironmentRead>,
 ) -> Response {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-    let mut headers = HeaderMap::new();
-    for (name, value) in ingress::headers(&request) {
-        if authentication::forwarded(name.as_str()) {
-            headers.append(name, value.clone());
-        }
-    }
-    let proof = match relay.authentication.sign(
-        &relay.coordinator.instance_id,
-        &destination.token,
-        request.method(),
-        request.uri(),
-        &headers,
+    let deadline = forward::deadline();
+    let outcome = forward::send(
+        relay,
+        destination,
+        &request,
         body,
-    ) {
-        Ok(proof) => proof,
-        Err(_) => return unavailable_with(environment.as_ref(), Refusal::PeerSignature),
-    };
-    if let Some(environment) = environment.as_mut() {
-        environment.correlate_hop(proof.as_bytes());
-    }
-    let url = format!(
-        "{}{}",
-        destination.member.relay_address.trim_end_matches('/'),
-        request
-            .uri()
-            .path_and_query()
-            .map_or("/", |value| value.as_str())
-    );
-    let response = match tokio::time::timeout_at(
         deadline,
-        relay
-            .client
-            .request(request.method().clone(), url)
-            .headers(headers)
-            .header(PROOF, proof)
-            .body(body.to_vec())
-            .send(),
+        environment.as_mut(),
     )
-    .await
-    {
-        Ok(Ok(response)) => response,
-        _ => return unavailable_with(environment.as_ref(), Refusal::PeerTransport),
-    };
-    let status = response.status();
-    if let Some(environment) = environment
-        .as_ref()
-        .filter(|_| status.is_client_error() || status.is_server_error())
-    {
-        environment.record(Refusal::PeerResponse);
-    }
-    let headers = response.headers().clone();
-    // Hold capacity through the response body, including slow readers. Headers
-    // alone do not finish a relay, and a trickle cannot extend its total deadline.
-    let stream = futures_util::stream::unfold(
-        Some((response.bytes_stream(), permit)),
-        move |state| async move {
-            let (mut stream, permit) = state?;
-            let next = tokio::time::timeout_at(deadline, stream.next()).await;
-            let result = match next {
-                Ok(Some(result)) => result.map_err(|_| std::io::Error::other("owner relay ended")),
-                Ok(None) => return None,
-                Err(_) => {
-                    return Some((
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "owner relay deadline exceeded",
-                        )),
-                        None,
-                    ))
-                }
-            };
-            Some((result, Some((stream, permit))))
-        },
-    );
-    let mut result = Response::new(Body::from_stream(stream));
-    *result.status_mut() = status;
-    for (name, value) in &headers {
-        if !matches!(
-            name.as_str(),
-            "connection"
-                | "transfer-encoding"
-                | "keep-alive"
-                | "upgrade"
-                | "proxy-authenticate"
-                | "proxy-authorization"
-                | "trailer"
-        ) {
-            result.headers_mut().append(name, value.clone());
-        }
-    }
-    result
+    .await;
+    forward::finish(outcome, permit, deadline, environment.as_ref())
 }
 
 pub(super) fn unavailable() -> Response {
@@ -434,7 +446,7 @@ pub(super) fn unavailable() -> Response {
     }))).into_response()
 }
 
-fn unavailable_with(environment: Option<&EnvironmentRead>, reason: Refusal) -> Response {
+pub(super) fn unavailable_with(environment: Option<&EnvironmentRead>, reason: Refusal) -> Response {
     if let Some(environment) = environment {
         environment.record(reason);
     }
@@ -442,12 +454,34 @@ fn unavailable_with(environment: Option<&EnvironmentRead>, reason: Refusal) -> R
 }
 
 pub(super) fn retain(response: Response, permit: capacity::Permit) -> Response {
+    retain_until(response, permit, None)
+}
+
+pub(super) fn retain_until(
+    response: Response,
+    permit: capacity::Permit,
+    deadline: Option<tokio::time::Instant>,
+) -> Response {
     let (parts, body) = response.into_parts();
     let stream = futures_util::stream::unfold(
         Some((http_body_util::BodyStream::new(body), permit)),
-        |state| async {
+        move |state| async move {
             let (mut stream, permit) = state?;
-            let frame = stream.next().await?;
+            let frame = match deadline {
+                Some(deadline) => match tokio::time::timeout_at(deadline, stream.next()).await {
+                    Ok(frame) => frame?,
+                    Err(_) => {
+                        return Some((
+                            Err(axum::Error::new(std::io::Error::new(
+                                std::io::ErrorKind::TimedOut,
+                                "owner relay deadline exceeded",
+                            ))),
+                            None,
+                        ))
+                    }
+                },
+                None => stream.next().await?,
+            };
             let state = frame.is_ok().then_some((stream, permit));
             Some((frame, state))
         },

@@ -15,6 +15,7 @@ pub(crate) struct MongoDocumentQuotaStore {
     pub(super) rows: Collection<Document>,
     client: Client,
     enabled: bool,
+    require_ready: bool,
     limits: [u64; 3],
 }
 impl MongoDocumentQuotaStore {
@@ -29,12 +30,18 @@ impl MongoDocumentQuotaStore {
             ),
             client: database.client().clone(),
             enabled,
+            require_ready: false,
             limits: [
                 OWNER_DOCUMENT_LIMIT,
                 OWNER_DOCUMENT_BYTES,
                 OWNER_DOCUMENT_OBJECT_LIMIT,
             ],
         }
+    }
+
+    pub(super) fn with_required_baseline(mut self, required: bool) -> Self {
+        self.require_ready = required;
+        self
     }
 
     async fn reserve_bounded(
@@ -48,7 +55,7 @@ impl MongoDocumentQuotaStore {
             .await
             .map_err(unavailable)?;
         match state {
-            None if !self.enabled => return Ok(()),
+            None if !self.enabled && !self.require_ready => return Ok(()),
             Some(state) if self.enabled && ready(&state) => {}
             _ => return Err(DocumentError::Unavailable),
         }
@@ -61,7 +68,10 @@ impl MongoDocumentQuotaStore {
                 .max_commit_time(IO)
                 .await
                 .map_err(unavailable)?;
-            let outcome = self.reserve_transaction(source, &mut session).await;
+            let outcome = match crate::store::transaction_barrier::open(&mut session).await {
+                Ok(()) => self.reserve_transaction(source, &mut session).await,
+                Err(error) => Err(QuotaError::Driver(error)),
+            };
             match outcome {
                 Ok(()) => match session.commit_transaction().await {
                     Ok(()) => return Ok(()),

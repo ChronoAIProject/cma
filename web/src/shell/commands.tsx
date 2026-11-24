@@ -130,6 +130,7 @@ export function shellCommands({
     go('agent-manager', 'Agent Manager', { kind: 'agent_manager' }),
     go('event-gateway', 'Event Gateway', { kind: 'event_gateway' }),
     ...(canOpenTriggers ? [go('triggers', 'Triggers', { kind: 'triggers' })] : []),
+    go('artifacts', 'Artifacts', { kind: 'artifacts' }),
     go('docs', 'Docs', { kind: 'docs' }),
     ...(canOpenOperations ? [go('operations', 'Operations', { kind: 'operations' })] : []),
   ];

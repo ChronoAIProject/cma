@@ -163,6 +163,7 @@ pub struct Config {
     pub cma_service_account: Option<ServiceAccountConfig>,
     pub channel_cache: ChannelCacheConfig,
     pub github_enabled: bool,
+    pub managed_telegram_setup_enabled: bool,
     pub native_bot_mentions_writes_enabled: bool,
     /// Allows new thread contracts only after every reader supports them.
     pub thread_contract_writes_enabled: bool,
@@ -217,6 +218,8 @@ pub struct Config {
     pub lark_message_effects_writes_enabled: bool,
     pub native_discord_writes_enabled: bool,
     pub native_telegram_message_events_writes_enabled: bool,
+    pub native_telegram_member_joins_enabled: bool,
+    pub relay_telegram_member_joins_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
     pub native_telegram_topic_lifecycle_enabled: bool,
     pub native_telegram_topic_creation_enabled: bool,
@@ -328,6 +331,15 @@ impl Config {
             )?,
             native_telegram_message_events_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_TELEGRAM_MESSAGE_EVENTS_WRITES_ENABLED",
+            )?,
+            native_telegram_member_joins_enabled: routing::write_flag(
+                "CMAEG_NATIVE_TELEGRAM_MEMBER_JOINS_ENABLED",
+            )?,
+            relay_telegram_member_joins_enabled: routing::write_flag(
+                "CMAEG_RELAY_TELEGRAM_MEMBER_JOINS_ENABLED",
+            )?,
+            managed_telegram_setup_enabled: routing::write_flag(
+                "CMAEG_MANAGED_TELEGRAM_SETUP_ENABLED",
             )?,
             native_lark_writes_enabled: routing::write_flag("CMAEG_NATIVE_LARK_WRITES_ENABLED")?,
             native_lark_intake_enabled: routing::write_flag("CMAEG_NATIVE_LARK_INTAKE_ENABLED")?,

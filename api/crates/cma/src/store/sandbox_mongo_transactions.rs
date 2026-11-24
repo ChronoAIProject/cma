@@ -8,7 +8,7 @@ use mongodb::ClientSession;
 const COMMIT_ATTEMPTS: usize = 5;
 const DUPLICATE_KEY: i32 = 11_000;
 
-pub(in crate::store) fn is_duplicate_key(error: &Error) -> bool {
+pub(crate) fn is_duplicate_key(error: &Error) -> bool {
     match error.kind.as_ref() {
         ErrorKind::Write(WriteFailure::WriteError(write)) => write.code == DUPLICATE_KEY,
         ErrorKind::Command(command) => command.code == DUPLICATE_KEY,
@@ -17,23 +17,26 @@ pub(in crate::store) fn is_duplicate_key(error: &Error) -> bool {
 }
 
 pub(in crate::store) fn is_transient(error: &Error) -> bool {
-    error.contains_label(TRANSIENT_TRANSACTION_ERROR)
+    // Only a known abort permits a fresh mutation. Multiple labels do not
+    // erase uncertainty about an earlier transaction result.
+    !error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT)
+        && error.contains_label(TRANSIENT_TRANSACTION_ERROR)
 }
 
 /// A body error with uncertain outcome never permits a new transaction.
-pub(in crate::store) fn is_confirmed_body_retry(error: &Error) -> bool {
+pub(crate) fn is_confirmed_body_retry(error: &Error) -> bool {
     !error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT)
         && (is_transient(error) || is_duplicate_key(error))
 }
 
-pub(in crate::store) enum CommitResolution<E> {
+pub(crate) enum CommitResolution<E> {
     Committed,
     Retry(E),
     Unknown(E),
     Failed(E),
 }
 
-pub(in crate::store) type CommitOutcome = CommitResolution<Error>;
+pub(crate) type CommitOutcome = CommitResolution<Error>;
 
 enum CommitFailure<E> {
     Unknown(E),
@@ -64,12 +67,19 @@ impl CommitOperation for ClientSession {
     }
 }
 
-pub(in crate::store) async fn start_transaction(session: &mut ClientSession) -> Result<(), Error> {
+pub(crate) async fn start_transaction(session: &mut ClientSession) -> Result<(), Error> {
     session
         .start_transaction()
         .read_concern(ReadConcern::snapshot())
         .write_concern(WriteConcern::majority())
         .await?;
+    // Read before the work-publication fence's Sandbox or Workspace write.
+    if let Err(error) = crate::store::transaction_barrier::open(session).await {
+        if let Err(abort) = session.abort_transaction().await {
+            tracing::warn!(error = %abort, "ordinary work transaction abort was not acknowledged");
+        }
+        return Err(error);
+    }
     if let Err(error) = crate::store::work_publication::fence_current(session).await {
         if let Err(abort) = session.abort_transaction().await {
             tracing::warn!(error = %abort, "ordinary work transaction abort was not acknowledged");
@@ -79,7 +89,7 @@ pub(in crate::store) async fn start_transaction(session: &mut ClientSession) -> 
     Ok(())
 }
 
-pub(in crate::store) async fn commit_transaction(session: &mut ClientSession) -> CommitOutcome {
+pub(crate) async fn commit_transaction(session: &mut ClientSession) -> CommitOutcome {
     if let Err(error) = layer2_core::sandbox::store::WorkAuthority::current() {
         if let Err(abort) = session.abort_transaction().await {
             tracing::warn!(error = %abort, "expired work publication abort was not acknowledged");
@@ -87,6 +97,52 @@ pub(in crate::store) async fn commit_transaction(session: &mut ClientSession) ->
         return CommitOutcome::Failed(Error::custom(error));
     }
     commit_with(session).await
+}
+
+/// Only an acknowledged abort before any commit send releases durable custody.
+pub(in crate::store) enum PrecommitRefusal {
+    Aborted(layer2_core::sandbox::store::SandboxStoreError),
+    AbortUnacknowledged(Error),
+}
+
+pub(in crate::store) async fn commit_transaction_with_refusal(
+    session: &mut ClientSession,
+) -> Result<CommitOutcome, PrecommitRefusal> {
+    if let Err(refusal) = layer2_core::sandbox::store::WorkAuthority::current() {
+        // The driver's convenience abort suppresses command failures. Observe
+        // the reply on this same session/transaction and pinned route first.
+        let reply = session
+            .client()
+            .database("admin")
+            .run_command(mongodb::bson::doc! {"abortTransaction":1_i32})
+            .session(&mut *session)
+            .await;
+        // Close local driver state; this second best-effort abort proves nothing
+        // about an uncertain first reply and cannot release the durable marker.
+        if session.abort_transaction().await.is_err() {
+            tracing::warn!(
+                stage = "precommit_refusal",
+                outcome = "local_abort_failed",
+                "publication custody remains governed by the original abort reply"
+            );
+        }
+        return Err(match reply {
+            Ok(reply) if acknowledged_abort_reply(&reply) => PrecommitRefusal::Aborted(refusal),
+            Ok(_) => PrecommitRefusal::AbortUnacknowledged(Error::custom(
+                "precommit abort acknowledgment is uncertain",
+            )),
+            Err(error) => PrecommitRefusal::AbortUnacknowledged(error),
+        });
+    }
+    Ok(commit_with(session).await)
+}
+
+fn acknowledged_abort_reply(reply: &mongodb::bson::Document) -> bool {
+    use mongodb::bson::Bson;
+    !reply.contains_key("writeConcernError")
+        && !reply.contains_key("errorLabels")
+        && (matches!(reply.get("ok"), Some(Bson::Int32(1) | Bson::Int64(1)))
+            || matches!(reply.get("ok"), Some(Bson::Double(value)) if *value == 1.0))
 }
 
 async fn commit_with<C: CommitOperation>(commit: &mut C) -> CommitResolution<C::Error> {

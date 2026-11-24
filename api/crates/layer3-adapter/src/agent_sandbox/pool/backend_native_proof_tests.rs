@@ -21,6 +21,9 @@ mod native_status;
 #[path = "binding_race_tests.rs"]
 mod binding_races;
 
+#[path = "backend_adoption_routing_tests.rs"]
+mod adoption_routing;
+
 struct StatusTransport {
     state: Arc<Mutex<State>>,
     client: AgentSandboxClient,
@@ -219,7 +222,7 @@ async fn native_proof_context_shares_dispatch_reads_but_revalidates_after_each_r
     // rollback returns to the original pool image. The combined path shares that read.
     assert_eq!(
         read_count(&fixture),
-        36,
+        30,
         "adoption and status each repeat exact authority after their response"
     );
     fixture.bound.fixture.state.lock().unwrap().calls.clear();

@@ -4,6 +4,7 @@ use super::super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, start_transaction, CommitOutcome, TRANSACTION_ATTEMPTS,
 };
 use super::*;
+use crate::store::agent_ownership::FenceError;
 use layer2_core::SandboxId;
 
 pub(super) async fn save(
@@ -93,9 +94,30 @@ async fn update(
             .map_err(driver);
     }
     for _ in 0..TRANSACTION_ATTEMPTS {
-        let mut session = store.client.start_session().await.map_err(driver)?;
-        start_transaction(&mut session).await.map_err(driver)?;
-        store.fence_agent_effect(id, &mut session).await?;
+        let mut session = match store.client.start_session().await {
+            Ok(session) => session,
+            Err(error) if native_retirement_action::retryable_body_error(&error) => continue,
+            Err(error) => return Err(driver(error)),
+        };
+        if let Err(error) = start_transaction(&mut session).await {
+            let _ = session.abort_transaction().await;
+            if native_retirement_action::retryable_body_error(&error) {
+                continue;
+            }
+            return Err(driver(error));
+        }
+        if let Err(error) = store.fence_agent_effect_transaction(id, &mut session).await {
+            let _ = session.abort_transaction().await;
+            match error {
+                FenceError::Driver(error)
+                    if native_retirement_action::retryable_body_error(&error) =>
+                {
+                    continue
+                }
+                FenceError::Driver(error) => return Err(driver(error)),
+                FenceError::Domain(error) => return Err(error),
+            }
+        }
         if let Some(sandbox) = new_obligation {
             match native_retirement_action::fence_obligation(store, sandbox, &mut session).await {
                 Ok(true) => {}

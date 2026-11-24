@@ -96,7 +96,13 @@ pub async fn delete(
                     .retryable(&state.records, &state.master_keys)
                     .await?;
             }
-            return Err(ManagementError::Provider(error.error));
+            return Err(match error.error {
+                // A definite answer that is not absence keeps the record (#1465).
+                crate::providers::ProviderError::Rejected { status, code } => {
+                    ManagementError::ReleaseRefused { status, code }
+                }
+                other => ManagementError::Provider(other),
+            });
         }
         reservation
             .confirmed(

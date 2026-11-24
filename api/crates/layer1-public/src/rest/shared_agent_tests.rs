@@ -183,6 +183,10 @@ fn request(path: &str, subject: &str) -> Request<Body> {
 async fn owner_json_is_unchanged_and_shared_documents_contain_only_authorized_fields() {
     use layer2_core::sandbox::store::AgentLogStore;
     let (fixture, _, _, _) = fixture(Reply::Member).await;
+    let readability =
+        super::agents::agent_router(fixture.state.clone().with_sandbox_profile_readability(
+            Arc::new(layer2_core::profiles::InMemoryProfileStore::default()),
+        ));
     let target = ResourceTarget::Agent {
         agent_id: AgentId("agt_shared_read".into()),
     };
@@ -228,6 +232,8 @@ async fn owner_json_is_unchanged_and_shared_documents_contain_only_authorized_fi
             assert!(!encoded.contains(private), "{encoded}");
         }
         if suffix.is_empty() {
+            let enabled = json_response(&readability, request(&path, "recipient")).await;
+            assert_eq!(enabled, (status, body.clone()));
             assert_eq!(body["access"], "shared");
             assert!(body.get("profile").is_none());
             assert!(body.get("worktree").is_none());

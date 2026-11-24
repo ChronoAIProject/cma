@@ -18,8 +18,7 @@ import { OwnerAgentHeader } from './OwnerAgentHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { agentBreadcrumb, agentHeaderMenu, agentHeaderActionHandler } from './headerActions';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
-import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
-import { agentProgress } from '../sandbox/progress';
+import { AgentStatusPanel } from './AgentStatusPanel';
 import type { SteeringMode } from './SteeringMode';
 import {
   AgentOpening,
@@ -72,7 +71,6 @@ interface AgentSurfaceProps {
   readonly detailsOpen: boolean;
   readonly onDetailsOpenChange: (open: boolean) => void;
   readonly onNavigate: (route: AppRoute) => void;
-  /** What the viewer may do to this Agent from its header. */
   readonly permissions?: TreePermissions;
   /** Another resource action is still being confirmed. */
   readonly actionsBusy?: boolean;
@@ -227,7 +225,6 @@ export function AgentSurface({
     : state.historyUnavailable
       ? 'Earlier activity could not be loaded. Retrying…'
       : (connectionError ?? connections.error ?? controller.actionError);
-  const preparation = agentProgress({ ...detail, status }, state.sandboxEvents ?? []);
   const observed = controller.progressObservation;
   const setupRoute = setupEnvironmentRoute(
     status,
@@ -237,13 +234,13 @@ export function AgentSurface({
     observed,
   );
   const reviewEnvironment = setupRoute ? () => onNavigate(setupRoute) : undefined;
+  const currentSandbox = observed?.sandbox.id === detail.sandbox.id ? observed.sandbox : undefined;
   const headerMenu = agentHeaderMenu(status, readOnly ? undefined : permissions, {
-    sandbox: observed?.sandbox.id === detail.sandbox.id ? observed.sandbox : undefined,
+    sandbox: currentSandbox,
     viewerId,
     stale: observed?.stale,
     busy: actionsBusy,
   });
-  // A subscription Agent can be signed in again from the header menu.
   const signInAgain =
     !readOnly && verified?.services.some((service) => service.service === subscriptionService);
   const uploadAttachment = agentAttachmentUploader(
@@ -301,8 +298,12 @@ export function AgentSurface({
           }}
           moreActions={headerMenu}
           onReviewEnvironment={reviewEnvironment}
-          onMoreAction={agentHeaderActionHandler(agentId, readOnly, onAgentAction, () =>
-            onNavigate({ kind: 'sandbox', sandboxId: detail.sandbox.id }),
+          onMoreAction={agentHeaderActionHandler(
+            agentId,
+            readOnly,
+            onAgentAction,
+            () => onNavigate({ kind: 'sandbox', sandboxId: detail.sandbox.id }),
+            currentSandbox?.id,
           )}
         />
 
@@ -319,6 +320,7 @@ export function AgentSurface({
           />
           <AgentSurfaceIssue
             issue={issue}
+            unconfirmed={controller.pendingMessage !== undefined || controller.pendingControl}
             historyIncomplete={historyIncomplete}
             onRetry={connectionError && !readOnly ? connection.retry : undefined}
             onDismiss={() => {
@@ -326,12 +328,6 @@ export function AgentSurface({
               connections.clearError();
               controller.clearActionError();
             }}
-          />
-
-          <AgentCommandNotices
-            controller={controller}
-            unavailable={readOnly || !controlReady}
-            starting={status === 'starting'}
           />
 
           {!readOnly && lifecycleClient !== undefined && viewerId !== undefined ? (
@@ -344,15 +340,6 @@ export function AgentSurface({
         </div>
 
         <div className="agent-surface__conversation">
-          {status === 'starting' ||
-          detail.failure !== undefined ||
-          preparation.some((step) => step.status !== 'Done') ? (
-            <ProvisioningProgress
-              title="Agent preparation"
-              steps={preparation}
-              failure={detail.failure}
-            />
-          ) : null}
           <OwnerMessageStream
             taskAcceptance={accessUncertain ? undefined : detail.taskAcceptance}
             onTaskDeliveryConfirmed={controller.refreshDetail}
@@ -372,6 +359,19 @@ export function AgentSurface({
             approvalReadOnly={readOnly}
             onApproval={(id, decision) => void controller.approve(id, decision)}
           >
+            <AgentCommandNotices
+              key={JSON.stringify([agentId, viewerId])}
+              controller={controller}
+              unavailable={readOnly || !controlReady}
+              starting={status === 'starting'}
+            />
+            <AgentStatusPanel
+              detail={detail}
+              events={state.sandboxEvents}
+              observation={observed}
+              running={running}
+              historyIncomplete={historyIncomplete}
+            />
             {suggestions && !readOnly && verified && !historyIncomplete ? (
               <SuggestedReplies
                 onEdit={editing.admissionAllowed ? editing.edit : undefined}

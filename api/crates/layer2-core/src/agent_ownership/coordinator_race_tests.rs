@@ -12,6 +12,7 @@ struct PausedRenew {
     resume: Notify,
     before_pause: bool,
     pause_acquire: std::sync::atomic::AtomicBool,
+    pause_owner: bool,
 }
 
 #[async_trait::async_trait]
@@ -26,6 +27,10 @@ impl OwnershipStore for PausedRenew {
         self.inner.membership().await
     }
     async fn owner(&self, id: &AgentId) -> Result<Option<OwnershipLease>, OwnershipError> {
+        if self.pause_owner {
+            self.entered.notify_one();
+            self.resume.notified().await;
+        }
         self.inner.owner(id).await
     }
     async fn has_owner_history(&self, id: &AgentId) -> Result<bool, OwnershipError> {
@@ -100,6 +105,7 @@ async fn late_success_or_stale_renewal_after_handoff_cannot_revive_or_fail_the_m
             resume: Notify::new(),
             before_pause,
             pause_acquire: std::sync::atomic::AtomicBool::new(false),
+            pause_owner: false,
         });
         let coordinator = start(store.clone()).await;
         let authority = coordinator
@@ -207,13 +213,14 @@ async fn uncertain_receiver_revoke_retains_original_expiry_without_renewing_reti
 }
 
 #[tokio::test(start_paused = true)]
-async fn slow_acquisition_cannot_block_renewal_or_publish_authority_after_drain() {
+async fn slow_acquisition_cannot_block_renewal_and_drain_takes_custody_of_it() {
     let store = Arc::new(PausedRenew {
         inner: Arc::new(MemoryOwnershipStore::default()),
         entered: Notify::new(),
         resume: Notify::new(),
         before_pause: false,
         pause_acquire: std::sync::atomic::AtomicBool::new(false),
+        pause_owner: false,
     });
     let coordinator = start(store.clone()).await;
     let healthy = coordinator
@@ -227,22 +234,83 @@ async fn slow_acquisition_cannot_block_renewal_or_publish_authority_after_drain(
         async move { coordinator.acquire(&AgentId("slow".into())).await }
     });
     store.entered.notified().await;
-    // Both complete while the other acquisition's store response is held.
+    // Renewal completes while the other acquisition's store response is held.
     coordinator.maintain().await.unwrap();
     assert!(healthy.is_current());
-    let owned = coordinator.begin_drain().await;
-    assert_eq!(owned.len(), 1);
+    // Drain closes admission at once, then joins the held acquisition so the
+    // lease it committed is drained instead of being left to expire.
+    let draining = tokio::spawn({
+        let coordinator = coordinator.clone();
+        async move { coordinator.begin_drain().await }
+    });
+    tokio::task::yield_now().await;
+    assert!(coordinator.is_draining());
     store.resume.notify_one();
     assert!(matches!(
         acquiring.await.unwrap(),
         Err(OwnershipError::Stale)
     ));
-    assert_eq!(coordinator.owned().await.len(), 1);
+    let owned = draining.await.unwrap();
+    assert_eq!(owned.len(), 2);
+    assert!(owned.iter().all(|authority| !authority.is_current()));
     assert!(!healthy.is_current());
+    let slow = owned
+        .iter()
+        .find(|authority| authority.token.agent_id == AgentId("slow".into()))
+        .unwrap();
+    coordinator.handoff(slow, async { Ok(()) }).await.unwrap();
     assert!(store
         .inner
         .owner(&AgentId("slow".into()))
         .await
         .unwrap()
-        .is_some());
+        .is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn reconciliation_owner_lookup_times_out_without_serializing_acquisition() {
+    let store = Arc::new(PausedRenew {
+        inner: Arc::new(MemoryOwnershipStore::default()),
+        entered: Notify::new(),
+        resume: Notify::new(),
+        before_pause: false,
+        pause_acquire: std::sync::atomic::AtomicBool::new(false),
+        pause_owner: true,
+    });
+    let coordinator = start(store.clone()).await;
+    let candidate = AgentId("candidate".into());
+    let started = tokio::time::Instant::now();
+    let observed = tokio::spawn({
+        let coordinator = coordinator.clone();
+        let candidate = candidate.clone();
+        async move {
+            coordinator
+                .observe_foreign_reconciliation_owner(&candidate)
+                .await
+        }
+    });
+    store.entered.notified().await;
+    let healthy = coordinator
+        .acquire(&AgentId("healthy".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(healthy.is_current());
+    assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+    assert!(!observed.await.unwrap());
+    assert_eq!(started.elapsed(), std::time::Duration::from_millis(200));
+    let local = coordinator.acquire(&candidate).await.unwrap().unwrap();
+
+    // A cancelled local receiver with an unexpired same-instance lease must
+    // take the ordinary acquisition path and cannot revive its old epoch.
+    local.cancel_receiver();
+    let started = tokio::time::Instant::now();
+    assert!(
+        !coordinator
+            .observe_foreign_reconciliation_owner(&candidate)
+            .await
+    );
+    assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+    assert!(coordinator.acquire(&candidate).await.unwrap().is_none());
+    assert!(!local.is_current());
 }

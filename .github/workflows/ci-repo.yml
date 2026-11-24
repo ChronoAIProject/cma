@@ -21,7 +21,9 @@ jobs:
         name: "Track selection and workflow regressions"
         run: |
           python3 -B -m unittest discover -s .github/scripts/ci_tracks -p "test_*.py"
+          python3 -B -m unittest discover -s .github/scripts -p 'mongo_flaky_retry_tests.py'
           ruby .github/scripts/ci-tracks-workflow-tests.rb
+          python3 -B .github/scripts/omarchy-ci-scan-tests.py
       -
         name: "Staging publication and deployment contracts"
         run: |
@@ -49,6 +51,9 @@ jobs:
         name: "Source files stay within size limits"
         run: ".github/scripts/check-file-size.sh"
       -
+        name: "Pinned image pull retry regressions"
+        run: "bash .github/scripts/pull-pinned-image-tests.sh"
+      -
         uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38" # v6
         with:
           node-version: 26
@@ -61,6 +66,9 @@ jobs:
       -
         name: "Audit exception policy regressions"
         run: "node --test .github/scripts/audit-policy.test.mjs"
+      -
+        name: "Resource revocation trace contract regressions"
+        run: "node --test .github/scripts/resource-revocation-contracts.test.mjs"
       -
         name: "Public repository boundary regressions"
         run: "ruby .github/scripts/check-public-tree-tests.rb"
@@ -138,6 +146,7 @@ jobs:
       -
         uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" # v5
         with:
+          ref: "${{ github.sha }}"
           fetch-depth: 0
       -
         name: "gitleaks"
@@ -160,4 +169,50 @@ jobs:
         run: |
           python3 -B .github/scripts/image-scanner-policy-tests.py
           python3 -B .github/scripts/image_scanner_policy.py
-          PATH="$RUNNER_TEMP:$PATH" bash .github/scripts/image-secret-scanner/self-test.sh
+  scanner-tests:
+    name: "Frozen image scanner tests (${{ matrix.shard }})"
+    needs: ["secrets"]
+    runs-on: "ubuntu-latest"
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    outputs:
+      shard_0: "${{ steps.tests.outputs.shard_0 }}"
+      shard_1: "${{ steps.tests.outputs.shard_1 }}"
+    steps:
+      -
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" # v5
+        with:
+          ref: "${{ github.sha }}"
+      -
+        name: "Install pinned image secret scanner"
+        timeout-minutes: 5
+        run: "bash .github/scripts/install-image-gitleaks.sh"
+      -
+        id: tests
+        name: "Run frozen image scanner test shard"
+        working-directory: ".github/scripts/image-secret-scanner"
+        shell: bash
+        env:
+          SHARD: "${{ matrix.shard }}"
+        run: |
+          umask 077
+          python3 -B ../ci_tracks/repo_secrets.py --shard "$SHARD"
+          printf 'shard_%s=%s\n' "$SHARD" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+  result:
+    name: "Repo result"
+    if: "always()"
+    needs: ["structure", "secrets", "scanner-tests"]
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      -
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" # v5
+        with:
+          ref: "${{ github.sha }}"
+      -
+        name: "Validate repository job results"
+        env:
+          NEEDS: "${{ toJSON(needs) }}"
+        run: "python3 -B .github/scripts/ci_tracks/repo_secrets.py --check-gate"

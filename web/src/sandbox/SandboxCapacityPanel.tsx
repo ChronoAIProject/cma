@@ -9,6 +9,7 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Table, TableCell } from '../ui/Table';
 import { statusLabel } from '../vocabulary/status';
+import { IconWarningOutline16 } from '../ui/icons';
 import { sandboxLifecycleLabel } from './lifecycle';
 import type { useSandboxCapacity } from './useSandboxCapacity';
 import './SandboxCapacityPanel.css';
@@ -16,12 +17,94 @@ import './SandboxCapacityPanel.css';
 export function SandboxCapacityPanel({
   client,
   capacity,
+  presentation,
 }: {
   readonly client: CmaWebClient;
   readonly capacity: ReturnType<typeof useSandboxCapacity>;
+  readonly presentation?: 'home';
 }) {
   const [manage, setManage] = useState(false);
   const value = capacity.value;
+  if (presentation === 'home') {
+    if (!capacity.error && value && value.available > 1)
+      return manage ? (
+        <EnvironmentInventory client={client} onClose={() => setManage(false)} />
+      ) : null;
+    const near = !capacity.error && value?.available === 1;
+    const retiring = value?.counts_by_status.retiring ?? 0;
+    return (
+      <section
+        className="sandbox-capacity-home"
+        data-state={capacity.error ? 'unknown' : near ? 'near' : value ? 'full' : 'loading'}
+        aria-label="Sandbox capacity"
+      >
+        {capacity.error ? (
+          <div className="sandbox-capacity-home__message" role="alert">
+            <IconWarningOutline16 />
+            <div>
+              <strong>Capacity could not be checked</strong>
+              <p>
+                {capacity.error}. Your draft is kept.{' '}
+                {value
+                  ? 'The last observation is stale; available slots are unconfirmed.'
+                  : 'Available slots are unconfirmed.'}
+              </p>
+            </div>
+          </div>
+        ) : !value ? (
+          <p role="status">Checking Sandbox capacity…</p>
+        ) : near ? (
+          <p className="sandbox-capacity-home__near">
+            <span>1 environment slot left</span>
+          </p>
+        ) : (
+          <div className="sandbox-capacity-home__message">
+            <IconWarningOutline16 />
+            <div>
+              <strong>All {value.limit} Sandbox environment slots are in use</strong>
+              {retiring ? (
+                <p>
+                  {retiring}{' '}
+                  {retiring === 1
+                    ? 'environment is being deleted and still uses a slot.'
+                    : 'environments are being deleted and still use slots.'}{' '}
+                  Slots become available when deletion is confirmed.
+                </p>
+              ) : null}
+            </div>
+          </div>
+        )}
+        {!near ? (
+          <div className="sandbox-capacity__actions">
+            <Button
+              variant={capacity.error ? 'outline' : 'primary'}
+              onClick={() => setManage(true)}
+            >
+              Manage environments
+            </Button>
+            {capacity.error ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={capacity.loading}
+                onClick={() => void capacity.refresh()}
+              >
+                Check again
+              </Button>
+            ) : (
+              <Button size="sm" disabled={capacity.loading} onClick={() => void capacity.refresh()}>
+                Refresh Sandbox capacity
+              </Button>
+            )}
+            <DocsLink view="environments-and-capacity">
+              Help with environments and capacity
+            </DocsLink>
+          </div>
+        ) : null}
+        {manage ? <EnvironmentInventory client={client} onClose={() => setManage(false)} /> : null}
+      </section>
+    );
+  }
   return (
     <section className="card sandbox-capacity" aria-label="Sandbox capacity">
       {capacity.error ? (
