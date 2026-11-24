@@ -24,6 +24,8 @@ mod response_readers_tests;
 mod rest;
 
 pub(crate) struct AgentProjectionServices {
+    #[cfg(feature = "qualification-hooks")]
+    qualification: Option<Arc<cma_qualification::Registry>>,
     bounded_replay: bool,
     sandbox_profile_readability: bool,
     sandbox_profiles: Arc<dyn SandboxProfileStore>,
@@ -174,6 +176,8 @@ impl AgentProjectionServices {
             Arc::new(crate::agent_lifecycle::guidance::ManagedInstructionPolicy),
         );
         Self {
+            #[cfg(feature = "qualification-hooks")]
+            qualification: None,
             bounded_replay: false,
             sandbox_profile_readability: false,
             sandbox_profiles: profiles,

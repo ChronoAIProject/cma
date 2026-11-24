@@ -41,7 +41,10 @@ use layer2_core::{
 mod state;
 pub(crate) use state::ControlPlaneComposition;
 impl ControlPlaneComposition {
-    async fn assemble(config: &Config) -> Result<Self, String> {
+    async fn assemble(
+        config: &Config,
+        #[cfg(feature = "qualification-hooks")] qualification: Option<cma_qualification::Registry>,
+    ) -> Result<Self, String> {
         let stores = stores::connect(config).await?;
         let (deletions, standing) = account_deletion::compose(config, &stores).await?;
         let activity = ActivityService::new(stores.activity.clone());
@@ -130,6 +133,8 @@ impl ControlPlaneComposition {
         .with_resource_access(resource_access.clone())
         .with_response_logs(stores.sandbox_model.response_log_reader())
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
+        #[cfg(feature = "qualification-hooks")]
+        let projections = projections.with_qualification(qualification);
         let (projections, observations) =
             observation::prepare(config, &stores, &agent_manager, projections).await?;
         let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(

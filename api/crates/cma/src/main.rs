@@ -43,6 +43,8 @@ mod profile_policy;
 mod projections;
 mod provider_tool_relay;
 mod public_streams;
+#[cfg(feature = "qualification-hooks")]
+mod qualification;
 mod rate_limit;
 mod read_telemetry;
 mod readiness_diagnostics;
@@ -221,6 +223,18 @@ async fn run() {
                 eprintln!("{message}");
                 std::process::exit(2);
             }
+        }
+        return;
+    }
+    #[cfg(feature = "qualification-hooks")]
+    if let Some(options) = qualification::startup_options(&arguments) {
+        let options = options.unwrap_or_else(|message| {
+            eprintln!("{message}");
+            std::process::exit(2);
+        });
+        if let Err(error) = startup::serve_qualified(options).await {
+            tracing::error!(error = %error, "CMA stopped");
+            std::process::exit(1);
         }
         return;
     }

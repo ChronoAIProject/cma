@@ -1,7 +1,5 @@
 //! CMA Agent collection, detail, creation, and deletion routes.
 
-use std::sync::Arc;
-
 use axum::{
     extract::{Extension, Path, Query, State},
     http::StatusCode,
