@@ -6,6 +6,7 @@ use super::{
 use crate::qualification::agent_digest;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use tokio::time::Instant;
 
 /// The original local authority. This handle cannot be retargeted or reused.
 pub struct CapturedOwner(Arc<Authority>);
@@ -81,4 +82,17 @@ pub fn qualification_owner_digest(token: &OwnershipToken) -> [u8; 32] {
     digest.update(token.epoch.to_be_bytes());
     digest.update(token.protocol.to_be_bytes());
     digest.finalize().into()
+}
+
+/// Validate the selected result with the coordinator's original token and time basis.
+pub struct RenewalWindow {
+    pub(super) started: Instant,
+    pub(super) now_ms: i64,
+}
+
+impl RenewalWindow {
+    pub fn accepts(&self, authority: &Authority, lease: &super::super::OwnershipLease) -> bool {
+        super::require_same_token(&authority.token, lease).is_ok()
+            && super::deadline(self.started, self.now_ms, lease.expires_at_ms).is_ok()
+    }
 }

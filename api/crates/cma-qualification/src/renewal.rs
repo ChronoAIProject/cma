@@ -2,7 +2,9 @@
 
 use super::{ArmError, Registry, MAX_LIFETIME};
 use layer2_core::{
-    agent_ownership::{Authority, CapturedOwner, OwnershipError, OwnershipLease, OwnershipStore},
+    agent_ownership::{
+        Authority, CapturedOwner, OwnershipError, OwnershipLease, OwnershipStore, RenewalWindow,
+    },
     qualification::RenewalHook,
 };
 use std::{future::pending, sync::Arc, time::Duration};
@@ -162,6 +164,7 @@ impl RenewalHook for Registry {
     async fn renew_selected(
         &self,
         authority: &Arc<Authority>,
+        window: RenewalWindow,
     ) -> Option<Result<OwnershipLease, OwnershipError>> {
         let (work, _registration) = self.take_renewal(authority)?;
         let mut invocation = Invocation {
@@ -173,7 +176,8 @@ impl RenewalHook for Registry {
             .send_modify(|evidence| evidence.started = true);
         let outcome = work.isolated_store.renew(&authority.token).await;
         let observed = match &outcome {
-            Ok(_) => RenewalOutcome::Committed,
+            Ok(lease) if window.accepts(authority, lease) => RenewalOutcome::Committed,
+            Ok(_) => RenewalOutcome::Invalid,
             Err(OwnershipError::Unavailable(_)) => RenewalOutcome::Unavailable,
             Err(OwnershipError::Stale) => RenewalOutcome::Stale,
             Err(OwnershipError::IncompatibleProtocol) => RenewalOutcome::Incompatible,
@@ -182,7 +186,7 @@ impl RenewalHook for Registry {
         invocation
             .evidence
             .send_modify(|evidence| evidence.result = Some(observed));
-        if outcome.is_ok() {
+        if observed == RenewalOutcome::Committed {
             // Even if the plan disarms or the client disconnects, a committed
             // renewal remains withheld until the original coordinator drops us.
             pending::<()>().await;
