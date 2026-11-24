@@ -65,10 +65,10 @@ fn executor_matches_rust_member_and_receipt_wire_bytes() {
     let vector = serde_json::to_vec(&(member, receipt)).unwrap();
     let script = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../.github/scripts/sandbox-retirement-executor-tests.py"
+        "/../../../.github/scripts/sandbox-retirement-receipt-vector.py"
     );
     let mut child = Command::new("python3")
-        .args(["-B", script, "--check-rust-vector"])
+        .args(["-B", script])
         .stdin(Stdio::piped())
         .spawn()
         .unwrap();

@@ -16,8 +16,6 @@ import tempfile
 from threading import Thread
 import unittest
 
-from sandbox_retirement_application import ApplicationRetirement, digest as guard_digest, make_guard
-
 
 SCRIPT = Path(__file__).with_name("sandbox-retirement-executor.py")
 EXECUTOR = runpy.run_path(str(SCRIPT))
@@ -479,25 +477,5 @@ raise SystemExit(main(consume))
         )
 
 
-def check_rust_vector():
-    member, receipt = json.load(sys.stdin)
-    assert member["runtime"]["bound_at"]
-    assert member["home"]["receipt"]["native_authority"]["pvc_uid"]
-    assert not member["owner"].isascii()
-    row = {**member, "id": member["sandbox_id"]}
-    sandbox = {**member, "lifecycle": {"home": member["home"]}}
-    batch = member["batch_sha256"]
-    reconstructed = make_guard(batch, row, sandbox)
-    assert reconstructed == member
-    fingerprint = guard_digest(reconstructed, ordered=True)
-    boundary = ApplicationRetirement(None, None, batch, None, None, 1)
-    assert boundary.matches_receipt(row, fingerprint, receipt)
-    adjusted = make_guard(batch, {**row, "idle_before": "2026-09-16T00:00:00Z"}, sandbox)
-    assert not boundary.matches_receipt(row, guard_digest(adjusted, ordered=True), receipt)
-
-
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--check-rust-vector"]:
-        check_rust_vector()
-    else:
-        unittest.main()
+    unittest.main()
