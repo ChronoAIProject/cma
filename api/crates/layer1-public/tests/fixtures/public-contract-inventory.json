@@ -4253,6 +4253,30 @@
         "json_content_type_required",
         "store_failed"
       ]
+    },
+    "GET /api/v1/agents/{id}/original-request": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_original_request.rs# async fn read(",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/reply-preview": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_reply_preview.rs# async fn read(",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable"
+      ]
     }
   },
   "shared_capacity_problems": [
