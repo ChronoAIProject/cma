@@ -37,9 +37,17 @@ impl MongoAgentLifecycleStore {
         lease: &LifecycleLease,
         update: impl Into<mongodb::options::UpdateModifications>,
     ) -> Result<(), StoreError> {
+        self.write_matching(lease.filter(), update).await
+    }
+
+    async fn write_matching(
+        &self,
+        filter: Document,
+        update: impl Into<mongodb::options::UpdateModifications>,
+    ) -> Result<(), StoreError> {
         let result = self
             .operations
-            .update_one(lease.filter(), update)
+            .update_one(filter, update)
             .await
             .map_err(driver)?;
         if result.matched_count != 1 {
@@ -193,8 +201,18 @@ impl MongoAgentLifecycleStore {
         lease: &LifecycleLease,
         sandbox_id: &str,
     ) -> Result<(), StoreError> {
-        self.write(
-            lease,
+        // This links the admitted creation input to one Sandbox across claims.
+        // A fresh lease may repeat the recorded association.
+        let mut filter = lease.filter();
+        filter.insert(
+            "sandbox_id",
+            doc! {
+                "$in": [Bson::Null, Bson::String(sandbox_id.into())],
+                "$not": { "$type": "array" },
+            },
+        );
+        self.write_matching(
+            filter,
             doc! { "$set": { "sandbox_id": sandbox_id, "updated_at": DateTime::now() } },
         )
         .await
