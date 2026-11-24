@@ -14,18 +14,17 @@ use layer1_public::rest::{
 };
 use layer2_core::{now_rfc3339, Capability, StoreError, SubjectId};
 use mongodb::{
-    bson::{doc, spec::BinarySubtype, Binary, Bson, DateTime},
+    bson::{doc, Binary, Bson, DateTime},
     error::{Error, ErrorKind, WriteFailure},
     options::{IndexOptions, ReturnDocument},
     Collection, Database, IndexModel,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VERSION};
 
 mod admission;
-pub(super) mod canary_admission;
+pub(crate) mod canary_admission;
 pub(crate) mod canary_key;
 pub(crate) use canary_admission::CanaryProfiles;
 #[cfg(test)]
@@ -127,6 +126,8 @@ pub(crate) struct LifecycleRecord {
     canary_admission: Option<canary_admission::CanaryAdmission>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     canary_manifest_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canary_redemption_key: Option<canary_admission::CanaryRedemptionKey>,
     pub status: String,
     pub phase: String,
     pub events: Vec<LifecycleEvent>,
@@ -222,6 +223,12 @@ impl MongoAgentLifecycleStore {
             admission_settings: majority_collection(database, super::settings::SETTINGS),
             released_lanes: None,
         })
+    }
+
+    pub(crate) fn canary_database(&self) -> Database {
+        self.operations
+            .client()
+            .database(&self.operations.namespace().db)
     }
 
     /// Claim queued work or an expired worker, including legacy records whose

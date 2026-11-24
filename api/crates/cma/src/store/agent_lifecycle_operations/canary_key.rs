@@ -30,8 +30,7 @@ pub(crate) fn profile_key(operation_id: &str, kind: &str) -> String {
     format!("runtime-canary-profile:{operation_id}:{kind}")
 }
 
-#[cfg(test)]
-pub(super) fn fixture_key(id: &str) -> String {
+pub(super) fn admission_key(id: &str) -> String {
     let prefix = format!("{OPERATION_PREFIX}{id}");
     let padding = ".".repeat(INTERNAL_KEY_BYTES - prefix.len());
     format!("{prefix}{padding}")
@@ -44,7 +43,7 @@ mod tests {
     #[test]
     fn canary_keys_are_outside_public_admission_and_child_keys_are_bounded() {
         let id = "d".repeat(OPERATION_ID_BYTES);
-        let key = fixture_key(&id);
+        let key = admission_key(&id);
         assert_eq!(operation_id(&key), Some(id.as_str()));
         assert!(!layer2_core::operation::valid_idempotency_key(
             key.as_bytes()

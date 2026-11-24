@@ -24,6 +24,27 @@ fn command_requires_one_sandbox_and_a_closed_bounded_window() {
     }
 }
 
+#[test]
+fn measured_preview_requires_a_physical_id_and_completed_window() {
+    let anchor = "a".repeat(64);
+    let arguments =
+        |id: &str, from: &str, to: &str| ["--measured-preview", id, from, to].map(str::to_owned);
+    let accepted = arguments(&anchor, "20", "40");
+    assert_eq!(
+        preview_invocation(&accepted, 40),
+        Ok((anchor.as_str(), Range { from: 20, to: 40 }))
+    );
+    assert_eq!(preview_invocation(&accepted, 39), Err(PREVIEW_INVALID));
+    assert_eq!(
+        preview_invocation(&arguments("sample:fake", "20", "40"), 40),
+        Err(PREVIEW_INVALID)
+    );
+    assert_eq!(
+        preview_invocation(&arguments(&anchor, "20", "921"), 921),
+        Err(PREVIEW_INVALID)
+    );
+}
+
 async fn exporter(State(used): State<Arc<AtomicU64>>, uri: Uri) -> String {
     let selected = uri.query().unwrap();
     let metric = if selected.contains(SourceMetric::PvcUsed.name()) {
