@@ -202,6 +202,9 @@ impl HostedBackend for InMemoryHostedBackend {
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame> {
         let operation = request.operation();
+        if request.has_unexpected_restart_runtime() {
+            return refused(operation, "agent_process_restart_runtime_unexpected");
+        }
         self.requests
             .lock()
             .await

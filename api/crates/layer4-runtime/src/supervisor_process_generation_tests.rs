@@ -255,8 +255,37 @@ async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
     let home_file = Path::new(&initial.home).join("conversation-fixture");
     let retained = std::fs::read(&home_file).unwrap();
 
+    let pinned_legacy_open = restart_open(&supervisor, 1, &initial);
+    let RequestFrame::OpenAgent(pinned) = &pinned_legacy_open else {
+        unreachable!()
+    };
+    let mut pinned_close = FencedRequest::new(
+        1,
+        AgentCloseRequest::new("agent:agent:close:v1", AgentSlot::new("agent")),
+    );
+    pinned_close
+        .restart_runtime
+        .clone_from(&pinned.restart_runtime);
+    let close_operation = crate::mutation_journal::Operation::close_agent(&pinned_close.request);
+    for request in [pinned_legacy_open, RequestFrame::CloseAgent(pinned_close)] {
+        assert_eq!(
+            failure(supervisor.dispatch(request).await),
+            "agent_process_restart_runtime_unexpected"
+        );
+    }
+    assert!(supervisor
+        .mutations
+        .recovery_fence(&close_operation)
+        .await
+        .unwrap()
+        .is_none());
+    let legacy_open = open(1, &initial);
+    assert!(serde_json::to_value(&legacy_open)
+        .unwrap()
+        .get("restart_runtime")
+        .is_none());
     assert!(matches!(
-        supervisor.dispatch(open(1, &initial)).await,
+        supervisor.dispatch(legacy_open).await,
         ResponseFrame::OpenAgent(_)
     ));
     assert_eq!(

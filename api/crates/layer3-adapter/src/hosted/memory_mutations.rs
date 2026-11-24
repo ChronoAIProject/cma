@@ -229,6 +229,12 @@ pub(super) fn authorize_process_open(
         return refused(WireOperation::OpenAgent, "operation_request_invalid");
     }
     if incarnation == 1 {
+        if request.restart_runtime.is_some() {
+            return refused(
+                WireOperation::OpenAgent,
+                "agent_process_restart_runtime_unexpected",
+            );
+        }
         return Ok(incarnation);
     }
     let Some(writer) = &request.restart_runtime else {
