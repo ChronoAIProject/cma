@@ -5,6 +5,7 @@ import {
   type UsageInitialData,
   type UsageInitialProjection,
   type UsageInitialReport,
+  type UsageInitialView,
   type UsageMetricReport,
   type UsageMetricViewQuery,
 } from '@cma/client';
@@ -85,6 +86,7 @@ function commitInitial(
   projection: UsageInitialProjection,
   principal: string | undefined,
   admin: boolean,
+  view?: UsageInitialView['view'],
 ) {
   if (report.status !== 'ready' || !report.summary || !initial)
     throw new ProtocolError('Initial report is incomplete');
@@ -92,17 +94,20 @@ function commitInitial(
   entry.report = report;
   entry.initial = initial;
   entry.initialProjection = projection;
-  entry.initialPending = false;
-  entry.generatedAt = undefined;
-  entry.stale = false;
-  entry.latestPending = false;
-  entry.refreshReportId = undefined;
+  entry.initialPending = view?.refresh.state === 'pending';
+  entry.generatedAt = view?.generated_at == null ? undefined : Number(view.generated_at);
+  entry.stale = Boolean(view && (view.stale || view.refresh.state !== 'idle'));
+  entry.latestPending = entry.initialPending;
+  entry.refreshReportId = view?.refresh.report_id ?? undefined;
   entry.pending = undefined;
-  entry.pollAt = 0;
+  entry.pollAt =
+    view && view.refresh.state !== 'idle'
+      ? Date.now() + jitteredRetryDelay(Number(view.refresh.retry_after_seconds) * 1000)
+      : 0;
   entry.error = undefined;
   entry.retryAt = 0;
   entry.completedAt = Date.now();
-  entry.observationStartedAt = 0;
+  if (!entry.initialPending) entry.observationStartedAt = 0;
   notify(entry);
 }
 
@@ -156,32 +161,46 @@ async function loadInitial(
     return true;
   }
   const query = metricQuery(selection, admin);
-  const result: UsageInitialReport =
-    selection.range !== '1h' && api.latestInitial
-      ? await observeReport<UsageInitialReport>(api, entry, signal, async (requestSignal) => {
-          const view = await api.latestInitial!(
-            {
-              selection: latestQuery(selection, admin, forceRefresh) as UsageMetricViewQuery,
-              projection,
-            },
-            { signal: requestSignal },
-          );
-          return { report: view.view.report, initial: view.initial };
-        })
-      : await observeReport<UsageInitialReport>(api, entry, signal, (requestSignal) =>
-          api.createInitial!({ query, projection }, { signal: requestSignal }),
-        );
+  const latest = selection.range !== '1h' && api.latestInitial;
+  const view = latest
+    ? await observeReport(api, entry, signal, (requestSignal) =>
+        latest.call(
+          api,
+          {
+            selection: latestQuery(selection, admin, forceRefresh) as UsageMetricViewQuery,
+            projection,
+          },
+          { signal: requestSignal },
+        ),
+      )
+    : undefined;
+  const result: UsageInitialReport = view
+    ? { report: view.view.report, initial: view.initial }
+    : await observeReport(api, entry, signal, (requestSignal) =>
+        api.createInitial!({ query, projection }, { signal: requestSignal }),
+      );
   signal.throwIfAborted();
   validateReport(result.report, principal, admin);
   if (result.report.status === 'ready') {
-    commitInitial(entry, result.report, result.initial, projection, principal, admin);
+    commitInitial(entry, result.report, result.initial, projection, principal, admin, view?.view);
+    if (entry.initialPending) {
+      entry.refreshing = true;
+      notify(entry);
+      await observeInitialPending(api, entry, signal, principal, admin, projection);
+    }
     return true;
   }
   if (result.report.status !== 'pending') throw new ProtocolError('Report failed');
   entry.pending = result.report;
   entry.initialPending = true;
   entry.refreshReportId = result.report.report_id;
-  entry.pollAt = Date.now() + retryAfterMilliseconds(result.report);
+  entry.pollAt =
+    Date.now() +
+    jitteredRetryDelay(
+      view
+        ? Number(view.view.refresh.retry_after_seconds) * 1000
+        : Number(result.report.retry_after_seconds) * 1000,
+    );
   entry.refreshing = true;
   notify(entry);
   await observeInitialPending(api, entry, signal, principal, admin, projection);
@@ -255,7 +274,7 @@ async function observePending(
     validateReport(report, principal, admin);
     if (report.report_id !== id) throw new ProtocolError('Report identity changed');
     if (Date.now() / 1000 >= Number(report.expires_at)) throw new ApiError(410, 'Expired');
-    if (report.status === 'ready' && report.summary) return;
+    if (report.status === 'ready' && report.summary) return report;
     if (report.status !== 'pending') throw new ApiError(503, 'Report generation failed');
     if (!entry.report) entry.pending = report;
     entry.pollAt = Date.now() + retryAfterMilliseconds(report);
@@ -294,6 +313,15 @@ async function loadLegacy(
     signal.throwIfAborted();
   }
   if (signal.aborted) return;
+  commitLegacy(entry, report, principal, admin);
+}
+
+function commitLegacy(
+  entry: ReportEntry,
+  report: UsageMetricReport,
+  principal: string | undefined,
+  admin: boolean,
+) {
   if (report.status !== 'ready' || !report.summary) throw new Error('Report failed');
   validateReport(report, principal, admin);
   entry.report = report;
@@ -302,6 +330,7 @@ async function loadLegacy(
   entry.initialPending = false;
   entry.generatedAt = undefined;
   entry.latestPending = false;
+  entry.refreshReportId = undefined;
   entry.pollAt = 0;
   entry.stale = false;
   entry.pending = undefined;
@@ -370,9 +399,11 @@ export function startReportLoad(
     } catch (error) {
       if (background || !isUsageInitialUnavailable(error)) throw error;
       if (entry.initialPending) {
-        if (!entry.pending || entry.pending.report_id !== entry.refreshReportId)
+        if (!entry.refreshReportId)
           throw new ProtocolError('Missing admitted initial report identity');
-        await loadLegacy(api, selection, admin, entry, signal, principal);
+        const ready = await observePending(api, entry, signal, principal, admin);
+        signal.throwIfAborted();
+        commitLegacy(entry, ready, principal, admin);
         return;
       }
     }

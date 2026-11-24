@@ -1,6 +1,6 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { ApiError } from '@cma/client';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { defaultSelection, type MetricsClient } from './model';
 import { metricRow, metricsClient, reportFixture } from './testFixtures';
 import { useUsageReport } from './useReport';
@@ -101,3 +101,86 @@ it('falls back to the existing latest and report flow only when the initial rout
   expect(api.latest).toHaveBeenCalledTimes(1);
   expect(api.create).not.toHaveBeenCalled();
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+it.each(['pending', 'deferred'] as const)(
+  'retains an initial Ready view during a %s refresh',
+  async (state) => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const report = reportFixture(true);
+    const replacement = { ...report, report_id: 'successor' };
+    const initial = (id: string) => ({
+      projection: {
+        first_page: { limit: 50, sort: 'last_activity_at', order: 'desc' },
+        total_metrics: [],
+      },
+      rows: initialPage(id),
+      charts: [],
+    });
+    const view = {
+      report,
+      generated_at: report.as_of,
+      stale: true,
+      refresh: {
+        state,
+        report_id: state === 'pending' ? replacement.report_id : null,
+        retry_after_seconds: 2,
+      },
+    };
+    const api = Object.assign(metricsClient(true), {
+      createInitial: vi.fn(),
+      latestInitial: vi
+        .fn()
+        .mockResolvedValueOnce({ view, initial: initial(report.report_id) })
+        .mockResolvedValue({
+          view: {
+            ...view,
+            report: replacement,
+            stale: false,
+            refresh: { state: 'idle', report_id: null, retry_after_seconds: 0 },
+          },
+          initial: initial(replacement.report_id),
+        }),
+      initialReport: vi
+        .fn()
+        .mockResolvedValue({ report: replacement, initial: initial(replacement.report_id) }),
+    });
+    const hook = renderHook(() =>
+      useUsageReport(
+        api as unknown as MetricsClient,
+        defaultSelection,
+        true,
+        true,
+        undefined,
+        false,
+        false,
+        true,
+      ),
+    );
+    await act(async () => {});
+    expect(hook.result.current.report?.report_id).toBe(report.report_id);
+    expect(hook.result.current.initial?.rows.report_id).toBe(report.report_id);
+    expect(hook.result.current.stale).toBe(true);
+    expect(hook.result.current.generatedAt).toBe(Number(report.as_of));
+    if (state === 'deferred') act(() => hook.result.current.refresh());
+    await act(async () => vi.advanceTimersByTimeAsync(1999));
+    expect(api.initialReport).not.toHaveBeenCalled();
+    expect(api.latestInitial).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    if (state === 'pending') {
+      expect(api.initialReport).toHaveBeenCalledTimes(1);
+      expect(api.initialReport.mock.calls[0]?.[0]).toBe(replacement.report_id);
+      expect(api.latestInitial).toHaveBeenCalledTimes(1);
+    } else {
+      expect(api.initialReport).not.toHaveBeenCalled();
+      expect(api.latestInitial).toHaveBeenCalledTimes(2);
+    }
+    expect(hook.result.current.report?.report_id).toBe(replacement.report_id);
+    expect(hook.result.current.stale).toBe(false);
+  },
+);
