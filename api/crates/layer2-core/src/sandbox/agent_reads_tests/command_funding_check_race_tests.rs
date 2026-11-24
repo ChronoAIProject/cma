@@ -9,6 +9,21 @@ enum FailedCheck {
     Certification,
     Retirement,
     UncontestedSelection,
+    RuntimeResolution,
+    RuntimeCapability,
+    UncontestedRuntimeResolution,
+    UncontestedRuntimeCapability,
+}
+
+impl FailedCheck {
+    fn uncontested(self) -> bool {
+        matches!(
+            self,
+            Self::UncontestedSelection
+                | Self::UncontestedRuntimeResolution
+                | Self::UncontestedRuntimeCapability
+        )
+    }
 }
 
 struct Competition {
@@ -146,6 +161,28 @@ impl AgentRuntimeRegistry for CheckRuntime {
             };
             if matches!(
                 self.checked.check,
+                FailedCheck::RuntimeResolution
+                    | FailedCheck::RuntimeCapability
+                    | FailedCheck::UncontestedRuntimeResolution
+                    | FailedCheck::UncontestedRuntimeCapability
+            ) {
+                if !self.checked.check.uncontested() {
+                    competition.execute().await;
+                }
+                if matches!(
+                    self.checked.check,
+                    FailedCheck::RuntimeResolution | FailedCheck::UncontestedRuntimeResolution
+                ) {
+                    return Err(AgentRuntimeError::Unavailable(
+                        "runtime lookup unavailable after dispatch was fenced".into(),
+                    ));
+                }
+                let mut connection = self.runtime.resolve(target).await?;
+                connection.capabilities = RuntimeCapabilities::new([]);
+                return Ok(connection);
+            }
+            if matches!(
+                self.checked.check,
                 FailedCheck::UncontestedSelection | FailedCheck::Retirement
             ) {
                 self.checked
@@ -244,7 +281,7 @@ async fn failed_check_preserves_competing_dispatch(check: FailedCheck) {
         execution.await
     };
     let current = store.get_agent(&agent.id).await.unwrap().unwrap();
-    if check == FailedCheck::UncontestedSelection {
+    if check.uncontested() {
         assert_eq!(gateway.calls.load(Ordering::SeqCst), 0);
         assert_eq!(
             current.conversation.operation.as_ref().unwrap().state,
@@ -329,4 +366,24 @@ async fn model_credit_failed_check_retires_an_unstarted_phase_before_rollback() 
 #[tokio::test]
 async fn model_credit_dispatch_winning_retirement_race_preserves_recovery() {
     failed_check_preserves_competing_dispatch(FailedCheck::Retirement).await;
+}
+
+#[tokio::test]
+async fn model_credit_runtime_resolution_failure_preserves_competing_dispatch() {
+    failed_check_preserves_competing_dispatch(FailedCheck::RuntimeResolution).await;
+}
+
+#[tokio::test]
+async fn model_credit_runtime_capability_failure_preserves_competing_dispatch() {
+    failed_check_preserves_competing_dispatch(FailedCheck::RuntimeCapability).await;
+}
+
+#[tokio::test]
+async fn model_credit_runtime_resolution_failure_retires_unstarted_funding() {
+    failed_check_preserves_competing_dispatch(FailedCheck::UncontestedRuntimeResolution).await;
+}
+
+#[tokio::test]
+async fn model_credit_runtime_capability_failure_retires_unstarted_funding() {
+    failed_check_preserves_competing_dispatch(FailedCheck::UncontestedRuntimeCapability).await;
 }
