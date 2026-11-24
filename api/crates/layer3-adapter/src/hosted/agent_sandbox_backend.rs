@@ -63,6 +63,13 @@ impl AgentSandboxBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for AgentSandboxBackend {
+    fn stale_turn_producer(
+        &self,
+        _: &RuntimeHandle,
+    ) -> Option<&dyn crate::stale_turn::StaleTurnProducer> {
+        self.transport.stale_turn_producer()
+    }
+
     fn startup_binding_headroom(&self, _handles: &[RuntimeHandle]) -> Option<usize> {
         Some(binding::MAX_ASSIGNMENTS.saturating_sub(self.assignments.lock().unwrap().len()))
     }

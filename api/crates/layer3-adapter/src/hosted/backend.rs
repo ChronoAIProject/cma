@@ -80,6 +80,13 @@ pub trait HostedAgentRuntime: Send + Sync {
 /// Provider lifecycle and supervisor transport used by a hosted adapter.
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
+    fn stale_turn_producer(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::stale_turn::StaleTurnProducer> {
+        None
+    }
+
     /// Snapshot only: the caller must exclude all other binding-cache writers until done.
     fn startup_binding_headroom(&self, _handles: &[RuntimeHandle]) -> Option<usize> {
         None

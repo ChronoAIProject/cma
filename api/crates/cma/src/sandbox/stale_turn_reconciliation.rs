@@ -220,14 +220,52 @@ impl Worker {
                 let producer = adapter
                     .stale_turn_producer(&expected.runtime)
                     .ok_or("producer_seal_unavailable")?;
-                let producer_evidence = producer
+                let producer_evidence = match producer
                     .observe_stale_turn_seal(&expected, budget.remaining() as usize)
                     .await
-                    .map_err(|hold| match hold {
-                        StaleTurnHold::Unsupported => "producer_seal_unavailable",
-                        StaleTurnHold::Unconfirmed => "producer_seal_unconfirmed",
-                        StaleTurnHold::CanonicalResult => "canonical_result",
-                    })?;
+                {
+                    Ok(evidence) => evidence,
+                    Err(StaleTurnHold::Unsupported) => return Err("producer_seal_unavailable"),
+                    Err(StaleTurnHold::CanonicalResult) => return Err("canonical_result"),
+                    Err(StaleTurnHold::Unconfirmed) => {
+                        let fresh = self
+                            .store
+                            .observe(candidate, now, budget)
+                            .await
+                            .map_err(|error| error.outcome())?;
+                        let Observation::Quiet {
+                            target: current,
+                            evidence,
+                            ..
+                        } = fresh
+                        else {
+                            return Err("identity_changed");
+                        };
+                        let confirmed = StaleTurnSettlement::target(
+                            &evidence.snapshot,
+                            &evidence.parent,
+                            &evidence.command,
+                            &authority.token,
+                        )
+                        .map_err(|_| "terminal_evidence_unavailable")?;
+                        if current != target || confirmed != expected {
+                            return Err("identity_changed");
+                        }
+                        if !self
+                            .registry
+                            .owned_target_is_recording(&target, &authority.token)
+                        {
+                            return Err("recorder_unavailable");
+                        }
+                        return match producer.request_stale_turn_stop(&confirmed).await {
+                            Ok(()) => Err("producer_stop_pending"),
+                            Err(StaleTurnHold::CanonicalResult) => Err("canonical_result"),
+                            Err(StaleTurnHold::Unsupported | StaleTurnHold::Unconfirmed) => {
+                                Err("producer_seal_unconfirmed")
+                            }
+                        };
+                    }
+                };
                 let seal = producer_evidence.seal;
                 if !seal.matches(&expected) {
                     return Err("producer_seal_unconfirmed");

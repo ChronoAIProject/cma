@@ -3,6 +3,13 @@ use crate::{desktop_ownership::DesktopOwnedRuntime, Result};
 
 #[async_trait::async_trait]
 impl SandboxAdapter for HostedAdapter {
+    fn stale_turn_producer(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::stale_turn::StaleTurnProducer> {
+        self.backend.stale_turn_producer(handle)
+    }
+
     fn startup_binding_headroom(&self, handles: &[RuntimeHandle]) -> Option<usize> {
         self.backend.startup_binding_headroom(handles)
     }

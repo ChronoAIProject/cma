@@ -31,6 +31,10 @@ const DEFAULT_READY_POLL: Duration = Duration::from_millis(500);
 /// Runtime control-link implementation paired with the provider lifecycle.
 #[async_trait::async_trait]
 pub trait HostedControlTransport: Send + Sync {
+    fn stale_turn_producer(&self) -> Option<&dyn crate::stale_turn::StaleTurnProducer> {
+        None
+    }
+
     async fn challenge_retirement_receiver(
         &self,
         _handle: &RuntimeHandle,

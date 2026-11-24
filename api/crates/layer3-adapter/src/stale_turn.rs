@@ -123,8 +123,8 @@ pub struct StaleTurnEvidence {
 }
 
 /// Only an adapter that can authenticate the exact producer's durable seal may
-/// implement this capability. Calls are observation only. They cannot dispatch
-/// or cancel input, and a cancelled read cannot leave a detached probe running.
+/// implement this capability. Observation cannot dispatch or cancel input, and
+/// a cancelled read cannot leave a detached probe running.
 #[async_trait::async_trait]
 pub trait StaleTurnProducer: Send + Sync {
     /// Stop reading producer evidence at the supplied cumulative byte bound.
@@ -133,6 +133,15 @@ pub trait StaleTurnProducer: Send + Sync {
         target: &StaleTurnTarget,
         max_evidence_bytes: usize,
     ) -> Result<StaleTurnEvidence, StaleTurnHold>;
+
+    /// Submit one exact stop after the caller has revalidated ownership and eligibility.
+    /// Acknowledgement only confirms submission. Observe the ordered result separately.
+    async fn request_stale_turn_stop(
+        &self,
+        _target: &StaleTurnTarget,
+    ) -> Result<(), StaleTurnHold> {
+        Err(StaleTurnHold::Unsupported)
+    }
 }
 
 fn valid_stream(value: &str) -> bool {

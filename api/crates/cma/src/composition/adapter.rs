@@ -176,6 +176,17 @@ pub(super) async fn production_adapter(
         .with_shared_runtime_output(config.features.shared_runtime_output)
         .with_native_close_agent_lane(config.features.native_close_agent_lane)
         .with_legacy_receiver_image(config.runtime.legacy_receiver_image.clone());
+        let transport = match &config.runtime.stale_turn_runtime_digest {
+            Some(digest)
+                if config.features.stale_turn_reconciliation
+                    && config.features.stale_turn_terminal =>
+            {
+                transport
+                    .with_qualified_stale_turn_image(digest.clone())
+                    .map_err(|error| error.to_string())?
+            }
+            _ => transport,
+        };
         let transport = register_owner_control(config, "native", transport, &mut owner_controls);
         backends.agent_sandbox = Some(Arc::new(layer3_adapter::hosted::AgentSandboxBackend::new(
             client, transport,
