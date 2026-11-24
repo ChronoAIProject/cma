@@ -14,12 +14,15 @@ pub(super) async fn page(
     auth: &AuthenticatedResourceCaller,
     id: AgentId,
     raw: Option<String>,
-    message_bindings: bool,
-    tool_output: bool,
-    retained_output: bool,
-) -> Result<EventPage, Error> {
+    preferences: projection::Preferences,
+) -> Result<(EventPage, super::external_approval::Preference), Error> {
     let (limit, page_cursor) = parse::snapshot(raw)?;
     let authorization = snapshot::authorize(state, auth, &id).await?;
+    let external = super::external_approval::Preference::new(
+        preferences.external_approval,
+        &state.external_review_origin,
+        &authorization,
+    );
     let window = state
         .reads
         .buffered_event_window(&authorization, &state.commands, |header| {
@@ -32,12 +35,18 @@ pub(super) async fn page(
                 after,
                 through,
                 limit,
-                message_bindings,
+                message_bindings: preferences.message_bindings,
             })
         })
         .await?;
     let identity = cursor::incarnation(&window.header);
-    let items = projection::items(&window, &identity, tool_output, retained_output)?;
+    let mut items = projection::items(
+        &window,
+        &identity,
+        preferences.tool_output,
+        preferences.retained_output,
+    )?;
+    external.project(&mut items)?;
     // A successful forward window is empty only at its frozen upper bound;
     // oversized first entries and incomplete intervals fail in core.
     let delivered = items.last().map_or(window.through, |item| item.sequence);
@@ -54,7 +63,7 @@ pub(super) async fn page(
     if serde_json::to_vec(&page).map_err(|_| Error::History)?.len() > projection::MAX_BYTES {
         return Err(Error::History);
     }
-    Ok(page)
+    Ok((page, external))
 }
 
 pub(super) async fn head(

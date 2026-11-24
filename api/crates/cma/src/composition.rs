@@ -349,7 +349,9 @@ impl ControlPlaneComposition {
                 task_experience: config.task_experience.clone(),
             },
         );
-        let projections = projections.with_commands(agent_access.commands.clone());
+        let projections = projections
+            .with_commands(agent_access.commands.clone())
+            .with_external_approval_review_origin(auth.approval_review_origin());
         let responses_v2 = bindings::responses(
             &stores,
             agent_access.commands.clone(),

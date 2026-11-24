@@ -24,6 +24,7 @@ mod agent_v2;
 mod response_readers_tests;
 
 pub(crate) struct AgentProjectionServices {
+    external_review_origin: String,
     bounded_replay: bool,
     suggestions: Option<Arc<dyn layer2_core::sandbox::suggestions::SuggestionStore>>,
     agent_page_origin: layer1_public::agent_page::AgentPageOrigin,
@@ -39,6 +40,10 @@ pub(crate) struct AgentProjectionServices {
 }
 
 impl AgentProjectionServices {
+    pub(crate) fn with_external_approval_review_origin(mut self, origin: &str) -> Self {
+        self.external_review_origin = origin.into();
+        self
+    }
     pub(crate) fn command_service(
         &self,
     ) -> Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>> {
@@ -172,6 +177,7 @@ impl AgentProjectionServices {
         );
         Self {
             bounded_replay: false,
+            external_review_origin: String::new(),
             suggestions: None,
             agent_page_origin,
             message_feedback: None,
