@@ -1,5 +1,5 @@
 //! Typed ownership closure, never a generic identity/prefix scan.
-use super::census_catalog::{Policy, AUDIT};
+use super::census_catalog::{Policy, AUDIT, INDEPENDENT_CUSTODY};
 use super::*;
 use std::collections::BTreeSet;
 #[path = "census_activity.rs"]
@@ -17,12 +17,13 @@ pub(super) struct Closure {
     commands: Vec<String>,
 }
 pub(super) fn validate_catalog() -> Result<()> {
-    let names: BTreeSet<_> = AUDIT.iter().map(|(name, _)| *name).collect();
-    let declared: BTreeSet<_> = super::super::isolation::COLLECTIONS
+    let names: BTreeSet<_> = AUDIT
         .iter()
-        .copied()
+        .chain(INDEPENDENT_CUSTODY)
+        .map(|(name, _)| *name)
         .collect();
-    if names.len() != AUDIT.len() || names != declared {
+    let declared: BTreeSet<_> = super::super::isolation::authority_collections().collect();
+    if names.len() != AUDIT.len() + INDEPENDENT_CUSTODY.len() || names != declared {
         return Err(REFUSED);
     }
     Ok(())
@@ -33,7 +34,12 @@ pub(super) async fn selection(
     closure: &Closure,
     session: &mut ClientSession,
 ) -> Result<Document> {
-    let policy = AUDIT.iter().find(|(n, _)| *n == name).ok_or(REFUSED)?.1;
+    let policy = AUDIT
+        .iter()
+        .chain(INDEPENDENT_CUSTODY)
+        .find(|(n, _)| *n == name)
+        .ok_or(REFUSED)?
+        .1;
     if matches!(policy, Policy::Budget) {
         budget::require_known_shapes(db, session).await?;
     }
