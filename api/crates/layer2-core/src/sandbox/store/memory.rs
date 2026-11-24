@@ -430,6 +430,7 @@ impl AgentStore for InMemorySandboxStore {
             || current.owner != agent.owner
             || current.profile != agent.profile
             || current.conversation.settings != agent.conversation.settings
+            || current.conversation.turn_timeout != agent.conversation.turn_timeout
             || current.work.resolved_skills != agent.work.resolved_skills
             || current.work.live_skills != agent.work.live_skills
         {

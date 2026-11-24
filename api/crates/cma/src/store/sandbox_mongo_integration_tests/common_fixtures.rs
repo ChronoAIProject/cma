@@ -216,6 +216,7 @@ pub(super) fn worktree_and_agent(sandbox_id: &SandboxId) -> (Worktree, Agent) {
         ]),
         status: AgentStatus::Starting,
         conversation: ConversationState {
+            turn_timeout: None,
             preferences: Default::default(),
             managed_guidance_revision: 0,
             observations: Default::default(),

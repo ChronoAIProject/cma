@@ -167,6 +167,7 @@ mod retained_reopen_service;
 #[cfg(test)]
 mod retained_reopen_tests;
 mod retained_suspended_reopen;
+pub mod turn_timeout;
 pub use retained_reopen::{
     apply_retained_reopen, RetainedReopenAccepted, RetainedReopenProof, RetainedReopenReceipt,
     RetainedReopenReplay, RetainedReopenRequest, RetainedReopenSnapshot, RetainedReopenVerifier,
@@ -321,7 +322,7 @@ pub use credential_prerequisite::{
 pub use error::SandboxModelError;
 pub use event::{
     AgentAvailableCommand, AgentConfigOption, AgentLogEntry, AgentLogKind, AgentPlanStep,
-    RecordedToolOutput, SandboxEvent, SandboxEventKind,
+    ExternalApprovalResolution, RecordedToolOutput, SandboxEvent, SandboxEventKind,
 };
 pub use execution::ProvisioningExecution;
 pub use first_message::{
