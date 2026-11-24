@@ -170,7 +170,12 @@ for (const kind of ['Agent', 'Sandbox'] as const)
         await act(async () => fireEvent.click(screen.getByText('Close', { selector: 'button' })));
       }
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-      expect(screen.getAllByRole('region', { name: 'Deletion request' })).toHaveLength(2);
+      expect(screen.getAllByRole('region', { name: 'Deletion request' })).toHaveLength(1);
+      expect(screen.getByRole('region', { name: 'Deletion request' })).toHaveTextContent(
+        failure === 'unknown'
+          ? '2 deletion requests · 1 unconfirmed'
+          : `Deleting 2 ${kind === 'Sandbox' ? 'environments' : 'Agents'}`,
+      );
       expect(restoreDeletions('owner')).toHaveLength(storageFails ? 1 : 2);
       if (failure === 'remove-failure')
         vi.spyOn(localStorage, 'removeItem').mockImplementation(() => {
@@ -206,3 +211,26 @@ for (const kind of ['Agent', 'Sandbox'] as const)
       expect(screen.queryAllByRole('region', { name: 'Deletion request' })).toHaveLength(1);
     },
   );
+
+it('resets the open aggregate when the viewer changes without reading or submitting requests', async () => {
+  for (const viewer of ['first-owner', 'second-owner'])
+    persistDeletion(viewer, {
+      key: viewer,
+      accepted: true,
+      action: { kind: 'delete_agent', agentId: viewer },
+    });
+  const source = agentClient({ readAgent: vi.fn(), deleteAgent: vi.fn() });
+  function Notice({ viewer }: { readonly viewer: string }) {
+    return useResourceActions(source, vi.fn(), undefined, viewer).notice;
+  }
+  const view = render(<Notice viewer="first-owner" />);
+  fireEvent.click(screen.getByRole('button', { name: 'View status' }));
+  expect(screen.getByRole('dialog')).toHaveTextContent('first-owner');
+  view.rerender(<Notice viewer="second-owner" />);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'View status' }));
+  expect(screen.getByRole('dialog')).toHaveTextContent('second-owner');
+  expect(screen.getByRole('dialog')).not.toHaveTextContent('first-owner');
+  expect(source.readAgent).not.toHaveBeenCalled();
+  expect(source.deleteAgent).not.toHaveBeenCalled();
+});

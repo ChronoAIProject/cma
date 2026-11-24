@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { CmaClientProvider } from './api/context';
@@ -16,7 +16,7 @@ it('keeps accepted cleanup optional across navigation and allows deleting anothe
     visitor: false,
     capabilities: ['create_sandbox', 'use_own_sandboxes', 'delete_own_sandbox'],
   };
-  const sandboxes = ['first', 'second'].map((id) => ({
+  const sandboxes = ['first', 'second', 'third', 'fourth', 'fifth'].map((id) => ({
     ...sandboxFixture(),
     id,
     name: id,
@@ -63,13 +63,40 @@ it('keeps accepted cleanup optional across navigation and allows deleting anothe
   expect(deleteSandbox.mock.calls.map(([id]) => id)).toEqual(['first', 'second']);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.getByText('Deletion progress (2)')).toBeInTheDocument();
+  for (const id of ['third', 'fourth', 'fifth']) {
+    view.rerender(draw(id));
+    await act(async () => {});
+    await remove();
+  }
+  expect(screen.getAllByRole('region', { name: 'Deletion request' })).toHaveLength(1);
+  expect(screen.getByText('Deleting 5 environments')).toBeVisible();
   view.unmount();
-  render(draw('second'));
+  const reloaded = render(draw('second'));
   await act(async () => {});
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  await actor.click(screen.getByRole('button', { name: 'View deletion status' }));
+  await actor.click(screen.getByRole('button', { name: 'View status' }));
+  const progress = screen.getByRole('dialog', { name: 'Deletion progress' });
+  expect(within(progress).getAllByRole('listitem')).toHaveLength(5);
+  await actor.click(
+    within(progress).getByRole('button', { name: 'View Sandbox deletion status (5)' }),
+  );
   expect(screen.getByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
-  expect(deleteSandbox).toHaveBeenCalledTimes(2);
+  expect(deleteSandbox).toHaveBeenCalledTimes(5);
+  expect(screen.queryByRole('dialog', { name: 'Deletion progress' })).not.toBeInTheDocument();
+  await actor.click(screen.getByText('Close', { selector: 'button' }));
+  for (const [index, sandbox] of sandboxes.entries()) {
+    sandbox.status = 'retired';
+    reloaded.rerender(draw(sandbox.id));
+    await act(async () => {});
+    const remaining = sandboxes.length - index - 1;
+    if (remaining)
+      expect(screen.getByRole('region', { name: 'Deletion request' })).toHaveTextContent(
+        `Deleting ${remaining} environment${remaining === 1 ? '' : 's'}`,
+      );
+    else expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
+  }
+  expect(restoreDeletions('owner')).toEqual([]);
+  expect(deleteSandbox).toHaveBeenCalledTimes(5);
 });
 
 it('reconciles accepted notices when an existing page read proves retirement after re-entry', async () => {
@@ -92,14 +119,14 @@ it('reconciles accepted notices when an existing page read proves retirement aft
     </CmaClientProvider>
   );
   const view = render(draw(false));
-  await screen.findByText('Sandbox delete request accepted. Cleanup continues in the background.');
+  await screen.findByText('Deleting 1 environment');
   view.rerender(draw(true));
   await act(async () => {});
   expect(restoreDeletions('owner')).toEqual([request]);
   readSandbox.mockResolvedValue(sandboxFixture('retired'));
   view.rerender(draw(false));
   await act(async () => {});
-  expect(screen.queryByText(/Cleanup continues in the background/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
   expect(screen.queryByText('Deletion progress (1)')).not.toBeInTheDocument();
   expect(restoreDeletions('owner')).toEqual([]);
 });

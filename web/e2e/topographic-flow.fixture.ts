@@ -145,10 +145,15 @@ export async function protectedFlowFixture(
       await page.goto(
         target === 'ordinary' ? '/' : target === 'usage' ? '/usage' : '/agents/agt_contract',
       );
-      if (target === 'deletion')
+      if (target === 'deletion') {
+        await page
+          .getByRole('region', { name: 'Deletion request', exact: true })
+          .getByRole('button', { name: 'View status', exact: true })
+          .click();
         await page
           .getByRole('button', { name: 'View Sandbox deletion status (1)', exact: true })
           .click();
+      }
       if (target === 'channel') {
         await page.getByRole('button', { name: 'Show Agent details', exact: true }).click();
         await page.getByRole('button', { name: 'Channel history', exact: true }).click();
