@@ -92,6 +92,21 @@ class MigrationInventoryTests(unittest.TestCase):
             self.assertEqual(row["old_to_new"], "NOT_RUN")
             self.assertEqual(row["new_to_old"], "NOT_RUN")
 
+    def test_imported_registry_module_does_not_hide_a_new_namespace(self):
+        for files in self.git.files.values():
+            files["store/isolation.rs"] = '''
+use super::retained_consents;
+const COLLECTIONS: &[&str] = &[retained_consents::COLLECTION];
+const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
+'''
+            files["store/retained_consents.rs"] = 'const COLLECTION: &str = "retained_consents";'
+        self.git.files[NEW]["store/isolation.rs"] = self.git.files[NEW]["store/isolation.rs"].replace(
+            "retained_consents::COLLECTION]", "retained_consents::COLLECTION, super::measured::COLLECTION]")
+        self.git.files[NEW]["store/measured.rs"] = 'const COLLECTION: &str = "measured_observations";'
+        rows = inventory.compare(self.source(OLD), self.source())["collections"]
+        self.assertEqual([row["name"] for row in rows if row["old"] is None], ["measured_observations"])
+        self.assertFalse(any(row["new"] is None for row in rows))
+
     def test_unknown_expression_missing_constant_and_duplicate_cannot_drop_a_row(self):
         for expression in ('make_collection!()', 'super::absent::COLLECTION', '"agents", "agents"'):
             with self.subTest(expression=expression):
@@ -99,20 +114,6 @@ class MigrationInventoryTests(unittest.TestCase):
                     'const COLLECTIONS: &[&str] = &[' + expression + '];')
                 with self.assertRaises(ValueError):
                     self.source().collections()
-
-    def test_discovers_new_runtime_custody_outside_the_archive_registry(self):
-        path = "store/isolation.rs"
-        registry = "INDEPENDENT_CUSTODY_COLLECTIONS"
-        self.git.files[NEW][path] += f'''
-const {registry}: &[&str] = &[super::measured::COLLECTION];
-'''
-        self.git.files[NEW]["store/measured.rs"] = 'const COLLECTION: &str = "measured_custody";'
-        rows = {r["name"]: r for r in inventory.compare(self.source(OLD), self.source())["collections"]}
-        self.assertIsNone(rows["measured_custody"]["old"])
-        self.assertEqual(rows["measured_custody"]["new"]["role"], "runtime")
-        self.git.files[NEW][path] = self.git.files[NEW][path].replace("&[super::measured::COLLECTION]", "dynamic()")
-        with self.assertRaisesRegex(ValueError, "unrecognized collection registry"):
-            self.source().collections()
 
     def test_refuses_duplicate_across_runtime_and_replica_catalogs(self):
         self.git.files[NEW]["store/ownership/mod.rs"] = '''

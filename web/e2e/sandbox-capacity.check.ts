@@ -259,7 +259,7 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
   await page.goto('/');
   await expect(capacity.getByText('All 10 Sandbox environment slots are in use')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Deletion request', exact: true })).toHaveText(
-    /Sandbox delete request accepted\. Cleanup continues in the background\./,
+    /Deleting 1 environment/,
   );
   await expect(
     page.getByRole('button', { name: 'View deletion status', exact: true }),

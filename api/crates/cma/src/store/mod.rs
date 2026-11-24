@@ -55,6 +55,7 @@ mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
 pub(crate) mod stale_turns;
+pub(crate) mod transaction_barrier;
 #[cfg(test)]
 pub(crate) use agent_worker_transaction::adoption_probe;
 #[cfg(test)]
@@ -92,6 +93,7 @@ pub(crate) mod legal_consents;
 mod media_uploads;
 pub(crate) mod provenance_progress;
 pub(crate) mod registration_capacity;
+mod retained_consents;
 mod segment_response;
 mod transaction_scope;
 pub(crate) use segment_response::emit as emit_response_reads;

@@ -1,6 +1,9 @@
 use super::*;
 use serde_json::Value;
 
+#[path = "creation_pending.rs"]
+mod pending;
+
 fn reserved_body() -> Value {
     let mut body = create_body();
     body["record_id"] = uuid::Uuid::new_v4().to_string().into();

@@ -12,12 +12,12 @@ pub(super) enum Policy {
     Empty,
 }
 use Policy::*;
-// Billing evidence has its own retention policy and is outside the immutable
-// Sandbox archive census and its persisted digest.
-pub(super) const INDEPENDENT_CUSTODY: &[(&str, Policy)] = &[(
+// The schema authority inventories detached consent receipts and measured
+// billing evidence outside the Sandbox retirement manifest.
+pub(super) const OUTSIDE_MANIFEST: &[&str] = &[
+    super::super::retained_consents::COLLECTION,
     crate::store::migrations::measured_custody::COLLECTION,
-    Independent,
-)];
+];
 pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("account_deletions", Independent),
     ("account_deletion_events", Independent),

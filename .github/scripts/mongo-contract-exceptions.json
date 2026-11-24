@@ -103,6 +103,10 @@
     "kind": "fixture",
     "reason": "Requires authenticated disposable service Mongo fixture."
   },
+  "store::isolation::tests::real_transaction_barrier_is_authorized_by_the_exact_runtime_grant": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture; selected by image-manager-mongo-contract.sh."
+  },
   "store::migrations::tests::segments_runtime::canonical_migrator_and_isolated_runtime_cover_controls_and_format2_work": {
     "kind": "fixture",
     "reason": "Requires authenticated disposable service Mongo fixture."
