@@ -4,7 +4,7 @@ import type { InputErrorOwner } from './actionError';
 import type { AgentCommand, ApprovalDecision } from './controller';
 import type { MessageAcceptance } from './controllerTypes';
 import { ApiError, type AnswerContext } from '@cma/client';
-import { stoppedInputMessage } from './controllerError';
+import { isLegacySuggestionRefusal, stoppedInputMessage } from './controllerError';
 import { submitV2Control, recoverV2Control } from './transport/controls';
 import {
   submitV2Interruption,
@@ -280,10 +280,7 @@ export function useAgentActions({
           currentContext.current === context &&
           legacyKey &&
           !accepted &&
-          error instanceof ApiError &&
-          ((error.status === 422 &&
-            ['invalid_run_request', 'invalid_answer_context'].includes(error.code ?? '')) ||
-            (error.status === 409 && error.code === 'agent_not_ready'))
+          isLegacySuggestionRefusal(error)
         ) {
           legacy?.journal.legacySuggestion.refused(legacyKey);
           onRefused?.(error.status === 409 ? 'answer_changed' : undefined);
