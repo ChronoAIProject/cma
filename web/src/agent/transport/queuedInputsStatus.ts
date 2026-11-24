@@ -17,6 +17,7 @@ export interface QueuedInputRow {
   readonly busy?: boolean;
   readonly error?: string;
   readonly needsRecovery?: boolean;
+  readonly pendingEdit?: string;
 }
 export interface QueuedInputsControl {
   readonly items: readonly QueuedInputRow[];
@@ -263,6 +264,14 @@ export function useQueuedInputs(
           ...item,
           busy: item.busy || local?.busy.has(item.responseId),
           needsRecovery: intents.some((intent) => intent.responseId === item.responseId),
+          pendingEdit: storageError
+            ? undefined
+            : intents.find(
+                (intent) =>
+                  intent.action === 'edit' &&
+                  intent.responseId === item.responseId &&
+                  intent.commandId === item.commandId,
+              )?.text,
           error: local?.errors.get(item.responseId),
         }))
       : [],

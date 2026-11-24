@@ -14,11 +14,8 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{
-    durability::majority_collection, sandbox_mongo as transaction, schema,
-    transaction_terminal::GuardedTerminal as _,
-};
-use crate::config::CreationOutcomesConfig;
+use super::{durability::majority_collection, sandbox_mongo as transaction, schema};
+use crate::{config::CreationOutcomesConfig, store::transaction_terminal::GuardedTerminal};
 
 mod coverage;
 mod legacy;

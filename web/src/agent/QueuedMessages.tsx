@@ -16,6 +16,7 @@ export interface QueuedMessageItem {
   readonly busy?: boolean;
   readonly error?: string;
   readonly needsRecovery?: boolean;
+  readonly pendingEdit?: string;
 }
 interface QueueActions {
   readonly disabled?: boolean;
@@ -236,6 +237,9 @@ function QueueRow({
             </div>
           ) : null}
         </Presence>
+        {!unavailable && item.needsRecovery && item.pendingEdit !== undefined ? (
+          <PendingQueuedEdit key={item.pendingEdit} text={item.pendingEdit} />
+        ) : null}
         {!unavailable ? (
           <div className="queued-message__actions">
             <Button
@@ -260,5 +264,37 @@ function QueueRow({
         ) : null}
       </div>
     </article>
+  );
+}
+
+function PendingQueuedEdit({ text }: { readonly text: string }) {
+  const [copy, setCopy] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
+  return (
+    <div className="queued-message__editor-frame queued-message-editor">
+      <label>
+        Edit awaiting confirmation
+        <textarea readOnly value={text} rows={3} />
+      </label>
+      <p>The edit is saved in this browser. It has not been confirmed.</p>
+      <Button
+        size="sm"
+        disabled={copy === 'copying'}
+        onClick={async () => {
+          setCopy('copying');
+          try {
+            await navigator.clipboard.writeText(text);
+            setCopy('copied');
+          } catch {
+            setCopy('failed');
+          }
+        }}
+      >
+        Copy edit
+      </Button>
+      {copy === 'copied' ? <p role="status">Edit copied.</p> : null}
+      {copy === 'failed' ? (
+        <p role="status">Copy was unavailable. Select and copy the edit above.</p>
+      ) : null}
+    </div>
   );
 }
