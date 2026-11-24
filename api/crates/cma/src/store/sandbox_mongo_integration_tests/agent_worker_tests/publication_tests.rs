@@ -226,7 +226,7 @@ async fn agent_work_consumes_only_the_exact_durable_stop_intent() {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn owner_stop_settlement_fences_parents_and_retains_partial_output() {
     for segmented in [false, true] {
-        check_owner_stop_fences(false, segmented).await;
+        check_owner_stop_fences(false, segmented, false).await;
     }
 }
 
@@ -234,11 +234,19 @@ async fn owner_stop_settlement_fences_parents_and_retains_partial_output() {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn owner_stop_settlement_refuses_expired_lease_without_takeover() {
     for segmented in [false, true] {
-        check_owner_stop_fences(true, segmented).await;
+        check_owner_stop_fences(true, segmented, false).await;
     }
 }
 
-async fn check_owner_stop_fences(expire: bool, segmented: bool) {
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn owner_stop_settlement_reconciles_a_lost_acknowledgement() {
+    for segmented in [false, true] {
+        check_owner_stop_fences(false, segmented, true).await;
+    }
+}
+
+async fn check_owner_stop_fences(expire: bool, segmented: bool, lost_ack: bool) {
     use layer2_core::budget::{BudgetPolicy, OwnerBudget, TurnReservation};
     use layer2_core::sandbox::store::{
         AgentLogPublicationIdentity, AgentWorkPublication, AgentWorkPublicationLineage,
@@ -246,7 +254,27 @@ async fn check_owner_stop_fences(expire: bool, segmented: bool) {
     };
     use std::time::{Duration, SystemTime};
 
-    let (client, name) = database("owner_stop_settlement").await;
+    let (mut client, name) = database("owner_stop_settlement").await;
+    let uncertain_replies = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    if lost_ack {
+        let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
+        let mut options = ClientOptions::parse(uri).await.unwrap();
+        options.app_name = Some(name.clone());
+        let seen = Arc::clone(&uncertain_replies);
+        options.command_event_handler = Some(EventHandler::callback(move |event| {
+            if let CommandEvent::Succeeded(event) = event {
+                if event.command_name == "commitTransaction"
+                    && event
+                        .reply
+                        .get_document("writeConcernError")
+                        .is_ok_and(|error| error.get_i32("code").ok() == Some(50))
+                {
+                    seen.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        }));
+        client = Client::with_options(options).unwrap();
+    }
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let mut agent = ready_conversation_fixture(&store, "stop_settlement").await;
     store
@@ -494,13 +522,33 @@ async fn check_owner_stop_fences(expire: bool, segmented: bool) {
         client.database(&name).drop().await.unwrap();
         return;
     }
-    assert_eq!(
-        store
-            .try_publish_agent_work(proposal, observed)
+    let admin = client.database("admin");
+    if lost_ack {
+        admin
+            .run_command(doc! {
+                "configureFailPoint": "failCommand",
+                "mode": {"times": 5_i32},
+                "data": {
+                    "failCommands": ["commitTransaction"],
+                    "appName": &name,
+                    "writeConcernError": {
+                        "code": 50_i32, "codeName": "MaxTimeMSExpired",
+                        "errmsg": "injected owner Stop publication ambiguity",
+                    },
+                },
+            })
             .await
-            .unwrap(),
-        AgentWorkPublication::Published,
-    );
+            .unwrap();
+    }
+    let published = store.try_publish_agent_work(proposal, observed).await;
+    if lost_ack {
+        admin
+            .run_command(doc! {"configureFailPoint": "failCommand", "mode": "off"})
+            .await
+            .unwrap();
+        assert!(uncertain_replies.load(Ordering::SeqCst) > 0);
+    }
+    assert_eq!(published.unwrap(), AgentWorkPublication::Published);
     assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(stopped));
     let actual: Vec<_> = store
         .agent_log(&agent.id, 0, 20)
