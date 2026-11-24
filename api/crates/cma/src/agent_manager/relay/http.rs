@@ -85,7 +85,12 @@ async fn route_request(
     };
     // A draining receiver must authenticate the signed hop before reporting
     // handoff. Public ingress and unrelated coordinator failures still refuse.
-    let draining_file_peer = file_read && proof.is_some() && relay.coordinator.is_draining();
+    let write_handoff_route = relay.authentication.file_write_handoff_enabled()
+        && !private
+        && request.method() == axum::http::Method::POST
+        && request.uri().path().ends_with("/files");
+    let draining_file_peer =
+        (file_read || write_handoff_route) && proof.is_some() && relay.coordinator.is_draining();
     if !relay.coordinator.is_ready() && !draining_file_peer {
         return unavailable_with(environment.as_ref(), Refusal::CoordinatorNotReady);
     }
@@ -105,11 +110,24 @@ async fn route_request(
         _ => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
     };
     let mut request = Request::from_parts(parts, Body::from(bytes.clone()));
-    if !private && !is_cancellation {
-        if let Err(refusal) = authorize_public(&relay, &id, &request, environment.as_ref()).await {
-            return refusal;
+    let file_write =
+        write_handoff_route && file_write::eligible(request.uri().path(), request.method(), &bytes);
+    let write_target = if !private && !is_cancellation {
+        match authorize_public(
+            &relay,
+            &id,
+            &request,
+            environment.as_ref(),
+            file_write && proof.is_none(),
+        )
+        .await
+        {
+            Ok(target) => target,
+            Err(refusal) => return refusal,
         }
-    }
+    } else {
+        None
+    };
     let (destination, reports_handoff) = if let Some(raw) = proof {
         if request.headers().get_all(PROOF).iter().count() != 1 {
             return StatusCode::FORBIDDEN.into_response();
@@ -156,6 +174,10 @@ async fn route_request(
             return StatusCode::FORBIDDEN.into_response();
         }
         let reports_handoff = file_read && verified.reports_file_handoff();
+        let reports_file_write = file_write && verified.reports_file_write_handoff();
+        if reports_file_write && relay.coordinator.is_draining() {
+            return file_write::refusal(&relay, raw.as_bytes());
+        }
         if reports_handoff && relay.coordinator.is_draining() {
             return file_read::refusal(Refusal::CoordinatorNotReady);
         }
@@ -173,6 +195,11 @@ async fn route_request(
             relay.destination(&id).await
         } {
             Ok(value) => value,
+            Err(
+                Refusal::OwnerMissing | Refusal::OwnerMemberUnavailable | Refusal::AuthorityChanged,
+            ) if reports_file_write => {
+                return file_write::refusal(&relay, raw.as_bytes());
+            }
             Err(Refusal::OwnerMissing) if reports_handoff => {
                 return file_read::refusal(Refusal::OwnerMissing);
             }
@@ -195,6 +222,9 @@ async fn route_request(
                     .starts_with("/internal/agent-manager/v1/control/")
                 && destination.token.instance_id == verified.owner.instance_id)
         {
+            if reports_file_write {
+                return file_write::refusal(&relay, raw.as_bytes());
+            }
             return if reports_handoff {
                 file_read::refusal(Refusal::AuthorityChanged)
             } else {
@@ -253,6 +283,11 @@ async fn route_request(
         environment.as_mut(),
     )
     .await;
+    if matches!(forwarded, Err(forward::Failure::WriteNotEntered)) {
+        if let Some(target) = write_target {
+            return file_write::recover(&relay, &id, request, next, slot, deadline, target).await;
+        }
+    }
     match forward::handoff(&forwarded) {
         Some(reason) if file_read => {
             file_read::recover(&relay, &id, request, next, slot, deadline, reason).await
@@ -266,7 +301,10 @@ pub(super) fn authorize_public<'a>(
     id: &'a AgentId,
     request: &'a Request,
     environment: Option<&'a EnvironmentRead>,
-) -> impl std::future::Future<Output = Result<(), Response>> + use<'a> {
+    capture_write_target: bool,
+) -> impl std::future::Future<
+    Output = Result<Option<layer2_core::sandbox::agent_filesystem::FileWriteTarget>, Response>,
+> + use<'a> {
     let access = relay.public_access.get();
     let context = request
         .extensions()
@@ -282,6 +320,7 @@ pub(super) fn authorize_public<'a>(
         headers: ingress::headers(request),
         context,
         credential,
+        capture_write_target,
     });
     async move {
         let access = access
