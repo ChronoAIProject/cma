@@ -64,7 +64,8 @@ pub(super) async fn apply_observed(
         // The segmented reader returns None exclusively for legacy roots.
         None => legacy_evidence(store, &agent, &agent_row, &command, session).await?,
     };
-    let retry_current = if evidence.has_source_deferred() {
+    let source_deferred = evidence.has_source_deferred();
+    let retry_current = if source_deferred {
         // The ledger fold can run anywhere. Only this branch writes the Agent,
         // so tell the scheduler when the durable evidence needs an owner.
         if store.agent_ownership.is_some()
@@ -72,6 +73,7 @@ pub(super) async fn apply_observed(
         {
             return Err(CommandLedgerError::StaleClaim.into());
         }
+        require_unheld_parent(store, &agent, session).await?;
         store
             .fence_agent_effect(&agent.id, session)
             .await
@@ -95,6 +97,9 @@ pub(super) async fn apply_observed(
     let written =
         evidence.apply_with_continuation_retry(&mut command, &mut lane, &agent, retry_current)?;
     if written {
+        if !source_deferred {
+            require_unheld_parent(store, &agent, session).await?;
+        }
         worker_apply::write(store, &command, revision, &lane, session).await?;
     }
     let outcome = if !written {
@@ -105,6 +110,18 @@ pub(super) async fn apply_observed(
         Outcome::Advanced
     };
     Ok((command, outcome))
+}
+
+async fn require_unheld_parent(
+    store: &MongoSandboxStore,
+    agent: &layer2_core::sandbox::Agent,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    if worker_apply::fence_parent(store, Some(agent), session).await? {
+        Ok(())
+    } else {
+        Err(CommandLedgerError::Conflict.into())
+    }
 }
 
 async fn legacy_evidence(
