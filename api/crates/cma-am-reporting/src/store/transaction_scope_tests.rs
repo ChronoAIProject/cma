@@ -1,4 +1,9 @@
 use super::*;
+
+async fn finish<T>(session: &mut impl Transaction, result: Result<T>) -> Result<T> {
+    super::finish(session, result, |_| Box::pin(async {})).await
+}
+
 use mongodb::{
     bson::doc,
     error::{WriteConcernError, WriteFailure},
