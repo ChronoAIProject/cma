@@ -13,6 +13,7 @@ use layer2_core::{rfc3339_at, seconds_from_rfc3339, SandboxId};
 use layer3_adapter::binding_diagnostics::{adapter_outcome, measure, Outcome, Stage};
 use layer3_adapter::{RuntimeAdoptionRequest, RuntimeObservation, SandboxAdapter};
 
+use self::transient::provider_error;
 use super::runtime_mapping::sandbox_spec;
 
 #[path = "reconciliation_supervision.rs"]
@@ -490,14 +491,6 @@ fn fresh_recovery_boundary(sandbox: &Sandbox, floor: SystemTime) -> RecoveryBoun
         observed_at,
         stale: floor > observed_at || durable > observed_at,
     }
-}
-
-fn provider_error(error: layer3_adapter::AdapterError) -> SandboxStoreError {
-    let mapped = SandboxStoreError::Unavailable(format!(
-        "sandbox runtime authority is unavailable: {error}"
-    ));
-    transient::note(&error, &mapped);
-    mapped
 }
 
 fn corrupt(detail: &str) -> SandboxStoreError {
