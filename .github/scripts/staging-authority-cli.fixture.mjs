@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { campaignFixture } from './public-journey-evidence.fixture.mjs';
 import { requiredCases } from './staging-authority.mjs';
+import { externalCleanupFixture } from './external-account-cleanup.fixture.mjs';
 
 export const hash = (value) => createHash('sha256').update(value).digest('hex');
 export function fixtures() {
@@ -36,7 +37,8 @@ export function harness(t) {
   const before = fixtures(), after = fixtures();
   after.request.nonce = after.receipt.nonce = '00000000-0000-4000-8000-000000000002';
   write('before.json', before); write('after.json', after); write('output', '');
-  const { results, journal: proofJournal, connectionFixture } = campaignFixture(requiredCases);
+  const cleanup = externalCleanupFixture('test-owner');
+  const { results, journal: proofJournal, connectionFixture } = campaignFixture(requiredCases, cleanup);
   const identity = { run: 'test-run', at: new Date().toISOString(), kind: 'sandboxes', id: 'test-sandbox', subject: 'test-owner' };
   const journal = [{ ...identity, action: 'created' }, { ...identity, action: 'cleanup_complete' }, ...proofJournal];
   write('results.json', results); write('cleanup.ndjson', journal.map((row) => JSON.stringify(row)).join('\n'));
@@ -45,6 +47,8 @@ export function harness(t) {
     ...Object.fromEntries(Object.entries(before.request.expected.images).map(([key, value]) => [`${key}Image`, value])),
   } };
   write('fixture.json', fixture); write('config.json', '{}');
+  const trust = JSON.stringify(cleanup.authority.trust);
+  write('cleanup-trust.json', trust);
   const observer = `import { readFileSync, writeFileSync } from 'node:fs';
     const request = JSON.parse(readFileSync(0, 'utf8'));
     const receipt = ${JSON.stringify(before.receipt)};
@@ -78,6 +82,7 @@ export function harness(t) {
     CMA_ATTESTATION_VERIFIER: path('observer.mjs'), CMA_ATTESTATION_CONFIG: path('config.json'),
     VERIFIER_SHA256: hash(observer), CONFIG_SHA256: hash('{}'), CMA_E2E_FIXTURE_FILE: path('fixture.json'),
     CMA_E2E_MUTATION_TARGET: fixture.origin, CMA_E2E_BASE_URL: fixture.origin, CMA_E2E_FIXTURE_OWNER: fixture.fixtureOwner,
+    CMA_E2E_CLEANUP_TRUST_FILE: path('cleanup-trust.json'), CMA_E2E_CLEANUP_TRUST_SHA256: hash(trust),
   };
   const run = (mode, args = mode === 'attest' ? [path('attested.json')] : mode === 'audit' ? [directory, path('before.json'), path('after.json')] : []) => {
     write('state.json', state);
@@ -87,5 +92,5 @@ export function harness(t) {
     return result;
   };
   const setObserver = (script) => { write('observer.mjs', script); env.VERIFIER_SHA256 = hash(script); };
-  return { path, write, env, run, state, before, after, fixture, observer, setObserver, results, journal };
+  return { path, write, env, run, state, before, after, fixture, observer, setObserver, results, journal, cleanup };
 }

@@ -65,6 +65,7 @@ export class Harness {
   private identityFlow = false;
   private journeyProof?: Record<string, unknown>;
   private connectionProof?: ConnectionProof;
+  private signupCleanup?: { run: string; requestId: string; fixtureOwner: string; subject: string };
   constructor(
     readonly browser: Browser,
     readonly operators: Hooks,
@@ -158,11 +159,17 @@ export class Harness {
             )
           )
             throw new Error('J0 returned an existing fixture identity');
-          account.subject = identity.subject;
-          this.journal.record({
-            action: 'external_account_cleanup_required',
-            subject: account.subject,
-          });
+          const { subject } = identity;
+          const { fixtureOwner } = this.fixture;
+          const requestId = this.journal.requireExternalAccountCleanup(
+            this.config.baseURL,
+            fixtureOwner,
+            subject,
+          );
+          const signupCleanup = { run: this.journal.run, requestId, fixtureOwner, subject };
+          assertCredentialFree(JSON.stringify(signupCleanup), this.forbidden);
+          this.signupCleanup = signupCleanup;
+          account.subject = subject;
         }
         this.journal.observe(
           url.pathname,
@@ -208,6 +215,11 @@ export class Harness {
     if (this.connectionProof)
       await info.attach('connection-journey-proof', {
         body: JSON.stringify(this.connectionProof),
+        contentType: 'application/json',
+      });
+    if (this.caseId === 'J0' && this.signupCleanup)
+      await info.attach('signup-cleanup', {
+        body: JSON.stringify(this.signupCleanup),
         contentType: 'application/json',
       });
   }
@@ -354,15 +366,16 @@ export class Harness {
     for (const { context, role } of this.contexts.reverse()) {
       try {
         const subject = this.fixture.accounts[role].subject;
+        if (role === 'signup' && subject)
+          this.journal.requireExternalAccountCleanup(
+            this.config.baseURL,
+            this.fixture.fixtureOwner,
+            subject,
+          );
         if (!cleaned.has(subject)) {
           await this.journal.cleanup(context.request, this.config.baseURL, subject);
           cleaned.add(subject);
         }
-        if (role === 'signup')
-          this.journal.record({
-            action: 'external_account_cleanup_required',
-            subject: this.fixture.accounts.signup.subject,
-          });
       } catch (error) {
         failures.push(error);
       } finally {

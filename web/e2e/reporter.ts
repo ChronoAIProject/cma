@@ -19,6 +19,7 @@ export default class RedactedReporter implements Reporter {
     durationMs: number;
     proof?: unknown;
     connectionProof?: unknown;
+    signupCleanup?: unknown;
   }[] = [];
   onBegin(_config: FullConfig, suite: Suite) {
     process.stdout.write(`Discovered ${suite.allTests().length} Playwright cases.\n`);
@@ -34,6 +35,7 @@ export default class RedactedReporter implements Reporter {
     for (const [name, field] of [
       ['public-journey-proof', 'proof'],
       ['connection-journey-proof', 'connectionProof'],
+      ['signup-cleanup', 'signupCleanup'],
     ] as const) {
       const proofs = (result.attachments ?? []).filter((item) => item.name === name);
       if (proofs.length > 0) {
