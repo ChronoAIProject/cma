@@ -250,6 +250,117 @@ async fn fleet_message_reservation_keeps_exact_replay_and_authority_deadlines() 
 }
 
 #[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn held_fleet_message_admission_and_replay_leave_log_proof_unchanged() {
+    use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
+
+    let (client, name) = database("fleet_command_ledger_hold").await;
+    let (legacy, agent, parent) = fixture(&name, &client).await;
+    let (mut store, agent) = prepare_history(legacy, agent, 6).await;
+    store.bounded_admission_agents.clear();
+    let retained = request(&agent, &parent, "retained-fleet-message");
+    let fresh = request(&agent, &parent, "fresh-fleet-message");
+    let admitted = record(store.reserve_command(retained.clone()).await.unwrap());
+    remove_metadata(&store, &agent.id).await;
+
+    let agent_key = doc! {"_id": agent.id.as_str()};
+    let parent_key = doc! {"_id": parent.id.as_str()};
+    let mut hold = Document::new();
+    hold.insert(LEDGER_MAINTENANCE_FIELD, doc! {"phase": "requested"});
+    store
+        .sandboxes
+        .update_one(parent_key.clone(), doc! {"$set": hold})
+        .await
+        .unwrap();
+    let parent_before = store.sandboxes.find_one(parent_key.clone()).await.unwrap();
+    let agent_before = store
+        .agents
+        .find_one(agent_key.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!agent_before.contains_key(INTEGRITY_FIELD));
+
+    isolated(async {
+        let first_process = store.clone().with_fleet_log_percentage(100);
+        assert_eq!(
+            first_process.reserve_command(fresh).await,
+            Err(CommandLedgerError::Conflict)
+        );
+        assert_eq!(snapshot(ScanCaller::RecoveryProof, true)[0], 0);
+        assert_eq!(
+            store
+                .agents
+                .find_one(agent_key.clone())
+                .await
+                .unwrap()
+                .as_ref(),
+            Some(&agent_before)
+        );
+
+        store
+            .agent_log
+            .delete_one(doc! {"agent_id": agent.id.as_str(), "seq": 3_i64})
+            .await
+            .unwrap();
+        // A different process has no preparation cooldown from the first call.
+        let second_process = store.clone().with_fleet_log_percentage(100);
+        assert_eq!(
+            second_process
+                .reserve_command(retained.clone())
+                .await
+                .unwrap(),
+            CommandReservationResult::Existing(Box::new(admitted.clone()))
+        );
+        assert_eq!(snapshot(ScanCaller::RecoveryProof, true)[0], 0);
+    })
+    .await;
+    let bounded = store
+        .prepare_bounded_admission(std::slice::from_ref(&agent.id))
+        .await
+        .unwrap();
+    assert!(!bounded.bounded_admission_agents.contains(&agent.id));
+    assert_eq!(
+        bounded.agents.find_one(agent_key.clone()).await.unwrap(),
+        Some(agent_before)
+    );
+    assert_eq!(
+        bounded
+            .sandboxes
+            .find_one(parent_key.clone())
+            .await
+            .unwrap(),
+        parent_before
+    );
+    assert_eq!(
+        bounded
+            .agent_commands
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        1
+    );
+    bounded
+        .sandboxes
+        .update_one(parent_key, doc! {"$unset": {LEDGER_MAINTENANCE_FIELD: ""}})
+        .await
+        .unwrap();
+    let resumed = bounded.with_fleet_log_percentage(100);
+    assert_eq!(
+        resumed.reserve_command(retained).await.unwrap(),
+        CommandReservationResult::Existing(Box::new(admitted))
+    );
+    assert!(resumed
+        .agents
+        .find_one(agent_key)
+        .await
+        .unwrap()
+        .unwrap()
+        .contains_key(QUARANTINE_FIELD));
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
 async fn failed_fleet_preparation_keeps_the_existing_append_fallback_usable() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();

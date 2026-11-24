@@ -1,6 +1,24 @@
 //! Bounded trusted-prefix checks and fail-closed invalidation.
 use super::*;
 
+impl IntegrityFailurePolicy {
+    pub(super) async fn quarantine(
+        self,
+        store: &MongoSandboxStore,
+        row: &Document,
+        session: &mut mongodb::ClientSession,
+    ) -> Result<(), TransactionLogError> {
+        match self {
+            Self::Quarantine => {
+                let _ = session.abort_transaction().await;
+                quarantine_row(store, row).await
+            }
+            Self::FencedPreparation => quarantine_preparation(store, row, session).await,
+            Self::ReportOnly => Ok(()),
+        }
+    }
+}
+
 pub(super) async fn validate_summary(
     store: &MongoSandboxStore,
     agent: &Agent,
@@ -152,6 +170,47 @@ pub(in crate::store) async fn quarantine_row(
     row: &Document,
 ) -> Result<(), TransactionLogError> {
     let observed = crate::store::agents::read_agent(row).map_err(TransactionLogError::Domain)?;
+    let (filter, update) = quarantine_update(&observed)?;
+    let result = store
+        .agents
+        .update_one(filter, update)
+        .write_concern(mongodb::options::WriteConcern::majority())
+        .await
+        .map_err(TransactionLogError::Driver)?;
+    require_quarantine_match(result.matched_count)?;
+    fleet::telemetry::record(fleet::telemetry::Event::QuarantineWritten);
+    Ok(())
+}
+
+pub(super) async fn quarantine_preparation(
+    store: &MongoSandboxStore,
+    row: &Document,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), TransactionLogError> {
+    let observed = crate::store::agents::read_agent(row).map_err(TransactionLogError::Domain)?;
+    let (filter, update) = quarantine_update(&observed)?;
+    let result = store
+        .agents
+        .update_one(filter, update)
+        .session(&mut *session)
+        .await
+        .map_err(TransactionLogError::Driver)?;
+    require_quarantine_match(result.matched_count)?;
+    preparation::fence_parent(store, &observed, session).await?;
+    match crate::store::sandbox_mongo::commit_transaction(session).await {
+        crate::store::sandbox_mongo::CommitOutcome::Committed => {
+            fleet::telemetry::record(fleet::telemetry::Event::QuarantineWritten);
+            Ok(())
+        }
+        crate::store::sandbox_mongo::CommitOutcome::Retry(error)
+        | crate::store::sandbox_mongo::CommitOutcome::Unknown(error)
+        | crate::store::sandbox_mongo::CommitOutcome::Failed(error) => {
+            Err(TransactionLogError::Driver(error))
+        }
+    }
+}
+
+fn quarantine_update(observed: &Agent) -> Result<(Document, Document), TransactionLogError> {
     let head = signed(observed.conversation.last_seq, "quarantined log head")
         .map_err(SandboxStoreError::Corrupt)?;
     let filter = doc! {
@@ -162,28 +221,23 @@ pub(in crate::store) async fn quarantine_row(
         "record.workspace_id": observed.workspace_id.as_str(),
         "last_seq": { "$gte": head },
     };
-    let result = store
-        .agents
-        .update_one(
-            filter,
-            doc! { "$set": {
-                QUARANTINE_FIELD: {
-                    "format": INTEGRITY_FORMAT,
-                    "reason": "integrity_validation_failed",
-                    "observed_head": head,
-                }
-            }},
-        )
-        .write_concern(mongodb::options::WriteConcern::majority())
-        .await
-        .map_err(TransactionLogError::Driver)?;
-    if result.matched_count != 1 {
+    let update = doc! { "$set": {
+        QUARANTINE_FIELD: {
+            "format": INTEGRITY_FORMAT,
+            "reason": "integrity_validation_failed",
+            "observed_head": head,
+        }
+    }};
+    Ok((filter, update))
+}
+
+fn require_quarantine_match(matched: u64) -> Result<(), TransactionLogError> {
+    if matched != 1 {
         return Err(SandboxStoreError::Corrupt(
             "Agent history changed before quarantine could be persisted".into(),
         )
         .into());
     }
-    fleet::telemetry::record(fleet::telemetry::Event::QuarantineWritten);
     Ok(())
 }
 
