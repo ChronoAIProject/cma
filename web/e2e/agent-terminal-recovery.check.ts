@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { binding, LocalAgentV2 } from './agent-v2.fixture';
 import { THINKING_NO_PROGRESS_THRESHOLD_MS } from '../src/agent/ThinkingProgress';
 
@@ -31,6 +31,7 @@ for (const theme of ['light', 'dark']) {
           body: '<title>Synthetic approval inbox</title><p>Review fixture</p>',
         }),
       );
+      await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.clock.install();
       await page.goto('/agents/agt_contract');
       const wait = page.getByRole('heading', { name: 'Waiting for your approval', exact: true });
@@ -42,13 +43,16 @@ for (const theme of ['light', 'dark']) {
         'warning',
       );
       await expect(page.locator('.thinking')).toHaveCount(0);
+      await expect(page.getByRole('heading', { name: 'Working on it', exact: true })).toHaveCount(
+        0,
+      );
       await expect(page.getByRole('button', { name: 'Allow', exact: true })).toHaveCount(0);
       await page.evaluate(
         (dark) => document.body.toggleAttribute('data-ds-dark-theme', dark),
         theme === 'dark',
       );
       for (const width of [1440, 390]) {
-        await page.setViewportSize({ width, height: 900 });
+        await settledViewport(page, width);
         await expect(review).toBeVisible();
         expect(
           await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
@@ -207,6 +211,7 @@ for (const theme of ['light', 'dark']) {
     fixture.append({ type: 'message', role: 'user', content: 'Synthetic original input' });
     try {
       await fixture.route(page, baseURL!);
+      await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.clock.install();
       await page.goto('/agents/agt_contract');
       const waiting = page.getByText(/Still waiting for this turn to finish/);
@@ -223,7 +228,7 @@ for (const theme of ['light', 'dark']) {
         theme === 'dark',
       );
       for (const width of [1440, 390]) {
-        await page.setViewportSize({ width, height: 900 });
+        await settledViewport(page, width);
         await expect(waiting).toBeVisible();
         await page.screenshot({
           path: info.outputPath(`waiting-${theme}-${width}.png`),
@@ -268,7 +273,7 @@ for (const theme of ['light', 'dark']) {
         theme === 'dark',
       );
       for (const width of [1440, 390]) {
-        await page.setViewportSize({ width, height: 900 });
+        await settledViewport(page, width);
         await expect(terminal).toBeVisible();
         expect(
           await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
@@ -306,6 +311,7 @@ for (const theme of ['light', 'dark']) {
     fixture.append({ type: 'message', role: 'user', content: 'Synthetic accepted question' });
     try {
       await fixture.route(page, baseURL!);
+      await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.clock.install();
       await page.goto('/agents/agt_contract');
       await expect(page.getByText('Waiting for a response', { exact: true })).toBeVisible();
@@ -375,4 +381,17 @@ for (const theme of ['light', 'dark']) {
       await fixture.close(page);
     }
   });
+}
+
+async function settledViewport(page: Page, width: number) {
+  await page.setViewportSize({ width, height: 900 });
+  await page.evaluate(() => document.fonts.ready);
+  await expect
+    .poll(async () => {
+      await page.clock.runFor(100);
+      const box = await page.locator('.agent-surface').boundingBox();
+      return box ? box.x + box.width : Infinity;
+    })
+    .toBeLessThanOrEqual(width + 1);
+  await page.clock.runFor(500);
 }

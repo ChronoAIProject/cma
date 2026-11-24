@@ -369,7 +369,7 @@ export function AgentSurface({
               detail={detail}
               events={state.sandboxEvents}
               observation={observed}
-              running={running}
+              running={running && state.activityStatus !== 'waiting_approval'}
               historyIncomplete={historyIncomplete}
             />
             {suggestions && !readOnly && verified && !historyIncomplete ? (
