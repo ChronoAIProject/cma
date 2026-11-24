@@ -187,7 +187,9 @@ impl ProviderHostedControlTransport {
             Err(failed) => failed,
         };
         let retry_deadline = deadline
-            .filter(|_| failed.retryable && authority.is_current() && crate::file_read_retry::take())
+            .filter(|_| {
+                failed.retryable && authority.is_current() && crate::file_read_retry::take()
+            })
             .and_then(|deadline| attempt_deadline(Some(deadline)).ok());
         if let Some(retry_deadline) = retry_deadline {
             let reason = failed.failure.observation.reason.as_str();
