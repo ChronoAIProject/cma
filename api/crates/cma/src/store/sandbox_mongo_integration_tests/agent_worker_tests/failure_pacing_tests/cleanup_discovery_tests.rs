@@ -8,6 +8,75 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[tokio::test]
 #[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
+async fn dense_agent_discovery_streams_the_first_page_before_joining_all_parents() {
+    let (client, name, store, template, _, _) = fixture("dense_hold_discovery").await;
+    let store = store.with_ownership_retry_hints(false);
+    let mut rows = Vec::new();
+    for index in 0..1_024 {
+        let mut agent = template.clone();
+        let id = format!("000-due-{index:04}");
+        agent.id = AgentId(id.clone());
+        agent.creation_key = id.clone();
+        agent.worktree_id = WorktreeId(format!("{id}-tree"));
+        agent.work.lease = None;
+        rows.push(crate::store::agents::agent_document(&agent).unwrap());
+    }
+    store.agents.insert_many(rows).await.unwrap();
+    let now = layer2_core::rfc3339_at(SystemTime::now());
+    let exclusions = BTreeSet::new();
+    let filter = AgentWorkDiscovery::new(&exclusions, StartupWorkFilter::All);
+    let database = client.database(&name);
+    for (variant, pipeline) in [
+        (
+            "local",
+            discovery::filtered_pipeline(&store, &now, 1, filter),
+        ),
+        (
+            "owned",
+            discovery::filtered_owned_pipeline(&store, &now, 1, None, filter),
+        ),
+    ] {
+        let explained = database
+            .run_command(doc! {
+                "explain": {"aggregate": store.agents.name(), "pipeline": pipeline, "cursor": {}},
+                "verbosity": "executionStats",
+            })
+            .await
+            .unwrap();
+        let stages = explained.get_array("stages").unwrap();
+        let cursor = stages[0]
+            .as_document()
+            .unwrap()
+            .get_document("$cursor")
+            .unwrap();
+        let docs_examined = |stats: &Document| {
+            stats
+                .get_i64("totalDocsExamined")
+                .or_else(|_| stats.get_i32("totalDocsExamined").map(i64::from))
+                .unwrap()
+        };
+        let agents_examined = docs_examined(cursor.get_document("executionStats").unwrap());
+        let lookup = stages
+            .iter()
+            .filter_map(|stage| stage.as_document())
+            .find(|stage| {
+                stage
+                    .get_document("$lookup")
+                    .is_ok_and(|lookup| lookup.get_str("as").ok() == Some("maintenance_parent"))
+            })
+            .unwrap();
+        let parents_examined = docs_examined(lookup);
+        println!(
+            "{variant} discovery examined {agents_examined} Agents and {parents_examined} parents"
+        );
+        assert!((1..=128).contains(&agents_examined));
+        assert_eq!(parents_examined, 1);
+    }
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
 async fn ledger_maintenance_filters_both_agent_discovery_arms_before_paging() {
     use crate::store::sandbox_mongo_integration_tests::sandbox;
     use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;

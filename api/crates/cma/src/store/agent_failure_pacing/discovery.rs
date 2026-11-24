@@ -146,7 +146,7 @@ fn build(
     let mut ordinary = available.clone();
     ordinary.insert("work_ready_at", doc! {"$lte": now});
     ordinary.insert("$expr", doc! {"$not": [candidate.clone()]});
-    let mut pipeline = vec![doc! {"$match": ordinary}];
+    let mut pipeline = vec![doc! {"$match": ordinary}, doc! {"$sort": {"_id": 1}}];
     pipeline.extend(exclude_held_sandboxes(store));
     pipeline.extend(super::ownership::discovery::filter(store));
     pipeline.extend(page(limit));
@@ -167,7 +167,11 @@ fn build(
         doc! {"_id": 1, "revision": 1, FIELD: 1, "agent_command_admission_fence": 1,
         "record.sandbox_id": 1, "record.workspace_id": 1, "record.worktree_id": 1}
     };
-    let mut wake = vec![doc! {"$match": paced}, doc! {"$project": projection}];
+    let mut wake = vec![
+        doc! {"$match": paced},
+        doc! {"$sort": {"_id": 1}},
+        doc! {"$project": projection},
+    ];
     wake.extend(exclude_held_sandboxes(store));
     let mut holds = vec![
         Bson::Document(doc! {
@@ -206,6 +210,7 @@ fn build(
     // An advisory read race between arms may yield one ID twice; claims remain
     // authoritative, but discovery still promises unique, sorted IDs.
     pipeline.push(doc! {"$group": {"_id": "$_id"}});
+    pipeline.push(doc! {"$sort": {"_id": 1}});
     pipeline.extend(page(limit));
     pipeline
 }
@@ -232,9 +237,8 @@ fn startup_candidate() -> Document {
     }
 }
 
-fn page(limit: u16) -> [Document; 3] {
+fn page(limit: u16) -> [Document; 2] {
     [
-        doc! {"$sort": {"_id": 1}},
         doc! {"$limit": i64::from(limit)},
         doc! {"$project": {"_id": 1}},
     ]
