@@ -15,6 +15,7 @@ use layer2_core::{
 mod common_execution;
 mod connection;
 mod input_protocol;
+mod maintenance_tests;
 mod publisher_erasure;
 use connection::Connected;
 
@@ -429,15 +430,7 @@ async fn trigger_initiation_agent_creation_is_atomic_with_original_human_or_api_
         assert!(
             matches!(&before.creation_origin, AgentCreationOrigin::Trigger { launching_actor: Some(actor), .. } if actor == &f.identity.actor)
         );
-        assert_eq!(
-            f.resources
-                .admit_agent_with_trigger_initiator(request, initiation, false)
-                .await
-                .unwrap()
-                .creation()
-                .agent,
-            *agent
-        );
+        maintenance_tests::assert_held_legacy_replay(&f, &launch, request, initiation, agent).await;
         assert_eq!(
             f.resources
                 .agent_provenance_snapshot(&agent.id)

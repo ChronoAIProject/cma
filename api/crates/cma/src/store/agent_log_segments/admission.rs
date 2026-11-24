@@ -71,9 +71,13 @@ pub(in crate::store) async fn apply_catalogue(
             return Ok(replay);
         }
     }
-    if let Some(initiation) = initiation {
-        attribution::fence_initiation(store, admission, initiation, scope.session()).await?;
-    }
+    let initiation_fence = match initiation {
+        Some(initiation) => Some(
+            attribution::read_initiation_fence(store, admission, initiation, scope.session())
+                .await?,
+        ),
+        None => None,
+    };
     if let Some(replay) = replay_in_transaction(store, admission, scope.session()).await? {
         return Ok(replay);
     }
@@ -84,6 +88,9 @@ pub(in crate::store) async fn apply_catalogue(
             .write_admission_fence(fence, scope.session())
             .await
             .map_err(ApplyError::from)?;
+    }
+    if let Some(fence) = initiation_fence {
+        fence.write(scope.session()).await?;
     }
 
     if let Some(launch) = &persisted_launch {

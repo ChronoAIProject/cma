@@ -68,14 +68,37 @@ impl AgentAdmissionStore for MongoSandboxStore {
     }
 }
 
+pub(in crate::store) struct InitiationFence {
+    launches: mongodb::Collection<mongodb::bson::Document>,
+    filter: mongodb::bson::Document,
+}
+
+impl InitiationFence {
+    pub(in crate::store) async fn write(
+        self,
+        session: &mut mongodb::ClientSession,
+    ) -> Result<(), ApplyError> {
+        let changed = self
+            .launches
+            .update_one(self.filter, doc! {"$inc":{"agent_initiation_fence":1_i64}})
+            .session(session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        if changed.matched_count != 1 {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+        Ok(())
+    }
+}
+
 /// Resolve the exact durable source again in the Agent creation transaction.
-/// Caller-supplied provenance or another launch's sidecar cannot supply attribution.
-pub(in crate::store) async fn fence_initiation(
+/// A receipt can be read under this proof without committing an admission write.
+pub(in crate::store) async fn read_initiation_fence(
     store: &MongoSandboxStore,
     admission: &AgentAdmission,
     expected: &layer2_core::trigger_domain::LaunchInitiation,
     session: &mut mongodb::ClientSession,
-) -> Result<(), ApplyError> {
+) -> Result<InitiationFence, ApplyError> {
     use crate::store::sandbox_mongo::{read_record, record_bson};
     use layer2_core::trigger_domain::{Launch, LaunchEffectKind, LaunchEffectState};
     use mongodb::bson::Document;
@@ -112,16 +135,16 @@ pub(in crate::store) async fn fence_initiation(
     launch
         .validate()
         .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
+    let expiry = launch
+        .work
+        .lease
+        .as_ref()
+        .and_then(|lease| layer2_core::seconds_from_rfc3339(&lease.expires_at))
+        .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
     let now = layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339());
     if launch.initiation.as_ref() != Some(expected)
         || launch.resolution.workspace.id() != Some(&admission.workspace_id)
-        || launch
-            .work
-            .lease
-            .as_ref()
-            .and_then(|lease| layer2_core::seconds_from_rfc3339(&lease.expires_at))
-            .zip(now)
-            .is_none_or(|(expires, now)| expires <= now)
+        || now.is_none_or(|now| expiry <= now)
         || launch.work.effect.as_ref().is_none_or(|effect| {
             effect.kind != LaunchEffectKind::CreateAgent
                 || !matches!(
@@ -135,13 +158,15 @@ pub(in crate::store) async fn fence_initiation(
     let record = document
         .get("record")
         .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
-    let changed = launches.update_one(doc! {
+    let deadline = expiry
+        .checked_mul(1_000)
+        .and_then(|millis| i64::try_from(millis).ok())
+        .map(mongodb::bson::DateTime::from_millis)
+        .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
+    let filter = doc! {
         "_id":expected.launch_id().as_str(), "record":record.clone(),
         "launch_initiation":record_bson(expected).map_err(|_|ApplyError::Domain(SandboxStoreError::Conflict))?,
-    }, doc! {"$inc":{"agent_initiation_fence":1_i64}})
-        .session(session).await.map_err(ApplyError::Driver)?;
-    if changed.matched_count != 1 {
-        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-    }
-    Ok(())
+        "$expr": {"$gt": [deadline, "$$NOW"]},
+    };
+    Ok(InitiationFence { launches, filter })
 }
