@@ -181,7 +181,8 @@ def newest_first(item):
 def staging_verified(images, request, download):
     """Return the components whose exact image staging recorded as controller-verified."""
     pending, verified, downloads, listings = dict(images), set(), 0, 0
-    # Read the workflows page by page together, newest run first. Searching one
+    # Read the workflows page by page together, newest run first within each
+    # page round (not across rounds; acceptance never depends on order). Searching one
     # workflow to its end before the next starved redeploy-staging: its evidence
     # sat behind every staging CD run and the listing bound refused first.
     remaining = list(EVIDENCE_WORKFLOWS)
