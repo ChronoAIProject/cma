@@ -1204,6 +1204,7 @@
               "at": "2026-09-05T00:00:00Z",
               "actor": "operator-a",
               "actor_name": "Morgan Park",
+              "actor_reference": "actor-ab4a922790380f90",
               "target_name": null,
               "action": "configure",
               "target": {
