@@ -23,14 +23,10 @@ for (const mode of ['confirmed', 'pending', 'untrusted', 'tampered', 'legacy', '
     h.write('cleanup.ndjson', bytes);
     const result = h.run('audit');
     assert.equal(readFileSync(h.path('cleanup.ndjson'), 'utf8'), bytes);
-    if (mode === 'confirmed') {
-      assert.equal(result.status, 0);
-      assert.equal(readFileSync(h.path('output'), 'utf8'), 'publishable=true\n');
-    } else {
-      assert.equal(result.status, 1);
-      assert.equal(result.stderr, line('audit', 'cleanup_journal'));
-      assert.equal(readFileSync(h.path('output'), 'utf8'), '');
-      assert.equal(existsSync(h.path('attestation.json')), false);
-    }
+    // The synthetic campaign still lacks the separate live connection outcome matrix.
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr, line('audit', mode === 'confirmed' ? 'connection_coverage' : 'cleanup_journal'));
+    assert.equal(readFileSync(h.path('output'), 'utf8'), '');
+    assert.equal(existsSync(h.path('attestation.json')), false);
   });
 }
