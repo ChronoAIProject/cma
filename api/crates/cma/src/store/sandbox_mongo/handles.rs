@@ -14,6 +14,7 @@ impl MongoSandboxStore {
     ) -> Self {
         let database = client.database(name);
         Self {
+            creation_writer_epoch: None,
             usage_capture: None,
             initial_settings,
             empty_discovery: Default::default(),
@@ -112,6 +113,7 @@ impl MongoSandboxStore {
             native_prepared: majority_collection(&database, store::native_prepared::COLLECTION),
             warm_runtime_version: None,
             managed_runtime_version: None,
+            released_lanes: None,
             managed_machine_runtime_version: None,
             released: None,
             warm_home_policy: None,

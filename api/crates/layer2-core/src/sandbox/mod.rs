@@ -47,7 +47,9 @@ mod agent_operation_queue;
 mod agent_operation_service;
 mod agent_operation_settlement;
 mod agent_read_types;
+mod agent_reply_preview;
 pub use agent_failure_projection::{public_agent_turn_failure, sanitize_agent_transcript};
+pub use agent_reply_preview::{normalize_reply_preview, AgentReplyPreview, AssistantReplyPreview};
 mod agent_reads;
 pub use admission_checkpoint::AgentLogCheckpoint;
 mod agent_log_projection;
@@ -167,6 +169,7 @@ mod retained_reopen_service;
 #[cfg(test)]
 mod retained_reopen_tests;
 mod retained_suspended_reopen;
+pub mod turn_timeout;
 pub use retained_reopen::{
     apply_retained_reopen, RetainedReopenAccepted, RetainedReopenHistory, RetainedReopenProof,
     RetainedReopenReceipt, RetainedReopenReplay, RetainedReopenRequest, RetainedReopenSnapshot,
@@ -186,6 +189,10 @@ pub use retained_recovery::{
     RetainedRecoveryAssessment, RetainedRecoveryDisposition, RetainedRecoveryError,
     RetainedRecoveryInspector, RetainedRecoveryService, RetainedRecoverySnapshot,
     RetainedRecoverySource,
+};
+mod custom_runtime;
+pub use custom_runtime::{
+    SandboxCustomRuntimeMigration, SandboxCustomRuntimeOrigin, SandboxCustomRuntimeState,
 };
 mod runtime_update;
 mod runtime_update_resume;
@@ -275,11 +282,11 @@ pub use agent_reads::privacy_export;
 pub use agent_reads::{
     AgentBufferedEventRequest, AgentConfigurationRead, AgentDetailReading,
     AgentEventStreamAuthorization, AgentEventStreamHeader, AgentEventStreamSnapshot,
-    AgentHistoryCursor, AgentHistoryReading, AgentOutputObservation, AgentReadService,
-    AgentReplayEntry, AgentReplayWindow, AgentResponseBinding, AgentRetainedOutput,
-    AgentRetainedOutputAvailability, AgentRetainedOutputPage, AgentSourceReadError,
-    AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
-    RETAINED_OUTPUT_CHUNK_BYTES,
+    AgentHistoryCursor, AgentHistoryReading, AgentOriginalRequest, AgentOutputObservation,
+    AgentReadService, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
+    AgentRetainedOutput, AgentRetainedOutputAvailability, AgentRetainedOutputPage,
+    AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail,
+    SharedAgentOrigin, RETAINED_OUTPUT_CHUNK_BYTES,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,
@@ -314,6 +321,7 @@ pub use conversation_recorder::{
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
     SandboxServiceGrant, SandboxServiceScopeRevision, SandboxSignInState,
+    ServiceConnectionSelection,
 };
 pub use credential_prerequisite::{
     FixedSandboxCredentialPrerequisite, SandboxCredentialPrerequisite,
@@ -322,7 +330,7 @@ pub use credential_prerequisite::{
 pub use error::SandboxModelError;
 pub use event::{
     AgentAvailableCommand, AgentConfigOption, AgentLogEntry, AgentLogKind, AgentPlanStep,
-    RecordedToolOutput, SandboxEvent, SandboxEventKind,
+    ExternalApprovalResolution, RecordedToolOutput, SandboxEvent, SandboxEventKind,
 };
 pub use execution::ProvisioningExecution;
 pub use first_message::{

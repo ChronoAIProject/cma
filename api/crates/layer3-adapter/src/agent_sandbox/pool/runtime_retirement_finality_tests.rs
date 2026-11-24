@@ -1,7 +1,7 @@
 use super::super::runtime_tests::{client, request};
 use super::*;
 use crate::{AdapterError, HomeVolumeAttachment, RuntimeHandle};
-use std::time::Duration;
+use std::{sync::atomic::Ordering, time::Duration};
 
 async fn bound(
     native: bool,
@@ -162,6 +162,89 @@ async fn fresh_finality_waits_for_owned_pods_and_cancellation_never_writes() {
         .all(|(c, _)| c.starts_with("GET ")));
     fixture.state.lock().unwrap().rows.remove(path);
     runtime.verify_retired(&handle, &home).await.unwrap();
+}
+
+#[tokio::test]
+async fn restarted_verifier_waits_for_original_pod_after_acknowledged_delete() {
+    let (fixture, home, request, handle) = bound(true).await;
+    const PODS: &str = "/api/v1/namespaces/cma-test/pods";
+    let pod_path = format!("{PODS}/retiring-original");
+    let original = fixture.state.lock().unwrap().rows[MEMBER].clone();
+    fixture.state.lock().unwrap().rows.insert(pod_path.clone(), json!({
+        "apiVersion":"v1", "kind":"Pod", "metadata":{
+            "name":"retiring-original", "namespace":"cma-test", "uid":"original-pod",
+            "deletionTimestamp":"2026-01-01T00:00:00Z",
+            "labels":{super::super::super::pods::TRACKING_LABEL:super::super::super::pods::name_hash("warm-member")},
+            "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox","name":"warm-member","uid":"member-uid","controller":true}]}}));
+    let pod_read = format!("GET {PODS}");
+    let acknowledged = fixture.gate(pod_read.clone(), Some(format!("DELETE {MEMBER}")));
+    let deadline = Duration::from_secs(5);
+    {
+        let original_client = client(&fixture, false);
+        let retirement = original_client.retire_verified(&handle, &request, &home, None);
+        tokio::pin!(retirement);
+        // A Pod read after the DELETE shows the client received the acknowledgement.
+        tokio::select! {
+            result = &mut retirement => panic!("retirement settled before Pod observation: {result:?}"),
+            result = tokio::time::timeout(deadline, acknowledged.entered.notified()) => result.unwrap(),
+        }
+    }
+    acknowledged.disconnect.store(true, Ordering::SeqCst);
+    acknowledged.release.notify_one();
+    let before_restart = {
+        let state = fixture.state.lock().unwrap();
+        assert!(!state.rows.contains_key(MEMBER));
+        assert_eq!(state.rows[&pod_path]["metadata"]["uid"], "original-pod");
+        state.calls.len()
+    };
+
+    let successor = client(&fixture, false);
+    let first_read = fixture.gate(pod_read.clone(), None);
+    let repeated_read = fixture.gate(pod_read, None);
+    let finality = successor.verify_retired(&handle, &home);
+    tokio::pin!(finality);
+    for (gate, remove_pod) in [(&first_read, false), (&repeated_read, true)] {
+        tokio::select! {
+            result = &mut finality => panic!("finality settled with the original Pod present: {result:?}"),
+            result = tokio::time::timeout(deadline, gate.entered.notified()) => result.unwrap(),
+        }
+        if remove_pod {
+            fixture
+                .state
+                .lock()
+                .unwrap()
+                .rows
+                .remove(&pod_path)
+                .unwrap();
+        }
+        gate.release.notify_one();
+    }
+    tokio::time::timeout(deadline, finality)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let mut replacement = original;
+    replacement["metadata"]["uid"] = json!("replacement");
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .rows
+        .insert(MEMBER.into(), replacement.clone());
+    assert!(matches!(
+        successor.verify_retired(&handle, &home).await,
+        Err(AdapterError::Rejected(_))
+    ));
+    let state = fixture.state.lock().unwrap();
+    assert_eq!(state.rows[MEMBER], replacement);
+    assert_eq!(
+        state.rows[VOLUME]["metadata"]["uid"],
+        home.receipt.storage_generation
+    );
+    assert!(state.calls[before_restart..]
+        .iter()
+        .all(|(call, _)| call.starts_with("GET ")));
 }
 
 #[tokio::test]

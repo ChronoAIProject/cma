@@ -55,7 +55,7 @@ for (const width of [1440, 390]) {
     await main.getByRole('tab', { name: 'Access', exact: true }).click();
     await expect(main.getByRole('link', { name: 'GitHub', exact: true })).toHaveAttribute(
       'href',
-      'https://nyxid.ai/services/catalog-github',
+      'https://catalog.example.test/services/catalog-github',
     );
     await expect(main.getByText('Workspace limit', { exact: true })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(

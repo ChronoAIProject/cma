@@ -378,6 +378,23 @@ impl CommandEvidence {
         {
             return Err(CommandLedgerError::Corrupt);
         }
+        // The same aggregate snapshot carries external waits; native approval
+        // indexes and native action selectors keep their original namespace.
+        if self.message
+            && !self.status.is_terminal()
+            && agent
+                .conversation
+                .turn_timeout
+                .as_ref()
+                .is_some_and(|policy| {
+                    policy.binding().matches_active_turn(agent)
+                        && policy.binding().command_id == self.dispatch.claim.command_id
+                        && policy.binding().operation_sequence == self.dispatch.operation_sequence
+                        && policy.is_waiting_for_external_approval()
+                })
+        {
+            self.status = AgentResponseStatus::WaitingAction;
+        }
         let mut next = command.clone();
         next.status = self.status;
         next.work.failure = self.failure;

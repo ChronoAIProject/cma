@@ -128,8 +128,15 @@ pub struct RuntimeProvisionRequest {
     /// mutable coverage must not change an immutable provisioning receipt digest.
     #[serde(skip)]
     pub funded_until: Option<u64>,
+    /// Verified, request-scoped descriptor for a canary's native home.
+    #[serde(skip)]
+    pub native_canary_image: Option<RuntimeImage>,
     pub generation: u64,
     pub spec: SandboxSpec,
+    /// The release this operation was admitted against. It supplies the image
+    /// only when the spec records none, so it never enters the receipt digest.
+    #[serde(skip)]
+    pub released: Option<crate::ReleasedRuntime>,
 }
 
 impl RuntimeProvisionRequest {
@@ -138,7 +145,15 @@ impl RuntimeProvisionRequest {
             generation,
             spec,
             funded_until: None,
+            native_canary_image: None,
+            released: None,
         }
+    }
+
+    /// Render new work from the release captured at its admission.
+    pub fn with_released(mut self, released: crate::ReleasedRuntime) -> Self {
+        self.released = Some(released);
+        self
     }
 }
 
@@ -367,6 +382,52 @@ pub struct CredentialFrame {
     pub value: RuntimeCredential,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custody_generation: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_route: Option<GithubCredentialRoute>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GithubCredentialRoute {
+    pub service_id: String,
+    pub catalog_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub other_services: Vec<PlatformServiceRoute>,
+}
+
+impl GithubCredentialRoute {
+    pub fn is_valid(&self) -> bool {
+        valid_proxy_selector(&self.service_id)
+            && valid_proxy_selector(&self.catalog_id)
+            && self.other_services.len() <= 32
+            && self.other_services.iter().all(|service| {
+                valid_proxy_selector(&service.service_id)
+                    && valid_proxy_selector(&service.slug)
+                    && service.service_id != self.service_id
+                    && service.slug != "api-github"
+                    && service
+                        .catalog_id
+                        .as_ref()
+                        .is_none_or(|id| valid_proxy_selector(id) && id != &self.catalog_id)
+            })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlatformServiceRoute {
+    pub service_id: String,
+    pub slug: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_id: Option<String>,
+}
+
+fn valid_proxy_selector(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 impl std::fmt::Debug for CredentialFrame {

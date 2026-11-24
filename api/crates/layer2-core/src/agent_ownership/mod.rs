@@ -5,12 +5,17 @@
 
 mod placement;
 pub use placement::candidates;
+mod heartbeat_retry;
+mod lease_operation;
+mod policy;
+pub use policy::{MaintenancePolicy, MaintenanceStep, RetirementIntent, Settlement};
 mod authority;
 pub use authority::{execution_authority, execution_owner, Authority};
 mod cleanup_pacing;
 mod coordinator;
 mod observations;
 mod receiver_binding;
+pub mod receiver_diagnostics;
 mod transport;
 pub use coordinator::{bounded, OwnershipCoordinator};
 pub use observations::{observe_transport, observed_transport, transport_observation_scope};
@@ -173,3 +178,16 @@ mod coordinator_race_tests;
 
 #[cfg(test)]
 mod receiver_loss_tests;
+
+#[cfg(test)]
+mod containment_diagnostic_tests;
+#[cfg(test)]
+mod containment_test_support;
+#[cfg(test)]
+mod containment_tests;
+#[cfg(test)]
+mod drain_containment_tests;
+#[cfg(test)]
+mod receiver_settlement_containment_tests;
+#[cfg(test)]
+mod retirement_containment_tests;

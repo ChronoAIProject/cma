@@ -19,10 +19,10 @@ use super::{durability::majority_collection, schema::initialize_collections};
 
 #[path = "sandbox_mongo_transactions.rs"]
 mod transactions;
-pub(super) use transactions::{
-    commit_transaction, commit_transaction_with_refusal, is_confirmed_body_retry, is_duplicate_key,
-    is_transient, start_transaction, CommitOutcome, PrecommitRefusal,
+pub(crate) use transactions::{
+    commit_transaction, is_confirmed_body_retry, is_duplicate_key, start_transaction, CommitOutcome,
 };
+pub(super) use transactions::{commit_transaction_with_refusal, is_transient, PrecommitRefusal};
 
 pub use super::profile_mongo::MongoProfileStore;
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
@@ -70,6 +70,7 @@ use collections::SANDBOX_COLLECTIONS;
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) creation_writer_epoch: Option<String>,
     pub(super) usage_capture: Option<super::sandbox_usage_export::CaptureStore>,
     pub(super) initial_settings: super::settings_defaults::InitialSettings,
     pub(super) ownership_retry_hints_enabled: bool,
@@ -163,6 +164,7 @@ pub struct MongoSandboxStore {
     /// The process's released-default authority. When set it supersedes the
     /// two fixed pins above, which remain only for store fixtures.
     pub(super) released: Option<std::sync::Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
+    pub(super) released_lanes: Option<super::released_runtimes::MongoReleasedRuntimes>,
     pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
     pub(crate) native_prepared_changed: std::sync::Arc<tokio::sync::Notify>,
@@ -202,6 +204,7 @@ impl MongoSandboxStore {
                 revision: 0,
                 agent: self.managed_runtime_version.clone().unwrap_or_default(),
                 machine: self.managed_machine_runtime_version.clone(),
+                lane_revisions: None,
             },
         }
     }
@@ -211,14 +214,6 @@ impl MongoSandboxStore {
         match &self.released {
             Some(released) => Some(released.snapshot().agent),
             None => self.managed_runtime_version.clone(),
-        }
-    }
-
-    /// The current machine-lane release, when the deployment has one.
-    pub(crate) fn managed_machine_release(&self) -> Option<String> {
-        match &self.released {
-            Some(released) => released.snapshot().machine,
-            None => self.managed_machine_runtime_version.clone(),
         }
     }
 

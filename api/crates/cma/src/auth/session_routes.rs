@@ -74,6 +74,12 @@ pub(super) async fn read(
                 body["service_authorization"] = true.into();
             }
             if !erasing
+                && auth.binding_diagnostics_enabled
+                && caller.authorization.allows(Capability::ReadAllSandboxes)
+            {
+                body["binding_diagnostics"] = true.into();
+            }
+            if !erasing
                 && auth.privacy_export_enabled
                 && caller.authorization.allows(Capability::UseOwnSandboxes)
                 && authority
@@ -110,6 +116,13 @@ pub(super) async fn read(
 }
 
 impl AuthState {
+    pub(crate) fn with_binding_diagnostics(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("auth configured before sharing")
+            .binding_diagnostics_enabled = enabled;
+        self
+    }
+
     /// Publish the terms an owner must accept, readable before sign-in.
     pub(crate) fn with_legal_terms(
         mut self: Arc<Self>,
@@ -235,6 +248,48 @@ pub(super) fn urlencode(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn binding_diagnostics_advertisement_requires_opt_in_and_cross_owner_read() {
+        for enabled in [false, true] {
+            for capability in [
+                Capability::ReadAllSandboxes,
+                Capability::UseOwnSandboxes,
+                Capability::ControlAnySandbox,
+            ] {
+                let auth = AuthState::in_memory(
+                    super::super::AuthMode::Trusted {
+                        subject: "operator".into(),
+                    },
+                    None,
+                )
+                .with_binding_diagnostics(enabled);
+                let caller = layer2_core::Caller::new(
+                    layer2_core::SubjectId::new("operator"),
+                    Authorization::new([capability]),
+                );
+                let response = read(
+                    State(auth),
+                    Some(AuthenticatedCaller(caller)),
+                    None,
+                    None,
+                    None,
+                    HeaderMap::new(),
+                )
+                .await;
+                assert_eq!(response.status(), StatusCode::OK);
+                let body = axum::body::to_bytes(response.into_body(), 16384)
+                    .await
+                    .unwrap();
+                let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(
+                    value.get("binding_diagnostics"),
+                    (enabled && capability == Capability::ReadAllSandboxes)
+                        .then_some(&serde_json::Value::Bool(true))
+                );
+            }
+        }
+    }
 
     #[test]
     fn cookies_are_host_only_http_only_and_conditionally_secure() {

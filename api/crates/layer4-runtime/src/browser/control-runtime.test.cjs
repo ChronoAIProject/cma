@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { spawn } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { once } = require('node:events');
 const { mkdtemp, rm } = require('node:fs/promises');
@@ -9,6 +9,9 @@ const { join } = require('node:path');
 const { createInterface } = require('node:readline');
 const { test } = require('node:test');
 const { setTimeout: delay } = require('node:timers/promises');
+const { promisify } = require('node:util');
+
+const run = promisify(execFile);
 
 async function fixture(test) {
   const directory = await mkdtemp(join(tmpdir(), 'cma-control-policy-'));
@@ -43,6 +46,27 @@ async function fixture(test) {
       for await (const chunk of request) value += chunk;
       values.push(value);
       response.end('ok');
+    } else if (request.url === '/heading-redirect') {
+      response.writeHead(302, { location: '/heading-final' }).end('<h1>Redirect response</h1>');
+    } else if (request.url === '/heading-final') {
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1 id="heading">Example Domain</h1><h1>Second heading</h1>' +
+        '<script>document.querySelector = () => ({ textContent: "Page override" });</script>');
+    } else if (request.url === '/iframe-heading') {
+      response.setHeader('content-type', 'text/html');
+      response.end('<iframe src="/heading-final"></iframe>');
+    } else if (request.url === '/empty-heading') {
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1> </h1>');
+    } else if (request.url === '/long-heading') {
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1>' + 'H'.repeat(2000) + '</h1>');
+    } else if (request.url === '/superseded-heading') {
+      response.setHeader('content-type', 'text/html');
+      response.end('<h1>Superseded document</h1><img src="/hold-load">' +
+        '<script>setTimeout(() => location.replace("/form"), 200);</script>');
+    } else if (request.url === '/hold-load') {
+      response.writeHead(200, { 'content-type': 'image/png' }).flushHeaders();
     } else {
       response.setHeader('content-type', 'text/html');
       response.end('<input autofocus style="position:absolute;left:20px;top:20px;width:500px;height:40px" oninput="fetch(\'/value\',{method:\'POST\',body:this.value})">');
@@ -72,6 +96,39 @@ async function fixture(test) {
   const command = (command, revision, extra = {}) => ({ ...base, command, expected_revision: revision, operation_id: randomUUID(), ...extra });
   return { call, rpc, agent, command, base, values, directory, url: `http://127.0.0.1:${page.address().port}/form` };
 }
+
+test('Agent navigation reports the first H1 of the committed main document', { timeout: 30000 }, async test => {
+  const browser = await fixture(test);
+  const navigate = async path => {
+    const { stdout } = await run(process.execPath, [
+      join(__dirname, 'command.cjs'), 'navigate', new URL(path, browser.url).href,
+    ], { env: { ...process.env, CMA_BROWSER_SOCKET: join(browser.directory, 'browser.sock') } });
+    return JSON.parse(stdout);
+  };
+
+  for (const [path, heading] of [
+    ['/heading-redirect', 'Example Domain'],
+    ['/heading-final#heading', 'Example Domain'],
+    ['/iframe-heading', null],
+    ['/empty-heading', ''],
+    ['/long-heading', 'H'.repeat(512)],
+    ['/form', null],
+  ]) {
+    assert.deepEqual(await navigate(path), {
+      navigated: true, location: 'Local page', first_heading: heading,
+    }, path);
+  }
+  await assert.rejects(navigate('/superseded-heading'), {
+    code: 1, stdout: /^\{"error":"browser_(navigation_unconfirmed|disconnected)"\}$/,
+  });
+  const status = await browser.call({ operation: 'status' });
+  assert.equal(Object.hasOwn(status, 'first_heading'), false);
+  const lease = await browser.call(browser.command('acquire', 0));
+  assert.equal(lease.state, 'user');
+  await assert.rejects(navigate('/heading-final'), {
+    code: 1, stdout: '{"error":"browser_control_conflict"}',
+  });
+});
 
 test('live observations report only the current origin and reset it with the browser context', { timeout: 30000 }, async test => {
   const browser = await fixture(test);

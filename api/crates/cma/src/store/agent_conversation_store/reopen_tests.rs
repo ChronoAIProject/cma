@@ -1,5 +1,6 @@
 use super::*;
 use crate::store::sandbox_maintenance::mongo_integration_tests::{database, fixture};
+use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
 use layer2_core::sandbox::store::{
     AgentConversationStore, AgentLogStore, AgentReopenGuard, AgentStore, ReopenRefusalFence,
     SandboxLifecycleAgentMutation, SandboxLifecycleAgentScope, SandboxLifecycleExecutionStore,
@@ -138,7 +139,7 @@ async fn run_case(count: usize, park: bool) {
             runtime_generation: 2,
         };
         let (acks, _) = tokio::sync::mpsc::channel(1);
-        let output = |cursor| ConversationUpdate::RuntimeOutput {
+        let output_with_ack = |cursor, acknowledgements| ConversationUpdate::RuntimeOutput {
             receipt: RuntimeOutputReceipt::new(
                 RuntimeOutputSource {
                     stream_id: "d99003d1-0c3c-46cd-aa47-9bbdbed50b12".into(),
@@ -146,10 +147,11 @@ async fn run_case(count: usize, park: bool) {
                     native_conversation_id: native.clone(),
                     payload_sha256: format!("{cursor:064x}"),
                 },
-                acks.clone(),
+                acknowledgements,
             ),
             update: None,
         };
+        let output = |cursor| output_with_ack(cursor, acks.clone());
         let recorder = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
         let mut assembly = AgentMessageAssembly::default();
         if park {
@@ -213,6 +215,68 @@ async fn run_case(count: usize, park: bool) {
             .unwrap()
             .unwrap();
         assert_eq!(held.runtime_generation, 2);
+        let log_before_hold = store.agent_log(&agent.id, 0, 200).await.unwrap();
+        let hold = doc! { "phase": "requested" };
+        let mut fields = doc! {};
+        fields.insert(LEDGER_MAINTENANCE_FIELD, hold.clone());
+        let parent_id = doc! { "_id": parent.id.as_str() };
+        // The guard was captured before the hold and no WorkAuthority scope is active.
+        assert!(!layer2_core::sandbox::store::WorkAuthority::active());
+        assert_eq!(
+            store
+                .sandboxes
+                .update_one(parent_id.clone(), doc! { "$set": fields })
+                .await
+                .unwrap()
+                .matched_count,
+            1,
+        );
+        let (sender, mut acknowledgements) = tokio::sync::mpsc::channel(1);
+        let refused = recorder
+            .record_reopen_update(
+                &agent.id,
+                &guard,
+                &mut AgentMessageAssembly::default(),
+                output_with_ack(2, sender),
+                at.clone(),
+            )
+            .await;
+        assert_eq!(
+            refused,
+            Err(AgentConversationError::Unavailable(
+                "conversation changed during every commit attempt".into(),
+            ))
+        );
+        assert!(acknowledgements.try_recv().is_err());
+        assert_eq!(
+            store.agent_message_checkpoint(&agent.id).await.unwrap(),
+            Some(held.clone())
+        );
+        assert_eq!(
+            store.agent_log(&agent.id, 0, 200).await.unwrap(),
+            log_before_hold
+        );
+        assert_eq!(
+            store.get_agent(&agent.id).await.unwrap(),
+            Some(agent.clone())
+        );
+        let persisted = store
+            .sandboxes
+            .find_one(parent_id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            persisted.get_document(LEDGER_MAINTENANCE_FIELD).unwrap(),
+            &hold
+        );
+        let mut fields = doc! {};
+        fields.insert(LEDGER_MAINTENANCE_FIELD, "");
+        store
+            .sandboxes
+            .update_one(parent_id, doc! { "$unset": fields })
+            .await
+            .unwrap();
         let mut obsolete = guard.clone();
         obsolete.sandbox.lease.as_mut().unwrap().fence += 1;
         assert!(recorder
@@ -355,6 +419,7 @@ async fn prove_refusal_fences(
         agent_revision: agent.revision,
         checkpoint: None,
         owner: Some(authority.token.clone()),
+        released: None,
     };
     assert_eq!(
         store

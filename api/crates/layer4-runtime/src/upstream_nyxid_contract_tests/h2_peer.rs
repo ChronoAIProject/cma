@@ -146,6 +146,7 @@ pub(super) async fn credential() -> CredentialHolder {
             operation_id: "h2-contract-install".into(),
             value: RuntimeCredential::new("h2-scoped-fixture"),
             custody_generation: Some(1),
+            github_route: None,
         })
         .await
         .unwrap();

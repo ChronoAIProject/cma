@@ -183,18 +183,16 @@ function mapMeasurements(initialWidth = 720) {
       });
     },
     flush() {
-      const pending = [...frames.keys()];
-      for (const id of pending) {
-        const callback = frames.get(id);
-        if (!callback) continue;
-        frames.delete(id);
-        act(() => callback(0));
-      }
+      const pending = [...frames.values()];
+      frames.clear();
+      act(() => {
+        for (const callback of pending) callback(0);
+      });
     },
   };
 }
 
-it('keeps resize subscriptions live while coalescing measurements and fitting the latest settings', () => {
+it('keeps resize subscriptions live while fitting the latest overlay and motion settings once', () => {
   const measurements = mapMeasurements();
   const { container } = render(
     <DeliveryFlowCanvas groups={groups} overlay={<button>Activity</button>} />,
@@ -202,7 +200,6 @@ it('keeps resize subscriptions live while coalescing measurements and fitting th
   const map = container.querySelector('.delivery-flow')!;
   const overlay = container.querySelector('.delivery-flow__overlay')!;
   measurements.resize(overlay);
-  measurements.flush();
   measurements.flush();
   expect(flow.fitView).toHaveBeenLastCalledWith({
     padding: { top: '144px', bottom: '64px', left: '32px', right: '32px' },
@@ -222,12 +219,6 @@ it('keeps resize subscriptions live while coalescing measurements and fitting th
 
   expect(measurements.active(map)).toEqual(subscriptions);
   for (const observer of subscriptions) expect(observer.disconnect).not.toHaveBeenCalled();
-  // Measurements and viewport fitting each coalesce into one callback. A fit
-  // using the committed overlay measurement may follow on the next frame.
-  expect(measurements.frames.size).toBe(2);
-  measurements.flush();
-  expect(flow.fitView.mock.calls.length).toBeLessThanOrEqual(1);
-  flow.fitView.mockClear();
   expect(measurements.frames.size).toBe(1);
   measurements.flush();
   expect(flow.fitView).toHaveBeenCalledExactlyOnceWith({
@@ -235,7 +226,6 @@ it('keeps resize subscriptions live while coalescing measurements and fitting th
     maxZoom: 1,
     duration: 0,
   });
-  expect(measurements.frames.size).toBe(0);
 });
 
 it('uses a replacement fit implementation without restarting resize observation', () => {
@@ -291,7 +281,7 @@ it.each([false, true])(
     const map = container.querySelector('.delivery-flow')!;
     measurements.resize(map);
     measurements.resize(map);
-    expect(measurements.frames.size).toBe(2);
+    expect(measurements.frames.size).toBe(1);
     unmount();
     expect(measurements.frames.size).toBe(0);
     for (const observer of measurements.observers) {

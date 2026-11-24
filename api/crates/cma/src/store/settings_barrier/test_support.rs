@@ -18,6 +18,7 @@ pub(in crate::store) enum Point {
     Owner,
     Fence,
     CommitAck,
+    ConsentAck,
 }
 
 #[derive(Default)]
@@ -113,6 +114,7 @@ impl Pause {
                                 && command.contains_key("autocommit")
                         }
                         Some(Point::CommitAck) => event.command_name == "commitTransaction",
+                        Some(Point::ConsentAck) => command.get_str("update").ok() == Some("users"),
                         None => false,
                     };
                     if matches {

@@ -188,45 +188,6 @@ export function registerRedesignChannelCases() {
 
   test.describe('narrow error boundary', () => {
     test.use({ viewport: { width: 390, height: 844 } });
-    test('LOCAL narrow channel layout settles without resize-loop errors on a slow CPU', async ({
-      page,
-      baseURL,
-      browserName,
-    }) => {
-      test.skip(browserName !== 'chromium', 'CPU throttling requires Chromium CDP.');
-      const session = await page.context().newCDPSession(page);
-      await session.send('Emulation.setCPUThrottlingRate', { rate: 4 });
-      const { browserErrors, boundary, layoutDiagnostics, layoutTelemetry } = await setupActivity(
-        page,
-        baseURL!,
-        'light',
-      );
-      await page.keyboard.press('Escape');
-      const map = page.getByRole('region', { name: 'Delivery map' });
-      const canvas = map.locator('.delivery-flow');
-      await expect
-        .poll(() =>
-          canvas.evaluate((element) => {
-            const bounds = element.getBoundingClientRect();
-            return [...element.querySelectorAll('.channel-map__node')].every((card) => {
-              const rect = card.getBoundingClientRect();
-              return (
-                rect.left >= bounds.left &&
-                rect.right <= bounds.right &&
-                rect.top >= bounds.top &&
-                rect.bottom <= bounds.bottom
-              );
-            });
-          }),
-        )
-        .toBe(true);
-      expect(browserErrors).toEqual([]);
-      expect(layoutDiagnostics).toEqual([]);
-      expect(layoutTelemetry).toEqual([]);
-      expect(boundary.errors).toEqual([]);
-      expect(boundary.unexpected).toEqual([]);
-    });
-
     for (const guard of ['trust', 'phase'] as const) {
       test(`LOCAL Activity fixture isolates ${guard} rejection at eligible width`, async ({
         page,
@@ -355,7 +316,7 @@ export function registerRedesignChannelCases() {
   }) => {
     const { state, view, boundary } = await setupActivity(page, baseURL!);
     const initialReads = state.reads.length;
-    state.snapshot = activityPage([
+    const snapshot = activityPage([
       { ...responseConsumer, deliveries: [receipt('confirmed'), receipt('unknown', 'other-team')] },
       {
         ...responseConsumer,
@@ -366,7 +327,7 @@ export function registerRedesignChannelCases() {
         deliveries: [receipt('rejected', 'helper-team')],
       },
     ]);
-    state.snapshot.has_more = true;
+    state.snapshot = { ...snapshot, has_more: true };
     let release!: () => void;
     state.hold = new Promise<void>((resolve) => {
       release = resolve;

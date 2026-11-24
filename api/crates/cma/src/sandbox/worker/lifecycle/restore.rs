@@ -6,9 +6,7 @@ use layer2_core::sandbox::{
     Agent, AgentStatus, RuntimeBinding, Sandbox, SandboxEventKind, SandboxLifecycleOperation,
     SandboxStatus,
 };
-use layer3_adapter::{
-    CredentialFrame, RestoreBootstrapRequest, RuntimeCredential, RuntimeProvisionRequest,
-};
+use layer3_adapter::{RestoreBootstrapRequest, RuntimeProvisionRequest};
 
 use super::super::support::{
     adapter_failure, credential_failure, credential_rotation_at, material_matches, runtime,
@@ -89,7 +87,8 @@ impl SandboxWorker {
                 return self.handle_lifecycle_failure(sandbox, failure, now).await;
             }
         }
-        let mut spec = sandbox_spec(&sandbox, &self.config.deployment_id);
+        let mut spec = sandbox_spec(&sandbox, &self.config.deployment_id)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
         if let Some(target) = sandbox.admitted_runtime_update_target() {
             spec.runtime_image = Some(target.into());
         }
@@ -205,7 +204,8 @@ impl SandboxWorker {
         } else {
             match crate::sandbox::runtime_attachment::provisioned_runtime_status(
                 self.dependencies.adapter.as_ref(),
-                &sandbox_spec(&sandbox, &self.config.deployment_id),
+                &sandbox_spec(&sandbox, &self.config.deployment_id)
+                    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?,
                 &handle,
                 generation,
             )
@@ -227,7 +227,7 @@ impl SandboxWorker {
                 runtime_id: handle.0,
                 runtime_version: replacement_runtime_version(
                     &sandbox,
-                    &self.config.released.snapshot().agent,
+                    &self.config.default_version(self.config.release().as_ref()),
                 ),
                 bound_at: stamp.clone(),
             },
@@ -310,11 +310,7 @@ impl SandboxWorker {
                     .await
             }
         };
-        let frame = CredentialFrame {
-            operation_id: operation_id(&sandbox, "deliver_credential")?,
-            value: RuntimeCredential::new(material.value.expose()),
-            custody_generation: Some(authority.generation),
-        };
+        let frame = material.into_runtime_frame(operation_id(&sandbox, "deliver_credential")?);
         if let Err(error) = self
             .dependencies
             .adapter

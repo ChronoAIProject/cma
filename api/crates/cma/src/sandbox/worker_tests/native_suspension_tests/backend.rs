@@ -31,6 +31,7 @@ pub(super) struct NativeBackend {
     pub lose_resume: Arc<AtomicBool>,
     pub lose_delete: Arc<AtomicBool>,
     pub reject_reopen: Arc<AtomicBool>,
+    pub fail_reopen_transiently: Arc<AtomicBool>,
     pub reopen_output: Arc<reopen_fixture::StartupOutput>,
     pub adoption_pause: Arc<Mutex<Option<Arc<RetirementProbePause>>>>,
     pub hold_reopen: Arc<AtomicBool>,
@@ -235,7 +236,12 @@ impl HostedBackend for NativeBackend {
             .into_iter()
             .find(|row| row.handle == pod)
             .unwrap();
-        observation.handle = RuntimeHandle::new("agent-sandbox:retained-crd:original-uid");
+        observation.handle = RuntimeHandle::new(if self.pools.is_some() {
+            // Match the original native Claim/Sandbox authority returned by Pools.
+            "agent-sandbox:warm-member:member-uid"
+        } else {
+            "agent-sandbox:retained-crd:original-uid"
+        });
         let handle = observation.handle.clone();
         *rows = Some(Row {
             request,

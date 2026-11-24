@@ -9,6 +9,7 @@ import { WhatsappSourceFields } from './WhatsappSourceFields';
 import { modeUnavailable, RelayDiscoveryNotice, useRelayCapabilities } from '../RelayCapabilities';
 import { RelaySetupGuidance } from './RelaySetupGuidance';
 import { SourceAdmissionFields } from './SourceAdmissionFields';
+import { TelegramMemberJoinFields } from './TelegramMemberJoinFields';
 import { Choice, Section, StringList, TextField, Toggle } from './Fields';
 import { optional, strings, without, type Fields } from './model';
 const platforms = ['telegram', 'lark', 'feishu', 'discord', 'whatsapp', 'slack'];
@@ -79,7 +80,10 @@ export function SourceFields({
               }))}
               onChange={(platform) => {
                 const updated = {
-                  ...without(value, platform !== value.platform ? ['lark_resources'] : []),
+                  ...without(
+                    value,
+                    platform !== value.platform ? ['lark_resources', 'member_join_chat_ids'] : [],
+                  ),
                   platform,
                   ...(['discord', 'whatsapp'].includes(platform) &&
                   !value.trust_normalized &&
@@ -189,6 +193,9 @@ export function SourceFields({
                 original platform event.
               </p>
             ) : null}
+            {value.platform === 'telegram' ? (
+              <TelegramMemberJoinFields value={value} onChange={onChange} />
+            ) : null}
             <RelaySetupGuidance platform={String(value.platform)} />
           </>
         ) : null}
@@ -239,11 +246,9 @@ export function SourceFields({
               }
               onChange={(enabled) =>
                 onChange(
-                  optional(
-                    optional(value, 'message_events', enabled || undefined),
-                    'channel_posts',
-                    enabled ? value.channel_posts : undefined,
-                  ),
+                  enabled
+                    ? optional(value, 'message_events', true)
+                    : without(value, ['message_events', 'channel_posts', 'member_join_chat_ids']),
                 )
               }
             />
@@ -278,6 +283,7 @@ export function SourceFields({
                 ? 'Managed connections register these event types; an older registration may need an operator refresh.'
                 : 'If the current webhook does not subscribe to these event types, refresh its registration.'}
             </p>
+            <TelegramMemberJoinFields value={value} onChange={onChange} />
             {discovery.authoring?.native_telegram_message_events_enabled !== true ? (
               <p className="channel-field-hint">
                 This gateway has not enabled new message event settings. Saved settings are

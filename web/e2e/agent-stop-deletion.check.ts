@@ -112,6 +112,33 @@ test('LOCAL owner Resume checks the paused Sandbox before one keyed request', as
     };
     return route.fulfill({ status: 202, json: boundary.sandbox });
   });
+  const expectStoppedInBothMenus = async () => {
+    await page.goto(`/agents/${boundary.agent.id}`);
+    await navigation(page, true);
+    for (const [menu, label] of [
+      [page.getByRole('button', { name: 'More Agent actions', exact: true }), 'Stop agent'],
+      [
+        resourceRow(page, 'agent', boundary.agent.id).getByRole('button', {
+          name: /^Options for /,
+        }),
+        'Stop',
+      ],
+    ] as const) {
+      await menu.click();
+      const stop = page.getByRole('menuitem', {
+        name: `${label} Agent is already stopped.`,
+        exact: true,
+      });
+      await expect(stop).toHaveAttribute('aria-disabled', 'true');
+      await stop.click({ force: true });
+      await stop.press('Enter');
+      await stop.press('Space');
+      await expect(page.getByRole('dialog', { name: 'Stop Agent', exact: true })).toHaveCount(0);
+      await page.keyboard.press('Escape');
+    }
+    noEffects(boundary);
+  };
+  await expectStoppedInBothMenus();
   await page.goto(`/sandboxes/${boundary.sandbox.id}`);
   const resume = page.getByRole('button', { name: 'Resume', exact: true });
   await expect(resume).toBeEnabled();
@@ -126,7 +153,7 @@ test('LOCAL owner Resume checks the paused Sandbox before one keyed request', as
   expect(reviveKeys).toHaveLength(1);
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeEnabled();
 
-  await page.goto(`/agents/${boundary.agent.id}`);
+  await expectStoppedInBothMenus();
   await page.getByRole('button', { name: 'More Agent actions', exact: true }).click();
   const remove = page.getByRole('menuitem', { name: /^Delete task\b/ });
   await expect(remove).toBeEnabled();
@@ -157,7 +184,33 @@ for (const { combined, uncertain } of [
       ...boundary.workspace,
       agents: [{ ...boundary.workspace.agents[0]!, status: 'ready' }, sibling],
     };
+    const siblingPath = `/api/v1/agents/${sibling.id}`;
+    const siblingReads = {
+      [siblingPath]: {
+        ...boundary.agent,
+        id: sibling.id,
+        status: sibling.status,
+        title: sibling.title,
+        worktree: { ...boundary.agent.worktree, id: sibling.worktree_id, agent_id: sibling.id },
+      },
+      [`${siblingPath}/transcript`]: { agent_id: sibling.id, through_seq: 0, turns: [] },
+      [`${siblingPath}/usage`]: {
+        agent_id: sibling.id,
+        through_seq: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        context_used: 0,
+      },
+      [`${siblingPath}/events`]: { items: [] },
+    };
     await boundary.route(page, baseURL!);
+    await page.route(
+      (url) => url.origin === baseURL && Object.hasOwn(siblingReads, url.pathname),
+      (route) =>
+        route.request().method() === 'GET'
+          ? route.fulfill({ json: siblingReads[new URL(route.request().url()).pathname] })
+          : route.fallback(),
+    );
     await page.route('**/api/v1/agents/agt_sibling/channel-usage', (route) =>
       route.fulfill({
         json: {
@@ -285,25 +338,54 @@ for (const { combined, uncertain } of [
       await expect.poll(() => deletes.length).toBe(2);
       expect(deletes[1]).toBe(deletes[0]);
     }
-    await expect(
-      page.getByText('Agent delete request accepted. Cleanup continues in the background.'),
-    ).toBeVisible();
+    await expect(page.getByText('Deleting 1 Agent')).toBeVisible();
     expect(deletes).toHaveLength(combined && uncertain ? 2 : 1);
     expect(deletes[0]).not.toBe(stops[0]!.key);
+    const detailFirst = !combined && !uncertain;
+    if (detailFirst) await page.clock.install();
+    // Reload from Agent Manager so the Agent page's detail refresh cannot settle the receipt
+    // before the reopened status dialog observes cleanup.
+    await page.goto('/agent-manager');
     await page.reload();
-    await page.getByRole('button', { name: /View Agent deletion status/ }).click();
-    await expect(page.getByRole('dialog', { name: 'Deleting Agent', exact: true })).toBeVisible();
+    await page
+      .getByRole('region', { name: 'Deletion request', exact: true })
+      .getByRole('button', { name: 'View status', exact: true })
+      .click();
+    const reopen = page.getByRole('button', { name: /View Agent deletion status/ });
+    await expect(reopen).toBeEnabled();
+    if (detailFirst) await page.clock.pauseAt(new Date(Date.now() + 500));
+    await reopen.press('Enter');
+    const deleting = page.getByRole('dialog', { name: 'Deleting Agent', exact: true });
+    await expect(deleting.getByText('Last status read:')).toBeVisible();
+    const deleted = page.getByRole('dialog', { name: 'Agent deleted', exact: true });
+    await expect(deleted).toHaveCount(0);
     boundary.agent = {
       ...boundary.agent,
       status: 'deleted',
       worktree: { ...boundary.agent.worktree, status: 'removed' },
     };
     boundary.workspace = { ...boundary.workspace, agents: [sibling] };
-    await expect(page.getByRole('dialog', { name: 'Agent deleted', exact: true })).toBeVisible();
-    await page
-      .getByRole('dialog', { name: 'Agent deleted', exact: true })
-      .getByRole('button', { name: 'Done', exact: true })
-      .click();
+    if (detailFirst) {
+      // Keep the dialog's poll paused while the original detail page reads terminal state.
+      const detail = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === `/api/v1/agents/${boundary.agent.id}` &&
+          response.request().method() === 'GET' &&
+          response.ok(),
+      );
+      await page.evaluate((path) => {
+        window.dispatchEvent(new CustomEvent('cma:route-request', { detail: path }));
+      }, `/agents/${boundary.agent.id}`);
+      expect(await (await detail).json()).toMatchObject({
+        id: boundary.agent.id,
+        status: 'deleted',
+        worktree: { status: 'removed' },
+      });
+      await expect(page.locator('.deletion-notice')).toHaveCount(0);
+      await page.clock.resume();
+    }
+    await expect(deleted).toBeVisible();
+    await deleted.getByRole('button', { name: 'Done', exact: true }).click();
     await page.reload();
     await expect(page.locator(`.tree-row[data-node-id="agent:${boundary.agent.id}"]`)).toHaveCount(
       0,

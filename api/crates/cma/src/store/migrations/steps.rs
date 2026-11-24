@@ -1,8 +1,8 @@
 //! The explicit manifest registry is also the migrator's reader floor.
 use super::{
     activity_indexes, activity_page_index, agent_log_segments, agent_log_source_keys,
-    agent_owner_index, binding_indexes, collection_indexes, command_cohort_index, opening_index,
-    sandbox_usage_capture, Result,
+    agent_owner_index, binding_indexes, collection_indexes, command_cohort_index, measured_custody,
+    opening_index, sandbox_usage_capture, turn_policy_index, Result,
 };
 use mongodb::bson::{doc, Document};
 
@@ -13,21 +13,25 @@ pub(super) enum Step {
     LedgerCollection,
     AgentOpening,
     AgentOwnerPage,
+    TurnPolicyDue,
     AgentLogSegments,
     AgentLogSourceKeys,
     BindingIndexes,
     CommandCohort,
     SandboxUsageCapture,
+    MeasuredCustody,
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 10] = [
+    pub(super) const ALL: [Self; 12] = [
+        Self::MeasuredCustody,
         Self::SandboxUsageCapture,
         Self::Activity,
         Self::ActivityPage,
         Self::LedgerCollection,
         Self::AgentOpening,
         Self::AgentOwnerPage,
+        Self::TurnPolicyDue,
         Self::AgentLogSegments,
         Self::AgentLogSourceKeys,
         Self::BindingIndexes,
@@ -42,6 +46,7 @@ impl Step {
     pub(super) fn id(self) -> &'static str {
         match self {
             Self::CommandCohort => command_cohort_index::ID,
+            Self::MeasuredCustody => measured_custody::ID,
             Self::SandboxUsageCapture => sandbox_usage_capture::ID,
             Self::BindingIndexes => binding_indexes::ID,
             Self::Activity => activity_indexes::ID,
@@ -49,6 +54,7 @@ impl Step {
             Self::LedgerCollection => collection_indexes::ID,
             Self::AgentOpening => opening_index::ID,
             Self::AgentOwnerPage => agent_owner_index::ID,
+            Self::TurnPolicyDue => turn_policy_index::ID,
             Self::AgentLogSegments => agent_log_segments::ID,
             Self::AgentLogSourceKeys => agent_log_source_keys::ID,
         }
@@ -56,6 +62,7 @@ impl Step {
     pub(super) fn checksum(self) -> String {
         match self {
             Self::CommandCohort => command_cohort_index::checksum(),
+            Self::MeasuredCustody => measured_custody::checksum(),
             Self::SandboxUsageCapture => sandbox_usage_capture::checksum(),
             Self::BindingIndexes => binding_indexes::checksum(),
             Self::Activity => activity_indexes::checksum(),
@@ -63,6 +70,7 @@ impl Step {
             Self::LedgerCollection => collection_indexes::checksum(),
             Self::AgentOpening => opening_index::checksum(),
             Self::AgentOwnerPage => agent_owner_index::checksum(),
+            Self::TurnPolicyDue => turn_policy_index::checksum(),
             Self::AgentLogSegments => agent_log_segments::checksum(),
             Self::AgentLogSourceKeys => agent_log_source_keys::checksum(),
         }
@@ -73,24 +81,29 @@ impl Step {
     pub(super) fn max_changes(self) -> i64 {
         match self {
             Self::CommandCohort => 1,
+            Self::MeasuredCustody => 1,
             Self::SandboxUsageCapture => crate::store::sandbox_usage_export::schema::MAX_STEPS,
             Self::BindingIndexes => 11,
             Self::Activity => 2,
             Self::ActivityPage => 1,
             Self::LedgerCollection => 5,
-            Self::AgentOpening | Self::AgentOwnerPage | Self::AgentLogSourceKeys => 1,
+            Self::AgentOpening
+            | Self::AgentOwnerPage
+            | Self::AgentLogSourceKeys
+            | Self::TurnPolicyDue => 1,
             Self::AgentLogSegments => agent_log_segments::MAX_SCHEMA_STEPS,
         }
     }
     pub(super) fn collections(self) -> &'static [&'static str] {
         match self {
+            Self::MeasuredCustody => &[measured_custody::COLLECTION],
             Self::SandboxUsageCapture => crate::store::sandbox_usage_export::COLLECTIONS,
             Self::BindingIndexes => crate::store::bindings::schema::COLLECTIONS,
             Self::Activity | Self::ActivityPage => &["activity"],
             Self::LedgerCollection => &collection_indexes::COLLECTIONS,
             Self::AgentOpening => &opening_index::COLLECTIONS,
             Self::CommandCohort => &["agent_commands"],
-            Self::AgentOwnerPage => &["agents"],
+            Self::AgentOwnerPage | Self::TurnPolicyDue => &["agents"],
             Self::AgentLogSourceKeys => &["agent_log"],
             Self::AgentLogSegments => crate::store::agent_log_segments::COLLECTIONS,
         }
@@ -103,9 +116,11 @@ impl Step {
             | Self::LedgerCollection
             | Self::AgentOpening
             | Self::AgentOwnerPage
+            | Self::TurnPolicyDue
             | Self::AgentLogSourceKeys
-            | Self::BindingIndexes
-            | Self::CommandCohort => "created_indexes",
+            | Self::CommandCohort
+            | Self::MeasuredCustody
+            | Self::BindingIndexes => "created_indexes",
         }
     }
     pub(super) async fn inspect(
@@ -118,6 +133,7 @@ impl Step {
                 .into_iter()
                 .map(|index| ("agent_commands", index))
                 .collect()),
+            Self::MeasuredCustody => measured_custody::inspect(database).await,
             Self::SandboxUsageCapture => Err("usage migration requires schema-unit inspection"),
             Self::BindingIndexes => binding_indexes::inspect(database).await,
             Self::Activity => Ok(activity_indexes::inspect(database)
@@ -132,6 +148,11 @@ impl Step {
                 .collect()),
             Self::LedgerCollection => collection_indexes::inspect(database).await,
             Self::AgentOpening => opening_index::inspect(database).await,
+            Self::TurnPolicyDue => Ok(turn_policy_index::inspect(database)
+                .await?
+                .into_iter()
+                .map(|index| ("agents", index))
+                .collect()),
             Self::AgentOwnerPage => Ok(agent_owner_index::inspect(database)
                 .await?
                 .into_iter()
@@ -155,6 +176,9 @@ impl Step {
             Self::CommandCohort if collection == "agent_commands" => {
                 command_cohort_index::create(database, index).await
             }
+            Self::MeasuredCustody if collection == measured_custody::COLLECTION => {
+                measured_custody::create(database, index).await
+            }
             Self::BindingIndexes => binding_indexes::create(database, collection, index).await,
             Self::Activity if collection == "activity" => {
                 activity_indexes::create(database, index).await
@@ -164,6 +188,9 @@ impl Step {
             }
             Self::LedgerCollection => collection_indexes::create(database, collection, index).await,
             Self::AgentOpening => opening_index::create(database, collection, index).await,
+            Self::TurnPolicyDue if collection == "agents" => {
+                turn_policy_index::create(database, index).await
+            }
             Self::AgentOwnerPage if collection == "agents" => {
                 agent_owner_index::create(database, index).await
             }

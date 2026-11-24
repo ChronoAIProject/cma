@@ -33,7 +33,8 @@ impl Reader<'_> {
             .hint(Hint::Name("agent_log_output_change_seek".into()))
             .sort(doc! {"change_ordinal":1})
             .limit(expected as i64 + 1)
-            .batch_size(u32::from(limit))
+            // Leave room for the excess-evidence probe in the initial batch.
+            .batch_size(u32::from(limit) + 1)
             .max_time(std::time::Duration::from_secs(2))
             .read_concern(ReadConcern::snapshot())
             .session(&mut self.session)

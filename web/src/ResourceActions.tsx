@@ -9,7 +9,6 @@ import { DeletionDialog } from './DeletionDialog';
 import { useConnectionGate } from './connections/useConnectionGate';
 import {
   restoreDeletion,
-  deletionTarget,
   type DeleteAction,
   type DeletionRequest,
   type AgentDeletionPermissions,
@@ -19,7 +18,7 @@ import {
   reconcileDeletionRequests,
   type DeletionSettlements,
 } from './useDeletionNoticeReconciliation';
-import { Button } from './ui/Button';
+import { DeletionNotice } from './DeletionNotice';
 import { useHistoryExport } from './agent/useHistoryExport';
 import type { AppRoute } from './routing/routes';
 import { SandboxActionStatus, type SandboxActionRequest } from './sandbox/SandboxActionStatus';
@@ -231,6 +230,13 @@ export function useResourceActions(
     select,
     viewDeletion,
     deletingSandboxIds,
+    unknownDeletingSandboxIds: new Set(
+      deletionRequests.flatMap((request) =>
+        !request.accepted && request.action.kind === 'delete_sandbox'
+          ? [request.action.sandboxId]
+          : [],
+      ),
+    ),
     busySandboxIds: new Set(
       sandboxRequests
         .filter((request) => request.phase === 'accepted' || request.phase === 'submitting')
@@ -251,27 +257,14 @@ export function useResourceActions(
             {history.notice}
           </p>
         ) : null}
-        {deletionRequests.map((request, index) => (
-          <section
-            key={request.key}
-            className="console__navigation-status deletion-notice"
-            aria-label="Deletion request"
-          >
-            <p role="status">
-              {deletionTarget(request.action)} delete request{' '}
-              {request.accepted
-                ? 'accepted. Cleanup continues in the background.'
-                : 'is not confirmed.'}
-            </p>
-            <Button
-              size="sm"
-              disabled={pending || deletion !== undefined || stopping !== undefined}
-              onClick={() => reopenDeletion(request)}
-            >
-              View {deletionTarget(request.action)} deletion status ({index + 1})
-            </Button>
-          </section>
-        ))}
+        {deletionRequests.length > 0 ? (
+          <DeletionNotice
+            key={viewerId}
+            requests={deletionRequests}
+            disabled={!enabled || pending || deletion !== undefined || stopping !== undefined}
+            onViewStatus={reopenDeletion}
+          />
+        ) : null}
         {sandboxRequests.map((sandboxRequest) => (
           <SandboxActionStatus
             key={sandboxRequest.key}
@@ -326,6 +319,7 @@ export function useResourceActions(
               viewerId={viewerId}
               agentPermissions={agentPermissions}
               enabled={enabled}
+              settlements={settlements}
               initial={deletion.request}
               restored={deletion.restored}
               backgroundOnAcceptance

@@ -83,11 +83,13 @@ pub(crate) struct AgentWorkerConfig {
         Option<Arc<dyn crate::store::native_retirement_action::RetirementRecords>>,
     pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     skip_ineligible_reconciliation: bool,
+    defer_foreign_reconciliation: bool,
     pub parent_not_ready_pacing_enabled: bool,
     startup_sibling_hold_enabled: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
     pub cleanup_continuation_enabled: bool,
+    pub owner_stop_settlement_enabled: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub holder: String,
@@ -105,12 +107,14 @@ impl AgentWorkerConfig {
             retirement_reporter: None,
             ownership: None,
             skip_ineligible_reconciliation: false,
+            defer_foreign_reconciliation: false,
             ownership_retry_hints: None,
             parent_not_ready_pacing_enabled: false,
             startup_sibling_hold_enabled: false,
             retry_single_marker_enabled: false,
             work_retry_policy_enabled: false,
             cleanup_continuation_enabled: false,
+            owner_stop_settlement_enabled: false,
             managed_documents_enabled: false,
             access_transport_migration: None,
             holder: holder.into(),
@@ -154,6 +158,11 @@ impl AgentWorkerConfig {
 
     pub(crate) fn with_skip_ineligible_reconciliation(mut self, enabled: bool) -> Self {
         self.skip_ineligible_reconciliation = enabled;
+        self
+    }
+
+    pub(crate) fn with_defer_foreign_reconciliation(mut self, enabled: bool) -> Self {
+        self.defer_foreign_reconciliation = enabled;
         self
     }
 

@@ -135,13 +135,18 @@ export interface AgentLifecycleOperationEvent {
 
 export interface AgentLifecycleOperationView {
   readonly id: string;
+  readonly accepted_at?: string;
   readonly status: string;
   readonly phase: string;
   readonly agent_id?: string;
   readonly error?: string;
   readonly failure?: import('@cma/client').AgentLifecycleFailure;
   readonly events: readonly AgentLifecycleOperationEvent[];
-  readonly connection?: { readonly services: readonly string[]; readonly target: ConnectionTarget };
+  readonly connection?: {
+    readonly services: readonly string[];
+    readonly target: ConnectionTarget;
+    readonly repository_access?: 'verification_unavailable';
+  };
 }
 
 export interface AgentLifecycleConnectionRequired {
@@ -290,12 +295,20 @@ export interface CmaWebClient {
   readAgent(id: string, options?: ReadOptions): Promise<AgentDetail>;
   readAgentEvents(
     id: string,
-    options?: PageOptions<number>,
+    options?: PageOptions<number> & { readonly cache?: 'no-store' },
   ): Promise<ResourcePage<AgentEvent, number>>;
   readonly readRetainedOutput?: (
     id: string,
     options?: import('@cma/client').RetainedOutputOptions,
   ) => Promise<import('@cma/client').RetainedOutputPage>;
+  readonly readAgentReplyPreview?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<import('./replyPreview').ReplyPreview>;
+  readonly readAgentOriginalRequest?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<import('./originalRequest').OriginalRequestRead>;
   readAgentTranscript(
     id: string,
     options?: ReadOptions & {
