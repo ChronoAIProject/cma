@@ -4,6 +4,7 @@ const { readFileSync, writeFileSync } = require("node:fs");
 const { bridgePath } = require("./persist_conversations.cjs");
 
 const sourceSha256 = "ddb625f66a5a14d94df3512a525c4a674a359e564602c09085769c8b61e2bca1";
+const stopMarker = 'const cmaAdministrativeStop = Symbol("native administrative stop");';
 
 function createNativePromptStarter(enabled, onBound) {
   // The native listener requires increasing sequences and permits gaps. Keep the
@@ -104,10 +105,8 @@ function createNativeStopCoordinator(enabled) {
   return { bind, stop, acceptFence, release };
 }
 
-function applyNativeBoundDispatch(source) {
-  assert.equal(createHash("sha256").update(source).digest("hex"), sourceSha256,
-    "Unexpected ACP composition for native dispatch binding");
-  const edits = [
+function nativeBoundDispatchEdits() {
+  return [
     ["getAgent().prompt(ctx.params, ctx.signal)",
       "getAgent().prompt(ctx.params, ctx.signal, void 0, ctx.requestId, " +
       "fence => ctx.client.notify(\"cma/codex/turn-stop-fence\", fence))"],
@@ -134,7 +133,7 @@ function applyNativeBoundDispatch(source) {
       "      if (boundTurnId !== null) cmaNativeStop.release(this, params.threadId, boundTurnId);\n      releaseCapture();"],
     [
       "function extractTurnRouting(notification) {",
-      `const cmaAdministrativeStop = Symbol("native administrative stop");
+      `${stopMarker}
 const cmaNativeStop = (${createNativeStopCoordinator.toString()})(process.env.CHRONO_CODEX_EXACT_TURN_SEAL_V1 === "1");
 const cmaStartNativePrompt = (${createNativePromptStarter.toString()})(process.env.CHRONO_CODEX_EXACT_TURN_STOP_V1 === "1", cmaNativeStop.bind);
 function extractTurnRouting(notification) {`,
@@ -183,6 +182,9 @@ function extractTurnRouting(notification) {`,
       '.onNotification("cma/codex/stop-exact-turn", emptyExtensionParamsParser, (ctx) => getAgent().cmaStopNativeTurn(ctx.params))' +
       '.onNotification(methods.agent.session.cancel, (ctx) => getAgent().cancel(ctx.params))'],
   ];
+}
+
+function replaceNativeBoundDispatch(source, edits) {
   for (const [before, after] of edits) {
     assert.equal(source.split(before).length, 2, "Unexpected native dispatch insertion point");
     source = source.replace(before, after);
@@ -190,7 +192,27 @@ function extractTurnRouting(notification) {`,
   return source;
 }
 
-module.exports = { createNativePromptStarter, createNativeStopCoordinator, applyNativeBoundDispatch };
+function applyNativeBoundDispatch(source) {
+  assert.equal(createHash("sha256").update(source).digest("hex"), sourceSha256,
+    "Unexpected ACP composition for native dispatch binding");
+  return replaceNativeBoundDispatch(source, nativeBoundDispatchEdits());
+}
+
+function withoutNativeBoundDispatch(source) {
+  if (!source.includes(stopMarker)) return source;
+  const edits = nativeBoundDispatchEdits().reverse().map(([before, after]) => [after, before]);
+  const original = replaceNativeBoundDispatch(source, edits);
+  assert.equal(createHash("sha256").update(original).digest("hex"), sourceSha256,
+    "Unexpected pre-binding ACP composition");
+  return original;
+}
+
+module.exports = {
+  createNativePromptStarter,
+  createNativeStopCoordinator,
+  applyNativeBoundDispatch,
+  withoutNativeBoundDispatch,
+};
 if (require.main === module) {
   writeFileSync(bridgePath, applyNativeBoundDispatch(readFileSync(bridgePath, "utf8")));
 }
