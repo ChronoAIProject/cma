@@ -36,7 +36,6 @@ fn lark_effects_require_their_own_gate_and_allow_exact_carry_or_removal() {
     check(Some(&opted), &changed, WriteFlags::default()).unwrap();
     if let cmaeg_core::channel::Source::NyxidRelay {
         lark_message_effects: Some(binding),
-        member_join_chat_ids: Vec::new(),
         ..
     } = &mut changed.sources[0]
     {

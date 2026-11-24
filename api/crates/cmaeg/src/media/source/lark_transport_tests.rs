@@ -151,7 +151,6 @@ async fn current_authority_revokes_old_locators_even_with_a_retained_cached_chan
             _ => {
                 if let Source::NyxidRelay {
                     lark_resources: Some(binding),
-                    member_join_chat_ids: Vec::new(),
                     bot_id,
                     route_ids,
                     ..

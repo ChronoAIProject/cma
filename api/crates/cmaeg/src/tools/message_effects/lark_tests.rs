@@ -313,7 +313,6 @@ async fn lark_write_opt_in_is_separate_and_operations_are_independent() {
         let mut f = App::new(Platform::Lark).await;
         if let Source::NyxidRelay {
             lark_message_effects: Some(binding),
-            member_join_chat_ids: Vec::new(),
             ..
         } = &mut f.definition.sources[0]
         {

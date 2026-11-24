@@ -13,6 +13,7 @@ use cmaeg_core::{
     ids::{ConversationId, EventId, IdempotencyKey, MessageRef},
     seal::{EventRef, EventRefPayload, MasterKeyRing, ReplyAddress},
 };
+use sha2::{Digest, Sha256};
 use std::{sync::Arc, time::Instant};
 /// Build the sealed launch request, or the refusal the media guard chose. The
 /// error is the static 400 detail for an activity invalid for reasons unrelated
@@ -33,14 +34,18 @@ pub(crate) fn launch_request(
             && ce.r#type == crate::ingress::telegram::member_joins::EVENT_TYPE
     });
     let event_id = EventId::new(if let Some(callback) = &facts.callback {
-        use sha2::{Digest, Sha256};
         format!(
             "{}-callback:{:x}",
             platform.as_str(),
             Sha256::digest(format!("{}:{}", payload.conversation.id, callback.id).as_bytes())
         )
     } else if let Some(join) = member_join {
-        format!("telegram:relay:{}:{}", payload.conversation.id, join.id)
+        // Keep the full route and update in the default consumer's bounded key.
+        let mut digest = Sha256::new();
+        digest.update(payload.conversation.id.as_bytes());
+        digest.update([0]);
+        digest.update(join.id.as_bytes());
+        format!("telegram:relay:{:x}", digest.finalize())
     } else {
         payload.message_id.clone()
     })

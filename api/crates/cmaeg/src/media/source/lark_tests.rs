@@ -104,7 +104,6 @@ fn source_revision_is_stable_but_changes_with_exact_authority() {
     );
     if let Source::NyxidRelay {
         lark_resources: Some(binding),
-        member_join_chat_ids: Vec::new(),
         ..
     } = &mut source
     {

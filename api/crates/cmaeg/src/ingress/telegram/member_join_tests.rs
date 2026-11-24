@@ -158,8 +158,8 @@ async fn telegram_relay_member_joins_preserve_the_reply_token_and_durable_update
 
     let mut f = Fixture::new(false).await;
     let definition = &mut Arc::make_mut(&mut f.channel).definition;
-    let route = crate::channels::routing_fixture::ROUTE;
-    let mut source = crate::channels::routing_fixture::relay("telegram", route);
+    let route = "r".repeat(200);
+    let mut source = crate::channels::routing_fixture::relay("telegram", &route);
     source["bot_id"] = "77".into();
     source["member_join_chat_ids"] = json!(["-100"]);
     source["admission"] = json!({
@@ -181,8 +181,7 @@ async fn telegram_relay_member_joins_preserve_the_reply_token_and_durable_update
         "content":{"type":"unknown"},"timestamp":"2026-10-26T00:00:00Z",
         "raw_platform_data":raw,
     });
-    let source_bytes = serde_json::to_vec(&body).unwrap();
-    let request = || {
+    let request = |body: &Value| {
         let payload = serde_json::from_value(body.clone()).unwrap();
         let Observation::Message(facts) =
             relay::telegram_member_joins::observe(&f.channel.definition.sources[0], &payload)
@@ -211,29 +210,45 @@ async fn telegram_relay_member_joins_preserve_the_reply_token_and_durable_update
         };
         *request
     };
-    let event_id = format!("telegram:relay:{route}:405");
-    let mut recorded = None;
-    for _ in 0..2 {
-        let request = request();
-        assert_eq!(request.activity.event_id.as_str(), event_id);
+    let mut second = body.clone();
+    second["message_id"] = "message-2".into();
+    second["raw_platform_data"]["update_id"] = 406.into();
+    let mut recorded = Vec::new();
+    for (body, original_update, original_message) in [
+        (&body, "405", "message-1"),
+        (&second, "406", "message-2"),
+        (&body, "405", "message-1"),
+    ] {
+        let request = request(body);
+        let event_id = request.activity.event_id.clone();
         assert_eq!(request.activity.actor.id, "telegram:system");
         assert_eq!(request.activity.actor.display_name, None);
+        let ActivityKind::Event { ce, .. } = &request.activity.kind else {
+            panic!("expected relay group join");
+        };
+        assert_eq!(ce.id, original_update);
+        assert_eq!(ce.source, format!("nyxid:route:{route}"));
+        let source_bytes = serde_json::to_vec(body).unwrap();
         let source = f.state.capture_routed(&request, &source_bytes, true);
         let hold = f.state.inflight.clone().try_acquire_owned().unwrap();
         assert!(matches!(
             f.state.launch_verified(request, source, hold).await,
             LaunchOutcome::Admitted { .. }
         ));
-        let plan = f.plan(&event_id).await.unwrap();
-        assert!(
-            matches!(&plan.targets[0].launch.event.reply, ReplyAddress::NyxidRelay {
+        let plan = f.plan(event_id.as_str()).await.unwrap();
+        let target = &plan.targets[0].launch;
+        assert!(target.consumer.is_default());
+        assert!(matches!(&target.event.reply, ReplyAddress::NyxidRelay {
             route_id, message_id, reply_token, ..
-        } if route_id == route && message_id == "message-1" && reply_token.as_str() == "fixture-reply-token")
-        );
-        if let Some(previous) = &recorded {
-            assert_eq!(previous, &plan);
-        }
-        recorded = Some(plan);
+        } if route_id == &route && message_id == original_message
+            && reply_token.as_str() == "fixture-reply-token"));
+        recorded.push(plan);
     }
+    assert_ne!(recorded[0].identity.event_id, recorded[1].identity.event_id);
+    assert_ne!(
+        recorded[0].targets[0].launch.idempotency_key,
+        recorded[1].targets[0].launch.idempotency_key,
+    );
+    assert_eq!(recorded[0], recorded[2]);
     assert_eq!(f.legacy.0.load(Ordering::SeqCst), 0);
 }

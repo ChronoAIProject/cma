@@ -465,7 +465,6 @@ fn lark_resources_require_own_gate_and_carry_or_remove_without_reauthoring() {
     let mut changed = opted.clone();
     if let cmaeg_core::channel::Source::NyxidRelay {
         lark_resources: Some(binding),
-        member_join_chat_ids: Vec::new(),
         ..
     } = &mut changed.sources[0]
     {
