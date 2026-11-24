@@ -359,7 +359,7 @@ impl SandboxReconciler {
                 .map_err(|error| corrupt(&error.to_string()))?,
         )
         .with_expected_image(&binding.runtime_version);
-        if measure(
+        let adopted = measure(
             Stage::Adoption,
             self.adapter.adopt_runtime(&request),
             |result| match result {
@@ -367,10 +367,8 @@ impl SandboxReconciler {
                 _ => adapter_outcome(result),
             },
         )
-        .await
-        .map_err(provider_error)?
-        .is_none()
-        {
+        .await;
+        if self.binding_result(sandbox, adopted).await?.is_none() {
             return Ok(false);
         }
         let mut next = sandbox.clone();
@@ -386,11 +384,8 @@ impl SandboxReconciler {
             let accepted = measure(
                 Stage::Status,
                 async {
-                    let status = self
-                        .adapter
-                        .runtime_status(&observation.handle)
-                        .await
-                        .map_err(provider_error)?;
+                    let status = self.adapter.runtime_status(&observation.handle).await;
+                    let status = self.binding_result(sandbox, status).await?;
                     if !next
                         .runtime_process_matches(&status)
                         .map_err(|error| corrupt(&error.to_string()))?
@@ -443,6 +438,35 @@ impl SandboxReconciler {
             .await?;
         }
         Ok(true)
+    }
+
+    async fn binding_result<T>(
+        &self,
+        sandbox: &Sandbox,
+        result: layer3_adapter::Result<T>,
+    ) -> Result<T, SandboxStoreError> {
+        let error = match result {
+            Ok(value) => return Ok(value),
+            Err(error) => error,
+        };
+        if error.is_native_home_identity_refusal() {
+            // Home verification can race a new durable binding.
+            let current = measure(
+                Stage::DurableRead,
+                self.store.get_sandbox(&sandbox.id),
+                diagnostics::store_outcome,
+            )
+            .await?;
+            if current.is_some_and(|row| {
+                row.revision > sandbox.revision
+                    && (row.runtime != sandbox.runtime
+                        || row.lifecycle.suspended_runtime != sandbox.lifecycle.suspended_runtime
+                        || row.lifecycle.home != sandbox.lifecycle.home)
+            }) {
+                return Err(SandboxStoreError::Conflict);
+            }
+        }
+        Err(provider_error(error))
     }
 }
 
