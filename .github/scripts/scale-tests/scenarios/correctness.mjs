@@ -1,6 +1,40 @@
-import { check, clock, isHash, reconcile, waitFor } from '../lib/checks.mjs';
+import { check, clock, hash, isHash, reconcile, waitFor } from '../lib/checks.mjs';
 
 export const paths = ['create', 'open', 'send', 'interrupt', 'stream', 'desktop'];
+
+export function sw04Cancel(observation) {
+  check(observation?.schema === 'cma-sw04-cancel-v1', 'sw04_observation_missing', true);
+  const { replicas, owner, admission, replay, durable, effectsBeforeReplay, effectsAfterReplay } = observation;
+  check(Array.isArray(replicas) && replicas.length === 2 && replicas.every(isHash)
+    && new Set(replicas).size === 2, 'sw04_replica_identity_missing', true);
+  check(replicas.includes(owner?.processHash) && Number.isSafeInteger(owner.epoch) && owner.epoch > 0,
+    'sw04_owner_authority_missing', true);
+  check(admission?.status === 202 && replicas.includes(admission.processHash)
+    && admission.processHash !== owner.processHash, 'sw04_wrong_ingress');
+  check(replay?.status === 202 && replay.processHash === owner.processHash, 'sw04_wrong_replay_ingress');
+  const { commandHash, responseHash } = admission;
+  check(isHash(commandHash) && isHash(responseHash) && replay.commandHash === commandHash
+    && replay.responseHash === responseHash, 'sw04_replay_identity_changed');
+  check(durable?.commandHash === commandHash && durable.responseHash === responseHash
+    && durable.status === 'completed'
+    && Number.isSafeInteger(durable.runtimeGeneration) && durable.runtimeGeneration > 0,
+  'sw04_durable_outcome_invalid');
+  for (const effects of [effectsBeforeReplay, effectsAfterReplay]) {
+    check(Array.isArray(effects), 'sw04_receiver_observation_missing', true);
+    check(effects.length > 0, 'sw04_effect_missing');
+    check(effects.length === 1, 'sw04_effect_duplicate');
+    const [effect] = effects;
+    check(effect?.processHash === owner.processHash && effect.ownerProcessHash === owner.processHash
+      && effect.epoch === owner.epoch, 'sw04_effect_owner_invalid');
+    check(effect.kind === 'interrupt' && effect.commandHash === commandHash
+      && effect.runtimeGeneration === durable.runtimeGeneration, 'sw04_effect_identity_invalid');
+  }
+  return {
+    commands: 1, effects: 1, additional_replay_effects: 0,
+    evidence_hash: hash(JSON.stringify([admission.processHash, owner.processHash, owner.epoch,
+      commandHash, responseHash, durable.runtimeGeneration])),
+  };
+}
 
 function pathProof(value, replicaHash) {
   check(value?.ok === true && value.completed === true, 'client_path_failed');
