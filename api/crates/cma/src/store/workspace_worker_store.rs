@@ -9,6 +9,7 @@ use mongodb::bson::{doc, Bson};
 
 use super::child_writer_claims::{persist, ChildWriterClaim};
 use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS};
+use super::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
 
 #[async_trait::async_trait]
 impl WorkspaceWorkerStore for MongoSandboxStore {
@@ -51,20 +52,31 @@ impl WorkspaceWorkerStore for MongoSandboxStore {
         {
             return Ok(Vec::new());
         }
+        let due = crate::store::work_schema::query(doc! {
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "work_pending": true,
+            "work_ready_at": { "$lte": now },
+            "$or": [
+                { "work_lease_expires_at": Bson::Null },
+                { "work_lease_expires_at": { "$lte": now } },
+            ],
+        });
+        // Apply the hold filter before the page limit so held Workspaces cannot
+        // take the slots needed by later due work.
+        let parent_hold = format!("parent.{LEDGER_MAINTENANCE_FIELD}");
         let mut cursor = self
             .workspaces
-            .find(crate::store::work_schema::query(doc! {
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "work_pending": true,
-                "work_ready_at": { "$lte": now },
-                "$or": [
-                    { "work_lease_expires_at": Bson::Null },
-                    { "work_lease_expires_at": { "$lte": now } },
-                ],
-            }))
-            .projection(doc! { "_id": 1 })
-            .sort(doc! { "work_ready_at": 1, "_id": 1 })
-            .limit(i64::from(limit))
+            .aggregate([
+                doc! {"$match": due},
+                doc! {"$sort": {"work_ready_at": 1, "_id": 1}},
+                doc! {"$lookup": {
+                    "from": self.sandboxes.name(), "localField": "sandbox_id", "foreignField": "_id",
+                    "pipeline": [{"$project": {LEDGER_MAINTENANCE_FIELD: 1}}], "as": "parent",
+                }},
+                doc! {"$match": {parent_hold: {"$exists": false}}},
+                doc! {"$limit": i64::from(limit)},
+                doc! {"$project": {"_id": 1}},
+            ])
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         let mut ids = Vec::new();
