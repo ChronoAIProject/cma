@@ -28,6 +28,10 @@ pub(crate) fn launch_request(
 ) -> Result<Built, &'static str> {
     super::lark_resources::bind(&channel, platform, &verified.payload, &mut facts);
     let payload = verified.payload;
+    let member_join = facts.event.as_ref().filter(|ce| {
+        platform == Platform::Telegram
+            && ce.r#type == crate::ingress::telegram::member_joins::EVENT_TYPE
+    });
     let event_id = EventId::new(if let Some(callback) = &facts.callback {
         use sha2::{Digest, Sha256};
         format!(
@@ -35,10 +39,13 @@ pub(crate) fn launch_request(
             platform.as_str(),
             Sha256::digest(format!("{}:{}", payload.conversation.id, callback.id).as_bytes())
         )
+    } else if let Some(join) = member_join {
+        format!("telegram:relay:{}:{}", payload.conversation.id, join.id)
     } else {
         payload.message_id.clone()
     })
     .map_err(|_| "activity_invalid")?;
+    let member_join = member_join.is_some();
     let occurred_at = facts
         .event
         .as_ref()
@@ -72,8 +79,16 @@ pub(crate) fn launch_request(
         event_id: event_id.clone(),
         kind,
         actor: Actor {
-            id: payload.sender.platform_id,
-            display_name: payload.sender.display_name,
+            id: if member_join {
+                "telegram:system".into()
+            } else {
+                payload.sender.platform_id
+            },
+            display_name: if member_join {
+                None
+            } else {
+                payload.sender.display_name
+            },
             kind: facts.actor,
         },
         conversation: ActivityConversation {

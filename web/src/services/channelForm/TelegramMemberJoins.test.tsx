@@ -66,3 +66,44 @@ it('retains a saved opt-in, refuses gated expansion, and checks group admission'
     ).toThrow(/exact group IDs/);
   }
 });
+
+it('gates a verified Telegram relay independently and retains only the same relay identity', () => {
+  const relay = {
+    ...source,
+    type: 'nyxid_relay',
+    platform: 'telegram',
+    issuer: 'https://nyx.example',
+    key_id: 'relay-key',
+    route_ids: ['route-1'],
+    member_join_chat_ids: ['-100'],
+  };
+  const relayAvailable: RelayDiscovery = {
+    ...available,
+    authoring: {
+      ...available.authoring!,
+      relay_telegram_member_joins_enabled: true,
+      platforms: [
+        {
+          id: 'telegram',
+          label: 'Telegram',
+          verification_modes: [{ id: 'native_event', writes_enabled: true }],
+        },
+      ],
+    },
+  };
+  expect(() => validateRelayAuthoring(available, { sources: [relay] })).toThrow(/disabled/);
+  expect(() => validateRelayAuthoring(relayAvailable, { sources: [relay] })).not.toThrow();
+  expect(() =>
+    validateRelayAuthoring(legacy, { sources: [relay] }, { sources: [relay] }),
+  ).not.toThrow();
+  expect(() =>
+    validateRelayAuthoring(
+      legacy,
+      { sources: [{ ...relay, route_ids: ['new-route'] }] },
+      { sources: [relay] },
+    ),
+  ).toThrow(/disabled/);
+  expect(() =>
+    validateRelayAuthoring(relayAvailable, { sources: [{ ...relay, bot_id: undefined }] }),
+  ).toThrow(/bot ID/);
+});

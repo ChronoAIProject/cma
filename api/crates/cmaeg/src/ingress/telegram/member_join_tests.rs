@@ -150,3 +150,90 @@ async fn telegram_member_joins_request_retry_when_durable_routing_is_unavailable
     assert!(f.plan("telegram:77:405").await.is_none());
     assert_eq!(f.legacy.0.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn telegram_relay_member_joins_preserve_the_reply_token_and_durable_update_identity() {
+    use crate::ingress::relay::{self, facts::Observation, verify::VerifiedCallback};
+    use cmaeg_core::channel::{Platform, Secret};
+
+    let mut f = Fixture::new(false).await;
+    let definition = &mut Arc::make_mut(&mut f.channel).definition;
+    let route = crate::channels::routing_fixture::ROUTE;
+    let mut source = crate::channels::routing_fixture::relay("telegram", route);
+    source["bot_id"] = "77".into();
+    source["member_join_chat_ids"] = json!(["-100"]);
+    source["admission"] = json!({
+        "type":"scoped", "groups":"all", "senders":{"type":"open"},
+        "chats":{"type":"allowlist","ids":["-100"]},
+    });
+    definition.sources = vec![serde_json::from_value(source).unwrap()];
+    definition.routing.as_mut().unwrap().default_targets =
+        vec![crate::ingress::routing_plan::fixture::id("default")];
+    definition.validate().unwrap();
+    f.publish_channel();
+
+    let raw = update(&f, json!([{"id":61,"is_bot":false,"first_name":"Ada"}]));
+    let body = json!({
+        "message_id":"message-1","correlation_id":"correlation-1","platform":"telegram",
+        "agent":{"api_key_id":"key-1","name":""},
+        "conversation":{"id":route,"platform_id":"-100","type":"group"},
+        "sender":{"platform_id":"42","display_name":"Inviter"},
+        "content":{"type":"unknown"},"timestamp":"2026-10-26T00:00:00Z",
+        "raw_platform_data":raw,
+    });
+    let source_bytes = serde_json::to_vec(&body).unwrap();
+    let request = || {
+        let payload = serde_json::from_value(body.clone()).unwrap();
+        let Observation::Message(facts) =
+            relay::telegram_member_joins::observe(&f.channel.definition.sources[0], &payload)
+                .unwrap()
+                .unwrap()
+        else {
+            panic!("expected join event");
+        };
+        let verified = VerifiedCallback {
+            payload,
+            reply_token: Secret::new("fixture-reply-token"),
+            reply_expires_at: f.now + 300,
+            callback_deadline: f.now + 300,
+        };
+        let crate::ingress::media_guard::Built::Launch(request) = relay::activity::launch_request(
+            f.channel.clone(),
+            Platform::Telegram,
+            verified,
+            facts,
+            &f.state.master_keys,
+            Instant::now(),
+            f.now,
+        )
+        .unwrap() else {
+            panic!("expected relay launch");
+        };
+        *request
+    };
+    let event_id = format!("telegram:relay:{route}:405");
+    let mut recorded = None;
+    for _ in 0..2 {
+        let request = request();
+        assert_eq!(request.activity.event_id.as_str(), event_id);
+        assert_eq!(request.activity.actor.id, "telegram:system");
+        assert_eq!(request.activity.actor.display_name, None);
+        let source = f.state.capture_routed(&request, &source_bytes, true);
+        let hold = f.state.inflight.clone().try_acquire_owned().unwrap();
+        assert!(matches!(
+            f.state.launch_verified(request, source, hold).await,
+            LaunchOutcome::Admitted { .. }
+        ));
+        let plan = f.plan(&event_id).await.unwrap();
+        assert!(
+            matches!(&plan.targets[0].launch.event.reply, ReplyAddress::NyxidRelay {
+            route_id, message_id, reply_token, ..
+        } if route_id == route && message_id == "message-1" && reply_token.as_str() == "fixture-reply-token")
+        );
+        if let Some(previous) = &recorded {
+            assert_eq!(previous, &plan);
+        }
+        recorded = Some(plan);
+    }
+    assert_eq!(f.legacy.0.load(Ordering::SeqCst), 0);
+}
