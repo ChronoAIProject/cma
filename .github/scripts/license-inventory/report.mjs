@@ -8,7 +8,7 @@ export function makeInventory(records, inputHashes, tools, unmappedNotices) {
   for (const record of records) counts[record.ecosystem] = (counts[record.ecosystem] ?? 0) + 1;
   return {
     schemaVersion: 1,
-    status: 'DRAFT — pending owner decisions and distribution review',
+    status: 'DRAFT — third-party distribution review remains',
     scope: 'Cargo all-features/all-targets metadata, every npm lock location, and declared vendored source/assets; not a release SBOM',
     counts,
     tools,
@@ -51,7 +51,9 @@ export function renderNotices(inventory) {
     'inspection. The vendor catalog is an explicit starting inventory, not an exhaustive code scan.',
     'Web bundles, binaries and images require artifact-specific inventories and source-offer review.', '',
     '## Inventory', '', ...table(thirdParty),
-    '## Project workspace (license decision pending)', '',
+    '## Project workspace declarations', '',
+    'The project has adopted Apache-2.0. NOASSERTION on a workspace row means its Cargo',
+    'manifest has no license declaration; it does not reopen the project license decision.', '',
     ...table(inventory.records.filter((record) => record.ecosystem === 'workspace')),
     '## Unmapped notice files', '',
     ...(inventory.unmappedNotices.length ? inventory.unmappedNotices.map((path) => `- ${cell(path)} — review and extend the vendor catalog.`) : ['No additional notice filenames found; this does not prove all copied code or media is cataloged.']), '',

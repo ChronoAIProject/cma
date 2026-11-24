@@ -53,7 +53,8 @@ export function collectCargo(metadata, root, policy) {
     const evidence = local ? relativePath(relative(root, pkg.manifest_path)) : 'api/Cargo.lock';
     const license = assessLicense(pkg.license, policy);
     const firstParty = workspace.has(pkg.id);
-    const flags = [...license.flags, ...(firstParty ? ['project-license-pending'] : [])];
+    const flags = license.flags.map((flag) => firstParty && flag === 'missing-license'
+      ? 'workspace-license-metadata-missing' : flag);
     if (pkg.license_file) flags.push('license-file-review');
     return { ecosystem: firstParty ? 'workspace' : 'cargo', name, version, evidence, ...license, flags,
       sourceSha256: sha256(local ? dirname(evidence) : String(pkg.source)),

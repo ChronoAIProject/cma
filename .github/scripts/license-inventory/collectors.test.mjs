@@ -69,7 +69,10 @@ test('Cargo includes first-party packages separately and keeps license-file revi
   const data = cargo(); data.packages[1].license_file = 'COPYING';
   const rows = collectCargo(data, '/fixture', policy);
   assert.equal(rows[0].ecosystem, 'workspace');
-  assert.ok(rows[0].flags.includes('project-license-pending'));
+  assert.ok(rows[0].flags.includes('workspace-license-metadata-missing'));
+  assert.ok(!rows[0].flags.includes('project-license-pending'));
+  data.packages[0].license = 'Apache-2.0';
+  assert.deepEqual(collectCargo(data, '/fixture', policy)[0].flags, []);
   assert.equal(rows[1].ecosystem, 'cargo');
   assert.ok(rows[1].flags.includes('license-file-review'));
   assert.ok(!JSON.stringify(rows).includes('/cache/'));
@@ -111,12 +114,14 @@ test('reports are deterministic, escaped and explicit about limitations', () => 
   assert.equal(renderNotices(a), renderNotices(b));
   assert.match(renderReview(a, policy), /MPL-2.0 \(weak-copyleft\)/);
   assert.match(renderNotices(a), /not a release SBOM/);
+  assert.doesNotMatch(canonicalJson(a), /pending owner decisions|project-license-pending/);
+  assert.doesNotMatch(renderNotices(a), /license decision pending/);
   assert.match(renderNotices(a), /No additional notice filenames/);
   a.unmappedNotices = ['fixture/NOTICE.txt'];
   a.records[0].name = '<fixture|name>';
   assert.match(renderNotices(a), /&lt;fixture&#124;name&gt;/);
   assert.match(renderNotices(a), /fixture\/NOTICE.txt/);
-  assert.match(renderReview(a, policy), /missing-license/);
+  assert.match(renderReview(a, policy), /workspace-license-metadata-missing/);
 });
 
 test('path validation rejects traversal, absolute paths and malformed segments', () => {

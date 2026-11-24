@@ -1,10 +1,10 @@
 # Contributing
 
-> **Community onboarding draft.** Project licensing and contribution terms are
-> awaiting owner decisions. This document does not grant a license to CMA or
-> change third-party terms. The engineering requirements below remain applicable.
+The first OSS release covers first-party source under [Apache-2.0](LICENSE).
+Contributions use the Developer Certificate of Origin below. Third-party material
+retains its own terms. The engineering requirements below remain applicable.
 
-## Decisions required before opening community contributions
+## Release and contribution scope
 
 | Topic | Decision/status |
 | --- | --- |
