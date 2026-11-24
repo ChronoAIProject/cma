@@ -176,7 +176,7 @@ export const SourceRequestSchema = tagged(
       verify_raw_event: optional(boolean),
       lark_resources: optional(nullable(LarkResourceBindingSchema)),
       lark_message_effects: optional(nullable(LarkMessageEffectsBindingSchema)),
-      member_join_chat_ids: optional(array(text)),
+      member_join_chat_ids: optional(nullable(array(text))),
       type: enumeration('nyxid_relay'),
     }),
     custom: object({
