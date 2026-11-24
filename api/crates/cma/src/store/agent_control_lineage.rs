@@ -9,6 +9,7 @@ use super::agent_control_receipt::{read_control_receipts, StoredControlReceipts}
 use super::agents::read_agent;
 use super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::sandboxes::read_sandbox;
+use super::work_claim_authority::without_ledger_maintenance;
 use super::workspaces::read_workspace;
 use super::worktrees::read_worktree;
 
@@ -216,12 +217,12 @@ pub(super) async fn fence_control_lineage(
     let result = store
         .sandboxes
         .update_one(
-            crate::store::work_schema::query(doc! {
+            crate::store::work_schema::query(without_ledger_maintenance(doc! {
                 "_id": snapshot.sandbox.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "revision": sandbox_revision,
                 "owner": snapshot.agent.owner.as_str(),
-            }),
+            })),
             doc! { "$set": { CONTROL_MARKER_FIELD: operation_id } },
         )
         .session(session)

@@ -10,6 +10,7 @@ fn request() -> WorkspaceRemovalRequest {
             agent_model_catalog: false,
             agent_browser: false,
             agent_resource_preparation: false,
+            exact_github_credential_route: false,
             sandbox_id: "sandbox".into(),
             generation: 2,
             home_identity: "a".repeat(43),

@@ -3,7 +3,12 @@ type FailureCategory =
   | 'upstream_timeout'
   | 'insufficient_credits'
   | 'permission_denied'
-  | 'agent_log_capacity_exceeded';
+  | 'agent_log_capacity_exceeded'
+  | 'agent_turn_timeout'
+  | 'approval_timeout'
+  | 'approval_denied'
+  | 'approval_expired'
+  | 'approval_wait_disconnected';
 
 export interface FailureMessage {
   readonly detail: string;
@@ -21,6 +26,36 @@ const nextStep =
 // even when they contain a recognizable status or appear to be plain text.
 export function failureMessage(category: unknown): FailureMessage {
   switch (category) {
+    case 'agent_turn_timeout':
+      return {
+        detail: 'This turn reached its time limit and has ended.',
+        nextStep,
+        technicalDetails: { category },
+      };
+    case 'approval_timeout':
+      return {
+        detail: 'The approval wait timed out. This turn has ended.',
+        nextStep,
+        technicalDetails: { category },
+      };
+    case 'approval_denied':
+      return {
+        detail: 'Approval was denied. This turn has ended.',
+        nextStep,
+        technicalDetails: { category },
+      };
+    case 'approval_expired':
+      return {
+        detail: 'The approval request expired. This turn has ended.',
+        nextStep,
+        technicalDetails: { category },
+      };
+    case 'approval_wait_disconnected':
+      return {
+        detail: 'The approval request disconnected and could not continue. This turn has ended.',
+        nextStep,
+        technicalDetails: { category },
+      };
     case 'upstream_unavailable':
       return {
         detail:

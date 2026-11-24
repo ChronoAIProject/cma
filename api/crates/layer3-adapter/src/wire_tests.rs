@@ -143,6 +143,7 @@ fn every_contract_3_request_round_trips_with_its_exact_tag() {
             operation_id: "credential-1".into(),
             value: RuntimeCredential::new("secret"),
             custody_generation: Some(7),
+            github_route: None,
         }),
         RequestFrame::Resources,
     ];
@@ -318,6 +319,7 @@ fn credential_debug_is_redacted_while_the_wire_retains_its_value() {
         operation_id: "credential-1".into(),
         value: RuntimeCredential::new("never-log-this"),
         custody_generation: Some(4),
+        github_route: None,
     };
     assert!(!format!("{frame:?}").contains("never-log-this"));
     let json = serde_json::to_value(RequestFrame::Credential(frame)).expect("serializes");
