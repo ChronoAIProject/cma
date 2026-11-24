@@ -61,6 +61,7 @@ fn executable(rule: Erasure) -> bool {
             | Erasure::OwnerKey(_)
             | Erasure::Reference(_)
             | Erasure::ProvenAbsent(_)
+            | Erasure::ProvenAbsentJson(_)
     )
 }
 pub(super) fn bind(cursor: &mut Cursor, operations: &[(&Entry, bool)]) {
