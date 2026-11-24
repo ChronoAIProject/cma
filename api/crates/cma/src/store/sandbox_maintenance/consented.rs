@@ -437,7 +437,7 @@ async fn reconcile(
     receipt: &Receipt,
     time: Timestamp,
 ) -> Result<bool, AgentAccessError> {
-    if !super::transaction::reconcile(store, &receipt.maintenance, time)
+    if !super::reconcile(store, &receipt.maintenance, time)
         .await
         .map_err(|_| AgentAccessError::Unavailable)?
     {
