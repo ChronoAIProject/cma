@@ -1,5 +1,4 @@
 use super::*;
-use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     agent_control_lineage::fence_restart_lineage,
     agent_control_receipt::matches_restart_predecessor,

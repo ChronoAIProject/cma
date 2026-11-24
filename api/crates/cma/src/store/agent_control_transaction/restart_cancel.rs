@@ -3,7 +3,6 @@
 use super::restart::ACTIVE_RESTART_FIELD;
 use super::restart_dispatch::{read_work, DISPATCH_FIELD};
 use super::*;
-use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     agent_control_receipt::{restore_owner_stop, RESTART_PREDECESSOR_FIELD, STOP_RECEIPT_FIELD},
     agent_log_integrity::{AppendCapacity, TransactionLogError},

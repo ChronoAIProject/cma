@@ -5,7 +5,6 @@ use super::{
     restart_dispatch::{live_lease_expression, read_restart_record, DISPATCH_FIELD},
     *,
 };
-use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     agent_control_receipt::{restore_owner_stop, RESTART_PREDECESSOR_FIELD, STOP_RECEIPT_FIELD},
     agent_log_integrity::{AppendCapacity, TransactionLogError},
