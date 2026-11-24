@@ -26,6 +26,12 @@ struct ResolvedProfile {
     revision: SandboxProfileRevision,
 }
 
+struct AdmissionAuthority<'a> {
+    limit: u16,
+    class: SandboxLimitClass,
+    lifecycle_lease: Option<&'a str>,
+}
+
 impl SandboxService {
     /// Check the same owner credential and service prerequisites as fresh
     /// lifecycle admission without reserving a Sandbox.
@@ -53,6 +59,25 @@ impl SandboxService {
         caller: &Caller,
         request: CreateSandbox,
     ) -> Result<Sandbox, SandboxServiceError> {
+        self.admit_lifecycle(caller, request, None).await
+    }
+
+    /// Trusted admission using the initiating lifecycle worker's claim.
+    pub async fn create_for_lifecycle_with_lease(
+        &self,
+        caller: &Caller,
+        request: CreateSandbox,
+        lease: &str,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        self.admit_lifecycle(caller, request, Some(lease)).await
+    }
+
+    async fn admit_lifecycle(
+        &self,
+        caller: &Caller,
+        request: CreateSandbox,
+        lifecycle_lease: Option<&str>,
+    ) -> Result<Sandbox, SandboxServiceError> {
         require(caller, Capability::UseOwnSandboxes)?;
         require(caller, Capability::CreateSandbox)?;
         request.origin.validate()?;
@@ -78,8 +103,11 @@ impl SandboxService {
             caller,
             request,
             profile,
-            policy.max_sandboxes_per_owner,
-            SandboxLimitClass::Owner,
+            AdmissionAuthority {
+                limit: policy.max_sandboxes_per_owner,
+                class: SandboxLimitClass::Owner,
+                lifecycle_lease,
+            },
             policy,
         )
         .await
@@ -105,8 +133,11 @@ impl SandboxService {
             caller,
             request,
             profile,
-            policy.max_sandboxes_per_owner,
-            SandboxLimitClass::Owner,
+            AdmissionAuthority {
+                limit: policy.max_sandboxes_per_owner,
+                class: SandboxLimitClass::Owner,
+                lifecycle_lease: None,
+            },
             policy,
         )
         .await
@@ -146,8 +177,18 @@ impl SandboxService {
             }
             _ => unreachable!("launch authority was validated"),
         };
-        self.admit(caller, request, profile, limit, limit_class, policy)
-            .await
+        self.admit(
+            caller,
+            request,
+            profile,
+            AdmissionAuthority {
+                limit,
+                class: limit_class,
+                lifecycle_lease: None,
+            },
+            policy,
+        )
+        .await
     }
 
     async fn read_profile(
@@ -260,8 +301,7 @@ impl SandboxService {
         caller: &Caller,
         request: CreateSandbox,
         profile: ResolvedProfile,
-        limit: u16,
-        limit_class: SandboxLimitClass,
+        authority: AdmissionAuthority<'_>,
         policy: SandboxPolicy,
     ) -> Result<Sandbox, SandboxServiceError> {
         let name = requested_name(request.name, &profile.name)?;
@@ -318,8 +358,11 @@ impl SandboxService {
             .validate()
             .map_err(|error| SandboxServiceError::Corrupt(error.to_string()))?;
         let mut admission =
-            SandboxAdmission::new(sandbox, name, limit, now).map_err(store_error)?;
-        admission.limit_class = limit_class;
+            SandboxAdmission::new(sandbox, name, authority.limit, now).map_err(store_error)?;
+        admission.limit_class = authority.class;
+        if let Some(token) = authority.lifecycle_lease {
+            admission = admission.with_lifecycle_lease(token);
+        }
         let result = self
             .store
             .admit_catalogue_sandbox(admission)

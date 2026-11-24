@@ -12,6 +12,8 @@ use crate::{
     require_string, ValidationError,
 };
 
+mod admission;
+pub use admission::{AdmissionPolicy, BotMessageAdmission, GroupAdmission, IdentityAdmission};
 mod consumer;
 mod mutation;
 pub use mutation::{ChannelMutation, ChannelMutationKind};
@@ -157,6 +159,10 @@ pub enum Source {
         /// Optional exact NyxID connection for embedded Lark/Feishu resources.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_resources: Option<LarkResourceBinding>,
+        /// Exact Telegram relay groups opted into one event per human membership update.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schema(max_items = 16)]
+        member_join_chat_ids: Vec<String>,
         /// Explicit write authority; independent of resource reads.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_message_effects: Option<Box<LarkMessageEffectsBinding>>,
@@ -179,71 +185,6 @@ pub enum Source {
 pub enum CustomAuth {
     Hmac { key_id: String },
     NyxidKey { key_hashes: Vec<String> },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
-pub enum AdmissionPolicy {
-    All {},
-    Allowlist {
-        sender_ids: Vec<String>,
-    },
-    Scoped {
-        senders: IdentityAdmission,
-        chats: IdentityAdmission,
-        groups: GroupAdmission,
-        /// Native exact bot mentions only. The caller must bound downstream
-        /// automated execution; the gateway grants no human execution identity.
-        #[serde(default, skip_serializing_if = "BotMessageAdmission::is_deny")]
-        bot_messages: BotMessageAdmission,
-    },
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum BotMessageAdmission {
-    #[default]
-    Deny,
-    NativeMentions,
-}
-impl BotMessageAdmission {
-    pub fn is_deny(&self) -> bool {
-        *self == Self::Deny
-    }
-}
-impl AdmissionPolicy {
-    pub fn native_bot_mentions(&self) -> bool {
-        matches!(
-            self,
-            Self::Scoped {
-                bot_messages: BotMessageAdmission::NativeMentions,
-                ..
-            }
-        )
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(
-    rename_all = "snake_case",
-    tag = "type",
-    content = "ids",
-    deny_unknown_fields
-)]
-pub enum IdentityAdmission {
-    Deny,
-    Open,
-    Allowlist(Vec<String>),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GroupAdmission {
-    Deny,
-    All,
-    Mention,
-    ReplyToBot,
-    MentionOrReplyToBot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

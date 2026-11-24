@@ -92,12 +92,12 @@ that a provider can execute every requested capability.
 
 ## Integration sequence
 
-1. The owner completes a supported connection in **Event Gateway**, then opens
-   **Consumers** and **New consumer** in CMA. The owner selects that ready connection,
-   configures the Agent inline, chooses message rules, and confirms creation.
-   The [consumer setup steps](CMAEG_Integration.md#create-a-cma-consumer) name the
-   current fields and recovery action. Available connection types depend on the
-   gateway's enabled capabilities.
+1. In CMA, the owner opens **Event Gateway**, selects **Channels**, then uses
+   **New channel** to configure a producer, Agent destination, and access and
+   reply policy. Accounts that have a **Consumers** tab can also create a
+   consumer from a ready connection. Available connection types depend on the
+   gateway's enabled capabilities. [Channel setup](CMAEG_Integration.md#create-a-channel-in-cma) ·
+   [Consumer setup](CMAEG_Integration.md#create-a-cma-consumer)
 2. CMA's durable consumer creation operation uses the selected connection,
    dedicated Agent credentials, an exact request identity, and the complete
    worker configuration. The API still calls this configuration `profile`.
