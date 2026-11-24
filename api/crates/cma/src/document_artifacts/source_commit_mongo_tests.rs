@@ -19,7 +19,7 @@ struct Blobs {
 }
 
 enum CommitFault {
-    DelayedAcknowledgement,
+    LostAcknowledgement,
     Unresolved,
 }
 
@@ -34,15 +34,15 @@ impl DocumentBlobStore for Blobs {
         if let Some((admin, fault)) = self.pending_failpoint.lock().await.take() {
             // The reservation has committed by the time object storage is called.
             let mut data = match fault {
-                CommitFault::DelayedAcknowledgement => doc! {
+                CommitFault::LostAcknowledgement => doc! {
                     "writeConcernError": { "code": 64, "errmsg": "fixture lost acknowledgement" },
-                    "blockConnection": true,
-                    "blockTimeMS": 40,
                 },
-                CommitFault::Unresolved => doc! { "errorCode": 1 },
+                CommitFault::Unresolved => doc! {
+                    "errorCode": 1,
+                    "errorLabels": ["UnknownTransactionCommitResult"],
+                },
             };
             data.insert("failCommands", vec!["commitTransaction"]);
-            data.insert("errorLabels", vec!["UnknownTransactionCommitResult"]);
             admin
                 .run_command(doc! {
                     "configureFailPoint": "failCommand",
@@ -298,10 +298,17 @@ async fn document_quota_source_commits_reconcile_uncertain_creation_and_edit() {
     let blobs = Arc::new(Blobs::default());
     let service = service(&store, blobs.clone(), true);
     let owner = owner();
-    *blobs.pending_failpoint.lock().await =
-        Some((admin.clone(), CommitFault::DelayedAcknowledgement));
+    *blobs.pending_failpoint.lock().await = Some((admin.clone(), CommitFault::LostAcknowledgement));
     let first = service.create(&owner, "create", create()).await;
     settle_injected_commit(&admin, &database).await;
+    assert_eq!(
+        quota
+            .rows
+            .count_documents(doc! { "kind": "source_commit" })
+            .await
+            .unwrap(),
+        1
+    );
     let created = service.create(&owner, "create", create()).await.unwrap();
     match first {
         Ok(response) => assert_eq!(response, created),
