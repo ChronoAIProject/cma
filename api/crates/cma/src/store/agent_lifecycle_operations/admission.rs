@@ -4,6 +4,8 @@
 use super::*;
 use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::SandboxStoreError;
+use mongodb::bson::spec::BinarySubtype;
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum LifecycleCreateError {
@@ -16,6 +18,50 @@ pub(crate) enum LifecycleCreateError {
 }
 
 impl LifecycleRecord {
+    pub(super) fn for_admission(
+        id: String,
+        owner: &SubjectId,
+        key: &str,
+        input: LifecycleInput,
+    ) -> Result<Self, StoreError> {
+        let bytes = serde_json::to_vec(&input.request)
+            .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
+        let fingerprint = Binary {
+            subtype: BinarySubtype::Generic,
+            bytes: Sha256::digest(&bytes).to_vec(),
+        };
+        let now = DateTime::now();
+        Ok(Self {
+            id,
+            owner: owner.to_string(),
+            key: key.to_owned(),
+            fingerprint,
+            creation_wire: None,
+            creation_fence: None,
+            input,
+            released_lane: None,
+            canary_admission: None,
+            canary_manifest_digest: None,
+            canary_redemption_key: None,
+            status: "queued".into(),
+            phase: "queued".into(),
+            events: Vec::new(),
+            sandbox_id: None,
+            agent_id: None,
+            repository_commit: None,
+            error: None,
+            failure: None,
+            connection: None,
+            lease_expires_at: None,
+            lease_token: None,
+            attempts: 0,
+            retry_at: None,
+            created_at: now,
+            updated_at: now,
+            document_schema_version: DOCUMENT_SCHEMA_VERSION,
+        })
+    }
+
     /// The release selected by the ordinary creation of a new Machine Sandbox.
     pub(in crate::store) fn admitted_machine_image(&self) -> Option<&str> {
         let request = &self.input.request;
@@ -88,12 +134,6 @@ impl MongoAgentLifecycleStore {
             )
             .into());
         }
-        let bytes = serde_json::to_vec(&input.request)
-            .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
-        let fingerprint = Binary {
-            subtype: BinarySubtype::Generic,
-            bytes: Sha256::digest(&bytes).to_vec(),
-        };
         if let Some(existing) = self
             .operations
             .find_one(doc! { "owner": owner.as_str(), "key": key })
@@ -110,35 +150,10 @@ impl MongoAgentLifecycleStore {
             }
             return Ok(CreateResult::Existing(Box::new(existing)));
         }
-        let now = DateTime::now();
-        let record = LifecycleRecord {
-            id: uuid::Uuid::new_v4().simple().to_string(),
-            owner: owner.to_string(),
-            key: key.to_owned(),
-            fingerprint,
-            creation_wire,
-            creation_fence,
-            input,
-            released_lane: None,
-            canary_admission: None,
-            canary_manifest_digest: None,
-            status: "queued".into(),
-            phase: "queued".into(),
-            events: Vec::new(),
-            sandbox_id: None,
-            agent_id: None,
-            repository_commit: None,
-            error: None,
-            failure: None,
-            connection: None,
-            lease_expires_at: None,
-            lease_token: None,
-            attempts: 0,
-            retry_at: None,
-            created_at: now,
-            updated_at: now,
-            document_schema_version: DOCUMENT_SCHEMA_VERSION,
-        };
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let mut record = LifecycleRecord::for_admission(id, owner, key, input)?;
+        record.creation_wire = creation_wire;
+        record.creation_fence = creation_fence;
         self.finish_create(record, release).await
     }
 

@@ -156,5 +156,82 @@ async fn queued_input_stale_observation_aborts_without_changing_source_or_receip
     client.database(&name).drop().await.unwrap();
 }
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn queued_edit_and_removal_fence_supported_sandbox_work_envelopes() {
+    use layer2_core::sandbox::store::WorkAuthorityProtocol;
+
+    for (proof, version) in [(None, 3_i64), (Some("a".repeat(64)), 4_i64)] {
+        let (client, name) = database("queued_input_work_envelope").await;
+        let (store, agent, mut parent, mut edit, source) = queued(&name, &client).await;
+        let prior_revision = parent.revision;
+        parent.revision += 1;
+        parent.work.authority_protocol = Some(WorkAuthorityProtocol::RenewedV1);
+        parent.work.prepared_installation_digest = proof;
+        store
+            .save_sandbox(prior_revision, parent.clone())
+            .await
+            .unwrap();
+
+        let sandbox_document = || store.sandboxes.find_one(doc! {"_id": parent.id.as_str()});
+        let mut before = sandbox_document().await.unwrap().unwrap();
+        let before_edit_fence = before.get_i64("agent_command_admission_fence").unwrap_or(0);
+        assert_eq!(before.get_i64("document_schema_version").unwrap(), version);
+        edit.cancellation.command.parent = SandboxMutationGuard::capture(&parent);
+
+        let saved = applied(store.edit_queued_input(edit.clone()).await.unwrap());
+        assert_eq!(saved.response.receipt, source.receipt);
+        assert_eq!(saved.response.revision, source.revision + 1);
+        assert_eq!(saved.binding.text, edit.text);
+        let after_edit = sandbox_document().await.unwrap().unwrap();
+        assert_eq!(
+            after_edit.get_i64("agent_command_admission_fence").unwrap(),
+            before_edit_fence + 1
+        );
+        assert_eq!(
+            applied(store.edit_queued_input(edit.clone()).await.unwrap()),
+            saved
+        );
+
+        let mut remove = edit.cancellation;
+        remove.command.key_sha256 = command_key_digest("remove-edited-input").unwrap();
+        remove.command.envelope.command_id = AgentCommandId::generate();
+        remove.target.expected_command_revision = saved.response.revision;
+        let before_removal = sandbox_document().await.unwrap().unwrap();
+        let result = store.cancel_queued_response(remove.clone()).await.unwrap();
+        let QueuedCancellationOutcome::Applied(cancelled) = &result else {
+            panic!("expected a cancellation receipt");
+        };
+        assert_eq!(cancelled.response.status, AgentResponseStatus::Cancelled);
+        assert_eq!(cancelled.response.revision, source.revision + 2);
+        let after_removal = sandbox_document().await.unwrap().unwrap();
+        assert_eq!(
+            after_removal
+                .get_i64("agent_command_admission_fence")
+                .unwrap(),
+            before_removal
+                .get_i64("agent_command_admission_fence")
+                .unwrap()
+                + 1
+        );
+        assert_eq!(store.cancel_queued_response(remove).await.unwrap(), result);
+        assert!(store
+            .list_queued_inputs(&agent.id)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store.agent_commands.count_documents(doc! {}).await.unwrap(),
+            3
+        );
+
+        let mut after = sandbox_document().await.unwrap().unwrap();
+        before.remove("agent_command_admission_fence");
+        after.remove("agent_command_admission_fence");
+        assert_eq!(after, before);
+        client.database(&name).drop().await.unwrap();
+    }
+}
+
 #[path = "queued_input_race_tests.rs"]
 mod races;

@@ -112,11 +112,14 @@ returns 409, including changing an omitted default into an explicit reference.
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
 | `GET /api/v1/admin/activity` | - | actor, action, limit, cursor | 200 ActivityPageView |
-| `GET /api/v1/admin/activity/actors` | - | q | 200 array<ActivityActorView> |
+| `GET /api/v1/admin/activity/actors` | ReadActivityLog and ReadUserDirectory | q (literal display name or subject) | 200 array<ActivityActorView> (up to 20 matches), 400/401/403/503 ProblemDocument |
 | `GET /api/v1/admin/profiles` | - | kind, visibility, owner, cursor, limit | 200 ProfilePageView |
 | `POST /api/v1/admin/profiles/{kind}/{id}/retire` | - | - | 200 ProfileSummaryView |
 | `GET /api/v1/admin/runtime-inventory` | - | - | 200 RuntimeInventoryView |
-| `GET /api/v1/admin/runtime-binding-holds` | - | - | 200 BindingHoldOverviewView |
+| `GET /api/v1/admin/runtime-binding-holds` | - | - | 200 BindingHoldOverviewView; 403/503 ProblemDocument; 404 when diagnostics are disabled |
+| `PUT /api/v1/admin/runtime-canary-policy` | CanaryPolicyRequest | - | 200 CanaryPolicyView; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/runtime-canary-grants` | CanaryGrantRequest | - | 201 CanaryGrantView; 401/403/409/422/503 ProblemDocument |
+| `POST /api/v1/admin/runtime-canary-grants/revoke` | CanaryRevokeRequest | - | 200 CanaryGrantView; 401/403/409/422/503 ProblemDocument |
 | `GET /api/v1/admin/sandboxes` | - | owner, status, runtime_version, cursor, limit | 200 SandboxPageView |
 | `GET /api/v1/admin/sandboxes/{id}` | - | - | 200 SandboxDetailView |
 | `POST /api/v1/admin/sandboxes/{id}/always-on` | AdminAlwaysOnRequest | - | 200 SandboxView |
@@ -194,6 +197,7 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/desktop-capability` | - | workspace_id, sandbox_id | 200 DesktopCapabilityView |
 | `POST /api/v1/agents` | AgentLifecycleCreateRequest; key | - | 202 AgentLifecycleCreateReceipt |
 | `GET /api/v1/agent-lifecycle/{id}` | - | - | 200 AgentLifecycleOperationView |
+| `POST /api/v1/runtime-canary-redemptions` | CanaryRedeemRequest; Idempotency-Key | - | 202 AgentLifecycleCreateReceipt; 400/401/403/409/422/503 ProblemDocument |
 | `GET /api/v1/agents` | - | organization, sandbox, workspace, status, cursor, limit | 200 AccessibleAgentPageView |
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
 | `GET /api/v1/agents/{id}/capacity-recovery/dry-run` | - | - | 200 authorized recovery metadata |

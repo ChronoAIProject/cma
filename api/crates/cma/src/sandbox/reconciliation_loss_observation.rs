@@ -74,20 +74,3 @@ impl SandboxReconciler {
         ))
     }
 }
-
-#[derive(Clone, Copy)]
-pub(super) struct RecoveryBoundary {
-    pub(super) observed_at: SystemTime,
-    pub(super) stale: bool,
-}
-
-pub(super) fn fresh_recovery_boundary(sandbox: &Sandbox, floor: SystemTime) -> RecoveryBoundary {
-    let observed_at = SystemTime::now();
-    let durable = layer2_core::seconds_from_rfc3339(&sandbox.updated_at)
-        .map(|seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
-        .unwrap_or(SystemTime::UNIX_EPOCH);
-    RecoveryBoundary {
-        observed_at,
-        stale: floor > observed_at || durable > observed_at,
-    }
-}

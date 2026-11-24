@@ -159,6 +159,7 @@ impl ControlPlaneComposition {
         .with_session_guidance_v4(config.features.session_guidance_v4)
         .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
         .with_managed_repository_preflight(config.features.github_repository_preflight);
+        let runtime_canary_routes = routes::runtime_canaries(config, inline_lifecycle.clone())?;
         let lifecycle_drain = inline_lifecycle.drain_handle();
         if let Some(manager) = &agent_manager {
             manager.register_lifecycle(lifecycle_drain.clone())?;
@@ -353,18 +354,11 @@ impl ControlPlaneComposition {
             config.gateway.as_ref(),
             config.features,
         )?;
-        let event_workers = layer2_core::event_workers::EventWorkerProfileService::new(
-            stores.event_workers.clone(),
-            layer2_core::bots::PublishedBotProfiles::new(
-                stores.sandbox_profiles.clone(),
-                settings.clone(),
-                config.default_profiles.agent_model.clone(),
-            ),
-            "cma_codex".into(),
-        );
+        let event_workers = bots::event_worker_profiles(config, &stores, &settings);
         let metadata = routes::agent_metadata(&stores, resource_access.clone(), config);
         let accounts = routes::accounts(config, &stores, deletions, standing, projections.reads());
         let resource_routes = rest::profiles_router(profiles)
+            .merge(runtime_canary_routes)
             .merge(accounts)
             .merge(rest::answer_deliverables_router(deliverables))
             .merge(media::router(media))
