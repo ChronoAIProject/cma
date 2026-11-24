@@ -186,7 +186,8 @@ connection lifetime. Channel deletion or failed revalidation closes the stream.
 
 | Your system | What to implement |
 | --- | --- |
-| A CMA user connecting a messaging channel | Complete an Event Gateway connection, then create a consumer with inline Agent settings. Follow [Create a CMA consumer](#create-a-cma-consumer). |
+| A CMA user connecting a messaging channel | Open **Channels** and follow [Create a channel in CMA](#create-a-channel-in-cma). |
+| A CMA user who has a **Consumers** tab | To create a consumer from a ready connection, follow [Create a CMA consumer](#create-a-cma-consumer). |
 | A backend sending business events to an agent | Create a custom channel, sign CloudEvents, then consume streamed results or a result webhook. |
 | An agent using event reply tools | Connect native MCP with the channel's agent key; use the event reference supplied with the turn. |
 | A new downstream agent execution provider | Implement the binding, conversation, Responses and context endpoints below; arrange operator registration of your provider. |
@@ -197,11 +198,30 @@ JSON field remains `profile`. The gateway validates its common shape, while the
 provider reports which fields it honours or refuses. This API configuration does
 not require a saved CMA Profile revision.
 
+## Create a channel in CMA
+
+1. In CMA, open **Event Gateway**, select **Channels**, then choose
+   **New channel**. Enter a **Channel name**.
+2. Under **Connection**, choose a supported producer. For a messaging platform,
+   use a ready connection you own when the form offers one, or fill in the
+   settings for the selected producer. For a **Custom event** producer, configure
+   its credentials and keep **Each event subject** or choose another supported
+   grouping.
+3. Configure the Agent destination and its service access. Provide the
+   **Provider agent key** and any credentials required by the selected producer.
+4. Under **Access & reply policy**, review who can send messages,
+   **Group incoming messages by**, and where replies go. If **Send final answers
+   automatically** is enabled, make sure the channel has a reply destination.
+5. Check **Review**, then select **Create channel**. If the result is unconfirmed,
+   use **Check original channel** to look up the saved request, then
+   **Retry same request** to confirm its result.
+
 ## Create a CMA consumer
 
-Sign in to CMA with an account that can create consumers. Use the connection
-types and setup actions offered by your Event Gateway. Telegram availability
-depends on the gateway's supported connections and enabled setup capabilities.
+Use this route when your CMA account has a **Consumers** tab in **Event Gateway**.
+If you only see **Channels**, follow the [channel setup steps](#create-a-channel-in-cma).
+Telegram availability depends on the gateway's supported connections and enabled
+setup capabilities.
 
 1. Open **Event Gateway** and complete your channel connection setup. The
    connection must be ready before you can select it for a new consumer.
