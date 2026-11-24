@@ -53,7 +53,8 @@ async fn custom_runtime_recovery_discovers_and_admits_the_recorded_pin() {
         }
         row.validate().unwrap();
         let id = row.id.clone();
-        store.create_sandbox(row.clone()).await.unwrap();
+        // Start from a restored migration row with no child records.
+        *store.restored_recovery_row.lock().unwrap() = Some(row.clone());
         let verifier = Arc::new(Verify {
             calls: Mutex::default(),
             refuse: None,
@@ -82,9 +83,12 @@ async fn custom_runtime_recovery_discovers_and_admits_the_recorded_pin() {
         lane.run(&reconciler).await.unwrap();
         assert!(verifier.calls.lock().unwrap().is_empty());
         lane.run(&reconciler).await.unwrap();
-        assert_eq!(*verifier.calls.lock().unwrap(), [id.clone()]);
+        assert_eq!(
+            verifier.calls.lock().unwrap().as_slice(),
+            std::slice::from_ref(&id)
+        );
         assert_eq!(store.keys("recovery_admit"), [id.as_str()]);
-        let recovered = store.inner.get_sandbox(&id).await.unwrap().unwrap();
+        let recovered = store.restored_recovery_row.lock().unwrap().clone().unwrap();
         assert_eq!(
             recovered.admitted_runtime_update_target(),
             Some(target.as_str())
