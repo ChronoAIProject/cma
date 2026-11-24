@@ -275,6 +275,11 @@ impl SandboxLifecycleState {
         }
         if let Some(update) = &self.runtime_update {
             update.validate()?;
+            if let Some(request) = &update.request {
+                if let Some(retained) = &request.retained_transition {
+                    retained.validate_for(sandbox, request)?;
+                }
+            }
         }
         if let Some(interruption) = &self.interruption {
             interruption.validate()?;

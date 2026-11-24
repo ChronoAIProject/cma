@@ -7,6 +7,19 @@ pub const RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE: &str =
     "application/vnd.cma.runtime-startup-policy.v1+json";
 pub(crate) const MAX_RUNTIME_STARTUP_POLICY_STATUS_BYTES: usize = 32_768;
 
+/// Provider evidence to freeze with a retained transition's domain admission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetainedStartupPolicyPredecessor {
+    pub uid: String,
+    pub resource_version: String,
+    pub request_sha256: String,
+    pub home_identity: String,
+    pub image: String,
+    pub generation: u64,
+    pub journal_recovery: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeStartupPolicyObservation {

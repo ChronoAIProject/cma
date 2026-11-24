@@ -1,23 +1,11 @@
 //! Explicit image replacement of a fully stopped native member, under its original UID.
 use super::pool::runtime_upgrade::{RetainedStartupPolicyProof, RuntimeUpgradeProof};
 use super::*;
-use crate::{provider::ProviderSandboxRequest, HomeVolumeAttachment};
+use crate::{
+    provider::ProviderSandboxRequest, HomeVolumeAttachment, RetainedStartupPolicyPredecessor,
+};
 use kube::api::{Patch, PatchParams};
-use serde::{Deserialize, Serialize};
 use serde_json::json;
-
-/// Provider evidence to freeze with a retained transition's domain admission.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RetainedStartupPolicyPredecessor {
-    pub uid: String,
-    pub resource_version: String,
-    pub request_sha256: String,
-    pub home_identity: String,
-    pub image: String,
-    pub generation: u64,
-    pub journal_recovery: bool,
-}
 
 /// Exact intent frozen by the retained-home admission transaction.
 pub struct RetainedStartupPolicyUpgrade<'a> {

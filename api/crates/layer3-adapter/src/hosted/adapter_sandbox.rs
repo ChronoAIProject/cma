@@ -137,6 +137,12 @@ impl SandboxAdapter for HostedAdapter {
     async fn verify_suspended_runtime(&self, request: &RuntimeAdoptionRequest) -> Result<()> {
         self.suspend_exact(request, true).await
     }
+    async fn inspect_retained_startup_policy(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> Result<crate::RetainedStartupPolicyPredecessor> {
+        self.inspect_retained_exact(request).await
+    }
     async fn resume_runtime(
         &self,
         request: &RuntimeAdoptionRequest,

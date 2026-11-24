@@ -213,6 +213,16 @@ impl HostedBackend for AgentSandboxBackend {
     ) -> Result<()> {
         self.client.verify_suspended(handle, request).await
     }
+    async fn inspect_retained_startup_policy(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+    ) -> Result<crate::RetainedStartupPolicyPredecessor> {
+        self.client
+            .observe_retained_startup_policy_predecessor(handle, request, home)
+            .await
+    }
     async fn resume(
         &self,
         handle: &RuntimeHandle,

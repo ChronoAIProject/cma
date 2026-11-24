@@ -277,6 +277,22 @@ pub fn apply_image_rotation(
     })
 }
 
+/// Plan admission against the complete evidence read by the store transaction.
+#[doc(hidden)]
+pub fn apply_retained_runtime_transition(
+    current: &Sandbox,
+    agents: &[Agent],
+    request: &crate::sandbox::RetainedRuntimeTransitionRequest,
+    requested_at: &str,
+) -> Result<SandboxMaintenanceApplication, SandboxStoreError> {
+    validate_current(current, &request.sandbox_id)?;
+    schedule(current, SandboxStatus::Rotating, |sandbox| {
+        sandbox
+            .begin_retained_runtime_transition(request.clone(), agents, requested_at.to_owned())
+            .map(|_| ())
+    })
+}
+
 #[doc(hidden)]
 pub fn validate_inactivity_pause_request(
     request: &SandboxInactivityPauseRequest,

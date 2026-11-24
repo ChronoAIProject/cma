@@ -84,7 +84,8 @@ impl SandboxRuntimeUpdateService {
             .runtime_update_request()
             .filter(|r| r.completed_at.is_none())
         {
-            return request.failure.is_some()
+            return request.retained_transition.is_none()
+                && request.failure.is_some()
                 && sandbox.work.lease.is_none()
                 && sandbox.admitted_runtime_update_target()
                     == Some(request.target_version.as_str());
@@ -214,7 +215,9 @@ impl SandboxRuntimeUpdateService {
                 return Err(SandboxRuntimeUpdateError::NotAvailable);
             }
             let pinned = sandbox.runtime_update_request().is_some_and(|request| {
-                request.completed_at.is_none() && request.target_version == target_version
+                request.retained_transition.is_none()
+                    && request.completed_at.is_none()
+                    && request.target_version == target_version
             });
             if target_version != latest && !pinned {
                 return Err(SandboxRuntimeUpdateError::TargetChanged);

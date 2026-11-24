@@ -99,6 +99,21 @@ impl HostedAdapter {
         self.verify_spec_home(&request.spec).await
     }
 
+    pub(super) async fn inspect_retained_exact(
+        &self,
+        request: &RuntimeAdoptionRequest,
+    ) -> crate::Result<crate::RetainedStartupPolicyPredecessor> {
+        let rendered = self.retained_request(request, request.generation)?;
+        let home = request.spec.home_volume.as_deref().ok_or_else(|| {
+            crate::AdapterError::Rejected("retained policy inspection requires a home".into())
+        })?;
+        self.verify_spec_home(&request.spec).await?;
+        self.verify_adoption_home_route(request)?;
+        self.backend
+            .inspect_retained_startup_policy(&request.handle, &rendered, home)
+            .await
+    }
+
     pub(super) async fn resume_exact(
         &self,
         request: &RuntimeAdoptionRequest,

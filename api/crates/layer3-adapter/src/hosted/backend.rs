@@ -233,6 +233,16 @@ pub trait HostedBackend: Send + Sync {
             "provider suspension observation is unavailable".into(),
         ))
     }
+    async fn inspect_retained_startup_policy(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<crate::RetainedStartupPolicyPredecessor> {
+        Err(crate::AdapterError::Unsupported(
+            "retained runtime policy inspection is unavailable".into(),
+        ))
+    }
     async fn resume(
         &self,
         _handle: &RuntimeHandle,

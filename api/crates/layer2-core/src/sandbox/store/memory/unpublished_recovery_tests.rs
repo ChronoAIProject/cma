@@ -109,6 +109,7 @@ fn stalled_reopen_fixture() -> (InMemorySandboxStore, SandboxId) {
                 started_at: None,
                 completed_at: None,
                 failure: None,
+                retained_transition: None,
             }),
         });
         sandbox

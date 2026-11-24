@@ -110,6 +110,15 @@ pub trait SandboxAdapter: Send + Sync {
     async fn verify_suspended_runtime(&self, _request: &RuntimeAdoptionRequest) -> Result<()> {
         Err(unsupported("runtime suspension observation is unavailable"))
     }
+    /// Observe the exact suspended predecessor for scoped retained policy admission.
+    async fn inspect_retained_startup_policy(
+        &self,
+        _request: &RuntimeAdoptionRequest,
+    ) -> Result<crate::RetainedStartupPolicyPredecessor> {
+        Err(unsupported(
+            "retained runtime policy inspection is unavailable",
+        ))
+    }
     /// Delete a persisted provider identity and all Pods without requiring a live process.
     async fn teardown_retained_runtime(&self, _handle: &RuntimeHandle) -> Result<()> {
         Err(unsupported("retained runtime deletion is unavailable"))
