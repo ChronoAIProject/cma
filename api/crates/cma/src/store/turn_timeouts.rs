@@ -1,4 +1,5 @@
 //! Policy terminal publication shares the conversation writer transaction.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::{store::SandboxStoreError, turn_timeout::TurnTimeoutSettlement};
 use mongodb::bson::{doc, Document};
 
@@ -29,7 +30,7 @@ pub(crate) async fn settle(
     let applied = Box::pin(apply(store, proof, &mut scope)).await;
     let session = scope.release();
     if let Err(error) = applied {
-        if let Err(abort) = session.abort_transaction().await {
+        if let Err(abort) = session.abort_guarded().await {
             tracing::warn!(%abort, "turn policy transaction abort unconfirmed");
         }
         return Err(match error {
