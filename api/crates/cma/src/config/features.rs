@@ -33,6 +33,7 @@ pub(crate) struct FeatureFlags {
     pub usage_strict_cursors_enabled: bool,
     pub visitor_two_sandbox_defaults: bool,
     pub admin_runtime_inventory: bool,
+    pub binding_diagnostics: bool,
     pub ownership_retry_hints_enabled: bool,
     pub home_backup_enabled: bool,
     pub home_backup_expiry_enabled: bool,
@@ -163,6 +164,7 @@ impl FeatureFlags {
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
         let flags = Self {
+            binding_diagnostics: flag(lookup, "CHRONO_BINDING_DIAGNOSTICS_ENABLED")?,
             session_guidance_v4: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED")?,
             image_manager_retirement: flag(lookup, "CHRONO_IMAGE_MANAGER_RETIREMENT_ENABLED")?,
             am_startup_health_serving: flag(lookup, "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED")?,
@@ -432,16 +434,14 @@ mod response_tests;
 mod paged_event_tests;
 
 #[cfg(test)]
+mod permission_bound_tests;
+#[cfg(test)]
 mod transcript_tests;
 
 #[cfg(test)]
-mod permission_bound_tests;
-
+mod live_buffer_tests;
 #[cfg(test)]
 mod read_frame_tests;
-
-#[cfg(test)]
-mod live_buffer_tests;
 
 #[cfg(test)]
 mod relay_tests;

@@ -96,6 +96,10 @@ pub(crate) struct SandboxLifecycleComposition {
 }
 
 impl SandboxLifecycleComposition {
+    pub(crate) fn binding_diagnostics(&self) -> Arc<dyn crate::binding_diagnostics::LocalSource> {
+        self.reconciliation.binding_diagnostics()
+    }
+
     pub(crate) fn register_inline_lifecycle(
         &mut self,
         drain: crate::agent_lifecycle::LifecycleDrain,
