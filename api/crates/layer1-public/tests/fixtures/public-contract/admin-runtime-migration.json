@@ -121,6 +121,15 @@
             "max_agents_per_workspace": 4
           },
           "lifecycle": {
+            "result": {
+              "state": "in_progress",
+              "operation_id": "sandbox-lifecycle-v1:sbx_route:2",
+              "started_at": "2026-09-05T00:01:00Z",
+              "result_due_at": "2026-09-05T00:02:30Z",
+              "continuing": true,
+              "actions": ["observe"],
+              "retry_after_seconds": 5
+            },
             "pause": {
               "allowed": false,
               "reason": "not_active"
@@ -143,7 +152,8 @@
         "bodyKind": "json"
       },
       "captures": {
-        "migration_admitted_at": "/updated_at"
+        "migration_admitted_at": "/updated_at",
+        "migration_result_due_at": "/lifecycle/result/result_due_at"
       }
     },
     {
@@ -179,6 +189,15 @@
             "max_agents_per_workspace": 4
           },
           "lifecycle": {
+            "result": {
+              "state": "in_progress",
+              "operation_id": "sandbox-lifecycle-v1:sbx_route:2",
+              "started_at": "2026-09-05T00:01:00Z",
+              "result_due_at": "2026-09-05T00:02:30Z",
+              "continuing": true,
+              "actions": ["observe"],
+              "retry_after_seconds": 5
+            },
             "pause": {
               "allowed": false,
               "reason": "not_active"
@@ -201,7 +220,8 @@
         "bodyKind": "json"
       },
       "captures": {
-        "migration_admitted_at": "/updated_at"
+        "migration_admitted_at": "/updated_at",
+        "migration_result_due_at": "/lifecycle/result/result_due_at"
       }
     },
     {

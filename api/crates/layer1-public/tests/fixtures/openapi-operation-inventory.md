@@ -120,7 +120,9 @@ returns 409, including changing an omitted default into an explicit reference.
 | `POST /api/v1/admin/sandboxes/{id}/always-on` | AdminAlwaysOnRequest | - | 200 SandboxView |
 | `GET /api/v1/admin/sandboxes/{id}/events` | - | after, limit | 200 array<object> |
 | `POST /api/v1/admin/sandboxes/{id}/retire` | - | - | 200 object |
+| `POST /api/v1/admin/sandboxes/{id}/runtime-migration` | CustomRuntimeMigrationRequest | - | 202 SandboxView |
 | `POST /api/v1/admin/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest | - | 202 SandboxView |
+| `GET /api/v1/admin/sandboxes/{id}/runtime-update/activity` | - | - | 200 object |
 | `GET /api/v1/admin/admission` | - | - | 200 AdmissionReadView |
 | `POST /api/v1/admin/admission/stop` | AdmissionChangeRequest | - | 200 AdmissionView |
 | `PUT /api/v1/admin/admission/ceilings` | ReplaceCeilingsRequest | - | 200 CeilingsStateView |
