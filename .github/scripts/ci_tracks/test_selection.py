@@ -152,7 +152,8 @@ class CIEventSelectionTests(unittest.TestCase):
             'head': {'ref': 'feature', 'sha': head, 'repo': {'full_name': repository}}}}
         cd = selection.determine(self.root, push, 'push')
         selective = selection.determine_ci(self.root, pull, 'pull_request', repository)
-        self.assertEqual(selective, selection.determine(self.root, pull, 'pull_request'))
+        self.assertEqual(selective, dict(selection.determine(self.root, pull, 'pull_request'),
+                                         approval_contract=False))
         self.assertFalse(selective['am'])
         self.assertEqual(cd['deployables'], ['cma-web'])
         self.assertFalse(cd['eg'])
@@ -165,6 +166,7 @@ class CIEventSelectionTests(unittest.TestCase):
                 baseline = selection.determine(self.root, event, name)
                 self.assertEqual(result['deployables'], baseline['deployables'])
                 self.assertEqual(result['test_tracks'], dict(repo=True, am=True, eg=True, web=True))
+                self.assertTrue(result['approval_contract'])
                 self.assertEqual(result['head'], head)
                 for track in ('am', 'eg'):
                     self.assertEqual(result[track + '_packages'], sorted(Workspace(metadata(self.root), self.root).owned[track] | SHARED))
@@ -179,6 +181,38 @@ class CIEventSelectionTests(unittest.TestCase):
         self.assertEqual(queued, selection.determine_ci(self.root, pull, 'pull_request', repository))
         self.assertFalse(queued['am'])
         self.assertEqual((queued['base'], queued['head']), (release_base, head))
+
+    def test_approval_contract_web_inputs_do_not_select_rust_product_tracks(self):
+        repository = 'example/repository'
+        for path in [
+            'web/src/api-client/agent-events-v2/index.ts',
+            'web/src/api-client/tests/external-approval-wire.contract.ts',
+            'web/src/agent/conversation.ts',
+            'web/src/agent/transport/projection.ts',
+            'web/build/identity.ts',
+            'web/vite.config.ts',
+            'web/package.json',
+            'web/package-lock.json',
+        ]:
+            with self.subTest(path=path):
+                base = self.git('rev-parse', 'HEAD')
+                if path.endswith('.json'):
+                    content = '{"name":"synthetic","private":true}'
+                else:
+                    content = 'export default { test: { globals: true } };'
+                self.write(path, content)
+                head = self.commit()
+                event = {'number': 7, 'repository': {'full_name': repository}, 'pull_request': {
+                    'base': {'ref': 'develop', 'sha': base, 'repo': {'full_name': repository}},
+                    'head': {'ref': 'feature', 'sha': head, 'repo': {'full_name': repository}},
+                }}
+                result = selection.determine_ci(self.root, event, 'pull_request', repository)
+                self.assertTrue(result['approval_contract'])
+                self.assertEqual(result['test_tracks'], dict(repo=True, am=False, eg=False, web=True))
+                self.assertEqual(result['am_packages'], [])
+                self.assertEqual(result['eg_packages'], [])
+                self.assertLessEqual(set(result['deployables']), {'cma-web'})
+                self.assertNotIn('input-analysis-uncertain', result['reasons'])
 
 
     def test_release_base_the_policy_cannot_model_selects_every_deployable(self):

@@ -1,0 +1,26 @@
+name: "External approval contract"
+on:
+  workflow_call: {}
+jobs:
+  contract:
+    name: "External approval producer and Web contract"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 15
+    permissions:
+      contents: "read"
+      actions: "read"
+    env:
+      CMA_NEXTEST_REUSE: "1"
+      RUST_MIN_STACK: 33554432
+    steps:
+      - uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
+      - uses: "./.github/actions/rust-archive"
+      - uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
+        with:
+          node-version: "24.15.0"
+          package-manager-cache: false
+      - name: "Run producer and Web contract"
+        working-directory: "web"
+        run: |
+          npm ci
+          npm run test:approval-contract

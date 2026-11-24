@@ -25,8 +25,18 @@ jobs:
     name: "2.2 Rust test archive"
     needs:
       - "changes"
-    if: "needs.changes.outputs.am == 'true'"
+    if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.approval_contract == 'true'"
     uses: "./.github/workflows/ci-rust-archive.yml"
+  approval-contract:
+    name: "2.4 External approval contract"
+    permissions:
+      contents: "read"
+      actions: "read"
+    needs:
+      - "changes"
+      - "rust-test-build"
+    if: "needs.changes.outputs.approval_contract == 'true'"
+    uses: "./.github/workflows/ci-approval-contract.yml"
   am:
     name: "2.3 Agent Manager checks"
     # A called workflow cannot hold more than this: its Rust jobs restore the
@@ -69,6 +79,7 @@ jobs:
     needs:
       - "changes"
       - "rust-test-build"
+      - "approval-contract"
       - "am"
       - "am-images"
       - "runtime-images"
