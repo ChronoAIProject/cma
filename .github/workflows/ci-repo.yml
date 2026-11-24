@@ -61,6 +61,9 @@ jobs:
         name: "Synthetic authority and observer regressions"
         run: "node --test .github/scripts/staging-authority.test.mjs .github/scripts/public-journey-evidence.test.mjs .github/scripts/connection-journey-evidence.test.mjs .github/scripts/connection-campaign.test.mjs .github/scripts/deployment-observer.test.mjs"
       -
+        name: "Agent-log activation evidence regressions"
+        run: "node --test .github/scripts/agent-log-activation-evidence.test.mjs"
+      -
         name: "TC-117 evidence consistency regressions"
         run: "node --test .github/scripts/visitor-abuse-campaign.test.mjs .github/scripts/visitor-abuse-authority.test.mjs .github/scripts/visitor-abuse-consistency.test.mjs"
       -

@@ -24,6 +24,7 @@ use super::sandbox_mongo::{
 use super::worktrees::{read_worktree, worktree_replacement_fields};
 
 mod contention;
+mod owner_stop;
 pub(super) mod pending_adoption;
 #[cfg(test)]
 pub(crate) use pending_adoption::test_hooks as adoption_probe;
@@ -148,20 +149,7 @@ async fn apply_publication(
     .await
 }
 
-pub(super) async fn commit_repeated_failure(
-    store: &MongoSandboxStore,
-    retry: &layer2_core::sandbox::store::AgentRepeatedFailure,
-) -> Result<(), SandboxStoreError> {
-    publication_transaction::commit(
-        store,
-        retry.mutation.clone(),
-        None,
-        Some(&retry.marker),
-        None,
-    )
-    .await
-    .map(|_| ())
-}
+pub(super) use publication_transaction::commit_repeated_failure;
 
 async fn apply_publication_observed(
     store: &MongoSandboxStore,
@@ -403,6 +391,15 @@ async fn apply_publication_observed(
             .map_err(ApplyError::Domain)?;
     }
 
+    owner_stop::settle(
+        store,
+        &current_row,
+        &current,
+        mutation,
+        guards.rebuild_parents,
+        session,
+    )
+    .await?;
     let sign_in_sandbox = sign_in::apply(store, &current, mutation, session).await?;
     prepared_replay::fence(store, &current, &current_worktree, mutation, session).await?;
     let (final_agent, logs) = final_agent_and_logs(&current, mutation)?;

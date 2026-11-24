@@ -345,6 +345,7 @@ async fn protected_completion_clears_exact_claim_and_appends_one_event() {
                 store
                     .commit(SandboxTransaction::SaveSandboxAndAppend {
                         command_revival: None,
+                        released_runtime: None,
                         expected_revision: claimed.revision,
                         sandbox: Box::new(next.clone()),
                         event_at: at(0),

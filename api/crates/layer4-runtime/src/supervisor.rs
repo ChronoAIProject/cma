@@ -227,6 +227,12 @@ impl Supervisor {
         {
             return writers_held_error().response(operation);
         }
+        if let RequestFrame::ProveAgentProcessClosed(proof) = request {
+            return match self.prove_agent_process_closed(proof).await {
+                Ok(proof) => ResponseFrame::ProveAgentProcessClosed(proof),
+                Err(error) => error.response(operation),
+            };
+        }
         if let Err(error) = self.authorize_mutation(&request).await {
             return error.response(operation);
         }

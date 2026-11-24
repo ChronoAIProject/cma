@@ -301,6 +301,9 @@ impl HostedBackend for InMemoryHostedBackend {
                 require_credential(runtime, operation)?;
                 process::close_agent(runtime, request)
             }
+            RequestFrame::ProveAgentProcessClosed(_) => {
+                return refused(operation, "agent_process_close_proof_unsupported");
+            }
             RequestFrame::CaptureAgent(reference) => {
                 require_credential(runtime, operation)?;
                 let Some(agent) = runtime.agents.get(&reference.agent_id) else {

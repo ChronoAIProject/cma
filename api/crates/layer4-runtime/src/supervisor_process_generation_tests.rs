@@ -244,6 +244,118 @@ pub(in crate::supervisor) fn restart_open(
 }
 
 #[tokio::test]
+async fn owner_stop_close_proof_requires_the_latest_exact_native_pair() {
+    check_owner_stop_close_proof(true).await;
+    check_owner_stop_close_proof(false).await;
+}
+
+async fn check_owner_stop_close_proof(started_successor: bool) {
+    let mut fixture = Fixture::new();
+    fixture.config.agent_process_restart_enabled = true;
+    let supervisor = installed(&fixture).await;
+    let launch = prepare_agent(&fixture, &supervisor).await;
+    assert!(matches!(
+        supervisor.dispatch(open(1, &launch)).await,
+        ResponseFrame::OpenAgent(_)
+    ));
+    let RequestFrame::CloseAgent(close) = close(2) else {
+        unreachable!();
+    };
+    let proof = layer3_adapter::wire::AgentProcessCloseProof {
+        runtime: layer3_adapter::AgentRestartRuntime {
+            runtime: layer3_adapter::RuntimeStatusRequest {
+                sandbox_id: fixture.config.sandbox_id.clone(),
+                generation: fixture.config.generation,
+                home_identity: fixture.config.home_identity.clone().unwrap(),
+            },
+            boot_id: supervisor.boot_id.clone(),
+        },
+        close: close.request.clone(),
+        open_request_sha256: launch.request_sha256.clone(),
+        worktree_path: launch.cwd.clone(),
+    };
+    let request = RequestFrame::ProveAgentProcessClosed(proof.clone());
+    assert_eq!(
+        failure(supervisor.dispatch(request.clone()).await),
+        "agent_process_close_unproved"
+    );
+    assert!(matches!(
+        supervisor.dispatch(RequestFrame::CloseAgent(close)).await,
+        ResponseFrame::CloseAgent(_)
+    ));
+    assert_eq!(
+        supervisor.dispatch(request.clone()).await,
+        ResponseFrame::ProveAgentProcessClosed(proof.clone())
+    );
+    let mut different = proof.clone();
+    different.runtime.boot_id = "replaced-runtime".into();
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::ProveAgentProcessClosed(different))
+                .await
+        ),
+        "agent_process_close_runtime_changed"
+    );
+    let mut different = proof;
+    different.worktree_path.push_str("-other");
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::ProveAgentProcessClosed(different))
+                .await
+        ),
+        "agent_process_close_unproved"
+    );
+
+    let mut successor = launch;
+    successor.operation_id = "agent:agent:open:2:v1".into();
+    successor.request_sha256 = "c".repeat(64);
+    if started_successor {
+        let operation = crate::mutation_journal::Operation::open_agent(&successor);
+        supervisor
+            .mutations
+            .admit(3, std::slice::from_ref(&operation))
+            .await
+            .unwrap();
+        assert_eq!(
+            failure(supervisor.dispatch(request.clone()).await),
+            "agent_process_close_unproved"
+        );
+        assert!(!supervisor.mutations.admitted(&operation).await.unwrap());
+        assert!(matches!(
+            supervisor
+                .mutations
+                .begin::<layer3_adapter::wire::AgentOpenReceipt>(&operation)
+                .await
+                .unwrap(),
+            crate::mutation_store::Begin::New(_)
+        ));
+        assert_eq!(
+            failure(supervisor.dispatch(request.clone()).await),
+            "agent_process_close_unproved"
+        );
+        assert!(!supervisor.mutations.completed(&operation).await.unwrap());
+        assert!(supervisor.bridge("agent").await.is_none());
+        return;
+    }
+    assert!(matches!(
+        supervisor
+            .dispatch(restart_open(&supervisor, 3, &successor))
+            .await,
+        ResponseFrame::OpenAgent(_)
+    ));
+    assert!(matches!(
+        supervisor.dispatch(close_incarnation(4, 2)).await,
+        ResponseFrame::CloseAgent(_)
+    ));
+    assert_eq!(
+        failure(supervisor.dispatch(request).await),
+        "agent_process_close_unproved"
+    );
+}
+
+#[tokio::test]
 async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
     let mut fixture = Fixture::new();
     fixture.config.agent_process_restart_enabled = true;

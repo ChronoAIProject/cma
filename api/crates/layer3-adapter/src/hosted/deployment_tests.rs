@@ -365,6 +365,7 @@ fn new_work_renders_its_admitted_release_and_recorded_images_win() {
         revision: 7,
         agent: released.clone(),
         machine: None,
+        lane_revisions: None,
     };
     // A request without a captured release keeps the bootstrap image.
     let legacy = crate::RuntimeProvisionRequest::new(1, spec.clone());
