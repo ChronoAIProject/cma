@@ -18,6 +18,7 @@ async fn real_allocation_buckets_activate_only_with_confined_namespace_grants() 
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn real_transaction_barrier_is_authorized_by_the_exact_runtime_grant() {
     use mongodb::{
+        bson::Document,
         options::{ClientOptions, Credential},
         Client,
     };
@@ -31,42 +32,49 @@ async fn real_transaction_barrier_is_authorized_by_the_exact_runtime_grant() {
     "roles":[{"role":"cma_am_runtime","db":&name}]})
         .await
         .unwrap();
-    let client = |database: &str| {
-        let (uri, name, password, database) = (
-            uri.clone(),
-            name.clone(),
-            password.clone(),
-            database.to_owned(),
-        );
-        async move {
-            let mut options = ClientOptions::parse(&uri).await.unwrap();
-            options.credential = Some(
-                Credential::builder()
-                    .username("barrier-runtime".to_owned())
-                    .password(password)
-                    .source(name)
-                    .build(),
-            );
-            // Production clients carry their configured database (#3217).
-            options.default_database = Some(database);
-            Client::with_options(options).unwrap()
+    let (commands, mut observed) = tokio::sync::mpsc::unbounded_channel();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.credential = Some(
+        Credential::builder()
+            .username("barrier-runtime".to_owned())
+            .password(password)
+            .source(name.clone())
+            .build(),
+    );
+    options.command_event_handler = Some(mongodb::event::EventHandler::callback(move |event| {
+        if let mongodb::event::command::CommandEvent::Started(event) = event {
+            if event.command.get_bool("startTransaction").ok() == Some(true) {
+                let _ = commands.send(event);
+            }
         }
-    };
-    let runtime = client(&name).await;
+    }));
+    crate::store::transaction_barrier::bind(&mut options, &name);
+    let runtime = Client::with_options(options).unwrap();
     let mut session = runtime.start_session().await.unwrap();
     crate::store::sandbox_mongo::start_transaction(&mut session)
         .await
-        .expect("the barrier read on agents is covered by the exact runtime grant");
+        .expect("the barrier must run under the exact runtime grant");
+    let opening = observed.try_recv().unwrap();
+    assert_eq!(opening.db, name);
+    assert_eq!(opening.command_name, "aggregate");
+    assert_eq!(opening.command.get_i32("aggregate").unwrap(), 1);
+    assert_eq!(
+        opening.command.get_array("pipeline").unwrap(),
+        doc! {"pipeline": [{"$documents": [doc! {}]}]}
+            .get_array("pipeline")
+            .unwrap()
+    );
     session.commit_transaction().await.unwrap();
-    // Control: the barrier really reads its configured database.
-    let foreign = client(&format!("{name}_foreign")).await;
-    let mut session = foreign.start_session().await.unwrap();
-    let error = crate::store::sandbox_mongo::start_transaction(&mut session)
+    // The literal command grants no access to data in other databases.
+    let foreign = runtime.database(&format!("{name}_foreign"));
+    let error = foreign
+        .collection::<Document>("agents")
+        .find_one(doc! {})
         .await
         .unwrap_err();
     assert!(
         matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(c) if c.code == 13),
-        "the barrier read must be refused outside the runtime grant"
+        "an actual read must be refused outside the runtime grant"
     );
     db.drop().await.unwrap();
 }

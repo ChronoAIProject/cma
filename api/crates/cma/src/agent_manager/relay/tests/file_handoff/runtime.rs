@@ -1,6 +1,7 @@
 use layer3_adapter::*;
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, Notify};
 
 pub(super) const FILE_NAME: &str = "handoff.txt";
@@ -16,9 +17,19 @@ pub(super) struct Files {
     pub pause_next: AtomicBool,
     pub entered: Notify,
     pub resume: Notify,
+    pub writes: AtomicUsize,
+    pub lose_write_ack: AtomicBool,
+    contents: Option<Arc<Mutex<Vec<u8>>>>,
 }
 
 impl Files {
+    pub(super) fn with_write_contents(contents: Option<Arc<Mutex<Vec<u8>>>>) -> Self {
+        Self {
+            contents,
+            ..Self::default()
+        }
+    }
+
     fn check(
         &self,
         handle: &RuntimeHandle,
@@ -91,11 +102,52 @@ impl SandboxAdapter for Files {
             self.entered.notify_one();
             self.resume.notified().await;
         }
+        let contents = self.contents.as_ref().map_or_else(
+            || FILE_BYTES.to_vec(),
+            |contents| contents.lock().unwrap().clone(),
+        );
         Ok(AgentFileReadReceipt {
             path: request.path.clone(),
-            size_bytes: FILE_BYTES.len() as u64,
-            sha256: digest(),
-            content_base64: base64::engine::general_purpose::STANDARD.encode(FILE_BYTES),
+            size_bytes: contents.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(&contents)),
+            content_base64: base64::engine::general_purpose::STANDARD.encode(&contents),
+        })
+    }
+
+    async fn write_agent_file(
+        &self,
+        handle: &RuntimeHandle,
+        request: &AgentFileWriteRequest,
+    ) -> Result<AgentFileWriteReceipt> {
+        self.check(
+            handle,
+            &request.sandbox_id,
+            request.runtime_generation,
+            &request.boot_id,
+        )?;
+        assert!(!request.directory);
+        assert_eq!(request.path, FILE_PATH);
+        self.writes.fetch_add(1, Ordering::SeqCst);
+        let mut stored = self
+            .contents
+            .as_ref()
+            .expect("fixture write support")
+            .lock()
+            .unwrap();
+        let original = format!("{:x}", Sha256::digest(&*stored));
+        if request.expected_sha256.as_ref() != Some(&original) {
+            return Err(AdapterError::Rejected("file changed".into()));
+        }
+        *stored = request.content()?;
+        if self.lose_write_ack.swap(false, Ordering::SeqCst) {
+            return Err(AdapterError::Unavailable(
+                "fixture lost write acknowledgement".into(),
+            ));
+        }
+        Ok(AgentFileWriteReceipt {
+            path: request.path.clone(),
+            size_bytes: stored.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(&*stored)),
         })
     }
 

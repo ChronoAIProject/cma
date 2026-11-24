@@ -71,6 +71,7 @@ impl SandboxRetirement for ConflictingRetirement {
         &self,
         _: &SandboxId,
         _: String,
+        _: Option<u64>,
     ) -> Result<SandboxRetirementResult, OperatorError> {
         Err(OperatorError::InvalidState(
             "contract retirement revision changed".into(),
