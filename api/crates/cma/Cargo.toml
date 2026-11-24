@@ -31,6 +31,7 @@ sha1 = { workspace = true }
 layer1-public = { workspace = true }
 layer2-core = { workspace = true }
 layer3-adapter = { workspace = true }
+libc = { workspace = true }
 mongodb = { workspace = true, features = ["opentelemetry"] }
 opentelemetry = { workspace = true }
 reqwest = { workspace = true }

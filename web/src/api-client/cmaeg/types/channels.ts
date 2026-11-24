@@ -381,7 +381,10 @@ export const SourceSchema = tagged(
       conversation_history: optional(boolean),
       type: enumeration('discord'),
     }),
-    telegram: TelegramSourceSchema,
+    telegram: object({
+      ...telegramSourceFields,
+      member_join_chat_ids: optional(array(text)),
+    }),
     nyxid_relay: object({
       admission: AdmissionPolicySchema,
       bot_id: optional(nullable(text)),
