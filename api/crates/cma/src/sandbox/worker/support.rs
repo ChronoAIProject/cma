@@ -238,6 +238,7 @@ pub(super) fn material_matches(
         && material.owner == sandbox.owner
         && material.source == sandbox.credential.source
         && material.matches_source()
+        && material.matches_connection(sandbox)
         && &material.authority == pending
 }
 

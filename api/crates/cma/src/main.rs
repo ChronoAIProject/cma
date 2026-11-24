@@ -1,4 +1,7 @@
 //! CMA control plane composition while replacement resource routes are rebuilt.
+// Tests drive raw driver sessions to construct the faults the guarded
+// terminal commands defend against (#3288).
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 // Avoid libc allocator retention and contention across async worker threads.
 #[global_allocator]

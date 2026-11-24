@@ -445,6 +445,7 @@ dependencies = [
  "layer1-public",
  "layer2-core",
  "layer3-adapter",
+ "libc",
  "metrics",
  "metrics-exporter-prometheus",
  "mimalloc",

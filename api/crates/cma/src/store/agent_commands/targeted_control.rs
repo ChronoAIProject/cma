@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::agent_io::{
     AdmittedTargetedControl, CommandLedgerError, TargetedControlInspection,
     TargetedControlReservation,
@@ -93,12 +94,12 @@ async fn execute(
         let result = match apply::apply(store, &request, mode, &mut session).await {
             Ok(result) => result,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 record_outcome("other_refused", attempt);
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if is_transient(&error) || is_duplicate_key(&error) {
                     tracing::warn!(
                         agent_id = %request.command.envelope.agent_id,
@@ -116,7 +117,7 @@ async fn execute(
             }
         };
         if let Err(error) = request.command.require_current_authority() {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             record_outcome("other_refused", attempt);
             return Err(error);
         }

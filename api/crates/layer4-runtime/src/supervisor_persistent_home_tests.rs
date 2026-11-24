@@ -76,6 +76,7 @@ fn credential() -> RequestFrame {
         operation_id: "persistent-credential".into(),
         value: RuntimeCredential::new("opaque-test-credential"),
         custody_generation: Some(1),
+        github_route: None,
     })
 }
 

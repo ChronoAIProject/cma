@@ -1,4 +1,5 @@
 //! Atomic, owner-consented reopening on an already restored retained runtime.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::{
     sandbox::{
         RetainedReopenAccepted, RetainedReopenPath, RetainedReopenReceipt, RetainedReopenRequest,
@@ -59,7 +60,7 @@ pub(super) async fn snapshot(
         .await
         .map_err(unavailable)?;
     let result = scope.retained_reopen_view(store, id, path, policy).await;
-    let _ = scope.release().abort_transaction().await;
+    let _ = scope.release().abort_guarded().await;
     result
         .map(|(snapshot, _)| snapshot)
         .map_err(ApplyError::domain)
@@ -94,11 +95,11 @@ pub(super) async fn admit(
         let applied = match transaction::apply_scoped(store, &request, scope).await {
             Ok(applied) => applied,
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 continue;
             }
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error.domain());
             }
         };
@@ -112,7 +113,7 @@ pub(super) async fn admit(
             let transaction::Applied::Replay(accepted) = applied else {
                 unreachable!()
             };
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Ok(accepted);
         };
         match commit_transaction(&mut session).await {

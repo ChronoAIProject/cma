@@ -207,24 +207,10 @@ impl IntoResponse for InstanceProblem {
             Self::RuntimeCapacity(capacity) => return super::problems::runtime_capacity(*capacity),
             Self::HistoryExport(error) => return super::agent_history::problem(*error),
             Self::AdmissionPaused => return super::admission_problem::paused(),
-            Self::ModelFundingUnsupported => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "model-funding-unsupported",
-                "Guaranteed model funding is unavailable for this turn.",
-                "model_funding_unsupported",
+            Self::ModelFundingUnsupported => crate::model_funding_problem::projection(
+                layer2_core::sandbox::model_credit::FundingError::Unsupported,
             ),
-            Self::ModelFunding(layer2_core::sandbox::model_credit::FundingError::Insufficient) => (
-                StatusCode::PAYMENT_REQUIRED,
-                "model-funding-insufficient",
-                "Model funding is insufficient for this turn.",
-                "model_funding_insufficient",
-            ),
-            Self::ModelFunding(_) => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "model-funding-unavailable",
-                "Model funding could not be verified for this turn.",
-                "model_funding_unavailable",
-            ),
+            Self::ModelFunding(reason) => crate::model_funding_problem::projection(*reason),
             Self::SessionCapacityUnavailable => return super::admission_problem::session_capacity(),
             // Every budget refusal, the platform's included, is a final 402
             // without Retry-After: clients treat >= 500 as retryable.

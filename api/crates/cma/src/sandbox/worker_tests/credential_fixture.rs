@@ -91,6 +91,7 @@ impl SandboxCredentialController for MemoryCredentials {
         self.actions.push(format!("mint:{generation}"));
         let material = CredentialMaterial {
             source: Default::default(),
+            github_route: None,
             sandbox_id: sandbox.id.clone(),
             owner: sandbox.owner.clone(),
             authority: layer2_core::sandbox::SandboxCredentialAuthority {

@@ -146,7 +146,12 @@ pub fn command_ready_for_claim(
     }
     match command.receipt.envelope.command {
         AgentCommand::Message { .. } => {
-            agent.status == AgentStatus::Ready
+            !agent
+                .conversation
+                .turn_timeout
+                .as_ref()
+                .is_some_and(|timeout| timeout.blocks_dispatch())
+                && agent.status == AgentStatus::Ready
                 && agent.conversation.active_turn.is_none()
                 && agent
                     .conversation

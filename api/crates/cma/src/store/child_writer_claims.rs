@@ -1,5 +1,6 @@
 //! Runtime-writer claims serialized with the owning Sandbox capture marker.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::{
     AgentWorkClaimDetail as ClaimDetail, AgentWorkClaimError, SandboxStoreError,
 };
@@ -129,20 +130,20 @@ pub(super) async fn persist_observed(
         {
             Ok(true) => {}
             Ok(false) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(false);
             }
             Err(ClaimError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ClaimError::Driver(error, _)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(diagnostics.transient(&error));
                 continue;
             }
             Err(ClaimError::Driver(error, detail)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(unavailable(error, detail));
             }
         }

@@ -5,7 +5,7 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
     RuntimeBinding, Sandbox, SandboxEventKind, SandboxStatus, SandboxWorkStep,
 };
-use layer3_adapter::{CredentialFrame, RuntimeCredential, RuntimeProvisionRequest};
+use layer3_adapter::RuntimeProvisionRequest;
 
 use super::support::{
     adapter_failure, credential_failure, credential_rotation_at, credential_valid_for_delivery,
@@ -280,11 +280,7 @@ impl SandboxWorker {
                 )
                 .await;
         }
-        let frame = CredentialFrame {
-            operation_id: operation_id(&sandbox),
-            value: RuntimeCredential::new(material.value.expose()),
-            custody_generation: Some(pending.generation),
-        };
+        let frame = material.into_runtime_frame(operation_id(&sandbox));
         layer2_core::sandbox::store::WorkAuthority::current()?;
         if let Err(error) = self
             .dependencies

@@ -1,5 +1,6 @@
 //! Mongo persistence for sandbox profile drafts and revisions.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::{SandboxProfileId, SubjectId};
 use layer2_core::profiles::store::{
     ProfilePage, ProfilePageRequest, ProfileStoreError, SandboxProfileStore,
@@ -291,7 +292,7 @@ impl MongoProfileStore {
             {
                 Ok(value) => value,
                 Err(PublishError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     if let Some(initial) = initial.filter(|_| error == ProfileStoreError::Conflict)
                     {
                         return self.replay_initial_sandbox(initial).await;
@@ -299,26 +300,26 @@ impl MongoProfileStore {
                     return Err(error);
                 }
                 Err(PublishError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(PublishError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(ProfileStoreError::Unavailable(error.to_string()));
                 }
             };
             let profile = match read_profile(&profile) {
                 Ok(profile) => profile,
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
             };
             if let Err(error) =
                 super::profile_references::sandbox_references(self, &profile, &mut session).await
             {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 match error {
                     PublishError::Domain(error) => return Err(error),
                     PublishError::Driver(error) if is_transient(&error) => {
@@ -331,7 +332,7 @@ impl MongoProfileStore {
                 }
             }
             if initial.is_some_and(|expected| expected != &profile) {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(ProfileStoreError::Conflict);
             }
             let revision = match profile
@@ -340,7 +341,7 @@ impl MongoProfileStore {
             {
                 Ok(revision) => revision,
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error.into());
                 }
             };
@@ -350,7 +351,7 @@ impl MongoProfileStore {
                 .session(&mut session)
                 .await;
             if let Err(error) = inserted {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if is_transient(&error) {
                     last_transient = Some(error.to_string());
                     continue;

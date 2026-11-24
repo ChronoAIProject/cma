@@ -15,6 +15,8 @@ use layer2_core::sandbox::store::{SandboxEventStore, WorktreeStore};
 mod release_race;
 use release_race::ReleaseRace;
 
+type ReopenResponses = Arc<Mutex<Vec<(StatusCode, Option<String>)>>>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Caller {
     Enabled,
@@ -23,6 +25,8 @@ enum Caller {
     BeforeCursorRefusal,
     DurableCurrent,
     PromotedBeforeParking,
+    TerminalOwnerRefusal,
+    TransientOwnerFailure,
 }
 
 pub(crate) async fn exercise_runtime_update_reopen_http() {
@@ -33,6 +37,8 @@ pub(crate) async fn exercise_runtime_update_reopen_http() {
         Caller::Enabled,
         Caller::DurableCurrent,
         Caller::PromotedBeforeParking,
+        Caller::TerminalOwnerRefusal,
+        Caller::TransientOwnerFailure,
     ] {
         exercise(mode).await;
     }
@@ -40,7 +46,34 @@ pub(crate) async fn exercise_runtime_update_reopen_http() {
 
 async fn exercise(mode: Caller) {
     let (fixture, mut parent, mut agent, now) = at_reopen(true, 0).await;
-    *fixture.backend.reopen_output.cursors.lock().unwrap() = vec![2];
+    let (status, code, submitted, failure_detail) = match mode {
+        Caller::TerminalOwnerRefusal => {
+            fixture.backend.reject_reopen.store(true, Ordering::SeqCst);
+            (
+                StatusCode::CONFLICT,
+                Some("owner_reopen_rejected"),
+                &[][..],
+                Some("runtime rejected the lifecycle operation"),
+            )
+        }
+        Caller::TransientOwnerFailure => {
+            fixture
+                .backend
+                .fail_reopen_transiently
+                .store(true, Ordering::SeqCst);
+            (StatusCode::SERVICE_UNAVAILABLE, None, &[][..], None)
+        }
+        _ => {
+            *fixture.backend.reopen_output.cursors.lock().unwrap() = vec![2];
+            (
+                StatusCode::CONFLICT,
+                Some("owner_reopen_output_discontinuity"),
+                &[2][..],
+                matches!(mode, Caller::Enabled | Caller::DurableCurrent)
+                    .then_some("retained conversation output is discontinuous"),
+            )
+        }
+    };
 
     let (mongo, database_name, store) = database().await;
     let race = if matches!(mode, Caller::DurableCurrent | Caller::PromotedBeforeParking) {
@@ -82,13 +115,13 @@ async fn exercise(mode: Caller) {
     agent.conversation.last_seq = 0;
     store.create_agent(agent.clone()).await.unwrap();
 
-    let problem_codes = Arc::new(Mutex::new(Vec::new()));
+    let responses = Arc::new(Mutex::new(Vec::new()));
     let owners = store.agent_ownership.as_ref().unwrap();
     let instances = cluster_with_store(2, owners.clone(), |router| {
-        let codes = problem_codes.clone();
+        let responses = responses.clone();
         let race = race.clone();
         router.layer(from_fn(move |request: Request, next: Next| {
-            observe_reopen_response(request, next, codes.clone(), mode, race.clone())
+            observe_reopen_response(request, next, responses.clone(), mode, race.clone())
         }))
     })
     .await;
@@ -123,17 +156,17 @@ async fn exercise(mode: Caller) {
         result,
         Ok(true),
         "{mode:?} responses={:?}",
-        problem_codes.lock().unwrap()
+        responses.lock().unwrap()
     );
     let after = store.get_sandbox(&parent.id).await.unwrap().unwrap();
     assert_eq!(
-        *problem_codes.lock().unwrap(),
-        ["owner_reopen_output_discontinuity"],
+        *responses.lock().unwrap(),
+        [(status, code.map(str::to_owned))],
         "{mode:?}"
     );
     assert_eq!(
         *fixture.backend.reopen_output.submitted.lock().unwrap(),
-        [2]
+        submitted
     );
     assert!(fixture
         .backend
@@ -154,13 +187,10 @@ async fn exercise(mode: Caller) {
     assert!(after.work.lease.is_none());
 
     let failure = after.runtime_update_request().unwrap().failure.as_ref();
-    let parked = matches!(mode, Caller::Enabled | Caller::DurableCurrent);
-    if parked {
+    let parked = failure_detail.is_some();
+    if let Some(detail) = failure_detail {
         assert_eq!(after.work.step, SandboxWorkStep::None);
-        assert_eq!(
-            failure.unwrap().detail,
-            "retained conversation output is discontinuous"
-        );
+        assert_eq!(failure.unwrap().detail, detail);
         assert_eq!(failure.unwrap().class, "terminal_validation");
     } else {
         assert_eq!(
@@ -169,6 +199,10 @@ async fn exercise(mode: Caller) {
             "{mode:?}"
         );
         assert!(failure.is_none(), "{mode:?}");
+        if mode == Caller::TransientOwnerFailure {
+            assert!(after.work.ready_at > parent.work.ready_at);
+            assert!(after.work.attempts > parent.work.attempts);
+        }
     }
     if let Some(race) = race {
         use layer3_adapter::ReleasedRuntimeSource;
@@ -235,20 +269,27 @@ fn worker(
 async fn observe_reopen_response(
     request: Request,
     next: Next,
-    codes: Arc<Mutex<Vec<String>>>,
+    responses: ReopenResponses,
     mode: Caller,
     race: Option<Arc<ReleaseRace>>,
 ) -> Response {
     let reopen = request.uri().path().ends_with("/reopen");
     let response = next.run(request).await;
-    if !reopen || response.status() != StatusCode::CONFLICT {
+    if !reopen {
+        return response;
+    }
+    if response.status() != StatusCode::CONFLICT {
+        responses.lock().unwrap().push((response.status(), None));
         return response;
     }
     let (mut parts, body) = response.into_parts();
     let bytes = to_bytes(body, 4096).await.unwrap();
     let problem: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let code = problem["code"].as_str().unwrap();
-    codes.lock().unwrap().push(code.to_owned());
+    responses
+        .lock()
+        .unwrap()
+        .push((parts.status, Some(code.to_owned())));
     if mode == Caller::PromotedBeforeParking {
         assert_eq!(code, "owner_reopen_output_discontinuity");
         race.unwrap().promote_after_refusal().await;

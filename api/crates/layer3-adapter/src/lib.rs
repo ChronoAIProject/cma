@@ -172,12 +172,14 @@ pub use released_runtime::{
     released_image, PinnedReleasedRuntime, ReleasedLaneRevisions, ReleasedRuntime,
     ReleasedRuntimeSource, StaleReleasedRuntime,
 };
+pub use runtime::PlatformServiceRoute;
 pub use runtime::{
-    CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,
-    RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeInspection, RuntimeLifecycle,
-    RuntimeObservation, RuntimeProvisionRequest, RuntimeTermination, SandboxCapacity, SandboxSpec,
-    DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES, DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY,
-    DEFAULT_SUPERVISOR_PROGRAM, DEFAULT_TOTAL_TIMEOUT_SECONDS,
+    CommandReceipt, CredentialFrame, GithubCredentialRoute, InstallReceipt, InstallRequest,
+    RuntimeAdoptionRequest, RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeInspection,
+    RuntimeLifecycle, RuntimeObservation, RuntimeProvisionRequest, RuntimeTermination,
+    SandboxCapacity, SandboxSpec, DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
+    DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY, DEFAULT_SUPERVISOR_PROGRAM,
+    DEFAULT_TOTAL_TIMEOUT_SECONDS,
 };
 pub use runtime_ledger_status::{
     RuntimeLedgerCounters, RuntimeLedgerObservation, RuntimeLedgerStatus,
