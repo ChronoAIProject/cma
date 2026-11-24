@@ -43,6 +43,10 @@ export const operatorDispatch: Record<string, Dispatch> = {
     client.admin.retireSandbox(param('id')),
   'POST /api/v1/admin/sandboxes/{id}/runtime-update': ({ client, param, body }) =>
     client.admin.updateSandboxRuntime(param('id'), body),
+  'GET /api/v1/admin/sandboxes/{id}/runtime-update/activity': ({ client, param, options }) =>
+    client.admin.runtimeActivity(param('id'), options),
+  'POST /api/v1/admin/sandboxes/{id}/runtime-migration': ({ client, param, body, options }) =>
+    client.admin.migrateSandboxRuntime(param('id'), body, options),
   'GET /api/v1/admin/profiles': ({ client, options }) => client.admin.listProfiles(options),
   'POST /api/v1/admin/profiles/{kind}/{id}/retire': ({ client, param }) =>
     client.admin.retireProfile(param('kind') as ProfileKind, param('id')),
