@@ -11,6 +11,7 @@ members = [
     "crates/cma-image-manager",
     "crates/cma-service-auth",
     "crates/cma-allocator-qualification",
+    "crates/cma-journey-probe",
 ]
 
 [workspace.package]
