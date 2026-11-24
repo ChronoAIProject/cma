@@ -244,6 +244,97 @@ pub(in crate::supervisor) fn restart_open(
 }
 
 #[tokio::test]
+async fn file_process_generation_teardown_closes_the_live_successor_on_its_pinned_boot() {
+    use crate::bridge::Outbound;
+    use layer3_adapter::wire::{AgentProcessCloseProof, AgentRestartFence};
+
+    let mut fixture = Fixture::new();
+    fixture.config.agent_process_restart_enabled = true;
+    let supervisor = installed(&fixture).await;
+    let mut initial = prepare_agent(&fixture, &supervisor).await;
+    initial.args[1] = r#"while IFS= read -r line; do printf '%s\n' "$line"; done"#.into();
+    assert!(matches!(
+        supervisor.dispatch(open(1, &initial)).await,
+        ResponseFrame::OpenAgent(_)
+    ));
+    let prior = supervisor.bridge("agent").await.unwrap();
+    let close = AgentCloseRequest::new("agent:agent:close:v1", initial.agent_id.clone());
+    assert!(matches!(
+        supervisor
+            .dispatch(RequestFrame::CloseAgent(FencedRequest::new(
+                2,
+                close.clone()
+            )))
+            .await,
+        ResponseFrame::CloseAgent(_)
+    ));
+    assert!(prior.is_ended());
+    let mut successor = initial.clone();
+    successor.operation_id = "agent:agent:open:2:v1".into();
+    successor.request_sha256 = "c".repeat(64);
+    let open = restart_open(&supervisor, 3, &successor);
+    let RequestFrame::OpenAgent(pinned) = &open else {
+        unreachable!()
+    };
+    let mut close_successor = AgentRestartFence {
+        predecessor: AgentProcessCloseProof {
+            runtime: pinned.restart_runtime.clone().unwrap(),
+            close,
+            open_request_sha256: initial.request_sha256.clone(),
+            worktree_path: initial.cwd.clone(),
+        },
+        successor_operation_id: successor.operation_id.clone(),
+        authority_fence: 4,
+        successor_open_request_sha256: Some(successor.request_sha256.clone()),
+    };
+    assert!(matches!(
+        supervisor.dispatch(open).await,
+        ResponseFrame::OpenAgent(_)
+    ));
+    let bridge = supervisor.bridge("agent").await.unwrap();
+    let mut output = bridge.subscribe();
+    assert!(bridge.send(b"new process response".to_vec()).await);
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), output.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        Outbound::Frame(b"new process response".to_vec())
+    );
+    let wrong_boot = std::mem::replace(
+        &mut close_successor.predecessor.runtime.boot_id,
+        "replacement-boot".into(),
+    );
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(RequestFrame::FenceAgentRestart(close_successor.clone()))
+                .await
+        ),
+        "agent_process_close_runtime_changed"
+    );
+    assert!(!bridge.is_ended());
+    close_successor.predecessor.runtime.boot_id = wrong_boot;
+    for _ in 0..2 {
+        assert_eq!(
+            supervisor
+                .dispatch(RequestFrame::FenceAgentRestart(close_successor.clone()))
+                .await,
+            ResponseFrame::FenceAgentRestart(close_successor.clone())
+        );
+    }
+    assert!(bridge.is_ended());
+    assert_eq!(
+        status(supervisor.dispatch(fixture.status()).await).agent_processes,
+        0
+    );
+    assert!(Path::new(&successor.cwd).join(".git").is_file());
+    assert!(Path::new(&successor.home)
+        .join("conversation-fixture")
+        .is_file());
+}
+
+#[tokio::test]
 async fn owner_stop_close_proof_requires_the_latest_exact_native_pair() {
     check_owner_stop_close_proof(true).await;
     check_owner_stop_close_proof(false).await;
