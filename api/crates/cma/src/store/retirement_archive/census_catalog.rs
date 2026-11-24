@@ -12,6 +12,27 @@ pub(super) enum Policy {
     Empty,
 }
 use Policy::*;
+
+// Deployment release authority is independent of any Sandbox. Keep it out
+// of the persisted census so the preceding build can read these archives.
+pub(super) const DEPLOYMENT_ONLY: &[&str] = &[
+    crate::store::released_runtimes::COLLECTION,
+    crate::store::released_runtimes::TRANSITIONS_COLLECTION,
+];
+
+pub(crate) fn persisted_collections() -> impl Iterator<Item = &'static str> {
+    super::super::isolation::COLLECTIONS
+        .iter()
+        .copied()
+        .filter(|name| !DEPLOYMENT_ONLY.contains(name))
+}
+
+pub(super) fn persisted_policies() -> impl Iterator<Item = (&'static str, Policy)> {
+    AUDIT
+        .iter()
+        .copied()
+        .filter(|(name, _)| !DEPLOYMENT_ONLY.contains(name))
+}
 pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("account_deletions", Independent),
     ("account_deletion_events", Independent),

@@ -21,6 +21,8 @@ mod census_catalog;
 mod completion;
 mod export;
 mod schema;
+#[cfg(test)]
+pub(crate) use census_catalog::persisted_collections;
 pub(crate) use export::capture;
 pub(crate) use schema::{matches_current, schema_sha256, validate_manifest_census};
 #[cfg(test)]

@@ -58,17 +58,17 @@ pub(crate) async fn capture(
         .filter(doc! {"name":{"$in":super::super::isolation::OPTIONAL_COLLECTIONS}})
         .await
         .map_err(|_| REFUSED)?;
-    for name in super::super::isolation::COLLECTIONS {
+    for name in super::census_catalog::persisted_collections() {
         // Disabled features have no collection or grants. An absent optional
         // namespace contributes an explicit empty inventory without reading it.
         // Existing namespaces still take the normal ownership/authority path.
-        if super::super::isolation::OPTIONAL_COLLECTIONS.contains(name)
+        if super::super::isolation::OPTIONAL_COLLECTIONS.contains(&name)
             && !present_optional
                 .iter()
-                .any(|present| present.as_str() == *name)
+                .any(|present| present.as_str() == name)
         {
             records.push(DatabaseRecord {
-                collection: (*name).into(),
+                collection: name.into(),
                 documents: 0,
                 bytes: 0,
                 sha256: digest(&[]),
@@ -89,7 +89,7 @@ pub(crate) async fn capture(
             .await
             .map_err(|_| REFUSED)?;
         let mut record = DatabaseRecord {
-            collection: (*name).into(),
+            collection: name.into(),
             documents: 0,
             bytes: 0,
             sha256: String::new(),
@@ -100,10 +100,10 @@ pub(crate) async fn capture(
         while cursor.advance(&mut session).await.map_err(|_| REFUSED)? {
             let raw = cursor.deserialize_current().map_err(|_| REFUSED)?;
             let document = Document::try_from(&raw).map_err(|_| REFUSED)?;
-            if *name == crate::document_artifacts::COLLECTION {
+            if name == crate::document_artifacts::COLLECTION {
                 external.extend(document_objects(&document, custody, blobs, request).await?);
             }
-            let data = if *name == "sandboxes" {
+            let data = if name == "sandboxes" {
                 mongodb::bson::serialize_to_vec(&original).map_err(|_| REFUSED)?
             } else {
                 raw.as_bytes().to_vec()

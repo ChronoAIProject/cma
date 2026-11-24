@@ -43,10 +43,9 @@ async fn manifest() -> Manifest {
         schema_sha256: schema_sha256(),
         external: vec![],
         files: vec![],
-        database: crate::store::isolation::COLLECTIONS
-            .iter()
+        database: census_catalog::persisted_collections()
             .map(|name| DatabaseRecord {
-                collection: (*name).into(),
+                collection: name.into(),
                 documents: 0,
                 bytes: 0,
                 sha256: digest(&[]),
@@ -56,12 +55,20 @@ async fn manifest() -> Manifest {
     }
 }
 
+#[test]
+fn current_census_keeps_the_exact_pre_pointer_descriptor() {
+    assert_eq!(schema_sha256(), PRE_RELEASE_SHA256);
+    assert_eq!(
+        census_catalog::persisted_collections().collect::<Vec<_>>(),
+        PRE_RELEASE_COLLECTIONS
+    );
+}
+
 #[tokio::test]
 async fn frozen_pre_capture_census_requires_new_evidence_namespaces_to_be_empty() {
     for (collections, schema) in [
         (pre_capture::COLLECTIONS, pre_capture::SHA256),
         (pre_execution::COLLECTIONS, pre_execution::SHA256),
-        (pre_release::COLLECTIONS, pre_release::SHA256),
         (
             pre_capture_backups::COLLECTIONS,
             pre_capture_backups::SHA256,
@@ -92,15 +99,14 @@ async fn frozen_pre_capture_census_requires_new_evidence_namespaces_to_be_empty(
         old.database
             .retain(|row| collections.contains(&row.collection.as_str()));
         assert!(matches_current(&old, current.clone()).unwrap());
-        for name in crate::store::isolation::COLLECTIONS
-            .iter()
-            .filter(|name| !collections.contains(name))
+        for name in
+            census_catalog::persisted_collections().filter(|name| !collections.contains(name))
         {
             let mut pending = current.clone();
             pending
                 .database
                 .iter_mut()
-                .find(|row| row.collection == *name)
+                .find(|row| row.collection == name)
                 .unwrap()
                 .documents = 1;
             assert!(!matches_current(&old, pending).unwrap());
@@ -137,16 +143,15 @@ async fn exact_current_and_legacy_censuses_refuse_unknown_duplicate_and_missing_
     mismatched.schema_sha256 = schema_sha256();
     assert!(validate_manifest_census(&mismatched).is_err());
     assert!(matches_current(&old, current.clone()).unwrap());
-    for name in crate::store::isolation::COLLECTIONS
-        .iter()
-        .filter(|name| !legacy::COLLECTIONS.contains(name))
+    for name in
+        census_catalog::persisted_collections().filter(|name| !legacy::COLLECTIONS.contains(name))
     {
         for mode in 0..5 {
             let mut changed = current.clone();
             let extra = changed
                 .database
                 .iter_mut()
-                .find(|r| r.collection == *name)
+                .find(|r| r.collection == name)
                 .unwrap();
             match mode {
                 0 => extra.documents = 1,

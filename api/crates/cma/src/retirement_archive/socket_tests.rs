@@ -113,10 +113,9 @@ async fn fixture() -> Fixture {
         custody: custody.policy().await.unwrap(),
         schema_sha256: crate::store::retirement_archive::schema_sha256(),
         files,
-        database: crate::store::isolation::COLLECTIONS
-            .iter()
+        database: crate::store::retirement_archive::persisted_collections()
             .map(|name| DatabaseRecord {
-                collection: (*name).into(),
+                collection: name.into(),
                 documents: 0,
                 bytes: 0,
                 sha256: digest(&[]),
