@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 import { ProtocolError, type UsageMetricReport } from '@cma/client';
 import { Button } from '../../ui/Button';
 import { IconChevronDownOutline14 } from '../../ui/icons/IconChevronDownOutline14';
@@ -31,6 +31,7 @@ export function ReportSelector({
   readonly selectedReport?: UsageMetricReport;
   readonly unavailable?: boolean;
 }) {
+  const triggerId = useId();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [appliedSearch, setAppliedSearch] = useState('');
@@ -84,9 +85,19 @@ export function ReportSelector({
         ? 'Selected Sandbox unavailable'
         : (selected.name ?? 'Loading Sandbox…');
   return (
-    <div className="usage-metric-selector">
+    <div
+      className="usage-metric-selector"
+      onKeyDown={(event) => {
+        if (!open || event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+        event.currentTarget.ownerDocument.getElementById(triggerId)?.focus({ preventScroll: true });
+      }}
+    >
       <span className="usage-filter-label">{label}</span>
       <Button
+        id={triggerId}
         variant="outline"
         placement="usage-discovery-control"
         aria-label={`${label}: ${selectedName}`}

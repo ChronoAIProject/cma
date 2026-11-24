@@ -4,6 +4,68 @@ import { LocalUsageMetrics } from './usage-metrics.fixture';
 
 const measured = process.env.CMA_E2E_MEASURED_USAGE === 'true';
 
+test('LOCAL Usage Escape closes only the focused picker before closing the dialog', async ({
+  page,
+  baseURL,
+}) => {
+  const boundary = new LocalStartup();
+  const metrics = new LocalUsageMetrics();
+  await boundary.route(page, baseURL!);
+  await metrics.route(page);
+  await metrics.session(page);
+  await page.setViewportSize({ width: 1100, height: 680 });
+  await page.goto('/agent-manager');
+  await page.getByRole('button', { name: /Account menu for/ }).click();
+  await page.getByRole('menuitem', { name: 'Usage', exact: true }).click();
+
+  const dialog = page.getByRole('dialog', { name: 'Your usage' });
+  const range = dialog.getByRole('button', { name: 'Usage time range', exact: true });
+  await range.click();
+  await page.getByRole('menuitemradio', { name: 'Last 7 days', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Sandbox: All my Sandboxes', exact: true }).click();
+  const choose = dialog.getByRole('button', { name: 'Choose sandbox', exact: true });
+  await choose.click();
+  const choice = page.getByRole('menuitemradio', { name: 'Research Sandbox (sbx-1)', exact: true });
+  await choice.click();
+  await dialog.getByRole('button', { name: 'Apply usage filters' }).click();
+  await expect(page).toHaveURL(/range=7d/);
+  await expect(page).toHaveURL(/sandbox=sbx-1/);
+  const selectionUrl = page.url();
+
+  const sandbox = dialog.getByRole('button', { name: 'Sandbox: Research Sandbox', exact: true });
+  await sandbox.click();
+  const search = dialog.getByRole('textbox', { name: 'Search sandbox choices' });
+  await choose.click();
+  await expect(choice).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(choice).toHaveCount(0);
+  await expect(choose).toBeFocused();
+  await expect(search).toBeVisible();
+
+  await search.fill('Research');
+  await search.focus();
+  const body = dialog.locator('.modal__body');
+  const scrollTop = await body.evaluate((node) => {
+    node.scrollTop = 40;
+    return node.scrollTop;
+  });
+  expect(scrollTop).toBeGreaterThan(0);
+  await expect(search).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(search).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await expect(sandbox).toHaveAttribute('aria-expanded', 'false');
+  await expect(sandbox).toBeFocused();
+  await expect(range).toHaveText('Last 7 days');
+  await expect(page).toHaveURL(selectionUrl);
+  expect(await body.evaluate((node) => node.scrollTop)).toBe(scrollTop);
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).not.toBeVisible();
+  expect(boundary.writes).toEqual([]);
+  expect(boundary.errors).toEqual([]);
+});
+
 test('LOCAL selected Usage names survive Apply, reopen and exact URL recovery', async ({
   page,
   baseURL,
