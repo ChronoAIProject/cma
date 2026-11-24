@@ -28,7 +28,7 @@ export function RuntimeAttentionDisclosure({
   useLayoutEffect(() => {
     if (visible && disclosure.current && (revealAgents || selectedFailure))
       disclosure.current.open = true;
-  }, [revealAgents, selectedFailure, visible]);
+  }, [revealAgents, selectedAgentId, selectedFailure, selectedSandboxId, visible]);
   if (!visible) return null;
   const fresh = attention.freshness === 'fresh';
   return (

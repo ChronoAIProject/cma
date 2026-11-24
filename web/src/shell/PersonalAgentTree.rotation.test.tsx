@@ -162,6 +162,32 @@ describe('Agent navigation during environment updates', () => {
     expect(screen.getByRole('treeitem')).toHaveAccessibleName(/Starting Agent.*Preparing/);
   });
 
+  it('reveals a different selected Agent after the failed environment disclosure is closed', async () => {
+    const user = userEvent.setup();
+    const twoAgents = items({ id: 'agt_one' }).map((item) => ({
+      ...item,
+      workspaces: item.workspaces.map((workspace) => ({
+        ...workspace,
+        agents: [
+          workspace.agents[0]!,
+          { ...workspace.agents[0]!, id: 'agt_two', title: 'Agent two' },
+        ],
+      })),
+    }));
+    const draw = (agentId: string) => tree({ items: twoAgents, route: { kind: 'agent', agentId } });
+    const view = render(draw('agt_one'));
+    const selectedAgent = (name: string) => screen.getByText(name).closest('[role="treeitem"]');
+    expect(selectedAgent('Agent one')).toHaveAttribute('aria-selected', 'true');
+    expect(selectedAgent('Agent one')).toBeVisible();
+
+    await user.click(screen.getByText('1 updates failed · Fix'));
+    expect(selectedAgent('Agent one')).not.toBeVisible();
+
+    view.rerender(draw('agt_two'));
+    expect(selectedAgent('Agent two')).toHaveAttribute('aria-selected', 'true');
+    expect(selectedAgent('Agent two')).toBeVisible();
+  });
+
   it.each(['failed', 'stopped'] as const)(
     'keeps historical %s outcomes and their date group',
     (taskStatus) => {
