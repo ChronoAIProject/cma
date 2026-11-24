@@ -14,6 +14,7 @@ use super::migrations::measured_custody::COLLECTION;
 use super::sandbox_mongo::{
     commit_transaction, is_confirmed_body_retry, start_transaction, CommitOutcome,
 };
+use super::transaction_terminal::GuardedTerminal;
 
 pub(crate) mod command;
 const SCHEMA_VERSION: i64 = 1;
@@ -99,7 +100,7 @@ impl MeasuredCapture {
                 match self.apply(observation, digest, payload, &mut session).await {
                     Ok(result) => result,
                     Err(error) => {
-                        let _ = session.abort_transaction().await;
+                        let _ = session.abort_guarded().await;
                         match error {
                             TransactionError::Driver(error) if is_confirmed_body_retry(&error) => {
                                 continue
