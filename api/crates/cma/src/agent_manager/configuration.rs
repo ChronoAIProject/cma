@@ -1,6 +1,10 @@
 use super::*;
 use crate::config::{AgentManagerReplicas, FeatureFlags};
 
+fn batch_renewal_enabled(features: &FeatureFlags) -> bool {
+    features.batch_ownership_renewal && !features.am_failure_containment_enabled
+}
+
 impl AgentManager {
     pub(crate) async fn register_configured(
         store: Arc<MongoSandboxStore>,
@@ -13,6 +17,10 @@ impl AgentManager {
         } else {
             MaintenancePolicy::Legacy
         };
+        // Containment owns independently supervised renewal and retry state.
+        // If both rollout flags are set, containment takes precedence and the
+        // legacy batch scheduler is deliberately not allocated.
+        let batch_renewal = batch_renewal_enabled(features);
         let manager = Self::register_with_policy_options(
             store,
             registry,
@@ -20,12 +28,25 @@ impl AgentManager {
             settings.max_owned_agents,
             features.ownership_cleanup_pacing,
             policy,
-            features.batch_ownership_renewal,
+            batch_renewal,
         )
         .await?;
         if features.receiver_housekeeping_containment && !features.am_failure_containment_enabled {
             manager.enable_receiver_containment();
         }
         Ok(manager)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn containment_precedes_batch_renewal() {
+        let mut features = FeatureFlags::default();
+        features.batch_ownership_renewal = true;
+        features.am_failure_containment_enabled = true;
+        assert!(!batch_renewal_enabled(&features));
     }
 }

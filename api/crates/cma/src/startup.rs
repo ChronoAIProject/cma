@@ -265,14 +265,8 @@ async fn serve_after_initialization(
                 }
             }
         };
-        return shutdown::serve_contained(
-            server,
-            http_stop,
-            trigger,
-            manager.as_deref(),
-            shutdown,
-        )
-        .await;
+        return shutdown::serve_contained(server, http_stop, trigger, manager.as_deref(), shutdown)
+            .await;
     }
     let server_result = tokio::select! {
         result = &mut server => http_result(result),

@@ -19,12 +19,12 @@ use crate::AgentId;
 mod acquisition;
 #[path = "coordinator_activation.rs"]
 mod activation;
+#[path = "coordinator_batch_renewal.rs"]
+mod batch;
 #[path = "coordinator_custody.rs"]
 mod custody;
 #[path = "coordinator_handoff.rs"]
 mod handoff;
-#[path = "coordinator_batch_renewal.rs"]
-mod batch;
 #[path = "coordinator_heartbeat.rs"]
 mod heartbeat;
 #[path = "coordinator_legacy_acquire.rs"]

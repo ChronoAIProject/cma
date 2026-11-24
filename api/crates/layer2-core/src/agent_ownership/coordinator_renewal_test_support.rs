@@ -63,7 +63,10 @@ impl OwnershipStore for Store {
     async fn heartbeat(&self, id: &str, draining: bool) -> Result<Membership, OwnershipError> {
         self.heartbeat_starts.lock().unwrap().push(Instant::now());
         if self.batch_supported.load(Ordering::SeqCst) {
-            self.batch_events.lock().unwrap().push(RenewalEvent::Heartbeat);
+            self.batch_events
+                .lock()
+                .unwrap()
+                .push(RenewalEvent::Heartbeat);
         }
         // Modes 7-11 fail before the store row changes; 1 and 6 lose a committed reply.
         match self.heartbeat_mode.load(Ordering::SeqCst) {
@@ -172,10 +175,7 @@ impl OwnershipStore for Store {
         self.batch_supported.load(Ordering::SeqCst)
     }
 
-    async fn renew_batch(
-        &self,
-        tokens: &[OwnershipToken],
-    ) -> Result<RenewalBatch, OwnershipError> {
+    async fn renew_batch(&self, tokens: &[OwnershipToken]) -> Result<RenewalBatch, OwnershipError> {
         assert!(self.batch_supported.load(Ordering::SeqCst));
         self.batch_events.lock().unwrap().push(RenewalEvent::Chunk(
             tokens.iter().map(|token| token.agent_id.clone()).collect(),
@@ -248,7 +248,11 @@ impl Fixture {
                     .unwrap(),
             );
         }
-        Self { store, manager, owners }
+        Self {
+            store,
+            manager,
+            owners,
+        }
     }
 
     pub(super) async fn with_policy(count: usize, policy: MaintenancePolicy) -> Self {
@@ -271,7 +275,11 @@ impl Fixture {
                     .unwrap(),
             );
         }
-        Self { store, manager, owners }
+        Self {
+            store,
+            manager,
+            owners,
+        }
     }
 
     fn member() -> Member {

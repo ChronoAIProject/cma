@@ -188,7 +188,10 @@ impl FeatureFlags {
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
             ownership_cleanup_pacing: flag(lookup, "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED")?,
             batch_ownership_renewal: flag(lookup, "CHRONO_AM_BATCH_OWNERSHIP_RENEWAL")?,
-            am_failure_containment_enabled: flag(lookup, "CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED")?,
+            am_failure_containment_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED",
+            )?,
             receiver_housekeeping_containment: flag(
                 lookup,
                 "CHRONO_RECEIVER_HOUSEKEEPING_CONTAINMENT_ENABLED",
@@ -343,6 +346,9 @@ impl FeatureFlags {
                 && flags.bounded_live_fragments)
         {
             return Err("CHRONO_INGRESS_COORDINATOR_ENABLED requires JSON retention, raw output, permission and live fragment bounds".into());
+        }
+        if flags.am_startup_health_serving && flags.am_failure_containment_enabled {
+            return Err("CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED cannot be combined with CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED".into());
         }
         Ok(flags)
     }

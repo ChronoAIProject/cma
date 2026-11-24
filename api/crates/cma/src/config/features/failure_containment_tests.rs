@@ -58,3 +58,18 @@ fn receiver_only_and_combined_flags_remain_independent() {
         }
     }
 }
+
+#[test]
+fn startup_health_and_failure_containment_are_rejected_before_composition() {
+    const STARTUP: &str = "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED";
+    let result = FeatureFlags::from_lookup(&mut |key| {
+        Ok(match key {
+            STARTUP | KEY => Some("true".into()),
+            _ => None,
+        })
+    });
+    assert_eq!(
+        result.unwrap_err(),
+        format!("{STARTUP} cannot be combined with {KEY}")
+    );
+}

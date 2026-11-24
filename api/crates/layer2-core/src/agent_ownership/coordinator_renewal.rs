@@ -32,25 +32,20 @@ impl OwnershipCoordinator {
                 return Err(error);
             }
         }
-        let obsolete = || {
-            authority.retiring.load(Ordering::Acquire)
-                || authority.receiver_cancelled()
-                || (self.contains_failures() && authority.retirement_pending())
-        };
         let normalize = || {
             self.contains_failures()
                 && self.is_ready()
                 && episode.is_some_and(|episode| authority.retire_retry_expiry(episode))
         };
         let fatal = |stage, error| self.maintenance_error(stage, Some(authority), error);
-        if obsolete() {
+        if self.contains_failures() && !authority.is_current() && normalize() {
             return Ok(());
         }
-        if !self.is_ready() || !authority.is_current() {
-            if normalize() || (self.is_ready() && obsolete()) {
-                return Ok(());
-            }
-            return Err(fatal("owner_dispatch_deadline", OwnershipError::Stale));
+        if self
+            .live_renewal_deadline(authority, "owner_dispatch_deadline")?
+            .is_none()
+        {
+            return Ok(());
         }
         let renewal = tokio::time::timeout(Duration::from_millis(STORE_DEADLINE_MS), async {
             if self.contains_failures() {
@@ -63,7 +58,7 @@ impl OwnershipCoordinator {
         let result = tokio::select! {
             biased;
             _ = authority.revoked() => {
-                if !obsolete() && !normalize() {
+                if !renewal_obsolete(authority) && !normalize() {
                     return Err(fatal("owner_active_deadline", OwnershipError::Stale));
                 }
                 // A deliberate handoff/cancellation must not revive authority.
@@ -75,7 +70,7 @@ impl OwnershipCoordinator {
         let reason = match result {
             Err(_) => "renewal_call_timeout",
             Ok(Err(OwnershipError::Unavailable(_))) => "renewal_store_unavailable",
-            Ok(Err(OwnershipError::Stale)) if obsolete() => return Ok(()),
+            Ok(Err(OwnershipError::Stale)) if renewal_obsolete(authority) => return Ok(()),
             Ok(Err(error)) => return Err(fatal("owner_store_renew", error)),
             Ok(Ok(lease)) => {
                 // A different token is an invariant failure, not a late success
@@ -84,23 +79,23 @@ impl OwnershipCoordinator {
                     .map_err(|error| fatal("owner_same_token", error))?;
                 let until = deadline(started, now_ms, lease.expires_at_ms)
                     .map_err(|error| fatal("owner_store_deadline", error))?;
-                if obsolete() {
+                if self.contains_failures() && !authority.is_current() && normalize() {
                     return Ok(());
                 }
-                if !self.is_ready() || !authority.is_current() {
-                    if normalize() || (self.is_ready() && obsolete()) {
-                        return Ok(());
-                    }
-                    return Err(fatal("owner_result_deadline", OwnershipError::Stale));
+                if self
+                    .live_renewal_deadline(authority, "owner_result_deadline")?
+                    .is_none()
+                {
+                    return Ok(());
                 }
                 return match authority.renew_until(until) {
                     Ok(()) => Ok(()),
-                    Err(_) if obsolete() => Ok(()),
+                    Err(_) if renewal_obsolete(authority) => Ok(()),
                     Err(error) => Err(fatal("owner_local_renew", error)),
                 };
             }
         };
-        if obsolete() {
+        if renewal_obsolete(authority) {
             return Ok(());
         }
         if !self.is_ready() {
@@ -222,9 +217,7 @@ impl OwnershipCoordinator {
 }
 
 pub(super) fn renewal_obsolete(authority: &Authority) -> bool {
-    authority.retiring.load(Ordering::Acquire)
-        || authority.receiver_cancelled()
-        || authority.retirement_pending()
+    authority.retiring.load(Ordering::Acquire) || authority.receiver_cancelled()
 }
 
 pub(super) fn error_reason(error: &OwnershipError) -> &'static str {
