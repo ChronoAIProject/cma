@@ -15,7 +15,8 @@ async fn declared_write_checks_only_the_unique_active_default_oauth_key() {
     let key = |id, slug, scopes: Value| {
         Reply::json(json!({
             "id":id, "slug":slug, "catalog_service_id":"github-catalog", "label":id,
-            "credential_type":"oauth2", "is_active":true, "granted_scopes": scopes
+            "credential_type":"oauth2", "is_active":true, "granted_scopes": scopes,
+            "status":"active", "connection_status":"connected"
         }))
     };
     let weak = row("weak", "api-github", true);
@@ -138,7 +139,8 @@ async fn scope_check_distinguishes_missing_and_empty_evidence_and_the_two_operat
         provider.state.credential_replies.lock().unwrap().insert(
             "selected".into(), Reply::json(json!({
                 "id":"selected", "slug":"api-github", "catalog_service_id":"github-catalog",
-                "label":"GitHub", "is_active":true, "credential_type":credential_type, "granted_scopes":scopes
+                "label":"GitHub", "is_active":true, "credential_type":credential_type, "granted_scopes":scopes,
+                "status":"active", "connection_status":"connected"
             })),
         );
         let report = broker.github_connections(&owner).await;
@@ -156,6 +158,45 @@ async fn scope_check_distinguishes_missing_and_empty_evidence_and_the_two_operat
             .unwrap()
             .get("scope_check")
             .is_none());
+    }
+
+    for (status, connection_status, expected) in [
+        (
+            Some("expired"),
+            Some("connected"),
+            "verification_unavailable",
+        ),
+        (
+            Some("revoked"),
+            Some("connected"),
+            "verification_unavailable",
+        ),
+        (Some("active"), Some("expired"), "verification_unavailable"),
+        (Some("active"), None, "verification_unavailable"),
+        (None, Some("connected"), "verification_unavailable"),
+        (Some("active"), Some("connected"), "scope_satisfied"),
+    ] {
+        let mut detail = json!({
+            "id":"selected", "slug":"api-github", "catalog_service_id":"github-catalog",
+            "label":"GitHub", "is_active":true, "credential_type":"oauth2", "granted_scopes":["repo"]
+        });
+        if let Some(status) = status {
+            detail["status"] = json!(status);
+        }
+        if let Some(connection_status) = connection_status {
+            detail["connection_status"] = json!(connection_status);
+        }
+        provider
+            .state
+            .credential_replies
+            .lock()
+            .unwrap()
+            .insert("selected".into(), Reply::json(detail));
+        let report = broker.github_connections(&owner).await;
+        for need in [PublicRepositoryWrite, PrivateRepositoryRead] {
+            let check = serde_json::to_value(report.scope_check(need)).unwrap();
+            assert_eq!(check["status"], expected);
+        }
     }
 }
 

@@ -126,6 +126,8 @@ struct KeyDetail {
     granted_scopes: Option<Vec<String>>,
     credential_type: Option<String>,
     is_active: Option<bool>,
+    status: Option<String>,
+    connection_status: Option<String>,
 }
 
 impl NyxidServiceConnectionBroker {
@@ -255,7 +257,9 @@ impl NyxidServiceConnectionBroker {
             granted_scopes: detail.granted_scopes,
             manage_url: manage_url.to_string(),
             active_oauth: detail.is_active == Some(true)
-                && detail.credential_type.as_deref() == Some("oauth2"),
+                && detail.credential_type.as_deref() == Some("oauth2")
+                && detail.status.as_deref() == Some("active")
+                && detail.connection_status.as_deref() == Some("connected"),
         })
     }
 }
