@@ -132,9 +132,26 @@ class Recovery(unittest.TestCase):
         self.assertEqual(set(api.rows), {spare.id, newest.id, unrelated.id, full.id})
         for changed in (replace(newest, accessed=oldest.accessed),
                         replace(newest, key=newest.key.replace("01234567", "76543210")), unrelated):
-            self.assertIsNone(recovery_kind(Removal(oldest, "superseded", changed),
+            self.assertIsNone(recovery_kind(Removal(oldest, "superseded", changed, spare),
                                             CLOCK.date() + timedelta(days=1), POLICY))
-        self.assertIsNone(recovery_kind(Removal(oldest, "superseded", newest), CLOCK.date(), POLICY))
+        self.assertIsNone(recovery_kind(Removal(oldest, "superseded", newest, spare), CLOCK.date(), POLICY))
+
+    def test_rust_ci_does_not_delete_when_the_spare_is_empty_or_disappears(self):
+        for family in ("build", "lint"):
+            prefix = f"v0-rust-{family}-Linux-x64-01234567-"
+            oldest = entry(1, prefix + "aaaaaaaa", size=30)
+            spare = entry(2, prefix + "bbbbbbbb")
+            newest = replace(entry(3, prefix + "cccccccc"), accessed=CLOCK + timedelta(seconds=10))
+            for missing in (False, True):
+                with self.subTest(family=family, missing=missing):
+                    api = Inventory(oldest, spare if missing else replace(spare, size=0), newest)
+                    if missing:
+                        api.entries = Mock(side_effect=[list(api.rows.values()), [oldest, newest]])
+                        del api.rows[spare.id]
+                    code, result, *_ = self.execute(api, "--apply-recovery")
+                    self.assertEqual((code, result["deleted_bytes"]), (0, 0))
+                    self.assertIn(oldest.id, api.rows)
+                    api.delete.assert_not_called()
 
     def test_keeps_current_base_shared_layers_and_other_namespaces(self):
         oldest, newest = base(1), base(2)

@@ -75,6 +75,7 @@ class Removal:
     entry: Entry
     reason: str
     successor: Entry | None = None
+    spare: Entry | None = None
 
 
 def recovery_kind(action, today, policy):
@@ -103,7 +104,12 @@ def recovery_kind(action, today, policy):
         # a cache miss. Retain the archive used by current develop.
         return "superseded-omarchy-archive"
     rust_ci, replacement = RUST_CI.fullmatch(old.key), RUST_CI.fullmatch(keep.key)
-    if (rust_ci and replacement and rust_ci[1] == replacement[1]
+    spare = action.spare
+    spare_key = RUST_CI.fullmatch(spare.key) if spare else None
+    if (rust_ci and replacement and spare_key and rust_ci[1] == replacement[1] == spare_key[1]
+            and spare.ref == DEVELOP and spare.version == old.version and spare.size
+            and spare.id not in (old.id, keep.id)
+            and (spare.created, spare.id) > (old.created, old.id)
             and old.created.astimezone(timezone.utc).date() < today and old.accessed < keep.accessed):
         # The pinned Rust cache action tries the exact key and then this
         # environment prefix. It cleans stale target files after a partial hit.
@@ -148,6 +154,13 @@ def generations(entries, policy):
 
     for (group, _), candidates in groups.items():
         ordered = sorted(candidates, key=lambda pair: pair[0], reverse=True)
+        if RUST_CI.fullmatch(ordered[0][1].key):
+            usable = [item for _, item in ordered if item.size]
+            if len(usable) > 2:
+                keep, spare, *older = usable
+                for old in older:
+                    yield Removal(old, "superseded", keep, spare)
+            continue
         rank, keep = ordered[0]
         if (group.startswith("cargo-") or group == "omarchy") and not rank[0]:
             # The latest reserved-source build may still need the previous family.
@@ -155,9 +168,7 @@ def generations(entries, policy):
             continue
         if keep.size == 0:
             continue
-        # Retain two lockfile generations per Rust CI restore prefix and version.
-        candidates_to_retire = ordered[2:] if RUST_CI.fullmatch(keep.key) else ordered[1:]
-        for _, old in candidates_to_retire:
+        for _, old in ordered[1:]:
             if (group.startswith(("index-", "cargo-"))
                     and (old.created, old.id) > (keep.created, keep.id)):
                 # A backfill/rerun or an index-counter reset can complete out of
