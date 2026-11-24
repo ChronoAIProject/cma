@@ -18,6 +18,7 @@ import {
   downloadSavedDocument,
   ownsSavedDocument,
   prepareSavedDocumentExport,
+  SavedDocumentAccessError,
   SavedDocumentExportError,
 } from './savedExport';
 import { savedDocumentExportEnabled } from './savedExportFeature';
@@ -221,8 +222,12 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
       console.info('Saved document export download started.');
     } catch (cause) {
       if (!request.signal.aborted) {
+        const accessLost = cause instanceof SavedDocumentAccessError;
+        if (accessLost) revoke();
+        const failure = accessLost ? cause.cause : cause;
         console.warn('Saved document export failed.', {
-          status: cause instanceof DocumentError ? cause.status : undefined,
+          status: failure instanceof DocumentError ? failure.status : undefined,
+          accessLost,
         });
         setError(
           cause instanceof SavedDocumentExportError
@@ -443,30 +448,32 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
           onClose={() => setShareOpen(false)}
         />
       ) : null}
-      <Modal
-        open={discardOpen}
-        title="Load the latest document?"
-        onClose={() => setDiscardOpen(false)}
-        footer={
-          <>
-            <Button onClick={download}>Download draft</Button>
-            <Button
-              variant="danger"
-              onClick={() => {
-                retainDocumentDraft(viewer, id);
-                setDiscardOpen(false);
-                setIntent(undefined);
-                setLoaded(undefined);
-                setRevision((value) => value + 1);
-              }}
-            >
-              Discard draft and reload
-            </Button>
-          </>
-        }
-      >
-        <p>Your unsaved changes will be replaced by the latest saved version.</p>
-      </Modal>
+      {loaded ? (
+        <Modal
+          open={discardOpen}
+          title="Load the latest document?"
+          onClose={() => setDiscardOpen(false)}
+          footer={
+            <>
+              <Button onClick={download}>Download draft</Button>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  retainDocumentDraft(viewer, id);
+                  setDiscardOpen(false);
+                  setIntent(undefined);
+                  setLoaded(undefined);
+                  setRevision((value) => value + 1);
+                }}
+              >
+                Discard draft and reload
+              </Button>
+            </>
+          }
+        >
+          <p>Your unsaved changes will be replaced by the latest saved version.</p>
+        </Modal>
+      ) : null}
     </section>
   );
 }
