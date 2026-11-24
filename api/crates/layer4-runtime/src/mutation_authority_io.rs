@@ -23,6 +23,22 @@ pub(super) fn scan(
     budget: &mut crate::mutation_recovery::ScanBudget,
     preserve_temporary: bool,
 ) -> Result<Vec<AuthorityFile>> {
+    scan_records(state_root, budget, preserve_temporary, false)
+}
+
+pub(super) fn scan_for_proof(
+    state_root: &Path,
+    budget: &mut crate::mutation_recovery::ScanBudget,
+) -> Result<Vec<AuthorityFile>> {
+    scan_records(state_root, budget, true, true)
+}
+
+fn scan_records(
+    state_root: &Path,
+    budget: &mut crate::mutation_recovery::ScanBudget,
+    preserve_temporary: bool,
+    require_settled: bool,
+) -> Result<Vec<AuthorityFile>> {
     let directory = state_root.join(DIRECTORY);
     match std::fs::symlink_metadata(&directory) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -44,6 +60,12 @@ pub(super) fn scan(
             budget.entry()?;
         }
         if temporary_name(&name) {
+            if require_settled {
+                return Err(RuntimeError::unavailable(
+                    "agent_process_authority_unsettled",
+                    "Agent process proof is unavailable while authority publication is pending",
+                ));
+            }
             // Unpublished authority is never evidence. Recovery inspection keeps
             // it intact, including when a later record proves ambiguous.
             if preserve_temporary {

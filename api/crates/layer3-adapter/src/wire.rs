@@ -156,6 +156,15 @@ pub struct AgentProcessCloseProof {
     pub worktree_path: String,
 }
 
+/// Advance the exact predecessor Close fence if no successor has been admitted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentRestartFence {
+    pub predecessor: AgentProcessCloseProof,
+    pub successor_operation_id: String,
+    pub authority_fence: u64,
+}
+
 /// Correlated proof that a stopped agent's home was removed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -196,6 +205,7 @@ pub enum WireOperation {
     OpenAgent,
     CloseAgent,
     ProveAgentProcessClosed,
+    FenceAgentRestart,
     CaptureAgent,
     Checkpoint,
     CheckpointForTeardown,
@@ -266,6 +276,7 @@ pub enum RequestFrame {
     OpenAgent(FencedRequest<AgentLaunch>),
     CloseAgent(FencedRequest<AgentCloseRequest>),
     ProveAgentProcessClosed(AgentProcessCloseProof),
+    FenceAgentRestart(AgentRestartFence),
     CaptureAgent(AgentRef),
     Checkpoint(CheckpointRequest),
     CheckpointForTeardown(CheckpointHoldRequest),
@@ -327,6 +338,7 @@ impl RequestFrame {
             Self::OpenAgent(_) => WireOperation::OpenAgent,
             Self::CloseAgent(_) => WireOperation::CloseAgent,
             Self::ProveAgentProcessClosed(_) => WireOperation::ProveAgentProcessClosed,
+            Self::FenceAgentRestart(_) => WireOperation::FenceAgentRestart,
             Self::CaptureAgent(_) => WireOperation::CaptureAgent,
             Self::Checkpoint(_) => WireOperation::Checkpoint,
             Self::CheckpointForTeardown(_) => WireOperation::CheckpointForTeardown,
@@ -369,6 +381,7 @@ pub enum ResponseFrame {
     OpenAgent(FencedReceipt<AgentOpenReceipt>),
     CloseAgent(FencedReceipt<AgentCloseReceipt>),
     ProveAgentProcessClosed(AgentProcessCloseProof),
+    FenceAgentRestart(AgentRestartFence),
     CaptureAgent(ConversationSnapshot),
     Checkpoint(CheckpointReceipt),
     CheckpointForTeardown(CheckpointHoldReceipt),

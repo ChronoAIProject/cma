@@ -202,9 +202,17 @@ pub(crate) fn recovery_fence(config: &RuntimeConfig, operation: &Operation) -> R
 }
 
 pub(crate) fn has_process_writer(config: &RuntimeConfig, key: &ResourceKey) -> Result<bool> {
-    Ok(files_with_temporary_policy(config, true)?
-        .iter()
-        .any(|file| &file.record.resource == key))
+    let mut budget = crate::mutation_recovery::ScanBudget::new(
+        config,
+        crate::mutation_recovery::authority_limit(config),
+    );
+    let mut found = false;
+    for root in crate::mutation_scope::roots(config)? {
+        found |= io::scan_for_proof(&root, &mut budget)?
+            .iter()
+            .any(|file| &file.record.resource == key);
+    }
+    Ok(found)
 }
 
 pub(super) fn authorize(current_records: &[&Record], incoming: &Record) -> Result<bool> {
