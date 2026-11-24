@@ -198,10 +198,7 @@ impl ControlPlaneComposition {
         .with_warm_pools(native_warm_pools.clone())
         .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))
         .with_admission_ceilings(stores::admission_ceilings(&stores, config))
-        .with_admission_control(Arc::new(
-            layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
-                .with_writes_enabled(config.features.admission_control_writes_enabled),
-        ));
+        .with_admission_control(stores::admission_control(&stores, config));
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
             stores.sandbox_profiles.clone(),
@@ -364,15 +361,7 @@ impl ControlPlaneComposition {
             config.gateway.as_ref(),
             config.features,
         )?;
-        let event_workers = layer2_core::event_workers::EventWorkerProfileService::new(
-            stores.event_workers.clone(),
-            layer2_core::bots::PublishedBotProfiles::new(
-                stores.sandbox_profiles.clone(),
-                settings.clone(),
-                config.default_profiles.agent_model.clone(),
-            ),
-            "cma_codex".into(),
-        );
+        let event_workers = bots::event_worker_profiles(config, &stores, &settings);
         let metadata = routes::agent_metadata(&stores, resource_access.clone(), config);
         let accounts = routes::accounts(config, &stores, deletions, standing, projections.reads());
         let resource_routes = rest::profiles_router(profiles)

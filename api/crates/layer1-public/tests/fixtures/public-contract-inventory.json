@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 322,
+  "openapi_operations": 325,
   "operations": {
     "PUT /api/v1/admin/retained-runtime-policy": {
       "classification": "openapi",
