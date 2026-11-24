@@ -13,7 +13,9 @@ import {
   PROFILE_BOUNDS,
 } from './profiles';
 
-export function referenceClient(): ProfileViewsClient {
+export function referenceClient(
+  catalogOrigin = 'https://catalog.example.test',
+): ProfileViewsClient {
   return {
     agent: {
       ...documentClient(AGENT_PROFILE),
@@ -32,8 +34,18 @@ export function referenceClient(): ProfileViewsClient {
     authoring: {
       readCapacityBounds: async () => PROFILE_BOUNDS,
       listServices: async () => [
-        { id: 'github', name: 'GitHub', catalogId: 'catalog-github' },
-        { id: 'storage', name: 'Chrono Storage', catalogId: 'catalog-storage' },
+        {
+          id: 'github',
+          name: 'GitHub',
+          catalogId: 'catalog-github',
+          detailUrl: `${catalogOrigin}/services/catalog-github`,
+        },
+        {
+          id: 'storage',
+          name: 'Chrono Storage',
+          catalogId: 'catalog-storage',
+          detailUrl: `${catalogOrigin}/services/catalog-storage`,
+        },
       ],
       searchSkills: async (id) => ({ items: [{ id, name: 'TypeScript', versions: ['1.2'] }] }),
       resolveRepository: async (value) => value,
@@ -41,9 +53,15 @@ export function referenceClient(): ProfileViewsClient {
   };
 }
 
-export function NamedReferences({ children }: { readonly children: ReactNode }) {
+export function NamedReferences({
+  children,
+  catalogOrigin,
+}: {
+  readonly children: ReactNode;
+  readonly catalogOrigin?: string;
+}) {
   return (
-    <CmaClientProvider client={unavailableClient} profiles={referenceClient()}>
+    <CmaClientProvider client={unavailableClient} profiles={referenceClient(catalogOrigin)}>
       <ReferenceProvider onNavigate={() => {}}>{children}</ReferenceProvider>
     </CmaClientProvider>
   );
