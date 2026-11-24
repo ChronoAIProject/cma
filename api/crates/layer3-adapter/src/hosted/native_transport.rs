@@ -60,6 +60,7 @@ impl NativeHttpObservation {
 pub(super) struct NativeHttpResponse {
     pub status: http::StatusCode,
     pub bytes: Vec<u8>,
+    pub content_type: Option<http::HeaderValue>,
     lease: NativeLease,
 }
 
@@ -251,12 +252,17 @@ impl ProviderHostedControlTransport {
             .header(http::header::CONTENT_TYPE, "application/json")
             .header(
                 http::header::ACCEPT,
-                format!(
-                    "{}, {}, {}, {}",
-                    crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
-                    crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
-                    crate::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
-                    crate::wire::GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE,
+                endpoint.accept().map_or_else(
+                    || {
+                        format!(
+                            "{}, {}, {}, {}",
+                            crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
+                            crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
+                            crate::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
+                            crate::wire::GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE,
+                        )
+                    },
+                    str::to_owned,
                 ),
             )
             .header(name, token);
@@ -284,6 +290,7 @@ impl ProviderHostedControlTransport {
             return Ok(NativeHttpResponse {
                 status,
                 bytes: Vec::new(),
+                content_type: None,
                 lease,
             });
         }
@@ -299,6 +306,9 @@ impl ProviderHostedControlTransport {
                 "runtime HTTP response exceeds the size limit".into(),
             ));
         }
+        let content_type = endpoint
+            .accept()
+            .and_then(|_| response.headers().get(http::header::CONTENT_TYPE).cloned());
         let mut body = response.into_body();
         let mut bytes = Vec::new();
         while let Some(frame) = body.frame().await {
@@ -317,6 +327,7 @@ impl ProviderHostedControlTransport {
         Ok(NativeHttpResponse {
             status,
             bytes,
+            content_type,
             lease,
         })
     }
