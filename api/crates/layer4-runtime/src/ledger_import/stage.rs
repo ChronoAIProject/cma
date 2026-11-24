@@ -143,7 +143,7 @@ async fn fill(
         store.authority(*scope, key.clone(), rows).await?;
         boundary(Boundary::Authority)?;
     }
-    let mut opens = Vec::new();
+    let mut processes = Vec::new();
     for ((scope, _), group) in &analysis.journals {
         let index = group.selected.ok_or_else(invalid)?;
         let bytes = plan.inventory.read(index, budget)?;
@@ -151,18 +151,21 @@ async fn fill(
         if *scope != 0 {
             scoped.generation = *scope;
         }
-        if matches!(
-            Record::decode(&bytes, &scoped)?.operation().subject,
-            Subject::OpenAgent { .. }
-        ) {
-            opens.push((*scope, index));
+        let operation = Record::decode(&bytes, &scoped)?.operation();
+        if matches!(operation.subject, Subject::OpenAgent { .. })
+            || crate::mutation_journal::process_history::uses_incarnation(
+                &operation.subject,
+                &operation.operation_id,
+            )
+        {
+            processes.push((*scope, index));
         }
         store.journal(*scope, bytes).await?;
         boundary(Boundary::Journal)?;
     }
     let mut expected_processes = 0;
     let mut verification = Budget::new(budget.remaining_limits()?);
-    for (scope, index) in opens {
+    for (scope, index) in processes {
         let bytes = plan.inventory.read(index, &mut verification)?;
         expected_processes += u64::from(store.verify_process(scope, bytes).await?);
     }

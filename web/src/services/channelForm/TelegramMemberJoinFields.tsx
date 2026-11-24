@@ -2,7 +2,7 @@ import { Section, Toggle } from './Fields';
 import { optional, strings, type Fields } from './model';
 import { useRelayCapabilities } from '../RelayCapabilities';
 
-import { telegramMemberJoinGroupIds } from './telegramMemberJoins';
+import { telegramMemberJoinGroupIds, telegramRelayJoinIdentityReady } from './telegramMemberJoins';
 
 export function TelegramMemberJoinFields({
   value,
@@ -12,10 +12,14 @@ export function TelegramMemberJoinFields({
   onChange: (value: Fields) => void;
 }) {
   const discovery = useRelayCapabilities();
-  const enabled = discovery.authoring?.native_telegram_member_joins_enabled === true;
+  const relay = value.type === 'nyxid_relay';
+  const enabled = relay
+    ? discovery.authoring?.relay_telegram_member_joins_enabled === true
+    : discovery.authoring?.native_telegram_member_joins_enabled === true;
   const selected = strings(value.member_join_chat_ids);
   if (!enabled && selected.length === 0) return null;
-  const allowed = value.message_events === true ? telegramMemberJoinGroupIds(value) : [];
+  const sourceReady = relay ? telegramRelayJoinIdentityReady(value) : value.message_events === true;
+  const allowed = sourceReady ? telegramMemberJoinGroupIds(value) : [];
   const groups = enabled ? [...new Set([...allowed, ...selected])] : selected;
   return (
     <Section title="Welcome new Telegram group members" path="member_join_chat_ids">
@@ -25,8 +29,11 @@ export function TelegramMemberJoinFields({
       </p>
       {groups.length === 0 ? (
         <p className="channel-field-hint">
-          Enable message edits and reactions, allow all group messages and senders, and list the
-          exact Telegram group IDs under Chat admission.
+          {relay
+            ? 'Set the Telegram Bot ID and relay route. '
+            : 'Enable message edits and reactions. '}
+          Allow all group messages and senders, and list the exact Telegram group IDs under Chat
+          admission.
         </p>
       ) : null}
       {groups.map((id) => (
