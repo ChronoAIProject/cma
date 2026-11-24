@@ -46,11 +46,11 @@ import { usePreparedConfiguration } from './preparedConfiguration';
 import { messageSubmission } from './messageSubmission';
 import { useFirstTextSend } from './useFirstTextSend';
 import { composerInputAvailability } from './composerPresentation';
+import { turnRetryAvailable, nativeApprovalBusy } from './turnRetryAvailability';
 import type { AgentComputerObservation } from './environment/observation';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
-
 interface AgentSurfaceProps {
   readonly computerObservation?: AgentComputerObservation;
   readonly onViewDeletionStatus?: () => void;
@@ -166,7 +166,6 @@ export function AgentSurface({
     discardPrepared();
   }, [detailsOpen, discardPrepared]);
   usePreparedConfiguration(state, connection.scope, discardPrepared);
-
   useEffect(() => {
     if (state.status !== 'ready') headingRef.current?.focus({ preventScroll: true });
   }, [agentId, state.status]);
@@ -215,11 +214,7 @@ export function AgentSurface({
     detailsOpen,
     v2: state.v2,
   });
-  const approvalBusy =
-    controller.pending === 'approval' ||
-    !controlReady ||
-    !controller.inputAvailability.allowed ||
-    controller.controlsUnavailable === true;
+  const approvalBusy = nativeApprovalBusy(controller, controlReady);
   const issue = state.historyLoading
     ? 'Loading conversation activity.'
     : state.historyUnavailable
@@ -358,6 +353,11 @@ export function AgentSurface({
             approvalBusy={approvalBusy}
             approvalReadOnly={readOnly}
             onApproval={(id, decision) => void controller.approve(id, decision)}
+            onReviewRetry={
+              turnRetryAvailable(controller, !readOnly && !!verified, draft, actionsBusy)
+                ? editing.restore
+                : undefined
+            }
           >
             <AgentCommandNotices
               key={JSON.stringify([agentId, viewerId])}
