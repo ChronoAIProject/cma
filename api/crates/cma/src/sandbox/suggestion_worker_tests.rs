@@ -153,6 +153,7 @@ impl Fixture {
             owner: sandbox.owner.clone(),
             authority: sandbox.credential.current.clone().unwrap(),
             value: SecretValue::new(KEY.into()),
+            github_route: None,
         }))));
         let reading = Arc::new(Reading(Mutex::new(SuggestionStatus::Running)));
         let budget = Arc::new(Budget {
