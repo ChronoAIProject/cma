@@ -26,7 +26,7 @@ impl OwnershipCoordinator {
         }
         let renewal = tokio::time::timeout(
             Duration::from_millis(STORE_DEADLINE_MS),
-            self.store.renew(&authority.token),
+            self.call_renewal(authority),
         );
         tokio::pin!(renewal);
         let result = tokio::select! {
@@ -49,6 +49,19 @@ impl OwnershipCoordinator {
             Ok(Ok(lease)) => return self.apply_renewal(authority, started, now_ms, &lease),
         };
         self.contain_unavailable_renewal(authority, reason)
+    }
+
+    async fn call_renewal(
+        &self,
+        authority: &Arc<Authority>,
+    ) -> Result<OwnershipLease, OwnershipError> {
+        #[cfg(feature = "qualification-hooks")]
+        if let Some(hook) = self.qualification_renewal.get() {
+            if let Some(outcome) = hook.renew_selected(authority).await {
+                return outcome;
+            }
+        }
+        self.store.renew(&authority.token).await
     }
 
     pub(super) fn apply_renewal(

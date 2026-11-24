@@ -93,3 +93,16 @@ pub(crate) fn agent_digest(agent: &AgentId) -> [u8; 32] {
     encoder.update(agent.as_str().as_bytes());
     encoder.finalize().into()
 }
+
+/// Instrument only an already captured local renewal invocation.
+#[async_trait::async_trait]
+pub trait RenewalHook: Send + Sync {
+    fn selected(&self, authority: &std::sync::Arc<crate::agent_ownership::Authority>) -> bool;
+
+    async fn renew_selected(
+        &self,
+        authority: &std::sync::Arc<crate::agent_ownership::Authority>,
+    ) -> Option<
+        Result<crate::agent_ownership::OwnershipLease, crate::agent_ownership::OwnershipError>,
+    >;
+}

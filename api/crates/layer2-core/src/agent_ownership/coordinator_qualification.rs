@@ -14,6 +14,10 @@ impl CapturedOwner {
         agent_digest(&self.0.token.agent_id)
     }
 
+    pub fn matches(&self, authority: &Arc<Authority>) -> bool {
+        Arc::ptr_eq(&self.0, authority) && self.0.is_current()
+    }
+
     pub fn cancel(self) -> bool {
         self.0.cancel_receiver() == ReceiverCancellation::CancelledWhileLive
     }
@@ -31,5 +35,14 @@ impl OwnershipCoordinator {
         let authority = local.get(&token.agent_id)?;
         (self.is_ready() && authority.token == *token && authority.is_current())
             .then(|| CapturedOwner(Arc::clone(authority)))
+    }
+}
+
+impl OwnershipCoordinator {
+    pub fn attach_qualification_renewal(
+        &self,
+        hook: Arc<dyn crate::qualification::RenewalHook>,
+    ) -> bool {
+        self.qualification_renewal.set(hook).is_ok()
     }
 }

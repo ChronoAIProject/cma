@@ -41,6 +41,8 @@ pub struct OwnershipCoordinator {
     pub instance_id: String,
     pub store: Arc<dyn OwnershipStore>,
     owned: Mutex<BTreeMap<AgentId, Arc<Authority>>>,
+    #[cfg(feature = "qualification-hooks")]
+    qualification_renewal: std::sync::OnceLock<Arc<dyn crate::qualification::RenewalHook>>,
     acquisition: Mutex<()>,
     cancelled_cursor: AtomicUsize,
     member_deadline: std::sync::Mutex<Instant>,

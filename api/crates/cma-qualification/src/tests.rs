@@ -212,3 +212,77 @@ async fn cancellation_consumes_only_the_original_owner_and_its_linked_receipt() 
     work.await.unwrap();
     other_work.await.unwrap();
 }
+
+#[tokio::test(start_paused = true)]
+async fn selected_renewal_withholds_only_the_capture_and_records_the_callers_timeout() {
+    use layer2_core::agent_ownership::{
+        test_support::MemoryOwnershipStore, Member, OwnershipCoordinator, OwnershipStore,
+        PROTOCOL_VERSION,
+    };
+    let store = MemoryOwnershipStore::default();
+    let coordinator = OwnershipCoordinator::register(
+        store.client(),
+        Member {
+            instance_id: "fixture-instance".into(),
+            protocol: PROTOCOL_VERSION,
+            relay_address: "http://127.0.0.1:8080".into(),
+            expires_at_ms: 0,
+            draining: false,
+            owned_agents: 0,
+            max_owned_agents: 2,
+        },
+    )
+    .await
+    .unwrap();
+    let selected = AgentId("selected".into());
+    let healthy = AgentId("healthy".into());
+    let selected = coordinator.acquire(&selected).await.unwrap().unwrap();
+    let healthy = coordinator.acquire(&healthy).await.unwrap().unwrap();
+    let original = store
+        .owner(&selected.token.agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let capture = coordinator
+        .capture_qualification_owner(&selected.token)
+        .await
+        .unwrap();
+    let registry = Registry::default();
+    assert!(coordinator.attach_qualification_renewal(Arc::new(registry.clone())));
+    let mut armed = registry
+        .arm_renewal(capture, store.client(), LIFETIME)
+        .unwrap();
+    tokio::time::advance(Duration::from_millis(10)).await;
+    let task = tokio::spawn({
+        let coordinator = coordinator.clone();
+        async move { coordinator.maintain().await }
+    });
+
+    loop {
+        let facts = armed.changed().await.expect("renewal evidence");
+        if facts.result.is_some() {
+            assert_eq!(facts.result, Some(RenewalOutcome::Committed));
+            assert!(facts.started);
+            assert!(!facts.caller_dropped);
+            break;
+        }
+    }
+    assert!(!task.is_finished());
+    assert!(selected.is_current());
+    assert!(healthy.is_current());
+    assert!(
+        store
+            .owner(&selected.token.agent_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .expires_at_ms
+            > original.expires_at_ms
+    );
+
+    task.await.unwrap().unwrap();
+    assert!(armed.evidence().caller_dropped);
+    assert!(selected.receiver_cancelled());
+    assert!(healthy.is_current());
+    assert!(coordinator.is_ready());
+}
