@@ -6,6 +6,7 @@ members = [
     "crates/layer3-adapter",
     "crates/layer4-runtime",
     "crates/cma",
+    "crates/cma-am-auth",
     "crates/cma-am-mongo-primitives",
     "crates/cma-qualification",
     "crates/cmaeg-core",

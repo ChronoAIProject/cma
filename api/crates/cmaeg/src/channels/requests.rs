@@ -161,6 +161,10 @@ pub enum SourceRequest {
         verify_raw_event: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_resources: Option<cmaeg_core::channel::LarkResourceBinding>,
+        /// Exact opted-in Telegram relay group IDs. Omit to retain them; send an empty list to clear them.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schema(max_items = 16)]
+        member_join_chat_ids: Option<Vec<String>>,
         /// Explicit write authority; independent of resource reads.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lark_message_effects: Option<Box<cmaeg_core::channel::LarkMessageEffectsBinding>>,
