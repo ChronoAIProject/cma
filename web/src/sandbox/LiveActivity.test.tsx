@@ -53,6 +53,26 @@ it('translates only lifecycle vocabulary, never payloads or unknown values', () 
   ).toBe('Remove agent files: completed');
 });
 
+it('distinguishes a scheduled provisioning retry from a terminal Sandbox failure', () => {
+  const events = [
+    event(1, {
+      type: 'work_step_failed',
+      step: { kind: 'provision_runtime' },
+      failure: { class: 'retryable_transient', detail: 'private runtime diagnostic' },
+    }),
+    event(2, {
+      type: 'failed',
+      failure: { class: 'configuration', detail: 'private configuration diagnostic' },
+    }),
+  ];
+
+  render(<LiveActivity entries={activityEntries(events, 'sandbox')} />);
+  expect(screen.getByText('Start sandbox environment: retry scheduled')).toBeVisible();
+  expect(screen.queryByText('Start sandbox environment: needs attention')).toBeNull();
+  expect(screen.getByText('Sandbox needs attention')).toBeVisible();
+  expect(screen.queryByText(/private .* diagnostic/)).toBeNull();
+});
+
 it('caps translated entries and display rows without retaining raw payloads', () => {
   const entries = activityEntries(
     Array.from({ length: 160 }, (_, n) => event(n + 1)),
