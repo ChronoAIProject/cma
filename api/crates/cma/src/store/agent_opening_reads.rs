@@ -169,13 +169,22 @@ async fn selected(
 }
 
 fn decision(outcome: &'static str) {
+    use crate::diagnostic_format::{OPENING_DECISION_ROOT, OPENING_DECISION_TARGET};
+
     // The JSON formatter can include the current span even for a root event.
-    let root = tracing::debug_span!(parent: None, "agent_opening_decision");
+    let root = tracing::debug_span!(
+        target: OPENING_DECISION_TARGET,
+        parent: None,
+        OPENING_DECISION_ROOT
+    );
     if root.is_disabled() {
         return;
     }
     let _entered = root.enter();
-    tracing::debug!(parent: &root, outcome, "Agent opening legacy projection decision");
+    tracing::debug!(
+        target: OPENING_DECISION_TARGET, parent: &root, outcome,
+        "Agent opening legacy projection decision"
+    );
 }
 fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
     SandboxStoreError::Unavailable(error.to_string())

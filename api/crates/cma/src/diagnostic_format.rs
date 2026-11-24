@@ -12,6 +12,8 @@ pub(crate) const AUTHENTICATION_TARGET: &str = "cma::auth::middleware::failure_d
 pub(crate) const PROVIDER_IDENTITY_TARGET: &str = "cma::auth::verification_diagnostics";
 pub(crate) const ORGANIZATION_PRINCIPAL_TARGET: &str =
     "cma::auth::organizations::principal_diagnostics";
+pub(crate) const OPENING_DECISION_TARGET: &str = "cma::store::agent_opening_reads";
+pub(crate) const OPENING_DECISION_ROOT: &str = "agent_opening_decision";
 
 pub(crate) struct PrivacyFormat<F> {
     ordinary: F,
@@ -35,6 +37,7 @@ where
             AUTHENTICATION_TARGET => Some("authentication_failure"),
             PROVIDER_IDENTITY_TARGET => Some("identity_verification"),
             ORGANIZATION_PRINCIPAL_TARGET => Some("organization_principal"),
+            OPENING_DECISION_TARGET => Some(OPENING_DECISION_ROOT),
             _ => None,
         };
         if let Some(root) = root {
