@@ -27,12 +27,15 @@ pub(in crate::store) async fn validate_and_fence(
         })?;
     // A real write prevents lifecycle replacement/lease takeover from committing
     // concurrently with a receipt based on an obsolete transaction snapshot.
+    let filter = crate::store::work_claim_authority::without_ledger_maintenance(doc! {
+        "_id": parent.id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "revision": super::signed(parent.revision, "reopen parent revision")
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+    });
     let locked = store
         .sandboxes
         .update_one(
-            crate::store::work_schema::query(doc! { "_id": parent.id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-            "revision": super::signed(parent.revision, "reopen parent revision")
-                .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))? }),
+            crate::store::work_schema::query(filter),
             doc! { "$inc": { "agent_conversation_reopen_fence": 1_i64 } },
         )
         .session(session)

@@ -36,12 +36,12 @@ export function taskPresentation(
   if (parent.status === 'rotating' || failed) {
     const recorded = observedTaskStatus(agent, undefined, currentTask);
     const ended = recorded === 'failed' || recorded === 'stopped';
+    const showRecordedOutcome = ended || recorded === 'completed';
     const group = failed ? 'Needs attention' : 'Updating environment';
     return {
-      status: failed && !ended ? 'needs_attention' : recorded,
+      status: failed && !showRecordedOutcome ? 'needs_attention' : recorded,
       group: ended ? undefined : group,
-      label:
-        ended || recorded === 'completed' ? taskWords[recorded] : failed ? group : parent.label,
+      label: showRecordedOutcome ? taskWords[recorded] : failed ? group : parent.label,
       parentNotice: failed ? 'Runtime update failed' : parent.label,
       showRunningTime: false,
     };
