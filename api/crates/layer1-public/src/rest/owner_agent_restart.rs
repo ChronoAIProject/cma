@@ -26,6 +26,8 @@ pub(crate) struct AgentRestartReceipt {
 #[utoipa::path(post, path = "/api/v1/agents/{id}/restart", tag = "agents",
     params(("id" = String, Path), ("Idempotency-Key" = String, Header)),
     responses((status = 202, body = AgentRestartReceipt),
+        (status = 400, body = crate::rest::ProblemDocument),
+        (status = 401, body = crate::rest::ProblemDocument),
         (status = 403, body = crate::rest::ProblemDocument),
         (status = 404, body = crate::rest::ProblemDocument),
         (status = 409, body = crate::rest::ProblemDocument),

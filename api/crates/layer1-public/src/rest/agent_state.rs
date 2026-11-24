@@ -29,7 +29,8 @@ pub struct AgentRoutesState {
         Option<Arc<dyn super::super::agent_skills::AgentSkillRuntimeSupport>>,
     pub(in crate::rest) commands: Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>>,
     pub(in crate::rest) agents: Arc<AgentService>,
-    pub(in crate::rest) owner_agent_restart: Option<Arc<layer2_core::sandbox::AgentRestartService>>,
+    pub(in crate::rest) owner_agent_restart:
+        Option<Arc<dyn layer2_core::sandbox::AgentRestartControl>>,
     pub(in crate::rest) reads: Arc<AgentReadService>,
     pub(in crate::rest) agent_operations: Arc<AgentOperationService>,
     pub(in crate::rest) operation_records: Arc<dyn OperationStore>,
@@ -42,7 +43,7 @@ pub struct AgentRoutesState {
 impl AgentRoutesState {
     pub fn with_owner_agent_restart(
         mut self,
-        service: Arc<layer2_core::sandbox::AgentRestartService>,
+        service: Arc<dyn layer2_core::sandbox::AgentRestartControl>,
     ) -> Self {
         self.owner_agent_restart = Some(service);
         self

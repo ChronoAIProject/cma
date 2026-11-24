@@ -5,7 +5,7 @@ mod launch;
 mod restart;
 mod support;
 use launch::CreationAttribution;
-pub use restart::{AgentRestartObservation, AgentRestartService};
+pub use restart::{AgentRestartControl, AgentRestartObservation, AgentRestartService};
 use support::{
     control_error, creation_key, profile_error, require, require_launch, runtime_error,
     store_error, validate_title,

@@ -32,6 +32,16 @@ pub struct AgentRestartService {
     observation: Arc<dyn AgentRestartObservation>,
 }
 
+#[async_trait::async_trait]
+pub trait AgentRestartControl: Send + Sync {
+    async fn restart(
+        &self,
+        caller: &Caller,
+        agent_id: &AgentId,
+        key: &str,
+    ) -> Result<AgentRestartAcceptance, AgentServiceError>;
+}
+
 impl AgentRestartService {
     pub fn new(
         store: Arc<dyn AgentServiceStore>,
@@ -39,8 +49,11 @@ impl AgentRestartService {
     ) -> Arc<Self> {
         Arc::new(Self { store, observation })
     }
+}
 
-    pub async fn restart(
+#[async_trait::async_trait]
+impl AgentRestartControl for AgentRestartService {
+    async fn restart(
         &self,
         caller: &Caller,
         agent_id: &AgentId,

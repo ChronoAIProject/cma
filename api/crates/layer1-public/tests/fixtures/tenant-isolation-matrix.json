@@ -135,6 +135,7 @@
   {"operation":"POST /api/v1/agents/{id}/input","positive":"agent-runtime-input","negative":"agent-input-unavailable-denied","proof":"probe"},
   {"operation":"POST /api/v1/agents/{id}/interrupt","positive":"agent-runtime-interrupt","negative":"agent-interrupt-no-turn-denied","proof":"probe"},
   {"operation":"POST /api/v1/agents/{id}/recover-worktree","positive":"agent-worktree-recovery-accepted","negative":"agent-worktree-recovery-foreign","proof":"contract"},
+  {"operation":"POST /api/v1/agents/{id}/restart","positive":"agent-restart-accepted","negative":"agent-restart-foreign","proof":"contract"},
   {"operation":"POST /api/v1/agents/{id}/share-links","positive":"typed-link-create","negative":"typed-link-create-not-owner","proof":"contract"},
   {"operation":"POST /api/v1/agents/{id}/skills","positive":"agent-skills-install-accepted","negative":"agent-skills-install-foreign","proof":"probe"},
   {"operation":"POST /api/v1/agents/{id}/steer","positive":"agent-runtime-steer","negative":"agent-steer-no-turn-denied","proof":"probe"},
