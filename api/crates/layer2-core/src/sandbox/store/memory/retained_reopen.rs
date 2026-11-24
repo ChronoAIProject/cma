@@ -132,7 +132,8 @@ pub(super) fn admit(
             return Ok(receipt.accepted.clone());
         }
         if receipts.last().is_some_and(|latest| {
-            parent.status != crate::sandbox::SandboxStatus::Failed
+            !request.repeat_authorized
+                || parent.status != crate::sandbox::SandboxStatus::Failed
                 || parent.revision <= latest.accepted.revision
                 || parent.revision != request.snapshot.retained.sandbox.revision
         }) {

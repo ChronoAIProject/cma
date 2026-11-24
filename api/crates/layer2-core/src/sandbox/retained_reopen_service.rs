@@ -20,6 +20,8 @@ pub enum RetainedReopenError {
     InvalidConsent,
     #[error("recovery authority changed; review the current Sandbox")]
     Conflict,
+    #[error("the requested revision passed without accepting this recovery key")]
+    StaleRequest,
     #[error("this environment cannot safely reopen its conversations")]
     Refused,
     #[error("recovery is unavailable")]
@@ -191,6 +193,7 @@ impl RetainedReopenService {
             Err(RetainedReopenError::NotFound) => "not_found",
             Err(RetainedReopenError::InvalidConsent) => "invalid_consent",
             Err(RetainedReopenError::Conflict) => "authority_changed",
+            Err(RetainedReopenError::StaleRequest) => "stale_request",
             Err(RetainedReopenError::Refused) => "proof_refused",
             Err(RetainedReopenError::Unavailable) => "unavailable",
         };
@@ -237,6 +240,13 @@ impl RetainedReopenService {
                 .retained_reopen_history(id, Some(&key_sha256))
                 .await
                 .map_err(map_error)?;
+            if history
+                .observed_parent
+                .as_ref()
+                .is_some_and(|(owner, _)| owner != &caller.subject)
+            {
+                return Err(E::NotFound);
+            }
             if let Some(receipt) = history.replay {
                 if receipt.owner != caller.subject {
                     return Err(E::NotFound);
@@ -249,9 +259,16 @@ impl RetainedReopenService {
                 // Disabling new admission does not revoke an accepted request.
                 return Ok(Err(receipt.accepted));
             }
+            if history
+                .observed_parent
+                .is_some_and(|(_, revision)| revision > expected_revision)
+            {
+                return Err(E::StaleRequest);
+            }
             if !self.permits_revision(&parent, history.latest_revision) {
                 return Err(E::Conflict);
             }
+            let repeat_authorized = history.latest_revision.is_some();
             if !self.enabled() {
                 return Err(E::Unavailable);
             }
@@ -286,6 +303,7 @@ impl RetainedReopenService {
                             proof,
                             key_sha256,
                             requested_at: crate::now_rfc3339(),
+                            repeat_authorized,
                         },
                     )));
                 }
@@ -309,6 +327,7 @@ impl RetainedReopenService {
                 proof,
                 key_sha256,
                 requested_at: crate::now_rfc3339(),
+                repeat_authorized,
             })))
         })
         .await

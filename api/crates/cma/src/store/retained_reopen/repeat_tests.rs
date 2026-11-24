@@ -10,6 +10,7 @@ async fn seed_repeat(store: &MongoSandboxStore, name: &str) -> RetainedReopenReq
         .await
         .unwrap();
     let request = RetainedSuspendedReopenRequest {
+        repeat_authorized: false,
         proof: proof(&snapshot).unwrap(),
         snapshot,
         key_sha256: "a".repeat(64),
@@ -21,7 +22,9 @@ async fn seed_repeat(store: &MongoSandboxStore, name: &str) -> RetainedReopenReq
         .retained_reopen_snapshot(&child.sandbox_id)
         .await
         .unwrap();
-    legacy_request(later, "e".repeat(64))
+    let mut request = legacy_request(later, "e".repeat(64));
+    request.repeat_authorized = true;
+    request
 }
 
 #[tokio::test]
@@ -42,6 +45,14 @@ async fn retained_repeat_admission_serializes_identical_and_distinct_keys() {
         }
         let before = store.sandbox_events(&id, 0, 10).await.unwrap();
         let old = row(&store, &id).await;
+        let mut first_only = first.clone();
+        first_only.repeat_authorized = false;
+        assert!(matches!(
+            store.admit_retained_reopen(first_only).await,
+            Err(SandboxStoreError::Conflict)
+        ));
+        assert_eq!(row(&store, &id).await, old);
+        assert_eq!(store.sandbox_events(&id, 0, 10).await.unwrap(), before);
         let (a, b) = tokio::join!(
             store.admit_retained_reopen(first.clone()),
             other.admit_retained_reopen(competing.clone())
@@ -105,7 +116,9 @@ async fn retained_repeat_admission_serializes_identical_and_distinct_keys() {
             .replace_one(event_key, restored)
             .await
             .unwrap();
-        assert_eq!(other.admit_retained_reopen(winner).await.unwrap(), accepted);
+        let mut replay = winner;
+        replay.repeat_authorized = false;
+        assert_eq!(other.admit_retained_reopen(replay).await.unwrap(), accepted);
         assert_eq!(store.sandbox_events(&id, 0, 10).await.unwrap(), events);
     }
     client.database(&name).drop().await.unwrap();
@@ -206,5 +219,63 @@ async fn retained_repeat_receipt_replays_from_retirement_archive() {
         accepted
     );
     client.database(&restored_name).drop().await.unwrap();
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn suspended_repeat_requires_transaction_permission_but_exact_replay_does_not() {
+    let (client, name, store) = database().await;
+    let child = live(&store, "sbx_suspended_repeat", false).await;
+    let id = &child.sandbox_id;
+    let snapshot = store.retained_suspended_reopen_snapshot(id).await.unwrap();
+    let original = RetainedSuspendedReopenRequest {
+        repeat_authorized: false,
+        proof: proof(&snapshot).unwrap(),
+        snapshot,
+        key_sha256: "a".repeat(64),
+        requested_at: AT.into(),
+    };
+    let first = store
+        .admit_suspended_reopen(original.clone())
+        .await
+        .unwrap();
+    save_failed_revival(&store, id).await;
+
+    let parent = store.get_sandbox(id).await.unwrap().unwrap();
+    let generation = parent.runtime.unwrap().provision_generation.unwrap();
+    let child = store.get_agent(&child.id).await.unwrap().unwrap();
+    let child = set_live_child(&store, child, generation, false).await;
+    let snapshot = store.retained_suspended_reopen_snapshot(id).await.unwrap();
+    assert!(snapshot.retained.sandbox.revision > first.revision);
+    let mut request = RetainedSuspendedReopenRequest {
+        repeat_authorized: false,
+        proof: proof(&snapshot).unwrap(),
+        snapshot,
+        key_sha256: "b".repeat(64),
+        requested_at: AT.into(),
+    };
+    let before = row(&store, id).await;
+    let events = store.sandbox_events(id, 0, 10).await.unwrap();
+    assert!(matches!(
+        store.admit_suspended_reopen(request.clone()).await,
+        Err(SandboxStoreError::Conflict)
+    ));
+    assert_eq!(row(&store, id).await, before);
+    assert_eq!(store.get_agent(&child.id).await.unwrap().unwrap(), child);
+    assert_eq!(store.sandbox_events(id, 0, 10).await.unwrap(), events);
+    assert_eq!(store.admit_suspended_reopen(original).await.unwrap(), first);
+
+    request.repeat_authorized = true;
+    let accepted = store.admit_suspended_reopen(request.clone()).await.unwrap();
+    request.repeat_authorized = false;
+    assert_eq!(
+        store.admit_suspended_reopen(request).await.unwrap(),
+        accepted
+    );
+    assert_eq!(
+        store.sandbox_events(id, 0, 10).await.unwrap().len(),
+        events.len() + 1
+    );
     client.database(&name).drop().await.unwrap();
 }

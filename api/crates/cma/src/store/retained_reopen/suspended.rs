@@ -257,10 +257,11 @@ async fn apply(
         return Ok(Applied::Replay(receipt.accepted));
     }
     let repeat = previous.latest_revision.is_some();
-    if previous
-        .latest_revision
-        .is_some_and(|latest| durable.status != SandboxStatus::Failed || durable.revision <= latest)
-        || durable.revision != parent.revision
+    if previous.latest_revision.is_some_and(|latest| {
+        !request.repeat_authorized
+            || durable.status != SandboxStatus::Failed
+            || durable.revision <= latest
+    }) || durable.revision != parent.revision
     {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }

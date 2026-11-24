@@ -152,6 +152,7 @@ pub(in crate::store) async fn read(
     let domain = ApplyError::Domain;
     let options = FindOneOptions::builder().read_concern(read_concern).build();
     let parent = read_sandbox(row).map_err(domain)?;
+    let observed_parent = Some((parent.owner.clone(), parent.revision));
     let (original, original_personal) = if row.contains_key(suspended::SUSPENDED_FIELD) {
         (suspended::pair(row).map_err(domain)?.map(Into::into), true)
     } else {
@@ -181,7 +182,10 @@ pub(in crate::store) async fn read(
         .map_err(domain)?;
     let Some(original): Option<RetainedReopenReplay> = original else {
         return if latest.is_none() {
-            Ok(RetainedReopenHistory::default())
+            Ok(RetainedReopenHistory {
+                observed_parent,
+                ..Default::default()
+            })
         } else {
             Err(domain(corrupt()))
         };
@@ -243,6 +247,7 @@ pub(in crate::store) async fn read(
         suspended::require_personal(policy.as_ref(), &parent).map_err(domain)?;
     }
     Ok(RetainedReopenHistory {
+        observed_parent,
         latest_revision,
         replay: matching.map(|(receipt, _)| receipt),
     })

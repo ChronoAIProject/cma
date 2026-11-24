@@ -96,10 +96,11 @@ pub(super) async fn apply_scoped(
         return Ok(Applied::Replay(receipt.accepted));
     }
     let repeat = previous.latest_revision.is_some();
-    if previous
-        .latest_revision
-        .is_some_and(|latest| parent.status != SandboxStatus::Failed || parent.revision <= latest)
-        || parent.revision != expected.revision
+    if previous.latest_revision.is_some_and(|latest| {
+        !request.repeat_authorized
+            || parent.status != SandboxStatus::Failed
+            || parent.revision <= latest
+    }) || parent.revision != expected.revision
     {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }

@@ -177,10 +177,16 @@ impl SandboxStore for InMemorySandboxStore {
         key_sha256: Option<&str>,
     ) -> Result<crate::sandbox::RetainedReopenHistory, SandboxStoreError> {
         let state = self.lock();
+        let parent = state.sandboxes.get(id).ok_or(SandboxStoreError::NotFound)?;
+        let observed_parent = Some((parent.owner.clone(), parent.revision));
         let Some(receipts) = state.retained_reopen_receipts.get(id) else {
-            return Ok(crate::sandbox::RetainedReopenHistory::default());
+            return Ok(crate::sandbox::RetainedReopenHistory {
+                observed_parent,
+                ..Default::default()
+            });
         };
         Ok(crate::sandbox::RetainedReopenHistory {
+            observed_parent,
             latest_revision: receipts.last().map(|receipt| receipt.accepted.revision),
             replay: receipts
                 .iter()

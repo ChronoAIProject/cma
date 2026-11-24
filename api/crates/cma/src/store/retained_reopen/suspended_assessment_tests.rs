@@ -179,6 +179,25 @@ async fn owner_assessment_offers_only_the_verified_path_and_replays_after_disabl
     }
     assert_eq!(store.get_agent(&child.id).await.unwrap().unwrap(), child);
 
+    let ordinary = router(&state, &store, true, false, false);
+    let stale_ordinary = response(
+        &ordinary,
+        &idle.owner,
+        &idle.id,
+        Some((idle.revision - 1, "unaccepted-ordinary-key")),
+    )
+    .await;
+    assert_eq!(stale_ordinary.0, StatusCode::CONFLICT);
+    assert_eq!(
+        stale_ordinary.1["code"],
+        "retained_recovery_revision_passed"
+    );
+    assert!(store
+        .sandbox_events(&idle.id, 0, 10)
+        .await
+        .unwrap()
+        .is_empty());
+
     let app = router(&state, &store, false, true, false);
     let mut current = parent.clone();
     current.revision += 1;
@@ -196,6 +215,7 @@ async fn owner_assessment_offers_only_the_verified_path_and_replays_after_disabl
     )
     .await;
     assert_eq!(stale.0, StatusCode::CONFLICT);
+    assert_eq!(stale.1["code"], "retained_recovery_revision_passed");
     assert!(store
         .sandbox_events(&current.id, 0, 10)
         .await

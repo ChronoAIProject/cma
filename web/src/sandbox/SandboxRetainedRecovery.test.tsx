@@ -229,6 +229,45 @@ it('keeps an ambiguous repeat request across a predecessor conflict', async () =
   expect(f.inspectSandboxRecovery).toHaveBeenCalledTimes(2);
 });
 
+it('offers a new assessment when the current server confirms a lost request never committed', async () => {
+  const f = setup();
+  f.recoverSandboxRetained
+    .mockRejectedValueOnce(new TypeError('request lost'))
+    .mockRejectedValueOnce(new ApiError(409, 'Conflict', 'retained_recovery_authority_changed'))
+    .mockRejectedValueOnce(new ApiError(409, 'Conflict', 'retained_recovery_revision_passed'))
+    .mockResolvedValueOnce({ ...receipt, revision: 11 });
+  fireEvent.click(screen.getByRole('button', { name: 'Recover on the same image' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Recover my Sandbox' }));
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Retry recovery request' })).toBeEnabled(),
+  );
+  const firstKey = f.recoverSandboxRetained.mock.calls[0]?.[2].idempotencyKey;
+  f.rerender(<SandboxRetainedRecovery {...f.props} revision={10} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Retry recovery request' }));
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Retry recovery request' })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Retry recovery request' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Recover on the same image' }));
+  const consent = await screen.findByRole('button', { name: 'Recover my Sandbox' });
+  expect(f.inspectSandboxRecovery).toHaveBeenCalledTimes(2);
+  expect(
+    f.recoverSandboxRetained.mock.calls.map(([, revision, options]) => [
+      revision,
+      options.idempotencyKey,
+    ]),
+  ).toEqual([
+    [7, firstKey],
+    [7, firstKey],
+    [7, firstKey],
+  ]);
+  fireEvent.click(consent);
+  await screen.findByText(/Recovery accepted/);
+  expect(f.recoverSandboxRetained).toHaveBeenCalledTimes(4);
+  expect(f.recoverSandboxRetained.mock.calls[3]?.[1]).toBe(10);
+  expect(f.recoverSandboxRetained.mock.calls[3]?.[2].idempotencyKey).not.toBe(firstKey);
+});
+
 it('retains an accepted receipt on stale, lower, or still-running observations', () => {
   const accepted = { revision: 7, key: 'original-key', receipt };
   saveRecoveryIntent('owner', 'sbx_recovery', accepted);

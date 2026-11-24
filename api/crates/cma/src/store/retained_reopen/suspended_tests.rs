@@ -36,7 +36,7 @@ mod repeat;
 
 async fn live(store: &MongoSandboxStore, id: &str, active: bool) -> Agent {
     let original = super::super::mongo_fixtures::reopen_fixture(store, id).await;
-    let mut agent = original.snapshot.retained.agents[0].clone();
+    let agent = original.snapshot.retained.agents[0].clone();
     let generation = original
         .snapshot
         .retained
@@ -45,6 +45,15 @@ async fn live(store: &MongoSandboxStore, id: &str, active: bool) -> Agent {
         .unwrap()
         .provision_generation
         .unwrap();
+    set_live_child(store, agent, generation, active).await
+}
+
+async fn set_live_child(
+    store: &MongoSandboxStore,
+    mut agent: Agent,
+    generation: u64,
+    active: bool,
+) -> Agent {
     agent.status = if active {
         AgentStatus::Working
     } else {
@@ -159,6 +168,7 @@ async fn suspended_admission_refuses_changed_membership_and_organization_ownersh
     let id = &child.sandbox_id;
     let snapshot = store.retained_suspended_reopen_snapshot(id).await.unwrap();
     let mut request = RetainedSuspendedReopenRequest {
+        repeat_authorized: false,
         proof: proof(&snapshot).unwrap(),
         snapshot,
         key_sha256: "b".repeat(64),
@@ -297,7 +307,7 @@ async fn competing_consents_settle_once_and_flag_rollback_keeps_only_exact_repla
     assert!(matches!(
         off.request(&owner, id, parent.revision, "fresh-key", true)
             .await,
-        Err(RetainedReopenError::Conflict)
+        Err(RetainedReopenError::StaleRequest)
     ));
     assert!(matches!(
         off.request(
@@ -391,6 +401,7 @@ fn legacy_request(snapshot: RetainedReopenSnapshot, key: String) -> RetainedReop
     };
     proof.validate(&snapshot).unwrap();
     RetainedReopenRequest {
+        repeat_authorized: false,
         snapshot,
         proof,
         key_sha256: key,
@@ -406,6 +417,7 @@ async fn suspended_receipt_pair_survives_failed_revive_and_reconciliation() {
     let id = &child.sandbox_id;
     let snapshot = store.retained_suspended_reopen_snapshot(id).await.unwrap();
     let request = RetainedSuspendedReopenRequest {
+        repeat_authorized: false,
         proof: proof(&snapshot).unwrap(),
         snapshot,
         key_sha256: "a".repeat(64),
