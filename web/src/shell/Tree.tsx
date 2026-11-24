@@ -20,6 +20,8 @@ import {
   IconFolderOpenOutline16,
   IconPauseOutline16,
 } from '../ui/icons';
+import type { AgentDetail } from '../api/types';
+import type { RuntimeAttention } from './runtimeAttention';
 import type { NavigationSandbox } from './navigation';
 import { TreeRow } from './TreeRow';
 import { agentActions, sandboxActions, workspaceActions } from './treeActions';
@@ -64,6 +66,10 @@ export type TreeAction =
 
 export interface TreeProps {
   readonly currentTask?: CurrentTask;
+  readonly selectedRetired?: AgentDetail;
+  readonly onShowAll?: () => void;
+  readonly attention?: RuntimeAttention;
+  readonly showDeletionProgress?: boolean;
   readonly active?: boolean;
   readonly resourceClient?: ResourceViewsClient;
   readonly viewerId: string;
@@ -101,6 +107,10 @@ function restored(viewerId: string): Set<string> {
 
 export function Tree({
   currentTask,
+  selectedRetired,
+  onShowAll,
+  attention,
+  showDeletionProgress = true,
   active = true,
   resourceClient,
   viewerId,
@@ -151,12 +161,14 @@ export function Tree({
 
   return (
     <div className="resource-tree" {...focus}>
-      <DeletionProgressList
-        sandboxes={deletingItems.map(({ sandbox }) => sandbox)}
-        onViewStatus={(id) =>
-          onViewDeletion ? onViewDeletion(id) : onNavigate({ kind: 'sandbox', sandboxId: id })
-        }
-      />
+      {showDeletionProgress ? (
+        <DeletionProgressList
+          sandboxes={deletingItems.map(({ sandbox }) => sandbox)}
+          onViewStatus={(id) =>
+            onViewDeletion ? onViewDeletion(id) : onNavigate({ kind: 'sandbox', sandboxId: id })
+          }
+        />
+      ) : null}
       <Presence>
         {refreshError === undefined ? null : (
           <p className="resource-tree__notice" role="alert">
@@ -168,6 +180,9 @@ export function Tree({
         <PersonalAgentTree
           viewerId={viewerId}
           currentTask={currentTask}
+          selectedRetired={selectedRetired}
+          onShowAll={onShowAll}
+          attention={attention}
           active={active}
           items={visibleItems}
           statusFilter={statusFilter}

@@ -391,3 +391,89 @@ async fn drain_blocks_unowned_prepared_and_legacy_warm_allocations_before_their_
     );
     db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn frozen_lane_retains_candidate_until_provider_work_settles() {
+    use crate::store::released_runtimes::MongoReleasedRuntimes;
+    use layer2_core::released_runtime::{ReleasedLane, ReleasedLaneRecord};
+    let (database, targets, old, active) = fixture().await;
+    let lanes = MongoReleasedRuntimes::open(&database, "test");
+    lanes.initialize().await.unwrap();
+    let when = layer2_core::now_rfc3339();
+    let first = ReleasedLaneRecord::bootstrap(ReleasedLane::Agent, active.clone(), &when).unwrap();
+    lanes.bootstrap(first.clone()).await.unwrap();
+    let candidate_image = format!("registry.example/runtime@sha256:{}", "c".repeat(64));
+    let preparing = first
+        .enable_following()
+        .unwrap()
+        .observe(candidate_image.clone(), "pending-effect".into(), &when)
+        .unwrap();
+
+    let mut candidate = old;
+    candidate.id = "candidate".into();
+    candidate.activated_at = None;
+    candidate.binding = None;
+    candidate.lease = None;
+    candidate.lease_until = DateTime::from_millis(0);
+    candidate.plan.config_sha256 = "c".repeat(64);
+    candidate.plan.spec.image.uri = candidate_image;
+    let mut session = lanes.session().await.unwrap();
+    targets
+        .prepare_candidate(
+            candidate.clone(),
+            preparing.candidate.as_ref().unwrap(),
+            &mut session,
+        )
+        .await
+        .unwrap();
+    lanes
+        .replace(&first, preparing, Some(&mut session))
+        .await
+        .unwrap();
+    session.commit_transaction().await.unwrap();
+    let claimed = targets.claim_target(&candidate.id).await.unwrap().unwrap();
+    assert!(targets.begin_candidate_effect(&claimed).await.unwrap());
+
+    crate::runtime_pointer::operator::set_following(&lanes, &targets, false)
+        .await
+        .unwrap();
+    let frozen = lanes.load(ReleasedLane::Agent).await.unwrap().unwrap();
+    assert!(frozen.frozen);
+    assert_eq!(frozen.active.image, active);
+    assert!(frozen.candidate.is_some());
+    assert!(!targets.begin_candidate_effect(&claimed).await.unwrap());
+
+    targets.finish(&claimed, false).await.unwrap();
+    database
+        .collection::<Document>(COLLECTION)
+        .update_one(
+            doc! {"_id": &candidate.id},
+            doc! {"$set": {
+                "preparation.effect_until": DateTime::from_millis(0),
+                "reconcile_after": DateTime::from_millis(0),
+            }},
+        )
+        .await
+        .unwrap();
+    // A withheld provider result remains unresolved even after both local time bounds.
+    crate::runtime_pointer::operator::set_following(&lanes, &targets, false)
+        .await
+        .unwrap();
+    assert!(lanes
+        .load(ReleasedLane::Agent)
+        .await
+        .unwrap()
+        .unwrap()
+        .candidate
+        .is_some());
+    let recovery = targets.claim_target(&candidate.id).await.unwrap().unwrap();
+    assert!(targets.candidate_pending(&recovery).await.unwrap());
+    targets.confirm_candidate_barrier(&recovery).await.unwrap();
+    crate::runtime_pointer::operator::set_following(&lanes, &targets, false)
+        .await
+        .unwrap();
+    let confirmed = lanes.load(ReleasedLane::Agent).await.unwrap().unwrap();
+    assert!(confirmed.frozen && confirmed.candidate.is_none());
+    database.drop().await.unwrap();
+}

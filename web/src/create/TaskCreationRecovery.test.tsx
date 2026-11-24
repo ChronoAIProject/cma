@@ -31,18 +31,22 @@ it('groups the uncertain receipt and recovery while resending only the original 
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Original task' } });
   await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  const recovery = await screen.findByRole('region', { name: 'Task request recovery' });
+  const recovery = await screen.findByRole('region', { name: 'Task preparation' });
+  await within(recovery).findByRole('alert');
   expect(within(recovery).getAllByRole('alert')).toHaveLength(1);
   expect(within(recovery).getByRole('alert')).toHaveTextContent('resend the same request');
   const original = JSON.parse(sessionStorage.getItem(lifecycleStorageKey('owner'))!);
-  fireEvent.change(screen.getByLabelText('Your task'), {
+  fireEvent.change(screen.getByLabelText('Follow-up draft'), {
     target: { value: 'A separate newer draft' },
   });
   fireEvent.click(within(recovery).getByRole('button', { name: 'Recover original task' }));
   await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
   expect(create.mock.calls[1]![0]).toEqual(create.mock.calls[0]![0]);
   expect(create.mock.calls[1]![1].idempotencyKey).toBe(original.intent.key);
-  expect(screen.getByLabelText('Your task')).toHaveValue('A separate newer draft');
+  expect(screen.getByLabelText('Follow-up draft')).toHaveValue('A separate newer draft');
+  expect(screen.getByRole('region', { name: 'Original request' })).toHaveTextContent(
+    'Original task',
+  );
   expect(onCreated).not.toHaveBeenCalled();
 });
 
@@ -75,9 +79,9 @@ it('keeps unconfirmed setup, last confirmed facts and read-only recovery in one 
       })}
     />,
   );
-  await screen.findByText('The latest setup status is unconfirmed');
+  await screen.findByRole('heading', { name: 'Setup updates interrupted' });
   const region = screen.getByRole('region', { name: 'Task preparation' });
-  expect(within(region).getByText(/Last confirmed: Request accepted/)).toBeVisible();
+  expect(within(region).getByText('Request accepted')).toBeVisible();
   expect(within(region).getAllByRole('alert')).toHaveLength(1);
   const retained = sessionStorage.getItem(lifecycleStorageKey('owner'));
   await act(async () =>

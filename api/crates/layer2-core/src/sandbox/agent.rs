@@ -39,6 +39,17 @@ pub struct ConversationState {
     pub queued_messages: Vec<QueuedAgentMessage>,
 }
 
+impl ConversationState {
+    pub(super) fn interrupt_active_turn(&mut self) -> Option<super::AgentLogKind> {
+        let turn_sequence = self.active_turn.take()?;
+        let terminal = super::AgentLogKind::TurnInterrupted { turn_sequence };
+        if let Some(task) = self.observations.task_acceptance.as_mut() {
+            task.observe_execution(Some(turn_sequence), std::slice::from_ref(&terminal));
+        }
+        Some(terminal)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentStopReason {
@@ -123,6 +134,22 @@ pub struct Agent {
 }
 
 impl Agent {
+    /// Derive the terminal event once the caller has proved the current native Close.
+    /// The command record still carries the exact delivery outcome before the Stop.
+    pub fn settle_owner_stop_turn(&mut self) -> Option<super::AgentLogKind> {
+        if self.work.step != AgentWorkStep::PublishStopped
+            || self.requested_stop_reason != Some(AgentStopReason::Owner)
+            || !self
+                .work
+                .receipts
+                .iter()
+                .any(|receipt| receipt.step == AgentWorkStep::CloseProcess)
+        {
+            return None;
+        }
+        self.conversation.interrupt_active_turn()
+    }
+
     pub fn validate_for_admission(&self, worktree: &Worktree) -> Result<(), SandboxModelError> {
         self.validate_lineage(worktree)?;
         if self.work.step == AgentWorkStep::WaitForWorkspace

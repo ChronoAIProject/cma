@@ -25,6 +25,7 @@ mod agent_control_transaction;
 mod agent_conversation_store;
 mod agent_failure_pacing;
 mod agent_lifecycle_operations;
+pub(crate) use agent_lifecycle_operations::released::managed_lifecycle_release_lane;
 mod agent_log;
 mod agent_log_codec;
 mod agent_log_integrity;
@@ -129,6 +130,7 @@ mod marketplace_mutations;
 mod marketplace_query;
 mod marketplace_support;
 mod marketplace_visibility;
+pub(crate) mod measured_capture;
 mod message_feedback;
 pub(crate) mod migrations;
 pub mod mongo;
@@ -265,6 +267,7 @@ mod legacy_sandbox;
 pub(crate) mod runtime_routing;
 
 pub(crate) mod native_warm_pools;
+pub(crate) mod released_runtimes;
 
 // Measured reporting read models (#1332); independent of lifecycle writes.
 pub(crate) mod allocation_buckets;
@@ -272,3 +275,38 @@ pub(crate) mod sandbox_metric_bindings;
 pub(crate) mod sandbox_metric_rollups;
 pub(crate) mod sandbox_usage_rollups;
 pub(crate) mod usage_reports;
+
+#[cfg(test)]
+pub(crate) async fn open_pointer_fixture_sandbox_store(
+    database: &mongodb::Database,
+    pin: String,
+    released: std::sync::Arc<released_runtimes::StoreReleasedRuntime>,
+) -> Result<MongoSandboxStore, layer2_core::StoreError> {
+    let mut store = MongoSandboxStore::open(database.client(), database.name())
+        .await?
+        .with_managed_runtime_version(pin);
+    store.released_lanes = Some(released.lanes.clone());
+    Ok(store.with_released_runtime(released))
+}
+
+#[cfg(test)]
+pub(crate) async fn open_pointer_fixture_pool_store(
+    database: &mongodb::Database,
+    deployment: &str,
+) -> Result<native_warm_pools::MongoNativeWarmPools, layer2_core::StoreError> {
+    let mut store = native_warm_pools::MongoNativeWarmPools::open(database, deployment).await?;
+    store.released_lanes = Some(released_runtimes::MongoReleasedRuntimes::open(
+        database, deployment,
+    ));
+    Ok(store)
+}
+
+#[cfg(test)]
+pub(crate) async fn open_pointer_fixture_lifecycle_store(
+    database: &mongodb::Database,
+    released: &released_runtimes::StoreReleasedRuntime,
+) -> Result<MongoAgentLifecycleStore, layer2_core::StoreError> {
+    let mut store = MongoAgentLifecycleStore::open(database).await?;
+    store.released_lanes = Some(released.lanes.clone());
+    Ok(store)
+}

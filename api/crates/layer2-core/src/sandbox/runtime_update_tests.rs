@@ -387,6 +387,7 @@ async fn an_update_admitted_against_a_superseded_release_retries_instead_of_writ
         revision,
         agent: agent.into(),
         machine: None,
+        lane_revisions: None,
     };
     let service = SandboxRuntimeUpdateService::with_released(
         store.clone(),
