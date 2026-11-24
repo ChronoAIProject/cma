@@ -1,10 +1,10 @@
 //! A private Unix socket for one pinned qualification plan per process.
 
-use super::{ArmedControl, ReachedControl, Registry, MAX_LIFETIME};
+use super::{Registry, MAX_LIFETIME};
+mod session;
 use layer2_core::{
-    agent_ownership::{OwnershipCoordinator, OwnershipToken},
-    qualification::{ControlContext, ScheduleEffect},
-    AgentId,
+    agent_ownership::{OwnershipCoordinator, OwnershipStore},
+    qualification::ControlContext,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -34,23 +34,24 @@ struct PlanDocument {
     request_digest: [u8; 32],
     agent_digest: [u8; 32],
     lifetime_ms: u64,
-    owner: Option<OwnerDocument>,
+    #[serde(default)]
+    mode: Mode,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OwnerDocument {
-    agent: String,
-    instance: String,
-    epoch: u64,
-    protocol: u32,
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum Mode {
+    #[default]
+    Control,
+    ControlWithOwner,
+    Renewal,
 }
 
 pub struct Plan {
     digest: [u8; 32],
     context: ControlContext,
     lifetime: Duration,
-    owner: Option<OwnershipToken>,
+    mode: Mode,
 }
 
 impl Plan {
@@ -90,18 +91,15 @@ impl Plan {
         if lifetime.is_zero() || lifetime > MAX_LIFETIME {
             return Err(refusal("qualification plan lifetime refused"));
         }
-        let owner = plan.owner.map(|owner| OwnershipToken {
-            agent_id: AgentId(owner.agent),
-            instance_id: owner.instance,
-            epoch: owner.epoch,
-            protocol: owner.protocol,
-        });
         Ok(Self {
             digest: Sha256::digest(bytes).into(),
             context: ControlContext::from_digests(plan.request_digest, plan.agent_digest),
             lifetime,
-            owner,
+            mode: plan.mode,
         })
+    }
+    pub fn needs_renewal_store(&self) -> bool {
+        self.mode == Mode::Renewal
     }
 }
 
@@ -116,10 +114,14 @@ impl ControlServer {
         plan: Plan,
         registry: Registry,
         coordinator: Option<Arc<OwnershipCoordinator>>,
+        isolated_renewal_store: Option<Arc<dyn OwnershipStore>>,
     ) -> io::Result<Self> {
         validate_parent(&path)?;
-        if plan.owner.is_some() && coordinator.is_none() {
+        if plan.mode != Mode::Control && coordinator.is_none() {
             return Err(refusal("qualification owner selector has no coordinator"));
+        }
+        if plan.needs_renewal_store() != isolated_renewal_store.is_some() {
+            return Err(refusal("qualification isolated renewal store refused"));
         }
         let listener = UnixListener::bind(&path)?;
         let socket = SocketPath::own(path)?;
@@ -184,7 +186,7 @@ impl Drop for SocketPath {
     }
 }
 
-fn validate_parent(socket: &Path) -> io::Result<()> {
+pub fn validate_parent(socket: &Path) -> io::Result<()> {
     if !socket.is_absolute()
         || socket
             .components()
@@ -215,6 +217,7 @@ struct Request {
     sequence: u8,
     plan_digest: [u8; 32],
     action: Action,
+    owner_digest: Option<[u8; 32]>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -236,113 +239,12 @@ enum Reply {
     },
     Cancelled,
     Released,
+    Renewal {
+        started: bool,
+        result: Option<super::RenewalOutcome>,
+        caller_dropped: bool,
+    },
     Refused,
-}
-
-struct Session {
-    arm: Option<ArmedControl>,
-    reached: Option<ReachedControl>,
-}
-
-async fn serve(
-    mut stream: UnixStream,
-    plan: &Plan,
-    registry: &Registry,
-    coordinator: Option<&OwnershipCoordinator>,
-    used: &mut bool,
-) -> io::Result<()> {
-    let mut session = Session {
-        arm: None,
-        reached: None,
-    };
-    let mut history = Vec::<(Request, Reply)>::new();
-    loop {
-        let read_budget = if session.arm.is_some() {
-            plan.lifetime.max(IO_TIMEOUT)
-        } else {
-            IO_TIMEOUT
-        };
-        let request = timeout(read_budget, read_request(&mut stream)).await??;
-        if request.plan_digest != plan.digest {
-            return Err(refusal("qualification request plan mismatch"));
-        }
-        let sequence = usize::from(request.sequence);
-        if let Some((original, reply)) = history.get(sequence) {
-            if request != *original {
-                return Err(refusal("qualification command replay changed"));
-            }
-            timeout(IO_TIMEOUT, write_reply(&mut stream, *reply)).await??;
-            continue;
-        }
-        if sequence != history.len() || sequence > 7 {
-            return Err(refusal("qualification command sequence refused"));
-        }
-        let reply = match request.action {
-            Action::Arm if session.arm.is_none() && !*used => {
-                let result = match (&plan.owner, coordinator) {
-                    (Some(token), Some(coordinator)) => {
-                        match coordinator.capture_qualification_owner(token).await {
-                            Some(owner) => registry
-                                .arm_with_owner(plan.context, plan.lifetime, owner)
-                                .ok(),
-                            None => None,
-                        }
-                    }
-                    (None, _) => registry.arm(plan.context, plan.lifetime).ok(),
-                    _ => None,
-                };
-                if let Some(arm) = result {
-                    *used = true;
-                    session.arm = Some(arm);
-                    Reply::Armed
-                } else {
-                    Reply::Refused
-                }
-            }
-            Action::Wait if session.reached.is_none() => {
-                if let Some(arm) = session.arm.as_mut() {
-                    let reached = tokio::select! {
-                        biased;
-                        _ = stream.read_u8() => return Ok(()),
-                        reached = arm.reached() => reached,
-                    };
-                    if let Some(receipt) = reached {
-                        let reply = Reply::Reached {
-                            agent_revision: receipt.schedule.agent_revision,
-                            scheduled: receipt.schedule.effect == ScheduleEffect::Scheduled,
-                        };
-                        session.reached = Some(receipt);
-                        reply
-                    } else {
-                        Reply::Refused
-                    }
-                } else {
-                    Reply::Refused
-                }
-            }
-            Action::CancelOwner => match (&mut session.arm, &session.reached) {
-                (Some(arm), Some(reached)) => {
-                    if arm.cancel_owner(reached) {
-                        Reply::Cancelled
-                    } else {
-                        Reply::Refused
-                    }
-                }
-                _ => Reply::Refused,
-            },
-            Action::Release => {
-                if let Some(arm) = session.arm.take() {
-                    arm.release();
-                    Reply::Released
-                } else {
-                    Reply::Refused
-                }
-            }
-            _ => Reply::Refused,
-        };
-        timeout(IO_TIMEOUT, write_reply(&mut stream, reply)).await??;
-        history.push((request, reply));
-    }
 }
 
 async fn read_request(stream: &mut UnixStream) -> io::Result<Request> {

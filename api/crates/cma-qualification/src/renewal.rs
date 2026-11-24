@@ -8,7 +8,8 @@ use layer2_core::{
 use std::{future::pending, sync::Arc, time::Duration};
 use tokio::{sync::watch, time::Instant};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RenewalOutcome {
     Committed,
     Unavailable,
