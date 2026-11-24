@@ -1,6 +1,6 @@
 //! Read a complete v1 custody snapshot before pairing physical samples.
 use super::{decode, CaptureError, Document, EvidenceError, MeasuredCapture, RetainedObservation};
-use futures::TryStreamExt;
+use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::{
     measured_evidence::interval::{
         normalize_series, CustodySample, MeasuredInterval, Quantity, Unresolved,
