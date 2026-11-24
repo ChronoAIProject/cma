@@ -42,7 +42,17 @@ pub(super) async fn save_reviewed_retirement(
             crate::store::work_publication::FenceError::Domain(error) => ApplyError::Domain(error),
             crate::store::work_publication::FenceError::Driver(error) => ApplyError::Driver(error),
         })?;
-    match sandbox_save::apply(store, session, None, expected_revision, sandbox, at, event).await? {
+    match sandbox_save::apply(
+        store,
+        session,
+        (None, None),
+        expected_revision,
+        sandbox,
+        at,
+        event,
+    )
+    .await?
+    {
         Receipt::SaveSandbox(event, None) => Ok(event),
         _ => Err(ApplyError::Domain(SandboxStoreError::InvalidTransaction(
             "reviewed retirement did not produce a Sandbox event",
