@@ -1,5 +1,8 @@
 //! Persistent sender mapping and public, secret-free status.
-use super::*;
+use layer2_core::{bots::BotError, StoreError, SubjectId};
+use serde::{Deserialize, Serialize};
+
+use super::{profile::Profile, SecretDigest};
 
 /// Supplied only after authenticating and normalizing the ingress event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -12,7 +15,7 @@ pub struct EventActor {
     pub platform: String,
 }
 impl EventActor {
-    pub(super) fn key(&self) -> Result<String, StoreError> {
+    pub fn key(&self) -> Result<String, StoreError> {
         // These values are copied from CMAEG's verified event context.  Its
         // public identifier types allow 1..=512 bytes, including sealed
         // channel pointers (the Bot Father channel is commonly 278 bytes).
@@ -75,7 +78,7 @@ pub struct ActorLinkOrigin {
     pub reply_expires_at: u64,
 }
 impl ActorLinkOrigin {
-    pub(super) fn validate(&self, actor: &EventActor) -> Result<(), StoreError> {
+    pub fn validate(&self, actor: &EventActor) -> Result<(), StoreError> {
         self.source_event.validate().map_err(|_| unavailable())?;
         if self.binding_generation == 0
             || self.provider_conversation_id.is_empty()
@@ -201,7 +204,7 @@ impl std::fmt::Debug for ActorLinkRecord {
 }
 impl ActorLinkRecord {
     /// Worker leases/renewal timestamps may change without changing authority.
-    pub(super) fn same_active_authority(&self, other: &Self) -> bool {
+    pub fn same_active_authority(&self, other: &Self) -> bool {
         self.active
             && other.active
             && !self.revoked
@@ -263,7 +266,7 @@ impl ActorLinkRecord {
         }
         Ok(())
     }
-    pub(in crate::auth) fn grant(&self) -> Result<ActorGrant, BotError> {
+    pub fn grant(&self) -> Result<ActorGrant, BotError> {
         if !self.active || self.revoked {
             return Err(BotError::Forbidden);
         }
@@ -281,4 +284,18 @@ impl ActorLinkRecord {
 
 fn hex_digest(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+pub fn opaque(value: &str) -> bool {
+    value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+pub fn digest(domain: &str, value: &str) -> String {
+    SecretDigest::identify(domain, value)
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+fn unavailable() -> StoreError {
+    StoreError::Unavailable("actor link store is unavailable".into())
 }

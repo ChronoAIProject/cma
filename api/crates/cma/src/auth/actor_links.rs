@@ -22,12 +22,12 @@ const LINK_LIFETIME: u64 = 15 * 60;
 const RENEW_INTERVAL: u64 = 24 * 60 * 60;
 mod browser;
 mod consent;
-mod model;
 mod renewal;
 mod services;
 mod wakeups;
 pub(super) use browser::routes;
-pub use model::*;
+pub use cma_am_auth::actor_links::*;
+use cma_am_auth::actor_links::{digest, opaque};
 
 impl AuthState {
     pub(crate) async fn owner_authority_for_grant(
@@ -467,17 +467,4 @@ fn now() -> u64 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-}
-fn opaque(value: &str) -> bool {
-    value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-fn digest(domain: &str, value: &str) -> String {
-    SecretDigest::identify(domain, value)
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-fn unavailable() -> StoreError {
-    StoreError::Unavailable("actor link store is unavailable".into())
 }

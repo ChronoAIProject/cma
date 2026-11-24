@@ -13,7 +13,7 @@ use axum::{
     Json,
 };
 use layer2_core::{resource_access::CredentialSource, ServiceId, StoreError, SubjectId};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use url::Url;
 
 use super::{
@@ -31,15 +31,7 @@ pub(crate) const CALLBACK_PATH: &str = "/auth/service-authorization/callback";
 const ATTEMPT_DOMAIN: &str = "service-authorization-attempt";
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RecoveryIntent {
-    pub subject: SubjectId,
-    pub issuer: String,
-    pub required: BTreeSet<ServiceId>,
-    pub requested: BTreeSet<ServiceId>,
-    pub redirect_uri: String,
-    pub return_to: String,
-}
+pub(crate) use cma_am_auth::RecoveryIntent;
 
 pub(crate) struct VerifiedAccountGrant {
     pub subject: SubjectId,
