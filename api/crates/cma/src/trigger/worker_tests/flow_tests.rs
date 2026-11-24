@@ -4,7 +4,8 @@ use layer2_core::profiles::content_digest;
 use layer2_core::sandbox::{AgentStatus, FirstMessageDelivery};
 use layer2_core::trigger_domain::{
     LaunchAuthorityClass, LaunchEffectKind, LaunchResolution, LaunchState, LaunchWorkStep,
-    ResolvedResource, TriggerId,
+    ResolvedResource, TriggerId, TriggerImage, TriggerInlineAgent, TriggerInlineTarget,
+    TriggerRevision,
 };
 use layer2_core::Capability;
 
@@ -158,6 +159,26 @@ async fn retained_launch_provisions_its_pinned_runtime_after_republish() {
     let pinned = format!("registry.example/runtime@sha256:{}", "a".repeat(64));
     retained.profiles.sandbox.content.runtime_image = Some(pinned.clone());
     retained.profiles.sandbox.digest = content_digest(&retained.profiles.sandbox.content).unwrap();
+    let mut content = retained.revision.content.clone();
+    let profile = &retained.profiles.agent.content;
+    content.target.inline = Some(TriggerInlineTarget {
+        image: Some(TriggerImage {
+            id: "retained-image".into(),
+            version: Some("retained-version".into()),
+            reference: Some(pinned.clone()),
+        }),
+        agent: TriggerInlineAgent {
+            model: profile.model.clone(),
+            reasoning_effort: profile.thinking_effort,
+            permission_mode: profile.permission_level,
+            skills: profile.skills.clone(),
+            system_prompt: profile.system_prompt.clone(),
+            services: Vec::new(),
+        },
+        workspace: None,
+    });
+    retained.revision =
+        TriggerRevision::new(1, content, retained.revision.published_at.clone()).unwrap();
     let launch = started_launch(
         &retained,
         LaunchAuthorityClass::Visitor,

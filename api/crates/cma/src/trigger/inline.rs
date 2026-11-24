@@ -66,6 +66,17 @@ impl TriggerInlineTargetMaterializer for InlineTriggerProfileMaterializer {
         existing: &TriggerTarget,
         delegated_credential: Option<&str>,
     ) -> Result<TriggerTarget, TriggerReferenceError> {
+        if self.image_resolver.retirement_enabled()
+            && existing
+                .inline
+                .as_ref()
+                .is_some_and(|inline| inline.image.is_some())
+            && target.inline == existing.inline
+        {
+            // The edit changes no inline settings. Retain the exact profile
+            // references from the stored target and avoid creating new profiles.
+            return Ok(existing.clone());
+        }
         self.materialize_target(
             owner,
             target,

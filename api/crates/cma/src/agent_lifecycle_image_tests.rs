@@ -6,7 +6,7 @@ use axum::{
 };
 
 #[tokio::test]
-async fn retirement_refuses_fresh_selections_and_preserves_the_authorized_pin() {
+async fn retirement_refuses_fresh_and_unversioned_selections() {
     let resolver = ImageManagerResolver::new("http://127.0.0.1:1".into(), true).unwrap();
     let image = AgentLifecycleImageReference {
         id: "image".into(),
@@ -17,13 +17,20 @@ async fn retirement_refuses_fresh_selections_and_preserves_the_authorized_pin() 
         Err(AgentLifecycleProvisioningError::ImageSelectionUnsupported)
     ));
     let pinned = "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    assert_eq!(
+    assert!(matches!(
+        resolver.resolve_retained(None, &image, pinned).await,
+        Err(AgentLifecycleProvisioningError::SignInRequired)
+    ));
+    let unversioned = AgentLifecycleImageReference {
+        version: None,
+        ..image
+    };
+    assert!(matches!(
         resolver
-            .resolve_retained(None, &image, pinned)
-            .await
-            .unwrap(),
-        pinned,
-    );
+            .resolve_retained(Some("fixture-credential"), &unversioned, pinned)
+            .await,
+        Err(AgentLifecycleProvisioningError::ImageSelectionUnsupported)
+    ));
 }
 
 #[tokio::test]
