@@ -6,7 +6,10 @@ use layer2_core::{
     agent_ownership::OwnershipCoordinator,
     sandbox::store::{SandboxStoreError, StaleTurnSettlement},
 };
-use layer3_adapter::{stale_turn::StaleTurnHold, SandboxAdapter};
+use layer3_adapter::{
+    stale_turn::{StaleTurnHold, MAX_SEAL_BYTES},
+    SandboxAdapter,
+};
 use mongodb::bson::DateTime;
 use tokio::{
     sync::watch,
@@ -220,8 +223,15 @@ impl Worker {
                 let producer = adapter
                     .stale_turn_producer(&expected.runtime)
                     .ok_or("producer_seal_unavailable")?;
+                // Reserve the response allowance even if decoding fails or the
+                // probe is cancelled after reading part of the body.
+                let allowance = budget.remaining().min(MAX_SEAL_BYTES as i64);
+                if allowance == 0 {
+                    return Err("proof_byte_budget");
+                }
+                budget.charge(allowance).map_err(|error| error.outcome())?;
                 let producer_evidence = match producer
-                    .observe_stale_turn_seal(&expected, budget.remaining() as usize)
+                    .observe_stale_turn_seal(&expected, allowance as usize)
                     .await
                 {
                     Ok(evidence) => evidence,
@@ -273,9 +283,9 @@ impl Worker {
                 let seal_bytes = serde_json::to_vec(&seal)
                     .map_err(|_| "producer_seal_unconfirmed")?
                     .len();
-                let bytes_read = i64::try_from(producer_evidence.bytes_read.max(seal_bytes))
-                    .map_err(|_| "proof_byte_budget")?;
-                budget.charge(bytes_read).map_err(|error| error.outcome())?;
+                if producer_evidence.bytes_read.max(seal_bytes) > allowance as usize {
+                    return Err("proof_byte_budget");
+                }
                 // Read a new majority snapshot after the probe. Only the attached
                 // recorder can drain retained frames and advance this checkpoint.
                 let fresh = self

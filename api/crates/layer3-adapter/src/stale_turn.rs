@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::{AgentSlot, PromptIdentity, RuntimeHandle, RuntimeOutputSource};
 
 pub const SEAL_VERSION: u32 = 1;
+pub const MAX_SEAL_BYTES: usize = 4_096;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

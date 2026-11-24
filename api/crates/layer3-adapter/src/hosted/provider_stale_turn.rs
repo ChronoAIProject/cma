@@ -2,9 +2,9 @@ use super::*;
 use crate::owner_protocol::current_authority;
 use crate::stale_turn::{
     StaleTurnEvidence, StaleTurnHold, StaleTurnProducer, StaleTurnSeal, StaleTurnTarget,
+    MAX_SEAL_BYTES,
 };
 
-const MAX_SEAL_BYTES: usize = 4_096;
 const SEAL_DEADLINE: Duration = Duration::from_secs(3);
 
 impl ProviderHostedControlTransport {
