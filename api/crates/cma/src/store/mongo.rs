@@ -22,6 +22,8 @@ pub(crate) struct MongoConnectionPolicy {
     pub startup_schema: crate::config::StartupSchemaMode,
     pub shared_observation: bool,
     pub initial_settings: super::settings_defaults::InitialSettings,
+    /// The process's single released-default authority; fixtures may omit it.
+    pub released: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
 }
 
 /// Aggregate-neutral stores opened atomically at process startup.
@@ -66,6 +68,24 @@ pub struct MongoStores {
 }
 
 impl MongoStores {
+    pub(crate) fn with_creation_writer_epoch(mut self, epoch: Option<&str>) -> Self {
+        if let Some(epoch) = epoch {
+            Arc::make_mut(&mut self.sandbox_model).creation_writer_epoch = Some(epoch.to_owned());
+            Arc::make_mut(&mut self.agent_lifecycle).creation_writer_epoch = Some(epoch.to_owned());
+        }
+        self
+    }
+    pub(crate) async fn creation_outcomes(
+        &self,
+        config: crate::config::CreationOutcomesConfig,
+    ) -> Result<super::creation_outcomes::CreationOutcomes, StoreError> {
+        super::creation_outcomes::CreationOutcomes::open(
+            self.client.database(&self.database),
+            config,
+        )
+        .await
+    }
+
     pub(crate) async fn configure_admission_ceilings(
         mut self,
         deployment_limit: u16,
@@ -161,6 +181,7 @@ impl MongoStores {
                 startup_schema: Default::default(),
                 shared_observation: false,
                 initial_settings: Default::default(),
+                released: None,
             },
         )
         .await
@@ -198,6 +219,7 @@ impl MongoStores {
                 runtime,
                 schema: super::schema::StartupObserver::new(policy.startup_schema),
                 initial_settings: policy.initial_settings,
+                released: policy.released,
             },
         )
         .await
@@ -224,6 +246,7 @@ impl MongoStores {
                 runtime,
                 schema: super::schema::StartupObserver::new(Default::default()),
                 initial_settings: Default::default(),
+                released: None,
             },
         )
         .await
@@ -248,9 +271,12 @@ impl MongoStores {
         )
         .await?
         .with_managed_runtime_version(startup.runtime.0.into());
-        let released_runtime: Arc<dyn layer3_adapter::ReleasedRuntimeSource> = Arc::new(
-            layer3_adapter::PinnedReleasedRuntime::new(startup.runtime.0, None),
-        );
+        let released_runtime = startup.released.clone().unwrap_or_else(|| {
+            Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+                startup.runtime.0,
+                None,
+            ))
+        });
         let sandbox_model = Arc::new(sandbox_model.with_released_runtime(released_runtime.clone()));
         let sandbox_profiles = Arc::new(MongoProfileStore::open(&client, database).await?);
         let sandbox_credentials = Arc::new(
@@ -461,4 +487,5 @@ struct StoreStartup<'a> {
     runtime: (&'a str, Option<&'a layer3_adapter::HomeVolumePolicy>),
     schema: super::schema::StartupObserver,
     initial_settings: super::settings_defaults::InitialSettings,
+    released: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
 }

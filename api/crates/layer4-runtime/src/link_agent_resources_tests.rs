@@ -4,10 +4,82 @@ use super::*;
 mod close_effect;
 use crate::config::RuntimeConfig;
 use layer3_adapter::wire::{
-    AGENT_COMPUTER_STATUS_MEDIA_TYPE, AGENT_RESOURCES_STATUS_MEDIA_TYPE,
-    AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE, GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE,
+    AGENT_COMPUTER_STATUS_MEDIA_TYPE, AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE,
+    AGENT_RESOURCES_STATUS_MEDIA_TYPE, AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
+    GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE,
 };
 use layer3_adapter::RuntimeStatusRequest;
+
+#[tokio::test]
+async fn agent_restart_capability_requires_opt_in_and_an_enabled_runtime() {
+    for enabled in [false, true] {
+        let config = RuntimeConfig {
+            home_identity: Some("a".repeat(43)),
+            agent_process_restart_enabled: enabled,
+            ..RuntimeConfig::for_test(root("restart-negotiation"))
+        };
+        std::fs::create_dir_all(&config.home).unwrap();
+        let supervisor = Supervisor::new(
+            config.clone(),
+            crate::writer_fence::SupervisorBoundary::default(),
+        )
+        .unwrap();
+        let identity = RuntimeStatusRequest {
+            sandbox_id: config.sandbox_id.clone(),
+            generation: config.generation,
+            home_identity: config.home_identity.clone().unwrap(),
+        };
+        let (address, server) = serve(supervisor).await;
+        let client = reqwest::Client::new();
+        for (accept, frame, field_present) in [
+            (
+                "application/json",
+                RequestFrame::RuntimeStatus(identity.clone()),
+                false,
+            ),
+            (
+                AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE,
+                RequestFrame::RuntimeStatus(identity.clone()),
+                enabled,
+            ),
+            (
+                AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE,
+                RequestFrame::WorkspaceRemovalSupport(identity.clone()),
+                false,
+            ),
+        ] {
+            let value: serde_json::Value = client
+                .post(format!("http://{address}/runtime/control"))
+                .header(header::ACCEPT, accept)
+                .json(&frame)
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let status = match frame {
+                RequestFrame::RuntimeStatus(_) => {
+                    assert_eq!(value["t"], "runtime_status");
+                    &value
+                }
+                _ => {
+                    assert_eq!(value["t"], "workspace_removal_support");
+                    &value["runtime"]
+                }
+            };
+            assert_eq!(
+                status.get("agent_process_restart"),
+                field_present.then_some(&serde_json::Value::Bool(true))
+            );
+        }
+        server.abort();
+        let _ = server.await;
+        for path in [&config.home, &config.state_root, &config.checkpoint_root] {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+}
 
 #[tokio::test]
 async fn agent_resource_status_extension_is_explicitly_negotiated_per_request() {

@@ -7,7 +7,7 @@ use super::{
     agent_conversation_store::ApplyError,
     agent_log_segments::{conversation::checkpoint, transaction_scope::TransactionScope},
     sandbox_mongo::{commit_transaction, signed, CommitOutcome, MongoSandboxStore},
-    transaction_terminal::GuardedTerminal,
+    transaction_terminal::GuardedTerminal as _,
 };
 
 const RECEIPT: &str = "turn_policy_publication";

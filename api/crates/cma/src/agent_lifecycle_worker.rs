@@ -90,11 +90,33 @@ impl InlineAgentLifecycle {
         }
     }
 
-    async fn run_worker(&self, operation_id: &str) -> Result<(), layer2_core::StoreError> {
+    pub(super) async fn run_worker(
+        &self,
+        operation_id: &str,
+    ) -> Result<(), layer2_core::StoreError> {
         let Some(record) = self.operations.claim(operation_id).await? else {
             return Ok(());
         };
         let lease = record.lease()?;
+        let creation_fence = record.creation_fence.clone().map(|mut fence| {
+            fence.lifecycle_lease = Some((lease.id.clone(), lease.token.clone()));
+            fence
+        });
+        if layer1_public::rest::creation_outcomes::is_covered_key(&record.key)
+            != creation_fence.is_some()
+        {
+            return Err(layer2_core::StoreError::Malformed(
+                "lifecycle creation fence is missing or unsupported".into(),
+            ));
+        }
+        if creation_fence
+            .as_ref()
+            .is_some_and(|fence| !self.operations.supports_creation(fence))
+        {
+            return Err(layer2_core::StoreError::Unavailable(
+                "lifecycle creation epoch is unsupported".into(),
+            ));
+        }
         let attempts = record.attempts;
         let canary_profiles = match record.verify_canary_worker() {
             Ok(profiles) => profiles,
@@ -118,6 +140,7 @@ impl InlineAgentLifecycle {
         );
         let work = async {
             let mut input = ProvisionInput {
+                creation_fence: creation_fence.clone(),
                 behavior: record.input.behavior,
                 first_message,
                 request,
@@ -196,8 +219,26 @@ impl InlineAgentLifecycle {
                         _ => None,
                     })
                     .flatten();
+                let message = error.to_string();
+                if let (Some(fence), AgentLifecycleProvisioningError::SandboxLimitReached { .. }) =
+                    (&creation_fence, &error)
+                {
+                    if self
+                        .operations
+                        .fail_fenced_creation(
+                            &caller.subject,
+                            &lease,
+                            fence,
+                            &message,
+                            failure.clone(),
+                        )
+                        .await?
+                    {
+                        return Ok(());
+                    }
+                }
                 self.operations
-                    .fail_with_metadata(&lease, &error.to_string(), failure)
+                    .fail_with_metadata(&lease, &message, failure)
                     .await
             }
         }

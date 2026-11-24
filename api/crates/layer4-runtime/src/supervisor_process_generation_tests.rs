@@ -226,6 +226,23 @@ async fn abrupt_process_loss_requires_a_new_runtime_generation_before_reopen() {
     ));
 }
 
+pub(in crate::supervisor) fn restart_open(
+    supervisor: &Supervisor,
+    fence: u64,
+    launch: &AgentLaunch,
+) -> RequestFrame {
+    let mut request = FencedRequest::new(fence, launch.clone());
+    request.restart_runtime = Some(layer3_adapter::AgentRestartRuntime {
+        runtime: layer3_adapter::RuntimeStatusRequest {
+            sandbox_id: supervisor.config.sandbox_id.clone(),
+            generation: supervisor.config.generation,
+            home_identity: supervisor.config.home_identity.clone().unwrap(),
+        },
+        boot_id: supervisor.boot_id.clone(),
+    });
+    RequestFrame::OpenAgent(request)
+}
+
 #[tokio::test]
 async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
     let mut fixture = Fixture::new();
@@ -238,12 +255,45 @@ async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
     let home_file = Path::new(&initial.home).join("conversation-fixture");
     let retained = std::fs::read(&home_file).unwrap();
 
+    let pinned_legacy_open = restart_open(&supervisor, 1, &initial);
+    let RequestFrame::OpenAgent(pinned) = &pinned_legacy_open else {
+        unreachable!()
+    };
+    let mut pinned_close = FencedRequest::new(
+        1,
+        AgentCloseRequest::new("agent:agent:close:v1", AgentSlot::new("agent")),
+    );
+    pinned_close
+        .restart_runtime
+        .clone_from(&pinned.restart_runtime);
+    let close_operation = crate::mutation_journal::Operation::close_agent(&pinned_close.request);
+    for request in [pinned_legacy_open, RequestFrame::CloseAgent(pinned_close)] {
+        assert_eq!(
+            failure(supervisor.dispatch(request).await),
+            "agent_process_restart_runtime_unexpected"
+        );
+    }
+    assert!(supervisor
+        .mutations
+        .recovery_fence(&close_operation)
+        .await
+        .unwrap()
+        .is_none());
+    let legacy_open = open(1, &initial);
+    assert!(serde_json::to_value(&legacy_open)
+        .unwrap()
+        .get("restart_runtime")
+        .is_none());
     assert!(matches!(
-        supervisor.dispatch(open(1, &initial)).await,
+        supervisor.dispatch(legacy_open).await,
         ResponseFrame::OpenAgent(_)
     ));
     assert_eq!(
-        failure(supervisor.dispatch(open(2, &replacement)).await),
+        failure(
+            supervisor
+                .dispatch(restart_open(&supervisor, 2, &replacement))
+                .await
+        ),
         "agent_process_predecessor_unclosed"
     );
     assert_eq!(
@@ -253,16 +303,25 @@ async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
     let closed = supervisor.dispatch(close(3)).await;
     assert!(matches!(closed, ResponseFrame::CloseAgent(_)));
     assert_eq!(
-        failure(supervisor.dispatch(open(3, &replacement)).await),
+        failure(
+            supervisor
+                .dispatch(restart_open(&supervisor, 3, &replacement))
+                .await
+        ),
         "mutation_authority_stale"
     );
     let mut moved = replacement.clone();
     moved.cwd = moved.cwd.replace("/project/", "/another-project/");
     assert_ne!(moved.cwd, replacement.cwd);
     assert_eq!(
-        failure(supervisor.dispatch(open(4, &moved)).await),
+        failure(
+            supervisor
+                .dispatch(restart_open(&supervisor, 4, &moved))
+                .await
+        ),
         "agent_process_predecessor_unclosed"
     );
+    let pinned = restart_open(&supervisor, 4, &replacement);
     drop(supervisor);
 
     fixture.config.agent_process_restart_enabled = false;
@@ -271,8 +330,29 @@ async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
         supervisor.dispatch(credential()).await,
         ResponseFrame::Credential(_)
     ));
+    let operation = crate::mutation_journal::Operation::open_agent(&replacement);
+    assert_eq!(
+        failure(supervisor.dispatch(pinned).await),
+        "agent_process_restart_runtime_changed"
+    );
     assert_eq!(
         failure(supervisor.dispatch(open(4, &replacement)).await),
+        "agent_process_restart_runtime_missing"
+    );
+    assert!(!supervisor.mutations.admitted(&operation).await.unwrap());
+    assert!(supervisor
+        .mutations
+        .recovery_fence(&operation)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(supervisor.bridge("agent").await.is_none());
+    assert_eq!(
+        failure(
+            supervisor
+                .dispatch(restart_open(&supervisor, 4, &replacement))
+                .await
+        ),
         "agent_process_restart_disabled"
     );
     assert_eq!(
@@ -287,9 +367,16 @@ async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
         supervisor.dispatch(credential()).await,
         ResponseFrame::Credential(_)
     ));
-    let opened = supervisor.dispatch(open(4, &replacement)).await;
+    let opened = supervisor
+        .dispatch(restart_open(&supervisor, 4, &replacement))
+        .await;
     assert!(matches!(opened, ResponseFrame::OpenAgent(_)), "{opened:?}");
-    assert_eq!(supervisor.dispatch(open(4, &replacement)).await, opened);
+    assert_eq!(
+        supervisor
+            .dispatch(restart_open(&supervisor, 4, &replacement))
+            .await,
+        opened
+    );
     let bridge = supervisor.bridge("agent").await.unwrap();
 
     // The delayed request replays its original receipt without touching the new bridge.
@@ -319,7 +406,9 @@ async fn same_runtime_restart_preserves_home_and_fences_close_to_its_process() {
     replacement.operation_id = "agent:agent:open:3:v1".into();
     replacement.request_sha256 = "d".repeat(64);
     assert!(matches!(
-        supervisor.dispatch(open(6, &replacement)).await,
+        supervisor
+            .dispatch(restart_open(&supervisor, 6, &replacement))
+            .await,
         ResponseFrame::OpenAgent(_)
     ));
     let request = close_incarnation(7, 3);

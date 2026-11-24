@@ -594,10 +594,10 @@
           "next": "Re-run the failed jobs."
         },
         "VERSION_LABEL_REQUIRED": {
-          "title": "Version label required",
-          "meaning": "The merged pull request does not carry exactly one of version-upgrade:major, version-upgrade:minor or version-upgrade:patch.",
+          "title": "Conflicting or unsupported version labels",
+          "meaning": "The merged pull request carries multiple version-upgrade labels or an unsupported version-upgrade label.",
           "cause": "change",
-          "next": "Add exactly one version-upgrade label to the merged pull request, then re-run the failed jobs."
+          "next": "Keep one supported version-upgrade label or remove all version-upgrade labels to use patch, then re-run the failed jobs."
         },
         "VERSION_LABELS_INVALID": {
           "title": "Version labels malformed",
