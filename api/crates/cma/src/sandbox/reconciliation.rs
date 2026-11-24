@@ -368,29 +368,7 @@ impl SandboxReconciler {
             },
         )
         .await;
-        if adopted
-            .as_ref()
-            .is_err_and(|error| error.is_native_home_identity_refusal())
-        {
-            // A concurrent lifecycle transition can supersede the binding
-            // after the authority snapshot but before home verification.
-            // Keep the refusal when the durable binding still matches.
-            let current = measure(
-                Stage::DurableRead,
-                self.store.get_sandbox(&sandbox.id),
-                diagnostics::store_outcome,
-            )
-            .await?;
-            if current.is_some_and(|row| {
-                row.revision > sandbox.revision
-                    && (row.runtime != sandbox.runtime
-                        || row.lifecycle.suspended_runtime != sandbox.lifecycle.suspended_runtime
-                        || row.lifecycle.home != sandbox.lifecycle.home)
-            }) {
-                return Err(SandboxStoreError::Conflict);
-            }
-        }
-        if adopted.map_err(provider_error)?.is_none() {
+        if self.binding_result(sandbox, adopted).await?.is_none() {
             return Ok(false);
         }
         let mut next = sandbox.clone();
@@ -406,11 +384,8 @@ impl SandboxReconciler {
             let accepted = measure(
                 Stage::Status,
                 async {
-                    let status = self
-                        .adapter
-                        .runtime_status(&observation.handle)
-                        .await
-                        .map_err(provider_error)?;
+                    let status = self.adapter.runtime_status(&observation.handle).await;
+                    let status = self.binding_result(sandbox, status).await?;
                     if !next
                         .runtime_process_matches(&status)
                         .map_err(|error| corrupt(&error.to_string()))?
@@ -463,6 +438,36 @@ impl SandboxReconciler {
             .await?;
         }
         Ok(true)
+    }
+
+    async fn binding_result<T>(
+        &self,
+        sandbox: &Sandbox,
+        result: layer3_adapter::Result<T>,
+    ) -> Result<T, SandboxStoreError> {
+        let error = match result {
+            Ok(value) => return Ok(value),
+            Err(error) => error,
+        };
+        if error.is_native_home_identity_refusal() {
+            // A concurrent lifecycle transition can supersede the binding
+            // after the authority snapshot but before home verification.
+            let current = measure(
+                Stage::DurableRead,
+                self.store.get_sandbox(&sandbox.id),
+                diagnostics::store_outcome,
+            )
+            .await?;
+            if current.is_some_and(|row| {
+                row.revision > sandbox.revision
+                    && (row.runtime != sandbox.runtime
+                        || row.lifecycle.suspended_runtime != sandbox.lifecycle.suspended_runtime
+                        || row.lifecycle.home != sandbox.lifecycle.home)
+            }) {
+                return Err(SandboxStoreError::Conflict);
+            }
+        }
+        Err(provider_error(error))
     }
 }
 

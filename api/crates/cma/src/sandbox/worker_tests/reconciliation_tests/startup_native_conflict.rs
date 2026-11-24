@@ -209,15 +209,28 @@ async fn startup_native_changed_binding_is_deferred_without_adopting_new_targets
 
 #[tokio::test]
 async fn missing_native_home_defers_only_a_superseded_binding() {
+    assert_missing_home_respects_durable_binding(false).await;
+}
+
+#[tokio::test]
+async fn home_disappearance_during_status_defers_only_a_superseded_binding() {
+    assert_missing_home_respects_durable_binding(true).await;
+}
+
+async fn assert_missing_home_respects_durable_binding(status_in_flight: bool) {
     for binding_changed in [false, true] {
         let fixture = NativeStartup::new(false, false).await;
         fixture
             .control
             .hold_next_home_check
-            .store(true, Ordering::SeqCst);
+            .store(!status_in_flight, Ordering::SeqCst);
         let startup = fixture.reconciler.initialize_before_workers(fixture.now);
         tokio::pin!(startup);
-        until(&mut startup, fixture.control.home_check_entered.notified()).await;
+        if status_in_flight {
+            until(&mut startup, fixture.control.status_entered.notified()).await;
+        } else {
+            until(&mut startup, fixture.control.home_check_entered.notified()).await;
+        }
         let mut current = fixture.original.clone();
         current.revision += 1;
         current.name = "updated while checking the home".into();
@@ -238,7 +251,11 @@ async fn missing_native_home_defers_only_a_superseded_binding() {
             .unwrap();
         fixture.control.api.lock().unwrap().rows.remove(api::VOLUME);
         fixture.control.other_gate.add_permits(8);
-        fixture.control.home_check_gate.add_permits(1);
+        if status_in_flight {
+            fixture.control.status_gate.add_permits(1);
+        } else {
+            fixture.control.home_check_gate.add_permits(1);
+        }
         let result = tokio::time::timeout(Duration::from_secs(10), startup)
             .await
             .unwrap();
@@ -256,6 +273,14 @@ async fn missing_native_home_defers_only_a_superseded_binding() {
             Some(current)
         );
         fixture.control.assert_no_cleanup();
+        assert!(!fixture
+            .control
+            .api
+            .lock()
+            .unwrap()
+            .calls
+            .iter()
+            .any(|(kind, _)| kind == "DURABLE_CAS"));
         assert_retained(&fixture);
     }
 }
