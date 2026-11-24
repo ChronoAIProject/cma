@@ -36,6 +36,8 @@ mod home;
 mod mutations;
 #[path = "memory_probes.rs"]
 mod probes;
+#[path = "memory_process.rs"]
+mod process;
 #[path = "memory_status.rs"]
 mod status;
 #[path = "memory_workspace.rs"]
@@ -294,7 +296,7 @@ impl HostedBackend for InMemoryHostedBackend {
             }
             RequestFrame::CloseAgent(request) => {
                 require_credential(runtime, operation)?;
-                mutations::close_agent(runtime, request)
+                process::close_agent(runtime, request)
             }
             RequestFrame::CaptureAgent(reference) => {
                 require_credential(runtime, operation)?;
@@ -376,7 +378,7 @@ impl HostedBackend for InMemoryHostedBackend {
             return refused(WireOperation::OpenAgent, "checkpoint_writers_held");
         }
         require_credential(runtime, WireOperation::OpenAgent)?;
-        let incarnation = mutations::authorize_process_open(runtime, &launch)?;
+        let incarnation = process::authorize_open(runtime, &launch)?;
         let authority_fence = launch.authority_fence;
         let launch = launch.request;
         let payload = fingerprint(&launch)?;
