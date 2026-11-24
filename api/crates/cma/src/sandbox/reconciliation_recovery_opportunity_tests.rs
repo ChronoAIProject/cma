@@ -82,7 +82,10 @@ async fn custom_runtime_recovery_discovers_and_admits_the_recorded_pin() {
         lane.run(&reconciler).await.unwrap();
         assert!(verifier.calls.lock().unwrap().is_empty());
         lane.run(&reconciler).await.unwrap();
-        assert_eq!(*verifier.calls.lock().unwrap(), [id.clone()]);
+        assert_eq!(
+            verifier.calls.lock().unwrap().as_slice(),
+            std::slice::from_ref(&id)
+        );
         assert_eq!(store.keys("recovery_admit"), [id.as_str()]);
         let recovered = store.inner.get_sandbox(&id).await.unwrap().unwrap();
         assert_eq!(
