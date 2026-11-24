@@ -183,7 +183,7 @@ impl OwnershipCoordinator {
         // including revoked authorities and unresolved cancelled receivers.
         self.is_ready()
             && self.skipped_heartbeats.load(Ordering::Acquire) == 0
-            && !self.owned.lock().await.contains_key(id)
+            && !self.owned.lock().unwrap().contains_key(id)
     }
 
     /// A successful renewal never revives an authority already cancelled locally.

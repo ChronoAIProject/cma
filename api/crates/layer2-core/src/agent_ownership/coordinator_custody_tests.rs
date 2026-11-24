@@ -11,6 +11,7 @@ fn paused(before_pause: bool, acquisition: bool) -> Arc<PausedRenew> {
         resume: Notify::new(),
         before_pause,
         pause_acquire: AtomicBool::new(acquisition),
+        pause_owner: false,
     })
 }
 
