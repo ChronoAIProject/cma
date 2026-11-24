@@ -112,6 +112,7 @@ returns 409, including changing an omitted default into an explicit reference.
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
 | `GET /api/v1/admin/activity` | - | actor, action, limit, cursor | 200 ActivityPageView |
+| `GET /api/v1/admin/activity/actors` | - | q | 200 array<ActivityActorView> |
 | `GET /api/v1/admin/profiles` | - | kind, visibility, owner, cursor, limit | 200 ProfilePageView |
 | `POST /api/v1/admin/profiles/{kind}/{id}/retire` | - | - | 200 ProfileSummaryView |
 | `GET /api/v1/admin/runtime-inventory` | - | - | 200 RuntimeInventoryView |
