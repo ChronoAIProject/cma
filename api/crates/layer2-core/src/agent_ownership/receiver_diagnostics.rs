@@ -73,14 +73,19 @@ impl Authority {
         });
     }
 
-    pub(super) fn log_receiver_cleanup_failure(&self, receiver: &str, after_local_drain: bool) {
+    pub(super) fn log_receiver_cleanup_failure(
+        &self,
+        receiver: &str,
+        after_local_drain: bool,
+        error: &OwnershipError,
+    ) {
         let fields = self.correlation_for_receiver(Some(receiver));
         with_root(|| {
             tracing::warn!(target: TARGET, parent: None,
             agent_sha256 = %fields.agent_sha256, sandbox_sha256 = fields.sandbox_sha256.as_deref(),
             instance_sha256 = %fields.instance_sha256, receiver_sha256 = fields.receiver_sha256.as_deref(),
             epoch = self.token.epoch, stage = "receiver_revocation", after_local_drain,
-            reason = OwnershipFailureReason::TransportUnavailable.as_str(),
+            reason = super::transport::failure_reason(error).as_str(),
             "Receiver revocation could not be confirmed")
         });
     }

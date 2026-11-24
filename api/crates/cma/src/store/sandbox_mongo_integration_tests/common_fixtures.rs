@@ -425,7 +425,10 @@ pub(super) async fn replace_worktree_fixture(store: &MongoSandboxStore, worktree
     assert_eq!(result.matched_count, 1);
 }
 
-pub(super) async fn ready_conversation_fixture(store: &MongoSandboxStore, suffix: &str) -> Agent {
+pub(in crate::store) async fn ready_conversation_fixture(
+    store: &MongoSandboxStore,
+    suffix: &str,
+) -> Agent {
     let (_, mut worktree, claimed) = claimed_agent_work_fixture(store, suffix).await;
     let conversation_id = format!("conversation-{suffix}");
     let claimed = ready_publication_claim(claimed, &conversation_id);

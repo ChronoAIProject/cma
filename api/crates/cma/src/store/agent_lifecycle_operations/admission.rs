@@ -2,6 +2,7 @@
 //! single-document insert. Recovery never repeats this admission check.
 
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::SandboxStoreError;
 
 #[derive(Debug, thiserror::Error)]
@@ -10,6 +11,28 @@ pub(crate) enum LifecycleCreateError {
     Store(#[from] StoreError),
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
+}
+
+impl LifecycleRecord {
+    /// The release selected by the ordinary creation of a new Machine Sandbox.
+    pub(in crate::store) fn admitted_machine_image(&self) -> Option<&str> {
+        let request = &self.input.request;
+        if self.document_schema_version != DOCUMENT_SCHEMA_VERSION
+            || self.canary_admission.is_some()
+            || canary_key::is_reserved(&self.key)
+            || self.input.behavior != LifecycleBehavior::PromptRepository
+            || !request.machine_included
+            || request.image.is_some()
+            || request.workspace_id.is_some()
+            || request.sandbox_id.is_some()
+        {
+            return None;
+        }
+        self.input
+            .resolved_image
+            .as_deref()
+            .filter(|image| crate::agent_lifecycle::valid_immutable_image(image))
+    }
 }
 
 impl MongoAgentLifecycleStore {
@@ -77,7 +100,7 @@ impl MongoAgentLifecycleStore {
             .await
             .map_err(driver)?;
             if !linked {
-                session.abort_transaction().await.map_err(driver)?;
+                session.abort_guarded().await.map_err(driver)?;
                 return Err(StoreError::Unavailable(
                     "creation submission fence is no longer held".into(),
                 )
