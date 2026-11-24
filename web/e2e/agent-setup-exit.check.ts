@@ -186,10 +186,14 @@ for (const scenario of [
     expect(deletes).toHaveLength(scenario.uncertain ? 2 : 1);
     expect(deletes[0]!.key).toBeTruthy();
     if (scenario.uncertain) expect(deletes[1]).toEqual(deletes[0]);
+    // Reload from Home so the Sandbox page's detail refresh cannot settle the receipt
+    // before the reopened status dialog observes retirement.
+    await page.goto('/');
     await page.reload();
     await page.getByRole('button', { name: /View Sandbox deletion status/ }).click();
     const progress = page.getByRole('dialog', { name: 'Deleting Sandbox', exact: true });
     await expect(progress).toContainText('still uses one Sandbox slot');
+    await expect(progress.getByText('Last status read:')).toBeVisible();
     expect(deletes).toHaveLength(scenario.uncertain ? 2 : 1);
     await expect(page.getByRole('dialog', { name: 'Sandbox deleted', exact: true })).toHaveCount(0);
     boundary.sandbox = { ...boundary.sandbox, status: 'retired' };

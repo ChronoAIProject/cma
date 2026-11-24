@@ -290,20 +290,23 @@ for (const { combined, uncertain } of [
     ).toBeVisible();
     expect(deletes).toHaveLength(combined && uncertain ? 2 : 1);
     expect(deletes[0]).not.toBe(stops[0]!.key);
+    // Reload from the Workspace so the Agent page's detail refresh cannot settle the receipt
+    // before the reopened status dialog observes cleanup.
+    await page.goto(`/workspaces/${boundary.workspace.id}`);
     await page.reload();
     await page.getByRole('button', { name: /View Agent deletion status/ }).click();
-    await expect(page.getByRole('dialog', { name: 'Deleting Agent', exact: true })).toBeVisible();
+    const deleting = page.getByRole('dialog', { name: 'Deleting Agent', exact: true });
+    await expect(deleting.getByText('Last status read:')).toBeVisible();
+    const deleted = page.getByRole('dialog', { name: 'Agent deleted', exact: true });
+    await expect(deleted).toHaveCount(0);
     boundary.agent = {
       ...boundary.agent,
       status: 'deleted',
       worktree: { ...boundary.agent.worktree, status: 'removed' },
     };
     boundary.workspace = { ...boundary.workspace, agents: [sibling] };
-    await expect(page.getByRole('dialog', { name: 'Agent deleted', exact: true })).toBeVisible();
-    await page
-      .getByRole('dialog', { name: 'Agent deleted', exact: true })
-      .getByRole('button', { name: 'Done', exact: true })
-      .click();
+    await expect(deleted).toBeVisible();
+    await deleted.getByRole('button', { name: 'Done', exact: true }).click();
     await page.reload();
     await expect(page.locator(`.tree-row[data-node-id="agent:${boundary.agent.id}"]`)).toHaveCount(
       0,
