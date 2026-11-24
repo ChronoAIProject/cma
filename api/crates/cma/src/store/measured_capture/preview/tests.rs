@@ -83,6 +83,15 @@ async fn measured_preview_keeps_one_snapshot_across_concurrent_dispute_and_get_m
     let anchor = first.physical_sample_id().to_owned();
     let mut samples = vec![first, middle, last];
     samples.extend((20_000..20_064).map(|timestamp| observation_at("owner-a", 1, timestamp, 7.0)));
+    let mut existing_ids: Vec<_> = samples
+        .iter()
+        .map(|sample| sample.physical_sample_id())
+        .collect();
+    existing_ids.sort_unstable();
+    let unread = (30_001..39_000)
+        .map(|timestamp| observation_at("owner-a", 1, timestamp, 30.0))
+        .find(|sample| sample.physical_sample_id() > existing_ids[63])
+        .expect("fixture has a sample that sorts in the unread cursor range");
     let rows = samples.iter().map(|sample| {
         let physical = sample.physical_sample_id();
         crate::store::measured_capture::encode(
@@ -98,7 +107,7 @@ async fn measured_preview_keeps_one_snapshot_across_concurrent_dispute_and_get_m
     let admin_db = admin.database("admin");
     let configured = admin_db.run_command(doc! {
         "configureFailPoint": "failCommand", "mode": {"times": 1},
-        "data": {"failCommands": ["getMore"], "appName": &name, "blockConnection": true, "blockTimeMS": 2500},
+        "data": {"failCommands": ["getMore"], "appName": &name, "blockConnection": true, "blockTimeMS": 10_000},
     }).await.unwrap();
     let entered = configured.get_i64("count").unwrap() + 1;
     let window = Range { from: 21, to: 40 };
@@ -112,26 +121,31 @@ async fn measured_preview_keeps_one_snapshot_across_concurrent_dispute_and_get_m
             "waitForFailPoint": "failCommand", "timesEntered": entered, "maxTimeMS": 8_000,
         })
         .await;
-    let inserted = writer
+    let disputed = writer
         .capture(&observation_at("owner-b", 1, 30_000, 20.0))
         .await;
+    let added = writer.capture(&unread).await;
     admin_db
         .run_command(doc! {"configureFailPoint": "failCommand", "mode": "off"})
         .await
         .unwrap();
     barrier.unwrap();
-    assert_eq!(inserted.unwrap(), Capture::Disputed);
+    assert_eq!(disputed.unwrap(), Capture::Disputed);
+    assert_eq!(added.unwrap(), Capture::Inserted);
+    assert!(!in_progress.is_finished());
     let before = in_progress.await.unwrap().unwrap();
-    assert!(before["intervals"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|pair| pair["status"] == "measured"));
+    let intervals = before["intervals"].as_array().unwrap();
+    assert_eq!(intervals.len(), 2);
+    assert!(intervals.iter().all(|pair| pair["status"] == "measured"));
     let after = reader.preview(&anchor, window).await.unwrap();
-    assert!(after["intervals"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|pair| pair["reason"] == "disputed"));
+    let intervals = after["intervals"].as_array().unwrap();
+    assert_eq!(intervals.len(), 3);
+    assert_eq!(intervals[0]["reason"], "disputed");
+    assert_eq!(intervals[1]["reason"], "disputed");
+    assert_eq!(intervals[2]["status"], "measured");
+    assert_eq!(
+        intervals[2]["evidence_sha256"][0],
+        unread.evidence_sha256().unwrap()
+    );
     admin.database(&name).drop().await.unwrap();
 }

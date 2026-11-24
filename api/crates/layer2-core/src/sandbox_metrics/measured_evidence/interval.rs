@@ -178,17 +178,15 @@ fn cpu_delta(a: f64, b: f64) -> Result<CpuSeconds, Unresolved> {
     } else {
         first_exponent.min(next_exponent)
     };
-    let align = |mantissa, source_exponent| {
-        if mantissa == 0 {
-            return Ok(0);
-        }
-        let shift = u32::try_from(source_exponent - exponent).map_err(|_| Unresolved::Precision)?;
-        let scale = 1_u128.checked_shl(shift).ok_or(Unresolved::Precision)?;
-        u128::from(mantissa)
-            .checked_mul(scale)
-            .ok_or(Unresolved::Precision)
-    };
-    let delta = align(next, next_exponent)? - align(first, first_exponent)?;
+    let (first_high, first_low) = align_cpu(first, first_exponent - exponent)?;
+    let (next_high, next_low) = align_cpu(next, next_exponent - exponent)?;
+    let (delta, borrowed) = next_low.overflowing_sub(first_low);
+    // A single high bit may be consumed by the subtraction. If it survives,
+    // the aligned result cannot fit. Different canonical exponents yield an
+    // odd difference, and equal exponents never need a high bit.
+    if next_high - first_high - i32::from(borrowed) != 0 {
+        return Err(Unresolved::Precision);
+    }
     if delta == 0 {
         return Ok(CpuSeconds {
             significand: 0,
@@ -202,13 +200,31 @@ fn cpu_delta(a: f64, b: f64) -> Result<CpuSeconds, Unresolved> {
     })
 }
 
+fn align_cpu(significand: u64, shift: i16) -> Result<(i32, u128), Unresolved> {
+    if significand == 0 {
+        return Ok((0, 0));
+    }
+    let shift = u32::try_from(shift).map_err(|_| Unresolved::Precision)?;
+    let width = u64::BITS - significand.leading_zeros() + shift;
+    if width > u128::BITS + 1 {
+        return Err(Unresolved::Precision);
+    }
+    let low = u128::from(significand).checked_shl(shift).unwrap_or(0);
+    Ok((i32::from(width > u128::BITS), low))
+}
+
 fn cpu_parts(value: f64) -> (u64, i16) {
     let bits = value.to_bits();
     let mantissa = bits & ((1 << 52) - 1);
     let encoded_exponent = ((bits >> 52) & 0x7ff) as i16;
-    if encoded_exponent == 0 {
+    let (significand, exponent) = if encoded_exponent == 0 {
         (mantissa, -1074)
     } else {
         (mantissa | (1 << 52), encoded_exponent - 1075)
+    };
+    if significand == 0 {
+        return (0, 0);
     }
+    let trailing = significand.trailing_zeros();
+    (significand >> trailing, exponent + trailing as i16)
 }

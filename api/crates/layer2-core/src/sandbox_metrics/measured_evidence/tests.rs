@@ -308,6 +308,25 @@ mod intervals {
     }
 
     #[test]
+    fn bounds_the_canonical_cpu_delta_after_subtraction() {
+        let binding = binding(BindingKind::Compute);
+        let metric = SourceMetric::CpuCounter;
+        let (first, _) = retained(&binding, metric, 21_000, 1.0, 1);
+        for (power, significand) in [(76, (1_u128 << 76) - 1), (128, u128::MAX)] {
+            let (next, _) = retained(&binding, metric, 30_000, 2_f64.powi(power), 1);
+            assert_eq!(
+                pair(&first, &next).unwrap().quantity,
+                Ok(Quantity::Cpu(CpuSeconds {
+                    significand,
+                    exponent: 0
+                }))
+            );
+        }
+        let (too_large, _) = retained(&binding, metric, 30_000, 2_f64.powi(129), 1);
+        assert_eq!(pair(&first, &too_large), Err(Unresolved::Precision));
+    }
+
+    #[test]
     fn spacing_limit_and_cpu_reset_leave_only_the_affected_pair_pending() {
         let binding = binding(BindingKind::Compute);
         let metric = SourceMetric::CpuCounter;
