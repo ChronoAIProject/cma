@@ -7,6 +7,7 @@ import {
   type RelayDiscovery,
 } from '../RelayCapabilities';
 import { credentialsPatch, object, records, strings, text, without, type Fields } from './model';
+import { telegramMemberJoinGroupIds } from './telegramMemberJoins';
 
 export function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) =>
@@ -164,6 +165,30 @@ export function validateRelayAuthoring(
         );
       continue;
     }
+    if (source.type === 'telegram') {
+      const memberJoinChats = strings(source.member_join_chat_ids);
+      if (memberJoinChats.length > 0) {
+        const allowed = telegramMemberJoinGroupIds(source);
+        if (
+          source.message_events !== true ||
+          memberJoinChats.length > 16 ||
+          new Set(memberJoinChats).size !== memberJoinChats.length ||
+          memberJoinChats.some((id) => !allowed.includes(id))
+        )
+          throw new Error(
+            'Telegram member joins require message events and exact group IDs from Chat admission.',
+          );
+        const retained = oldSources.some(
+          (old) =>
+            old.type === 'telegram' &&
+            old.bot_id === source.bot_id &&
+            canonical(old.admission) === canonical(source.admission) &&
+            memberJoinChats.every((id) => strings(old.member_join_chat_ids).includes(id)),
+        );
+        if (discovery.authoring?.native_telegram_member_joins_enabled !== true && !retained)
+          throw new Error('New Telegram member join settings are disabled on this gateway.');
+      }
+    }
     if (
       source.type === 'telegram' &&
       source.channel_posts === true &&
@@ -175,12 +200,20 @@ export function validateRelayAuthoring(
       source.message_events === true &&
       !oldSources.some(
         (old) =>
-          canonical(without(old, ['topic_lifecycle', 'topic_creation'])) ===
-            canonical(without(source, ['topic_lifecycle', 'topic_creation'])) ||
+          canonical(without(old, ['topic_lifecycle', 'topic_creation', 'member_join_chat_ids'])) ===
+            canonical(
+              without(source, ['topic_lifecycle', 'topic_creation', 'member_join_chat_ids']),
+            ) ||
           (source.channel_posts !== true &&
-            canonical(without(old, ['topic_lifecycle', 'topic_creation'])) ===
+            canonical(
+              without(old, ['topic_lifecycle', 'topic_creation', 'member_join_chat_ids']),
+            ) ===
               canonical(
-                without({ ...source, channel_posts: true }, ['topic_lifecycle', 'topic_creation']),
+                without({ ...source, channel_posts: true }, [
+                  'topic_lifecycle',
+                  'topic_creation',
+                  'member_join_chat_ids',
+                ]),
               )),
       ) &&
       discovery.authoring?.native_telegram_message_events_enabled !== true
@@ -195,8 +228,22 @@ export function validateRelayAuthoring(
         (old) =>
           (source.message_events !== true || old.message_events === true) &&
           (source.channel_posts !== true || old.channel_posts === true) &&
-          canonical(without(old, ['message_events', 'channel_posts', 'topic_creation'])) ===
-            canonical(without(source, ['message_events', 'channel_posts', 'topic_creation'])),
+          canonical(
+            without(old, [
+              'message_events',
+              'channel_posts',
+              'topic_creation',
+              'member_join_chat_ids',
+            ]),
+          ) ===
+            canonical(
+              without(source, [
+                'message_events',
+                'channel_posts',
+                'topic_creation',
+                'member_join_chat_ids',
+              ]),
+            ),
       ) &&
       discovery.authoring?.native_telegram_topic_lifecycle_enabled !== true
     )
@@ -208,8 +255,22 @@ export function validateRelayAuthoring(
       source.topic_creation === true &&
       !oldSources.some(
         (old) =>
-          canonical(without(old, ['topic_lifecycle', 'message_events', 'channel_posts'])) ===
-          canonical(without(source, ['topic_lifecycle', 'message_events', 'channel_posts'])),
+          canonical(
+            without(old, [
+              'topic_lifecycle',
+              'message_events',
+              'channel_posts',
+              'member_join_chat_ids',
+            ]),
+          ) ===
+          canonical(
+            without(source, [
+              'topic_lifecycle',
+              'message_events',
+              'channel_posts',
+              'member_join_chat_ids',
+            ]),
+          ),
       ) &&
       discovery.authoring?.native_telegram_topic_creation_enabled !== true
     )

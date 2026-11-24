@@ -6,11 +6,10 @@ CMAEG Operations (maintainer guidance). CMA's implemented public interfaces are
 listed in CMA Public APIs (maintainer guidance); exact schemas come from each
 service's `GET /openapi.json`.
 
-Start with the public [integration guide](CMAEG_Integration.md), hosted at
-<https://gateway.example.com/event-gateway/docs>. It covers creator applications,
-event sources, Agent tools and downstream providers. The globally auto-connected
-NyxID service is **Agent Event Gateway** (`cmaeg`); its REST proxy is
-`https://gateway.example.com/api/v1/proxy/s/cmaeg`, already mapped to `/v1`.
+Start with the public [integration guide](CMAEG_Integration.md) for creator
+applications, event sources, Agent tools and downstream providers. The globally
+auto-connected NyxID service is **Agent Event Gateway** (`cmaeg`). Its REST proxy
+path on your NyxID API origin is `/api/v1/proxy/s/cmaeg`, already mapped to `/v1`.
 
 ## Ownership and topology
 

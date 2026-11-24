@@ -31,6 +31,7 @@ pub struct IngressState {
     pub native_whatsapp_groups_enabled: bool,
     pub native_whatsapp_message_events_enabled: bool,
     pub telegram_effects_issuance_enabled: bool,
+    pub native_telegram_member_joins_enabled: bool,
     /// Receives authenticated refusals, producers and authentication
     /// failures; a no-op unless the console is on.
     pub activity: Arc<dyn ActivityObserver>,
@@ -147,6 +148,7 @@ impl IngressState {
             native_whatsapp_groups_enabled: false,
             native_whatsapp_message_events_enabled: false,
             telegram_effects_issuance_enabled: false,
+            native_telegram_member_joins_enabled: false,
             activity: Arc::new(NoopObserver),
             resolver,
             master_keys,

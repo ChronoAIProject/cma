@@ -7416,6 +7416,12 @@
               "null"
             ]
           },
+          "native_telegram_member_joins_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_telegram_message_events_enabled": {
             "type": [
               "boolean",
@@ -8261,6 +8267,14 @@
                 "description": "Admit native channel posts as non-human channel identities; requires message_events.",
                 "type": "boolean"
               },
+              "member_join_chat_ids": {
+                "description": "Exact Telegram groups that opted into one event per human membership update.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
               "message_events": {
                 "description": "Retain original message routing for edits and attributable reactions.",
                 "type": "boolean"
@@ -8871,6 +8885,17 @@
               "channel_posts": {
                 "description": "Admit native channel posts as non-human channel identities; requires message_events.",
                 "type": "boolean"
+              },
+              "member_join_chat_ids": {
+                "description": "Exact opted-in group IDs. Omit to retain the saved list; send an empty list to clear it.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": [
+                  "array",
+                  "null"
+                ]
               },
               "message_events": {
                 "description": "Retain original message routing for edits and attributable reactions.",
