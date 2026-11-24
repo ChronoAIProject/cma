@@ -68,14 +68,37 @@ impl AgentAdmissionStore for MongoSandboxStore {
     }
 }
 
+pub(in crate::store) struct InitiationFence {
+    launches: mongodb::Collection<mongodb::bson::Document>,
+    filter: mongodb::bson::Document,
+}
+
+impl InitiationFence {
+    pub(in crate::store) async fn write(
+        self,
+        session: &mut mongodb::ClientSession,
+    ) -> Result<(), ApplyError> {
+        let changed = self
+            .launches
+            .update_one(self.filter, doc! {"$inc":{"agent_initiation_fence":1_i64}})
+            .session(session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        if changed.matched_count != 1 {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+        Ok(())
+    }
+}
+
 /// Resolve the exact durable source again in the Agent creation transaction.
-/// Caller-supplied provenance or another launch's sidecar cannot supply attribution.
-pub(in crate::store) async fn fence_initiation(
+/// A receipt can be read under this proof without committing an admission write.
+pub(in crate::store) async fn read_initiation_fence(
     store: &MongoSandboxStore,
     admission: &AgentAdmission,
     expected: &layer2_core::trigger_domain::LaunchInitiation,
     session: &mut mongodb::ClientSession,
-) -> Result<(), ApplyError> {
+) -> Result<InitiationFence, ApplyError> {
     use crate::store::sandbox_mongo::{read_record, record_bson};
     use layer2_core::trigger_domain::{Launch, LaunchEffectKind, LaunchEffectState};
     use mongodb::bson::Document;
@@ -135,13 +158,9 @@ pub(in crate::store) async fn fence_initiation(
     let record = document
         .get("record")
         .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
-    let changed = launches.update_one(doc! {
+    let filter = doc! {
         "_id":expected.launch_id().as_str(), "record":record.clone(),
         "launch_initiation":record_bson(expected).map_err(|_|ApplyError::Domain(SandboxStoreError::Conflict))?,
-    }, doc! {"$inc":{"agent_initiation_fence":1_i64}})
-        .session(session).await.map_err(ApplyError::Driver)?;
-    if changed.matched_count != 1 {
-        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-    }
-    Ok(())
+    };
+    Ok(InitiationFence { launches, filter })
 }
