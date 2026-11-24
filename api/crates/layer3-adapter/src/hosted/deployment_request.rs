@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{provider::ProviderSandboxRequest, AdapterError};
 
-const JOURNAL_RECOVERY: &str = "CHRONO_RUNTIME_LEGACY_JOURNAL_RECOVERY_ENABLED";
+pub(crate) const JOURNAL_RECOVERY: &str = "CHRONO_RUNTIME_LEGACY_JOURNAL_RECOVERY_ENABLED";
 const RUNTIME_GENERATION: &str = "CHRONO_RUNTIME_GENERATION";
 
 impl HostedDeployment {

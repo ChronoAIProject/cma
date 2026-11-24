@@ -43,6 +43,7 @@ mod suspension;
 mod termination;
 pub(crate) use startup_termination::{startup_boot_identity, startup_incarnation};
 mod upgrade;
+pub use upgrade::RetainedStartupPolicyUpgrade;
 
 use crate::{AdapterError, HomeVolumeScope, Result, RuntimeHandle};
 use k8s_openapi::api::core::v1::{PersistentVolumeClaim, Pod};

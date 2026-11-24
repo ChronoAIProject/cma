@@ -1,9 +1,19 @@
 //! Explicit image replacement of a fully stopped native member, under its original UID.
-use super::pool::runtime_upgrade::RuntimeUpgradeProof;
+use super::pool::runtime_upgrade::{RetainedStartupPolicyProof, RuntimeUpgradeProof};
 use super::*;
 use crate::{provider::ProviderSandboxRequest, HomeVolumeAttachment};
 use kube::api::{Patch, PatchParams};
 use serde_json::json;
+
+/// Exact intent frozen by the retained-home admission transaction.
+pub struct RetainedStartupPolicyUpgrade<'a> {
+    pub operation_id: &'a str,
+    pub predecessor_resource_version: &'a str,
+    pub predecessor_uid: &'a str,
+    pub target_image: &'a str,
+    pub successor_generation: u64,
+    pub journal_recovery: bool,
+}
 
 impl AgentSandboxClient {
     pub(crate) async fn upgrade_with_home(
@@ -14,16 +24,55 @@ impl AgentSandboxClient {
         home: &HomeVolumeAttachment,
     ) -> Result<()> {
         validate_successor(previous, next)?;
+        self.upgrade_stopped_member(runtime, previous, next, home, None)
+            .await
+    }
+
+    /// Apply only the admission's frozen predecessor or observe its exact replay.
+    pub async fn upgrade_retained_startup_policy(
+        &self,
+        runtime: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        admission: &RetainedStartupPolicyUpgrade<'_>,
+    ) -> Result<()> {
+        let (_, uid) = parse_handle(runtime)?;
+        if uid != admission.predecessor_uid || admission.predecessor_resource_version.is_empty() {
+            return Err(rejected(
+                "retained startup policy predecessor differs from admission",
+            ));
+        }
+        let next = previous.retained_startup_policy_successor(
+            admission.target_image,
+            admission.successor_generation,
+            admission.journal_recovery,
+        )?;
+        self.upgrade_stopped_member(runtime, previous, &next, home, Some(admission))
+            .await
+    }
+
+    async fn upgrade_stopped_member(
+        &self,
+        runtime: &RuntimeHandle,
+        previous: &ProviderSandboxRequest,
+        next: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        admission: Option<&RetainedStartupPolicyUpgrade<'_>>,
+    ) -> Result<()> {
         let origin = self.native_runtime_home_origin(runtime, home)?;
         let (name, _) = parse_handle(runtime)?;
         model::desired_at(&self.config, previous, &self.control_token(name), name)?;
         model::desired_at(&self.config, next, &self.control_token(name), name)?;
         let member = self.pools.prove_native_home(home).await?;
         let prior = RuntimeUpgradeProof::from_member(&member, origin)?;
+        let policy = admission.map(|admission| RetainedStartupPolicyProof {
+            operation_id: admission.operation_id.into(),
+            journal_recovery: admission.journal_recovery,
+        });
         // A replay proves both exact requests and the original complete home graph.
         // It cannot dispatch another generation after the successor was admitted.
         if let Some(proof) = &prior {
-            if proof.is_transition(previous, next)? {
+            if proof.retained_policy() == policy.as_ref() && proof.is_transition(previous, next)? {
                 let desired = self.pools.runtime_desired_with_upgrade(
                     origin,
                     home,
@@ -39,12 +88,22 @@ impl AgentSandboxClient {
                 return self.matches(&actual, &desired);
             }
         }
+        if admission.is_none()
+            && prior
+                .as_ref()
+                .and_then(RuntimeUpgradeProof::retained_policy)
+                .is_some()
+        {
+            return Err(rejected(
+                "retained startup policy requires a scoped runtime transition",
+            ));
+        }
         let mut before = self
             .pools
             .runtime_desired_for_member(origin, home, previous, name, &member)?;
         before.data["spec"]["operatingMode"] = json!("Suspended");
         self.matches(&member, &before)?;
-        let proof = RuntimeUpgradeProof::create(origin, previous, next, prior.as_ref())?;
+        let proof = RuntimeUpgradeProof::create(origin, previous, next, prior.as_ref(), policy)?;
         let desired =
             self.pools
                 .runtime_desired_with_upgrade(origin, home, next, name, Some(&proof))?;
@@ -58,6 +117,14 @@ impl AgentSandboxClient {
             .resource_version()
             .filter(|v| !v.is_empty())
             .ok_or_else(|| rejected("Sandbox resource version is absent"))?;
+        if admission.is_some_and(|admission| {
+            version != admission.predecessor_resource_version
+                || actual.uid().as_deref() != Some(admission.predecessor_uid)
+        }) {
+            return Err(rejected(
+                "retained startup policy predecessor changed after admission",
+            ));
+        }
         let patch = json!({
             "metadata": {"uid": actual.uid(), "resourceVersion": version,
                 "annotations": desired.annotations()},
