@@ -43,18 +43,19 @@ export function DeletionReference({ request }: { readonly request: DeletionReque
 export function DeletionStatusPanel({
   request,
   observation,
+  complete = observation?.complete === true,
   sending,
   readError,
   commandError,
 }: {
   readonly request: DeletionRequest;
   readonly observation?: DeletionObservation;
+  readonly complete?: boolean;
   readonly sending: boolean;
   readonly readError?: string;
   readonly commandError?: string;
 }) {
   const target = deletionTarget(request.action);
-  const complete = observation?.complete === true;
   const unknownDelete = !request.accepted && deleteMayHaveBeenSent(request);
   const blocked = request.stop?.phase === 'blocked' && !request.accepted;
   const stopping =
@@ -138,7 +139,7 @@ export function DeletionStatusPanel({
           </time>
         </p>
       ) : null}
-      {observation?.failure === undefined ? null : (
+      {complete || observation?.failure === undefined ? null : (
         <p role="alert">
           Cleanup reported: {observation.failure.detail}. Deletion is not complete.
         </p>
@@ -150,7 +151,7 @@ export function DeletionStatusPanel({
       <DeletionReference key={request.key} request={request} />
       <details className="deletion-status__details">
         <summary>Cleanup progress</summary>
-        {observation === undefined ? null : (
+        {observation === undefined || (complete && !observation.complete) ? null : (
           <ProvisioningProgress title="Deletion progress" steps={observation.steps} />
         )}
         <LiveActivity
@@ -160,7 +161,7 @@ export function DeletionStatusPanel({
           )}
           syncedAt={observation?.observedAt}
           stale={readError !== undefined}
-          loading={observation === undefined && readError === undefined}
+          loading={!complete && observation === undefined && readError === undefined}
         />
       </details>
     </section>

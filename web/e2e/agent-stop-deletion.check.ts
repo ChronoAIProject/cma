@@ -316,11 +316,16 @@ for (const { combined, uncertain } of [
     ).toBeVisible();
     expect(deletes).toHaveLength(combined && uncertain ? 2 : 1);
     expect(deletes[0]).not.toBe(stops[0]!.key);
+    const detailFirst = !combined && !uncertain;
+    if (detailFirst) await page.clock.install();
     // Reload from Agent Manager so the Agent page's detail refresh cannot settle the receipt
     // before the reopened status dialog observes cleanup.
     await page.goto('/agent-manager');
     await page.reload();
-    await page.getByRole('button', { name: /View Agent deletion status/ }).click();
+    const reopen = page.getByRole('button', { name: /View Agent deletion status/ });
+    await expect(reopen).toBeEnabled();
+    if (detailFirst) await page.clock.pauseAt(new Date(Date.now() + 500));
+    await reopen.press('Enter');
     const deleting = page.getByRole('dialog', { name: 'Deleting Agent', exact: true });
     await expect(deleting.getByText('Last status read:')).toBeVisible();
     const deleted = page.getByRole('dialog', { name: 'Agent deleted', exact: true });
@@ -331,6 +336,25 @@ for (const { combined, uncertain } of [
       worktree: { ...boundary.agent.worktree, status: 'removed' },
     };
     boundary.workspace = { ...boundary.workspace, agents: [sibling] };
+    if (detailFirst) {
+      // Keep the dialog's poll paused while the original detail page reads terminal state.
+      const detail = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === `/api/v1/agents/${boundary.agent.id}` &&
+          response.request().method() === 'GET' &&
+          response.ok(),
+      );
+      await page.evaluate((path) => {
+        window.dispatchEvent(new CustomEvent('cma:route-request', { detail: path }));
+      }, `/agents/${boundary.agent.id}`);
+      expect(await (await detail).json()).toMatchObject({
+        id: boundary.agent.id,
+        status: 'deleted',
+        worktree: { status: 'removed' },
+      });
+      await expect(page.locator('.deletion-notice')).toHaveCount(0);
+      await page.clock.resume();
+    }
     await expect(deleted).toBeVisible();
     await deleted.getByRole('button', { name: 'Done', exact: true }).click();
     await page.reload();

@@ -14,7 +14,7 @@ import {
   type DeletionRequest,
   type AgentDeletionPermissions,
 } from './deletion';
-import { restoreDeletions } from './deletionRecovery';
+import { restoreDeletions, sameDeletionRequest } from './deletionRecovery';
 import {
   reconcileDeletionRequests,
   type DeletionSettlements,
@@ -328,6 +328,9 @@ export function useResourceActions(
               enabled={enabled}
               initial={deletion.request}
               restored={deletion.restored}
+              settledElsewhere={settled.some((request) =>
+                sameDeletionRequest(request, deletion.request),
+              )}
               backgroundOnAcceptance
               onChanged={() => {
                 refreshDeletions();
