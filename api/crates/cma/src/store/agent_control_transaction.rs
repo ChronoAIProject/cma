@@ -20,7 +20,7 @@ use super::sandbox_mongo::{
 
 const CONTROL_ATTEMPTS: usize = 8;
 pub(super) mod restart;
-mod restart_cancel;
+pub(super) mod restart_cancel;
 pub(super) mod restart_dispatch;
 mod restart_receipt;
 pub(super) mod restart_teardown;
