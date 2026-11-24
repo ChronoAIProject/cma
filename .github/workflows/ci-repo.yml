@@ -23,6 +23,7 @@ jobs:
           python3 -B -m unittest discover -s .github/scripts/ci_tracks -p "test_*.py"
           python3 -B -m unittest discover -s .github/scripts -p 'mongo_flaky_retry_tests.py'
           ruby .github/scripts/ci-tracks-workflow-tests.rb
+          python3 -B .github/scripts/omarchy-ci-scan-tests.py
       -
         name: "Staging publication and deployment contracts"
         run: |
@@ -80,7 +81,7 @@ jobs:
       -
         name: "Root contains only permitted entries"
         run: |
-          allowed=".git .github api web CLAUDE.md AGENTS.md CONTRIBUTING.md README.md .gitignore .dockerignore"
+          allowed=".git .github api web CLAUDE.md AGENTS.md CONTRIBUTING.md README.md LICENSE NOTICE .gitignore .dockerignore"
           fail=0
           shopt -s dotglob nullglob
           for entry in *; do

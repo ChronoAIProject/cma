@@ -84,7 +84,7 @@ export function SetupReview({ value }: { value: Fields }) {
       <dl className="channel-inspector__facts">
         <div>
           <dt>Channel</dt>
-          <dd>{text(value.name) || 'Name required'}</dd>
+          <dd>{text(value.name).trim() || 'Name required'}</dd>
         </div>
         <div>
           <dt>Connection</dt>

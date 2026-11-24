@@ -24,6 +24,7 @@ mod strict_inactivity_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
     pub image_manager_retirement: bool,
+    pub session_guidance_v4: bool,
     pub am_startup_health_serving: bool,
     pub visitor_launch_admission: bool,
     pub usage_signed_cursors_enabled: bool,
@@ -37,6 +38,7 @@ pub(crate) struct FeatureFlags {
     pub agent_model_discovery_cache: bool,
     pub agent_environment_async: bool,
     pub agent_settings_owner_relay: bool,
+    pub agent_file_write_handoff: bool,
     pub agent_event_stream_wake: bool,
     pub agui_bounded_replay: bool,
     pub agent_shared_observation: bool,
@@ -159,6 +161,7 @@ impl FeatureFlags {
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
         let flags = Self {
+            session_guidance_v4: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED")?,
             image_manager_retirement: flag(lookup, "CHRONO_IMAGE_MANAGER_RETIREMENT_ENABLED")?,
             am_startup_health_serving: flag(lookup, "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED")?,
             pending_home_reconciliation: flag(
@@ -186,6 +189,7 @@ impl FeatureFlags {
             )?,
             agent_environment_async: flag(lookup, "CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED")?,
             agent_settings_owner_relay: flag(lookup, "CHRONO_AGENT_SETTINGS_OWNER_RELAY_ENABLED")?,
+            agent_file_write_handoff: flag(lookup, "CHRONO_AGENT_FILE_WRITE_HANDOFF_ENABLED")?,
             agent_shared_observation: flag(lookup, "CHRONO_AGENT_SHARED_OBSERVATION_ENABLED")?,
             agui_bounded_replay: flag(lookup, "CHRONO_AGUI_BOUNDED_REPLAY_ENABLED")?,
             agent_event_stream_wake: flag(lookup, "CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED")?,

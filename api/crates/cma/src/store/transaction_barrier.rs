@@ -6,26 +6,14 @@
 //! client disconnected, a bounded timeout, an authority revocation) leaves the
 //! server transaction open with that command's write locks until the server
 //! session is reused or the transaction lifetime expires (#3189, #3217).
-//! Opening with a read means such a cancellation strands at most a lock-free
-//! snapshot, and the driver aborts every later drop as intended.
-use mongodb::{
-    bson::{doc, Bson, Document},
-    error::Result,
-    ClientSession,
-};
+//! The collectionless read establishes the snapshot without taking a
+//! collection lock. It lets the driver abort later operations on drop.
+use mongodb::{bson::doc, error::Result, ClientSession};
 
-/// `agents` is in every credential's exact collection grant, so the read is
-/// authorized in both shared-schema and isolated modes.
-const COLLECTION: &str = "agents";
-
-/// The barrier reads the transaction's own database: the one its client was
-/// configured with. Production clients always carry it (`connection_options`
-/// and the runtime routing client). A client without one, such as an operator
-/// CLI or most test fixtures, skips the barrier rather than read a database its
-/// credential may not cover; tests that need production's shape configure it.
-/// The read is an `_id` lookup that matches nothing. A stranded barrier holds
-/// only an intent-shared lock on `agents`: it conflicts with no write, but it
-/// does delay the exclusive phases of new-index DDL on `agents` (#3276).
+/// Open on the client's configured application database. The literal
+/// aggregate needs no collection permissions and lets an agents index build
+/// proceed while the transaction holds its snapshot (#3276).
+/// Clients without an application database skip the barrier.
 pub(crate) async fn open(session: &mut ClientSession) -> Result<()> {
     let Some(database) = session
         .client()
@@ -35,9 +23,11 @@ pub(crate) async fn open(session: &mut ClientSession) -> Result<()> {
         return Ok(());
     };
     database
-        .collection::<Document>(COLLECTION)
-        .find_one(doc! {"_id": Bson::MinKey})
-        .projection(doc! {"_id": 1})
+        .run_command(doc! {
+            "aggregate": 1_i32,
+            "pipeline": [{ "$documents": [doc! {}] }],
+            "cursor": {},
+        })
         .session(session)
         .await
         .map(|_| ())

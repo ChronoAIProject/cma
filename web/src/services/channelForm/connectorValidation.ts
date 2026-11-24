@@ -1,4 +1,4 @@
-import { object, records, text, type Fields } from './model';
+import { object, records, strings, text, type Fields } from './model';
 
 export function botIdMessage(value: unknown, platform: 'telegram' | 'discord') {
   const id = text(value);
@@ -33,6 +33,13 @@ export function validateConnectorFields(draft: Fields) {
       const identity = object(source.identity);
       for (const key of ['app_id', 'tenant_key', 'bot_open_id'])
         check(`identity/${key}`, larkIdentityMessage(identity[key], key));
+      const admission = object(source.admission);
+      if (admission.type === 'allowlist') {
+        const senders = strings(admission.sender_ids);
+        if (!senders.length) check('admission', 'Add at least one allowed sender ID.');
+        const blank = senders.findIndex((sender) => !sender.trim());
+        if (blank !== -1) check(`admission/${blank}`, 'Enter a sender ID.');
+      }
     }
   });
 }
