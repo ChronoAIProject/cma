@@ -18,6 +18,7 @@ export default defineConfig({
     'usage-coverage.check.ts',
     'usage-backoff.check.ts',
     'usage-ranges.check.ts',
+    'usage-initial.check.ts',
     'spend-controls.check.ts',
   ],
   workers: 1,

@@ -369,6 +369,12 @@ export function startReportLoad(
         : false;
     } catch (error) {
       if (background || !isUsageInitialUnavailable(error)) throw error;
+      if (entry.initialPending) {
+        if (!entry.pending || entry.pending.report_id !== entry.refreshReportId)
+          throw new ProtocolError('Missing admitted initial report identity');
+        await loadLegacy(api, selection, admin, entry, signal, principal);
+        return;
+      }
     }
     if (!usedInitial) {
       try {
