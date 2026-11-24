@@ -36,10 +36,9 @@ use mongodb::options::ClientOptions;
 use mongodb::Client;
 use std::{sync::Arc, time::Duration};
 
-pub(crate) const JOBS: &str = "sandbox_usage_reports";
+pub(crate) use cma_am_reporting::{CONTROL, JOBS};
 pub(crate) const ROWS: &str = "sandbox_usage_report_rows";
 pub(crate) const CHARTS: &str = "sandbox_usage_report_charts";
-pub(crate) const CONTROL: &str = "sandbox_usage_report_control";
 #[cfg(test)]
 use cma_am_reporting::pool::configure_pool;
 pub(super) use cma_am_reporting::pool::DB_DEADLINE;

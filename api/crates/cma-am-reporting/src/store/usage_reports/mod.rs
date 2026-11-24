@@ -1,3 +1,5 @@
+mod admission;
+pub use admission::{Admission, AdmissionBudget, AdmissionRequest, CONTROL, JOBS};
 mod chart_encoding;
 mod charts;
 mod owners;
