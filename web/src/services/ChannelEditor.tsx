@@ -17,6 +17,7 @@ import {
   ConsumerPolicyFields,
   initialRouting,
   RoutingFields,
+  routingLimitErrors,
   routingRequest,
 } from './channelForm/RoutingFields';
 import {
@@ -139,6 +140,9 @@ export function ChannelEditor({
   }
   const checkingCustomSupport = create && customExecutionWaiting(discovery, draft);
   const additional = section.kind === 'consumer' && section.id !== 'default';
+  const limitErrors = routingLimitErrors(routing);
+  const invalidRoutingLimits =
+    section.kind === 'channel' && Object.values(limitErrors).some(Boolean);
   async function send(request: Pending) {
     setBusy(true);
     setError(undefined);
@@ -195,6 +199,7 @@ export function ChannelEditor({
       void send(pending);
       return;
     }
+    if (kind === 'routing' && invalidRoutingLimits) return;
     try {
       const record = baseline?.record_id ?? crypto.randomUUID();
       let projected = baseline ? selectedDraft(channelDraft(baseline), draft, section) : draft;
@@ -346,7 +351,7 @@ export function ChannelEditor({
         >
           <fieldset className="channel-form-section" disabled={pending !== undefined || busy}>
             {section.kind === 'channel' ? (
-              <RoutingFields value={routing} onChange={setRouting} />
+              <RoutingFields value={routing} onChange={setRouting} limitErrors={limitErrors} />
             ) : activeConsumer ? (
               <>
                 {additional ? (
@@ -378,7 +383,9 @@ export function ChannelEditor({
           {!pending ? (
             <Button
               type="submit"
-              disabled={busy || (section.kind === 'consumer' && !activeConsumer)}
+              disabled={
+                busy || invalidRoutingLimits || (section.kind === 'consumer' && !activeConsumer)
+              }
             >
               {section.kind === 'channel' ? 'Save routing' : 'Save consumer policy'}
             </Button>
