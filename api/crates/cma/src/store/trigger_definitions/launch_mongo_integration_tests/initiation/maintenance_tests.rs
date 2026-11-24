@@ -3,6 +3,7 @@ use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
 use layer2_core::sandbox::{store::SandboxStoreError, Agent};
 use mongodb::event::{command::CommandEvent, EventHandler};
 use mongodb::options::ClientOptions;
+use mongodb::Client;
 use std::sync::{mpsc, Mutex};
 use std::time::{Duration, SystemTime};
 
