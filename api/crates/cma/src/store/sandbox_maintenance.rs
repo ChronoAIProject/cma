@@ -17,8 +17,7 @@ use super::sandbox_mongo::{
     commit_transaction, is_transient, wait_for_reconciliation, CommitOutcome, MongoSandboxStore,
 };
 use super::sandboxes::read_sandbox;
-use reconcile::reconcile;
-use transaction::{attempt as apply_attempt, ApplyError, MaintenanceRequest};
+use transaction::{attempt as apply_attempt, reconcile, ApplyError, MaintenanceRequest};
 
 mod consented;
 mod custom_runtime;
@@ -27,7 +26,6 @@ mod evidence;
 #[cfg(test)]
 pub(crate) mod mongo_integration_tests;
 mod policy_fence;
-mod reconcile;
 mod retained_availability;
 pub(crate) mod retained_transition;
 mod retry;
