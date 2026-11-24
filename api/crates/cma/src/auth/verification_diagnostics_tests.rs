@@ -8,6 +8,7 @@ use tracing::Metadata;
 use tracing_subscriber::{filter::filter_fn, fmt, layer::SubscriberExt, Layer};
 
 use super::*;
+use cma_am_auth::provider::verification_error::ProviderVerificationError as Error;
 
 const PRIVATE_CALLER: &str = "synthetic-private-provider-caller";
 const PRIVATE_ERROR: &str = "synthetic-private-provider-error";
