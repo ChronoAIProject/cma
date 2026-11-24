@@ -65,8 +65,46 @@ async fn live_connection_scan_and_recovery_cas_are_complete_and_idempotent() {
     assert_eq!(scanned, expected);
 
     let request = connection_recovery_request(&working);
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let maintenance_client = Client::with_uri_str(uri).await.unwrap();
+    let sandboxes = maintenance_client
+        .database(&name)
+        .collection::<Document>("sandboxes");
+    let parent_key = doc! {"_id": working.sandbox_id.as_str()};
+    sandboxes
+        .update_one(
+            parent_key.clone(),
+            doc! {"$set": {"ledger_maintenance": Bson::Null}},
+        )
+        .write_concern(mongodb::options::WriteConcern::majority())
+        .await
+        .unwrap();
+    let held_parent = sandboxes.find_one(parent_key.clone()).await.unwrap();
+    assert_eq!(
+        store
+            .schedule_agent_connection_recovery(request.clone())
+            .await
+            .unwrap(),
+        AgentConnectionRecoveryOutcome::Superseded
+    );
+    assert_eq!(
+        store.get_agent(&working.id).await.unwrap(),
+        Some(working.clone())
+    );
+    assert_eq!(
+        sandboxes.find_one(parent_key.clone()).await.unwrap(),
+        held_parent
+    );
+    sandboxes
+        .update_one(
+            parent_key.clone(),
+            doc! {"$unset": {"ledger_maintenance": ""}},
+        )
+        .write_concern(mongodb::options::WriteConcern::majority())
+        .await
+        .unwrap();
     let left = store.schedule_agent_connection_recovery(request.clone());
-    let right = store.schedule_agent_connection_recovery(request);
+    let right = store.schedule_agent_connection_recovery(request.clone());
     let (left, right) = tokio::join!(left, right);
     let outcomes = [left.unwrap(), right.unwrap()];
     assert_eq!(
@@ -88,6 +126,24 @@ async fn live_connection_scan_and_recovery_cas_are_complete_and_idempotent() {
     assert_eq!(scheduled.conversation, working.conversation);
     assert_eq!(scheduled.work.step, AgentWorkStep::PublishConnection);
     assert_eq!(scheduled.revision, working.revision + 1);
+    sandboxes
+        .update_one(
+            parent_key.clone(),
+            doc! {"$set": {"ledger_maintenance": {"phase": "requested"}}},
+        )
+        .write_concern(mongodb::options::WriteConcern::majority())
+        .await
+        .unwrap();
+    let held_parent = sandboxes.find_one(parent_key.clone()).await.unwrap();
+    assert_eq!(
+        store
+            .schedule_agent_connection_recovery(request)
+            .await
+            .unwrap(),
+        AgentConnectionRecoveryOutcome::AlreadyScheduled
+    );
+    assert_eq!(store.get_agent(&working.id).await.unwrap(), Some(scheduled));
+    assert_eq!(sandboxes.find_one(parent_key).await.unwrap(), held_parent);
 
     client.database(&name).drop().await.unwrap();
 }
