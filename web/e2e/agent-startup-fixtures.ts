@@ -173,6 +173,7 @@ export class LocalStartup {
             prompt_pending: false,
             prompt_supported: false,
           });
+        case '/api/v1/build-info':
         case '/api/v2/ui/task-experience':
         case '/api/v1/agents/agt_contract/suggestions':
           return reply({ code: 'not_found', detail: 'Optional capability unavailable.' }, 404);
