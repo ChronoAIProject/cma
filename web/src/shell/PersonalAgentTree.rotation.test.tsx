@@ -129,7 +129,7 @@ describe('Agent navigation during environment updates', () => {
     },
   );
 
-  it('filters parked updates by Needs attention and genuinely starting Agents by Preparing', () => {
+  it('filters parked updates by Needs attention and genuinely starting Agents by Preparing', async () => {
     const starting = navigationFixture('provisioning', 'starting').map((item) => ({
       ...item,
       workspaces: item.workspaces.map((workspace) => ({
@@ -143,13 +143,20 @@ describe('Agent navigation during environment updates', () => {
     }));
     const mixed = [...items({ status: 'working' }), ...starting];
     const { rerender } = render(tree({ items: mixed, statusFilter: 'all' }));
+    expect(screen.getByText('1 updates failed · Fix').closest('details')).not.toHaveAttribute(
+      'open',
+    );
+    await userEvent.click(screen.getByText('1 updates failed · Fix'));
     expect(
       screen.getByRole('treeitem', { name: /Agent one.*Runtime update failed/ }),
     ).toBeVisible();
     expect(screen.getByRole('treeitem', { name: /Starting Agent.*Preparing/ })).toBeVisible();
 
+    await userEvent.click(screen.getByText('1 updates failed · Fix'));
     rerender(tree({ items: mixed, statusFilter: 'needs_attention' }));
-    expect(screen.getByRole('treeitem')).toHaveAccessibleName(/Agent one.*Runtime update failed/);
+    const failedAgent = screen.getByRole('treeitem');
+    expect(failedAgent).toHaveAccessibleName(/Agent one.*Runtime update failed/);
+    expect(failedAgent).toBeVisible();
 
     rerender(tree({ items: mixed, statusFilter: 'starting' }));
     expect(screen.getByRole('treeitem')).toHaveAccessibleName(/Starting Agent.*Preparing/);
