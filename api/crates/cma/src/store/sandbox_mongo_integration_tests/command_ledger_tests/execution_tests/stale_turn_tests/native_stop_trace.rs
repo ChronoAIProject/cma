@@ -115,6 +115,7 @@ async fn native_stop_trace_recorder_ack_matches_a_fresh_checkpoint() {
     assert_eq!(sends.load(Ordering::SeqCst), 1);
     let active = store.get_agent(&agent.id).await.unwrap().unwrap();
     let turn = active.conversation.active_turn.unwrap();
+    let dispatched_head = active.conversation.last_seq;
     assert_eq!(
         PromptIdentity::new(&trace.conversation, generation, turn).as_str(),
         trace.dispatch
@@ -127,7 +128,7 @@ async fn native_stop_trace_recorder_ack_matches_a_fresh_checkpoint() {
 
     // Decode the captured protocol effects and preserve each exact payload's hash.
     let (acknowledgements, mut acks) = tokio::sync::mpsc::channel(16);
-    let mut expected_message = String::new();
+    let mut expected_messages = Vec::new();
     for (index, payload) in trace.before.iter().enumerate() {
         let frame: serde_json::Value = serde_json::from_str(payload).unwrap();
         let update = if frame["method"] == "session/update" {
@@ -136,7 +137,7 @@ async fn native_stop_trace_recorder_ack_matches_a_fresh_checkpoint() {
                 serde_json::from_value(frame["params"]["update"].clone()).unwrap();
             if let SessionUpdate::AgentMessageChunk(chunk) = &update {
                 if let ContentBlock::Text(text) = &chunk.content {
-                    expected_message.push_str(&text.text);
+                    expected_messages.push(text.text.clone());
                 }
             }
             Some(Box::new(ConversationUpdate::Said(update)).into())
@@ -161,7 +162,8 @@ async fn native_stop_trace_recorder_ack_matches_a_fresh_checkpoint() {
             .await
             .unwrap();
     }
-    assert!(expected_message.contains("One partial model response."));
+    assert_eq!(expected_messages.len(), 2);
+    assert_eq!(expected_messages[1], "One partial model response.");
     let final_ack = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let ack = acks.recv().await.unwrap();
@@ -266,13 +268,18 @@ async fn native_stop_trace_recorder_ack_matches_a_fresh_checkpoint() {
         })
         .await
         .unwrap();
-    let logs = peer.agent_log(&agent.id, turn, 100).await.unwrap();
-    assert_eq!(
-        logs.iter()
-            .filter(|entry| matches!(&entry.kind, AgentLogKind::AgentMessage { content } if content == &expected_message))
-            .count(),
-        1
-    );
+    let logs = peer
+        .agent_log(&agent.id, dispatched_head, 100)
+        .await
+        .unwrap();
+    let messages = logs
+        .iter()
+        .filter_map(|entry| match &entry.kind {
+            AgentLogKind::AgentMessage { content } => Some(content),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(messages, expected_messages.iter().collect::<Vec<_>>());
     assert_eq!(
         logs.iter()
             .filter(|entry| matches!(&entry.kind, AgentLogKind::TurnFailed { turn_sequence, failure } if *turn_sequence == turn && failure.class == "agent_turn_no_progress"))
