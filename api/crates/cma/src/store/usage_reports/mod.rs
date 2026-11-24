@@ -31,9 +31,10 @@ pub(crate) use work::ReportLease;
 
 use crate::store::transaction_scope as tx;
 use layer2_core::sandbox_metrics::{MetricsError, Result};
+#[cfg(test)]
+use mongodb::options::ClientOptions;
 use mongodb::{
     bson::{doc, Document},
-    options::ClientOptions,
     Client, Collection, Database,
 };
 use std::{sync::Arc, time::Duration};
@@ -42,7 +43,9 @@ pub(crate) const JOBS: &str = "sandbox_usage_reports";
 pub(crate) const ROWS: &str = "sandbox_usage_report_rows";
 pub(crate) const CHARTS: &str = "sandbox_usage_report_charts";
 pub(crate) const CONTROL: &str = "sandbox_usage_report_control";
-pub(super) const DB_DEADLINE: Duration = Duration::from_secs(2);
+#[cfg(test)]
+use cma_am_reporting::pool::configure_pool;
+pub(super) use cma_am_reporting::pool::DB_DEADLINE;
 
 #[derive(Clone)]
 pub(crate) struct ReportingStore {
@@ -141,19 +144,19 @@ impl ReportingStore {
         budgets: crate::config::sandbox_metrics::MetricsBudgets,
         pool_size: u32,
     ) -> Result<Arc<Self>> {
-        let mut options = ClientOptions::parse(uri).await.map_err(unavailable)?;
-        super::transaction_barrier::bind(&mut options, database);
-        configure_pool(&mut options, pool_size);
         let circuit = Arc::default();
-        budget::observe(&mut options, Arc::clone(&circuit));
-        let client = Client::with_options(options).map_err(unavailable)?;
+        let (client, db) = cma_am_reporting::pool::connect(uri, database, pool_size, |options| {
+            super::transaction_barrier::bind(options, database);
+            budget::observe(options, Arc::clone(&circuit));
+        })
+        .await?;
         tracing::info!(
             max_pool_size = pool_size,
             "reporting MongoDB pool configured"
         );
         let store = Arc::new(Self {
             budgets,
-            db: client.database(database),
+            db,
             client,
             signer: Arc::new(layer2_core::sandbox_metrics::cursor::CursorSigner::new(key)),
             circuit,
@@ -171,13 +174,6 @@ impl ReportingStore {
     }
 }
 
-fn configure_pool(options: &mut ClientOptions, pool_size: u32) {
-    options.max_pool_size = Some(pool_size);
-    options.min_pool_size = Some(0);
-    options.max_connecting = Some(1);
-    options.connect_timeout = Some(DB_DEADLINE);
-    options.server_selection_timeout = Some(DB_DEADLINE);
-}
 pub(crate) fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
