@@ -21,6 +21,7 @@ impl AgentWorker {
             self.dependencies.store.get_workspace(&agent.workspace_id),
             self.dependencies.store.get_worktree(&agent.worktree_id),
             |sandbox, admission| async move {
+                let inspection = self.inspection_correlation(agent);
                 let inspection_started = std::time::Instant::now();
                 let attached = crate::sandbox::runtime_attachment::inspect_bound_runtime_after(
                     self.dependencies.adapter.as_ref(),
@@ -29,19 +30,27 @@ impl AgentWorker {
                     &admission,
                 )
                 .await;
-                self.inspection_identity(agent).inspection(
+                report_inspection(
+                    &inspection,
                     agent.work.step,
                     inspection_started.elapsed(),
-                    attached.is_ok(),
                     true,
+                    attached.as_ref().err(),
                 );
                 attached
             },
         )
         .await?;
         self.observe_runtime_startup(&sandbox, started, &attached);
-        self.inspection_identity(agent)
-            .inspection_complete(started.elapsed(), attached.is_ok());
+        let fields = self.inspection_correlation(agent);
+        with_root(|| {
+            tracing::info!(target: TARGET, parent: None,
+                agent_sha256 = %fields.agent_sha256, sandbox_sha256 = fields.sandbox_sha256.as_deref(),
+                instance_sha256 = %fields.instance_sha256, receiver_sha256 = fields.receiver_sha256.as_deref(),
+                epoch = fields.epoch, elapsed_ms = started.elapsed().as_millis() as u64,
+                succeeded = attached.is_ok(), parent_overlap = true,
+                "Agent parent reads and runtime inspection completed");
+        });
         let (runtime, status) = attached.map_err(adapter_failure)?;
         Ok(AgentContext {
             sandbox,

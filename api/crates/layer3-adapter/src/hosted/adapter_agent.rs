@@ -2,14 +2,18 @@ use std::path::Path;
 
 use tokio::sync::mpsc;
 
-use super::super::reply::{valid_git_commit, valid_sha256};
+use super::super::reply::valid_git_commit;
 use super::HostedAdapter;
+
+#[path = "adapter_agent_identity.rs"]
+mod identity;
 use crate::wire::{FencedRequest, RequestFrame, ResponseFrame};
 use crate::{
     AdapterError, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest, AgentOpenRequest,
-    ConversationChannel, ConversationUpdate, RuntimeHandle, WorktreeReceipt, WorktreeRef,
-    WorktreeRequest,
+    AgentProcessAction, ConversationChannel, ConversationUpdate, RuntimeHandle, WorktreeReceipt,
+    WorktreeRef, WorktreeRequest,
 };
+use identity::{validate_fence, validate_process_request, validate_request};
 
 pub(super) async fn add_worktree(
     adapter: &HostedAdapter,
@@ -287,9 +291,10 @@ pub(super) async fn open_agent(
         ));
     }
     adapter.validate_options(handle, &request.options).await?;
-    validate_request(
+    validate_process_request(
         request,
-        format!("agent:{}:open:v1", request.options.slot.as_str()),
+        AgentProcessAction::Open,
+        request.options.slot.as_str(),
     )?;
     validate_fence(authority_fence)?;
     let launch = adapter.runtime.launch(request)?;
@@ -423,9 +428,10 @@ pub(super) async fn close_agent(
 ) -> crate::Result<()> {
     validate_fence(authority_fence)?;
     adapter.known_state(handle).await?;
-    validate_request(
+    validate_process_request(
         request,
-        format!("agent:{}:close:v1", request.agent_id.as_str()),
+        AgentProcessAction::Close,
+        request.agent_id.as_str(),
     )?;
     match adapter
         .exchange(
@@ -446,53 +452,5 @@ pub(super) async fn close_agent(
             "runtime returned a receipt for another agent close operation".into(),
         )),
         _ => unreachable!("exchange verifies response operation"),
-    }
-}
-
-trait ReplayRequest {
-    fn operation_id(&self) -> &str;
-    fn request_sha256(&self) -> &str;
-    fn digest_matches(&self) -> bool;
-}
-
-macro_rules! replay_request {
-    ($($type:ty),+ $(,)?) => {
-        $(impl ReplayRequest for $type {
-            fn operation_id(&self) -> &str { &self.operation_id }
-            fn request_sha256(&self) -> &str { &self.request_sha256 }
-            fn digest_matches(&self) -> bool { self.has_valid_sha256() }
-        })+
-    };
-}
-
-replay_request!(
-    WorktreeRequest,
-    WorktreeRef,
-    AgentHomeRequest,
-    AgentHomeRemoveRequest,
-    AgentOpenRequest,
-    AgentCloseRequest,
-);
-
-fn validate_request(request: &impl ReplayRequest, expected: String) -> crate::Result<()> {
-    if request.operation_id() != expected
-        || request.operation_id().len() > 256
-        || !valid_sha256(request.request_sha256())
-        || !request.digest_matches()
-    {
-        return Err(AdapterError::Rejected(
-            "operation id or request digest is invalid".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_fence(authority_fence: u64) -> crate::Result<()> {
-    if authority_fence == 0 {
-        Err(AdapterError::Rejected(
-            "agent mutation authority fence must be nonzero".into(),
-        ))
-    } else {
-        Ok(())
     }
 }

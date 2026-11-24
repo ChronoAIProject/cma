@@ -210,3 +210,10 @@ pub(super) fn digest(bytes: &[u8]) -> String {
     let bytes = Sha256::digest(bytes);
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
+
+pub(super) fn channel(conversation_id: Option<String>) -> crate::ConversationChannel {
+    crate::ConversationChannel {
+        input: crate::ConversationInputSender::spawn(1, |_| async { Ok(()) }),
+        conversation_id,
+    }
+}

@@ -66,7 +66,9 @@ pub(crate) struct SandboxLifecycleConfig {
     pub stale_turn_reconciliation: bool,
     pub stale_turn_terminal: bool,
     pub skip_ineligible_reconciliation: bool,
+    pub defer_foreign_reconciliation: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
+    pub sandbox_binding_hold_metrics: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
@@ -153,6 +155,7 @@ impl SandboxLifecycleComposition {
             Duration::from_secs(15),
         ))
         .with_background_resumption(config.sandbox_reconciliation_reserved_lane)
+        .with_binding_hold_metrics(config.sandbox_binding_hold_metrics)
         .with_runtime_loss_bounded_proof(config.runtime_loss_bounded_proof_enabled)
         .with_profile_agents(Arc::clone(&dependencies.agents))
         .with_released_runtime(config.released.clone())
@@ -223,6 +226,7 @@ impl SandboxLifecycleComposition {
         .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
         .with_ownership(config.ownership)
         .with_skip_ineligible_reconciliation(config.skip_ineligible_reconciliation)
+        .with_defer_foreign_reconciliation(config.defer_foreign_reconciliation)
         .with_ownership_retry_hints(dependencies.store.ownership_retry_hints())
         .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
         .with_startup_sibling_hold(config.startup_sibling_hold_enabled)

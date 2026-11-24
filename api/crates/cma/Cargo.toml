@@ -9,6 +9,8 @@ real-model-suggestion-samples = []
 
 [dependencies]
 cma-allocator-qualification = { path = "../cma-allocator-qualification" }
+cma-am-auth = { path = "../cma-am-auth" }
+cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }
 async-trait = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
@@ -29,6 +31,7 @@ sha1 = { workspace = true }
 layer1-public = { workspace = true }
 layer2-core = { workspace = true }
 layer3-adapter = { workspace = true }
+libc = { workspace = true }
 mongodb = { workspace = true, features = ["opentelemetry"] }
 opentelemetry = { workspace = true }
 reqwest = { workspace = true }
@@ -63,5 +66,5 @@ layer2-core = { workspace = true, features = ["test-support"] }
 # Holds PTY receipt, output, and disconnect boundaries so socket races are
 # proved without sleeps or scheduler assumptions.
 layer1-public = { workspace = true, features = ["test-support"] }
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["io-std", "test-util"] }
 tokio-tungstenite = { workspace = true }

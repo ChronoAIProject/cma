@@ -60,7 +60,7 @@ async fn inspection_failure(step: AgentWorkStep, expected_lines: usize) {
         })
         .collect::<Vec<_>>();
     assert_eq!(events.len(), expected_lines);
-    let identity = authority.log_identity();
+    let identity = authority.receiver_correlation();
     assert_eq!(
         identity.sandbox_sha256,
         Some(format!(
@@ -76,10 +76,7 @@ async fn inspection_failure(step: AgentWorkStep, expected_lines: usize) {
             fields["sandbox_sha256"],
             identity.sandbox_sha256.as_ref().unwrap().as_str()
         );
-        assert_eq!(
-            fields["instance_sha256"],
-            identity.instance_sha256.as_ref().unwrap().as_str()
-        );
+        assert_eq!(fields["instance_sha256"], identity.instance_sha256.as_str());
         assert_eq!(fields["epoch"], 19);
         let line = event.to_string();
         for secret in [

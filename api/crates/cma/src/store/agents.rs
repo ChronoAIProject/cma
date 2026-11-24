@@ -334,7 +334,10 @@ impl AgentStore for MongoSandboxStore {
             .map(read_agent)
             .transpose()?;
         if let Some(agent) = &agent {
-            layer2_core::agent_ownership::observe_agent_sandbox(&agent.id, &agent.sandbox_id);
+            layer2_core::agent_ownership::receiver_diagnostics::observe_agent_sandbox(
+                &agent.id,
+                &agent.sandbox_id,
+            );
         }
         Ok(agent)
     }

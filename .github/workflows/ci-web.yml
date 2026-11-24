@@ -141,6 +141,24 @@ jobs:
           path: "${{ runner.temp }}/cma-channel-setup"
           retention-days: 1
       -
+        name: "Local channel authoring contracts"
+        id: channel_authoring
+        timeout-minutes: 5
+        shell: bash
+        env:
+          CMA_CHANNEL_SETUP_EVIDENCE_DIR: "${{ runner.temp }}/cma-channel-authoring"
+        run: |
+          node node_modules/playwright/cli.js test --config e2e/hmac-channel.config.ts
+          node node_modules/playwright/cli.js test --config e2e/wh-eg-authoring.config.ts
+      -
+        name: "Channel authoring failure evidence"
+        if: "failure() && steps.channel_authoring.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "channel-authoring-failure"
+          path: "${{ runner.temp }}/cma-channel-authoring"
+          retention-days: 1
+      -
         name: "Local credential recovery contracts"
         id: credential_setup
         timeout-minutes: 5

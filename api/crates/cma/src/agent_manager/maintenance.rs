@@ -9,7 +9,7 @@ impl AgentManager {
         match self.coordinator.handoff_background(authority).await {
             Ok(completed) => Ok(completed),
             Err(error) if authority.receiver_cancelled() => {
-                authority.log_identity().warn(
+                authority.log_receiver_handoff_failure(
                     "cancelled_receiver_cleanup",
                     &error,
                     "Receiver cleanup pending; healthy ownership continues",
@@ -17,7 +17,7 @@ impl AgentManager {
                 match self.coordinator.forget_cancelled(authority).await {
                     Ok(complete) => Ok(complete),
                     Err(error) => {
-                        authority.log_identity().warn(
+                        authority.log_receiver_handoff_failure(
                             "cancelled_owner_observation",
                             &error,
                             "Cancelled ownership retained until durable observation succeeds",

@@ -40,10 +40,9 @@ export function allocationCoverage(value: AllocationCoverageEvidence) {
       coverage === 'missing'
         ? `Confirmed missing duration: ${missingDuration}. Missing intervals are excluded from these totals; this does not mean zero usage.`
         : coverage === 'unverified'
-          ? 'No missing interval has been established.' +
-            (value.unknown_seconds === undefined
-              ? ' Missing-interval durations are unavailable for this scope.'
-              : '')
+          ? value.unknown_seconds === undefined
+            ? 'Missing-interval durations are unavailable for this scope.'
+            : 'No missing interval has been established.'
           : 'Allocation history is verified for this scope.',
     projection:
       value.projected_tail_seconds === undefined
