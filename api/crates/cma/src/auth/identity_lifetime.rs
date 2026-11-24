@@ -1,7 +1,6 @@
 //! Exact live verification receipts held only by their admitted consumers.
 use std::{cell::RefCell, future::Future, sync::Arc, time::SystemTime};
 
-use layer2_core::StoreError;
 use tokio::time::Instant;
 
 use super::{
@@ -10,7 +9,7 @@ use super::{
     verification_error::{
         ProviderVerificationError as Error, VerificationCause, VerificationFailure,
     },
-    AuthState, RequestAuth,
+    AuthState,
 };
 
 pub(super) struct VerificationLifetime {
@@ -99,10 +98,11 @@ pub(super) fn retain(evidence: &Arc<VerifiedSubject>) {
     let _ = CURRENT.try_with(|receipts| receipts.borrow_mut().push(evidence.clone()));
 }
 
-pub(super) async fn scope(
+pub(super) async fn scope<T, E>(
     auth: &AuthState,
-    future: impl Future<Output = Result<Option<RequestAuth>, StoreError>>,
-) -> Result<Option<RequestAuth>, StoreError> {
+    future: impl Future<Output = Result<Option<T>, E>>,
+    expired: impl FnOnce() -> E,
+) -> Result<Option<T>, E> {
     CURRENT
         .scope(RefCell::new(Vec::new()), async {
             let Some(result) = future.await? else {
@@ -118,7 +118,7 @@ pub(super) async fn scope(
             } else {
                 tracing::debug!(parent: None, event = "identity_evidence_changed",
                 "Live identity evidence changed or expired during authorization");
-                Err(super::identity_retry::unavailable())
+                Err(expired())
             }
         })
         .await

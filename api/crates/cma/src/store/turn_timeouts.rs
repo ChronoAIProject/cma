@@ -1,5 +1,4 @@
 //! Policy terminal publication shares the conversation writer transaction.
-use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::{store::SandboxStoreError, turn_timeout::TurnTimeoutSettlement};
 use mongodb::bson::{doc, Document};
 
@@ -8,6 +7,7 @@ use super::{
     agent_conversation_store::ApplyError,
     agent_log_segments::{conversation::checkpoint, transaction_scope::TransactionScope},
     sandbox_mongo::{commit_transaction, signed, CommitOutcome, MongoSandboxStore},
+    transaction_terminal::GuardedTerminal as _,
 };
 
 const RECEIPT: &str = "turn_policy_publication";
