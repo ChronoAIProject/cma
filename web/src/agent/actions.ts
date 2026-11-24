@@ -11,7 +11,6 @@ import {
   recoverV2Interruption,
   InterruptionNotSubmittedError,
 } from './transport/interruption';
-
 function runId(): string {
   return typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
