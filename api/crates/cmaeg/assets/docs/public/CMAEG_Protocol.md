@@ -2090,6 +2090,20 @@ and sealed channel destination. Human message-effect authority, discussion-group
 comments and channel direct-message topics are not inferred. See the
 native Telegram message events contract (maintainer guidance).
 
+Direct native Telegram sources may also set `member_join_chat_ids` to up to 16
+exact Telegram group IDs from the source's chat allowlist. The list defaults
+to empty. An update retains the saved list when omitted and clears it with an
+empty list. Disabling message events also clears the opt-in. Authoring requires the `native_telegram_member_joins_enabled`
+capability, retained message events, open senders and group admission set to
+`all`. A supported group join produces one `telegram.group_members_joined`
+CloudEvent per Telegram update. Its `data.members` contains the newly joined
+human users as `{id, display_name, is_bot}`, with string platform IDs and a
+nullable display name. Bot-only joins are refused. The actor is
+`{id:"telegram:system",kind:"system"}`. The source reply address is the original
+group and topic, if present. The existing non-human routing policy controls
+which consumers receive the event. Retries reuse the original Telegram update
+identity and the admitted turn.
+
 Activity kind is one of:
 
 | Type | Fields |

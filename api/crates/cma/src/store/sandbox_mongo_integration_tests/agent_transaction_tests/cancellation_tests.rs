@@ -33,7 +33,7 @@ async fn cancelled_first_command_of_a_store_transaction_strands_no_row_lock() {
         .run_command(doc! {
             "configureFailPoint": "failCommand", "mode": {"times": 1_i32},
             "data": {
-                "appName": &name, "failCommands": ["find", "update"],
+                "appName": &name, "failCommands": ["aggregate", "update"],
                 "blockConnection": true, "blockTimeMS": 400_i32,
             },
         })

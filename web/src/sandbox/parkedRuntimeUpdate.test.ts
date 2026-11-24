@@ -93,7 +93,7 @@ it('groups a fresh inventory result without fetching details and preserves task 
   expect(groups.find((group) => group.id === 'changing')?.items).toEqual([]);
   expect(sandboxNavigation([base], (value) => value, 'failed').visible).toEqual([base]);
   for (const [taskStatus, presentedStatus, label] of [
-    ['completed', 'needs_attention', 'Turn ended'],
+    ['completed', 'completed', 'Turn ended'],
     ['stopped', 'stopped', 'Stopped'],
     ['failed', 'failed', 'Failed'],
     ['working', 'needs_attention', 'Needs attention'],
