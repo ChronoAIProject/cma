@@ -4,6 +4,7 @@ import type { AgentCommand, ApprovalDecision } from './controller';
 import type { MessageAcceptance } from './controllerTypes';
 import { ApiError, type AnswerContext } from '@cma/client';
 import { stoppedInputMessage } from './controllerError';
+import { DraftBindingError } from './draftDelivery';
 import { submitV2Control, recoverV2Control } from './transport/controls';
 import {
   submitV2Interruption,
@@ -290,7 +291,8 @@ export function useAgentActions({
           !approving &&
           !accepted &&
           !recoveringInput &&
-          (error instanceof InterruptionNotSubmittedError ||
+          (error instanceof DraftBindingError ||
+            error instanceof InterruptionNotSubmittedError ||
             (error instanceof ApiError &&
               ((error.status === 422 &&
                 [
