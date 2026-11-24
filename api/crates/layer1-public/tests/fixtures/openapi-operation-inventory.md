@@ -112,9 +112,11 @@ returns 409, including changing an omitted default into an explicit reference.
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
 | `GET /api/v1/admin/activity` | - | actor, action, limit, cursor | 200 ActivityPageView |
+| `GET /api/v1/admin/activity/actors` | ReadActivityLog and ReadUserDirectory | q (literal display name or subject) | 200 array<ActivityActorView> (up to 20 matches), 400/401/403/503 ProblemDocument |
 | `GET /api/v1/admin/profiles` | - | kind, visibility, owner, cursor, limit | 200 ProfilePageView |
 | `POST /api/v1/admin/profiles/{kind}/{id}/retire` | - | - | 200 ProfileSummaryView |
 | `GET /api/v1/admin/runtime-inventory` | - | - | 200 RuntimeInventoryView |
+| `GET /api/v1/admin/runtime-binding-holds` | - | - | 200 BindingHoldOverviewView; 403/503 ProblemDocument; 404 when diagnostics are disabled |
 | `PUT /api/v1/admin/runtime-canary-policy` | CanaryPolicyRequest | - | 200 CanaryPolicyView; 401/403/409/422/503 ProblemDocument |
 | `POST /api/v1/admin/runtime-canary-grants` | CanaryGrantRequest | - | 201 CanaryGrantView; 401/403/409/422/503 ProblemDocument |
 | `POST /api/v1/admin/runtime-canary-grants/revoke` | CanaryRevokeRequest | - | 200 CanaryGrantView; 401/403/409/422/503 ProblemDocument |

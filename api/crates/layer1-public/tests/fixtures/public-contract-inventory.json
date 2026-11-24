@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 317,
+  "openapi_operations": 320,
   "operations": {
     "PUT /api/v1/admin/runtime-canary-policy": {
       "classification": "openapi",
