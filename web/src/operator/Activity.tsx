@@ -10,7 +10,7 @@ import type { OperatorClient } from './client';
 import { FailureNotice, RecordControls, Timestamp, stateWord, useRecords } from './records';
 
 const COLUMNS = [
-  { header: 'Time (SGT)' },
+  { header: 'Time (SGT)', sort: 'descending' },
   { header: 'Actor' },
   { header: 'Action' },
   { header: 'Target' },
@@ -148,6 +148,7 @@ function ActivitySummarys({
         loadingLabel={records.page === undefined ? 'Loading records' : 'Refreshing records'}
         empty={records.page === undefined ? undefined : 'No records match these filters.'}
       >
+        {/* The API cursor orders each page by recorded time, then record ID. */}
         {records.page?.items.map((row) => (
           <tr key={row.id}>
             <TableCell>

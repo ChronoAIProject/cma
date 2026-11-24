@@ -26,6 +26,37 @@ function pending() {
 }
 
 describe('Activity summary pages', () => {
+  it('shows seconds and preserves the API order for tied timestamps on refresh', async () => {
+    const client = operatorClient();
+    const latest = '2026-11-24T02:18:29.123Z';
+    const earlier = '2026-11-24T02:18:03.456Z';
+    client.admin.listActivitySummary.mockResolvedValue({
+      items: [
+        { ...row('second-tied'), at: latest },
+        { ...row('first-tied'), at: latest },
+        { ...row('earlier'), at: earlier },
+      ],
+      next: null,
+    });
+    const user = userEvent.setup();
+    const { container } = render(<Activity client={client} />);
+    await screen.findByText('earlier');
+    const times = [...container.querySelectorAll('tbody time')];
+    expect(times.map((time) => time.dateTime)).toEqual([latest, latest, earlier]);
+    expect(times.map((time) => time.title)).toEqual([latest, latest, earlier]);
+    expect(times[0]).toHaveTextContent('10:18:29');
+    expect(times[2]).toHaveTextContent('10:18:03');
+    expect(screen.getByRole('columnheader', { name: 'Time (SGT)' })).toHaveAttribute(
+      'aria-sort',
+      'descending',
+    );
+    await user.click(screen.getByRole('button', { name: 'Refresh records' }));
+    await waitFor(() => expect(screen.getByRole('table')).not.toHaveAttribute('aria-busy'));
+    expect(
+      Array.from(container.querySelectorAll('tbody code'), (cell) => cell.textContent),
+    ).toEqual(['second-tied', 'first-tied', 'earlier']);
+  });
+
   it('requests one bounded first page and retains rows while explicit refresh is pending', async () => {
     const client = operatorClient();
     const held = pending();
