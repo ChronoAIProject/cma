@@ -1,5 +1,6 @@
 use super::*;
 use crate::store::sandbox_mongo::is_duplicate_key;
+use crate::store::work_claim_authority::without_ledger_maintenance;
 
 /// Low-level child creation follows the same parent fence as public admissions.
 pub(in crate::store) async fn insert_child(
@@ -57,7 +58,7 @@ pub(in crate::store) fn adds_obligation(previous: &Agent, next: &Agent) -> bool 
         .any(|debt| !previous.work.cleanup_debt.contains(debt))
 }
 
-/// Serialize publication of a new obligation with the deletion admission.
+/// Serialize publication of a new obligation with deletion and maintenance admission.
 /// Both writers update the same parent in their own transactions. A snapshot
 /// read alone would allow a writer that started before custody to publish.
 pub(in crate::store) async fn fence_obligation(
@@ -68,11 +69,11 @@ pub(in crate::store) async fn fence_obligation(
     let result = store
         .sandboxes
         .update_one(
-            crate::store::work_schema::query(doc! {
+            crate::store::work_schema::query(without_ledger_maintenance(doc! {
                 "_id": sandbox.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 FIELD: { "$exists": false },
-            }),
+            })),
             doc! { "$inc": { CHILD_WRITE_FENCE: 1_i64 } },
         )
         .session(&mut *session)

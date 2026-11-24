@@ -192,6 +192,88 @@ async fn workspace_removal_locks_the_row_and_durably_admits_live_child_cleanup()
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn ledger_maintenance_refuses_new_child_obligations() {
+    use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
+    use layer2_core::sandbox::AgentCleanupDebt;
+
+    let (client, name) = database("held_child_obligations").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (independent, _) = database("child_obligations_peer").await;
+    let parent = sandbox("sbx_child_obligations");
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let existing = workspace(&parent, "wks_atomic", "project");
+    store.create_workspace(existing).await.unwrap();
+    let (tree, agent) = worktree_and_agent(&parent.id);
+    store.create_worktree(tree.clone()).await.unwrap();
+    store.create_agent(agent.clone()).await.unwrap();
+    let mut with_debt = agent.clone();
+    with_debt.revision += 1;
+    with_debt.work.cleanup_debt.push(AgentCleanupDebt {
+        step: AgentWorkStep::MaterializeHome,
+        operation_id: format!("agent:{}:home:create:v1", agent.id),
+        request_sha256: "c".repeat(64),
+    });
+    let candidate = workspace(&parent, "wks_child_candidate", "candidate");
+    let mut next_tree = tree;
+    next_tree.id = WorktreeId("wkt_child_candidate".into());
+    next_tree.workspace_id = candidate.id.clone();
+    next_tree.path = format!("{}/.worktrees/{}", candidate.path, next_tree.name);
+    let mut next_agent = agent.clone();
+    next_agent.id = AgentId("agt_child_candidate".into());
+    next_agent.creation_key = "create-child-candidate".into();
+    next_agent.workspace_id = candidate.id.clone();
+    next_agent.worktree_id = next_tree.id.clone();
+    next_tree.agent_id = Some(next_agent.id.clone());
+
+    let rows = independent
+        .database(&name)
+        .collection::<Document>(SANDBOXES);
+    let filter = doc! {"_id": parent.id.as_str()};
+    for hold in [Bson::Document(doc! {"phase": "requested"}), Bson::Null] {
+        rows.update_one(
+            filter.clone(),
+            doc! {"$set": {LEDGER_MAINTENANCE_FIELD: hold.clone()}},
+        )
+        .await
+        .unwrap();
+        let before = rows.find_one(filter.clone()).await.unwrap().unwrap();
+        assert_eq!(before.get(LEDGER_MAINTENANCE_FIELD), Some(&hold));
+        assert_eq!(
+            store.create_workspace(candidate.clone()).await,
+            Err(SandboxStoreError::Conflict)
+        );
+        assert_eq!(
+            store.create_agent(next_agent.clone()).await,
+            Err(SandboxStoreError::Conflict)
+        );
+        assert_eq!(
+            store.save_agent(agent.revision, with_debt.clone()).await,
+            Err(SandboxStoreError::Conflict)
+        );
+        assert_eq!(
+            rows.find_one(filter.clone()).await.unwrap().as_ref(),
+            Some(&before)
+        );
+        assert_eq!(store.get_workspace(&candidate.id).await.unwrap(), None);
+        assert_eq!(store.get_agent(&next_agent.id).await.unwrap(), None);
+        assert_eq!(
+            store.get_agent(&agent.id).await.unwrap().as_ref(),
+            Some(&agent)
+        );
+    }
+
+    rows.update_one(filter, doc! {"$unset": {LEDGER_MAINTENANCE_FIELD: ""}})
+        .await
+        .unwrap();
+    store.create_workspace(candidate).await.unwrap();
+    store.create_worktree(next_tree).await.unwrap();
+    store.create_agent(next_agent).await.unwrap();
+    store.save_agent(agent.revision, with_debt).await.unwrap();
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn claims_are_exclusive_and_an_expired_lease_gets_a_higher_fence() {
     let (client, name) = database("claims").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
