@@ -61,11 +61,13 @@ pub(crate) async fn capture(
     for name in super::super::isolation::COLLECTIONS {
         // Disabled features have no collection or grants. An absent optional
         // namespace contributes an explicit empty inventory without reading it.
-        // Existing namespaces still take the normal ownership/authority path.
-        if super::super::isolation::OPTIONAL_COLLECTIONS.contains(name)
-            && !present_optional
-                .iter()
-                .any(|present| present.as_str() == *name)
+        // The legal receipt namespace is outside Sandbox ownership and its
+        // writer has no read grant, even when the collection is populated.
+        if *name == super::super::retained_consents::COLLECTION
+            || (super::super::isolation::OPTIONAL_COLLECTIONS.contains(name)
+                && !present_optional
+                    .iter()
+                    .any(|present| present.as_str() == *name))
         {
             records.push(DatabaseRecord {
                 collection: (*name).into(),

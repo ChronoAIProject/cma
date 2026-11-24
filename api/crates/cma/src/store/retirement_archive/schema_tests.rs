@@ -5,6 +5,33 @@ use crate::retirement_archive::{
 };
 use layer3_adapter::permanent_custody::PermanentCustody;
 
+#[tokio::test]
+async fn frozen_census_before_legal_receipts_still_matches() {
+    use crate::store::retained_consents::COLLECTION;
+    let audit: Vec<_> = super::super::census_catalog::AUDIT
+        .iter()
+        .copied()
+        .filter(|(name, _)| *name != COLLECTION)
+        .collect();
+    let names: Vec<_> = crate::store::isolation::COLLECTIONS
+        .iter()
+        .copied()
+        .filter(|name| *name != COLLECTION)
+        .collect();
+    assert_eq!(names, pre_legal_consent::COLLECTIONS);
+    assert_eq!(
+        digest(format!("archive-census-v2\n{audit:?}\n{}", names.join("\n")).as_bytes()),
+        pre_legal_consent::SHA256
+    );
+    let current = manifest().await;
+    let mut old = current.clone();
+    old.schema_sha256 = pre_legal_consent::SHA256.into();
+    old.database.retain(|row| row.collection != COLLECTION);
+    assert!(matches_current(&old, current).unwrap());
+    old.database.pop();
+    assert!(validate_manifest_census(&old).is_err());
+}
+
 #[test]
 fn frozen_legacy_census_matches_the_exact_pre_allocation_descriptor() {
     let audit: Vec<_> = super::super::census_catalog::AUDIT

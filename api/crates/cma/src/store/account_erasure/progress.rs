@@ -79,11 +79,16 @@ pub(super) fn prepare(
 ) {
     let digest = layer2_core::document_artifacts::digest(
         format!(
-            "account-record-effects-c2-qualified:{operations:?}:{:?}:{:?}:{}:{:?}",
+            "account-record-effects-c2-qualified:{operations:?}:{:?}:{:?}:{}:{:?}{}",
             options.allocation_rollups_enabled,
             options.agent_shared_observation,
             options.transaction_drain_minimum_secs,
-            options.drain_qualification
+            options.drain_qualification,
+            if options.retain_legal_consents {
+                ":retain-legal-consents"
+            } else {
+                ""
+            },
         )
         .as_bytes(),
     );

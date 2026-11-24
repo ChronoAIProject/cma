@@ -92,6 +92,7 @@ pub(crate) mod legal_consents;
 mod media_uploads;
 pub(crate) mod provenance_progress;
 pub(crate) mod registration_capacity;
+mod retained_consents;
 mod segment_response;
 mod transaction_scope;
 pub(crate) use segment_response::emit as emit_response_reads;

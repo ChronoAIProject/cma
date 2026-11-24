@@ -20,9 +20,6 @@ mod completion_tests;
 mod schema_compatibility_tests;
 
 pub(super) async fn fixture() -> (Temp, ArchiveStore, Request, Vec<u8>) {
-    let temp = Temp::new();
-    let mut request = request(&temp);
-    request.sandbox_id = "sbx_retirement_fixture".into();
     let client = Client::with_uri_str(
         std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable Mongo required"),
     )
@@ -32,6 +29,14 @@ pub(super) async fn fixture() -> (Temp, ArchiveStore, Request, Vec<u8>) {
         "retirement_archive_{}",
         uuid::Uuid::new_v4().simple()
     ));
+    fixture_on(database).await
+}
+
+async fn fixture_on(database: Database) -> (Temp, ArchiveStore, Request, Vec<u8>) {
+    let client = database.client().clone();
+    let temp = Temp::new();
+    let mut request = request(&temp);
+    request.sandbox_id = "sbx_retirement_fixture".into();
     let mut sandbox = crate::store::sandbox_mongo_integration_tests::sandbox(&request.sandbox_id);
     sandbox.status = SandboxStatus::Retiring;
     sandbox.work.step = SandboxWorkStep::StopAgents;
@@ -83,6 +88,32 @@ pub(super) async fn fixture() -> (Temp, ArchiveStore, Request, Vec<u8>) {
         .await
         .unwrap();
     (temp, ArchiveStore { client, database }, request, bytes)
+}
+
+pub(in crate::store) async fn verify_legal_consent_census(admin: &Database, runtime: &Database) {
+    use crate::store::retained_consents::COLLECTION;
+    let (_temp, admin_store, request, bytes) = fixture_on(admin.clone()).await;
+    admin_store.admit(&request, &bytes).await.unwrap();
+    let store = ArchiveStore {
+        client: runtime.client().clone(),
+        database: runtime.clone(),
+    };
+    let custody = Custody::default();
+    let current = export::build(&store, &request, &bytes, &custody, None)
+        .await
+        .unwrap();
+    let row = current
+        .database
+        .iter()
+        .find(|row| row.collection == COLLECTION)
+        .unwrap();
+    assert_eq!((row.documents, row.bytes), (0, 0));
+    assert_eq!(row.sha256, digest(&[]));
+    assert!(row.objects.is_empty());
+    let mut old = current.clone();
+    old.schema_sha256 = super::schema::PRE_LEGAL_CONSENT_SHA256.into();
+    old.database.retain(|row| row.collection != COLLECTION);
+    assert!(super::matches_current(&old, current).unwrap());
 }
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]

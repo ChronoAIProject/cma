@@ -25,6 +25,8 @@ pub(crate) use export::capture;
 pub(crate) use schema::{matches_current, schema_sha256, validate_manifest_census};
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(super) use tests::verify_legal_consent_census;
 const ORIGINAL: &str = "retirement_archive_original_v1";
 const MANIFEST: &str = "retirement_archive_manifest_v1";
 const RESTORE: &str = "retirement_archive_restore_v1";

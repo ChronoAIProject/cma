@@ -25,6 +25,7 @@ fn frozen_account_pre_backup_census_matches_the_exact_develop_descriptor() {
     assert_eq!(
         introduced,
         [
+            crate::store::retained_consents::COLLECTION,
             crate::store::sandbox_usage_export::CAPTURES,
             crate::store::sandbox_usage_export::EVIDENCE,
             crate::store::sandbox_usage_export::OUTBOX,

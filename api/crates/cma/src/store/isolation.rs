@@ -1,4 +1,5 @@
 //! Agent Manager's exact schema authority. Legacy names retain existing data IDs.
+use super::retained_consents;
 use layer2_core::StoreError;
 use mongodb::{
     bson::{doc, Document},
@@ -9,6 +10,7 @@ pub(crate) mod replicas;
 pub(crate) const COLLECTIONS: &[&str] = &[
     "account_deletions",
     "account_deletion_events",
+    retained_consents::COLLECTION,
     super::budget::COLLECTION,
     super::agent_observation::COLLECTION,
     super::sandbox_metric_bindings::COLLECTION,
@@ -174,6 +176,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
 // These derived stores are activated separately. Existing credentials must
 // still start while the feature is disabled; partial grants remain invalid.
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
+    retained_consents::COLLECTION,
     super::sandbox_usage_export::CAPTURES,
     super::sandbox_usage_export::EVIDENCE,
     super::sandbox_usage_export::OUTBOX,
@@ -223,6 +226,7 @@ fn role_with_index_operation(
 ) -> Document {
     let mut grants: Vec<_> = COLLECTIONS
         .iter()
+        .filter(|name| **name != retained_consents::COLLECTION)
         .filter(|name| include_optional || !OPTIONAL_COLLECTIONS.contains(name))
         .map(|name| {
             let mut actions = ACTIONS.to_vec();
@@ -239,6 +243,11 @@ fn role_with_index_operation(
         grants.push(
             doc! {"resource":{"db":database,"collection":MIGRATION_COLLECTION},"actions":MIGRATION_ACTIONS},
         );
+    }
+    if include_optional {
+        // Detached legal receipts have no account or Sandbox selector. Their
+        // writer can create the namespace and append receipts only.
+        grants.push(doc! {"resource":{"db":database,"collection":retained_consents::COLLECTION},"actions":retained_consents::ACTIONS});
     }
     grants.push(doc! {"resource":{"db":database,"collection":""},"actions":["listCollections"]});
     doc! {"createRole":"cma_am_runtime","privileges":grants,"roles":[]}
@@ -307,6 +316,8 @@ fn validate_index_role(
                 action == "listCollections"
             } else if collection == super::provenance_progress::COLLECTION {
                 super::provenance_progress::ACTIONS.contains(&action)
+            } else if collection == retained_consents::COLLECTION {
+                retained_consents::ACTIONS.contains(&action)
             } else if migration_ledger && collection == MIGRATION_COLLECTION {
                 MIGRATION_ACTIONS.contains(&action)
             } else if metadata_collections.contains(&collection)
@@ -335,8 +346,19 @@ fn validate_index_role(
     {
         return Err(denied());
     }
+    if grants
+        .get(retained_consents::COLLECTION)
+        .is_some_and(|actions| {
+            !retained_consents::ACTIONS
+                .iter()
+                .all(|action| actions.contains(*action))
+        })
+    {
+        return Err(denied());
+    }
     if !COLLECTIONS.iter().all(|name| {
-        (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
+        *name == retained_consents::COLLECTION
+            || (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
             || ACTIONS
                 .iter()
                 .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
