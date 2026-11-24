@@ -64,13 +64,17 @@ pub(super) async fn apply_observed(
         // The segmented reader returns None exclusively for legacy roots.
         None => legacy_evidence(store, &agent, &agent_row, &command, session).await?,
     };
-    let retry_current = if evidence.has_source_deferred() {
+    let source_deferred = evidence.has_source_deferred();
+    let retry_current = if source_deferred {
         // The ledger fold can run anywhere. Only this branch writes the Agent,
         // so tell the scheduler when the durable evidence needs an owner.
         if store.agent_ownership.is_some()
             && layer2_core::agent_ownership::execution_owner().is_none()
         {
             return Err(CommandLedgerError::StaleClaim.into());
+        }
+        if !worker_apply::write_parent_fence(store, &agent, session).await? {
+            return Err(CommandLedgerError::Conflict.into());
         }
         store
             .fence_agent_effect(&agent.id, session)
@@ -95,6 +99,9 @@ pub(super) async fn apply_observed(
     let written =
         evidence.apply_with_continuation_retry(&mut command, &mut lane, &agent, retry_current)?;
     if written {
+        if !source_deferred && !worker_apply::fence_parent(store, Some(&agent), session).await? {
+            return Err(CommandLedgerError::Conflict.into());
+        }
         worker_apply::write(store, &command, revision, &lane, session).await?;
     }
     let outcome = if !written {
