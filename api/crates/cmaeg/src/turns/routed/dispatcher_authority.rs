@@ -136,8 +136,11 @@ pub(super) fn validate_current(
                     crate::whatsapp::legacy_source(source)
                         == crate::whatsapp::legacy_source(&plan.source)
                 } else if matches!(source, cmaeg_core::channel::Source::Telegram { .. }) {
+                    use crate::ingress::telegram::member_joins;
                     crate::telegram::messaging_source(source)
                         == crate::telegram::messaging_source(&plan.source)
+                        && (!member_joins::is_member_join(&plan.activity)
+                            || member_joins::group_opted_in(source, &plan.activity.conversation.id))
                 } else {
                     crate::native_lark::same_messaging_source(source, &plan.source)
                 }
