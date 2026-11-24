@@ -257,6 +257,7 @@ pub(super) fn default_config_sha256(
 ) -> Option<String> {
     provider?
         .plan(&NativePoolSpec {
+            cold_canary: false,
             image: image.clone(),
             cpu_millis: capacity.cpu_millis,
             memory_mib: capacity.memory_mib,
@@ -329,6 +330,7 @@ impl WarmPoolAdministration for NativeWarmPools {
             .ok_or(WarmPoolError::Unavailable)?;
         let plan = provider
             .plan(&NativePoolSpec {
+                cold_canary: false,
                 image: self.released_images().agent,
                 cpu_millis: body.cpu_millis,
                 memory_mib: body.memory_mib,
