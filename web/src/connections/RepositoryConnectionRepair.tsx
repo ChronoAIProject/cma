@@ -67,24 +67,7 @@ interface Props {
   readonly onRecheck: () => void;
 }
 
-export function RepositoryConnectionRepair(props: Props) {
-  return <RepositoryRepair key={JSON.stringify([props.owner, props.target])} {...props} />;
-}
-
-function RepositoryRepair({ target, owner, pending, onRecheck }: Props) {
-  const [result, setResult] = useState<{ readonly inventory?: Inventory }>();
-  useEffect(() => {
-    const controller = new AbortController();
-    void readRepositoryConnections(target, controller.signal).then(
-      (value) => {
-        if (!controller.signal.aborted) setResult({ inventory: inventory(value, owner) });
-      },
-      () => {
-        if (!controller.signal.aborted) setResult({});
-      },
-    );
-    return () => controller.abort();
-  }, [target, owner]);
+export function RepositoryConnectionRepair({ target, owner, pending, onRecheck }: Props) {
   return (
     <Alert
       tone="warning"
@@ -100,6 +83,33 @@ function RepositoryRepair({ target, owner, pending, onRecheck }: Props) {
         until CMA can verify the connection the Sandbox will use. A scope change in NyxID alone
         cannot verify that connection.
       </p>
+      <GitHubConnectionDetails owner={owner} target={target} />
+    </Alert>
+  );
+}
+
+type ConnectionDetailsProps = Pick<Props, 'target' | 'owner'>;
+
+export function GitHubConnectionDetails(props: ConnectionDetailsProps) {
+  return <ConnectionDetails key={JSON.stringify([props.owner, props.target])} {...props} />;
+}
+
+function ConnectionDetails({ target, owner }: ConnectionDetailsProps) {
+  const [result, setResult] = useState<{ readonly inventory?: Inventory }>();
+  useEffect(() => {
+    const controller = new AbortController();
+    void readRepositoryConnections(target, controller.signal).then(
+      (value) => {
+        if (!controller.signal.aborted) setResult({ inventory: inventory(value, owner) });
+      },
+      () => {
+        if (!controller.signal.aborted) setResult({});
+      },
+    );
+    return () => controller.abort();
+  }, [target, owner]);
+  return (
+    <>
       {result === undefined ? <p role="status">Looking up GitHub connections…</p> : null}
       {result?.inventory ? (
         <p>
@@ -114,10 +124,7 @@ function RepositoryRepair({ target, owner, pending, onRecheck }: Props) {
       ) : null}
       {result?.inventory?.connections?.length ? (
         <>
-          <p>
-            NyxID reports these connections. CMA could not verify which connection the Agent would
-            use.
-          </p>
+          <p>NyxID reports these connections. CMA has not verified the Agent’s connection.</p>
           <ul>
             {result.inventory.connections.map((row) => (
               <li key={row.id}>
@@ -134,6 +141,6 @@ function RepositoryRepair({ target, owner, pending, onRecheck }: Props) {
           </ul>
         </>
       ) : null}
-    </Alert>
+    </>
   );
 }

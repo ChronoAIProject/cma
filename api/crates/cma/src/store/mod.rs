@@ -55,6 +55,7 @@ mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
 pub(crate) mod stale_turns;
+pub(crate) mod transaction_barrier;
 #[cfg(test)]
 pub(crate) use agent_worker_transaction::adoption_probe;
 #[cfg(test)]
@@ -92,6 +93,7 @@ pub(crate) mod legal_consents;
 mod media_uploads;
 pub(crate) mod provenance_progress;
 pub(crate) mod registration_capacity;
+mod retained_consents;
 mod segment_response;
 mod transaction_scope;
 pub(crate) use segment_response::emit as emit_response_reads;
@@ -225,11 +227,12 @@ pub use admission_control::MongoAdmissionControlStore;
 #[cfg(test)]
 pub(crate) use agent_access_tools::fixtures as agent_access_fixtures;
 pub(crate) use agent_access_tools::MongoAgentAccessToolSource;
+pub(crate) use agent_lifecycle_operations::canary_key;
 #[cfg(test)]
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
-    CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput, LifecycleLease,
-    MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
+    CanaryProfiles, CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput,
+    LifecycleLease, MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
 };
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};

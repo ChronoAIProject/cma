@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { requiredPrefixes } from './mongo-contract-test-prefixes.mjs';
 import './mongo-contract-completeness.test.mjs';
@@ -309,6 +309,64 @@ for (const reuse of [false, true]) {
     }
   });
 }
+
+// Owner-approved merge-queue retry (.github/scripts/mongo_flaky_retry.py):
+// only an ordinary partition retries, only once, and only when the workflow's
+// merge-group policy step passed 1. Every other run, and every dedicated
+// mode, keeps zero retries whatever the nextest environment says.
+test('archive: only ordinary partitions retry once, and only when the merge-queue policy enables it', () => {
+  // '' is what a skipped policy step (every PR and push) passes; unset is
+  // every other suite here, which pins the complete argument lists.
+  for (const setting of ['', '0', '1']) {
+    const f = fixture('success', true);
+    try {
+      const reports = join(f.directory, 'flaky-reports');
+      const env = {...f.env, NEXTEST_RETRIES: '5', NEXTEST_FLAKY_RESULT: 'fail'};
+      delete env.CMA_MONGO_FLAKY_RETRIES;
+      delete env.CMA_MONGO_FLAKY_REPORT_DIR;
+      env.CMA_MONGO_FLAKY_RETRIES = setting;
+      if (setting === '1') { mkdirSync(reports); env.CMA_MONGO_FLAKY_REPORT_DIR = reports; }
+      execFileSync('bash', f.args, {env, timeout: runnerSetupTimeoutMs, stdio: 'pipe'});
+      const cargo = f.calls().filter(row => row.command === 'cargo' && row.args[1] === 'run');
+      assert.equal(cargo.length, isolatedTests.length + 2);
+      for (const row of cargo) {
+        assert.equal(row.retriesEnv, undefined, `${setting}: NEXTEST_RETRIES never reaches a run`);
+        assert.equal(row.flakyResultEnv, undefined, `${setting}: NEXTEST_FLAKY_RESULT never reaches a run`);
+        const partition = row.args.includes('--partition') ? row.args[row.args.indexOf('--partition') + 1] : null;
+        const stem = partition?.replace(/[:/]/g, '-');
+        const expected = setting === '1' && partition
+          ? ['--retries', '1', '--flaky-result', 'pass', '--tool-config-file', `cma-flaky-retry:${reports}/nextest-${stem}.toml`] : [];
+        const options = row.args.slice(row.args.indexOf(partition ? '--profile' : '--success-output') + 2, row.args.indexOf('--run-ignored'));
+        assert.deepEqual(options, expected, `${setting}: ${partition ?? 'isolated'} retry options`);
+        if (expected.length) {
+          assert.equal(readFileSync(join(reports, `nextest-${stem}.toml`), 'utf8'),
+            `[profile.mongo-ordinary.junit]\npath = "${reports}/junit-${stem}.xml"\n`, 'the tool config only sets the JUnit path');
+        }
+      }
+      assert.equal(cargo.filter(row => row.args.includes('--retries')).length, setting === '1' ? 2 : 0);
+    } finally { f.close(); }
+  }
+});
+
+test('archive: an invalid merge-queue retry setting fails before any listing or fixture', () => {
+  for (const [setting, directory] of [['2', null], ['true', null], ['1', null], ['1', 'relative/flaky'], ['1', '/nonexistent-cma-flaky-dir'], ['1', 'with space']]) {
+    const f = fixture('success', true);
+    try {
+      const env = {...f.env, CMA_MONGO_FLAKY_RETRIES: setting};
+      delete env.CMA_MONGO_FLAKY_REPORT_DIR;
+      if (directory === 'with space') { mkdirSync(join(f.directory, directory)); env.CMA_MONGO_FLAKY_REPORT_DIR = join(f.directory, directory); }
+      else if (directory !== null) env.CMA_MONGO_FLAKY_REPORT_DIR = directory;
+      assert.throws(() => execFileSync('bash', f.args, {env, timeout: 15000, stdio: 'pipe'}), error => error.status === 2,
+        `${setting} ${directory} must be refused`);
+      assert.equal(existsSync(f.log), false, 'nothing ran');
+    } finally { f.close(); }
+  }
+});
+
+test('no nextest profile configures retries, so only the merge-queue flag can', () => {
+  const config = readFileSync(new URL('../../api/.config/nextest.toml', import.meta.url), 'utf8');
+  assert.equal(config.split('\n').filter(line => /^\s*(retries|flaky-result)\s*=/.test(line)).length, 0);
+});
 
 registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, observationTest, fixturePredicate, ordinaryPredicate, qualificationPredicate});
 registerShardTests({fixture, scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest});

@@ -27,6 +27,7 @@ export function ServicePicker({
   const searchId = useId();
   const helpId = useId();
   const [query, setQuery] = useState('');
+  const searchTerm = query.trim().toLocaleLowerCase();
   const [reload, setReload] = useState(0);
   const [state, setState] = useState<{
     catalog: ServiceCatalogClient | undefined;
@@ -95,7 +96,7 @@ export function ServicePicker({
           .filter(
             (entry) => fixed.some((item) => item.id === entry.id) || !isCodexConnection(entry.id),
           )
-          .filter((entry) => entry.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+          .filter((entry) => entry.name.toLocaleLowerCase().includes(searchTerm))
           .map((entry) => (
             <li key={entry.id}>
               <label>

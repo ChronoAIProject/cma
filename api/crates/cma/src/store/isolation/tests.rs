@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "transaction_opening_tests.rs"]
+mod real_transaction_opening;
+
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn real_erasure_optional_authority_preserves_disabled_deployments() {
@@ -11,6 +14,71 @@ async fn real_erasure_optional_authority_preserves_disabled_deployments() {
 async fn real_allocation_buckets_activate_only_with_confined_namespace_grants() {
     super::allocation_tests::verify_runtime().await;
 }
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn real_transaction_barrier_is_authorized_by_the_exact_runtime_grant() {
+    use mongodb::{
+        bson::Document,
+        options::{ClientOptions, Credential},
+        Client,
+    };
+    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_barrier_grant_{}", uuid::Uuid::new_v4().simple());
+    let db = admin.database(&name);
+    db.run_command(role(&name)).await.unwrap();
+    let password = uuid::Uuid::new_v4().to_string();
+    db.run_command(doc! {"createUser":"barrier-runtime","pwd":&password,
+    "roles":[{"role":"cma_am_runtime","db":&name}]})
+        .await
+        .unwrap();
+    let (commands, mut observed) = tokio::sync::mpsc::unbounded_channel();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.credential = Some(
+        Credential::builder()
+            .username("barrier-runtime".to_owned())
+            .password(password)
+            .source(name.clone())
+            .build(),
+    );
+    options.command_event_handler = Some(mongodb::event::EventHandler::callback(move |event| {
+        if let mongodb::event::command::CommandEvent::Started(event) = event {
+            if event.command.get_bool("startTransaction").ok() == Some(true) {
+                let _ = commands.send(event);
+            }
+        }
+    }));
+    crate::store::transaction_barrier::bind(&mut options, &name);
+    let runtime = Client::with_options(options).unwrap();
+    let mut session = runtime.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .expect("the barrier must run under the exact runtime grant");
+    let opening = observed.try_recv().unwrap();
+    assert_eq!(opening.db, name);
+    assert_eq!(opening.command_name, "aggregate");
+    assert_eq!(opening.command.get_i32("aggregate").unwrap(), 1);
+    assert_eq!(
+        opening.command.get_array("pipeline").unwrap(),
+        doc! {"pipeline": [{"$documents": [doc! {}]}]}
+            .get_array("pipeline")
+            .unwrap()
+    );
+    session.commit_transaction().await.unwrap();
+    // The literal command grants no access to data in other databases.
+    let foreign = runtime.database(&format!("{name}_foreign"));
+    let error = foreign
+        .collection::<Document>("agents")
+        .find_one(doc! {})
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(c) if c.code == 13),
+        "an actual read must be refused outside the runtime grant"
+    );
+    db.drop().await.unwrap();
+}
+
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
@@ -470,4 +538,26 @@ async fn real_progress_grants_cannot_delete_receipts_or_access_another_service()
     }
     assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 1);
     db.drop().await.unwrap();
+}
+
+mod observation_grants_tests {
+    use super::*;
+    #[test]
+    fn observation_grants_are_optional_when_closed_and_required_when_enabled() {
+        let mut grants = role("cma").get_array("privileges").unwrap().clone();
+        let status = |grants| doc! {"authInfo": {"authenticatedUsers": [{"user": "manager", "db": "cma"}], "authenticatedUserPrivileges": grants}};
+        validate_observation_grants(&status(grants.clone()), "cma").unwrap();
+        grants.retain(|grant| {
+            grant
+                .as_document()
+                .unwrap()
+                .get_document("resource")
+                .unwrap()
+                .get_str("collection")
+                .unwrap()
+                != crate::store::agent_observation::COLLECTION
+        });
+        validate(&status(grants.clone()), "cma").unwrap();
+        assert!(validate_observation_grants(&status(grants), "cma").is_err());
+    }
 }

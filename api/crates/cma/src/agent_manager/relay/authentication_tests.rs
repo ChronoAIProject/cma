@@ -11,6 +11,68 @@ fn owner() -> OwnershipToken {
 }
 
 #[test]
+fn write_refusal_authenticates_only_the_exact_signed_hop() {
+    let authentication = Authentication::new(hmac::Key::new(
+        hmac::HMAC_SHA256,
+        b"synthetic-write-signing-key",
+    ));
+    let uri: Uri = "/api/v1/agents/agt-signing/files".parse().unwrap();
+    let make_hop = |owner: &OwnershipToken, body: &[u8]| {
+        authentication
+            .signed_headers(
+                "instance-sender",
+                owner,
+                &Method::POST,
+                &uri,
+                HeaderMap::new(),
+                body,
+            )
+            .unwrap()
+    };
+    let body = format!(
+        r#"{{"expected_sha256":"{}","content_base64":"aGk="}}"#,
+        "0".repeat(64)
+    );
+    let initial = make_hop(&owner(), body.as_bytes());
+    let proof = initial[PROOF].to_str().unwrap();
+    assert!(!authentication
+        .verify(proof, &Method::POST, &uri, &initial, body.as_bytes())
+        .unwrap()
+        .reports_file_write_handoff());
+    authentication.enable_file_write_handoff();
+    let hop = make_hop(&owner(), body.as_bytes());
+    let raw = hop[PROOF].as_bytes();
+    let verified = authentication
+        .verify(
+            hop[PROOF].to_str().unwrap(),
+            &Method::POST,
+            &uri,
+            &hop,
+            body.as_bytes(),
+        )
+        .unwrap();
+    assert!(verified.reports_file_write_handoff());
+    let expected = authentication.write_not_entered_verifier(raw);
+    let tag = authentication.write_not_entered_tag(raw);
+    let mut headers = HeaderMap::new();
+    headers.insert(file_write::NOT_ENTERED_HEADER, tag.clone());
+    assert!(expected.verify(&headers));
+    let mut next_owner = owner();
+    next_owner.epoch += 1;
+    for other in [
+        make_hop(&owner(), body.as_bytes()),
+        make_hop(&next_owner, body.as_bytes()),
+        make_hop(&owner(), body.replace("aGk=", "Ynll").as_bytes()),
+    ] {
+        assert!(!authentication
+            .write_not_entered_verifier(other[PROOF].as_bytes())
+            .verify(&headers));
+    }
+    headers.append(file_write::NOT_ENTERED_HEADER, tag);
+    assert!(!expected.verify(&headers));
+}
+
+#[test]
 fn signed_request_ids_match_the_receivers_normalized_view() {
     const CANONICAL: &str = "00000000-0000-4000-8000-0000000000b1";
     let authentication = Authentication::new(hmac::Key::new(
