@@ -25,7 +25,6 @@ const permissions: TreePermissions = {
 };
 const props = {
   scope: '',
-  choices: { options: [{ value: '', label: 'Personal' }], selected: undefined, unavailable: false },
   route: { kind: 'agent_manager' } as const,
   viewerId: 'navigation-viewer',
   permissions,
@@ -255,14 +254,6 @@ it('clears status and scope together and names the scope in the summary', async 
       {...props}
       client={{} as never}
       scope="shared"
-      choices={{
-        options: [
-          { value: '', label: 'Personal' },
-          { value: 'shared', label: 'Shared' },
-        ],
-        selected: undefined,
-        unavailable: false,
-      }}
       onScope={onScope}
       navigation={{ status: 'ready', items: navigationFixture(), refresh: vi.fn() }}
     />,

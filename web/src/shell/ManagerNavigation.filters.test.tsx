@@ -21,14 +21,6 @@ const items = ['provisioning', 'installing', 'retiring', 'retired'].map((status)
 });
 const props = {
   scope: '',
-  choices: {
-    options: [
-      { value: '', label: 'Personal' },
-      { value: 'shared', label: 'Shared' },
-    ],
-    selected: undefined,
-    unavailable: false,
-  },
   route: { kind: 'agent_manager' } as const,
   viewerId: 'filter-viewer',
   permissions: {
@@ -132,29 +124,46 @@ it('restores each view after returning, remounting and clearing without opening 
 
 it('keeps scope and viewer filters separate and resets the environment view on a viewer change', async () => {
   const user = userEvent.setup();
-  const view = render(<ManagerNavigation {...props} />);
+  const client = createClient({
+    baseUrl: 'https://fixture.invalid',
+    fetch: async (input) =>
+      Response.json({
+        items: new URL(String(input)).pathname.endsWith('/organizations')
+          ? [{ id: 'org_research', role: 'viewer', display_name: 'Research' }]
+          : [],
+      }),
+  });
+  const view = render(<ManagerNavigation {...props} client={client} />);
   await environments(user);
   await chooseOption(user, 'Sandbox status filter', 'Installing');
-  view.rerender(<ManagerNavigation {...props} scope="shared" />);
+  await chooseOption(user, 'Navigation scope', 'Shared');
   expect(screen.getByRole('button', { name: 'Sandbox status filter' })).toHaveTextContent(
     'All statuses',
   );
   await chooseOption(user, 'Sandbox status filter', 'Provisioning');
-  view.rerender(<ManagerNavigation {...props} scope="organization:research" />);
+  await chooseOption(user, 'Navigation scope', 'Research (Organization)');
   expect(screen.getByRole('button', { name: 'Sandbox status filter' })).toHaveTextContent(
     'All statuses',
   );
-  view.rerender(<ManagerNavigation {...props} scope="shared" />);
+  await chooseOption(user, 'Navigation scope', 'Shared');
   expect(screen.getByRole('button', { name: 'Sandbox status filter' })).toHaveTextContent(
     'Provisioning',
   );
-  view.rerender(<ManagerNavigation {...props} />);
+  await user.click(screen.getByRole('button', { name: 'Tasks' }));
+  await environments(user);
+  expect(screen.getByRole('button', { name: 'Navigation scope' })).toHaveTextContent('Shared');
+  expect(screen.getByRole('button', { name: 'Sandbox status filter' })).toHaveTextContent(
+    'Provisioning',
+  );
+  await chooseOption(user, 'Navigation scope', 'Personal');
   expect(screen.getByRole('button', { name: 'Sandbox status filter' })).toHaveTextContent(
     'Installing',
   );
-  view.rerender(<ManagerNavigation {...props} viewerId="another-viewer" />);
+  await chooseOption(user, 'Navigation scope', 'Shared');
+  view.rerender(<ManagerNavigation {...props} client={client} viewerId="another-viewer" />);
   expect(screen.getByRole('button', { name: 'Tasks' })).toHaveAttribute('aria-pressed', 'true');
   await environments(user);
+  expect(screen.getByRole('button', { name: 'Navigation scope' })).toHaveTextContent('Personal');
   expect(screen.getByRole('button', { name: 'Sandbox status filter' })).toHaveTextContent(
     'All statuses',
   );
@@ -182,11 +191,12 @@ it('discards a late shared inventory response from the previous viewer', async (
   let complete!: (value: Response) => void;
   const firstClient = createClient({
     baseUrl: 'https://fixture.invalid',
-    fetch: vi.fn(
-      () =>
-        new Promise<Response>((resolve) => {
-          complete = resolve;
-        }),
+    fetch: vi.fn((input) =>
+      new URL(String(input)).pathname === '/api/v1/sandboxes'
+        ? new Promise<Response>((resolve) => {
+            complete = resolve;
+          })
+        : Promise.resolve(Response.json({ items: [] })),
     ),
   });
   const secondClient = createClient({
@@ -196,11 +206,14 @@ it('discards a late shared inventory response from the previous viewer', async (
   const view = render(<ManagerNavigation {...props} client={firstClient} scope="shared" />);
   const user = userEvent.setup();
   await environments(user);
+  await chooseOption(user, 'Navigation scope', 'Shared');
   const finish = complete;
   view.rerender(
     <ManagerNavigation {...props} viewerId="another-viewer" client={secondClient} scope="shared" />,
   );
   await environments(user);
+  expect(screen.getByRole('button', { name: 'Navigation scope' })).toHaveTextContent('Personal');
+  await chooseOption(user, 'Navigation scope', 'Shared');
   await screen.findByText(/No shared Sandboxes on this page/);
   await act(async () =>
     finish(
