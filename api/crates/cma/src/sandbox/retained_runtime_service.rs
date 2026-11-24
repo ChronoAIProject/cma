@@ -138,6 +138,35 @@ impl RetainedRuntimeService {
             .map_err(|_| CanaryRefusal::Conflict)?;
         Ok(request)
     }
+
+    async fn fresh_redemption_policy(
+        &self,
+        owner: &SubjectId,
+        grant: &RetainedRuntimeGrant,
+    ) -> Result<RetainedRuntimeGrantPolicy<'_>, CanaryRefusal> {
+        let release = self
+            .release(owner, &grant.release_key)
+            .ok_or(CanaryRefusal::Closed)?;
+        let sandbox = self
+            .store
+            .get_sandbox(&grant.request.sandbox_id)
+            .await
+            .map_err(refusal)?
+            .filter(|sandbox| {
+                sandbox.owner == *owner && sandbox.revision == grant.request.expected_revision
+            })
+            .ok_or(CanaryRefusal::Conflict)?;
+        if self.observe_predecessor(&sandbox).await? != grant.request.predecessor {
+            return Err(CanaryRefusal::Conflict);
+        }
+        Ok(RetainedRuntimeGrantPolicy {
+            release_key: &release.release_key,
+            catalog_sha256: &self.catalog_sha256,
+            owner_scope_sha256: &self.scope_sha256,
+            target_image: &release.image.uri,
+            target_config_digest: &release.config_digest,
+        })
+    }
 }
 
 #[async_trait::async_trait]
@@ -259,37 +288,21 @@ impl RetainedRuntimeTransitions for RetainedRuntimeService {
             .read_retained_runtime_grant(owner, &redemption.grant_id)
             .await
             .map_err(refusal)?;
-        let current = if grant.receipt.is_some() {
-            None
+        let (current, preflight_error) = if grant.receipt.is_some() {
+            (None, None)
         } else {
-            let release = self
-                .release(owner, &grant.release_key)
-                .ok_or(CanaryRefusal::Closed)?;
-            let sandbox = self
-                .store
-                .get_sandbox(&grant.request.sandbox_id)
-                .await
-                .map_err(refusal)?
-                .filter(|sandbox| {
-                    sandbox.owner == *owner && sandbox.revision == grant.request.expected_revision
-                })
-                .ok_or(CanaryRefusal::Conflict)?;
-            if self.observe_predecessor(&sandbox).await? != grant.request.predecessor {
-                return Err(CanaryRefusal::Conflict);
+            match self.fresh_redemption_policy(owner, &grant).await {
+                Ok(policy) => (Some(policy), None),
+                Err(error) => (None, Some(error)),
             }
-            Some(RetainedRuntimeGrantPolicy {
-                release_key: &release.release_key,
-                catalog_sha256: &self.catalog_sha256,
-                owner_scope_sha256: &self.scope_sha256,
-                target_image: &release.image.uri,
-                target_config_digest: &release.config_digest,
-            })
         };
+        // Without fresh policy the store can only read back an exact committed
+        // receipt. A concurrent redemption can win after the initial grant read.
         let receipt = self
             .store
             .redeem_retained_runtime_grant(&self.database, grant.request, current)
             .await
-            .map_err(refusal)?;
+            .map_err(|error| preflight_error.unwrap_or_else(|| refusal(error)))?;
         Ok(RetainedRuntimeReceipt {
             operation_id: receipt.operation_id,
             successor_generation: receipt.successor_generation,

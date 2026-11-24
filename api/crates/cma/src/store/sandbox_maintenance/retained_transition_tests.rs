@@ -4,6 +4,7 @@ use crate::store::sandbox_maintenance::mongo_integration_tests::{active_sandbox,
 use crate::store::sandbox_unpublished_recovery::mongo_integration_tests::home;
 use layer2_core::sandbox::{SandboxWorkState, SandboxWorkStep};
 use layer3_adapter::RetainedStartupPolicyPredecessor;
+use mongodb::bson::Bson;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
@@ -112,6 +113,16 @@ async fn retained_runtime_grant_same_image_reserves_once_and_replays_after_polic
     let before = store.get_sandbox(&sandbox.id).await.unwrap().unwrap();
     assert_eq!(before, sandbox);
 
+    for hold in [Bson::Document(doc! {"phase": "requested"}), Bson::Null] {
+        let before = held_rows(&store, &sandbox, hold).await;
+        assert!(store
+            .redeem_retained_runtime_grant(&db, request.clone(), Some(fresh()))
+            .await
+            .is_err());
+        assert_eq!(rows(&store, &sandbox).await, before);
+    }
+    clear_hold(&store, &sandbox).await;
+
     let (left, right) = tokio::join!(
         store.redeem_retained_runtime_grant(&db, request.clone(), Some(fresh())),
         store.redeem_retained_runtime_grant(&db, request.clone(), Some(fresh())),
@@ -157,6 +168,23 @@ async fn retained_runtime_grant_same_image_reserves_once_and_replays_after_polic
         Some(admitted)
     );
 
+    for hold in [Bson::Document(doc! {"phase": "requested"}), Bson::Null] {
+        let before = held_rows(&store, &sandbox, hold).await;
+        assert!(store
+            .abort_retained_runtime_grant(&db, &sandbox.owner, &grant.request.grant_id)
+            .await
+            .is_err());
+        assert_eq!(
+            store
+                .redeem_retained_runtime_grant(&db, grant.request.clone(), None)
+                .await
+                .unwrap(),
+            receipt
+        );
+        assert_eq!(rows(&store, &sandbox).await, before);
+    }
+    clear_hold(&store, &sandbox).await;
+
     assert!(store
         .abort_retained_runtime_grant(&db, &foreign.owner, &grant.request.grant_id)
         .await
@@ -194,4 +222,40 @@ async fn retained_runtime_grant_same_image_reserves_once_and_replays_after_polic
     );
     assert_eq!(store.get_sandbox(&sandbox.id).await.unwrap(), Some(aborted));
     db.drop().await.unwrap();
+}
+
+async fn rows(store: &MongoSandboxStore, sandbox: &Sandbox) -> (bson::Document, bson::Document) {
+    let aggregate = store.sandboxes.find_one(doc! {"_id": sandbox.id.as_str()});
+    let grants = store
+        .sandbox_admissions
+        .find_one(doc! {"_id": sandbox.owner.as_str()});
+    let (aggregate, grants) = tokio::join!(async { aggregate.await }, async { grants.await });
+    (aggregate.unwrap().unwrap(), grants.unwrap().unwrap())
+}
+
+async fn held_rows(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+    hold: Bson,
+) -> (bson::Document, bson::Document) {
+    store
+        .sandboxes
+        .update_one(
+            doc! {"_id": sandbox.id.as_str()},
+            doc! {"$set": {"ledger_maintenance": hold}},
+        )
+        .await
+        .unwrap();
+    rows(store, sandbox).await
+}
+
+async fn clear_hold(store: &MongoSandboxStore, sandbox: &Sandbox) {
+    store
+        .sandboxes
+        .update_one(
+            doc! {"_id": sandbox.id.as_str()},
+            doc! {"$unset": {"ledger_maintenance": 1}},
+        )
+        .await
+        .unwrap();
 }

@@ -366,6 +366,14 @@ pub(super) async fn apply_with_sources(
         "last_seq": signed(last_seq, "sandbox maintenance event sequence")
             .map_err(|_| ApplyError::Domain(SandboxStoreError::SequenceConflict))?,
     };
+    if matches!(
+        request,
+        MaintenanceRequest::RetainedTransition { .. }
+            | MaintenanceRequest::RetainedTransitionAbort { .. }
+    ) {
+        revision_filter =
+            crate::store::work_claim_authority::without_ledger_maintenance(revision_filter);
+    }
     if desktop_activity_fence == 0 {
         revision_filter.insert(
             "$or",
