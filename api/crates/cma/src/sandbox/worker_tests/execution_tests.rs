@@ -70,6 +70,7 @@ async fn pending_install_replays_the_persisted_policy_after_deployment_changes()
             .store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision: current.revision,
                 sandbox: Box::new(changed),
                 event_at: rfc3339_at(now),

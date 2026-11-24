@@ -89,6 +89,7 @@ async fn prepare_step_inner(
                         revision: 0,
                         agent: record.plan.runtime_version.clone(),
                         machine: None,
+                        lane_revisions: None,
                     },
                 );
                 let home = super::home_native::reserve(adapter, &request, home).await?;

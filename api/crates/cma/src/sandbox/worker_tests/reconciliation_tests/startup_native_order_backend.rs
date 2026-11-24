@@ -161,6 +161,19 @@ impl HomeVolumeStore for Homes {
         self.inner.inventory().await
     }
     async fn verify(&self, home: &HomeVolumeAttachment) -> layer3_adapter::Result<()> {
+        if self
+            .control
+            .hold_next_home_check
+            .swap(false, Ordering::SeqCst)
+        {
+            self.control.home_check_entered.notify_one();
+            self.control
+                .home_check_gate
+                .acquire()
+                .await
+                .unwrap()
+                .forget();
+        }
         self.inner.verify(home).await
     }
     async fn prepare(&self, _: &HomeVolumeRequest) -> layer3_adapter::Result<HomeVolumeReceipt> {

@@ -61,6 +61,7 @@ pub(crate) struct RuntimeConfig {
     /// desktop machine. Keeping this separate from the default image prevents
     /// ordinary Agent creation from silently changing its runtime.
     pub machine_sandbox_image: Option<String>,
+    pub runtime_pointer: Option<crate::runtime_pointer::RuntimePointerConfig>,
     pub(crate) runtime_canary_releases: canary::Catalog,
     pub(crate) runtime_canary_writes: canary::WriteScope,
     pub sandbox_namespace: String,
@@ -276,6 +277,13 @@ impl RuntimeConfig {
         }
 
         let legacy_receiver_image = super::agent_sandbox::legacy_receiver_image(lookup)?;
+        let runtime_pointer = crate::runtime_pointer::RuntimePointerConfig::from_lookup(
+            lookup,
+            machine_sandbox_image.is_some(),
+        )?;
+        if runtime_pointer.is_some() && (!allocate_agent_sandbox || agent_sandbox.is_none()) {
+            return Err("runtime pointer following requires native allocation".into());
+        }
         if legacy_receiver_image.is_some()
             && (agent_sandbox.is_none()
                 || agent_sandbox_runtime_transport
@@ -302,6 +310,7 @@ impl RuntimeConfig {
             sandbox_api_key,
             sandbox_image,
             machine_sandbox_image,
+            runtime_pointer,
             runtime_canary_releases,
             runtime_canary_writes,
             sandbox_namespace,

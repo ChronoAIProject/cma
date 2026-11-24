@@ -13,14 +13,6 @@ impl InlineAgentLifecycle {
         self
     }
 
-    /// The machine image admitted now; it is recorded with the operation.
-    pub(super) fn released_machine_image(&self) -> Option<String> {
-        match self.released.get() {
-            Some(released) => released.snapshot().machine,
-            None => self.machine_sandbox_image.clone(),
-        }
-    }
-
     pub(crate) fn with_task_experience(
         self: Arc<Self>,
         policy: Arc<TaskExperiencePolicy>,

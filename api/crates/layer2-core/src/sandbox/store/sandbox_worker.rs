@@ -34,6 +34,14 @@ pub trait SandboxWorkerStore: Send + Sync {
         Ok(None)
     }
 
+    /// Release authority already committed with this Sandbox's creation operation.
+    async fn admitted_runtime_release(
+        &self,
+        _sandbox: &Sandbox,
+    ) -> Result<Option<layer3_adapter::ReleasedRuntime>, SandboxStoreError> {
+        Ok(None)
+    }
+
     async fn due_sandbox_work(
         &self,
         now: &str,

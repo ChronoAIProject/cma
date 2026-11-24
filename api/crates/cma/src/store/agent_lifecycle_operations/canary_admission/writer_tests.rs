@@ -429,3 +429,46 @@ async fn canary_grant_issuance_and_replacement_use_the_database_clock() {
     assert_eq!(store.operations.count_documents(doc! {}).await.unwrap(), 0);
     database.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn desktop_canary_on_released_image_does_not_keep_the_ordinary_pool_active() {
+    use super::super::released::protects_pool;
+
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let client = Client::with_uri_str(uri).await.unwrap();
+    let database = client.database(&format!(
+        "cma_canary_pool_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let owner = SubjectId::new("canary-pool-fixture");
+    let store = MongoAgentLifecycleStore::open(&database).await.unwrap();
+    let descriptor = release('1', "desktop");
+    let mut issue = issue(&owner, descriptor.clone(), 1, 0);
+    let fresh = issue.fresh.as_mut().unwrap();
+    fresh.lane = CanaryLane::DebianDesktop;
+    CanaryPolicy::configure(
+        &database,
+        0,
+        true,
+        fresh.catalog_sha256.clone(),
+        fresh.owner_scope_sha256.clone(),
+    )
+    .await
+    .unwrap();
+    let grant = store.issue_canary_grant(&database, &issue).await.unwrap();
+    let request = redeem(&issue, &grant, "desktop");
+    let mut ordinary = request.input.clone();
+    ordinary.request.desktop = true;
+    ordinary.resolved_image = Some(descriptor.image.uri.clone());
+
+    store.redeem_canary(&database, request).await.unwrap();
+    assert!(!protects_pool(&database, false, &descriptor.image.uri)
+        .await
+        .unwrap());
+    store.create(&owner, "ordinary", ordinary).await.unwrap();
+    assert!(protects_pool(&database, false, &descriptor.image.uri)
+        .await
+        .unwrap());
+    database.drop().await.unwrap();
+}
