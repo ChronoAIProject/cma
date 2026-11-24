@@ -10,7 +10,7 @@ import type { OperatorClient } from './client';
 import { FailureNotice, RecordControls, Timestamp, stateWord, useRecords } from './records';
 
 const COLUMNS = [
-  { header: 'Time (SGT)', sort: 'descending' },
+  { header: 'Time (SGT)' },
   { header: 'Actor' },
   { header: 'Action' },
   { header: 'Target' },
@@ -70,6 +70,7 @@ export function Activity({ client }: { readonly client: OperatorClient }) {
   return (
     <section aria-label="Operator activity">
       <h2>Activity</h2>
+      <p>Newest recorded first.</p>
       <form
         className="operator-filters"
         onSubmit={(event) => {

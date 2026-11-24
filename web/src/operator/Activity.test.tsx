@@ -46,10 +46,7 @@ describe('Activity summary pages', () => {
     expect(times.map((time) => time.title)).toEqual([latest, latest, earlier]);
     expect(times[0]).toHaveTextContent('10:18:29');
     expect(times[2]).toHaveTextContent('10:18:03');
-    expect(screen.getByRole('columnheader', { name: 'Time (SGT)' })).toHaveAttribute(
-      'aria-sort',
-      'descending',
-    );
+    expect(screen.getByText('Newest recorded first.')).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Refresh records' }));
     await waitFor(() => expect(screen.getByRole('table')).not.toHaveAttribute('aria-busy'));
     expect(
