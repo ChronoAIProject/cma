@@ -4,17 +4,6 @@ on:
     branches:
       - "develop"
       - "tl/release/**"
-  pull_request:
-    branches:
-      - "develop"
-      - "main"
-    types:
-      - "opened"
-      - "reopened"
-      - "synchronize"
-      - "edited"
-      - "labeled"
-      - "unlabeled"
   # Required checks must also report on the develop merge queue's group refs.
   # Each entry's ref is unique, so a PR or push run never cancels it.
   merge_group:

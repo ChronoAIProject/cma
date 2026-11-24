@@ -26,6 +26,59 @@ function pending() {
 }
 
 describe('Activity summary pages', () => {
+  it('finds an older actor on the server before paging and keeps the selection on refresh', async () => {
+    const client = operatorClient();
+    client.admin.searchActivityActors.mockResolvedValue([
+      { subject: 'historical-actor', display_name: 'Historical actor' },
+    ]);
+    client.admin.listActivitySummary
+      .mockResolvedValueOnce({ items: [row('newest')], next: '123:act_next' })
+      .mockResolvedValue({
+        items: [
+          {
+            ...row('historical record'),
+            actor: 'historical-actor',
+            actor_name: 'Historical actor',
+          },
+        ],
+        next: null,
+      });
+    const user = userEvent.setup();
+    render(<Activity client={client} canSearchActors />);
+    await screen.findByText('newest');
+    await user.type(screen.getByRole('searchbox', { name: 'Find actor by name or ID' }), 'history');
+    await waitFor(() =>
+      expect(client.admin.searchActivityActors).toHaveBeenCalledWith('history', expect.anything()),
+    );
+    await chooseOptionValue(user, screen.getByLabelText('Activity actor'), 'historical-actor');
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+    await screen.findByText('historical record');
+    expect(client.admin.listActivitySummary).toHaveBeenCalledTimes(2);
+    expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: undefined, actor: 'historical-actor' }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Refresh records' }));
+    await waitFor(() => expect(client.admin.listActivitySummary).toHaveBeenCalledTimes(3));
+    expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: undefined, actor: 'historical-actor' }),
+    );
+  });
+
+  it('looks up a known actor ID with Activity permission alone', async () => {
+    const client = operatorClient();
+    const user = userEvent.setup();
+    render(<Activity client={client} />);
+    await user.type(screen.getByRole('searchbox', { name: 'Find actor by ID' }), 'known-id');
+    await chooseOptionValue(user, screen.getByLabelText('Activity actor'), 'known-id');
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+    await waitFor(() =>
+      expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cursor: undefined, actor: 'known-id' }),
+      ),
+    );
+    expect(client.admin.searchActivityActors).not.toHaveBeenCalled();
+  });
+
   it('shows seconds and preserves the API order for tied timestamps on refresh', async () => {
     const client = operatorClient();
     const latest = '2026-11-24T02:18:29.123Z';
