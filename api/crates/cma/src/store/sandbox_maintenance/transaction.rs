@@ -233,7 +233,7 @@ async fn apply_with_sources(
                     &request.requested_at,
                     request.pause_after_seconds,
                 )
-                && super::evidence::agentless_commands_clear(store, &agents, session).await?;
+                && super::evidence::agent_commands_clear(store, &agents, session).await?;
             apply_proved_inactivity_pause(&current, &activities, request, agentless_idle)
         }
         MaintenanceRequest::Rotation(request) => apply_image_rotation(&current, &agents, request),
