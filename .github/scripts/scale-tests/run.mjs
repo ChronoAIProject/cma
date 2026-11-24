@@ -3,9 +3,9 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { check, safeFailure } from './lib/checks.mjs';
 import { pinnedModule, validateConfig, guardedFetch } from './lib/safety.mjs';
-import { selections, selectedScenarioNames, saveReport, saveSamples } from './lib/report.mjs';
+import { selections, selectedScenarioNames, saveReport, saveSamples, sw04Scenario, sw04Selection } from './lib/report.mjs';
 import { runSuite } from './lib/suite.mjs';
-import { runSw04Fixture, sw04Scenario, sw04Selection } from './lib/sw04-cancel.mjs';
+import { runSw04Fixture } from './lib/sw04-cancel.mjs';
 
 const args = process.argv.slice(2);
 let output = resolve('results', new Date().toISOString().replaceAll(':', '-'));
@@ -50,6 +50,7 @@ try {
     selection: scoped || selections.includes(scenario) ? scenario : 'all',
     started_at: new Date().toISOString(), scenarios: (scoped ? [sw04Scenario] : selectedScenarioNames(scenario)).map((scenario) => ({ scenario,
       status: 'BLOCKED', code: failure.code })) };
+  if (scoped) report.track_status = 'INCOMPLETE';
   await saveReport(output, report);
   console.error(`BLOCKED: ${failure.code}; evidence=${output}`);
   process.exitCode = 2;

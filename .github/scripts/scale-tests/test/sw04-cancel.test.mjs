@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { hash, isHash } from '../lib/checks.mjs';
 import { runSw04Fixture } from '../lib/sw04-cancel.mjs';
 
@@ -36,6 +41,25 @@ test('SW04 reconciles the process, receipt and runtime observations in the fixtu
   assert.equal(result.evidence.additional_replay_effects, 0);
   assert(isHash(result.evidence_hash));
   assert(!JSON.stringify(report).includes(value.unexpected));
+});
+
+test('SW04 CLI saves a passing fixture with incomplete scale qualification in both reports', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'cma-sw04-report-'));
+  t.after(() => rm(directory, { recursive: true }));
+  const observations = join(directory, 'fixture.log');
+  await writeFile(observations, frame(observation()) + '\n');
+  const run = fileURLToPath(new URL('../run.mjs', import.meta.url));
+  const output = execFileSync(process.execPath, [run, '--scenario', 'sw04-cancel',
+    '--observations', observations, '--out', directory], { encoding: 'utf8' });
+  assert.match(output, /SW04 Cancel PASS/);
+  const report = JSON.parse(await readFile(join(directory, 'results.json'), 'utf8'));
+  assert.equal(report.scenarios[0].status, 'PASS');
+  assert.equal(report.status, 'NO_GO');
+  assert.equal(report.track_status, 'INCOMPLETE');
+  const markdown = await readFile(join(directory, 'RESULTS.md'), 'utf8');
+  assert.match(markdown, /^SW04 Cancel fixture: \*\*PASS\*\*\./m);
+  assert.match(markdown, /^Overall scale qualification: \*\*INCOMPLETE\*\*\./m);
+  assert.doesNotMatch(markdown, /^Overall: \*\*PASS\*\*/m);
 });
 
 const failures = [

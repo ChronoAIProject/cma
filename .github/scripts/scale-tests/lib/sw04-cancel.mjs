@@ -1,8 +1,6 @@
 import { check, safeFailure } from './checks.mjs';
+import { sw04Scenario, sw04Selection } from './report.mjs';
 import { sw04Cancel } from '../scenarios/correctness.mjs';
-
-export const sw04Selection = 'sw04-cancel';
-export const sw04Scenario = 'sw04_cancel';
 
 export function verifySw04Fixture(log) {
   const frames = [...log.matchAll(/^(?:test \S+ \.\.\. )?SW04_CANCEL_OBSERVATION=(.*)$/gm)];
