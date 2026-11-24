@@ -21,6 +21,8 @@ const MAX_AGENT_SLOTS: usize = 16;
 
 #[path = "supervisor_agent.rs"]
 mod agent;
+#[path = "supervisor_agent_process.rs"]
+mod agent_process;
 #[path = "supervisor_agent_recovery.rs"]
 mod agent_recovery;
 #[path = "supervisor_agent_resources.rs"]

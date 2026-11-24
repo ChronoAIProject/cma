@@ -25,6 +25,90 @@ pub(crate) struct GitHubConnections {
     manage_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     connections: Option<Vec<GitHubConnection>>,
+    #[serde(skip)]
+    binding: Binding,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GitHubRepositoryNeed {
+    PublicRepositoryWrite,
+    PrivateRepositoryRead,
+}
+
+impl GitHubRepositoryNeed {
+    fn required_scope(self) -> &'static str {
+        match self {
+            Self::PublicRepositoryWrite => "public_repo",
+            Self::PrivateRepositoryRead => "repo",
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(crate) enum GitHubScopeCheck {
+    ScopeSatisfied {
+        connection_id: String,
+    },
+    InsufficientScope {
+        connection_id: String,
+        required_scope: &'static str,
+        manage_url: String,
+    },
+    MissingConnection,
+    VerificationUnavailable,
+}
+
+enum Binding {
+    Exact(String),
+    Missing,
+    Unverified,
+}
+
+impl GitHubConnections {
+    pub(crate) fn scope_check(&self, need: GitHubRepositoryNeed) -> GitHubScopeCheck {
+        let id = match &self.binding {
+            Binding::Exact(id) => id,
+            Binding::Missing => return GitHubScopeCheck::MissingConnection,
+            Binding::Unverified => return GitHubScopeCheck::VerificationUnavailable,
+        };
+        let Some(connection) = self
+            .connections
+            .as_ref()
+            .and_then(|connections| connections.iter().find(|connection| &connection.id == id))
+        else {
+            return GitHubScopeCheck::VerificationUnavailable;
+        };
+        let Some(scopes) = &connection.granted_scopes else {
+            return GitHubScopeCheck::VerificationUnavailable;
+        };
+        if !connection.active_oauth
+            || scopes.iter().any(|scope| {
+                scope.is_empty()
+                    || !scope.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'-')
+                    })
+            })
+        {
+            return GitHubScopeCheck::VerificationUnavailable;
+        }
+        let required = need.required_scope();
+        if scopes
+            .iter()
+            .any(|scope| scope == "repo" || scope == required)
+        {
+            GitHubScopeCheck::ScopeSatisfied {
+                connection_id: id.clone(),
+            }
+        } else {
+            GitHubScopeCheck::InsufficientScope {
+                connection_id: id.clone(),
+                required_scope: required,
+                manage_url: connection.manage_url.clone(),
+            }
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -33,6 +117,8 @@ struct GitHubConnection {
     label: String,
     granted_scopes: Option<Vec<String>>,
     manage_url: String,
+    #[serde(skip)]
+    active_oauth: bool,
 }
 
 #[derive(Deserialize)]
@@ -53,6 +139,10 @@ struct KeyDetail {
     catalog_service_id: Option<String>,
     label: String,
     granted_scopes: Option<Vec<String>>,
+    credential_type: Option<String>,
+    is_active: Option<bool>,
+    status: Option<String>,
+    connection_status: Option<String>,
 }
 
 impl NyxidServiceConnectionBroker {
@@ -71,16 +161,17 @@ impl NyxidServiceConnectionBroker {
             }
             _ => None,
         };
-        let connections = match connections {
-            Some(Ok(connections)) => Some(connections),
+        let (binding, connections) = match connections {
+            Some(Ok((binding, connections))) => (binding, Some(connections)),
             _ => {
                 tracing::debug!("Owner GitHub connection inventory could not be verified");
-                None
+                (Binding::Unverified, None)
             }
         };
         GitHubConnections {
             manage_url: manage_url.to_string(),
             connections,
+            binding,
         }
     }
 
@@ -88,9 +179,10 @@ impl NyxidServiceConnectionBroker {
         &self,
         credential: &SecretValue,
         deadline: Instant,
-    ) -> Result<Vec<GitHubConnection>, ServiceConnectionError> {
+    ) -> Result<(Binding, Vec<GitHubConnection>), ServiceConnectionError> {
         let (catalog_id, rows) = self.github_source(credential, deadline).await?;
         let catalog_id = &catalog_id;
+        let binding = default_binding(&rows, catalog_id);
         let choices = rows
             .iter()
             .filter(|row| row.is_allowed() && row.catalog_service_id.as_ref() == Some(catalog_id))
@@ -117,7 +209,7 @@ impl NyxidServiceConnectionBroker {
             .await;
         let mut connections = results.into_iter().collect::<Result<Vec<_>, _>>()?;
         connections.sort_by(|a, b| a.id.cmp(&b.id));
-        Ok(connections)
+        Ok((binding, connections))
     }
 
     async fn github_source(
@@ -254,7 +346,26 @@ impl NyxidServiceConnectionBroker {
             label: detail.label,
             granted_scopes: detail.granted_scopes,
             manage_url: manage_url.to_string(),
+            active_oauth: detail.is_active == Some(true)
+                && detail.credential_type.as_deref() == Some("oauth2")
+                && detail.status.as_deref() == Some("active")
+                && detail.connection_status.as_deref() == Some("active"),
         })
+    }
+}
+
+fn default_binding(rows: &[protocol::UserServiceRow], catalog_id: &str) -> Binding {
+    let matches = protocol::matching_services(&ServiceId::new(GITHUB_SERVICE), rows);
+    match matches.as_slice() {
+        [] => Binding::Missing,
+        [row] if row.is_allowed() && row.catalog_service_id.as_deref() == Some(catalog_id) => {
+            match row.is_active {
+                Some(true) => Binding::Exact(row.id.clone()),
+                Some(false) => Binding::Missing,
+                None => Binding::Unverified,
+            }
+        }
+        _ => Binding::Unverified,
     }
 }
 

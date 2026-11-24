@@ -83,6 +83,31 @@
       "captures": {}
     },
     {
+      "id": "admin-activity-actors-unavailable",
+      "operation": "GET /api/v1/admin/activity/actors",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/activity/actors?q=sam",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-service-unavailable",
+          "title": "operator service unavailable",
+          "status": 503,
+          "detail": "An operator dependency could not complete this request.",
+          "code": "operator_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "dependency-get-api-v1-admin-activity",
       "operation": "GET /api/v1/admin/activity",
       "scenario": "settings_dependency_unavailable",
