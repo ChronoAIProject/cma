@@ -152,7 +152,7 @@ where
         let key = std::str::from_utf8(bytes)
             .map_err(|_| IdempotencyProblem::Invalid)?
             .to_owned();
-        if key.starts_with(super::creation_outcomes::KEY_PREFIX)
+        if super::creation_outcomes::is_covered_key(&key)
             && (parts.method != axum::http::Method::POST
                 || !matches!(parts.uri.path(), "/api/v1/sandboxes" | "/api/v1/agents")
                 || parts.uri.query().is_some()

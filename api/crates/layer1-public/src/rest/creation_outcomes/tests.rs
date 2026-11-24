@@ -51,3 +51,33 @@ fn wire_and_proof_vectors_keep_utf8_lengths_and_exact_json_spelling() {
         Err(IdentityError::Mismatch)
     ));
 }
+
+#[test]
+fn covered_key_classification_is_independent_of_the_request_binding() {
+    let owner = SubjectId::new("owner");
+    let deployment = "d".repeat(64);
+    let digest = wire_digest(b"{}");
+    let opaque = Identity {
+        owner: &owner,
+        deployment: &deployment,
+        operation: Operation::AgentBootstrap,
+        key: "cma1.retry-17",
+        algorithm: Algorithm::NyxidWire,
+        wire_digest: &digest,
+    };
+    assert!(!is_covered_key(opaque.key));
+    assert!(opaque.period().unwrap().is_none());
+
+    let key = format!(
+        "cma1.{}.20000.{}.{}",
+        "a".repeat(32),
+        "b".repeat(32),
+        "c".repeat(64)
+    );
+    let covered = Identity {
+        key: &key,
+        ..opaque
+    };
+    assert!(is_covered_key(covered.key));
+    assert!(matches!(covered.period(), Err(IdentityError::Mismatch)));
+}

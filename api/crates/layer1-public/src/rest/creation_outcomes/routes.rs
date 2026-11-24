@@ -163,7 +163,7 @@ pub(in crate::rest) async fn begin_submission(
     let Some(digest) = digest else {
         return Err(problem(StatusCode::BAD_REQUEST));
     };
-    let versioned = key.starts_with(KEY_PREFIX);
+    let versioned = is_covered_key(key);
     let (fence, replay_operation_id) = if versioned {
         let identity = Identity {
             owner: &caller.subject,

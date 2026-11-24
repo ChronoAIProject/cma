@@ -234,7 +234,7 @@ impl MongoAgentLifecycleStore {
         input: LifecycleInput,
         submission: Option<layer1_public::rest::creation_outcomes::Submission>,
     ) -> Result<CreateResult, LifecycleCreateError> {
-        use layer1_public::rest::creation_outcomes::KEY_PREFIX;
+        use layer1_public::rest::creation_outcomes::is_covered_key;
         let (creation_wire, creation_fence) = match submission {
             Some(submission) => (
                 Some(CreationWire {
@@ -245,7 +245,7 @@ impl MongoAgentLifecycleStore {
             ),
             None => (None, None),
         };
-        if key.starts_with(KEY_PREFIX) != creation_fence.is_some() {
+        if is_covered_key(key) != creation_fence.is_some() {
             return Err(StoreError::Malformed(
                 "creation submission fence missing or unsupported".into(),
             )

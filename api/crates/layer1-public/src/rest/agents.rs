@@ -164,15 +164,17 @@ pub(crate) async fn create_lifecycle(
         .into_response();
     }
     use super::creation_outcomes::{
+        is_covered_key,
         routes::{begin_submission, problem},
-        Operation, RefusalCode, KEY_PREFIX,
+        Operation, RefusalCode,
     };
     let backend = creation.as_ref().map(|Extension(backend)| backend.as_ref());
     let new_sandbox = request.sandbox_id.is_none() && request.workspace_id.is_none();
-    if key.starts_with(KEY_PREFIX) && !new_sandbox {
+    let covered = is_covered_key(&key);
+    if covered && !new_sandbox {
         return problem(StatusCode::BAD_REQUEST);
     }
-    if key.starts_with(KEY_PREFIX) && !caller.authorization.allows(Capability::CreateSandbox) {
+    if covered && !caller.authorization.allows(Capability::CreateSandbox) {
         return problem(StatusCode::FORBIDDEN);
     }
     let submission = if new_sandbox {

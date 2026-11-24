@@ -9,7 +9,7 @@ pub(super) mod routes;
 pub use routes::{problem, router, AuthorizedLookup, Backend, Begin, Submission};
 
 pub const LOOKUP_PATH: &str = "/api/v1/sandbox-creation-outcomes/lookup";
-pub const KEY_PREFIX: &str = "cma1.";
+const KEY_PREFIX: &str = "cma1.";
 pub const MAX_LOOKUP_BYTES: usize = 2048;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, ToSchema)]
@@ -122,31 +122,59 @@ impl LookupRequest {
     }
 }
 
-impl Identity<'_> {
-    pub fn period(&self) -> Result<Option<KeyPeriod<'_>>, IdentityError> {
-        let Some(encoded) = self.key.strip_prefix(KEY_PREFIX) else {
-            return Ok(None);
-        };
-        let mut parts = encoded.split('.');
-        let (Some(epoch), Some(day), Some(nonce), Some(binding), None) = (
-            parts.next(),
-            parts.next(),
-            parts.next(),
-            parts.next(),
-            parts.next(),
-        ) else {
-            return Err(IdentityError::Invalid);
-        };
+struct CoveredKey<'a> {
+    epoch: &'a str,
+    day: &'a str,
+    day_number: u32,
+    nonce: &'a str,
+    binding: &'a str,
+}
+
+impl<'a> CoveredKey<'a> {
+    fn parse(key: &'a str) -> Option<Self> {
+        let mut parts = key.strip_prefix(KEY_PREFIX)?.split('.');
+        let epoch = parts.next()?;
+        let day = parts.next()?;
+        let nonce = parts.next()?;
+        let binding = parts.next()?;
         let day_number = day
             .parse::<u32>()
             .ok()
-            .filter(|value| value.to_string() == day);
-        let Some(day_number) = day_number else {
-            return Err(IdentityError::Invalid);
-        };
-        if !lower_hex(epoch, 32) || !lower_hex(nonce, 32) || !lower_hex(binding, 64) {
-            return Err(IdentityError::Invalid);
+            .filter(|value| value.to_string() == day)?;
+        if parts.next().is_some()
+            || !lower_hex(epoch, 32)
+            || !lower_hex(nonce, 32)
+            || !lower_hex(binding, 64)
+        {
+            return None;
         }
+        Some(Self {
+            epoch,
+            day,
+            day_number,
+            nonce,
+            binding,
+        })
+    }
+}
+
+/// A covered key has the v1 wire shape. Its binding is checked separately.
+pub fn is_covered_key(key: &str) -> bool {
+    CoveredKey::parse(key).is_some()
+}
+
+impl Identity<'_> {
+    pub fn period(&self) -> Result<Option<KeyPeriod<'_>>, IdentityError> {
+        let Some(CoveredKey {
+            epoch,
+            day,
+            day_number,
+            nonce,
+            binding,
+        }) = CoveredKey::parse(self.key)
+        else {
+            return Ok(None);
+        };
         let expected = hash_fields(&[
             "cma-creation-key-v1",
             epoch,

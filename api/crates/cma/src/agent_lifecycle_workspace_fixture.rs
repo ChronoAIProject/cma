@@ -71,6 +71,16 @@ pub(crate) async fn creation_test_router(
         .acquire_many_owned(crate::store::DISCOVERY_BATCH as u32)
         .await
         .unwrap();
+    let routes = creation_routes(database, store, profiles, service).await;
+    (routes, slots)
+}
+
+pub(super) async fn creation_routes(
+    database: &mongodb::Database,
+    store: Arc<InMemorySandboxStore>,
+    profiles: Arc<crate::store::MongoProfileStore>,
+    service: Arc<InlineAgentLifecycle>,
+) -> axum::Router {
     let records = Arc::new(
         crate::store::MongoOperationStore::open_for_test(database.client(), database.name())
             .await
@@ -79,7 +89,7 @@ pub(crate) async fn creation_test_router(
     let mut owner = context("owner");
     owner.caller.authorization =
         Authorization::new([Capability::UseOwnSandboxes, Capability::CreateSandbox]);
-    let routes = crate::projections::AgentProjectionServices::new(
+    crate::projections::AgentProjectionServices::new(
         service.agent_page_origin.clone(),
         store,
         profiles,
@@ -94,8 +104,7 @@ pub(crate) async fn creation_test_router(
         owner.caller.subject.clone(),
     )))
     .layer(axum::Extension(owner.caller.authorization.clone()))
-    .layer(axum::Extension(owner));
-    (routes, slots)
+    .layer(axum::Extension(owner))
 }
 
 pub(super) fn facade_with_limit(

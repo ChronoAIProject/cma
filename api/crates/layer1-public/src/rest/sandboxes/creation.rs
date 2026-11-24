@@ -37,7 +37,7 @@ pub(in crate::rest) async fn create(
     let backend = creation.map(|Extension(backend)| backend);
     let fence = if key
         .value()
-        .is_some_and(|key| key.starts_with(crate::rest::creation_outcomes::KEY_PREFIX))
+        .is_some_and(crate::rest::creation_outcomes::is_covered_key)
     {
         match begin_submission(
             backend.as_deref(),

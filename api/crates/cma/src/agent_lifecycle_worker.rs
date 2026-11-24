@@ -90,7 +90,10 @@ impl InlineAgentLifecycle {
         }
     }
 
-    async fn run_worker(&self, operation_id: &str) -> Result<(), layer2_core::StoreError> {
+    pub(super) async fn run_worker(
+        &self,
+        operation_id: &str,
+    ) -> Result<(), layer2_core::StoreError> {
         let Some(record) = self.operations.claim(operation_id).await? else {
             return Ok(());
         };
@@ -99,9 +102,7 @@ impl InlineAgentLifecycle {
             fence.lifecycle_lease = Some((lease.id.clone(), lease.token.clone()));
             fence
         });
-        if record
-            .key
-            .starts_with(layer1_public::rest::creation_outcomes::KEY_PREFIX)
+        if layer1_public::rest::creation_outcomes::is_covered_key(&record.key)
             != creation_fence.is_some()
         {
             return Err(layer2_core::StoreError::Malformed(

@@ -13,7 +13,7 @@ impl InlineAgentLifecycle {
         let replay_operation = submission
             .as_ref()
             .and_then(|submission| submission.replay_operation_id.as_deref());
-        if idempotency_key.starts_with(layer1_public::rest::creation_outcomes::KEY_PREFIX)
+        if layer1_public::rest::creation_outcomes::is_covered_key(idempotency_key)
             && replay_operation.is_none()
             && submission
                 .as_ref()
