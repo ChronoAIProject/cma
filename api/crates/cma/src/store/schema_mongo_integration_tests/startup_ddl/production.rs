@@ -38,6 +38,7 @@ async fn connect(
             agent_manager_replicas: false,
             startup_schema: mode,
             initial_settings: Default::default(),
+            released: None,
         },
     )
     .await

@@ -440,6 +440,9 @@ export function useAgentController(
     state.status === 'ready' ? queueObservationRevision(state.conversation) : '',
     onIdentityChange,
     requestRevision,
+    state.status === 'ready' && state.detail.id === agentId
+      ? state.conversation.messages
+      : undefined,
   );
   const interruptTurn = (strict: boolean) =>
     command(
