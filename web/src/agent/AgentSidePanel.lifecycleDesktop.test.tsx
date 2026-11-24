@@ -1,12 +1,16 @@
-import { createClient } from '@cma/client';
-import { act, render, screen } from '@testing-library/react';
+import { ApiError, createClient } from '@cma/client';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { AGENT_DETAIL } from '../test/agent';
 import { computerFixture, live, paused } from './computerLifecycle.fixture';
 
 const { connect } = vi.hoisted(() => ({ connect: vi.fn() }));
 vi.mock('@novnc/novnc', () => ({ default: connect }));
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 it.each(['pause', 'closed', 'viewer', 'agent', 'runtime'] as const)(
   'cancels desktop discovery at %s and refuses the old connection',
@@ -57,6 +61,42 @@ it.each(['pause', 'closed', 'viewer', 'agent', 'runtime'] as const)(
       expect(discover).toHaveBeenCalledTimes(2);
     }
     expect(f.mutations.reviveSandbox).not.toHaveBeenCalled();
+    expect(f.mutations.stopAgent).not.toHaveBeenCalled();
+  },
+);
+
+it.each(['stopped', 'deleted', 'retired'] as const)(
+  'cancels pending retries when the Agent or Sandbox is %s',
+  async (status) => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const sdk = createClient({ baseUrl: 'https://fixture.invalid' });
+    const discover = vi
+      .spyOn(sdk.agents, 'desktop')
+      .mockRejectedValue(new ApiError(503, 'Synthetic failure', 'desktop_runtime_unavailable'));
+    const f = computerFixture({ resourceViews: sdk });
+    const props = {
+      panel: 'browser' as const,
+      detail: { ...AGENT_DETAIL, desktop: true },
+      resourceAvailability: live,
+    };
+    const view = render(f.draw(props));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(discover).toHaveBeenCalledOnce();
+    view.rerender(
+      f.draw({
+        ...props,
+        detail:
+          status === 'retired'
+            ? { ...props.detail, sandbox: { ...props.detail.sandbox, status } }
+            : { ...props.detail, status },
+      }),
+    );
+    await act(() => vi.advanceTimersByTimeAsync(600_000));
+    expect(discover).toHaveBeenCalledOnce();
+    expect(connect).not.toHaveBeenCalled();
+    expect(f.mutations.reviveSandbox).not.toHaveBeenCalled();
+    expect(f.mutations.runAgent).not.toHaveBeenCalled();
     expect(f.mutations.stopAgent).not.toHaveBeenCalled();
   },
 );
