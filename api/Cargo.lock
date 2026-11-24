@@ -562,7 +562,9 @@ dependencies = [
  "cma-allocator-qualification",
  "cma-service-auth",
  "cmaeg-core",
+ "cmaeg-engine",
  "cmaeg-execution",
+ "cmaeg-http",
  "dashmap",
  "futures-util",
  "governor",
@@ -581,7 +583,6 @@ dependencies = [
  "metrics-exporter-prometheus",
  "moka",
  "mongodb",
- "pulldown-cmark",
  "quick-xml",
  "reqwest",
  "ring",
@@ -624,6 +625,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmaeg-engine"
+version = "0.1.0"
+dependencies = [
+ "cmaeg-core",
+ "meteroid-utoipa",
+ "serde",
+]
+
+[[package]]
 name = "cmaeg-execution"
 version = "0.1.0"
 dependencies = [
@@ -633,6 +643,15 @@ dependencies = [
  "sha2 0.10.9",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "cmaeg-http"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "pulldown-cmark",
+ "reqwest",
 ]
 
 [[package]]
