@@ -86,7 +86,7 @@ async fn stale_turn_settlement_compares_the_acknowledged_acp_checkpoint() {
         &name,
         Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         parent,
-        None,
+        Some((competing::history_rows(None), false)),
         Some((channel.input.clone(), CONVERSATION.into())),
     )
     .await;
