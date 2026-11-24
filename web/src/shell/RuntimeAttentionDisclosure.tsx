@@ -7,28 +7,29 @@ export function RuntimeAttentionDisclosure({
   attention,
   selectedSandboxId,
   selectedAgentId,
+  revealAgents = false,
   renderAgents,
   onSelect,
 }: {
   readonly attention: RuntimeAttention;
   readonly selectedSandboxId?: string;
   readonly selectedAgentId?: string;
+  readonly revealAgents?: boolean;
   readonly renderAgents?: (sandboxId: string) => ReactNode;
   readonly onSelect: (sandboxId: string) => void;
 }) {
   const disclosure = useRef<HTMLDetailsElement>(null);
+  const selectedFailure = attention.failedSandboxes.some(
+    (sandbox) =>
+      sandbox.sandboxId === selectedSandboxId ||
+      (selectedAgentId !== undefined && sandbox.agentIds.includes(selectedAgentId)),
+  );
+  const visible = attention.freshness !== 'unknown' && attention.failedSandboxes.length > 0;
   useLayoutEffect(() => {
-    if (
-      disclosure.current &&
-      attention.failedSandboxes.some(
-        (sandbox) =>
-          sandbox.sandboxId === selectedSandboxId ||
-          (selectedAgentId !== undefined && sandbox.agentIds.includes(selectedAgentId)),
-      )
-    )
+    if (visible && disclosure.current && (revealAgents || selectedFailure))
       disclosure.current.open = true;
-  }, [attention, selectedSandboxId, selectedAgentId]);
-  if (attention.freshness === 'unknown' || attention.failedSandboxes.length === 0) return null;
+  }, [revealAgents, selectedAgentId, selectedFailure, selectedSandboxId, visible]);
+  if (!visible) return null;
   const fresh = attention.freshness === 'fresh';
   return (
     <details ref={disclosure} className="runtime-attention">

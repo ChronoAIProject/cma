@@ -20,6 +20,7 @@ mod profiles;
 mod routes;
 mod runtime;
 mod runtime_inventory;
+mod runtime_migration;
 mod state;
 mod stores;
 mod usage;
@@ -158,6 +159,10 @@ impl ControlPlaneComposition {
         .with_session_guidance_v4(config.features.session_guidance_v4)
         .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
         .with_managed_repository_preflight(config.features.github_repository_preflight);
+        let runtime_canary_routes =
+            routes::runtime_canaries(config, inline_lifecycle.clone())?.merge(
+                routes::retained_runtime_transitions(config, &stores, adapter.clone())?,
+            );
         let lifecycle_drain = inline_lifecycle.drain_handle();
         if let Some(manager) = &agent_manager {
             manager.register_lifecycle(lifecycle_drain.clone())?;
@@ -180,7 +185,7 @@ impl ControlPlaneComposition {
             .with_detail_timings(config.features.sandbox_detail_timings)
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone())?;
-        let native_warm_pools = runtime.warm_pools;
+        let native_warm_pools = runtime.warm_pools.clone();
         let admin = runtime_inventory::admin_state(
             config.features,
             Arc::clone(&settings),
@@ -189,15 +194,12 @@ impl ControlPlaneComposition {
             Arc::clone(&adapter),
         )
         .with_user_directory(Arc::clone(&users))
-        .with_runtime_updates(runtime.updates.clone())
         .with_maintenance(stores.sandbox_model.clone())
         .with_warm_pools(native_warm_pools.clone())
         .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))
         .with_admission_ceilings(stores::admission_ceilings(&stores, config))
-        .with_admission_control(Arc::new(
-            layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
-                .with_writes_enabled(config.features.admission_control_writes_enabled),
-        ));
+        .with_admission_control(stores::admission_control(&stores, config));
+        let admin = runtime.attach_admin(admin, &stores);
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
             stores.sandbox_profiles.clone(),
@@ -360,18 +362,11 @@ impl ControlPlaneComposition {
             config.gateway.as_ref(),
             config.features,
         )?;
-        let event_workers = layer2_core::event_workers::EventWorkerProfileService::new(
-            stores.event_workers.clone(),
-            layer2_core::bots::PublishedBotProfiles::new(
-                stores.sandbox_profiles.clone(),
-                settings.clone(),
-                config.default_profiles.agent_model.clone(),
-            ),
-            "cma_codex".into(),
-        );
+        let event_workers = bots::event_worker_profiles(config, &stores, &settings);
         let metadata = routes::agent_metadata(&stores, resource_access.clone(), config);
         let accounts = routes::accounts(config, &stores, deletions, standing, projections.reads());
         let resource_routes = rest::profiles_router(profiles)
+            .merge(runtime_canary_routes)
             .merge(accounts)
             .merge(rest::answer_deliverables_router(deliverables))
             .merge(media::router(media))

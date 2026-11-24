@@ -39,6 +39,9 @@ pub(in crate::store) async fn admitted_release(
     else {
         return Ok(None);
     };
+    if operation.canary_admission.is_some() || super::canary_key::is_reserved(&operation.key) {
+        return Ok(None);
+    }
     let lane = managed_lifecycle_release_lane(&operation.input.request)
         .filter(|_| operation.input.resolved_image.as_ref() == Some(image));
     let lane = match (operation.released_lane, lane) {
@@ -86,6 +89,7 @@ pub(in crate::store) async fn protects_pool(
     let mut filter = doc! {
         "status": { "$in": ["queued", "running", "ready", "waiting_for_connection"] },
         "input.resolved_image": image,
+        "canary_admission": mongodb::bson::Bson::Null,
         "input.request.image": mongodb::bson::Bson::Null,
         "input.request.workspace_id": mongodb::bson::Bson::Null,
         "input.request.sandbox_id": mongodb::bson::Bson::Null,

@@ -86,6 +86,9 @@ pub struct SandboxSpec {
     pub runtime_image: Option<String>,
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
+    /// Effective journal recovery on this retained runtime generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_journal_recovery: Option<bool>,
     #[serde(default)]
     pub reaches: Vec<String>,
     pub own_credential: bool,
@@ -108,6 +111,7 @@ impl Default for SandboxSpec {
             capacity: SandboxCapacity::default(),
             runtime_image: None,
             environment: BTreeMap::new(),
+            retained_journal_recovery: None,
             reaches: Vec::new(),
             own_credential: false,
             home_directory: DEFAULT_HOME_DIRECTORY.to_string(),
@@ -128,6 +132,9 @@ pub struct RuntimeProvisionRequest {
     /// mutable coverage must not change an immutable provisioning receipt digest.
     #[serde(skip)]
     pub funded_until: Option<u64>,
+    /// Verified, request-scoped descriptor for a canary's native home.
+    #[serde(skip)]
+    pub native_canary_image: Option<RuntimeImage>,
     pub generation: u64,
     pub spec: SandboxSpec,
     /// The release this operation was admitted against. It supplies the image
@@ -142,6 +149,7 @@ impl RuntimeProvisionRequest {
             generation,
             spec,
             funded_until: None,
+            native_canary_image: None,
             released: None,
         }
     }

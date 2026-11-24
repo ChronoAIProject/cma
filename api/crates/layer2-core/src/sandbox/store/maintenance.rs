@@ -277,6 +277,43 @@ pub fn apply_image_rotation(
     })
 }
 
+/// Plan admission against the complete evidence read by the store transaction.
+#[doc(hidden)]
+pub fn apply_retained_runtime_transition(
+    current: &Sandbox,
+    agents: &[Agent],
+    request: &crate::sandbox::RetainedRuntimeTransitionRequest,
+    requested_at: &str,
+) -> Result<SandboxMaintenanceApplication, SandboxStoreError> {
+    validate_current(current, &request.sandbox_id)?;
+    schedule(current, SandboxStatus::Rotating, |sandbox| {
+        sandbox
+            .begin_retained_runtime_transition(request.clone(), agents, requested_at.to_owned())
+            .map(|_| ())
+    })
+}
+
+/// Cancel a retained transition while it still has no provider effects.
+#[doc(hidden)]
+pub fn apply_retained_runtime_abort(
+    current: &Sandbox,
+    receipt: &crate::sandbox::RetainedRuntimeTransition,
+    requested_at: &str,
+) -> Result<SandboxMaintenanceApplication, SandboxStoreError> {
+    validate_current(current, &receipt.request.sandbox_id)?;
+    if current.admitted_retained_runtime_transition() != Some(receipt) {
+        return Ok(SandboxMaintenanceApplication::Complete(
+            SandboxMaintenanceOutcome::NotEligible,
+        ));
+    }
+    schedule(current, SandboxStatus::Paused, |sandbox| {
+        sandbox.abort_unstarted_retained_runtime_transition(
+            &receipt.operation_id,
+            requested_at.to_owned(),
+        )
+    })
+}
+
 #[doc(hidden)]
 pub fn validate_inactivity_pause_request(
     request: &SandboxInactivityPauseRequest,
@@ -310,6 +347,16 @@ pub fn validate_image_rotation_request(
 /// Global discovery and evidence-backed atomic maintenance admission.
 #[async_trait]
 pub trait SandboxMaintenanceStore: Send + Sync {
+    /// Operator authority, current activity and lifecycle start share one CAS.
+    async fn admit_custom_runtime_migration(
+        &self,
+        _admission: super::SandboxCustomRuntimeMigrationAdmission,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        Err(SandboxStoreError::Unavailable(
+            "custom runtime migration unavailable".into(),
+        ))
+    }
+
     /// Page active and paused Sandbox IDs globally in stable, exclusive-cursor ID order.
     async fn sandbox_maintenance_candidates(
         &self,

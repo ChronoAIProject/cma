@@ -232,7 +232,7 @@ export function MessageStream({
             </p>
           ))}
         </div>
-        <ActiveThinking conversation={conversation} stopping={stopping} />
+        {historyOnly ? null : <ActiveThinking conversation={conversation} stopping={stopping} />}
         {optimisticMessages?.map((message, index) => (
           <article
             className={`message message--user${message.queued ? ' message--queued' : ''}`}

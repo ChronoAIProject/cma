@@ -27,6 +27,7 @@ mod model_request_budget;
 mod native_retirement_finalizer;
 mod reconciliation;
 pub(crate) mod retained_recovery;
+pub(crate) mod retained_runtime_service;
 pub(crate) mod runtime_attachment;
 mod runtime_mapping;
 mod scheduler;

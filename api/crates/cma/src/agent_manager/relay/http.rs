@@ -264,7 +264,7 @@ async fn route_request(
     if destination.member.instance_id == relay.coordinator.instance_id {
         let response = destination
             .authority
-            .run(next.run(request))
+            .run(file_read::run(next, request, file_read))
             .await
             .unwrap_or_else(|_| {
                 if reports_handoff {
