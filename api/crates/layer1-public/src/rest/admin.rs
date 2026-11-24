@@ -22,7 +22,10 @@ use crate::AuthenticatedCaller;
 use super::{problem_document, problem_response};
 
 mod activity;
-pub(crate) use activity::{__path_activity, activity, ActivityPageView, ActivityView};
+pub(crate) use activity::{
+    __path_activity, __path_activity_actors, activity, activity_actors, ActivityActorView,
+    ActivityPageView, ActivityView,
+};
 
 pub(super) mod admission;
 pub(super) mod auto_pause;
@@ -148,6 +151,7 @@ pub fn router(state: AdminState) -> Router {
         .merge(warm_pools::routes())
         .route("/api/v1/admin/runtime-inventory", get(runtime_inventory))
         .route("/api/v1/admin/activity", get(activity))
+        .route("/api/v1/admin/activity/actors", get(activity_actors))
         .with_state(Arc::new(state))
 }
 
