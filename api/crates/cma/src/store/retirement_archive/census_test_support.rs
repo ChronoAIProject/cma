@@ -2,23 +2,27 @@ use super::*;
 use futures_util::TryStreamExt;
 use std::collections::BTreeMap;
 
-pub(super) async fn prepare_source(
+pub(in crate::store) async fn prepare_source(
     client: Client,
     database: Database,
     id: &str,
 ) -> (Temp, ArchiveStore, Request, Vec<u8>) {
     let temp = Temp::new();
     let mut request = request(&temp);
-    let source = database
+    let mut source = database
         .collection::<Document>("sandboxes")
         .find_one(doc! {"_id":id})
         .await
         .unwrap()
         .unwrap();
     let mut parent = read_sandbox(&source).unwrap();
-    parent.status = SandboxStatus::Retiring;
-    parent.work.step = SandboxWorkStep::StopAgents;
-    parent.work.lease = None;
+    if parent.status == SandboxStatus::Reviving {
+        parent.begin_retirement(layer2_core::now_rfc3339()).unwrap();
+    } else {
+        parent.status = SandboxStatus::Retiring;
+        parent.work.step = SandboxWorkStep::StopAgents;
+        parent.work.lease = None;
+    }
     let mut home = SandboxHome::reserve(
         &parent.id,
         HomeVolumePolicy {
@@ -42,7 +46,7 @@ pub(super) async fn prepare_source(
     parent.lifecycle.home = Some(Box::new(home));
     parent.validate().unwrap();
     let seq = source.get_i64("last_seq").unwrap() as u64 + 1;
-    let source = crate::store::sandboxes::sandbox_document(&parent, seq).unwrap();
+    source.extend(crate::store::sandboxes::sandbox_document(&parent, seq).unwrap());
     let intent = crate::store::sandbox_events::event_document(&SandboxEvent {
         sandbox_id: parent.id.clone(),
         seq,
