@@ -114,6 +114,8 @@ pub use agent_lifecycle::{
     VersionedWorktree,
 };
 pub use agent_sign_in::apply_agent_sign_in;
+mod agent_work_claim;
+pub use agent_work_claim::{AgentWorkClaimDetail, AgentWorkClaimError};
 mod agent_work_evidence_validation;
 mod agent_work_prepared_open_ready;
 mod agent_work_prepared_pair;

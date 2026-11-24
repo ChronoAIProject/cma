@@ -15,7 +15,7 @@ async fn legacy_archive_readback_survives_upgrade_without_omitting_new_owned_dat
         .copied()
         .filter(|(name, _)| LEGACY_COLLECTIONS.contains(name))
         .collect();
-    let names: Vec<_> = crate::store::isolation::COLLECTIONS
+    let names: Vec<_> = crate::store::retirement_archive::manifest_collections()
         .iter()
         .copied()
         .filter(|name| LEGACY_COLLECTIONS.contains(name))

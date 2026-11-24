@@ -114,8 +114,9 @@ async fn fixture() -> Fixture {
         schema_sha256: crate::store::retirement_archive::schema_sha256(),
         files,
         database: crate::store::retirement_archive::manifest_collections()
+            .iter()
             .map(|name| DatabaseRecord {
-                collection: name.into(),
+                collection: (*name).into(),
                 documents: 0,
                 bytes: 0,
                 sha256: digest(&[]),

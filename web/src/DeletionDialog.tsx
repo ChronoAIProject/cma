@@ -430,7 +430,14 @@ export function DeletionDialog({
     onClose();
   };
   const name = observation?.name ?? target;
-  if (!started && !observation?.complete)
+  const completedInBackground =
+    request.accepted &&
+    identity.client === client &&
+    identity.viewerId === viewerId &&
+    deletionWasSettled(client, request) &&
+    observation?.complete !== true;
+  const complete = observation?.complete === true || completedInBackground;
+  if (!started && !complete)
     return (
       <DeletionConfirmation
         client={client}
@@ -447,16 +454,16 @@ export function DeletionDialog({
   return (
     <Modal
       open
-      title={observation?.complete ? `${target} deleted` : `Deleting ${target}`}
+      title={complete ? `${target} deleted` : `Deleting ${target}`}
       description={name}
       dismissible={!sending}
       onClose={close}
       footer={
         <>
           <Button disabled={sending} onClick={close}>
-            {observation?.complete ? 'Done' : 'Close'}
+            {complete ? 'Done' : 'Close'}
           </Button>
-          {!request.accepted && !observation?.complete ? (
+          {!request.accepted && !complete ? (
             <Button
               variant="primary"
               disabled={sending || blockedBeforeDelete(request) || !enabled}
@@ -469,10 +476,10 @@ export function DeletionDialog({
                 : 'Check request'}
             </Button>
           ) : null}
-          {request.stop?.phase === 'blocked' && !request.accepted && !observation?.complete ? (
+          {request.stop?.phase === 'blocked' && !request.accepted && !complete ? (
             <Button onClick={abandon}>End this request</Button>
           ) : null}
-          {readError === undefined ? null : (
+          {complete || readError === undefined ? null : (
             <Button onClick={() => setRevision((value) => value + 1)}>Refresh status</Button>
           )}
         </>
@@ -481,6 +488,7 @@ export function DeletionDialog({
       <DeletionStatusPanel
         request={request}
         observation={observation}
+        completedInBackground={completedInBackground}
         sending={sending}
         commandError={commandError}
         readError={readError}

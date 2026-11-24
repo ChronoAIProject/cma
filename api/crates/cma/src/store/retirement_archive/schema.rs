@@ -1,7 +1,7 @@
 //! Exact archive census versions. Compatibility never means an arbitrary subset.
 use super::*;
 use crate::retirement_archive::Manifest;
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::LazyLock};
 
 #[path = "legacy_census.rs"]
 mod legacy;
@@ -17,6 +17,13 @@ mod pre_capture_accounts;
 mod pre_capture_backups;
 #[path = "pre_resource_execution_census.rs"]
 mod pre_execution;
+#[path = "pre_legal_consent_census.rs"]
+#[cfg(test)]
+mod pre_legal_consent;
+#[cfg(test)]
+pub(super) const PRE_LEGAL_CONSENT_SHA256: &str = pre_legal_consent::SHA256;
+#[cfg(test)]
+pub(super) const PRE_LEGAL_CONSENT_COLLECTIONS: &[&str] = pre_legal_consent::COLLECTIONS;
 
 #[cfg(test)]
 pub(super) const PRE_BACKUP_COLLECTIONS: &[&str] = pre_backup::COLLECTIONS;
@@ -32,46 +39,49 @@ pub(super) const LEGACY_COLLECTIONS: &[&str] = legacy::COLLECTIONS;
 #[cfg(test)]
 pub(super) const LEGACY_SHA256: &str = legacy::SHA256;
 
-fn in_manifest(name: &str) -> bool {
-    // Creation evidence survives retirement with its owner and request. Keep
-    // the existing archive descriptor valid for readers already serving.
-    name != super::super::creation_outcomes::COLLECTION
-}
+// Creation evidence follows its owner across Sandbox retirement.
+const CREATION_PROOFS: &str = super::super::creation_outcomes::COLLECTION;
 
-pub(crate) fn manifest_collections() -> impl Iterator<Item = &'static str> {
-    super::super::isolation::COLLECTIONS
-        .iter()
-        .copied()
-        .filter(|name| in_manifest(name))
+pub(crate) fn manifest_collections() -> &'static [&'static str] {
+    static NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+        super::super::isolation::COLLECTIONS
+            .iter()
+            .copied()
+            .filter(|name| {
+                *name != CREATION_PROOFS && !super::census_catalog::OUTSIDE_MANIFEST.contains(name)
+            })
+            .collect()
+    });
+    &NAMES
 }
 
 pub(crate) fn schema_sha256() -> String {
     let audit: Vec<_> = super::census_catalog::AUDIT
         .iter()
         .copied()
-        .filter(|(name, _)| in_manifest(name))
+        .filter(|(name, _)| *name != CREATION_PROOFS)
         .collect();
-    let names: Vec<_> = manifest_collections().collect();
-    digest(format!("archive-census-v2\n{audit:?}\n{}", names.join("\n")).as_bytes())
+    let names = manifest_collections().join("\n");
+    digest(format!("archive-census-v2\n{audit:?}\n{names}").as_bytes())
 }
 
-fn collections(schema: &str) -> Result<Vec<&'static str>> {
+fn collections(schema: &str) -> Result<&'static [&'static str]> {
     if schema == schema_sha256() {
-        Ok(manifest_collections().collect())
+        Ok(manifest_collections())
     } else if schema == pre_execution::SHA256 {
-        Ok(pre_execution::COLLECTIONS.to_vec())
+        Ok(pre_execution::COLLECTIONS)
     } else if schema == pre_capture::SHA256 {
-        Ok(pre_capture::COLLECTIONS.to_vec())
+        Ok(pre_capture::COLLECTIONS)
     } else if schema == pre_capture_accounts::SHA256 {
-        Ok(pre_capture_accounts::COLLECTIONS.to_vec())
+        Ok(pre_capture_accounts::COLLECTIONS)
     } else if schema == pre_capture_backups::SHA256 {
-        Ok(pre_capture_backups::COLLECTIONS.to_vec())
+        Ok(pre_capture_backups::COLLECTIONS)
     } else if schema == pre_backup::SHA256 {
-        Ok(pre_backup::COLLECTIONS.to_vec())
+        Ok(pre_backup::COLLECTIONS)
     } else if schema == pre_backup_accounts::SHA256 {
-        Ok(pre_backup_accounts::COLLECTIONS.to_vec())
+        Ok(pre_backup_accounts::COLLECTIONS)
     } else if schema == legacy::SHA256 {
-        Ok(legacy::COLLECTIONS.to_vec())
+        Ok(legacy::COLLECTIONS)
     } else {
         Err(REFUSED)
     }

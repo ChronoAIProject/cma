@@ -231,6 +231,7 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("trigger_launch_input_protocols", Linked(Launches, &["_id"]) => true),
     entry!("trigger_launches", Owner(&["owner"]) => true),
     entry!("users", OwnerKey(Subject) => true),
+    entry!("retained_legal_consents", Retained("detached legal consent") => false),
     entry!("warm_sandboxes", Linked(Sandboxes, &["_id"]) => true),
     entry!("workspace_profile_revisions", Reference(ReferenceRule::Profiles) => false),
     entry!("workspace_profiles", Reference(ReferenceRule::Profiles) => false),

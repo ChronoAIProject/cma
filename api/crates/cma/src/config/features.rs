@@ -84,6 +84,7 @@ pub(crate) struct FeatureFlags {
     pub single_fence_event_pages: bool,
     pub concurrent_sandbox_detail_enrichment: bool,
     pub sandbox_agent_projection: bool,
+    pub sandbox_profile_readability: bool,
     pub sandbox_snapshot_reads: bool,
     pub sandbox_batched_reads: bool,
     pub sandbox_detail_timings: bool,
@@ -106,6 +107,7 @@ pub(crate) struct FeatureFlags {
     pub silent_sign_in: bool,
     pub document_revocation_reserve: bool,
     pub document_quotas: bool,
+    pub document_source_commits: bool,
     pub document_object_deletion: bool,
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
@@ -124,6 +126,7 @@ pub(crate) struct FeatureFlags {
     pub agent_connection_observations: bool,
     pub empty_discovery: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
+    pub sandbox_binding_hold_metrics: bool,
 }
 /// Rollout gates graduated to default-on after their rollout completed in
 /// every environment. Unset means enabled; an explicit `false` remains the
@@ -236,6 +239,10 @@ impl FeatureFlags {
             )?,
             agent_file_read_timings: flag(lookup, "CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED")?,
             sandbox_agent_projection: flag(lookup, "CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED")?,
+            sandbox_profile_readability: flag(
+                lookup,
+                "CHRONO_SANDBOX_PROFILE_READABILITY_ENABLED",
+            )?,
             sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
             sandbox_batched_reads: flag(lookup, "CHRONO_SANDBOX_BATCHED_READS_ENABLED")?,
             sandbox_detail_timings: match lookup("CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")? {
@@ -246,6 +253,7 @@ impl FeatureFlags {
                 )?,
             },
             document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
+            document_source_commits: flag(lookup, "CHRONO_DOCUMENT_SOURCE_COMMITS_ENABLED")?,
             document_object_deletion: flag(lookup, "CHRONO_DOCUMENT_OBJECT_DELETION_ENABLED")?,
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
@@ -285,6 +293,10 @@ impl FeatureFlags {
             sandbox_reconciliation_reserved_lane: flag(
                 lookup,
                 "CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED",
+            )?,
+            sandbox_binding_hold_metrics: flag(
+                lookup,
+                "CHRONO_SANDBOX_BINDING_HOLD_METRICS_ENABLED",
             )?,
             stale_turn_reconciliation: flag(lookup, "CHRONO_STALE_TURN_RECONCILIATION_ENABLED")?,
             stale_turn_terminal: flag(lookup, "CHRONO_STALE_TURN_TERMINAL_ENABLED")?,

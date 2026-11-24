@@ -214,9 +214,7 @@ export function registerDeletionStatusCases() {
         await page.clock.runFor(10000);
         await fixture.settled();
         expect(fixture.reads).toHaveLength(reads);
-        await expect(
-          page.getByText('Sandbox delete request accepted. Cleanup continues in the background.'),
-        ).toBeVisible();
+        await expect(page.getByText('Deleting 1 environment')).toBeVisible();
         await page.evaluate(() => {
           localStorage.setItem(
             'cma:deletion-requests:local-owner:synthetic-other-agent',
@@ -232,12 +230,8 @@ export function registerDeletionStatusCases() {
           (theme) => document.body.toggleAttribute('data-ds-dark-theme', theme === 'dark'),
           theme,
         );
-        await expect(
-          page.getByText('Sandbox delete request accepted. Cleanup continues in the background.'),
-        ).toHaveCount(0);
-        await expect(
-          page.getByText('Agent delete request accepted. Cleanup continues in the background.'),
-        ).toBeVisible();
+        await expect(page.getByText('Deleting 1 environment')).toHaveCount(0);
+        await expect(page.getByText('Deleting 1 Agent')).toBeVisible();
         expect(
           await page.evaluate(() => localStorage.getItem('cma:deletion:local-owner')),
         ).toBeNull();

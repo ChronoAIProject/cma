@@ -1,12 +1,108 @@
 #!/usr/bin/env ruby
 require 'yaml'
 require 'json'
+require 'date'
+require 'open3'
 require_relative 'omarchy-ci-contract'
 root = File.expand_path('../..', __dir__)
 
 
 def require_check(value, message)
   raise message unless value
+end
+
+def require_repo_secret_shards(documents)
+  jobs = documents.fetch('ci-repo').fetch('jobs')
+  secrets, shards, gate = jobs.values_at('secrets', 'scanner-tests', 'result')
+  require_check([secrets, shards, gate].all?, 'Repo requires secret policy, scanner shards and result jobs')
+  require_check([secrets, shards, gate].none? { |job| job.key?('continue-on-error') }, 'Repo secret checks must propagate failure')
+  require_check(!secrets.key?('if') && !secrets.key?('needs') &&
+    shards['needs'] == ['secrets'] && !shards.key?('if'), 'scanner shards must wait for successful secret policy')
+  require_check(shards['strategy'] == {'fail-fast' => false, 'matrix' => {'shard' => [0, 1]}},
+    'both scanner shards must run independently')
+  require_check(gate['if'] == 'always()' && gate['needs'] == %w[structure secrets scanner-tests],
+    'Repo result must always check every child')
+
+  checkout = {
+    'uses' => 'actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09',
+    'with' => {'ref' => '${{ github.sha }}'}
+  }
+  history_checkout = checkout.merge('with' => checkout['with'].merge('fetch-depth' => 0))
+  require_check(secrets['steps'].first == history_checkout &&
+    shards['steps'].first == checkout && gate['steps'].first == checkout,
+    'secret policy, shards and gate must check out the same candidate SHA with full history for the history scan')
+  history, policy = secrets['steps'].drop(1)
+  require_check(secrets['steps'].size == 3 && history['name'] == 'gitleaks' &&
+    !history.key?('if') && !history.key?('continue-on-error') &&
+    history['run'].lines.last(2).map(&:strip) == [
+      'bash .github/scripts/scan-secret-history-tests.sh "$RUNNER_TEMP/gitleaks"',
+      'bash .github/scripts/scan-secret-history.sh "$RUNNER_TEMP/gitleaks"'
+    ] && policy == {
+      'name' => 'Verify frozen image scanner and reject repository bypasses',
+      'run' => <<~BASH
+        python3 -B .github/scripts/image-scanner-policy-tests.py
+        python3 -B .github/scripts/image_scanner_policy.py
+      BASH
+    }, 'history scan and frozen policy must succeed before either shard runs')
+
+  outputs = {
+    'shard_0' => '${{ steps.tests.outputs.shard_0 }}',
+    'shard_1' => '${{ steps.tests.outputs.shard_1 }}'
+  }
+  install = {
+    'name' => 'Install pinned image secret scanner', 'timeout-minutes' => 5,
+    'run' => 'bash .github/scripts/install-image-gitleaks.sh'
+  }
+  run_shard = {
+    'id' => 'tests', 'name' => 'Run frozen image scanner test shard',
+    'working-directory' => '.github/scripts/image-secret-scanner', 'shell' => 'bash',
+    'env' => {'SHARD' => '${{ matrix.shard }}'},
+    'run' => <<~'BASH'
+      umask 077
+      python3 -B ../ci_tracks/repo_secrets.py --shard "$SHARD"
+      printf 'shard_%s=%s\n' "$SHARD" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+    BASH
+  }
+  require_check(shards['outputs'] == outputs && shards['steps'] == [checkout, install, run_shard],
+    'each scanner shard must publish its own candidate SHA only after successful testing')
+  validate_results = {
+    'name' => 'Validate repository job results',
+    'env' => {'NEEDS' => '${{ toJSON(needs) }}'},
+    'run' => 'python3 -B .github/scripts/ci_tracks/repo_secrets.py --check-gate'
+  }
+  require_check(gate['steps'] == [checkout, validate_results], 'Repo result must validate all child outcomes and shard SHAs')
+  caller = documents.fetch('ci').fetch('jobs')
+  require_check(caller.fetch('repo')['uses'] == './.github/workflows/ci-repo.yml' &&
+    !caller['repo'].key?('if') && !caller['repo'].key?('continue-on-error') &&
+    caller.fetch('gate-repo')['steps'].last['run'] == 'python3 -B .github/scripts/ci_tracks/gate.py repo',
+    'CI / Repo must require the reusable Repo workflow result')
+end
+
+def check_repo_secret_gate(root)
+  sha = 'f' * 40
+  success = {'structure' => {'result' => 'success'}, 'secrets' => {'result' => 'success'},
+    'scanner-tests' => {'result' => 'success', 'outputs' => {'shard_0' => sha, 'shard_1' => sha}}}
+  command = ['python3', '-B', File.join(root, '.github/scripts/ci_tracks/repo_secrets.py'), '--check-gate']
+  accepts = lambda do |needs|
+    _, _, status = Open3.capture3({'NEEDS' => JSON.generate(needs), 'GITHUB_SHA' => sha}, *command)
+    status.success?
+  end
+  require_check(accepts.call(success), 'Repo gate refused the complete successful run')
+  success.each_key do |job|
+    %w[failure cancelled skipped missing].each do |outcome|
+      needs = Marshal.load(Marshal.dump(success))
+      outcome == 'missing' ? needs.delete(job) : needs[job]['result'] = outcome
+      require_check(!accepts.call(needs), "Repo gate accepted #{job} with outcome #{outcome}")
+    end
+  end
+  %w[shard_0 shard_1].each do |shard|
+    [nil, '', 'a' * 40].each do |receipt|
+      needs = Marshal.load(Marshal.dump(success))
+      outputs = needs['scanner-tests']['outputs']
+      receipt.nil? ? outputs.delete(shard) : outputs[shard] = receipt
+      require_check(!accepts.call(needs), "Repo gate accepted an absent or mismatched SHA for #{shard}")
+    end
+  end
 end
 
 def require_runtime_inventory(documents)
@@ -199,7 +295,84 @@ def check_key_expiry(steps)
     'Omarchy must check its packager key expiry offline, warn-only, unconditionally and before building')
 end
 
+# Owner-approved on 2026-11-24 as a deliberate gate change: merge-queue
+# ordinary Agent Manager Mongo shards retry a failing test once, until one
+# fixed UTC date. The policy step is the only source of a nonzero count; PR
+# and push runs and the isolated shard skip it and pass an empty count. Every
+# pass on retry is reported and retained for the tracker's single issue.
+FLAKY_UNTIL = 'CMA_MONGO_FLAKY_RETRY_UNTIL'
+FLAKY_REGRESSIONS = "python3 -B -m unittest discover -s .github/scripts -p 'mongo_flaky_retry_tests.py'"
+FLAKY_POLICY_IF = "github.event_name == 'merge_group' && matrix.shard != 'isolated'"
+FLAKY_STEPS = [
+  {'name' => 'Merge-queue flaky retry policy', 'id' => 'flaky-retry', 'if' => FLAKY_POLICY_IF, 'working-directory' => '.',
+   'env' => {'EVENT_NAME' => '${{ github.event_name }}', 'TRACK' => '${{ inputs.track }}', 'MONGO_SHARD' => '${{ matrix.shard }}'},
+   'run' => 'python3 -B .github/scripts/mongo_flaky_retry.py policy'},
+  {'name' => 'Disposable real Mongo persistence contracts', 'id' => 'contracts', 'timeout-minutes' => 75,
+   'env' => {'MONGO_SHARD' => '${{ matrix.shard }}', 'CMA_MONGO_FLAKY_RETRIES' => '${{ steps.flaky-retry.outputs.retries }}',
+             'CMA_MONGO_FLAKY_REPORT_DIR' => '${{ steps.flaky-retry.outputs.report-dir }}'},
+   'run' => 'bash ../.github/scripts/mongo-contract-tests.sh --shard "$MONGO_SHARD"'},
+  {'name' => 'Flag tests that passed only on their retry', 'id' => 'flaky-report',
+   'if' => "always() && steps.flaky-retry.outputs.retries == '1'", 'timeout-minutes' => 5, 'working-directory' => '.',
+   'env' => {'EVENT_NAME' => '${{ github.event_name }}', 'MONGO_SHARD' => '${{ matrix.shard }}',
+             'TESTS_OUTCOME' => '${{ steps.contracts.outcome }}', 'CMA_MONGO_FLAKY_REPORT_DIR' => '${{ steps.flaky-retry.outputs.report-dir }}'},
+   'run' => 'python3 -B .github/scripts/mongo_flaky_retry.py report'},
+  {'name' => 'Retain the flaky test record for the tracking issue', 'if' => "always() && steps.flaky-report.outputs.upload == 'true'",
+   'uses' => 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
+   'with' => {'name' => '${{ steps.flaky-retry.outputs.artifact }}', 'path' => '${{ steps.flaky-retry.outputs.report-dir }}/flaky-tests.json',
+              'retention-days' => 3, 'if-no-files-found' => 'error'}}
+].freeze
+
+def check_mongo_flaky_retry(documents, shards)
+  date = shards.fetch('env')[FLAKY_UNTIL]
+  valid = date.is_a?(String) && date.match?(/\A[0-9]{4}-[0-9]{2}-[0-9]{2}\z/) && (Date.iso8601(date) rescue false)
+  require_check(valid, 'merge-queue flaky retry needs exactly one fixed YYYY-MM-DD expiry')
+  require_check(shards['permissions'] == {'contents' => 'read', 'actions' => 'read'}, 'Mongo shards must stay read-only')
+  steps = shards.fetch('steps')
+  archive = steps.index { |s| s['uses'] == './.github/actions/rust-archive' }
+  require_check(archive && steps.drop(archive + 1) == FLAKY_STEPS, 'Mongo shard execution or its merge-queue flaky retry changed')
+  # The count and expiry belong to this job alone: no other job, nextest
+  # environment or command line may retry a test.
+  serialized = JSON.generate(documents)
+  require_check(serialized.scan(FLAKY_UNTIL).length == 1 && serialized.scan('steps.flaky-retry.outputs.retries').length == 2 &&
+    serialized.scan('CMA_MONGO_FLAKY_RETRIES').length == 1 && !serialized.match?(/NEXTEST_RETRIES|NEXTEST_FLAKY_RESULT|--retries|--flaky-result/),
+    'only the merge-queue Mongo shards may retry a test')
+  regressions = documents.dig('ci-repo', 'jobs', 'structure', 'steps').find { |s| s['name'] == 'Track selection and workflow regressions' }
+  require_check(regressions && !regressions.key?('if') && !regressions.key?('continue-on-error') &&
+    regressions['run'].lines.map(&:strip).include?(FLAKY_REGRESSIONS), 'merge-queue flaky retry regressions must run in Repository checks')
+end
+
+# CI keeps contents: read and issues: read, so the tracking issue is written
+# only by this scheduled collector, from develop, never from PR code.
+TRACKER = 'mongo-flaky-tracker'
+TRACKER_JOB = {
+  'name' => 'Track tests retried in the merge queue',
+  'if' => "github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'",
+  'runs-on' => 'ubuntu-24.04', 'timeout-minutes' => 10,
+  'permissions' => {'contents' => 'read', 'actions' => 'read', 'issues' => 'write'},
+  'steps' => [
+    {'uses' => 'actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09', 'with' => {'persist-credentials' => false}},
+    {'name' => 'Collect retried tests into the tracking issue', 'timeout-minutes' => 8,
+     'env' => {'GH_TOKEN' => '${{ github.token }}'}, 'run' => 'python3 -B .github/scripts/mongo_flaky_tracker.py'}
+  ]
+}.freeze
+
+def check_flaky_tracker(workflows)
+  tracker = workflows.fetch(TRACKER)
+  events = tracker.fetch('on', tracker[true])
+  require_check(events == {'schedule' => [{'cron' => '23 * * * *'}], 'workflow_dispatch' => {}},
+    'flaky tracker runs only hourly or on dispatch')
+  require_check(tracker['permissions'] == {} && tracker['concurrency'] == {'group' => TRACKER, 'cancel-in-progress' => false} &&
+    tracker.fetch('jobs') == {'track' => TRACKER_JOB}, 'flaky tracker authority changed')
+  writers = workflows.select do |_, workflow|
+    [workflow['permissions'], *workflow.fetch('jobs').values.map { |job| job['permissions'] }].any? do |grant|
+      grant == 'write-all' || (grant.is_a?(Hash) && grant['issues'] == 'write')
+    end
+  end
+  require_check(writers.keys == [TRACKER], 'only the flaky tracker may write issues')
+end
+
 def validate(documents, actions)
+  require_repo_secret_shards(documents)
   require_runtime_inventory(documents)
   require_image_secret_scan(documents)
   require_runtime_vulnerability_gate(documents)
@@ -284,14 +457,11 @@ def validate(documents, actions)
   shards = rust.fetch('mongo-shards')
   require_check(shards.fetch('strategy') == {'fail-fast' => false,
     'matrix' => {'shard' => ['isolated'] + (1..8).map { |i| "#{i}/8" }}}, 'complete Mongo matrix required')
-  require_check(shards.fetch('env') == {'BASH_ENV' => '${{ github.workspace }}/.github/scripts/backend-resource-env.sh',
+  require_check(shards.fetch('env').reject { |key, _| key == FLAKY_UNTIL } == {'BASH_ENV' => '${{ github.workspace }}/.github/scripts/backend-resource-env.sh',
     'RUST_MIN_STACK' => 33554432, 'CMA_NEXTEST_REUSE' => '1'}, 'Mongo resource or archive guard omitted')
   require_check(shards.fetch('defaults') == {'run' => {'working-directory' => 'api'}}, 'Mongo workspace differs')
   require_check(shards.fetch('steps').any? { |s| s['uses'] == './.github/actions/rust-archive' }, 'Mongo archive reuse omitted')
-  execution = shards.fetch('steps').last
-  require_check(execution['run'] == 'bash ../.github/scripts/mongo-contract-tests.sh --shard "$MONGO_SHARD"' &&
-    execution['env'] == {'MONGO_SHARD' => '${{ matrix.shard }}'} && execution['timeout-minutes'] == 75 &&
-    !execution.key?('if') && !execution.key?('continue-on-error'), 'Mongo shard execution changed')
+  check_mongo_flaky_retry(documents, shards)
   %w[mongo mongo-harness mongo-shards mongo-eg].each do |id|
     require_check(rust[id]['runs-on'] == 'ubuntu-latest' && !rust[id].key?('continue-on-error') &&
       !rust[id].key?('environment'), 'Mongo runner or mandatory execution differs')
@@ -494,6 +664,7 @@ actions = Dir.glob(File.join(root, '.github/actions/**/action.{yml,yaml}')).to_h
   ["./#{File.dirname(file).delete_prefix(root + '/')}", YAML.load_file(file)]
 end
 validate(documents, actions)
+check_repo_secret_gate(root)
 workflows = Dir.glob(File.join(root, '.github/workflows/*.{yml,yaml}')).to_h do |file|
   [File.basename(file, File.extname(file)), YAML.load_file(file)]
 end
@@ -511,6 +682,32 @@ check_merge_group_triggers(workflows)
     next
   end
   abort 'merge-group trigger regression accepted'
+end
+check_flaky_tracker(workflows)
+tracker_job = ->(w) { w[TRACKER]['jobs']['track'] }
+[->(w) { w[TRACKER][true]['pull_request'] = {'branches' => ['develop']} },
+ ->(w) { w[TRACKER][true]['pull_request_target'] = {} },
+ ->(w) { w[TRACKER][true]['workflow_run'] = {'workflows' => ['CI'], 'types' => ['completed']} },
+ ->(w) { w[TRACKER][true]['schedule'][0]['cron'] = '* * * * *' },
+ ->(w) { w[TRACKER]['permissions'] = 'write-all' },
+ ->(w) { w[TRACKER]['concurrency']['cancel-in-progress'] = true },
+ ->(w) { tracker_job.call(w)['permissions']['contents'] = 'write' },
+ ->(w) { tracker_job.call(w)['permissions']['pull-requests'] = 'write' },
+ ->(w) { tracker_job.call(w)['if'] = "github.repository == 'ChronoAIProject/cma'" },
+ ->(w) { tracker_job.call(w)['steps'][0]['with']['ref'] = '${{ github.event.pull_request.head.sha }}' },
+ ->(w) { tracker_job.call(w)['steps'][1]['continue-on-error'] = true },
+ ->(w) { w['ci']['permissions']['issues'] = 'write' },
+ ->(w) { w['ci-rust']['jobs']['mongo-shards']['permissions']['issues'] = 'write' },
+ ->(w) { w['staging-cd']['permissions'] = {'contents' => 'read', 'issues' => 'write'} },
+ ->(w) { w.delete(TRACKER) }].each do |mutate|
+  copy = Marshal.load(Marshal.dump(workflows))
+  mutate.call(copy)
+  begin
+    check_flaky_tracker(copy)
+  rescue RuntimeError, KeyError
+    next
+  end
+  abort 'flaky tracker authority regression accepted'
 end
 check_artifact_downloads(workflows, actions)
 restore_step = ->(a) { a[ARCHIVE_ACTION]['runs']['steps'].find { |s| s['name'] == ARCHIVE_RESTORE['name'] } }
@@ -664,6 +861,39 @@ mutations = [
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Load native image for scanning' }['with']['build-args'].sub!('${{ steps.os-refresh.outputs.value }}', '${{ github.run_id }}-${{ github.run_attempt }}') },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['id'] == 'os-refresh' }['continue-on-error'] = true },
 ]
+# The merge-queue flaky retry cannot widen: PR or push runs, the isolated
+# shard, a hardcoded count, another job or the nextest environment retrying,
+# a skipped or optional report, a lost record, or a moving expiry all fail.
+flaky_steps = ->(d) { d['ci-rust']['jobs']['mongo-shards']['steps'] }
+flaky_step = ->(d, id) { flaky_steps.call(d).find { |s| s['id'] == id || s['name'] == id } }
+retain_step = 'Retain the flaky test record for the tracking issue'
+[->(d) { flaky_step.call(d, 'flaky-retry')['if'] = "github.event_name != 'push'" },
+ ->(d) { flaky_step.call(d, 'flaky-retry')['if'] = "github.event_name == 'merge_group'" },
+ ->(d) { flaky_step.call(d, 'flaky-retry')['if'] = "github.event_name == 'merge_group' || github.event_name == 'pull_request'" },
+ ->(d) { flaky_step.call(d, 'flaky-retry').delete('if') },
+ ->(d) { flaky_step.call(d, 'flaky-retry')['continue-on-error'] = true },
+ ->(d) { flaky_steps.call(d).delete(flaky_step.call(d, 'flaky-retry')) },
+ ->(d) { flaky_step.call(d, 'contracts')['env']['CMA_MONGO_FLAKY_RETRIES'] = '1' },
+ ->(d) { flaky_step.call(d, 'contracts')['env']['NEXTEST_RETRIES'] = '1' },
+ ->(d) { flaky_step.call(d, 'contracts')['run'] += ' --retries 1' },
+ ->(d) { flaky_step.call(d, 'flaky-report')['if'] = "steps.flaky-retry.outputs.retries == '1'" },
+ ->(d) { flaky_step.call(d, 'flaky-report')['continue-on-error'] = true },
+ ->(d) { flaky_step.call(d, 'flaky-report')['run'] += ' || true' },
+ ->(d) { flaky_steps.call(d).delete(flaky_step.call(d, 'flaky-report')) },
+ ->(d) { flaky_step.call(d, retain_step)['with']['retention-days'] = 90 },
+ ->(d) { flaky_step.call(d, retain_step)['with']['if-no-files-found'] = 'ignore' },
+ ->(d) { flaky_step.call(d, retain_step)['uses'] = 'actions/upload-artifact@v4' },
+ ->(d) { flaky_steps.call(d).delete(flaky_step.call(d, retain_step)) },
+ ->(d) { d['ci-rust']['jobs']['mongo-shards']['env'][FLAKY_UNTIL] = '2026-12-1' },
+ ->(d) { d['ci-rust']['jobs']['mongo-shards']['env'][FLAKY_UNTIL] = '2026-02-30' },
+ ->(d) { d['ci-rust']['jobs']['mongo-shards']['env'].delete(FLAKY_UNTIL) },
+ ->(d) { d['ci-rust']['jobs']['mongo-shards']['permissions']['issues'] = 'write' },
+ ->(d) { d['ci-rust']['jobs']['tests']['env']['NEXTEST_RETRIES'] = '1' },
+ ->(d) { d['ci-rust']['jobs']['tests']['env'][FLAKY_UNTIL] = '2026-12-01' },
+ ->(d) { d['ci-rust']['jobs']['mongo-eg']['steps'].last['run'] += ' --retries 1' },
+ ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['run'] += ' --flaky-result pass' },
+ ->(d) { d['ci']['permissions']['issues'] = 'write' },
+ ->(d) { d['ci-repo']['jobs']['structure']['steps'].find { |s| s['name'] == 'Track selection and workflow regressions' }['run'].sub!(/^.*mongo_flaky_retry_tests.*\n/, '') }].each { |mutate| mutations << mutate }
 synthetic_index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == 'Synthetic authority and observer regressions' }
 restore_index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == 'Synthetic home restore evidence regressions' }
 mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'].delete_at(restore_index) }
@@ -725,6 +955,20 @@ documents['ci-images']['jobs']['images']['steps'].each_with_index do |step, inde
   mutations << ->(d) { d['ci-images']['jobs']['images']['steps'][index]['with'].delete('package-manager-cache') }
   mutations << ->(d) { d['ci-images']['jobs']['images']['steps'][index]['with']['cache'] = 'npm' }
 end
+repo_jobs = ->(d) { d['ci-repo']['jobs'] }
+mutations.concat([
+  ->(d) { repo_jobs.call(d)['secrets']['steps'].first['with']['fetch-depth'] = 1 },
+  ->(d) { repo_jobs.call(d)['secrets']['steps'].pop },
+  ->(d) { repo_jobs.call(d)['scanner-tests'].delete('needs') },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['steps'].first['with'].delete('ref') },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['strategy']['fail-fast'] = true },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['strategy']['matrix']['shard'].pop },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['outputs'].delete('shard_1') },
+  ->(d) { repo_jobs.call(d)['scanner-tests']['steps'].last['continue-on-error'] = true },
+  ->(d) { repo_jobs.call(d)['result'].delete('if') },
+  ->(d) { repo_jobs.call(d)['result']['needs'].delete('scanner-tests') },
+  ->(d) { repo_jobs.call(d)['result']['steps'].last['run'] = 'true' }
+])
 mutations.each do |mutate|
   copy = Marshal.load(Marshal.dump(documents))
   mutate.call(copy)

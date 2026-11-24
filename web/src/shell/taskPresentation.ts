@@ -25,7 +25,7 @@ export function taskPresentation(
   const status = observedTaskStatus(agent, sandbox, currentTask);
   if (freshness === 'stale')
     return {
-      status,
+      status: 'unknown',
       group: 'Status unavailable',
       label: 'Status unavailable',
       showRunningTime: false,
@@ -38,7 +38,7 @@ export function taskPresentation(
     const ended = recorded === 'failed' || recorded === 'stopped';
     const group = failed ? 'Needs attention' : 'Updating environment';
     return {
-      status: recorded,
+      status: failed && !ended ? 'needs_attention' : recorded,
       group: ended ? undefined : group,
       label:
         ended || recorded === 'completed' ? taskWords[recorded] : failed ? group : parent.label,
