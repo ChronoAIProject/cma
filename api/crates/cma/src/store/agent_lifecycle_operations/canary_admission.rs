@@ -46,6 +46,74 @@ pub(crate) struct CanaryProfiles {
     pub(crate) sandbox: SandboxProfileRef,
 }
 
+pub(in crate::store) const SANDBOX_PROFILE_ID: &str = "canary_admission.profiles.sandbox.id";
+pub(in crate::store) const MANIFEST_DIGEST: &str = "canary_manifest_digest";
+
+pub(in crate::store) fn image_digest(image: &str) -> Option<String> {
+    let (_, digest) = image.rsplit_once("@sha256:")?;
+    (digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| digest.to_ascii_lowercase())
+}
+
+pub(super) async fn ensure_admission_indexes(
+    operations: &Collection<LifecycleRecord>,
+) -> Result<(), StoreError> {
+    operations
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { SANDBOX_PROFILE_ID: 1 })
+                .options(
+                    IndexOptions::builder()
+                        .name("agent_lifecycle_canary_sandbox_profile".to_owned())
+                        .unique(true)
+                        .partial_filter_expression(doc! { SANDBOX_PROFILE_ID: {"$exists": true} })
+                        .build(),
+                )
+                .build(),
+        )
+        .await
+        .map_err(driver)?;
+    operations
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! { MANIFEST_DIGEST: 1, "owner": 1 })
+                .options(
+                    IndexOptions::builder()
+                        .name("agent_lifecycle_canary_manifest_owner".to_owned())
+                        .unique(true)
+                        .partial_filter_expression(doc! { MANIFEST_DIGEST: {"$exists": true} })
+                        .build(),
+                )
+                .build(),
+        )
+        .await
+        .map_err(driver)?;
+    Ok(())
+}
+
+/// Claim the permanent operation-to-Sandbox binding under the same transaction
+/// that inserts the Sandbox. The binding survives retirement and purge.
+pub(in crate::store) async fn bind_sandbox(
+    operations: &Collection<LifecycleRecord>,
+    lease: &LifecycleLease,
+    sandbox: &layer2_core::SandboxId,
+    session: &mut mongodb::ClientSession,
+) -> Result<bool, Error> {
+    let mut filter = lease.filter();
+    filter.extend(doc! {
+        "canary_admission": {"$exists": true},
+        "sandbox_id": Bson::Null,
+    });
+    let result = operations
+        .update_one(
+            filter,
+            vec![doc! {"$set": {"sandbox_id": sandbox.as_str(), "updated_at": "$$NOW"}}],
+        )
+        .session(session)
+        .await?;
+    Ok(result.matched_count == 1)
+}
+
 impl CanaryProfiles {
     fn for_operation(owner: &SubjectId, id: &str) -> Result<Self, StoreError> {
         let profile_id = |kind| {
@@ -53,12 +121,9 @@ impl CanaryProfiles {
                 .map_err(|_| invalid_authority())
         };
         Ok(Self {
-            agent: AgentProfileRef::new(AgentProfileId::new(profile_id("agent")?), 1),
-            workspace: WorkspaceProfileRef::new(
-                WorkspaceProfileId::new(profile_id("workspace")?),
-                1,
-            ),
-            sandbox: SandboxProfileRef::new(SandboxProfileId::new(profile_id("sandbox")?), 1),
+            agent: AgentProfileRef::new(AgentProfileId(profile_id("agent")?), 1),
+            workspace: WorkspaceProfileRef::new(WorkspaceProfileId(profile_id("workspace")?), 1),
+            sandbox: SandboxProfileRef::new(SandboxProfileId(profile_id("sandbox")?), 1),
         })
     }
 }
@@ -68,14 +133,16 @@ impl LifecycleRecord {
     /// A later grant expiry or policy change cannot alter admitted work.
     pub(crate) fn verify_canary_worker(&self) -> Result<Option<CanaryProfiles>, StoreError> {
         let Some(admission) = &self.canary_admission else {
-            return if canary_key::is_reserved(&self.key) {
+            return if canary_key::is_reserved(&self.key) || self.canary_manifest_digest.is_some() {
                 Err(invalid_authority())
             } else {
                 Ok(None)
             };
         };
         schema::require_current(self.document_schema_version)?;
-        if canary_key::operation_id(&self.key) != Some(self.id.as_str())
+        let digest = image_digest(&admission.release.image.uri).ok_or_else(invalid_authority)?;
+        if self.canary_manifest_digest.as_deref() != Some(digest.as_str())
+            || canary_key::operation_id(&self.key) != Some(self.id.as_str())
             || admission.fingerprint != admission.fingerprint(self)?
             || admission.profiles
                 != CanaryProfiles::for_operation(&SubjectId::new(&self.owner), &self.id)?
@@ -124,6 +191,7 @@ impl MongoAgentLifecycleStore {
     ) -> CanaryProfiles {
         record.key = canary_key::fixture_key(&record.id);
         record.input.resolved_image = Some(image.uri.clone());
+        record.canary_manifest_digest = image_digest(&image.uri);
         let profiles =
             CanaryProfiles::for_operation(&SubjectId::new(&record.owner), &record.id).unwrap();
         let mut admission = CanaryAdmission {
