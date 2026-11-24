@@ -76,7 +76,7 @@ pub(in crate::store) async fn claim_ready(
     if operation.input.behavior != crate::store::LifecycleBehavior::PromptRepository
         || operation.input.request.machine_included != machine
         || (machine
-            && operation.input.resolved_image.as_ref() != Some(&desired.warm.runtime_version))
+            && operation.admitted_machine_image() != Some(desired.warm.runtime_version.as_str()))
         || operation.input.request.workspace_id.is_some()
         || operation.input.request.sandbox_id.is_some()
         || operation.sandbox_id.is_some()
