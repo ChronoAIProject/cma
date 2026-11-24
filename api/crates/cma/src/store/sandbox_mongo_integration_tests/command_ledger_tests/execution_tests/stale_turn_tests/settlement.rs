@@ -15,7 +15,7 @@ use layer3_adapter::{
 };
 
 mod competing;
-use competing::{Competition, Race, SealProbe};
+use competing::{budget_turn, Competition, Race, SealProbe};
 
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
@@ -243,6 +243,16 @@ async fn exercise_settlement(
         .unwrap();
     let future = DateTime::from_millis(DateTime::now().timestamp_millis() + 16 * 60 * 1000);
     let candidate = Candidate::from_row(&row, future).unwrap();
+    if partial && race == Some(Race::Canonical) {
+        crate::sandbox::assert_partial_does_not_request_stop(
+            store.clone(),
+            manager,
+            &owner,
+            &candidate,
+            future,
+        )
+        .await;
+    }
     let mut budget = ProofBudget::default();
     let Observation::Quiet { evidence, .. } = scan
         .observe_for_terminal(&candidate, future, &mut budget)
@@ -416,19 +426,6 @@ async fn exercise_settlement(
     assert_eq!(logs.iter().filter(|entry| matches!(&entry.kind, AgentLogKind::AgentMessage {content} if content == "retained prefix")).count(), 1);
     assert_eq!(sends.load(Ordering::SeqCst), 1);
     client.database(&name).drop().await.unwrap();
-}
-
-async fn budget_turn(store: &MongoSandboxStore, agent: &Agent) -> mongodb::bson::Document {
-    let key = crate::store::budget::turn_key(agent, agent.conversation.active_turn.unwrap());
-    store
-        .model_budget
-        .find_one(doc! {"_id": key})
-        .await
-        .unwrap()
-        .unwrap()
-        .get_document("record")
-        .unwrap()
-        .clone()
 }
 
 pub(super) async fn replica(client: &Client, name: &str) -> Arc<MongoSandboxStore> {

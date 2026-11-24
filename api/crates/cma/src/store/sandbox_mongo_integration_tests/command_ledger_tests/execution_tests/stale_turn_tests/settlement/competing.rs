@@ -382,3 +382,19 @@ pub(super) async fn settle_with_unknown_commit(
     assert_eq!(entries(after) - entries(before), 5);
     result.unwrap();
 }
+
+pub(super) async fn budget_turn(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+) -> mongodb::bson::Document {
+    let key = crate::store::budget::turn_key(agent, agent.conversation.active_turn.unwrap());
+    store
+        .model_budget
+        .find_one(doc! {"_id": key})
+        .await
+        .unwrap()
+        .unwrap()
+        .get_document("record")
+        .unwrap()
+        .clone()
+}

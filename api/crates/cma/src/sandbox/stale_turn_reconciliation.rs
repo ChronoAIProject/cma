@@ -7,8 +7,8 @@ use layer2_core::{
     sandbox::store::{SandboxStoreError, StaleTurnSettlement},
 };
 use layer3_adapter::{
-    stale_turn::{StaleTurnHold, MAX_SEAL_BYTES},
-    SandboxAdapter,
+    stale_turn::{StaleTurnHold, StaleTurnProducer, MAX_SEAL_BYTES},
+    RuntimeHandle, SandboxAdapter,
 };
 use mongodb::bson::DateTime;
 use tokio::{
@@ -34,6 +34,11 @@ const INVESTIGATION_DEADLINE: Duration = Duration::from_secs(5);
 const MAX_INVESTIGATIONS: usize = 4;
 const HOLD_CAPACITY: usize = 512;
 const HOLD_INTERVAL: Duration = Duration::from_secs(60);
+
+#[cfg(test)]
+mod partial_tests;
+#[cfg(test)]
+pub(crate) use partial_tests::assert_partial_does_not_request_stop;
 
 pub(super) struct Worker {
     store: StaleTurnStore,
@@ -157,7 +162,14 @@ impl Worker {
                     oldest = Some(oldest.map_or(age, |previous: u64| previous.max(age)));
                     let terminal = tokio::time::timeout_at(
                         stop_investigating,
-                        self.try_terminal(&candidate, lease.now, target, evidence, &mut budget),
+                        self.try_terminal(
+                            &candidate,
+                            lease.now,
+                            target,
+                            evidence,
+                            &mut budget,
+                            |runtime| self.terminal_adapter.as_ref()?.stale_turn_producer(runtime),
+                        ),
                     )
                     .await;
                     match terminal {
@@ -193,13 +205,14 @@ impl Worker {
         Ok(())
     }
 
-    async fn try_terminal(
+    async fn try_terminal<'producer>(
         &self,
         candidate: &Candidate,
         now: DateTime,
         target: super::LiveAgentTarget,
         evidence: Box<crate::store::stale_turns::QuietTurn>,
         budget: &mut ProofBudget,
+        producer_for: impl FnOnce(&RuntimeHandle) -> Option<&'producer dyn StaleTurnProducer>,
     ) -> Result<(), &'static str> {
         let authority = self
             .ownership
@@ -214,10 +227,6 @@ impl Worker {
                 {
                     return Err("recorder_unavailable");
                 }
-                let adapter = self
-                    .terminal_adapter
-                    .as_ref()
-                    .ok_or("producer_seal_unavailable")?;
                 let expected = StaleTurnSettlement::receipt_target(
                     &evidence.snapshot,
                     &evidence.parent,
@@ -225,9 +234,8 @@ impl Worker {
                     &authority.token,
                 )
                 .map_err(|_| "terminal_evidence_unavailable")?;
-                let producer = adapter
-                    .stale_turn_producer(&expected.runtime)
-                    .ok_or("producer_seal_unavailable")?;
+                let producer =
+                    producer_for(&expected.runtime).ok_or("producer_seal_unavailable")?;
                 // Reserve the response allowance even if decoding fails or the
                 // probe is cancelled after reading part of the body.
                 let allowance = budget.remaining().min(MAX_SEAL_BYTES as i64);
