@@ -46,7 +46,6 @@ import { ArtifactPublicationScope } from './resources/artifactRecovery';
 import { SandboxAccessPage } from './resources/SandboxAccessPage';
 import { WorkspaceAccessPage } from './resources/WorkspaceAccessPage';
 import { scopeValue } from './resources/scope';
-import { useNavigationScope } from './resources/NavigationScope';
 import { useConsoleScope } from './resources/useConsoleScope';
 import { OwnerViewsProvider } from './resources/retainedOwnerViews';
 import { useDeletionNoticeReconciliation } from './useDeletionNoticeReconciliation';
@@ -106,7 +105,6 @@ function ConsoleContent({
     select: setNavigationScope,
     ready: scopeReady,
   } = useConsoleScope(scopeClient, user.id, route);
-  const scopeChoices = useNavigationScope(scopeClient, navigationScope);
   const draft = useAgentDraft(client, user.id, route.kind === 'agent' ? route.agentId : undefined);
   const sandboxCommandScope = useMemo(() => ({ client, viewerId: user.id }), [client, user.id]);
   const {
@@ -428,7 +426,6 @@ function ConsoleContent({
               <ManagerNavigation
                 client={scopeClient}
                 scope={navigationScope}
-                choices={scopeChoices}
                 onScope={setNavigationScope}
                 route={route}
                 viewerId={user.id}
