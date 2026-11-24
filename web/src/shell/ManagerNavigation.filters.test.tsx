@@ -170,9 +170,11 @@ it('keeps scope and viewer filters separate and resets the environment view on a
 });
 
 it('shows a storage failure notice and still filters immediately', async () => {
-  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-    throw new Error('Quota');
-  });
+  vi.spyOn(Object.getPrototypeOf(window.sessionStorage) as Storage, 'setItem').mockImplementation(
+    () => {
+      throw new Error('Quota');
+    },
+  );
   render(<ManagerNavigation {...props} />);
   const user = userEvent.setup();
   await environments(user);
