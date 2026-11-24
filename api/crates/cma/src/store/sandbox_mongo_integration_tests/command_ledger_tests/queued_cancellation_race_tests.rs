@@ -86,6 +86,7 @@ async fn queued_cancellation_unknown_commit_recovers_one_receipt_and_one_effect(
     let result = store.cancel_queued_response(request.clone()).await;
     disable(&admin).await;
     assert_eq!(result.unwrap_err(), CommandLedgerError::Unavailable);
+    crate::store::test_visibility::majority_barrier(&admin, &name).await;
     let original = applied(store.cancel_queued_response(request.clone()).await.unwrap());
     let second = MongoSandboxStore::open(&admin, &name).await.unwrap();
     assert_eq!(

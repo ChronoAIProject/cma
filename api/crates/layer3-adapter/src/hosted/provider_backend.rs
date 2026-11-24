@@ -31,6 +31,17 @@ const DEFAULT_READY_POLL: Duration = Duration::from_millis(500);
 /// Runtime control-link implementation paired with the provider lifecycle.
 #[async_trait::async_trait]
 pub trait HostedControlTransport: Send + Sync {
+    async fn challenge_retirement_receiver(
+        &self,
+        _handle: &RuntimeHandle,
+        _binding: &crate::agent_sandbox::PodBinding,
+        _owner: &crate::owner_protocol::TransportOwner,
+    ) -> crate::Result<bool> {
+        Err(crate::AdapterError::Unsupported(
+            "native retirement challenge is unavailable".into(),
+        ))
+    }
+
     fn desktop_ownership(&self) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
         None
     }

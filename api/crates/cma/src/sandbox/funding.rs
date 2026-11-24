@@ -17,9 +17,9 @@ mod evidence;
 mod model;
 mod mongo;
 mod nyxid;
+mod recovery;
 #[cfg(test)]
 mod tests;
-mod token;
 pub(crate) use model::*;
 use nyxid::NyxIdFundingProvider;
 #[cfg(test)]
@@ -143,16 +143,7 @@ impl ProviderFundingAdapter {
         }
         let id = SandboxId(state.sandbox_id.clone());
         let Some(sandbox) = self.state.sandbox(&id).await? else {
-            // Ledger survives purge. Never infer a zero tail from missing runtime records.
-            self.emit_evidence(&mut state, seconds(now)).await?;
-            state.retained_disk_gib = 0;
-            state.stopped = true;
-            state.retry_at = seconds(now).saturating_add(60);
-            if !state.windows.is_empty() || state.pending.is_some() {
-                state.last_error =
-                    Some("purged Sandbox has unresolved funding or retained evidence".into());
-            }
-            return self.state.save(&mut state).await;
+            return self.reconcile_missing(state, now).await;
         };
         if state.pending.is_some() {
             if let Err(error) = self.recover_pending(&mut state).await {

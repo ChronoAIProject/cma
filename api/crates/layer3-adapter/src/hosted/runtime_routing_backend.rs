@@ -278,6 +278,38 @@ impl HostedBackend for RuntimeBackends {
             .provision_with_home(request, home)
             .await
     }
+    async fn challenge_retirement_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        receiver: &crate::receiver_failure::RetirementReceiver,
+    ) -> Result<bool> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?
+            .challenge_retirement_receiver(handle, request, home, receiver)
+            .await
+    }
+    async fn retire_unreachable(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        receiver: &crate::RetirementPod,
+    ) -> Result<()> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?
+            .retire_unreachable(handle, request, home, receiver)
+            .await
+    }
+    async fn verify_retired(
+        &self,
+        handle: &RuntimeHandle,
+        home: &crate::HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?.verify_retired(handle, home).await
+    }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> Result<()> {
         self.for_handle(handle)?.teardown_retained(handle).await
     }
@@ -372,6 +404,16 @@ impl HostedBackend for RuntimeBackends {
         request: &ProviderSandboxRequest,
     ) -> Result<Option<RuntimeObservation>> {
         self.for_handle(handle)?.adopt(handle, request).await
+    }
+    async fn adopt_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeObservation>> {
+        self.for_handle(handle)?
+            .adopt_with_home(handle, request, home)
+            .await
     }
     async fn inspect_native_runtime(
         &self,

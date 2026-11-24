@@ -43,6 +43,7 @@ async fn execute(arguments: &[String]) -> Result<Value> {
     let mut options = ClientOptions::parse(uri)
         .await
         .map_err(|_| "database configuration")?;
+    crate::store::transaction_barrier::bind(&mut options, &name);
     options.server_selection_timeout = Some(Duration::from_secs(5));
     options.connect_timeout = Some(Duration::from_secs(5));
     let client = Client::with_options(options).map_err(|_| "database configuration")?;

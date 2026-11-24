@@ -11,6 +11,7 @@ mod cleanup_pacing;
 mod coordinator;
 mod observations;
 mod receiver_binding;
+pub mod receiver_diagnostics;
 mod transport;
 pub use coordinator::{bounded, OwnershipCoordinator};
 pub use observations::{observe_transport, observed_transport, transport_observation_scope};
@@ -24,6 +25,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub const DEFAULT_LEASE_MS: u64 = 15_000;
 pub const HEARTBEAT_INTERVAL_MS: u64 = 3_000;
 pub const STORE_DEADLINE_MS: u64 = 2_000;
+pub const MAX_RENEWAL_BATCH: usize = 8;
 pub const DEFAULT_MAX_OWNED_AGENTS: u32 = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -62,6 +64,13 @@ pub struct OwnershipToken {
 pub struct OwnershipLease {
     pub token: OwnershipToken,
     pub expires_at_ms: i64,
+}
+
+/// A partial match is usable for fallback only after a definite transaction abort.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RenewalBatch {
+    Committed(Vec<OwnershipLease>),
+    PartialMatchAborted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,6 +135,17 @@ pub trait OwnershipStore: Send + Sync {
         instance_id: &str,
     ) -> Result<Option<OwnershipLease>, OwnershipError>;
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError>;
+    fn supports_batch_renewal(&self) -> bool {
+        false
+    }
+    async fn renew_batch(
+        &self,
+        _tokens: &[OwnershipToken],
+    ) -> Result<RenewalBatch, OwnershipError> {
+        Err(OwnershipError::Invalid(
+            "batch renewal is unsupported".into(),
+        ))
+    }
     /// Call only after revoking local and receiving-runtime authority.
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError>;
     async fn check(&self, token: &OwnershipToken) -> Result<(), OwnershipError>;

@@ -76,7 +76,11 @@ export function SandboxOverview({
         <p className="sandbox-page__hint">
           How much memory, processing power and network the Agent’s computer is using.
         </p>
-        {resourceAgent === undefined ? (
+        {sandbox.status === 'retired' ? (
+          <p>This environment is no longer running. Live resource usage is no longer available.</p>
+        ) : sandbox.status === 'retiring' ? (
+          <p>Live resource usage is unavailable while this environment is retiring.</p>
+        ) : resourceAgent === undefined ? (
           <p>Resources are available when this Sandbox has an Agent.</p>
         ) : (
           <Resources

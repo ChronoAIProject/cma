@@ -12,6 +12,9 @@ pub(super) enum Policy {
     Empty,
 }
 use Policy::*;
+// Detached receipts have no Sandbox ownership or read grant. The schema
+// authority inventories them, but there is no receipt entry in a Sandbox manifest.
+pub(super) const OUTSIDE_MANIFEST: &[&str] = &[super::super::retained_consents::COLLECTION];
 pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("account_deletions", Independent),
     ("account_deletion_events", Independent),
@@ -148,7 +151,12 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("provider_binding_preparations", Empty),
     ("provider_tool_opens", Empty),
     ("provider_tool_relays", Empty),
+    // Serialized execution records lack a qualified per-Sandbox archive closure.
+    ("resource_execution_effects_v1", Empty),
+    ("resource_execution_grants_v1", Empty),
+    ("resource_execution_records_v1", Empty),
     ("resource_policies", Sandbox(&["_id"])),
+    ("resource_revocation_operations_v1", Empty),
     ("resource_share_commands", Sandbox(&["sandbox_id"])),
     ("resource_shares", Sandbox(&["sandbox_id"])),
     ("sandbox_admissions", Independent),
@@ -162,6 +170,11 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("sandbox_events", Sandbox(&["sandbox_id"])),
     ("sandbox_usage", Sandbox(&["_id"])),
     ("sandbox_usage_events", Sandbox(&["sandbox_id"])),
+    ("sandbox_usage_captures_v1", Empty),
+    ("sandbox_usage_evidence_v1", Empty),
+    ("sandbox_usage_outbox_v1", Empty),
+    ("sandbox_usage_streams_v1", Empty),
+    ("sandbox_usage_inventory_v1", Empty),
     ("sandbox_profile_revisions", Independent),
     ("sandbox_profiles", Independent),
     ("sandbox_retained_availability", Sandbox(&["_id"])),

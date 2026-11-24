@@ -205,7 +205,7 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
   });
   await page.goto('/');
   const capacity = page.getByRole('region', { name: 'Sandbox capacity' });
-  await expect(capacity.getByText('10/10 Sandbox environments used')).toBeVisible();
+  await expect(capacity.getByText('All 10 Sandbox environment slots are in use')).toBeVisible();
   await page.getByLabel('Your task').fill('Use the next available environment');
   await expect(page.getByRole('button', { name: 'Start task' })).toBeDisabled();
   await page.screenshot({ path: info.outputPath('full-capacity.png'), fullPage: true });
@@ -224,7 +224,7 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
   expect(agents.filter((agent) => agent.status !== 'deleted')).toHaveLength(8);
   expect(parents).toHaveLength(10);
   await page.reload();
-  await expect(capacity.getByText('10/10 Sandbox environments used')).toBeVisible();
+  await expect(capacity.getByText('All 10 Sandbox environment slots are in use')).toBeVisible();
   await expect(
     page.getByRole('tree', { name: 'Personal Agents' }).getByRole('treeitem'),
   ).toHaveCount(8);
@@ -238,7 +238,7 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
   await page.getByRole('menuitem', { name: 'Delete Sandbox', exact: true }).click();
   const confirmation = page.getByRole('dialog', { name: 'Delete Sandbox', exact: true });
   await confirmation.getByLabel('I understand this Sandbox will be deleted.').check();
-  await confirmation.getByRole('button', { name: 'Delete Sandbox', exact: true }).click();
+  await confirmation.getByRole('button', { name: 'Request deletion', exact: true }).click();
   await expect.poll(() => writes.includes('DELETE sbx_quota_00')).toBe(true);
   expect(sandboxDeletionKey).toBeTruthy();
   const retainedDeletion = () =>
@@ -257,9 +257,9 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
   };
   await expect.poll(retainedDeletion).toEqual(acceptedDeletion);
   await page.goto('/');
-  await expect(capacity.getByText('10/10 Sandbox environments used')).toBeVisible();
+  await expect(capacity.getByText('All 10 Sandbox environment slots are in use')).toBeVisible();
   await expect(page.getByRole('region', { name: 'Deletion request', exact: true })).toHaveText(
-    /Sandbox delete request accepted\. Cleanup continues in the background\./,
+    /Deleting 1 environment/,
   );
   await expect(
     page.getByRole('button', { name: 'View deletion status', exact: true }),
@@ -272,7 +272,7 @@ test('LOCAL Agent deletion retains quota until separately confirmed Sandbox reti
   committedRetirement = true;
   parents[0] = { ...parents[0]!, status: 'retired' };
   const committedAt = Date.now();
-  await expect(capacity.getByText('9/10 Sandbox environments used')).toBeVisible({
+  await expect(capacity.getByText('1 environment slot left')).toBeVisible({
     timeout: 15_000,
   });
   const elapsed = Date.now() - committedAt;

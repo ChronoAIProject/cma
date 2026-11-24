@@ -4,9 +4,39 @@ use axum::http::HeaderValue;
 
 use super::{parse_canonical_https_origin, required};
 
+mod canary;
+
 const MAX_URL_LENGTH: usize = 2_048;
 const MAX_IMAGE_REFERENCE_LENGTH: usize = 2_048;
 const SHA256_SEPARATOR: &str = "@sha256:";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Provider {
+    OpenSandbox,
+    AgentSandbox,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RuntimeMode {
+    Execution(Provider),
+    BackendFree,
+}
+
+impl RuntimeMode {
+    pub(super) fn from_lookup(
+        lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+    ) -> Result<Self, String> {
+        match lookup("CHRONO_SANDBOX_PROVIDER")?.as_deref() {
+            None | Some("opensandbox") => Ok(Self::Execution(Provider::OpenSandbox)),
+            Some("agent-sandbox") => Ok(Self::Execution(Provider::AgentSandbox)),
+            Some("none") => match lookup("CHRONO_ENVIRONMENT")?.as_deref() {
+                Some("development" | "staging") => Ok(Self::BackendFree),
+                _ => Err("CHRONO_SANDBOX_PROVIDER=none requires CHRONO_ENVIRONMENT=development or staging".into()),
+            },
+            Some(_) => Err("CHRONO_SANDBOX_PROVIDER must be opensandbox, agent-sandbox or none".into()),
+        }
+    }
+}
 
 /// Deployment-owned endpoints and runtime identity validated at startup.
 #[derive(Clone, PartialEq, Eq)]
@@ -31,6 +61,7 @@ pub(crate) struct RuntimeConfig {
     /// desktop machine. Keeping this separate from the default image prevents
     /// ordinary Agent creation from silently changing its runtime.
     pub machine_sandbox_image: Option<String>,
+    runtime_canary_releases: canary::Catalog,
     pub sandbox_namespace: String,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub agent_sandbox_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
@@ -48,6 +79,10 @@ impl fmt::Debug for RuntimeConfig {
             .field("sandbox_api_key", &"<redacted>")
             .field("sandbox_image", &self.sandbox_image)
             .field("machine_sandbox_image", &self.machine_sandbox_image)
+            .field(
+                "runtime_canary_release_count",
+                &self.runtime_canary_releases.len(),
+            )
             .field("sandbox_namespace", &self.sandbox_namespace)
             .field("home_policy", &self.home_policy)
             .field("native_prepared_target", &self.native_prepared_target)
@@ -70,15 +105,9 @@ impl fmt::Debug for RuntimeConfig {
 impl RuntimeConfig {
     pub(super) fn from_lookup(
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+        provider: Provider,
     ) -> Result<Self, String> {
-        let allocate_agent_sandbox = match lookup("CHRONO_SANDBOX_PROVIDER")?
-            .as_deref()
-            .unwrap_or("opensandbox")
-        {
-            "opensandbox" => false,
-            "agent-sandbox" => true,
-            _ => return Err("CHRONO_SANDBOX_PROVIDER must be opensandbox or agent-sandbox".into()),
-        };
+        let allocate_agent_sandbox = provider == Provider::AgentSandbox;
         let retain_opensandbox = match lookup("CHRONO_RETAIN_OPENSANDBOX")?
             .as_deref()
             .unwrap_or("true")
@@ -128,6 +157,10 @@ impl RuntimeConfig {
         let home_policy = super::home::from_lookup(lookup)?;
         let agent_sandbox_home_policy =
             super::home::native_from_lookup(lookup, home_policy.as_ref())?;
+        let canary_home = agent_sandbox_home_policy
+            .as_ref()
+            .filter(|_| allocate_agent_sandbox && agent_sandbox.is_some());
+        let runtime_canary_releases = canary::Catalog::from_lookup(lookup, canary_home)?;
         let native_prepared_target = match lookup("CHRONO_NATIVE_PREPARED_TARGET")?.as_deref() {
             None | Some("0") => 0,
             Some("1") => 1,
@@ -263,6 +296,7 @@ impl RuntimeConfig {
             sandbox_api_key,
             sandbox_image,
             machine_sandbox_image,
+            runtime_canary_releases,
             sandbox_namespace,
             home_policy,
             agent_sandbox_home_policy,

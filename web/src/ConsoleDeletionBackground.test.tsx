@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { CmaClientProvider } from './api/context';
@@ -6,6 +6,7 @@ import type { User } from './auth/types';
 import { Console } from './Console';
 import { agentClient } from './test/agent';
 import { sandboxFixture } from './test/hierarchy';
+import { persistDeletion, restoreDeletions } from './deletionRecovery';
 
 it('keeps accepted cleanup optional across navigation and allows deleting another Sandbox', async () => {
   const actor = userEvent.setup();
@@ -15,7 +16,7 @@ it('keeps accepted cleanup optional across navigation and allows deleting anothe
     visitor: false,
     capabilities: ['create_sandbox', 'use_own_sandboxes', 'delete_own_sandbox'],
   };
-  const sandboxes = ['first', 'second'].map((id) => ({
+  const sandboxes = ['first', 'second', 'third', 'fourth', 'fifth'].map((id) => ({
     ...sandboxFixture(),
     id,
     name: id,
@@ -49,24 +50,93 @@ it('keeps accepted cleanup optional across navigation and allows deleting anothe
         name: 'I understand this Sandbox will be deleted.',
       }),
     );
-    await actor.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
+    await actor.click(screen.getByRole('button', { name: 'Request deletion' }));
   };
   await remove();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.queryByRole('treeitem', { name: /first/ })).not.toBeInTheDocument();
-  expect(screen.getByText('Deletion progress (1)')).toBeInTheDocument();
+  await actor.click(screen.getByRole('button', { name: 'Dismiss deletion notice' }));
+  expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
+  const progressLink = screen.getByText('Deletion progress (1)');
+  await actor.click(progressLink);
+  const progressRows = progressLink.closest('details')!;
+  await actor.click(within(progressRows).getByRole('button', { name: 'View status for first' }));
+  expect(await screen.findByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
+  await actor.click(screen.getByText('Close', { selector: 'button' }));
+  expect(deleteSandbox).toHaveBeenCalledTimes(1);
   view.rerender(draw('second'));
   await act(async () => {});
   expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled();
+  expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
   await remove();
+  expect(screen.getByText('Deleting 2 environments')).toBeVisible();
   expect(deleteSandbox.mock.calls.map(([id]) => id)).toEqual(['first', 'second']);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.getByText('Deletion progress (2)')).toBeInTheDocument();
+  for (const id of ['third', 'fourth', 'fifth']) {
+    view.rerender(draw(id));
+    await act(async () => {});
+    await remove();
+  }
+  expect(screen.getAllByRole('region', { name: 'Deletion request' })).toHaveLength(1);
+  expect(screen.getByText('Deleting 5 environments')).toBeVisible();
   view.unmount();
-  render(draw('second'));
+  const reloaded = render(draw('second'));
   await act(async () => {});
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  await actor.click(screen.getByRole('button', { name: 'View deletion status' }));
+  await actor.click(screen.getByRole('button', { name: 'View status' }));
+  const progress = screen.getByRole('dialog', { name: 'Deletion progress' });
+  expect(within(progress).getAllByRole('listitem')).toHaveLength(5);
+  await actor.click(
+    within(progress).getByRole('button', { name: 'View Sandbox deletion status (5)' }),
+  );
   expect(screen.getByRole('dialog', { name: 'Deleting Sandbox' })).toBeInTheDocument();
-  expect(deleteSandbox).toHaveBeenCalledTimes(2);
+  expect(deleteSandbox).toHaveBeenCalledTimes(5);
+  expect(screen.queryByRole('dialog', { name: 'Deletion progress' })).not.toBeInTheDocument();
+  await actor.click(screen.getByText('Close', { selector: 'button' }));
+  for (const [index, sandbox] of sandboxes.entries()) {
+    sandbox.status = 'retired';
+    reloaded.rerender(draw(sandbox.id));
+    await act(async () => {});
+    const remaining = sandboxes.length - index - 1;
+    if (remaining)
+      expect(screen.getByRole('region', { name: 'Deletion request' })).toHaveTextContent(
+        `Deleting ${remaining} environment${remaining === 1 ? '' : 's'}`,
+      );
+    else expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
+  }
+  expect(restoreDeletions('owner')).toEqual([]);
+  expect(deleteSandbox).toHaveBeenCalledTimes(5);
+});
+
+it('reconciles accepted notices when an existing page read proves retirement after re-entry', async () => {
+  const request = {
+    action: { kind: 'delete_sandbox' as const, sandboxId: 'sbx_1' },
+    key: 'synthetic-background-request',
+    accepted: true,
+  };
+  persistDeletion('owner', request);
+  const readSandbox = vi.fn().mockResolvedValue(sandboxFixture('retiring'));
+  const client = agentClient({ readSandbox, listSandboxes: async () => ({ items: [] }) });
+  const draw = (home: boolean) => (
+    <CmaClientProvider client={client}>
+      <Console
+        user={{ id: 'owner', handle: 'Owner', visitor: false, capabilities: ['use_own_sandboxes'] }}
+        route={home ? { kind: 'home' } : { kind: 'sandbox', sandboxId: 'sbx_1' }}
+        onNavigate={vi.fn()}
+        onSignOut={vi.fn()}
+      />
+    </CmaClientProvider>
+  );
+  const view = render(draw(false));
+  await screen.findByText('Deleting 1 environment');
+  view.rerender(draw(true));
+  await act(async () => {});
+  expect(restoreDeletions('owner')).toEqual([request]);
+  readSandbox.mockResolvedValue(sandboxFixture('retired'));
+  view.rerender(draw(false));
+  await act(async () => {});
+  expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Deletion progress (1)')).not.toBeInTheDocument();
+  expect(restoreDeletions('owner')).toEqual([]);
 });

@@ -303,3 +303,82 @@ async fn operator_pause_rechecks_input_and_desktop_activity_after_preview_on_ano
         client.database(&name).drop().await.unwrap();
     }
 }
+
+// #1330: the owner finishes adding a Workspace while the existing live Agent
+// stays quiet with an old log. The Sandbox's recorded activity must be a full
+// interval old before preview or admission schedule the pause.
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn live_agent_inactivity_waits_a_full_interval_after_recent_sandbox_activity() {
+    const OWNER_WORK_AT: &str = "2026-09-05T00:20:00Z";
+    for active_turn in [false, true] {
+        let (client, name, store) = database().await;
+        let mut sandbox = active_sandbox("sbx_recent_owner_work");
+        sandbox.last_activity_at = OWNER_WORK_AT.into();
+        store.create_sandbox(sandbox.clone()).await.unwrap();
+        let mut agent = ready_agent(&sandbox, "agt_sbx_recent_owner_work");
+        if active_turn {
+            agent.status = AgentStatus::Working;
+            agent.conversation.active_turn = Some(1);
+        }
+        insert_agent(&store, &agent, IDLE_AT).await;
+        let mut added = workspace(&sandbox, WorkspaceWorkStep::None);
+        added.id = WorkspaceId("wks_added_by_owner".into());
+        added.name = "added".into();
+        added.path = "/home/cma/added".into();
+        added.created_at = OWNER_WORK_AT.into();
+        added.ready_at = Some(OWNER_WORK_AT.into());
+        store.create_workspace(added).await.unwrap();
+
+        for (requested_at, due) in [
+            (LATER, false),
+            // The threshold boundary is strict, as for Agent logs.
+            ("2026-09-05T00:35:00Z", false),
+            ("2026-09-05T00:35:01Z", !active_turn),
+        ] {
+            let request = SandboxInactivityPauseRequest {
+                requested_at: requested_at.into(),
+                ..pause(&sandbox.id)
+            };
+            let expected = if due {
+                SandboxMaintenanceOutcome::Scheduled
+            } else {
+                SandboxMaintenanceOutcome::NotEligible
+            };
+            assert_eq!(
+                store
+                    .preview_inactivity_pause(request.clone())
+                    .await
+                    .unwrap(),
+                expected,
+                "{requested_at} active_turn={active_turn}"
+            );
+            if !due {
+                assert_eq!(
+                    store.schedule_inactivity_pause(request).await.unwrap(),
+                    expected,
+                    "{requested_at} active_turn={active_turn}"
+                );
+                assert_eq!(
+                    store.get_sandbox(&sandbox.id).await.unwrap(),
+                    Some(sandbox.clone()),
+                    "{requested_at} active_turn={active_turn}"
+                );
+                assert!(store
+                    .sandbox_events(&sandbox.id, 0, 100)
+                    .await
+                    .unwrap()
+                    .is_empty());
+                continue;
+            }
+            assert_eq!(
+                store.schedule_inactivity_pause(request).await.unwrap(),
+                expected
+            );
+            let after = store.get_sandbox(&sandbox.id).await.unwrap().unwrap();
+            assert_eq!(after.status, SandboxStatus::Pausing);
+            assert_eq!(after.revision, sandbox.revision + 1);
+        }
+        client.database(&name).drop().await.unwrap();
+    }
+}

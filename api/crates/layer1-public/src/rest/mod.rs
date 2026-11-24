@@ -18,6 +18,8 @@ pub use account_deletion::{account_deletion_problem, account_deletion_router};
 mod account_deletion_tests;
 mod bot_setups;
 mod bots;
+pub mod legal_consent;
+pub mod privacy_export;
 pub use bot_setups::bot_setup_router;
 pub use bots::bot_router;
 mod agent_access_requests;
@@ -96,7 +98,9 @@ mod badge_mark;
 mod badge_tests;
 mod defaults;
 mod desktop;
-pub use desktop::{desktop_router, desktop_router_with_origins};
+pub use desktop::{
+    desktop_router, desktop_router_with_origins, permitted_origin as desktop_origin_permitted,
+};
 mod documents;
 pub use documents::documents_router;
 mod embed;
@@ -127,6 +131,10 @@ mod remediation;
 mod resource_access;
 pub(crate) mod resource_access_problem;
 mod resource_access_shapes;
+mod resource_revocations;
+#[cfg(test)]
+mod resource_revocations_tests;
+pub use resource_revocations::resource_access_router_with_revocations;
 #[cfg(test)]
 mod resource_access_tests;
 #[cfg(test)]
@@ -138,12 +146,10 @@ mod shared_source_tests;
 #[cfg(test)]
 pub(crate) mod shared_stream_tests;
 pub use resource_access::resource_access_router;
+mod browser_telemetry;
 #[cfg(test)]
 mod trigger_assets_test_support;
-
-mod browser_telemetry;
 pub use browser_telemetry::{browser_telemetry_router, BrowserFault};
-
 mod bindings;
 #[cfg(test)]
 mod bindings_tests;
@@ -193,7 +199,7 @@ mod trigger_routes_tests;
 mod triggers;
 mod workspaces;
 mod worktrees;
-
+use crate::{InterfaceProfile, Operation};
 pub use agent_history::{AgentHistoryExportError, AgentHistoryExporter};
 pub use agent_lifecycle::{
     AgentLifecycleConnectionRequired, AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest,
@@ -201,10 +207,12 @@ pub use agent_lifecycle::{
     AgentLifecycleOperationReadError, AgentLifecycleOperationReader, AgentLifecycleOperationView,
     AgentLifecyclePermissions, AgentLifecycleProfile, AgentLifecycleProvisioner,
     AgentLifecycleProvisioningError, AgentLifecycleRepository, AgentLifecycleSkill,
-    AgentLifecycleTitleMode,
+    AgentLifecycleTitleMode, RepositoryAccessRefusal,
 };
 pub use agent_source::agent_source_router;
-pub use agents::{agent_router, AgentRoutesState};
+pub use agents::{
+    agent_router, personal_agent_inventory_router, AgentRoutesState, PersonalAgentInventory,
+};
 pub use embed::{
     EmbedContentSecurityPolicy, EmbedDescriptor, EmbedSnippets, EMBED_V1_JAVASCRIPT_SRI,
 };
@@ -216,14 +224,12 @@ pub use launch_events::{
     LaunchStepStatusValue, LaunchStepView, RepeatChoiceValue, ServiceRequirementStateValue,
 };
 pub use launch_quota::{LaunchQuota, LaunchQuotaError, LaunchQuotaPermit, LaunchQuotaRefusal};
+use openapi_shapes::ConformanceDocument;
 pub(crate) use problems::{problem_document, problem_response};
 pub use problems::{HttpProblem, Problem, ProblemDocument};
 pub use profile_authoring::profile_authoring_router;
 pub use profiles::{profiles_router, ProfileRoutePolicy, ProfilesState};
 pub use triggers::{trigger_router, TriggerRoutesState};
-
-use crate::{InterfaceProfile, Operation};
-use openapi_shapes::ConformanceDocument;
 
 pub(crate) const PROBLEM_BASE: &str = "https://spec.chrono-ai.fun/cma/1.0/problems";
 pub const REQUEST_ID_LENGTH: usize = 36;
@@ -459,39 +465,7 @@ pub fn router() -> Router {
 }
 
 #[cfg(test)]
-mod tests {
-    use axum::body::Body;
-    use tower::ServiceExt;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn discovery_and_openapi_are_both_composed() {
-        for path in ["/api/v1/conformance", "/openapi.json"] {
-            let response = router()
-                .oneshot(axum::http::Request::get(path).body(Body::empty()).unwrap())
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-        }
-    }
-
-    #[test]
-    fn request_identifiers_are_canonical_and_unambiguous() {
-        let canonical = "123e4567-e89b-12d3-a456-426614174000";
-        assert_eq!(normalize_request_id(canonical), Some(canonical));
-        assert_eq!(
-            normalize_request_id(" 123e4567-e89b-12d3-a456-426614174000 "),
-            Some(canonical)
-        );
-        assert!(normalize_request_id("123E4567-E89B-12D3-A456-426614174000").is_none());
-
-        let mut headers = HeaderMap::new();
-        headers.append("x-request-id", canonical.parse().unwrap());
-        headers.append("x-request-id", canonical.parse().unwrap());
-        assert!(request_id_from_headers(&headers).is_none());
-    }
-}
+mod tests;
 
 pub mod event_workers;
 pub use agent_models::{

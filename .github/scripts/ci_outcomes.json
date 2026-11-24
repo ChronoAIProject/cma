@@ -173,6 +173,12 @@
           "meaning": "The copy to the registry failed in transport and its tag could not be read back to settle the outcome.",
           "cause": "unknown",
           "next": "Read the reserved tag in the registry: if it holds the scanned digest the copy landed; otherwise push again for a new version."
+        },
+        "runtime_cleanup_incomplete": {
+          "title": "Runtime canary cleanup incomplete",
+          "meaning": "The runtime canary's Docker containers, volume or local image could not be proven removed after two cleanup passes; nothing was published.",
+          "cause": "transient",
+          "next": "Re-run the release; runtime-cleanup.json names the smoke result and failed cleanup step. failure=identity_refused means the runner held containers or a volume this run did not create: inspect its Docker inventory, do not re-run."
         }
       }
     },
@@ -1458,6 +1464,12 @@
           "meaning": "The deployment finished without a verified controller outcome for this component.",
           "cause": "unknown",
           "next": "Open the Deploy job: its FAIL line and summary state what the controller proved."
+        },
+        "retry-not-run": {
+          "title": "Automatic deployment retry did not run",
+          "meaning": "The first deployment was refused before any change for a transient reason and handed over to one automatic re-admission and retry, but that retry never started or never reported. Nothing is deployed for this component in this run.",
+          "cause": "unknown",
+          "next": "Open the lane's Re-admit and Deploy again jobs. If they were cancelled or skipped, dispatch redeploy-staging for the component or push to develop; a re-run of failed jobs reuses an expired admission."
         }
       }
     },

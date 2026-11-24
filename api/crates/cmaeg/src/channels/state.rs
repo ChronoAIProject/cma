@@ -18,6 +18,7 @@ use std::{
 use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ManagementState {
+    pub managed_telegram_setup_enabled: bool,
     pub github_enabled: bool,
     pub github: Arc<OnceLock<Arc<crate::github::Gateway>>>,
     pub native_lark_controls_enabled: bool,
@@ -68,6 +69,8 @@ pub struct ManagementState {
     pub lark_message_effects_writes_enabled: bool,
     pub native_discord_writes_enabled: bool,
     pub native_telegram_message_events_writes_enabled: bool,
+    pub native_telegram_member_joins_enabled: bool,
+    pub relay_telegram_member_joins_enabled: bool,
     pub native_telegram_durable_admission_enabled: bool,
     pub native_discord_thread_history_enabled: bool,
     pub native_telegram_topic_lifecycle_enabled: bool,
@@ -98,6 +101,16 @@ pub(crate) struct CachedResponse {
 }
 
 impl ManagementState {
+    pub(crate) fn telegram_member_join_authoring(&self) -> bool {
+        self.native_telegram_member_joins_enabled
+            && self.native_telegram_durable_admission_enabled
+            && self.multi_consumer_writes_enabled
+    }
+    pub(crate) fn relay_telegram_member_join_authoring(&self) -> bool {
+        self.relay_telegram_member_joins_enabled
+            && self.native_telegram_durable_admission_enabled
+            && self.multi_consumer_writes_enabled
+    }
     pub(crate) fn write_flags(&self) -> super::write_gate::WriteFlags {
         super::write_gate::WriteFlags {
             github: self.github_enabled,
@@ -119,6 +132,8 @@ impl ManagementState {
             lark_message_effects: self.lark_message_effects_writes_enabled,
             native_discord: self.native_discord_writes_enabled,
             telegram_message_events: self.native_telegram_message_events_writes_enabled,
+            telegram_member_joins: self.telegram_member_join_authoring(),
+            relay_telegram_member_joins: self.relay_telegram_member_join_authoring(),
             discord_thread_history: self.native_discord_thread_history_enabled,
             telegram_topic_lifecycle: self.native_telegram_topic_lifecycle_enabled,
             telegram_topic_creation: self.native_telegram_topic_creation_enabled,
@@ -197,6 +212,7 @@ impl ManagementState {
             tools_nyxid_slug: config.tools_nyxid_slug,
             cma_service_token: config.cma_service_token,
             telegram: None,
+            managed_telegram_setup_enabled: false,
             native_bot_mentions_writes_enabled: false,
             thread_contract_writes_enabled: false,
             media_enabled: false,
@@ -222,6 +238,8 @@ impl ManagementState {
             lark_message_effects_writes_enabled: false,
             native_discord_writes_enabled: false,
             native_telegram_message_events_writes_enabled: false,
+            native_telegram_member_joins_enabled: false,
+            relay_telegram_member_joins_enabled: false,
             native_telegram_durable_admission_enabled: false,
             native_discord_thread_history_enabled: false,
             native_telegram_topic_lifecycle_enabled: false,
@@ -265,7 +283,16 @@ pub enum ManagementError {
     Provider(ProviderError),
     Record(RecordError),
     NotFound,
-    Conflict { expected: u64, actual: Option<u64> },
+    Conflict {
+        expected: u64,
+        actual: Option<u64>,
+    },
+    /// The provider answered a binding release with a definite refusal. The
+    /// channel record is retained; nothing proves the binding is absent.
+    ReleaseRefused {
+        status: u16,
+        code: String,
+    },
     Unauthorized,
     Internal(String),
 }
@@ -281,6 +308,12 @@ impl fmt::Display for ManagementError {
                 write!(
                     formatter,
                     "channel version conflict: expected {expected}, actual {actual:?}"
+                )
+            }
+            Self::ReleaseRefused { status, .. } => {
+                write!(
+                    formatter,
+                    "provider refused to release the binding (HTTP {status})"
                 )
             }
             Self::Unauthorized => formatter.write_str("management service authentication failed"),

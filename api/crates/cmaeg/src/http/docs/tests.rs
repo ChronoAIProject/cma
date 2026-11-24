@@ -28,6 +28,11 @@ async fn public_docs_are_real_html_and_exact_markdown_without_authentication() {
             .contains("default-src 'none'"));
         let body = response.text().await.unwrap();
         assert!(body.contains(expected));
+        assert!(body.contains("NyxID REST proxy base (example)"));
+        assert!(body.contains("https://nyxid.example.com/api/v1/proxy/s/cmaeg"));
+        assert!(body.contains("<strong>Retry creation</strong>"));
+        assert!(body.contains("<strong>Resume creation</strong>"));
+        assert!(!body.contains("Production address"));
         assert!(body.contains("<nav aria-label=\"Sections\">"));
         assert!(body.contains("<main id=\"content\"><h1"));
         assert!(body.contains("href=\"/openapi.json\""));
@@ -68,6 +73,10 @@ async fn public_docs_are_real_html_and_exact_markdown_without_authentication() {
         "Full event context and restart recovery",
         "Flow H — Replica restart",
         "8. Tools API and MCP",
+        "NyxID REST proxy base (example)",
+        "https://nyxid.example.com/api/v1/proxy/s/cmaeg",
+        "**Retry creation**",
+        "**Resume creation**",
     ] {
         assert!(markdown.contains(text));
     }
@@ -99,6 +108,30 @@ async fn public_docs_are_real_html_and_exact_markdown_without_authentication() {
         .unwrap();
     assert!(spec["paths"]["/channels"].is_object());
     server.abort();
+}
+
+#[test]
+fn published_guide_explains_channels_and_the_optional_consumer_route() {
+    let html = page();
+    assert!(html.contains("id=\"integration-create-a-channel-in-cma\""));
+    assert!(html.contains("href=\"#integration-create-a-channel-in-cma\""));
+    let (_, channel) = html
+        .split_once("id=\"integration-create-a-channel-in-cma\"")
+        .unwrap();
+    let (channel, consumer) = channel
+        .split_once("id=\"integration-create-a-cma-consumer\"")
+        .unwrap();
+    for label in [
+        "New channel",
+        "Create channel",
+        "Check original channel",
+        "Retry same request",
+    ] {
+        assert!(channel.contains(label), "missing channel action {label}");
+    }
+    assert!(!channel.contains("New consumer"));
+    assert!(consumer.contains("has a <strong>Consumers</strong> tab"));
+    assert!(download_markdown().contains("](#integration-create-a-channel-in-cma)"));
 }
 
 #[test]

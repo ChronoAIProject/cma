@@ -40,6 +40,7 @@ pub struct Authority {
     pub(super) retry_evidence:
         std::sync::OnceLock<Arc<layer3_adapter::owner_protocol::OwnershipEvidence>>,
     pub token: OwnershipToken,
+    pub(super) sandbox_sha256: std::sync::OnceLock<String>,
     pub(super) retiring: AtomicBool,
     receiver_cancelled: AtomicBool,
     pub(super) receiver_failure:
@@ -59,6 +60,7 @@ impl Authority {
         Arc::new(Self {
             retry_evidence: Default::default(),
             token,
+            sandbox_sha256: Default::default(),
             retiring: AtomicBool::new(false),
             receiver_cancelled: AtomicBool::new(false),
             receiver_failure: Default::default(),
@@ -81,6 +83,7 @@ impl Authority {
         Arc::new(Self {
             retry_evidence: Default::default(),
             token,
+            sandbox_sha256: Default::default(),
             retiring: AtomicBool::new(false),
             receiver_cancelled: AtomicBool::new(false),
             receiver_failure: Default::default(),
@@ -101,6 +104,10 @@ impl Authority {
         self.deadline
             .borrow()
             .is_some_and(|deadline| Instant::now() < deadline)
+    }
+
+    pub(super) fn established_deadline(&self) -> Option<Instant> {
+        *self.deadline.borrow()
     }
 
     pub fn renew_until(&self, next: Instant) -> Result<(), OwnershipError> {

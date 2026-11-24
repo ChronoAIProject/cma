@@ -8,6 +8,28 @@ use crate::{
     rate_limit::RateLimiters, store::MongoStores, REQUEST_BODY_LIMIT_BYTES,
 };
 
+pub(super) fn accounts(
+    config: &crate::config::Config,
+    stores: &MongoStores,
+    deletions: Arc<layer2_core::account_deletion::AccountDeletionService>,
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+    reads: Arc<layer2_core::sandbox::AgentReadService>,
+) -> Router {
+    let routes = layer1_public::rest::account_deletion_router(deletions).merge(
+        layer1_public::rest::legal_consent::legal_consent_router(super::legal_consent::service(
+            config, stores,
+        )),
+    );
+    if config.features.privacy_export_enabled {
+        use layer2_core::sandbox::privacy_export::PrivacyExport;
+        routes.merge(layer1_public::rest::privacy_export::router(Arc::new(
+            PrivacyExport::new(reads, standing, stores.sandbox_model.clone()),
+        )))
+    } else {
+        routes
+    }
+}
+
 /// Apply before cloning for delegated dispatch: all entry points share slots.
 pub(super) fn stream_budget(resources: Router, limit: usize) -> Router {
     resources.layer(axum::middleware::from_fn_with_state(
@@ -26,8 +48,9 @@ pub(super) fn compose(
     relay: Option<&Arc<crate::agent_manager::relay::Relay>>,
 ) -> Router {
     let public = crate::rest_router(resources)
-        .merge(crate::connections::router(connections))
+        .merge(crate::connections::router(connections, auth.clone()))
         .merge(crate::auth::router(auth.clone()))
+        .merge(crate::auth::service_authorization::router(auth.clone()))
         .layer(axum::middleware::from_fn_with_state(
             recorder,
             crate::activity::record,
@@ -40,14 +63,17 @@ pub(super) fn compose(
             crate::expensive_reads::ReadBudget::new(config.features.retain_read_frames),
             crate::expensive_reads::enforce,
         ));
-    // Routing before operation charging charges a forwarded request only at
-    // its serving owner. Both pods authenticate it behind cheap admission.
+    // Public Stop/Delete charge directly after authentication. Runtime-effect
+    // routes retain owner routing before their existing operation budgets.
     let public = match relay {
-        Some(relay) => relay.authenticated_routes(public, auth),
-        None => public.layer(axum::middleware::from_fn_with_state(
-            auth,
-            crate::auth::attach_subject,
-        )),
+        Some(relay) => relay.authenticated_control_routes(public, auth, limits.lifecycle()),
+        None => {
+            let public = crate::control_admission::routes(public, limits.lifecycle());
+            public.layer(axum::middleware::from_fn_with_state(
+                auth,
+                crate::auth::attach_subject,
+            ))
+        }
     };
     Router::new()
         .merge(public)

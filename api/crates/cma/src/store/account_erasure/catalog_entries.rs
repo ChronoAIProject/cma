@@ -188,7 +188,18 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("provider_binding_preparations", Owner(&["owner"]) => false),
     entry!("provider_tool_opens", Linked(Agents, &["record.scope.agent_id"]) => false),
     entry!("provider_tool_relays", Linked(Agents, &["agent_id"]) => false),
+    // Opt-in execution evidence keeps identities in its serialized `record`;
+    // erasure fails closed if any row still names the subject, one of its
+    // resources, one of their shares, or one of the subject's recomputed actor
+    // and owner digests (#3296). Still unmatched: delegated Api actor digests
+    // and the resource-derived `origin`, `target_ancestry` and `registration`
+    // digests; whether those may be retained as pseudonymous evidence is the
+    // owner's decision on #3296.
+    entry!("resource_execution_effects_v1", ProvenAbsentJson(&["record"]) => false),
+    entry!("resource_execution_grants_v1", ProvenAbsentJson(&["record"]) => false, ProvenAbsent(&["share_id"]) => false),
+    entry!("resource_execution_records_v1", ProvenAbsentJson(&["record"]) => false),
     entry!("resource_policies", Linked(Sandboxes, &["_id"]) => true, Reference(ReferenceRule::Identities) => false),
+    entry!("resource_revocation_operations_v1", ProvenAbsentJson(&["record"]) => false),
     entry!("resource_share_commands", Linked(Sandboxes, &["sandbox_id"]) => false, Reference(ReferenceRule::ShareReceipts) => false, Reference(ReferenceRule::Identities) => false),
     entry!("resource_shares", Linked(Sandboxes, &["sandbox_id"]) => true, Reference(ReferenceRule::Shares) => true, Reference(ReferenceRule::Shares) => false, Reference(ReferenceRule::Identities) => false),
     entry!("sandbox_admissions", OwnerKey(Subject) => true),
@@ -201,6 +212,11 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("sandbox_events", Linked(Sandboxes, &["sandbox_id"]) => true),
     entry!("sandbox_usage", Owner(&["owner"]) => true),
     entry!("sandbox_usage_events", Owner(&["owner"]) => true),
+    entry!("sandbox_usage_captures_v1", Retained("usage-capture-custody") => false),
+    entry!("sandbox_usage_evidence_v1", Retained("usage-capture-custody") => false),
+    entry!("sandbox_usage_outbox_v1", Retained("usage-delivery-custody") => false),
+    entry!("sandbox_usage_streams_v1", Retained("usage-capture-custody") => false),
+    entry!("sandbox_usage_inventory_v1", Retained("usage-capture-custody") => false),
     entry!("sandbox_profile_revisions", Reference(ReferenceRule::Profiles) => false),
     entry!("sandbox_profiles", Reference(ReferenceRule::Profiles) => false),
     entry!("sandbox_retained_availability", Linked(Sandboxes, &["_id"]) => true),
@@ -214,6 +230,7 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("trigger_launch_input_protocols", Linked(Launches, &["_id"]) => true),
     entry!("trigger_launches", Owner(&["owner"]) => true),
     entry!("users", OwnerKey(Subject) => true),
+    entry!("retained_legal_consents", Retained("detached legal consent") => false),
     entry!("warm_sandboxes", Linked(Sandboxes, &["_id"]) => true),
     entry!("workspace_profile_revisions", Reference(ReferenceRule::Profiles) => false),
     entry!("workspace_profiles", Reference(ReferenceRule::Profiles) => false),

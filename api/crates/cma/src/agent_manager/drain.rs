@@ -5,12 +5,12 @@ use layer2_core::agent_ownership::{Authority, OwnershipError};
 use std::future::Future;
 
 #[derive(Debug)]
-struct HandoffFailure {
+pub(crate) struct HandoffFailure {
     phase: &'static str,
     error: OwnershipError,
 }
 
-async fn handoff(
+pub(crate) async fn handoff(
     coordinator: &OwnershipCoordinator,
     authority: &Arc<Authority>,
     revoke: impl Future<Output = Result<(), OwnershipError>>,
@@ -23,13 +23,19 @@ async fn handoff(
             Ok(())
         })
         .await;
-    result.map_err(|error| HandoffFailure {
-        phase: if receivers_settled {
+    result.map_err(|error| {
+        let phase = if receivers_settled {
             "durable_release"
         } else {
             "receiver_revocation"
-        },
-        error,
+        };
+        let failure = HandoffFailure { phase, error };
+        authority.log_receiver_handoff_failure(
+            failure.phase,
+            &failure.error,
+            "Agent Manager drain handoff failed",
+        );
+        failure
     })
 }
 
@@ -74,21 +80,12 @@ impl AgentManager {
             .map_err(|error| error.to_string())?;
         let results = stream::iter(owned.into_iter().map(|authority| async move {
             self.registry.detach_owner(&authority.token);
-            let result = handoff(
+            handoff(
                 &self.coordinator,
                 &authority,
                 authority.revoke_transports_after_local_drain(),
             )
-            .await;
-            if let Err(failure) = &result {
-                tracing::warn!(
-                    agent_id = %authority.token.agent_id,
-                    phase = failure.phase,
-                    error = %failure.error,
-                    "Agent Manager drain handoff failed"
-                );
-            }
-            result
+            .await
         }))
         .buffer_unordered(4)
         .collect::<Vec<_>>()

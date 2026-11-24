@@ -1,79 +1,110 @@
+import { randomUUID } from 'node:crypto';
+import type { TriggerStatistics } from '@cma/client';
 import { test, expect } from './harness';
 import { identifier, object, required } from './environment';
-import { createToRevive, openWorkspacesTab, workspaceAgentButton } from './lifecycle-creation';
+import { createContextualTask, createToRevive, openWorkspacesTab } from './lifecycle-creation';
+import { publishCurrentTrigger } from './publisher-current';
+import { publicApiPath } from './public-api-path';
+import { assertPublishedLaunch, assertSingleLaunchDelta } from './public-journey-contracts';
+import {
+  commandProof,
+  hashText,
+  publicationProof,
+  runtimeProof,
+  workCommands,
+} from './journey-proof';
+import { firstAnswer } from './journey-answer';
 
-test('J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and rotation preserve work', async ({
+test('J6 image and inline Workspace tasks preserve identity through retry, pause, rotation and deletion', async ({
   harness: h,
 }) => {
   const page = await h.open('owner');
-  const profile = h.fixture.profiles.sandbox;
-  await page.goto(`${h.config.baseURL}/marketplace/sandbox/${profile.id}`);
-  await page.getByRole('button', { name: 'Use', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Create sandbox', exact: true })).toBeDisabled();
-  await page.getByLabel('I trust this profile', { exact: true }).check();
-  await h.capture(page, 'j6-trust');
-  await page.getByRole('button', { name: 'Create sandbox', exact: true }).click();
-  await page.waitForURL(/\/sandboxes\/[^/]+$/);
-  await h.flush();
-  const sandboxId = h.journal.resources.find((row) => row.kind === 'sandboxes')!.id;
-  await expect
-    .poll(
-      async () => (await h.get<{ status: string }>(page, `/api/v1/sandboxes/${sandboxId}`)).status,
-      { timeout: 540_000 },
-    )
-    .toBe('active');
-  await page.reload();
-  await page.getByRole('button', { name: 'More actions', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'New workspace', exact: true }).click();
-  await page.getByRole('radio', { name: 'Public', exact: true }).check();
-  await page
-    .getByRole('button', {
-      name: `${h.fixture.profiles.workspace.name} Version ${h.fixture.profiles.workspace.revision}`,
-      exact: true,
-    })
-    .click();
-  const trust = page.getByLabel('I trust this profile', { exact: true });
-  if (await trust.isVisible()) await trust.check();
-  const workspaceAdmission = page.waitForResponse(
+  const published = await publishCurrentTrigger(h, page, 'owner', true);
+  const beforeStats = await h.get<TriggerStatistics>(
+    page,
+    `/api/v1/triggers/${published.document.id}/stats`,
+  );
+  const beforeCommands = h.commands.length;
+  const admitted = await h.launchTarget(page, {
+    publicId: published.document.public_id!,
+    placementId: published.placement.id,
+  });
+  const launch = await h.ready(page, admitted.id);
+  await firstAnswer(h, page, launch, h.fixture.accounts.owner.subject);
+  const sandboxId = identifier(launch.resolution.sandbox.id, 'J6 managed Sandbox');
+  const sandbox = await h.get(page, `/api/v1/sandboxes/${sandboxId}`);
+  assertPublishedLaunch(launch, sandbox, {
+    triggerId: published.document.id,
+    publicId: published.document.public_id!,
+    placementId: published.placement.id,
+    digest: published.revision.digest,
+    subject: h.fixture.accounts.owner.subject,
+  });
+  let afterStats = beforeStats;
+  await expect(async () => {
+    afterStats = await h.get<TriggerStatistics>(
+      page,
+      `/api/v1/triggers/${published.document.id}/stats`,
+    );
+    assertSingleLaunchDelta(beforeStats, afterStats, published.placement.id);
+  }).toPass({ timeout: 20_000 });
+  const bootstrap = publicationProof(
+    published,
+    launch,
+    sandbox,
+    workCommands(h.commands.slice(beforeCommands)),
+    beforeStats,
+    afterStats,
+  );
+  await page.goto(`${h.config.baseURL}/sandboxes/${sandboxId}`);
+  await openWorkspacesTab(page);
+  await page.getByRole('button', { name: 'New workspace', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New workspace', exact: true });
+  await dialog.getByRole('button', { name: 'Workspace source', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'Clone a GitHub repository', exact: true }).click();
+  const repository = h.fixture.publicJourneys.repository;
+  const name = `journey-${randomUUID().slice(0, 8)}`;
+  await dialog.getByLabel('Workspace name', { exact: true }).fill(name);
+  await dialog.getByLabel('GitHub repository URL', { exact: true }).fill(repository.url);
+  await dialog.getByLabel('Branch or ref (optional)', { exact: true }).fill(repository.reference);
+  const admission = page.waitForResponse(
     (response) =>
-      response.url() === `${h.config.baseURL}/api/v1/sandboxes/${sandboxId}/workspaces` &&
+      publicApiPath(new URL(response.url()).pathname) ===
+        `/api/v1/sandboxes/${sandboxId}/workspaces/inline` &&
       response.request().method() === 'POST',
   );
-  await page.getByRole('button', { name: 'Create workspace', exact: true }).click();
-  const workspaceResponse = await workspaceAdmission;
-  expect(workspaceResponse.status()).toBe(201);
-  const createdWorkspace = object(await workspaceResponse.json());
-  expect(createdWorkspace.sandbox_id).toBe(sandboxId);
+  await dialog.getByRole('button', { name: 'Create workspace', exact: true }).click();
+  const response = await admission;
+  expect(response.status()).toBe(201);
+  expect(response.request().postDataJSON()).toEqual({
+    name,
+    source: { type: 'git_repository', url: repository.url, reference: repository.reference },
+  });
+  const created = object(await response.json());
+  expect(created.sandbox_id).toBe(sandboxId);
   const workspace = {
-    id: identifier(createdWorkspace.id, 'J6 created Workspace ID'),
-    path: required(createdWorkspace.path, 'J6 created Workspace path'),
+    id: identifier(created.id, 'J6 inline Workspace'),
+    path: required(created.path, 'J6 inline Workspace path'),
   };
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  const agentIds: string[] = [];
+  await expect(dialog).toHaveCount(0);
+  const agents = [];
   for (let index = 0; index < 2; index++) {
     await page.goto(`${h.config.baseURL}/sandboxes/${sandboxId}`);
-    await openWorkspacesTab(page);
-    await workspaceAgentButton(page, workspace).click();
-    const dialog = page.getByRole('dialog', { name: 'New agent', exact: true });
-    await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
-    await dialog.getByRole('radio', { name: 'Public', exact: true }).check();
-    await dialog
-      .getByRole('button', {
-        name: `${h.fixture.profiles.agent.name} Version ${h.fixture.profiles.agent.revision}`,
-        exact: true,
-      })
-      .click();
-    await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
-    await dialog.getByLabel('Title (optional)', { exact: true }).fill(`Staging Agent ${index + 1}`);
-    await dialog
-      .getByLabel('First message (optional)', { exact: true })
-      .fill('Reply with your working directory and agent home. Do not modify files.');
-    await dialog.getByRole('button', { name: 'Create agent', exact: true }).click();
-    await page.waitForURL(/\/agents\/[^/]+$/);
-    await expect(page.locator('#agent-message')).toBeEnabled({ timeout: 540_000 });
-    const id = new URL(page.url()).pathname.split('/').at(-1)!;
-    agentIds.push(id);
+    const result = await createContextualTask(
+      page,
+      h,
+      workspace,
+      `Task ${index + 1}: reply with your working directory and Agent home. Do not modify files.`,
+    );
+    agents.push({
+      id: result.agent.id,
+      workspaceId: result.agent.workspace.id,
+      sandboxId: result.agent.sandbox.id,
+      worktreeId: result.agent.worktree.id,
+      command: commandProof(result.commands[0]!),
+    });
   }
+  const agentIds = agents.map((agent) => agent.id);
   expect(new Set(agentIds).size).toBe(2);
   await h.capture(page, 'j6-two-agents');
   const before = await h.operators.verifyRuntime({ phase: 'before_pause', sandboxId, agentIds });
@@ -84,16 +115,30 @@ test('J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and ro
     dirtyWorktreePresent: true,
     transcriptsPreserved: true,
   });
+  expect(before.imageReference).toBe(h.fixture.provenance.runtimeImage);
+  expect(before.homes.map((home) => home.agentId).sort()).toEqual([...agentIds].sort());
+  expect(new Set(before.homes.map((home) => home.homeDigest)).size).toBe(2);
+  for (const home of before.homes) {
+    expect(home.homeDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(home.fileHash).toMatch(/^[a-f0-9]{64}$/);
+  }
   await page.goto(`${h.config.baseURL}/sandboxes/${sandboxId}`);
   await page.getByRole('button', { name: 'Pause', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeEnabled({
     timeout: 180_000,
   });
-  await createToRevive(page, h, sandboxId, workspace);
+  const retry = await createToRevive(page, h, sandboxId, workspace);
+  const workspaceState = await h.get<{ agents: { id: string }[] }>(
+    page,
+    `/api/v1/workspaces/${workspace.id}`,
+  );
+  const workspaceAgentIds = workspaceState.agents.map((agent) => agent.id);
+  expect([...workspaceAgentIds].sort()).toEqual([...agentIds, retry.agent.id].sort());
   await page.goto(`${h.config.baseURL}/sandboxes/${sandboxId}`);
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeEnabled({
     timeout: 540_000,
   });
+  const afterSnapshots = [];
   for (const fault of ['restart_pausing', 'restart_reviving', 'rotate_image'] as const) {
     const control = { name: fault, fixtureOwner: h.fixture.fixtureOwner, sandboxId };
     await h.operators.controlFault({ ...control, phase: 'arm' });
@@ -128,14 +173,24 @@ test('J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and ro
         dirtyWorktreePresent: true,
         transcriptsPreserved: true,
       });
-      if (fault === 'rotate_image') expect(after.runtimeVersion).not.toBe(before.runtimeVersion);
+      expect([...after.homes].sort((a, b) => a.agentId.localeCompare(b.agentId))).toEqual(
+        [...before.homes].sort((a, b) => a.agentId.localeCompare(b.agentId)),
+      );
+      expect(after.imageReference).toMatch(/@sha256:[a-f0-9]{64}$/);
+      if (fault === 'rotate_image') {
+        expect(after.runtimeVersion).not.toBe(before.runtimeVersion);
+        expect(after.imageReference).not.toBe(before.imageReference);
+      }
+      afterSnapshots.push({ fault, snapshot: runtimeProof(after) });
       for (const id of agentIds) {
-        const agent = await h.get<{ id: string; sandbox: { id: string } }>(
-          page,
-          `/api/v1/agents/${id}`,
-        );
-        expect(agent.id).toBe(id);
-        expect(agent.sandbox.id).toBe(sandboxId);
+        const original = agents.find((agent) => agent.id === id)!;
+        const agent = await h.get(page, `/api/v1/agents/${id}`);
+        expect(agent).toMatchObject({
+          id,
+          sandbox: { id: sandboxId },
+          workspace: { id: workspace.id },
+          worktree: { id: original.worktreeId },
+        });
       }
     } finally {
       await h.operators.controlFault({ ...control, phase: 'release' });
@@ -156,5 +211,33 @@ test('J6 G-S1 G-P1 trusted Sandbox, two Agents, stop/delete, pause/revive and ro
     .getByLabel('I understand this Agent and Worktree will be deleted.', { exact: true })
     .check();
   await page.getByRole('button', { name: 'Delete Agent', exact: true }).click();
-  expect((await h.get<{ id: string }>(page, `/api/v1/agents/${agentIds[1]}`)).id).toBe(agentIds[1]);
+  await expect
+    .poll(async () => {
+      const deleted = await page.request.get(`${h.config.baseURL}/api/v1/agents/${agentIds[0]}`);
+      if (deleted.status() === 404) return true;
+      if (!deleted.ok()) return false;
+      const retained = object(await deleted.json());
+      return retained.id === agentIds[0] && retained.status === 'deleted';
+    })
+    .toBe(true);
+  const survivingAgentId = (await h.get<{ id: string }>(page, `/api/v1/agents/${agentIds[1]}`)).id;
+  expect(survivingAgentId).toBe(agentIds[1]);
+  h.proveJourney({
+    owner: h.fixture.accounts.owner.subject,
+    bootstrap,
+    sandboxId,
+    workspaceId: workspace.id,
+    agents,
+    workspaceAgentIds,
+    expectedManagedImageHash: hashText(h.fixture.provenance.runtimeImage),
+    before: runtimeProof(before),
+    after: afterSnapshots,
+    retry: {
+      operationId: retry.operationId,
+      agentId: retry.agent.id,
+      commands: retry.commands.map(commandProof),
+    },
+    deletedAgentId: agentIds[0],
+    survivingAgentId,
+  });
 });

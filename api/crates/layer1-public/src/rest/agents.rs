@@ -10,70 +10,29 @@ use axum::{
     Json, Router,
 };
 use layer2_core::profiles::AgentProfileRef;
-use layer2_core::sandbox::store::PageRequest;
-use layer2_core::sandbox::{AgentListQuery, AgentOrigin, AgentStatus, CreateAgent};
-use layer2_core::{AgentId, AgentProfileId, Caller, Capability, SandboxId, SubjectId, WorkspaceId};
-use serde::Deserialize;
+use layer2_core::sandbox::{AgentDetailReading, AgentOrigin, CreateAgent};
+use layer2_core::{AgentId, AgentProfileId, Caller, Capability, WorkspaceId};
 
 #[path = "agent_state.rs"]
 mod agent_state;
+mod inventory;
 use super::agent_lifecycle::{
     AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleProvisioningError,
 };
-use super::agent_openapi_shapes::{AgentListItemView, AgentView, CreateAgentRequest};
+use super::agent_openapi_shapes::{AgentView, CreateAgentRequest};
 use super::agent_shared_shapes::{
     AccessibleAgentListItemView, AccessibleAgentPageView, AccessibleAgentView,
 };
 use super::idempotency::{self, IdempotencyKey, RequestBody};
 use super::instance_problem::InstanceProblem;
+use super::profiles_problem::ProfileProblem;
+use super::profiles_sandbox::readable_revision;
 use super::BodyProblem;
 use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
 pub use agent_state::AgentRoutesState;
-
-const DEFAULT_PAGE_LIMIT: u16 = 200;
-
-#[derive(Debug, Deserialize, utoipa::IntoParams)]
-#[into_params(parameter_in = Query)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AgentPageParams {
-    organization: Option<String>,
-    sandbox: Option<String>,
-    workspace: Option<String>,
-    #[param(value_type = Option<String>)]
-    status: Option<AgentStatus>,
-    cursor: Option<String>,
-    #[param(minimum = 1, maximum = 200, default = 200)]
-    limit: Option<u16>,
-}
-
-impl AgentPageParams {
-    fn into_parts(
-        self,
-    ) -> Result<(Option<SubjectId>, AgentListQuery, PageRequest), InstanceProblem> {
-        if self.organization.as_ref().is_some_and(|value| {
-            value.trim().is_empty() || value.len() > 128 || value != value.trim()
-        }) || self.sandbox.as_ref().is_some_and(|value| value.is_empty())
-            || self
-                .workspace
-                .as_ref()
-                .is_some_and(|value| value.is_empty())
-            || self.cursor.as_ref().is_some_and(String::is_empty)
-        {
-            return Err(InstanceProblem::InvalidQuery);
-        }
-        let page = PageRequest::new(self.limit.unwrap_or(DEFAULT_PAGE_LIMIT), self.cursor)
-            .map_err(|_| InstanceProblem::InvalidQuery)?;
-        Ok((
-            self.organization.map(SubjectId::new),
-            AgentListQuery {
-                sandbox_id: self.sandbox.map(SandboxId),
-                workspace_id: self.workspace.map(WorkspaceId),
-                status: self.status,
-            },
-            page,
-        ))
-    }
-}
+use inventory::personal_agent_page;
+pub(crate) use inventory::AgentPageParams;
+pub use inventory::{personal_agent_inventory_router, PersonalAgentInventory};
 
 pub(super) fn routes() -> Router<AgentRoutesState> {
     let list = get(list).layer(axum::middleware::from_fn(agent_state::list_private_headers));
@@ -321,23 +280,7 @@ pub(crate) async fn list(
         .into_response());
     }
     let stored = state.reads.list(&caller, &query, &page).await?;
-    Ok(
-        tracing::debug_span!(target: "cma.agent_inventory", "serialize").in_scope(|| {
-            Json(AccessibleAgentPageView {
-                items: stored
-                    .items
-                    .into_iter()
-                    .map(|agent| {
-                        AccessibleAgentListItemView::Personal(Box::new(AgentListItemView::from(
-                            agent,
-                        )))
-                    })
-                    .collect(),
-                next: stored.next,
-            })
-            .into_response()
-        }),
-    )
+    Ok(personal_agent_page(stored))
 }
 
 #[utoipa::path(
@@ -355,25 +298,46 @@ pub(crate) async fn read(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
-) -> Result<Json<AccessibleAgentView>, InstanceProblem> {
-    if let Some(resource) = resource {
-        return state
+) -> Result<Response, InstanceProblem> {
+    let id = AgentId(id);
+    let detail = if let Some(resource) = resource {
+        state
             .reads
             .detail_authorized(
                 &resource.context,
                 resource.credential.as_ref().map(DelegatedCredential::value),
-                &AgentId(id),
+                &id,
             )
-            .await
-            .map(AccessibleAgentView::from)
-            .map(|view| Json(view.with_agent_page(&state.agent_page_origin)))
-            .map_err(InstanceProblem::from);
+            .await?
+    } else {
+        AgentDetailReading::Personal(Box::new(state.reads.lineage(&caller, &id).await?))
+    };
+    let (view, private) = match (detail, state.sandbox_profile_readability.as_deref()) {
+        (AgentDetailReading::Personal(lineage), Some(profiles)) => {
+            let pinned = &lineage.sandbox.profile;
+            let readable =
+                match readable_revision(profiles, &caller, pinned.id.as_str(), pinned.revision)
+                    .await
+                {
+                    Ok(revision) => Some(revision.digest == pinned.digest),
+                    Err(ProfileProblem::Forbidden | ProfileProblem::NotFound) => Some(false),
+                    Err(_) => None,
+                };
+            let view =
+                AgentView::from_lineage(*lineage, None).with_sandbox_profile_readability(readable);
+            (AccessibleAgentView::Personal(Box::new(view)), true)
+        }
+        (detail, _) => (AccessibleAgentView::from(detail), false),
+    };
+    let body = Json(view.with_agent_page(&state.agent_page_origin));
+    let mut response = body.into_response();
+    if private {
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("private, no-store"),
+        );
     }
-    read_view(&state, &caller, &AgentId(id)).await.map(|view| {
-        Json(
-            AccessibleAgentView::Personal(Box::new(view)).with_agent_page(&state.agent_page_origin),
-        )
-    })
+    Ok(response)
 }
 
 #[utoipa::path(

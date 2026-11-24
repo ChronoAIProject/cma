@@ -184,6 +184,37 @@ pub trait HostedBackend: Send + Sync {
             "retained provider deletion is unavailable".into(),
         ))
     }
+    async fn challenge_retirement_receiver(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+        _receiver: &crate::receiver_failure::RetirementReceiver,
+    ) -> Result<bool> {
+        Err(crate::AdapterError::Unsupported(
+            "native retirement challenge is unavailable".into(),
+        ))
+    }
+    async fn retire_unreachable(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+        _receiver: &crate::RetirementPod,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "verified provider retirement is unavailable".into(),
+        ))
+    }
+    async fn verify_retired(
+        &self,
+        _handle: &RuntimeHandle,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<()> {
+        Err(crate::AdapterError::Unsupported(
+            "provider retirement finality is unavailable".into(),
+        ))
+    }
     async fn suspend(
         &self,
         _handle: &RuntimeHandle,
@@ -274,6 +305,16 @@ pub trait HostedBackend: Send + Sync {
         Err(crate::AdapterError::Unsupported(
             "hosted runtime adoption is not supported".into(),
         ))
+    }
+
+    /// A persisted home supplies identity only; adoption still proves live authority.
+    async fn adopt_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeObservation>> {
+        self.adopt(handle, request).await
     }
 
     /// Optional native optimization. None selects the unchanged full adoption path.

@@ -1,19 +1,21 @@
 import { useSandboxCapacity } from '../sandbox/useSandboxCapacity';
 import { SandboxCapacityPanel } from '../sandbox/SandboxCapacityPanel';
-import { DocsLink } from '../services/DocsLink';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';
 import { taskSubmission, submitTaskOnShortcut } from './taskSubmission';
 import { useTaskCreationSupport } from './useTaskCreationSupport';
-import { TaskTemplateFields, useTaskTemplateSupport } from './TaskTemplateFields';
+import { useTaskTemplateAvailability } from './TaskTemplateFields';
 import type { TemplateIssue } from './taskTemplateModel';
 import { useLifecycleIntent } from './lifecycleIntent';
 import { lifecycleFailureMessage } from './lifecycleFailure';
 import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
-import { AgentProvisioningProgress } from './AgentProvisioningProgress';
+import { TaskCreationStatus } from './TaskCreationStatus';
+import { DiscardWaitingCreation } from './DiscardWaitingCreation';
+import { TaskHomeLayout, type TaskHomeOverview } from './TaskHomeLayout';
+import { TaskTemplatePanel } from './TaskTemplatePanel';
 import { TaskComposer } from './TaskComposer';
 import { RunTargetMenu } from './RunTargetMenu';
 import { RepositoryChip } from './RepositoryChip';
@@ -25,9 +27,11 @@ import { useTaskDraft } from './taskDraft';
 import { taskCreateRequest, useTaskTitleModeSupport } from './taskCreateRequest';
 import { useTaskTemplateDraftSwitch } from './TaskTemplateDraftSwitch';
 import { useConnectionGate } from '../connections/useConnectionGate';
+import { RepositoryConnectionRepair } from '../connections/ConnectionWizard';
 import '../ui/Input.css';
 import './AgentLifecycleCard.css';
 import './TaskHome.css';
+import './TaskStartLayout.css';
 import './TaskFeedback.css';
 
 const recoverTask = { label: 'Recover original task', kind: 'recover' } as const;
@@ -41,6 +45,7 @@ export interface TaskHomeProps {
   readonly sandboxId?: string;
   readonly canCreateSandbox: boolean;
   readonly onCreated: (route: AppRoute) => void;
+  readonly home?: TaskHomeOverview;
 }
 
 export function TaskHome(props: TaskHomeProps) {
@@ -69,6 +74,7 @@ function TaskHomeContent({
   sandboxId,
   canCreateSandbox,
   onCreated,
+  home,
   onRefresh,
 }: TaskHomeProps & { readonly onRefresh: () => void }) {
   const policy = useTaskExperience(client, viewerId);
@@ -86,10 +92,17 @@ function TaskHomeContent({
   const [recovering, setRecovering] = useState(false);
   const titleId = useId();
   const errorId = useId();
-  const draft = useTaskDraft(viewerId, workspaceId, sandboxId);
+  const templateV1Availability = useTaskTemplateAvailability(client);
+  const templateV2Availability = useTaskTemplateAvailability(client, 2);
+  const allowTemplateV2 =
+    policy.confirmed && policy.task_home_admission && templateV2Availability === 'supported';
+  const draft = useTaskDraft(viewerId, workspaceId, sandboxId, allowTemplateV2);
   const input = useRef<HTMLTextAreaElement>(null);
   const [validation, setValidation] = useState<TemplateIssue>();
-  const templateSupported = useTaskTemplateSupport(client);
+  const templateAvailability =
+    draft.template?.version === 2 ? templateV2Availability : templateV1Availability;
+  const templateSupported =
+    templateAvailability === 'checking' ? undefined : templateAvailability === 'supported';
   const form = useRef<HTMLFormElement>(null);
   const templateDraft = useTaskTemplateDraftSwitch(
     draft,
@@ -171,29 +184,15 @@ function TaskHomeContent({
     titleModeSupported === undefined ||
     supported !== true;
   return (
-    <section
-      className="task-home"
-      data-task-home
-      data-contextual={contextual || undefined}
-      aria-labelledby={titleId}
+    <TaskHomeLayout
+      titleId={titleId}
+      home={home}
+      contextual={contextual}
+      contextLabel={workspaceId ? `Workspace ${workspaceId}` : `Sandbox ${sandboxId}`}
+      template={draft.template}
+      submitted={Boolean(intent)}
+      onNavigate={home?.onNavigate ?? onCreated}
     >
-      {!contextual ? (
-        <>
-          <span className="task-home__label">
-            <span className="task-home__dot" aria-hidden="true" />
-            New agent
-          </span>
-          <h1 id={titleId}>What should your Agent work on?</h1>
-          <p className="task-home__intro">
-            Give it a task. Your Agent works through it on a cloud computer.{' '}
-            <DocsLink view="start-a-task">Help starting a task</DocsLink>
-          </p>
-        </>
-      ) : (
-        <h2 className="sr-only" id={titleId}>
-          New task in {workspaceId ? `Workspace ${workspaceId}` : `Sandbox ${sandboxId}`}
-        </h2>
-      )}
       {policy.settled && !policy.task_home_admission && !intent ? (
         <>
           <p className="task-home__status" role="status">
@@ -225,9 +224,9 @@ function TaskHomeContent({
           Creating in {workspaceId ? `Workspace ${workspaceId}` : `Sandbox ${sandboxId}`}
         </p>
       ) : null}
-      {!contextual ? <SandboxCapacityPanel client={client} capacity={capacity} /> : null}
       {templateDraft.feedback}
       <form
+        hidden={Boolean(home && intent?.receipt && operation?.status !== 'failed')}
         ref={form}
         noValidate
         onKeyDown={submitTaskOnShortcut}
@@ -264,80 +263,82 @@ function TaskHomeContent({
           );
         }}
       >
-        {draft.template ? (
-          <TaskTemplateFields
-            template={draft.template}
-            issue={validation}
-            errorId={errorId}
-            onChange={(template) => {
-              setValidation(undefined);
-              draft.changeTemplate(template);
-            }}
-            onClear={templateDraft.clear}
-          />
-        ) : null}
-        {draft.template && templateSupported !== true ? (
-          <p className="task-home__status" role="status">
-            Template tasks are not available on this service. You can keep editing or write a task
-            without a template.
-          </p>
-        ) : null}
-        <TaskComposer
-          text={submission.text}
-          template={Boolean(draft.template)}
-          invalid={Boolean(draft.template && submission.issue)}
-          input={input}
-          validation={validation?.message}
+        <TaskTemplatePanel
+          template={draft.template}
+          availability={templateAvailability}
+          allowV2={allowTemplateV2}
+          issue={validation}
           errorId={errorId}
-          disabled={submissionDisabled}
-          onChange={(text) => {
+          onChange={(template) => {
             setValidation(undefined);
-            draft.change(text);
+            draft.changeTemplate(template);
           }}
         >
-          <RunTargetMenu
-            workspaceId={workspaceId}
-            sandboxId={sandboxId}
-            recordedDesktop={intent?.body.desktop === true}
-            machineIncluded={intent ? intent.body.machine_included === true : draft.machineIncluded}
-            machineIncludedAvailable={machineIncludedAvailable}
-            frozen={Boolean(intent)}
-            onMachineChange={draft.changeMachineIncluded}
-          />
-          <span className="task-home__divider" aria-hidden="true" />
-          <div
-            className="task-home__repository-slot"
-            data-has-repository={Boolean(draft.repositoryUrl || draft.repositoryRef) || undefined}
+          <TaskComposer
+            text={submission.text}
+            template={Boolean(draft.template)}
+            invalid={Boolean(draft.template && submission.issue)}
+            input={input}
+            validation={validation?.message}
+            errorId={errorId}
+            disabled={submissionDisabled}
+            onClearTemplate={templateDraft.clear}
+            onChange={(text) => {
+              setValidation(undefined);
+              draft.change(text);
+            }}
           >
-            <RepositoryChip
-              url={draft.repositoryUrl}
-              reference={draft.repositoryRef}
-              onChange={draft.changeRepository}
-              checking={!contextual && repositorySupported === undefined}
-              unavailableReason={
-                workspaceId || sandboxId
-                  ? 'Repository context is inherited. Start from Home to choose another repository.'
-                  : repositorySupported === undefined
-                    ? 'Checking repository support…'
-                    : repositorySupported === false
-                      ? 'Repository tasks are unavailable on this service.'
-                      : undefined
+            <RunTargetMenu
+              workspaceId={workspaceId}
+              sandboxId={sandboxId}
+              recordedDesktop={intent?.body.desktop === true}
+              machineIncluded={
+                intent ? intent.body.machine_included === true : draft.machineIncluded
               }
+              machineIncludedAvailable={machineIncludedAvailable}
+              frozen={Boolean(intent)}
+              onMachineChange={draft.changeMachineIncluded}
             />
-          </div>
-        </TaskComposer>
+            <span className="task-home__divider" aria-hidden="true" />
+            <div
+              className="task-home__repository-slot"
+              data-has-repository={Boolean(draft.repositoryUrl || draft.repositoryRef) || undefined}
+            >
+              <RepositoryChip
+                url={draft.repositoryUrl}
+                reference={draft.repositoryRef}
+                onChange={draft.changeRepository}
+                checking={!contextual && repositorySupported === undefined}
+                unavailableReason={
+                  workspaceId || sandboxId
+                    ? 'Repository context is inherited. Start from Home to choose another repository.'
+                    : repositorySupported === undefined
+                      ? 'Checking repository support…'
+                      : repositorySupported === false
+                        ? 'Repository tasks are unavailable on this service.'
+                        : undefined
+                }
+              />
+            </div>
+          </TaskComposer>
+        </TaskTemplatePanel>
       </form>
+      {!contextual && (!home || !intent?.receipt || quotaFailed) ? (
+        <SandboxCapacityPanel client={client} capacity={capacity} presentation="home" />
+      ) : null}
       {preparing ? (
         <p className="task-home__preparing" role="status">
           <span className="task-home__dot" aria-hidden="true" />
           {contextual ? 'Preparing your Agent…' : 'Preparing a cloud computer for your Agent…'}
         </p>
       ) : null}
-      <TaskTemplates onSelect={templateDraft.select} />
-      <p className="task-home__defaults">
-        <span className="task-home__dot" aria-hidden="true" />
-        GPT-6 · High reasoning · Autonomous
-      </p>
+      {!home || !intent?.receipt ? <TaskTemplates onSelect={templateDraft.select} /> : null}
+      {!home || !intent?.receipt ? (
+        <p className="task-home__defaults">
+          <span className="task-home__dot" aria-hidden="true" />
+          GPT-6 · High reasoning · Autonomous
+        </p>
+      ) : null}
       {supported === undefined || titleModeSupported === undefined ? (
         <p className="sr-only" role="status">
           Checking task creation…
@@ -358,81 +359,78 @@ function TaskHomeContent({
           {validation.message}
         </p>
       ) : null}
-      {intent ? (
-        <section className="task-submitted" aria-label="Submitted task">
-          <h2>Submitted task</h2>
-          <p className="task-submitted__text">{intent.body.initial_message}</p>
-          {!intent.receipt && !lifecycle.pending ? (
-            <DocsLink view="recover-and-continue">Help recovering this request</DocsLink>
-          ) : null}
-          {intent.body.repository ? (
-            <>
-              <p className="task-submitted__literal">{intent.body.repository.url}</p>
-              <dl>
-                <div>
-                  <dt>Requested ref</dt>
-                  <dd>{intent.body.repository.ref ?? 'Default branch'}</dd>
-                </div>
-                <div>
-                  <dt>Checkout commit</dt>
-                  <dd>{agent?.workspace.resolvedCommit ?? 'Not prepared yet'}</dd>
-                </div>
-              </dl>
-            </>
-          ) : null}
-        </section>
-      ) : null}
-      {intent && !intent.receipt && !lifecycle.connection ? (
-        <Button
-          variant="outline"
-          placement="task-home__action"
-          disabled={lifecycle.pending || lifecycle.blocked}
-          onClick={() => {
-            setRecovering(true);
-            void lifecycle.submit();
-          }}
-        >
-          {recoverTask.label}
-        </Button>
-      ) : null}
+      <TaskCreationStatus
+        intent={intent}
+        operation={operation}
+        failure={failure}
+        pending={lifecycle.pending}
+        preparing={preparing}
+        resolvedCommit={agent?.workspace.resolvedCommit}
+        recovery={
+          <>
+            {intent && !intent.receipt && !lifecycle.connection ? (
+              <Button
+                variant="outline"
+                placement="task-home__action"
+                disabled={lifecycle.pending || lifecycle.blocked}
+                onClick={() => {
+                  setRecovering(true);
+                  void lifecycle.submit();
+                }}
+              >
+                {recoverTask.label}
+              </Button>
+            ) : null}
+            {lifecycle.connection && !lifecycle.connection.repository_access ? (
+              <Button
+                variant="outline"
+                placement="task-home__action"
+                disabled={lifecycle.pending || lifecycle.blocked || connections.pending}
+                onClick={() => {
+                  if (viewerId && lifecycle.connection)
+                    void connections.checkAndRun(
+                      lifecycle.connection.target,
+                      viewerId,
+                      () => void lifecycle.submit(),
+                    );
+                }}
+              >
+                {continueTask.label}
+              </Button>
+            ) : null}
+            {lifecycle.canDiscardWaiting ? (
+              <DiscardWaitingCreation
+                key={intent?.key}
+                label="task"
+                onDiscard={() => {
+                  if (!lifecycle.discardWaiting()) return;
+                  connections.cancel();
+                  connections.clearError();
+                  setRecovering(false);
+                  setValidation(undefined);
+                  requestAnimationFrame(() => input.current?.focus());
+                }}
+              />
+            ) : null}
+            {failure && intent?.receipt ? (
+              <Button
+                variant="outline"
+                placement="task-home__action"
+                onClick={lifecycle.retryStatus}
+              >
+                {retryTaskStatus.label}
+              </Button>
+            ) : null}
+          </>
+        }
+      />
       {connections.dialog}
-      {lifecycle.connection ? (
-        <Button
-          variant="outline"
-          placement="task-home__action"
-          disabled={lifecycle.pending || lifecycle.blocked || connections.pending}
-          onClick={() => {
-            if (viewerId && lifecycle.connection)
-              void connections.checkAndRun(
-                lifecycle.connection.target,
-                viewerId,
-                () => void lifecycle.submit(),
-              );
-          }}
-        >
-          {continueTask.label}
-        </Button>
-      ) : null}
-      {intent?.receipt && !preparing && !failure ? (
-        <p className="task-home__status" role="status">
-          {preparationStatus === 'failed'
-            ? 'Task accepted, but Agent preparation failed.'
-            : preparationStatus === 'waiting_for_connection'
-              ? 'Task accepted. A connection check is required.'
-              : preparationStatus === 'succeeded'
-                ? 'Agent prepared. Verifying access to your task.'
-                : 'Task accepted. Checking task preparation.'}
-        </p>
-      ) : null}
-      {intent?.receipt && preparationStatus !== 'failed' ? (
-        <p className="task-home__status">Task progress and results appear in the conversation.</p>
-      ) : null}
-      {intent?.receipt ? (
-        <AgentProvisioningProgress
-          receipt={intent.receipt}
-          operation={operation}
-          announce={!preparing}
-          presentation="task"
+      {viewerId && lifecycle.connection?.repository_access ? (
+        <RepositoryConnectionRepair
+          owner={viewerId}
+          target={lifecycle.connection.target}
+          pending={lifecycle.pending || lifecycle.blocked}
+          onRecheck={() => void lifecycle.submit()}
         />
       ) : null}
       {quotaFailed ? (
@@ -464,21 +462,16 @@ function TaskHomeContent({
           {draft.error}
         </p>
       ) : null}
-      {failure ? (
+      {failure && !intent ? (
         <p className="task-home__alert" role="alert">
           {failure}
         </p>
-      ) : null}
-      {failure && intent?.receipt ? (
-        <Button variant="outline" placement="task-home__action" onClick={lifecycle.retryStatus}>
-          {retryTaskStatus.label}
-        </Button>
       ) : null}
       {connections.error ? (
         <p className="task-home__alert" role="alert">
           {connections.error}
         </p>
       ) : null}
-    </section>
+    </TaskHomeLayout>
   );
 }

@@ -298,7 +298,7 @@ async fn apply_admission(
         let revival = next
             .record_creation_admission_with_managed_runtime(
                 cause,
-                store.managed_runtime_version.as_deref(),
+                store.managed_agent_release().as_deref(),
                 admission.event_at.clone(),
             )
             .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
@@ -371,6 +371,7 @@ pub(super) async fn lock_sandbox(
                 "_id": sandbox_id,
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "channel_reuse_cleanup_execution": { "$exists": false },
+                super::native_retirement_action::FIELD: { "$exists": false },
             }),
             doc! { "$inc": { "workspace_admission_fence": 1_i64 } },
         )

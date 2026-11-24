@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Run the 12d/13b/12d reader-writer campaign on one disposable kind cluster.
 
-The runner owns only a uniquely named cluster and a synthetic Mongo authority.
-It never reads an existing Secret and never uses pod exec. A caller supplies a
-fixture command; that command must write and verify the reviewed collection and
-document-shape fixtures for the current stage. The runner preserves Mongo while
+The runner owns only a uniquely named cluster and synthetic Mongo authority.
+It never reads an existing Secret or uses pod exec. The supplied fixture must
+write and verify reviewed shapes for each stage. The runner preserves Mongo while
 replacing only the API reader, then records the rollback boot after 13b writes.
 """
 import argparse
@@ -26,6 +25,7 @@ from migration_kind_pods import PodSelectionError, select_ready_api_pod
 from migration_kind_manifests import IDENTITY, NAMESPACE, RUNTIME, manifests, mongo_documents
 from migration_redaction import EvidenceRedactor
 from migration_boot_observation import observe_boot
+from migration_image_preflight import ImagePreflight
 import migration_catalog as catalog
 SOURCE = re.compile(r"^[a-f0-9]{40}$")
 IMAGE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?/)+"
@@ -56,11 +56,50 @@ def checked_identity(command, image, source):
     if image not in digests and image.split("@", 1)[1] not in {d.split("@", 1)[-1] for d in digests}:
         raise RunnerError("image manifest digest is not present in local image metadata")
     config = row.get("Descriptor", {}).get("annotations", {}).get("config.digest")
+    if config is None:
+        config = manifest_config(command, image, row)
     if not isinstance(config, str) or not re.fullmatch(r"sha256:[a-f0-9]{64}", config):
         raise RunnerError("local image metadata lacks an explicit immutable config digest")
     return {"source": source, "image": image, "local_image_id": row.get("Id"), "config": config,
             "labels": {"revision": labels.get("org.opencontainers.image.revision"),
                        "source": labels.get("org.opencontainers.image.source")}}
+MANIFESTS = frozenset({"application/vnd.oci.image.manifest.v1+json",
+                       "application/vnd.docker.distribution.manifest.v2+json"})
+
+
+def manifest_config(command, image, row):
+    """Bind the config digest to the pinned manifest when Docker omits it.
+
+    Docker's containerd store describes a pulled image by its manifest digest
+    and carries no config annotation; the classic store has no descriptor and
+    names the image by its config digest. Either way the pinned manifest's own
+    bytes fix the config digest, so they are read and checked against the pin.
+    """
+    pinned = image.split("@", 1)[1]
+    descriptor = row.get("Descriptor")
+    if descriptor is not None and (descriptor.get("digest") != pinned
+                                   or descriptor.get("mediaType") not in MANIFESTS):
+        raise RunnerError("local image metadata lacks an explicit immutable config digest")
+    try:
+        raw = command(["docker", "buildx", "imagetools", "inspect", "--raw", image])
+    except (subprocess.CalledProcessError, OSError, ValueError) as error:
+        raise RunnerError("pinned image manifest is not readable") from error
+    if "sha256:" + hashlib.sha256(raw.encode()).hexdigest() != pinned:
+        raise RunnerError("pinned image manifest does not match its digest")
+    try:
+        manifest = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise RunnerError("pinned image manifest is not readable") from error
+    # mediaType is optional in an OCI manifest; an index always lists manifests.
+    if (not isinstance(manifest, dict) or "manifests" in manifest
+            or manifest.get("mediaType", next(iter(sorted(MANIFESTS)))) not in MANIFESTS):
+        raise RunnerError("pinned image must be a single-platform manifest")
+    config = (manifest.get("config") or {}).get("digest")
+    if descriptor is None and row.get("Id") != config:
+        raise RunnerError("local image id does not match the pinned manifest config")
+    return config
+
+
 def checked_dependency(command, image):
     """Validate the disposable linux/amd64 Mongo image before kind load."""
     if not IMAGE.fullmatch(image):
@@ -111,8 +150,17 @@ def _port():
     value = sock.getsockname()[1]
     sock.close()
     return value
+# Retained default for local campaigns; CI passes a digest-pinned node image.
+KIND_NODE = "kindest/node:v1.34.0"
+KIND_NODE_PINNED = re.compile(r"^(?:docker\.io/)?kindest/node(?::v[0-9]+\.[0-9]+\.[0-9]+)?@sha256:[a-f0-9]{64}$")
+
+
 class Campaign:
-    def __init__(self, output, kind_bin, command_timeout, plan_path):
+    def __init__(self, output, kind_bin, command_timeout, plan_path, node_image=KIND_NODE):
+        if node_image != KIND_NODE and not KIND_NODE_PINNED.fullmatch(node_image):
+            raise RunnerError("kind node image must be pinned by digest")
+        self.node_image = node_image
+        self.image_store = None
         self.output = Path(output)
         self.output.mkdir(parents=True, exist_ok=True)
         self.kind = kind_bin
@@ -158,6 +206,30 @@ class Campaign:
         # Readers need the original JSON. Only retained evidence is redacted.
         return proc.stdout
 
+    def containerd_store(self):
+        """Whether Docker keeps images in its containerd store (#1327).
+
+        That store cannot `kind load docker-image` a multi-platform image such
+        as the Mongo and Python dependencies, so it exports only linux/amd64.
+        """
+        if self.image_store is None:
+            status = self.command(["docker", "info", "--format", "{{json .DriverStatus}}"], timeout=30)
+            self.image_store = "containerd" if "io.containerd.snapshotter" in status else "classic"
+        return self.image_store == "containerd"
+
+    def load_image(self, image):
+        if not self.containerd_store():
+            self.command([self.kind, "load", "docker-image", "--name", self.cluster, image], timeout=300)
+            return
+        archive = self.output / f"image-{len(self.commands):04d}.private.tar"
+        try:
+            self.command(["docker", "save", "--platform", "linux/amd64", "--output", str(archive), image],
+                         timeout=300)
+            self.command([self.kind, "load", "image-archive", "--name", self.cluster, str(archive)],
+                         timeout=300)
+        finally:
+            archive.unlink(missing_ok=True)
+
     def kubectl(self, args, **kwargs):
         return self.command(["kubectl", "--kubeconfig", str(self.kubeconfig), "--context", f"kind-{self.cluster}"] + args, **kwargs)
 
@@ -176,14 +248,14 @@ class Campaign:
     def create(self, manifests):
         self.redactor.collect(manifests)
         config = {"kind": "Cluster", "apiVersion": "kind.x-k8s.io/v1alpha4",
-                  "nodes": [{"role": "control-plane", "image": "kindest/node:v1.34.0"}]}
+                  "nodes": [{"role": "control-plane", "image": self.node_image}]}
         config_path = self.output / "kind.private.json"
         config_path.write_text(json.dumps(config, indent=2))
         self.cluster_created = True
         self.command([self.kind, "create", "cluster", "--name", self.cluster, "--config", str(config_path),
                       "--kubeconfig", str(self.kubeconfig), "--wait", "120s"], timeout=240)
         for image in self.images:
-            self.command([self.kind, "load", "docker-image", "--name", self.cluster, image], timeout=300)
+            self.load_image(image)
         infrastructure = []
         api_manifest = None
         for obj in manifests:
@@ -332,7 +404,8 @@ class Campaign:
 def run(args):
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
-    command = lambda argv: subprocess.check_output(argv, text=True, stderr=subprocess.PIPE)
+    command = ImagePreflight(output, lambda argv: subprocess.check_output(
+        argv, text=True, stderr=subprocess.PIPE))
     old = checked_identity(command, args.old_image, args.old_source)
     new = checked_identity(command, args.new_image, args.new_source)
     plan_path = Path(args.plan)
@@ -344,16 +417,15 @@ def run(args):
         raise RunnerError("matrix plan is incomplete")
     mongo = checked_dependency(command, args.mongo_image)
     identity = checked_identity_dependency(command, args.identity_image)
-    campaign = Campaign(output, args.kind, args.timeout, plan_path)
+    campaign = Campaign(output, args.kind, args.timeout, plan_path,
+                        getattr(args, "kind_node_image", KIND_NODE))
     runtime_password = secrets.token_urlsafe(24)
     admin_password = secrets.token_urlsafe(24)
     campaign.mongo_password = runtime_password
     campaign.mongo_image = args.mongo_image
     key = base64.b64encode(secrets.token_bytes(32)).decode()
-    role_output = subprocess.check_output(["docker", "run", "--rm", "--network", "none",
-                                           "-e", "CHRONO_MONGODB_DATABASE=matrix",
-                                           args.old_image, "--print-runtime-role"], text=True)
-    role = json.loads(role_output)
+    from migration_fixture_dependencies import runtime_role
+    role = runtime_role(subprocess.check_output, args)
     identity_credentials = {
         "client_id": "migration-local-client-" + uuid.uuid4().hex,
         "client_secret": secrets.token_urlsafe(32),
@@ -379,15 +451,8 @@ def run(args):
         campaign.images = [old_ref, new_ref, mongo_ref, identity_ref]
         objects = manifests(old_ref, runtime_password, admin_password, key, mongo_ref, role,
                             args.runtime_image, identity_ref, identity_credentials)
-        if getattr(args, "bot_fixture", False):
-            from migration_bot_provider import manifests as bot_manifests
-            objects = bot_manifests(objects)
-        if getattr(args, "gateway_fixture", False):
-            from migration_gateway_provider import manifests as gateway_manifests
-            objects = gateway_manifests(objects)
-        if getattr(args, "rate_fixture", False):
-            from migration_rate_fixture import manifests as rate_manifests
-            objects = rate_manifests(objects)
+        from migration_fixture_dependencies import configure, capture
+        objects = configure(objects, args)
         campaign.create(catalog.infrastructure(objects, NAMESPACE, secrets.token_urlsafe(24)))
         previous_catalog = None
         stages = [("old-write", "historical-boot", old_ref, old),
@@ -407,6 +472,11 @@ def run(args):
                 raise RunnerError("reader changed during catalog capture")
             receipt["serving_pod"] = selected
             result["catalogs"].append(receipt)
+            documents = capture(campaign, args, NAMESPACE, mongo_ref, stage, source, image)
+            if documents is not None:
+                if select_ready_api_pod(campaign.reader_pods(), alias, artifact["config"]) != selected:
+                    raise RunnerError("reader changed during document capture")
+                result.setdefault("document_snapshots", []).append({**documents, "serving_pod": selected})
             if previous_catalog is not None:
                 comparison = catalog.compare(previous_catalog, snapshot)
                 result["catalog_comparisons"].append({"to_stage": stage, **comparison})
@@ -415,6 +485,10 @@ def run(args):
             previous_catalog = snapshot
         result["outcome"] = "UNVERIFIED"
         result["reason"] = "Boot/fixture receipts require full application reader-writer coverage review"
+    except (KeyboardInterrupt, SystemExit) as error:
+        result["outcome"] = "CANCELLED"
+        result["reason"] = f"campaign interrupted: {type(error).__name__}"
+        raise
     except Exception as error:
         result["outcome"] = "BLOCKED"
         result["reason"] = str(error)
@@ -424,8 +498,8 @@ def run(args):
         try:
             campaign.cleanup()
             result["cleanup"] = {"cluster_absent": True}
-        except Exception:
-            result["cleanup"] = {"cluster_absent": False}
+        except Exception as error:
+            result["cleanup"] = {"cluster_absent": False, "error": str(error)}
         result["diagnostic_errors"] = campaign.diagnostic_errors
         result["commands"] = campaign.commands
         result["finished_at"] = time.time()
@@ -446,16 +520,13 @@ def main(argv=None):
     parser.add_argument("--inventory", type=Path,
                         help="source inventory passed to the fixture command")
     parser.add_argument("--kind", default=os.environ.get("KIND_BIN", "kind"))
+    parser.add_argument("--kind-node-image", default=KIND_NODE,
+                        help="digest-pinned kindest/node image; the default keeps the local tag")
     parser.add_argument("--mongo-image", default="docker.io/library/mongo@sha256:42545cf0629db918d1a24a2df8bbca6926ed87bfabf59afc85008dd948448cc7")
     parser.add_argument("--runtime-image", default=RUNTIME)
     parser.add_argument("--identity-image", default=IDENTITY)
-    dependency = parser.add_mutually_exclusive_group()
-    dependency.add_argument("--bot-fixture", action="store_true",
-                            help="enable scoped synthetic Bot gateway/key dependencies")
-    dependency.add_argument("--gateway-fixture", action="store_true",
-                            help="enable scoped gateway-record authority in the identity fixture")
-    dependency.add_argument("--rate-fixture", action="store_true",
-                            help="set a one-per-minute input budget in the disposable API")
+    from migration_fixture_dependencies import add_arguments
+    add_arguments(parser)
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--preflight-only", action="store_true",
                         help="validate both local immutable images without creating a cluster")

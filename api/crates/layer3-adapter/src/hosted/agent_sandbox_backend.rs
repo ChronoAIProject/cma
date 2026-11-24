@@ -146,6 +146,54 @@ impl HostedBackend for AgentSandboxBackend {
         timing.completed("runtime_binding");
         Ok(handle)
     }
+    async fn challenge_retirement_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        receiver: &crate::receiver_failure::RetirementReceiver,
+    ) -> Result<bool> {
+        let binding = self
+            .client
+            .retirement_receiver(handle, request, home)
+            .await?;
+        if RetirementPod::try_from(&binding)? != receiver.pod {
+            return Err(AdapterError::Rejected("retirement receiver changed".into()));
+        }
+        let unavailable = self
+            .transport
+            .challenge_retirement_receiver(handle, &binding, &receiver.owner)
+            .await?;
+        if self
+            .client
+            .retirement_receiver(handle, request, home)
+            .await?
+            != binding
+        {
+            return Err(AdapterError::Rejected("retirement receiver changed".into()));
+        }
+        Ok(unavailable)
+    }
+    async fn retire_unreachable(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        receiver: &RetirementPod,
+    ) -> Result<()> {
+        self.client
+            .retire_verified(handle, request, home, Some(receiver))
+            .await?;
+        self.forget_assignment(handle);
+        self.transport.retire(handle).await
+    }
+    async fn verify_retired(
+        &self,
+        handle: &RuntimeHandle,
+        home: &HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.client.verify_retired(handle, home).await
+    }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> Result<()> {
         self.teardown(handle).await
     }
@@ -269,9 +317,20 @@ impl HostedBackend for AgentSandboxBackend {
         // object before exposing a current Running observation.
         timed(
             Stage::NativeIdentity,
-            self.refreshed_adoption_observation(handle, request),
+            self.refreshed_adoption_observation(handle, request, None),
         )
         .await
+    }
+    async fn adopt_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeObservation>> {
+        if !home.request.policy.is_native_vct() {
+            return self.adopt(handle, request).await;
+        }
+        self.adopt_persisted_home(handle, request, home).await
     }
     async fn inspect_native_runtime(
         &self,

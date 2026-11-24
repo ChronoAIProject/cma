@@ -11,7 +11,7 @@
  * a single line in main.tsx, which is what the seam was for.
  */
 
-import type { AuthProvider, AuthState, Capability, SignInOptions } from './types';
+import type { AuthProvider, AuthState, Capability, LegalTerms, SignInOptions } from './types';
 import { isCapability } from './types';
 import { canonicalReturnRoute, classifyReturnTarget } from './returnTarget';
 import { authHttpRetry, authTransportRetry } from './retryMetadata';
@@ -51,6 +51,31 @@ interface IdentityResponse {
   capabilities?: unknown;
   visitor?: unknown;
   silent_sign_in?: unknown;
+  service_authorization?: unknown;
+  privacy_export?: unknown;
+  legal_terms?: unknown;
+}
+
+/** Published terms, or none when the field is absent or not exactly usable. */
+export function legalTermsFrom(raw: unknown): LegalTerms | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const { version, terms_url: termsUrl, privacy_url: privacyUrl } = raw as Record<string, unknown>;
+  if (typeof version !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(version)) return undefined;
+  if (!isHttpsUrl(termsUrl) || !isHttpsUrl(privacyUrl)) return undefined;
+  return { version, termsUrl, privacyUrl };
+}
+
+function withLegalTerms(legalTerms: LegalTerms | undefined): { legalTerms?: LegalTerms } {
+  return legalTerms === undefined ? {} : { legalTerms };
+}
+
+function isHttpsUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -194,16 +219,20 @@ export function createNyxidAuthProvider(): AuthProvider {
       }
 
       if (response.status === 401 || response.status === 403) {
+        let legalTerms: LegalTerms | undefined;
         try {
           const anonymous = (await response.json()) as IdentityResponse;
           silentSignInOffered =
             response.status === 401 &&
             anonymous?.authenticated === false &&
             anonymous.silent_sign_in === true;
+          legalTerms = legalTermsFrom(anonymous?.legal_terms);
         } catch {
           silentSignInOffered = false;
         }
-        return { status: 'anonymous' };
+        return legalTerms === undefined
+          ? { status: 'anonymous' }
+          : { status: 'anonymous', legalTerms };
       }
       if (!response.ok) {
         const problem = (await response.json().catch(() => undefined)) as
@@ -263,6 +292,9 @@ export function createNyxidAuthProvider(): AuthProvider {
           avatarUrl: optionalText(body.avatar_url),
           capabilities: capabilitiesFrom(body.capabilities),
           visitor: body.visitor === true,
+          ...(body.service_authorization === true ? { serviceAuthorization: true } : {}),
+          ...(body.privacy_export === true ? { privacyExport: true } : {}),
+          ...withLegalTerms(legalTermsFrom(body.legal_terms)),
         },
       };
     },
