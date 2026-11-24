@@ -92,13 +92,18 @@ for (const theme of ['light', 'dark']) {
     for (const width of [1440, 390, 320]) {
       await page.setViewportSize({ width, height: 1000 });
       await page.locator('.operator-scroll').evaluate((element) => element.scrollTo(0, 0));
-      const bounds = await panel.locator('h2, h3, h4, dt, dd, button').evaluateAll((elements) =>
-        elements.map((element) => {
-          const rect = element.getBoundingClientRect();
-          return { left: rect.left, right: rect.right, width: window.innerWidth };
-        }),
-      );
-      expect(bounds.every((rect) => rect.left >= -1 && rect.right <= rect.width + 1)).toBe(true);
+      await expect
+        .poll(async () =>
+          panel.locator('h2, h3, h4, dt, dd, button').evaluateAll((elements) =>
+            elements
+              .map((element) => {
+                const rect = element.getBoundingClientRect();
+                return { left: rect.left, right: rect.right, width: window.innerWidth };
+              })
+              .filter((rect) => rect.left < -1 || rect.right > rect.width + 1),
+          ),
+        )
+        .toEqual([]);
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
       ).toBe(true);
