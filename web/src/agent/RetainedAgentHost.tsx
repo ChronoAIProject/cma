@@ -151,7 +151,7 @@ function RetainedExport({
       <Button
         variant="outline"
         disabled={!allowed || history.pending}
-        onClick={() => void history.run(presentation.identity.agentId, true)}
+        onClick={() => void history.run(presentation.identity.agentId, true, 'transcript')}
       >
         {history.pending ? 'Exporting conversation…' : 'Export conversation'}
       </Button>
