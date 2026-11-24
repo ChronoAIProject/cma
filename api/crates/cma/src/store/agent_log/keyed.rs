@@ -17,6 +17,11 @@ mod claim;
 pub(in crate::store) mod preparation;
 pub(in crate::store) mod settlement;
 
+#[cfg(test)]
+tokio::task_local! {
+    pub(in crate::store) static KEYED_CLAIM_COMMITTED: std::sync::Arc<tokio::sync::Barrier>;
+}
+
 pub(in crate::store) struct Attempt {
     pub(in crate::store) next: Agent,
     pub(in crate::store) publication: Publication,
@@ -54,11 +59,16 @@ pub(super) async fn append(
         // Starting may fence work and establish the transaction snapshot. The
         // independently durable marker must exist before that snapshot begins.
         let claim = claim::Claim::acquire(store, &current, &operation, &entry).await?;
+        #[cfg(test)]
+        if let Ok(barrier) = KEYED_CLAIM_COMMITTED.try_with(Clone::clone) {
+            barrier.wait().await;
+            barrier.wait().await;
+        }
         let mut scope = match TransactionScope::start(&mut session).await {
             Ok(scope) => scope,
             Err(error) if is_transient(&error) => {
                 let _ = session.abort_transaction().await;
-                claim.release_known_abort(store).await?;
+                claim.release_known_abort(store, &current).await?;
                 drop(session);
                 tokio::task::yield_now().await;
                 continue;
@@ -70,7 +80,7 @@ pub(super) async fn append(
                 if !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT) {
                     if let Some(refusal) = error.get_custom::<SandboxStoreError>().cloned() {
                         let _ = session.abort_transaction().await;
-                        claim.release_known_abort(store).await?;
+                        claim.release_known_abort(store, &current).await?;
                         return Err(refusal);
                     }
                 }
@@ -78,6 +88,7 @@ pub(super) async fn append(
             }
         };
         let result = async {
+            scope.fence_agent_parent(store, &current).await?;
             claim.consume(store, &mut scope).await?;
             publish(
                 store,
@@ -101,7 +112,7 @@ pub(super) async fn append(
                     return Err(domain(error));
                 }
                 scope.release().abort_transaction().await.map_err(driver)?;
-                claim.release_known_abort(store).await?;
+                claim.release_known_abort(store, &current).await?;
                 if let Some(entry) = writer_reconcile::replay(store, id, &operation, &kind).await? {
                     return Ok(entry);
                 }
@@ -134,7 +145,7 @@ pub(super) async fn append(
                 {
                     return Err(domain(error));
                 }
-                claim.release_known_abort(store).await?;
+                claim.release_known_abort(store, &current).await?;
                 if matches!(&error, TransactionLogError::Driver(error) if is_transient(error)) {
                     tokio::task::yield_now().await;
                     continue;
@@ -146,7 +157,7 @@ pub(super) async fn append(
             match crate::store::sandbox_mongo::commit_transaction_with_refusal(session).await {
                 Ok(outcome) => outcome,
                 Err(crate::store::sandbox_mongo::PrecommitRefusal::Aborted(refusal)) => {
-                    claim.release_known_abort(store).await?;
+                    claim.release_known_abort(store, &current).await?;
                     return Err(refusal);
                 }
                 Err(crate::store::sandbox_mongo::PrecommitRefusal::AbortUnacknowledged(error)) => {
@@ -158,7 +169,7 @@ pub(super) async fn append(
             CommitOutcome::Retry(_) => {
                 // TransientTransactionError positively establishes KnownAbort.
                 let _ = session.abort_transaction().await;
-                claim.release_known_abort(store).await?;
+                claim.release_known_abort(store, &current).await?;
             }
             CommitOutcome::Unknown(_) => {
                 return settlement::after_unknown(

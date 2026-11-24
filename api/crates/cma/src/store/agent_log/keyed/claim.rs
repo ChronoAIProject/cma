@@ -2,7 +2,7 @@
 //! Receipt absence never releases it. Only a locally known abort may do so;
 //! successful publication consumes it atomically with the immutable receipt.
 use super::*;
-use mongodb::{bson::Document, options::WriteConcern};
+use mongodb::bson::Document;
 
 const FIELD: &str = "keyed_publication_attempt_v1";
 
@@ -51,14 +51,13 @@ impl Claim {
                 "token":uuid::Uuid::new_v4().to_string(),
             },
         };
-        let result = store.agents.update_one(doc! {
+        let stored = update_marker(store, current, doc! {
             "_id":current.id.as_str(),"revision":current.revision as i64,
             "last_seq":current.conversation.last_seq as i64,
             "creation_key":&current.creation_key,"creation_fingerprint":&current.creation_fingerprint,
             "record.created_at":&current.created_at,FIELD:{"$exists":false},
-        }, doc! {"$set":{FIELD:&claim.record}})
-            .write_concern(WriteConcern::majority()).await.map_err(driver)?;
-        if result.matched_count != 1 {
+        }, doc! {"$set":{FIELD:&claim.record}}).await?;
+        if !stored {
             return Err(SandboxStoreError::Unavailable(
                 "keyed Agent log attempt is pending or its source changed; receipt absence is not KnownAbort".into(),
             ));
@@ -91,19 +90,51 @@ impl Claim {
     pub(super) async fn release_known_abort(
         &self,
         store: &MongoSandboxStore,
+        current: &Agent,
     ) -> Result<(), SandboxStoreError> {
-        let result = store
-            .agents
-            .update_one(
-                doc! {"_id":self.agent_id.as_str(),FIELD:&self.record},
-                doc! {"$unset":{FIELD:""}},
-            )
-            .write_concern(WriteConcern::majority())
-            .await
-            .map_err(driver)?;
-        if result.matched_count != 1 {
+        let removed = update_marker(
+            store,
+            current,
+            doc! {"_id":self.agent_id.as_str(),FIELD:&self.record},
+            doc! {"$unset":{FIELD:""}},
+        )
+        .await?;
+        if !removed {
             return Err(SandboxStoreError::Conflict);
         }
         Ok(())
+    }
+}
+
+async fn update_marker(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    filter: Document,
+    update: Document,
+) -> Result<bool, SandboxStoreError> {
+    let mut session = store.client.start_session().await.map_err(driver)?;
+    start_transaction(&mut session).await.map_err(driver)?;
+    let applied = async {
+        // Legacy independently retained Agents can have no Sandbox document.
+        crate::store::work_publication::agent::fence_parent(store, current, &mut session).await?;
+        store
+            .agents
+            .update_one(filter, update)
+            .session(&mut session)
+            .await
+            .map_err(TransactionLogError::Driver)
+    }
+    .await;
+    match applied {
+        Ok(result) if result.matched_count == 1 => {}
+        other => {
+            session.abort_transaction().await.map_err(driver)?;
+            return other.map(|_| false).map_err(domain);
+        }
+    }
+    match commit_transaction(&mut session).await {
+        CommitOutcome::Committed => Ok(true),
+        CommitOutcome::Retry(_) => Err(SandboxStoreError::Conflict),
+        CommitOutcome::Unknown(error) | CommitOutcome::Failed(error) => Err(driver(error)),
     }
 }
