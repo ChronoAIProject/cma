@@ -254,17 +254,7 @@ pub async fn update(
         .await?;
     validate_update_request(&request).map_err(ManagementError::Invalid)?;
     custom_attachments_allowed(state, &request.sources)?;
-    if current
-        .definition
-        .creation
-        .as_ref()
-        .is_some_and(|value| !value.ready)
-    {
-        return Err(ManagementError::Conflict {
-            expected: request.expected_version,
-            actual: Some(current.record.version),
-        });
-    }
+    super::creation::require_ready(&current.definition)?;
     if super::mutation::original_version(&current.definition, current.record.version)
         != request.expected_version
     {

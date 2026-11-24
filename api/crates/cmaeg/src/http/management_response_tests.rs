@@ -1,6 +1,23 @@
 use super::*;
 
 #[tokio::test]
+async fn incomplete_creation_reports_its_precondition_without_a_false_version_conflict() {
+    let response = management_error(ManagementError::CreationPending);
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["code"], "conflict");
+    let detail = body["detail"].as_str().unwrap();
+    assert!(detail.starts_with("channel_creation_pending:"));
+    assert!(detail.contains("original channel creation request"));
+    assert!(detail.contains("refresh"));
+    assert!(!detail.contains("expected version"));
+}
+
+#[tokio::test]
 async fn provider_failures_name_their_class_without_transport_text() {
     use crate::providers::ProviderError;
     for (error, detail) in [

@@ -299,6 +299,11 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             ProblemCode::Conflict,
             format!("expected version {expected}, actual {actual:?}"),
         ),
+        ManagementError::CreationPending => (
+            StatusCode::CONFLICT,
+            ProblemCode::Conflict,
+            crate::channels::creation::PENDING_DETAIL.into(),
+        ),
         ManagementError::ReleaseRefused { status, code } => (
             StatusCode::CONFLICT,
             ProblemCode::ProviderRejected,
