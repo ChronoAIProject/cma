@@ -55,7 +55,14 @@ async fn sandbox_hold_fences_pending_adoption_admission_and_staging() {
 
         barrier.resume.notify_one();
         let (fixture, result) = finish.await.unwrap();
-        assert_eq!(result, Err(SandboxStoreError::Conflict));
+        if admitted {
+            assert!(
+                matches!(result, Err(SandboxStoreError::Unavailable(ref detail))
+                if detail == "Original Agent publication requires exact adoption settlement")
+            );
+        } else {
+            assert_eq!(result, Err(SandboxStoreError::Conflict));
+        }
         no_publication(&fixture).await;
         assert_eq!(
             sandboxes.find_one(sandbox_key).await.unwrap(),
