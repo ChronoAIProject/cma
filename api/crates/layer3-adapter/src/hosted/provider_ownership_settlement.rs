@@ -9,6 +9,10 @@ impl ReceiverRevocation for ReceiverFence {
         self.identity.clone()
     }
 
+    fn sandbox_id(&self) -> Option<&str> {
+        self.endpoint.native_identity()?.sandbox_id.as_deref()
+    }
+
     async fn revoke(&self) -> crate::Result<()> {
         self.settle(ReceiverConfirmationCustody::PossiblyDelivered)
             .await?;

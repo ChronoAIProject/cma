@@ -262,8 +262,13 @@ impl MongoAgentLifecycleStore {
         lease: &LifecycleLease,
         services: Vec<String>,
         target: serde_json::Value,
+        repository_access: Option<layer1_public::rest::RepositoryAccessRefusal>,
     ) -> Result<(), StoreError> {
-        let connection = AgentLifecycleConnectionRequired { services, target };
+        let connection = AgentLifecycleConnectionRequired {
+            services,
+            target,
+            repository_access,
+        };
         let value = mongodb::bson::serialize_to_bson(&connection)
             .map_err(|error| StoreError::Malformed(error.to_string()))?;
         self.write(lease, doc! { "$set": { "status": "waiting_for_connection", "connection": value,

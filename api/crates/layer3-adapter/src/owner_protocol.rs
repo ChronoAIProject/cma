@@ -17,6 +17,9 @@ pub use settlement::{ReceiverSettlementFailure, ReceiverSettlementWatch};
 #[async_trait::async_trait]
 pub trait ReceiverRevocation: Send + Sync {
     fn identity(&self) -> String;
+    fn sandbox_id(&self) -> Option<&str> {
+        None
+    }
     async fn revoke(&self) -> crate::Result<()>;
     /// Compatibility can satisfy one cleanup obligation only when the owner
     /// has closed confirmation admission and this receiver could not install it.

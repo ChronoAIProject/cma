@@ -7,6 +7,8 @@ mod drain_contained;
 mod drain_contained_mongo_tests;
 mod drain_episode;
 mod receiver_containment;
+#[cfg(test)]
+pub(crate) use drain::handoff as drain_receiver_for_test;
 pub(crate) use drain_episode::DrainCause;
 mod maintenance;
 pub(crate) mod relay;

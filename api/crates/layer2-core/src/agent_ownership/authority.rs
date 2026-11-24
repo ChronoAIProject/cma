@@ -45,6 +45,7 @@ pub struct Authority {
     pub token: OwnershipToken,
     pub(super) policy: super::MaintenancePolicy,
     pub(super) settlement_watch: layer3_adapter::owner_protocol::ReceiverSettlementWatch,
+    pub(super) sandbox_sha256: std::sync::OnceLock<String>,
     pub(super) retiring: AtomicBool,
     pub(super) receiver_failure:
         std::sync::OnceLock<layer3_adapter::owner_protocol::OwnershipFailure>,
@@ -70,6 +71,7 @@ impl Authority {
             token,
             policy: super::MaintenancePolicy::Legacy,
             settlement_watch: Default::default(),
+            sandbox_sha256: Default::default(),
             retiring: AtomicBool::new(false),
             receiver_failure: Default::default(),
             receiver_failure_recording: Default::default(),
@@ -107,6 +109,7 @@ impl Authority {
             token,
             policy,
             settlement_watch: Default::default(),
+            sandbox_sha256: Default::default(),
             retiring: AtomicBool::new(false),
             receiver_failure: Default::default(),
             receiver_failure_recording: Default::default(),

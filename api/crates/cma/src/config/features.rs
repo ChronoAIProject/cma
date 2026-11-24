@@ -25,6 +25,7 @@ mod stale_turn_tests;
 mod strict_inactivity_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub image_manager_retirement: bool,
     pub am_startup_health_serving: bool,
     pub visitor_launch_admission: bool,
     pub usage_signed_cursors_enabled: bool,
@@ -45,6 +46,7 @@ pub(crate) struct FeatureFlags {
     pub runtime_loss_bounded_proof_enabled: bool,
     pub native_retirement_finality_enabled: bool,
     pub command_reconcile_pacing: bool,
+    pub command_cancel_wake: bool,
     pub ownership_cleanup_pacing: bool,
     pub batch_ownership_renewal: bool,
     pub am_failure_containment_enabled: bool,
@@ -98,6 +100,7 @@ pub(crate) struct FeatureFlags {
     pub paged_response_events: bool,
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
+    pub github_repository_preflight: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
     /// Gated writer for the stable proxy replay principal (reader floor landed first).
@@ -155,6 +158,7 @@ impl FeatureFlags {
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
         let flags = Self {
+            image_manager_retirement: flag(lookup, "CHRONO_IMAGE_MANAGER_RETIREMENT_ENABLED")?,
             am_startup_health_serving: flag(lookup, "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED")?,
             pending_home_reconciliation: flag(
                 lookup,
@@ -194,6 +198,7 @@ impl FeatureFlags {
                 "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
             )?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
+            command_cancel_wake: flag(lookup, "CHRONO_COMMAND_CANCEL_WAKE_ENABLED")?,
             ownership_cleanup_pacing: flag(lookup, "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED")?,
             batch_ownership_renewal: flag(lookup, "CHRONO_AM_BATCH_OWNERSHIP_RENEWAL")?,
             am_failure_containment_enabled: flag(
@@ -332,6 +337,10 @@ impl FeatureFlags {
             paged_response_events: flag(lookup, "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")?,
             v2_ui_transport: flag(lookup, "CHRONO_V2_UI_TRANSPORT_ENABLED")?,
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
+            github_repository_preflight: flag(
+                lookup,
+                "CHRONO_GITHUB_REPOSITORY_PREFLIGHT_ENABLED",
+            )?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
             nyxid_proxy: flag(lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
             nyxid_proxy_replay_principal: flag(
