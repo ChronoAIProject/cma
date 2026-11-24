@@ -581,7 +581,6 @@ it.each([
     type: 'nyxid_relay',
     platform: 'telegram',
     issuer: 'https://fixture.example',
-    jwks_url: 'https://fixture.example/keys',
     key_id: 'fixture-key',
     route_ids: ['fixture-route'],
     admission: { type: 'all' },
@@ -592,7 +591,12 @@ it.each([
     const request = { ...source, member_join_chat_ids: ids };
     expect(SourceRequestSchema(request)).toEqual(request);
   }
-  expect(() => SourceSchema({ ...source, member_join_chat_ids: null })).toThrow();
+  const response =
+    source.type === 'nyxid_relay'
+      ? { ...source, jwks_url: 'https://fixture.example/keys' }
+      : source;
+  expect(SourceSchema(response)).toEqual(response);
+  expect(() => SourceSchema({ ...response, member_join_chat_ids: null })).toThrow();
 });
 
 it('keeps Telegram topic consent independent and discovers only close/reopen', () => {
