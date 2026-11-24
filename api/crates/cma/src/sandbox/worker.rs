@@ -23,7 +23,7 @@ mod execute;
 mod home;
 mod initial_runtime;
 mod install_failure;
-mod lifecycle;
+pub(super) mod lifecycle;
 mod provision_timing;
 mod provisioning;
 mod retained_retirement;

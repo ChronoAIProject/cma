@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::sandbox::AgentWorkReceipt;
+use crate::sandbox::{Agent, AgentWorkReceipt};
 use crate::{AgentId, Caller, OperationClaim, WorktreeId};
-use layer3_adapter::AgentRestartRuntime;
+use layer3_adapter::{AgentOpenRequest, AgentRestartRuntime};
 
 use super::AgentControlTarget;
 
@@ -43,4 +43,20 @@ pub struct AgentRestartSource {
     pub worktree_revision: u64,
     pub workspace_revision: u64,
     pub sandbox_revision: u64,
+}
+
+/// A restart accepted in the control transaction and its immutable Open,
+/// once the worker has crossed the durable dispatch boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRestartWork {
+    pub acceptance: AgentRestartAcceptance,
+    pub dispatched_open: Option<AgentOpenRequest>,
+}
+
+#[derive(Clone)]
+pub struct AgentRestartDispatch {
+    pub claimed: Agent,
+    pub work: AgentRestartWork,
+    pub open: AgentOpenRequest,
+    pub dispatched_at: String,
 }

@@ -42,7 +42,7 @@ impl AgentWorker {
             }
         };
         let fence = claimed_fence(&agent, &self.config.holder)?;
-        if let Err(failure) = super::startup::validated_open_request(&agent, &context) {
+        if let Err(failure) = self.recorded_open_request(&agent, &context).await {
             return self
                 .handle_failure(agent, failure, now + started.elapsed())
                 .await;

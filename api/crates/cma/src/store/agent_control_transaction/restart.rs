@@ -25,7 +25,7 @@ use mongodb::{
     options::ReadConcern,
 };
 
-const ACTIVE_RESTART_FIELD: &str = "control_restart_active_v1";
+pub(in crate::store) const ACTIVE_RESTART_FIELD: &str = "control_restart_active_v1";
 
 pub(in crate::store) async fn schedule_restart(
     store: &MongoSandboxStore,

@@ -201,6 +201,100 @@ async fn owner_restart_admission_respects_the_shared_creation_capacity() {
     client.database(&name).drop().await.unwrap();
 }
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn owner_restart_dispatch_is_durable_and_cannot_be_retargeted() {
+    use layer2_core::sandbox::store::AgentRestartDispatch;
+    use layer3_adapter::{AgentOpenRequest, AgentProcessAction};
+
+    let (client, name) = database("owner_restart_dispatch").await;
+    crate::store::MongoOperationStore::open_for_test(&client, &name)
+        .await
+        .unwrap();
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (stopped, source) = stopped_agent(&store).await;
+    let accepted = store
+        .schedule_agent_restart(request(&stopped, &source, "dispatch", [1; 32]))
+        .await
+        .unwrap();
+    let now = SystemTime::now();
+    let timestamp = layer2_core::rfc3339_at(now);
+    let claimed = store
+        .claim_agent_work(
+            &stopped.id,
+            "restart-worker",
+            timestamp.clone(),
+            layer2_core::rfc3339_at(now + Duration::from_secs(60)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let work = store.agent_restart_work(&claimed).await.unwrap();
+    assert_eq!(work.acceptance, accepted);
+    assert!(work.dispatched_open.is_none());
+    let sandbox = store
+        .get_sandbox(&claimed.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let worktree = store
+        .get_worktree(&claimed.worktree_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let mut open = AgentOpenRequest::new(
+        AgentProcessAction::Open.operation_id(claimed.id.as_str(), accepted.next_incarnation),
+        crate::sandbox::runtime_options(&claimed, &sandbox, &worktree),
+        Some(source.conversation_id.clone()),
+    );
+    open.restart_runtime = Some(source.runtime.clone());
+    let dispatch = AgentRestartDispatch {
+        claimed: claimed.clone(),
+        work,
+        open,
+        dispatched_at: timestamp,
+    };
+    let mut retargeted = dispatch.clone();
+    retargeted.open.restart_runtime.as_mut().unwrap().boot_id = "b".repeat(32);
+    assert_eq!(
+        store.prepare_agent_restart_dispatch(retargeted).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(store.get_agent(&claimed.id).await.unwrap(), Some(claimed));
+
+    let armed = store
+        .prepare_agent_restart_dispatch(dispatch.clone())
+        .await
+        .unwrap();
+    let recorded = store.agent_restart_work(&armed).await.unwrap();
+    assert_eq!(recorded.acceptance, accepted);
+    assert_eq!(recorded.dispatched_open.as_ref(), Some(&dispatch.open));
+    assert_eq!(armed.work.step, AgentWorkStep::RestartConversation);
+    let [pending] = armed.work.cleanup_debt.as_slice() else {
+        panic!("exact successor Open must own cleanup coverage");
+    };
+    assert_eq!(pending.operation_id, dispatch.open.operation_id);
+    assert!(armed.work.receipts.iter().all(|receipt| !matches!(
+        receipt.step,
+        AgentWorkStep::OpenConversation | AgentWorkStep::CloseProcess
+    )));
+    assert_eq!(
+        store.prepare_agent_restart_dispatch(dispatch.clone()).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    let replay = AgentRestartDispatch {
+        claimed: armed.clone(),
+        work: recorded,
+        ..dispatch
+    };
+    assert_eq!(
+        store.prepare_agent_restart_dispatch(replay).await.unwrap(),
+        armed
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
 fn request(
     agent: &Agent,
     source: &AgentRestartSource,

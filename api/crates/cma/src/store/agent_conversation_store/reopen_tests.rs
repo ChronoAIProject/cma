@@ -133,6 +133,7 @@ async fn run_case(count: usize, park: bool) {
             .await
             .unwrap();
         let guard = AgentReopenGuard {
+            owner_restart: None,
             sandbox: SandboxMutationGuard::capture(&parent),
             agent_fence: agent.work.next_fence,
             native_conversation_id: native.clone(),

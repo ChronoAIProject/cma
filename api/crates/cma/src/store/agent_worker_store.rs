@@ -16,21 +16,32 @@ use super::sandbox_mongo::{MongoSandboxStore, TRANSACTION_ATTEMPTS};
 
 #[async_trait::async_trait]
 impl AgentWorkerStore for MongoSandboxStore {
+    async fn agent_restart_work(
+        &self,
+        claimed: &Agent,
+    ) -> Result<layer2_core::sandbox::store::AgentRestartWork, SandboxStoreError> {
+        super::agent_control_transaction::load_restart_work(self, claimed).await
+    }
+
+    async fn restart_connection_open(
+        &self,
+        agent: &Agent,
+    ) -> Result<Option<layer3_adapter::AgentOpenRequest>, SandboxStoreError> {
+        super::agent_control_transaction::load_restart_connection(self, agent).await
+    }
+
+    async fn prepare_agent_restart_dispatch(
+        &self,
+        request: layer2_core::sandbox::store::AgentRestartDispatch,
+    ) -> Result<Agent, SandboxStoreError> {
+        super::agent_control_transaction::prepare_restart_dispatch(self, &request).await
+    }
+
     async fn has_owner_stop_receipt(
         &self,
         agent: &layer2_core::sandbox::Agent,
     ) -> Result<bool, SandboxStoreError> {
-        let revision = super::sandbox_mongo::signed(agent.revision, "owner Stop revision")
-            .map_err(SandboxStoreError::Corrupt)?;
-        let row = self
-            .agents
-            .find_one(doc! {"_id": agent.id.as_str(), "revision": revision})
-            .projection(doc! {(super::agent_control_receipt::STOP_RECEIPT_FIELD): 1})
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-        Ok(row
-            .as_ref()
-            .is_some_and(|row| super::agent_control_receipt::has_owner_stop_receipt(row, agent)))
+        super::agent_control_receipt::observe_owner_stop_receipt(self, agent).await
     }
 
     async fn agent_create_admission(

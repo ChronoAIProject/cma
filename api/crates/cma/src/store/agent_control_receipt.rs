@@ -216,6 +216,26 @@ pub(super) fn read_control_receipts(
     Ok(StoredControlReceipts { stop, delete })
 }
 
+pub(super) async fn observe_owner_stop_receipt(
+    store: &super::sandbox_mongo::MongoSandboxStore,
+    agent: &Agent,
+) -> Result<bool, layer2_core::sandbox::store::SandboxStoreError> {
+    use layer2_core::sandbox::store::SandboxStoreError;
+    use mongodb::bson::doc;
+
+    let revision = super::sandbox_mongo::signed(agent.revision, "owner Stop revision")
+        .map_err(SandboxStoreError::Corrupt)?;
+    let row = store
+        .agents
+        .find_one(doc! {"_id": agent.id.as_str(), "revision": revision})
+        .projection(doc! {(STOP_RECEIPT_FIELD): 1})
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+    Ok(row
+        .as_ref()
+        .is_some_and(|row| has_owner_stop_receipt(row, agent)))
+}
+
 pub(super) fn has_owner_stop_receipt(row: &Document, agent: &Agent) -> bool {
     let Ok(StoredControlReceipts {
         stop: Some(receipt),

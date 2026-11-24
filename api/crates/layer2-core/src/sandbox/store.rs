@@ -46,7 +46,10 @@ pub use workspace_worker::{WorkspacePreparationCompletion, WorkspaceWorkerStore}
 
 mod agent_control;
 mod agent_restart;
-pub use agent_restart::{AgentRestartAcceptance, AgentRestartRequest, AgentRestartSource};
+pub use agent_restart::{
+    AgentRestartAcceptance, AgentRestartDispatch, AgentRestartRequest, AgentRestartSource,
+    AgentRestartWork,
+};
 mod background_checkpoint;
 pub use agent_control::{
     AgentControlResult, AgentControlStore, AgentControlStoreError, AgentControlTarget,
@@ -87,7 +90,7 @@ pub use agent_conversation::{
     validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
 };
 pub use agent_message_checkpoint::{AgentMessageCheckpoint, AgentMessageSnapshot};
-pub use agent_reopen::{AgentReopenGuard, ReopenRefusalFence};
+pub use agent_reopen::{AgentReopenGuard, OwnerRestartOutputFence, ReopenRefusalFence};
 mod agent_lifecycle;
 mod agent_skill_result;
 pub use agent_skill_result::{requires_agent_skill_result_guard, AgentSkillResultGuard};
@@ -118,6 +121,8 @@ pub use agent_lifecycle::{
 pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_claim;
 pub use agent_work_claim::{AgentWorkClaimDetail, AgentWorkClaimError};
+mod agent_restart_ready;
+pub use agent_restart_ready::owner_restart_ready;
 mod agent_work_evidence_validation;
 mod agent_work_prepared_open_ready;
 mod agent_work_prepared_pair;

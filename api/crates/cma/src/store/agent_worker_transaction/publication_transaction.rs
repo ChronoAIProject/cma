@@ -5,6 +5,15 @@ use crate::store::agent_capacity_recovery::observations::{cohort, Outcome, Stage
 use crate::store::agent_write_coordination::CLEANUP_RETRY_DEADLINE;
 use layer2_core::sandbox::store::{AgentWorkPublication, AgentWorkPublicationParents};
 
+#[derive(Default)]
+pub(super) struct PublicationGuards<'a> {
+    pub(super) rebuild_parents: Option<&'a AgentWorkPublicationParents>,
+    pub(super) skill_result: Option<&'a layer2_core::sandbox::store::AgentSkillResultGuard>,
+    pub(super) adoption: Option<&'a pending_adoption::Prepared>,
+    pub(super) adoption_not_selected: bool,
+    pub(super) observed_connection: Option<AgentWorkPublicationParents>,
+}
+
 enum Completion {
     Published,
     PreparedIneligible,

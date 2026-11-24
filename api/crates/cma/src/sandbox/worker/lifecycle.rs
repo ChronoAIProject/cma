@@ -14,7 +14,7 @@ mod conversations;
 mod home_recovery;
 mod pause;
 mod queue;
-mod reopen_output;
+pub(in crate::sandbox) mod reopen_output;
 mod reopen_owned;
 mod reopen_refusal;
 pub(super) use reopen_owned::{PendingReopen, ReopenGates};

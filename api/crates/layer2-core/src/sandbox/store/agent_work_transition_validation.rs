@@ -112,7 +112,13 @@ pub(super) fn validate_position(
             matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed)
                 && worktree.status == WorktreeStatus::Removed
         }
-        AgentWorkStep::RestartConversation | AgentWorkStep::None => false,
+        AgentWorkStep::RestartConversation => {
+            agent.status == AgentStatus::Starting
+                && agent.ready_at.is_some()
+                && agent.requested_stop_reason.is_none()
+                && worktree.status == WorktreeStatus::Ready
+        }
+        AgentWorkStep::None => false,
     };
     if live_shape && terminal_shape && positioned {
         Ok(())

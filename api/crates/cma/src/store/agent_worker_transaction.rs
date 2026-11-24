@@ -26,6 +26,7 @@ use super::worktrees::{read_worktree, worktree_replacement_fields};
 mod contention;
 mod owner_stop;
 pub(super) mod pending_adoption;
+pub(super) mod restart_ready;
 #[cfg(test)]
 pub(crate) use pending_adoption::test_hooks as adoption_probe;
 mod persistence;
@@ -37,8 +38,10 @@ mod prepared_replay_tests;
 mod publication_history;
 mod publication_log;
 mod publication_transaction;
-pub(super) use publication_transaction::commit_connection as commit_agent_connection_work;
 pub(in crate::store) mod retry_audit;
+pub(super) use publication_transaction::commit_connection as commit_agent_connection_work;
+use publication_transaction::PublicationGuards;
+mod prepared_open_ready;
 mod segmented;
 mod sign_in;
 mod skill_result;
@@ -46,7 +49,6 @@ mod skill_result;
 pub(crate) mod skill_result_test_support;
 use super::agent_log_segments::transaction_scope::TransactionScope;
 use publication_log::{final_agent_and_logs, insert_logs};
-mod prepared_open_ready;
 #[cfg(test)]
 mod prepared_open_ready_tests;
 
@@ -67,15 +69,6 @@ enum ApplyError {
     StaleProposal,
     StagePending(Box<pending_adoption::Source>),
     PendingReplayed,
-}
-
-#[derive(Default)]
-struct PublicationGuards<'a> {
-    rebuild_parents: Option<&'a AgentWorkPublicationParents>,
-    skill_result: Option<&'a layer2_core::sandbox::store::AgentSkillResultGuard>,
-    adoption: Option<&'a pending_adoption::Prepared>,
-    adoption_not_selected: bool,
-    observed_connection: Option<AgentWorkPublicationParents>,
 }
 
 impl From<TransactionEventError> for ApplyError {
@@ -460,6 +453,13 @@ async fn apply_publication_observed(
         .await?;
         insert_logs(store, &integrity.documents, session).await?;
     }
+    restart_ready::finish(
+        store,
+        (&current_row, &current, &final_agent),
+        guards.rebuild_parents,
+        session,
+    )
+    .await?;
     if let Some(versioned) = mutation.worktree.as_ref() {
         advance_worktree(store, &current_worktree, &versioned.worktree, session).await?;
     }
