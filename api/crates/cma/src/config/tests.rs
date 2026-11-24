@@ -6,6 +6,8 @@ mod erasure;
 mod machine_pools;
 #[path = "../config_native_tests.rs"]
 mod native;
+#[path = "runtime_canary_tests.rs"]
+mod runtime_canaries;
 mod home_tests {
     include!("home_tests.rs");
 }
@@ -139,6 +141,25 @@ mod shared_output_tests {
             .is_err());
         }
     }
+}
+
+#[test]
+fn privacy_export_requires_explicit_opt_in() {
+    let key = "CHRONO_ACCOUNT_PRIVACY_EXPORT_ENABLED";
+    assert!(!configured(&[]).unwrap().features.privacy_export_enabled);
+    assert!(
+        !configured(&[(key, "false")])
+            .unwrap()
+            .features
+            .privacy_export_enabled
+    );
+    assert!(
+        configured(&[(key, "true")])
+            .unwrap()
+            .features
+            .privacy_export_enabled
+    );
+    assert!(configured(&[(key, "TRUE")]).is_err());
 }
 
 #[test]

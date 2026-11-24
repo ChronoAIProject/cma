@@ -27,6 +27,7 @@ import { ChannelActivityPreview } from './ChannelActivityPreview';
 import { useChannelActivity } from './useChannelActivity';
 import { GatewayWelcome } from './GatewayWelcome';
 import { GatewayRecordMeta } from './GatewayRecordMeta';
+import { duplicateChannelLabels } from './channelLabels';
 import { ExistingChannel } from './ExistingChannel';
 import { RelayCapabilitiesProvider } from './RelayCapabilities';
 import './EventGateway.css';
@@ -69,6 +70,7 @@ function EventGatewayBody({
   const items = (
     created && !rows.some((row) => row.record_id === created.record_id) ? [created, ...rows] : rows
   ).filter((row) => !deleted.includes(row.record_id));
+  const labels = duplicateChannelLabels(items);
   // Nothing is open until somebody chooses a channel: the page opens on the
   // welcome surface until a channel is selected.
   const current = items.find((row) => row.record_id === selected);
@@ -90,14 +92,17 @@ function EventGatewayBody({
     setCreating(true);
     onNavigate?.();
   };
+  const exitCreate = () => setCreating(false);
+  const showChannels = () => {
+    retain();
+    setSelected(undefined);
+  };
+  const homeHref = routePath({ kind: 'event_gateway' });
   // A channel's breadcrumb returns home; its editor stays mounted.
   const channelsCrumb: Crumb = {
     label: 'Channels',
-    href: routePath({ kind: 'event_gateway' }),
-    onSelect: () => {
-      retain();
-      setSelected(undefined);
-    },
+    href: homeHref,
+    onSelect: showChannels,
   };
   const sidebar = (
     <section className="gateway-sidebar" aria-label="Channels">
@@ -130,7 +135,7 @@ function EventGatewayBody({
             nodeId={`channel:${channel.record_id}`}
             level={1}
             layout="line"
-            label={channel.definition.name}
+            label={labels.get(channel.record_id) ?? channel.definition.name}
             icon={null}
             selected={!creating && current?.record_id === channel.record_id}
             onNavigate={() => {}}
@@ -163,7 +168,18 @@ function EventGatewayBody({
       {createStarted ? (
         <section className="gateway-detail gateway-detail--create" hidden={!createActive}>
           <PageHeader
-            breadcrumb={[{ label: 'Event Gateway' }, { label: 'New channel' }]}
+            wrapIdentity
+            breadcrumb={[
+              {
+                label: 'Event Gateway',
+                href: homeHref,
+                onSelect: () => {
+                  showChannels();
+                  exitCreate();
+                },
+              },
+              { label: 'New channel' },
+            ]}
             title="New channel"
             description="Connect an event source to your agent."
           />
@@ -181,7 +197,7 @@ function EventGatewayBody({
               channels.refresh();
             }}
           />
-          <Button onClick={() => setCreating(false)}>Cancel</Button>
+          <Button onClick={exitCreate}>Cancel</Button>
         </section>
       ) : null}
       {items
@@ -264,6 +280,7 @@ function ChannelDetail({
   return (
     <>
       <PageHeader
+        wrapIdentity
         breadcrumb={[{ label: 'Event Gateway' }, channelsCrumb, { label: channel.definition.name }]}
         title={channel.definition.name}
         meta={

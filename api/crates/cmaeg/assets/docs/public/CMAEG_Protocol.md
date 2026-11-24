@@ -42,10 +42,10 @@ flowchart TB
 | Downstream agent provider | Implement Agent Card, binding, conversation, Responses SSE, durable idempotency and authenticated event-context reads | [Flow F](#flow-f-implement-a-downstream-agent-provider) and [§9](#9-provider-contract) |
 | Channel owner / operator | Reconcile versions and uncertain mutations; manage credentials and lifecycle within the correct authority | [Flow G](#flow-g-update-policy-rotate-credentials-and-delete), [Flow H](#flow-h-replica-restart-and-recovery-boundaries) and [§5](#5-management-api) |
 
-The REST base is `https://gateway.example.com/event-gateway/v1`. Through the globally
-auto-connected NyxID service, use
-`https://gateway.example.com/api/v1/proxy/s/cmaeg` and append the same relative
-path, without another `/v1`. Native MCP uses the separate gateway `/mcp` endpoint.
+Find the direct REST base in the served OpenAPI document's `servers` entry.
+Through the globally auto-connected NyxID service, use the
+`/api/v1/proxy/s/cmaeg` path on your NyxID API origin and append the same relative
+path without another `/v1`. Native MCP uses the separate gateway `/mcp` endpoint.
 
 ### Flow A — Create, inspect and test a channel
 
@@ -815,7 +815,8 @@ start above one because reservation and binding completion are separate writes.
 channel, including its exact callback URL, after a lost response. Other owners
 receive 404. Failed or uncertain provider calls retain their pending reservation
 for explicit retry or deletion; the caller must reconcile that identity before
-allocating another. This is management recovery, not durable event delivery.
+allocating another. A provider that is not allowlisted is refused with 400
+`invalid_request` before any reservation is written. This is management recovery, not durable event delivery.
 Deletion releases the reservation; callers must never reuse a retired record UUID
 or race cleanup against an outstanding create attempt.
 
@@ -847,7 +848,7 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channels/{channel_id}/partition` | Required `partition_key`; optional `consumer_id` (default `default`) | 200 retained CMA conversation mapping and current Agent status | 400 unsupported affinity; 404 absent/hidden channel or mapping |
 | `POST /v1/channels/{channel_id}/partition/resets` | Required `Idempotency-Key` and owner reset body below | 200 reserved successor receipt; no-store | 409 disabled, ineligible target, changed mapping or reused key; uncertain failures require exact retry |
 | `PUT /v1/channels/{channel_id}` | Complete create policy plus required `expected_version`; optional credential patch | 200 channel response with incremented version | 409 stale version |
-| `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version |
+| `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version; 409 `provider_rejected` when the provider refuses to release the binding |
 | `POST /v1/channels/{channel_id}/test` | No body | 200 `{"accepted_after_ms":42,"first_text":"...","level":"l1"}` | Provider refusal, timeout or no usable result |
 | `POST /v1/channels/{channel_id}/rekey` | CMA service bearer; no body | 200 `{"kid":1}` | 401 service authentication failure |
 | `GET /v1/permissions` | No body; creator bearer | 200 `{"subject":"...","roles":[...]}` for the authenticated creator | 401 unauthenticated |
@@ -867,7 +868,9 @@ reconciles the provider binding, including when credentials are retained. This
 repairs a previous update that changed the provider but failed to save the record;
 a GET alone does not establish the provider's credential state.
 Delete unbinds the provider before removing the record; an unbind failure
-preserves the record and is returned to the caller. Rekey re-encrypts the record under the
+preserves the record and is returned to the caller. A definite provider refusal
+other than 404 returns 409 `provider_rejected` naming the provider's HTTP status;
+the record and its version are unchanged, and nothing proves the binding absent. Rekey re-encrypts the record under the
 current master key and retains `channel_id`; operators must retain keys needed
 to open existing channel pointers. A channel pointer also seals the record URL
 under the CMA origin its issuing gateway was configured with. When a gateway
@@ -2087,6 +2090,29 @@ and sealed channel destination. Human message-effect authority, discussion-group
 comments and channel direct-message topics are not inferred. See the
 native Telegram message events contract (maintainer guidance).
 
+Direct native Telegram sources may also set `member_join_chat_ids` to up to 16
+exact Telegram group IDs from the source's chat allowlist. The list defaults
+to empty. An update retains the saved list when omitted and clears it with an
+empty list. Disabling message events also clears the opt-in. Authoring requires the `native_telegram_member_joins_enabled`
+capability, retained message events, open senders and group admission set to
+`all`. A supported group join produces one `telegram.group_members_joined`
+CloudEvent per Telegram update. Its `data.members` contains the newly joined
+human users as `{id, display_name, is_bot}`, with string platform IDs and a
+nullable display name. Bot-only joins are refused. The actor is
+`{id:"telegram:system",kind:"system"}`. The source reply address is the original
+group and topic, if present. The existing non-human routing policy controls
+which consumers receive the event. Retries reuse the original Telegram update
+identity and the admitted turn.
+
+A verified NyxID Telegram relay source may use the same group list when
+`relay_telegram_member_joins_enabled` is available. Configure an explicit
+receiving bot ID, the bound relay routes and each permitted group ID. The
+signed callback's normalized group and sender must agree with the original
+Telegram update. The CloudEvent source is `nyxid:route:<route_id>`, and
+deduplication uses that route and the original Telegram update ID. The reply
+uses the authenticated relay token for the original group. Each Telegram
+transport has its own authoring and intake switch.
+
 Activity kind is one of:
 
 | Type | Fields |
@@ -2550,6 +2576,14 @@ Native Telegram, interactive/edit and legacy relay chunking preserves UTF-16
 boundaries and complete escape atoms. Complete ordinary relay rendering applies
 the same escaping and block degradation without chunking.
 
+Lark, Feishu and Discord text, native or through `nyxid_relay`, keeps Markdown
+punctuation and backslashes literal instead of escaping them: Lark and Feishu
+show plain text, and Discord parses its own Markdown, so link labels and URL
+destinations arrive intact. Mention neutralization (`@` followed by a zero-width
+space, `<` and `>` replaced by `‹` and `›`) and control/bidi filtering still
+apply; inside an `http(s)://` destination an `@` stays literal unless it starts
+`@everyone` or `@here`. Chunking and block degradation are unchanged.
+
 A reply/update receipt is `{message_ref?,rendering,delivery}`. Rendering is
 `{outcome:"rendered|degraded|unsupported",blocks:[{index,outcome}]}`, where each
 block outcome is `{type:"exact"}`, `{type:"degraded",how}` or
@@ -2827,11 +2861,9 @@ at expires_at; run it in your workspace` and `download`:
 | `authorization` | `{scheme:"Bearer",token:"<link>"}` for clients that cannot execute shell text. The token is scoped to this event attachment and is accepted once. |
 | `curl` | `curl -fsSL -H 'Authorization: Bearer <link>' -o '<name>' '<url>'`, a compatibility command carrying the same link; `<name>` is the safe file name described below. |
 
-With `CMAEG_ADVERTISE_PUBLIC_API_URL=true`, the base is `CMAEG_PUBLIC_API_URL`;
-otherwise it is `CMAEG_PUBLIC_URL`. The checked-in deployment advertises
-`https://gateway.example.com/event-gateway/v1/media/content`. Clients pin the base from
-operator configuration and compare it with the returned URL before sending the
-capability. This configuration is not evidence that a particular image is live.
+With `CMAEG_ADVERTISE_PUBLIC_API_URL=true`, the base is `CMAEG_PUBLIC_API_URL`.
+Otherwise, the base is `CMAEG_PUBLIC_URL`. Clients pin the base from operator
+configuration and compare it with the returned URL before sending the capability.
 
 The REST twin returns the same view. When the media response budget defers an
 MCP result, the deferred `pending` view carries no `download`, so a link never
@@ -3580,6 +3612,11 @@ Native Telegram, other relay platforms and initiated messages keep their
 existing contracts. This switch takes precedence over the legacy/complete
 ordinary Telegram rendering choices below.
 
+The independent `CMAEG_NYXID_COMMONMARK_LARK_FEISHU_DISCORD_ENABLED` switch
+selects CommonMark for Lark, Feishu and Discord relay replies and text updates.
+It defaults off. Enable it only after verifying the corresponding NyxID routes
+on every receiving replica. Negotiated thread replies keep their thread target.
+
 Ordinary and keyboard updates use `/api/v1/channel-relay/reply/update/commonmark`
 with the retained exact outbound/platform identifiers. CommonMark source length
 is bounded by the request budget, while NyxID validates converted platform
@@ -3596,8 +3633,8 @@ deployed counterpart checks (maintainer guidance).
 With CommonMark disabled, `CMAEG_NYXID_COMPLETE_REPLIES` selects the ordinary
 relay deployment mode:
 
-- **`false` (default, legacy compatibility).** CMAEG escapes and chunks ordinary
-  relay text at 4000 UTF-16 units and sends each part independently. A bare 429
+- **`false` (default, legacy compatibility).** CMAEG escapes (Lark, Feishu and
+  Discord: keeps literal, as above) and chunks ordinary relay text at 4000 UTF-16 units and sends each part independently. A bare 429
   can be retried once with the channel key after a bounded wait. This preserves
   existing behavior, including its limitations: a URL may cross parts, a
   reply-token-only route cannot send later parts, and NyxID cannot detect absent

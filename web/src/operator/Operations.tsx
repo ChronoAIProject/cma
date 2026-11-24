@@ -116,7 +116,12 @@ export function Operations({
           />
         ) : null}
         {selectedView.id === 'warm_pools' ? <WarmPools client={client} /> : null}
-        {selectedView.id === 'activity' ? <Activity client={client} /> : null}
+        {selectedView.id === 'activity' ? (
+          <Activity
+            client={client}
+            canSearchActors={capabilities.includes('read_user_directory')}
+          />
+        ) : null}
       </div>
     </section>
   );

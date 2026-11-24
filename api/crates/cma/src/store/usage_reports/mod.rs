@@ -142,6 +142,7 @@ impl ReportingStore {
         pool_size: u32,
     ) -> Result<Arc<Self>> {
         let mut options = ClientOptions::parse(uri).await.map_err(unavailable)?;
+        super::transaction_barrier::bind(&mut options, database);
         configure_pool(&mut options, pool_size);
         let circuit = Arc::default();
         budget::observe(&mut options, Arc::clone(&circuit));

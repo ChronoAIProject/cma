@@ -226,7 +226,10 @@ async fn run(
         let mut ids = vec![];
         for row in rows {
             for rule in &rules {
-                if matches!(rule, Erasure::ProvenAbsent(_)) {
+                if matches!(
+                    rule,
+                    Erasure::ProvenAbsent(_) | Erasure::ProvenAbsentJson(_)
+                ) {
                     if let Some(context) = contexts
                         .iter()
                         .find(|context| batches::matches(entry, *rule, row, context))

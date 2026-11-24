@@ -99,7 +99,11 @@ module OmarchyCIContract
       { "name" => "Scan tested Omarchy image", "uses" => "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
         "with" => { "cache" => "${{ #{DEVELOP_PUSH} }}", "image-ref" => "cma-runtime-omarchy:ci", "format" => "json",
           "output" => "${{ runner.temp }}/omarchy-evidence/vulnerabilities.json", "severity" => "HIGH,CRITICAL",
-          "exit-code" => "1", "ignore-unfixed" => true } },
+          "exit-code" => "0", "ignore-unfixed" => true } },
+      { "name" => "Omarchy vulnerability gate", "timeout-minutes" => 5,
+        "env" => { "BASE_SHA" => "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}",
+          "GH_TOKEN" => "${{ github.token }}" },
+        "run" => 'python3 -B .github/scripts/image_vulnerability_gate.py --component runtime-omarchy --report "$RUNNER_TEMP/omarchy-evidence/vulnerabilities.json" --base "$BASE_SHA"' },
       { "name" => "Retain Omarchy image evidence", "if" => "always() && steps.build.outcome == 'success'",
         "uses" => "actions/upload-artifact@v4", "with" => {
           "name" => "omarchy-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}",

@@ -3,17 +3,7 @@ on:
   push:
     branches:
       - "develop"
-  pull_request:
-    branches:
-      - "develop"
-      - "main"
-    types:
-      - "opened"
-      - "reopened"
-      - "synchronize"
-      - "edited"
-      - "labeled"
-      - "unlabeled"
+      - "tl/release/**"
   # Required checks must also report on the develop merge queue's group refs.
   # Each entry's ref is unique, so a PR or push run never cancels it.
   merge_group:
@@ -29,6 +19,9 @@ concurrency:
   cancel-in-progress: "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"
 permissions:
   contents: "read"
+  # ci-images.yml and ci-omarchy.yml request it for the runtime vulnerability
+  # gate's tracking-issue lookup; a called workflow cannot exceed its caller.
+  issues: "read"
 jobs:
   changes:
     name: "Select tracks"

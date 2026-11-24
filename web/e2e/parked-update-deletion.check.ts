@@ -62,7 +62,7 @@ for (const uncertain of [false, true]) {
     await expect(confirmation).toContainText('stop the paused runtime update');
     expect(deletes).toEqual([]);
     await confirmation.getByRole('checkbox').check();
-    await confirmation.getByRole('button', { name: 'Delete Sandbox', exact: true }).click();
+    await confirmation.getByRole('button', { name: 'Request deletion', exact: true }).click();
     if (uncertain) {
       await expect(page.getByRole('dialog', { name: 'Deleting Sandbox' })).toContainText(
         'not been confirmed',
@@ -73,13 +73,15 @@ for (const uncertain of [false, true]) {
       expect(deletes).toHaveLength(1);
       await page.getByRole('button', { name: 'Check request', exact: true }).click();
     }
-    await expect(
-      page.getByText('Sandbox delete request accepted. Cleanup continues in the background.'),
-    ).toBeVisible();
+    await expect(page.getByText('Deleting 1 environment')).toBeVisible();
     expect(deletes).toHaveLength(uncertain ? 2 : 1);
     expect(deletes[0]!.key).toBeTruthy();
     if (uncertain) expect(deletes[1]).toEqual(deletes[0]);
     await page.reload();
+    await page
+      .getByRole('region', { name: 'Deletion request', exact: true })
+      .getByRole('button', { name: 'View status', exact: true })
+      .click();
     await page.getByRole('button', { name: /View Sandbox deletion status/ }).click();
     const progress = page.getByRole('dialog', { name: 'Deleting Sandbox', exact: true });
     await expect(progress).toBeVisible();

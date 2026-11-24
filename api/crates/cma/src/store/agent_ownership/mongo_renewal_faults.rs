@@ -1,5 +1,6 @@
 //! Targeted real-Mongo faults shared by custody and public-route regressions.
 use super::*;
+use layer2_core::agent_ownership::RenewalBatch;
 use mongodb::options::ClientOptions;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -67,6 +68,21 @@ impl OwnershipStore for RoutedStore {
         *self.returned.lock().unwrap() = result.as_ref().err().cloned();
         result
     }
+    fn supports_batch_renewal(&self) -> bool {
+        true
+    }
+    async fn renew_batch(&self, tokens: &[OwnershipToken]) -> Result<RenewalBatch, OwnershipError> {
+        if !tokens.iter().any(|token| token.agent_id == self.target) {
+            return self.inner.renew_batch(tokens).await;
+        }
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let result = self.fault_client.renew_batch(tokens).await;
+        if self.withhold_reply.load(Ordering::SeqCst) {
+            assert!(matches!(result, Ok(RenewalBatch::Committed(_))));
+            std::future::pending::<()>().await;
+        }
+        result
+    }
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
         if token.agent_id == self.target {
             self.releases.fetch_add(1, Ordering::SeqCst);
@@ -106,7 +122,10 @@ impl RoutedStore {
         let (mode, data) = match fault {
             Fault::KnownAbort => (
                 mongodb::bson::Bson::String("alwaysOn".into()),
-                doc! {"failCommands": ["findAndModify"], "appName": &self.app,
+                // Reject the first transactional command before MongoDB opens
+                // the transaction. Failing the later owner write can strand
+                // the shared member write if the retry deadline cuts off abort.
+                doc! {"failCommands": ["find"], "appName": &self.app,
                 "errorCode": 112_i32, "errorLabels": ["TransientTransactionError"]},
             ),
             Fault::UnknownCommit => (

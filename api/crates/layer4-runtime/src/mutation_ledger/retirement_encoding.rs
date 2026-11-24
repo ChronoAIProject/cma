@@ -69,7 +69,7 @@ impl SourceRow {
                         ledger_retired_worktree_key(&workspace, &name)
                     }
                     ResourceKey::AgentHome { agent_id }
-                    | ResourceKey::AgentProcess { agent_id }
+                    | ResourceKey::AgentProcess { agent_id, .. }
                     | ResourceKey::AgentSkill { agent_id, .. } => {
                         ledger_retired_agent_key(&agent_id)
                     }

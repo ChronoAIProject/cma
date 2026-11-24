@@ -71,14 +71,17 @@ pub struct RuntimeUpdateFailureView {
 
 impl SandboxRuntimeUpdateView {
     pub(super) fn new(sandbox: &Sandbox, service: &SandboxRuntimeUpdateService) -> Self {
+        // One release for the whole view, so its fields always agree.
+        let latest_version = service.latest_version();
         let current_version = sandbox
             .retained_runtime_binding()
             .map(|runtime| runtime.runtime_version.clone());
         let same_home = sandbox.supports_retained_runtime_update();
+        let can_update = service.can_update_to(sandbox, &latest_version);
         let update_available = same_home
             && current_version
                 .as_deref()
-                .is_some_and(|version| version != service.latest_version());
+                .is_some_and(|version| version != latest_version);
         let request = sandbox.runtime_update_request();
         let pending = request.filter(|request| request.completed_at.is_none());
         let state = match pending {
@@ -110,18 +113,43 @@ impl SandboxRuntimeUpdateView {
         } else {
             None
         };
+        let failure = pending.and_then(|request| {
+            let failure = request.failure.as_ref()?;
+            let guidance = if can_update {
+                if service.retry_uses_latest(sandbox, &request.target_version, &latest_version) {
+                    "Retry the runtime update. Recovery can use the latest runtime on your retained home."
+                } else {
+                    "Retry the runtime update to continue with the requested runtime on your retained home."
+                }
+            } else if !same_home {
+                "Retry requires a confirmed retained managed home. Contact the deployment operator for recovery help."
+            } else if sandbox.work.lease.is_some() {
+                "Retry is currently unavailable. Check the Sandbox status again after the current work finishes."
+            } else {
+                "Retry is unavailable. Contact the deployment operator for help recovering your retained home."
+            };
+            Some(RuntimeUpdateFailureView {
+                code: failure.class.clone(),
+                message: format!("The runtime update stopped at its current step. {guidance}"),
+            })
+        });
         Self {
-            current_version, latest_version: service.latest_version().into(), update_available, state,
-            can_update: service.can_update(sandbox), preserves_home: same_home,
-            schedule: RuntimeUpdateScheduleView { timezone: "Asia/Singapore".into(), local_time: "02:00".into() },
-            blocked_reason, target_version: request.map(|request| request.target_version.clone()),
+            can_update,
+            current_version,
+            latest_version,
+            update_available,
+            state,
+            preserves_home: same_home,
+            schedule: RuntimeUpdateScheduleView {
+                timezone: "Asia/Singapore".into(),
+                local_time: "02:00".into(),
+            },
+            blocked_reason,
+            target_version: request.map(|request| request.target_version.clone()),
             requested_at: request.map(|request| request.requested_at.clone()),
             started_at: request.and_then(|request| request.started_at.clone()),
             completed_at: request.and_then(|request| request.completed_at.clone()),
-            failure: pending.and_then(|request| request.failure.as_ref()).map(|failure| RuntimeUpdateFailureView {
-                code: failure.class.clone(),
-                message: "The runtime update paused safely. Your home and conversations are retained. Retry the update to continue.".into(),
-            }),
+            failure,
         }
     }
 }

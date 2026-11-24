@@ -4,11 +4,12 @@ use layer2_core::sandbox::store::{ClaimedWork, SandboxStoreError, WorkAuthority}
 use mongodb::bson::{doc, Document};
 
 use super::sandbox_mongo::MongoSandboxStore;
+use super::work_claim_authority::without_ledger_maintenance;
 
 pub(super) mod workspace;
 
 pub(super) fn sandbox(filter: Document, id: &str) -> Result<Document, SandboxStoreError> {
-    constrain(filter, id, true)
+    constrain(without_ledger_maintenance(filter), id, true)
 }
 
 pub(super) fn workspace(filter: Document, id: &str) -> Result<Document, SandboxStoreError> {
@@ -78,7 +79,12 @@ pub(super) fn for_collection(
     rows: &mongodb::Collection<Document>,
     filter: Document,
 ) -> Result<Document, SandboxStoreError> {
-    let mut conditions = vec![super::work_schema::for_collection(rows, filter)];
+    let filter = super::work_schema::for_collection(rows, filter);
+    let mut conditions = vec![if rows.name() == "sandboxes" {
+        without_ledger_maintenance(filter)
+    } else {
+        filter
+    }];
     for authority in WorkAuthority::current()? {
         let (id, claim) = match authority.claimed() {
             ClaimedWork::Sandbox(row) if rows.name() == "sandboxes" => (

@@ -1470,6 +1470,12 @@
           "meaning": "The deployment finished without a verified controller outcome for this component.",
           "cause": "unknown",
           "next": "Open the Deploy job: its FAIL line and summary state what the controller proved."
+        },
+        "retry-not-run": {
+          "title": "Automatic deployment retry did not run",
+          "meaning": "The first deployment was refused before any change for a transient reason and handed over to one automatic re-admission and retry, but that retry never started or never reported. Nothing is deployed for this component in this run.",
+          "cause": "unknown",
+          "next": "Open the lane's Re-admit and Deploy again jobs. If they were cancelled or skipped, dispatch redeploy-staging for the component or push to develop; a re-run of failed jobs reuses an expired admission."
         }
       }
     },

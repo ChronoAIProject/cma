@@ -108,3 +108,61 @@ async fn managed_updates_are_not_creation_consent_and_sender_policy_still_applie
     );
     assert!(fixture.recorder.requests.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn signed_telegram_relay_member_joins_require_both_gates_and_durable_runtime() {
+    use axum::{
+        body::{to_bytes, Body},
+        extract::{Path, State},
+    };
+    use cmaeg::http::callbacks;
+    let fixture = Fixture::new(
+        |definition| {
+            let source = &mut definition["sources"][0];
+            source["bot_id"] = "77".into();
+            source["member_join_chat_ids"] = json!(["-100"]);
+            source["admission"] = json!({
+                "type":"scoped", "senders":{"type":"open"}, "groups":"all",
+                "chats":{"type":"allowlist","ids":["-100","-101"]},
+            });
+        },
+        Default::default(),
+    )
+    .await;
+    let mut envelope = Envelope::new();
+    envelope.payload["conversation"]["platform_id"] = "-100".into();
+    envelope.payload["conversation"]["type"] = "group".into();
+    envelope.payload["content"] = json!({"type":"unknown"});
+    envelope.payload["raw_platform_data"] = json!({"update_id":91,"message":{
+        "message_id":11,"date":now()-2,"chat":{"id":-100,"type":"supergroup"},
+        "from":{"id":7,"is_bot":false},
+        "new_chat_members":[{"id":12,"is_bot":false,"first_name":"Ada"}],
+    }});
+    let (body, token) = envelope.signed();
+    let disabled = fixture.send(&envelope).await.json::<Value>().await.unwrap();
+    assert_eq!(disabled["reason"], "system_event");
+    let mut state = fixture.state.clone();
+    state.relay_telegram_member_joins_enabled = true;
+    let send = |body, token: &str| {
+        callbacks::callback(
+            State(state.clone()),
+            Path(fixture.id.to_string()),
+            fixture.local_request(Body::from(body), token),
+        )
+    };
+    let mut tampered = body.clone();
+    tampered.push(b' ');
+    assert_eq!(send(tampered, &token).await.status(), 401);
+    assert_eq!(send(body, &token).await.status(), 503);
+    envelope.payload["conversation"]["platform_id"] = "-101".into();
+    envelope.payload["raw_platform_data"]["message"]["chat"]["id"] = (-101).into();
+    let (body, token) = envelope.signed();
+    let response = send(body, &token).await;
+    assert_eq!(response.status(), 202);
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap()["reason"],
+        "system_event"
+    );
+    assert!(fixture.recorder.requests.lock().unwrap().is_empty());
+}

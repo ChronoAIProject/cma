@@ -134,6 +134,7 @@ impl std::fmt::Debug for AuthMode {
 pub struct AuthState {
     standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
     account_deletion_enabled: bool,
+    privacy_export_enabled: bool,
     platform_settings: Option<Arc<layer2_core::PlatformSettingsService>>,
     bot_father_username: Option<String>,
     agent_key_service_id: Option<String>,
@@ -217,6 +218,7 @@ impl AuthState {
         Arc::new(Self {
             standing: Arc::new(layer2_core::account_deletion::AvailableAccounts),
             account_deletion_enabled: false,
+            privacy_export_enabled: false,
             platform_settings: None,
             bot_father_username: None,
             bindings: None,
@@ -307,8 +309,11 @@ impl AuthState {
         &self,
         headers: &HeaderMap,
     ) -> Result<Option<RequestAuth>, StoreError> {
-        if self.identity_proxy.is_some() && headers.contains_key(nyxid_proxy::HEADER) {
-            return self.proxy_request(headers).await;
+        if headers.contains_key(nyxid_proxy::HEADER) {
+            if self.identity_proxy.is_some() {
+                return self.proxy_request(headers).await;
+            }
+            nyxid_proxy::note_disabled();
         }
         if let Some(token) = bearer::bearer_token(headers) {
             if agent_keys::is_agent_key(&token) {

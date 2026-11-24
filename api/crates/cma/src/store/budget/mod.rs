@@ -131,8 +131,30 @@ async fn owner_budget(
 fn owner_key(agent: &Agent) -> String {
     format!("owner:{}", agent.owner.as_str())
 }
-fn turn_key(agent: &Agent, turn: u64) -> String {
+pub(super) fn turn_key(agent: &Agent, turn: u64) -> String {
     format!("turn:{}:{turn}", agent.id.as_str())
+}
+
+pub(super) fn validate_stale_turn_reservation(
+    row: &Document,
+    agent: &Agent,
+    turn: u64,
+    settled: bool,
+) -> Result<(), ApplyError> {
+    let record: TurnRecord = decode(row)?;
+    if record.agent_id != agent.id
+        || record.owner != agent.owner
+        || record.turn_sequence != Some(turn)
+        || record.runtime_generation != agent.conversation.runtime_generation
+    {
+        return Err(domain(BudgetError::Unavailable));
+    }
+    if record.reservation.settled != settled || (!settled && record.reservation.stop.is_some()) {
+        return Err(ApplyError::Domain(
+            layer2_core::sandbox::store::SandboxStoreError::Conflict,
+        ));
+    }
+    Ok(())
 }
 fn command_key(command: &str) -> String {
     format!("command:{command}")

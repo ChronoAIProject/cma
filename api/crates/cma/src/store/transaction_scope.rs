@@ -77,7 +77,10 @@ where
             .await
             .map_err(super::usage_reports::unavailable)?;
         let result = match session.start_transaction().await {
-            Ok(()) => body(&context, &mut session).await,
+            Ok(()) => match super::transaction_barrier::open(&mut session).await {
+                Ok(()) => body(&context, &mut session).await,
+                Err(error) => Err(mongo(error)),
+            },
             Err(error) => Err(mongo(error)),
         };
         // The driver changes transaction state before sending commit/abort.

@@ -52,6 +52,7 @@ interface IdentityResponse {
   visitor?: unknown;
   silent_sign_in?: unknown;
   service_authorization?: unknown;
+  privacy_export?: unknown;
   legal_terms?: unknown;
 }
 
@@ -292,6 +293,7 @@ export function createNyxidAuthProvider(): AuthProvider {
           capabilities: capabilitiesFrom(body.capabilities),
           visitor: body.visitor === true,
           ...(body.service_authorization === true ? { serviceAuthorization: true } : {}),
+          ...(body.privacy_export === true ? { privacyExport: true } : {}),
           ...withLegalTerms(legalTermsFrom(body.legal_terms)),
         },
       };

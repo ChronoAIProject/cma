@@ -203,9 +203,15 @@ pub(super) fn record_path(state_root: &Path, record: &Record) -> PathBuf {
             digest.update(b"agent_home\0");
             field(&mut digest, agent_id);
         }
-        ResourceKey::AgentProcess { agent_id } => {
+        ResourceKey::AgentProcess {
+            agent_id,
+            incarnation,
+        } => {
             digest.update(b"agent_process\0");
             field(&mut digest, agent_id);
+            if let Some(incarnation) = incarnation {
+                digest.update(incarnation.to_be_bytes());
+            }
         }
     }
     digest.update(record.authority_fence.to_be_bytes());
