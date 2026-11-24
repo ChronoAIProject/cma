@@ -195,6 +195,9 @@ fn start_workers(composition: ControlPlaneComposition, shutdown: &mut ShutdownCo
         .sandbox_lifecycle
         .spawn(shutdown, &composition.workers);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
+    if let Some(outcomes) = composition.creation_outcomes {
+        shutdown.push(outcomes.spawn(shutdown.subscribe()));
+    }
     composition.usage.spawn(shutdown);
     composition.usage_metrics.spawn(shutdown);
 }

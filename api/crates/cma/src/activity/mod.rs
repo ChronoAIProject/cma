@@ -112,7 +112,9 @@ pub async fn record(
         .map(MatchedPath::as_str)
         .unwrap_or_else(|| request.uri().path())
         .to_owned();
-    if matches!(path.as_str(), "/livez" | "/ready") {
+    if matches!(path.as_str(), "/livez" | "/ready")
+        || path == layer1_public::rest::creation_outcomes::LOOKUP_PATH
+    {
         return next.run(request).await;
     }
     let actor = request

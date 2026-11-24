@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 314,
+  "openapi_operations": 315,
   "operations": {
     "POST /api/v1/admin/sandboxes/{id}/runtime-migration": {
       "classification": "openapi",
@@ -1382,6 +1382,17 @@
         "profile_store_unavailable",
         "profile_version_conflict",
         "store_failed"
+      ]
+    },
+    "POST /api/v1/sandbox-creation-outcomes/lookup": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/creation_outcomes/routes.rs # Read original Sandbox creation provenance with owner authority.",
+      "required_problems": [
+        "invalid_creation_identity",
+        "not_authenticated",
+        "permission_denied",
+        "creation_identity_conflict",
+        "creation_outcome_unavailable"
       ]
     },
     "POST /api/v1/sandboxes": {

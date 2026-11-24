@@ -112,6 +112,33 @@ test('LOCAL owner Resume checks the paused Sandbox before one keyed request', as
     };
     return route.fulfill({ status: 202, json: boundary.sandbox });
   });
+  const expectStoppedInBothMenus = async () => {
+    await page.goto(`/agents/${boundary.agent.id}`);
+    await navigation(page, true);
+    for (const [menu, label] of [
+      [page.getByRole('button', { name: 'More Agent actions', exact: true }), 'Stop agent'],
+      [
+        resourceRow(page, 'agent', boundary.agent.id).getByRole('button', {
+          name: /^Options for /,
+        }),
+        'Stop',
+      ],
+    ] as const) {
+      await menu.click();
+      const stop = page.getByRole('menuitem', {
+        name: `${label} Agent is already stopped.`,
+        exact: true,
+      });
+      await expect(stop).toHaveAttribute('aria-disabled', 'true');
+      await stop.click({ force: true });
+      await stop.press('Enter');
+      await stop.press('Space');
+      await expect(page.getByRole('dialog', { name: 'Stop Agent', exact: true })).toHaveCount(0);
+      await page.keyboard.press('Escape');
+    }
+    noEffects(boundary);
+  };
+  await expectStoppedInBothMenus();
   await page.goto(`/sandboxes/${boundary.sandbox.id}`);
   const resume = page.getByRole('button', { name: 'Resume', exact: true });
   await expect(resume).toBeEnabled();
@@ -126,7 +153,7 @@ test('LOCAL owner Resume checks the paused Sandbox before one keyed request', as
   expect(reviveKeys).toHaveLength(1);
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeEnabled();
 
-  await page.goto(`/agents/${boundary.agent.id}`);
+  await expectStoppedInBothMenus();
   await page.getByRole('button', { name: 'More Agent actions', exact: true }).click();
   const remove = page.getByRole('menuitem', { name: /^Delete task\b/ });
   await expect(remove).toBeEnabled();

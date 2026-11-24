@@ -55,9 +55,11 @@ async fn agent_control_concurrent_stop_schedules_once_and_replays_exactly() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn agent_control_delete_schedules_once_and_hides_foreign_owners() {
+    use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
+
     let (client, name) = database("agent_control_delete").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let (_, _, claimed) = claimed_agent_work_fixture(&store, "control_delete").await;
+    let (parent, _, claimed) = claimed_agent_work_fixture(&store, "control_delete").await;
     let expected_revision = claimed.revision;
     let mut stopped = claimed;
     stopped.work.schedule(AgentWorkStep::None, MINUTE.into());
@@ -83,14 +85,58 @@ async fn agent_control_delete_schedules_once_and_hides_foreign_owners() {
         Err(AgentControlStoreError::NotFound)
     );
 
+    let agent_key = doc! {"_id": stopped.id.as_str()};
+    let parent_key = doc! {"_id": parent.id.as_str()};
+    let before = store.agents.find_one(agent_key.clone()).await.unwrap();
+    let mut hold = Document::new();
+    hold.insert(LEDGER_MAINTENANCE_FIELD, doc! {"phase": "requested"});
+    store
+        .sandboxes
+        .update_one(parent_key.clone(), doc! {"$set": hold.clone()})
+        .await
+        .unwrap();
+    let parent_held = store.sandboxes.find_one(parent_key.clone()).await.unwrap();
+    assert_eq!(
+        store.schedule_agent_delete(request.clone()).await,
+        Err(AgentControlStoreError::Conflict)
+    );
+    assert_eq!(
+        store.agents.find_one(agent_key.clone()).await.unwrap(),
+        before
+    );
+    assert_eq!(
+        store.sandboxes.find_one(parent_key.clone()).await.unwrap(),
+        parent_held
+    );
+
+    store
+        .sandboxes
+        .update_one(parent_key.clone(), doc! {"$unset": hold.clone()})
+        .await
+        .unwrap();
     let scheduled = match store.schedule_agent_delete(request.clone()).await.unwrap() {
         AgentControlResult::Scheduled(agent) => agent,
         AgentControlResult::Existing(_) => panic!("new delete must be scheduled"),
     };
     assert_eq!(scheduled.work.step, AgentWorkStep::EnsureProcessClosed);
+    store
+        .sandboxes
+        .update_one(parent_key.clone(), doc! {"$set": hold})
+        .await
+        .unwrap();
+    let agent_scheduled = store.agents.find_one(agent_key.clone()).await.unwrap();
+    let parent_held = store.sandboxes.find_one(parent_key.clone()).await.unwrap();
     assert_eq!(
         store.schedule_agent_delete(request).await.unwrap(),
         AgentControlResult::Existing(scheduled)
+    );
+    assert_eq!(
+        store.agents.find_one(agent_key).await.unwrap(),
+        agent_scheduled
+    );
+    assert_eq!(
+        store.sandboxes.find_one(parent_key).await.unwrap(),
+        parent_held
     );
 
     client.database(&name).drop().await.unwrap();

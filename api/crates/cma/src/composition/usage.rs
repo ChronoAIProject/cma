@@ -21,3 +21,23 @@ pub(super) fn service(
         .usage_cursor_key(&config.deployment_id);
     SandboxUsageService::new(store, UsageCursors::new(&key, policy))
 }
+
+pub(super) struct Background {
+    pub provenance_backfill: crate::sandbox::AgentProvenanceBackfill,
+    pub usage: crate::usage_billing::UsageWorkers,
+    pub usage_metrics: crate::sandbox_metrics::MetricsWorkers,
+}
+
+pub(super) async fn background(
+    config: &Config,
+    stores: &crate::store::MongoStores,
+    capacity: Arc<layer3_adapter::agent_sandbox::RuntimeCapacityAuthority>,
+) -> Result<Background, String> {
+    Ok(Background {
+        provenance_backfill: crate::sandbox::AgentProvenanceBackfill::new(
+            stores.sandbox_model.clone(),
+        ),
+        usage: crate::usage_billing::UsageWorkers::new(stores, config)?,
+        usage_metrics: crate::sandbox_metrics::MetricsWorkers::new(config, capacity).await?,
+    })
+}

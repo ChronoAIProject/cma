@@ -1,0 +1,11 @@
+[package]
+name = "cmaeg-http"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+axum = { workspace = true }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+reqwest = { workspace = true }
+ring = { workspace = true }

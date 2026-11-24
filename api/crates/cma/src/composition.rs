@@ -1,4 +1,3 @@
-use std::sync::Arc;
 mod access;
 mod account_deletion;
 pub(crate) mod activity;
@@ -8,6 +7,7 @@ pub(crate) mod backend_free;
 mod bindings;
 mod bots;
 mod capacity_recovery;
+mod creation_outcomes;
 mod credentials;
 mod desktop;
 mod documents;
@@ -20,10 +20,11 @@ mod routes;
 mod runtime;
 mod runtime_inventory;
 mod runtime_migration;
+mod state;
 mod stores;
 mod usage;
 use crate::{
-    auth::{service_portal, AuthState},
+    auth::AuthState,
     config::Config,
     profile_policy::profile_route_policy,
     projections::{AdapterAgentHistoryExporter, AdapterSandboxResources, AgentProjectionServices},
@@ -39,11 +40,12 @@ use layer2_core::{
     sandbox::{AgentContextService, HierarchyReadService, SandboxService, WorkspaceService},
     ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
 };
-mod state;
 pub(crate) use state::ControlPlaneComposition;
+use std::sync::Arc;
 impl ControlPlaneComposition {
     async fn assemble(config: &Config) -> Result<Self, String> {
         let stores = stores::connect(config).await?;
+        let creation_outcomes = creation_outcomes::open(config, &stores).await?;
         let (deletions, standing) = account_deletion::compose(config, &stores).await?;
         let activity = ActivityService::new(stores.activity.clone());
         let documents::DocumentComposition {
@@ -79,6 +81,7 @@ impl ControlPlaneComposition {
             credentials::authentication(config, &stores, &users, &activity, settings.clone())?
                 .with_account_standing(standing.clone())
                 .with_account_deletion_enabled(config.account_deletion_enabled)
+                .with_creation_outcomes_enabled(creation_outcomes.is_some())
                 .with_privacy_export_enabled(config.features.privacy_export_enabled);
         let credentials::Connections {
             broker,
@@ -404,9 +407,8 @@ impl ControlPlaneComposition {
             .merge(projections.agent_events_router(config.features, sandbox_lifecycle.updates()))
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
-        let resource_routes = resource_routes.merge(bindings.router(config.gateway.as_ref())?);
-        let resource_routes = routes::stream_budget(resource_routes, config.public_stream_limit);
-        let resource_routes = crate::control_admission::routes(resource_routes, limits.lifecycle());
+        let resource_routes =
+            routes::resource_budgets(resource_routes, &bindings, config, &limits)?;
         let (bot_routes, bots) = bots::BotComposition::build(bots::BotCompositionDependencies {
             config,
             stores: &stores,
@@ -429,13 +431,16 @@ impl ControlPlaneComposition {
             agent_access.commands,
             resource_routes.merge(bot_routes),
         )?;
-        let provenance_backfill =
-            crate::sandbox::AgentProvenanceBackfill::new(stores.sandbox_model.clone());
-        let usage = crate::usage_billing::UsageWorkers::new(&stores, config)?;
-        let usage_metrics =
-            crate::sandbox_metrics::MetricsWorkers::new(config, adapters.runtime_capacity).await?;
+        let usage::Background {
+            provenance_backfill,
+            usage,
+            usage_metrics,
+        } = usage::background(config, &stores, adapters.runtime_capacity).await?;
         let resource_routes = resource_routes.merge(usage_metrics.router());
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
+        let tool_routes = routes::tools(tool_routes, &auth, config)?;
+        let resource_routes =
+            creation_outcomes::routes(resource_routes, creation_outcomes.as_deref());
         let worker_observations = runtime::worker_observations(config, &stores);
         let workers = crate::worker_supervision::Workers::new();
         let relay = agent_manager::relay(
@@ -460,14 +465,12 @@ impl ControlPlaneComposition {
             (limits, config),
             (
                 crate::health::router_with_workers(stores.clone(), workers.clone()),
-                tool_routes.merge(service_portal::router(
-                    auth.clone(),
-                    config.gateway.as_ref(),
-                )?),
+                tool_routes,
             ),
             relay.as_ref(),
         );
         Ok(Self {
+            creation_outcomes,
             activity_worker,
             workers,
             document_blob_maintenance,
