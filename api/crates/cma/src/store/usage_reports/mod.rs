@@ -25,7 +25,7 @@ mod view_finish;
 mod views;
 mod work;
 pub(crate) use cma_am_reporting::{chart_documents, unavailable};
-use cma_am_reporting::{decode, encode, expires};
+pub(super) use cma_am_reporting::{decode, encode, expires};
 pub(crate) use views::ViewLease;
 pub(crate) use work::ReportLease;
 
