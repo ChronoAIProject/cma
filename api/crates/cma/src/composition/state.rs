@@ -11,6 +11,7 @@ impl ControlPlaneComposition {
 }
 
 pub(crate) struct ControlPlaneComposition {
+    pub creation_outcomes: Option<Arc<crate::store::creation_outcomes::CreationOutcomes>>,
     // Reserved for document purge/reclaim and account erasure workers, never routes.
     #[allow(dead_code)]
     pub document_blob_maintenance:

@@ -46,6 +46,7 @@ impl HostedControlTransport for Transport {
             agent_model_catalog: true,
             agent_browser: false,
             agent_resource_preparation: false,
+            agent_process_restart: false,
             exact_github_credential_route: false,
         }))
     }

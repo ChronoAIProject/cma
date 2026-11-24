@@ -189,6 +189,7 @@ async fn contextual_title_modes_preserve_exact_admission_and_persist_title_autho
                 .unwrap()
                 .is_none());
             let input = ProvisionInput {
+                creation_fence: None,
                 behavior: record.input.behavior,
                 first_message: validation::admitted_first_message(&record.input),
                 request: record.input.request.clone(),

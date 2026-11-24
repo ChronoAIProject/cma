@@ -103,7 +103,8 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
     Ok(Arc::new(
         stores
             .with_empty_discovery(config.features.empty_discovery)
-            .with_writer_policy(config.task_experience.clone()),
+            .with_writer_policy(config.task_experience.clone())
+            .with_creation_writer_epoch(config.creation_writer_epoch.as_deref()),
     ))
 }
 
