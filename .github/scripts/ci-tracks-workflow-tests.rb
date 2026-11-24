@@ -127,23 +127,65 @@ IMAGE_SCAN_IF = "success() && (github.event_name == 'merge_group' || (github.eve
 # runs the same gate on its exported image before retaining it, so a PR or
 # merge group fails first instead of the release after the merge.
 def require_image_secret_scan(documents)
-  [['ci-images', 'images', '"$IMAGE_COMPONENT"', 'Scan tested image as staging publication does', 'Retain tested native image'],
-   ['ci-omarchy', 'omarchy', 'runtime-omarchy', 'Scan tested Omarchy image as staging publication does', 'Retain tested Omarchy image']].each do |file, job, component, name, retain|
-    steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
-    install = steps.index { |step| step['name'] == 'Install pinned image secret scanner' }
-    scan = steps.index { |step| step['name'] == name }
-    export = steps.index { |step| step.fetch('run', '').include?('export-ci-native-image.py') }
-    keep = steps.index { |step| step['name'] == retain }
-    require_check(install && scan && export && keep && export < install && install < scan && scan < keep,
-                  "#{file} must scan the exported image before retaining it")
-    [steps[install], steps[scan]].each do |step|
-      require_check(step['if'] == IMAGE_SCAN_IF && !step.key?('continue-on-error'), "#{file} image secret scan is optional")
-    end
-    require_check(steps[install]['run'] == "bash .github/scripts/staging_cd_transport.sh\nbash .github/scripts/install-image-gitleaks.sh\n" &&
-                  steps[install]['timeout-minutes'] == 5, "#{file} image scanner install differs")
-    command = "python3 -B .github/scripts/ci_image_secret_scan.py #{component} \"$RUNNER_TEMP/ci-native-image\" \"$GITHUB_SHA\""
-    require_check(steps[scan]['run'] == command && steps[scan]['timeout-minutes'] == 30, "#{file} image secret scan command differs")
+  steps = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
+  install = steps.index { |step| step['name'] == 'Install pinned image secret scanner' }
+  scan = steps.index { |step| step['name'] == 'Scan tested image as staging publication does' }
+  export = steps.index { |step| step.fetch('run', '').include?('export-ci-native-image.py') }
+  keep = steps.index { |step| step['name'] == 'Retain tested native image' }
+  require_check(install && scan && export && keep && export < install && install < scan && scan < keep,
+                'ci-images must scan the exported image before retaining it')
+  [steps[install], steps[scan]].each do |step|
+    require_check(step['if'] == IMAGE_SCAN_IF && !step.key?('continue-on-error'), 'ci-images image secret scan is optional')
   end
+  require_check(steps[install]['run'] == "bash .github/scripts/staging_cd_transport.sh\nbash .github/scripts/install-image-gitleaks.sh\n" &&
+                steps[install]['timeout-minutes'] == 5, 'ci-images image scanner install differs')
+  command = 'python3 -B .github/scripts/ci_image_secret_scan.py "$IMAGE_COMPONENT" "$RUNNER_TEMP/ci-native-image" "$GITHUB_SHA"'
+  require_check(steps[scan]['run'] == command && steps[scan]['timeout-minutes'] == 30, 'ci-images image secret scan command differs')
+  require_omarchy_image_secret_scan(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'))
+end
+
+def require_omarchy_image_secret_scan(steps)
+  input = steps.find { |step| step['id'] == 'omarchy-scan-input' }
+  install = steps.find { |step| step['id'] == 'omarchy-scanner-install' }
+  scan = steps.find { |step| step['id'] == 'omarchy-scan-start' }
+  export = steps.find { |step| step['name'] == 'Export tested Omarchy image' }
+  retain = steps.find { |step| step['name'] == 'Retain tested Omarchy image' }
+  order = [steps.find { |step| step['name'] == 'Verify every Omarchy image layer' }, input, install, scan,
+           steps.find { |step| step['name'] == 'Verify Omarchy runtime contract' },
+           steps.find { |step| step['name'] == 'Omarchy vulnerability gate' }, export, retain]
+  require_check(order.all? && order.map { |step| steps.index(step) }.each_cons(2).all? { |a, b| a < b },
+                'Omarchy must join its scanner after the foreground image checks and before retention')
+  require_check(input['if'] == IMAGE_SCAN_IF && input['timeout-minutes'] == 11 &&
+                input['run'] == <<~'SH', 'Omarchy must prepare a private scan input on scan-eligible runs')
+    if timeout 10m python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-ci-scan-input"; then
+      echo "ready=true" >> "$GITHUB_OUTPUT"
+    fi
+  SH
+  require_check(install['if'] == "success() && steps.omarchy-scan-input.outputs.ready == 'true'" &&
+                install['timeout-minutes'] == 6 && install['env'] == {'CD_COMPONENT' => 'runtime-omarchy'} &&
+                install['run'] == <<~'SH', 'Omarchy image scanner install differs')
+    if timeout 5m bash -ec 'bash .github/scripts/staging_cd_transport.sh && bash .github/scripts/install-image-gitleaks.sh'; then
+      echo "ready=true" >> "$GITHUB_OUTPUT"
+    fi
+  SH
+  require_check(scan['if'] == "success() && steps.omarchy-scanner-install.outputs.ready == 'true'" &&
+                scan['timeout-minutes'] == 1 && scan['run'] == <<~'SH', 'Omarchy must attest scanner startup')
+    if python3 -B .github/scripts/omarchy-ci-scan.py start "$GITHUB_SHA"; then
+      echo "ready=true" >> "$GITHUB_OUTPUT"
+    fi
+  SH
+  require_check([input, install, scan, export, retain].none? { |step| step.key?('continue-on-error') },
+                'Omarchy scan start and retention must reject optional workflow failure')
+  require_check(export['env'] == {
+    'OMARCHY_SCAN_STARTED' => '${{ steps.omarchy-scan-start.outputs.ready }}',
+  } && export['timeout-minutes'] == 31 && export['run'] == <<~'SH', 'Omarchy could export before image scan completion')
+    if [ "$GITHUB_EVENT_NAME" = push ]; then
+      timeout 10m python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
+    else
+      test "$OMARCHY_SCAN_STARTED" = true
+      python3 -B .github/scripts/omarchy-ci-scan.py promote "$GITHUB_SHA"
+    fi
+  SH
 end
 
 RUNTIME_VULNERABILITY_BASE = "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}"
@@ -788,6 +830,8 @@ mutations = [
   ->(d) { steps = d['ci-images']['jobs']['images']['steps']; scan = steps.index { |s| s['name'] == 'Scan tested image as staging publication does' }; steps.insert(steps.index { |s| s['name'] == 'Retain tested native image' } + 1, steps.delete_at(scan)) },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].reject! { |s| s['name'] == 'Install pinned image secret scanner' } },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Scan tested Omarchy image as staging publication does' }['timeout-minutes'] = 120 },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-scan-input' }['if'] = 'success()' },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Export tested Omarchy image' }['run'].sub!('test "$OMARCHY_SCAN_STARTED" = true', 'true') },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].reject! { |s| s['name'] == 'API allocator qualification' } },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'] << d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }.dup },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['continue-on-error'] = true },
