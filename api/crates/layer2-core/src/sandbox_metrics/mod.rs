@@ -2,6 +2,7 @@
 pub mod aggregate;
 pub mod allocation;
 pub mod cursor;
+pub mod initial;
 pub mod measured_evidence;
 pub mod model;
 pub mod options;
@@ -11,6 +12,7 @@ pub mod series;
 pub mod service;
 pub mod view;
 
+pub use initial::*;
 pub use model::*;
 pub use options::*;
 pub use owner_allocation::*;
@@ -59,3 +61,6 @@ mod series_tests;
 
 #[cfg(test)]
 mod view_tests;
+
+#[cfg(test)]
+mod initial_tests;

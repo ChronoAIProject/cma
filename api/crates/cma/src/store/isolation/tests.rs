@@ -622,3 +622,74 @@ mod observation_grants_tests {
         assert!(validate_observation_grants(&status(grants), "cma").is_err());
     }
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn real_measured_custody_role_can_be_added_and_revoked_with_capture_off() {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    use mongodb::{
+        options::{ClientOptions, Credential},
+        Client,
+    };
+    use std::{sync::Arc, time::Duration};
+
+    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_measured_role_{}", uuid::Uuid::new_v4().simple());
+    let db = admin.database(&name);
+    db.run_command(required_role(&name)).await.unwrap();
+    let password = uuid::Uuid::new_v4().to_string();
+    db.run_command(doc! {"createUser": "runtime", "pwd": &password,
+    "roles": [{"role": "cma_am_runtime", "db": &name}]})
+        .await
+        .unwrap();
+    db.create_collection(MEASURED_CUSTODY).await.unwrap();
+    let privilege = doc! {"resource": {"db": &name, "collection": MEASURED_CUSTODY},
+    "actions": MEASURED_CUSTODY_ACTIONS};
+    let key = crate::store::AuthEncryptionKey::from_base64(&STANDARD.encode([7_u8; 32])).unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.credential = Some(
+        Credential::builder()
+            .username("runtime".to_owned())
+            .password(password)
+            .source(name.clone())
+            .build(),
+    );
+    for (command, widened) in [
+        (None, false),
+        (Some("grantPrivilegesToRole"), true),
+        (Some("revokePrivilegesFromRole"), false),
+    ] {
+        if let Some(command) = command {
+            db.run_command(doc! {command: "cma_am_runtime", "privileges": [privilege.clone()]})
+                .await
+                .unwrap();
+        }
+        let runtime = Client::with_options(options.clone()).unwrap();
+        let stores = crate::store::MongoStores::open(
+            runtime.clone(),
+            &name,
+            "measured-role-fixture",
+            &key,
+            Duration::from_secs(86_400),
+            Arc::new(crate::store::checkpoint_storage::RetiredCheckpointStorage),
+            ("measured-role-fixture", None),
+        )
+        .await
+        .unwrap();
+        stores.ping().await.unwrap();
+        let rows = runtime
+            .database(&name)
+            .collection::<Document>(MEASURED_CUSTODY);
+        assert_eq!(rows.find_one(doc! {}).await.is_ok(), widened);
+        assert!(rows.delete_one(doc! {}).await.is_err());
+    }
+    assert_eq!(
+        db.collection::<Document>(MEASURED_CUSTODY)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    db.drop().await.unwrap();
+}

@@ -58,6 +58,7 @@ mod responses_v2_cases;
 mod retained_clients;
 mod retained_output_cases;
 mod retained_recovery_cases;
+mod runtime_canary_cases;
 mod runtime_capacity_cases;
 mod runtime_update_cases;
 mod sandbox_command_cases;
@@ -179,6 +180,15 @@ fn paths() -> Vec<PathBuf> {
 
 async fn scenario(name: &str) -> Scenario {
     if let Some(scenario) = creation_outcome_cases::scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = super::admin::tests::binding_holds_tests::contract_scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = super::agent_original_request::tests::contract_scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = runtime_canary_cases::scenario(name) {
         return scenario;
     }
     if let Some(scenario) = super::privacy_export::tests::contract_scenario(name).await {

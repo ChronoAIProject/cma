@@ -66,14 +66,32 @@ impl ProviderHostedControlTransport {
         &self,
         endpoint: &RuntimeEndpoint,
     ) -> crate::Result<Option<ReceiverLease>> {
+        self.receiver_lease_with_budget(endpoint, None).await
+    }
+
+    pub(super) async fn receiver_lease_for_read(
+        &self,
+        endpoint: &RuntimeEndpoint,
+    ) -> crate::Result<Option<ReceiverLease>> {
+        let deadline =
+            crate::file_read_retry::deadline().filter(|_| endpoint.retirement_receiver().is_some());
+        self.receiver_lease_with_budget(endpoint, deadline).await
+    }
+
+    async fn receiver_lease_with_budget(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        deadline: Option<tokio::time::Instant>,
+    ) -> crate::Result<Option<ReceiverLease>> {
         let Some(authority) = current_authority() else {
             return Ok(None);
         };
         let mut template = self.clone();
         template.state = Arc::new(Mutex::new(TransportState::default()));
         let identity = format!("{}:{:?}", endpoint.control()?, endpoint.native_binding());
-        let legacy_incarnation = match tokio::time::timeout(
-            NEGOTIATION_DEADLINE,
+        let lookup_deadline = attempt_deadline(deadline)?;
+        let legacy_incarnation = match tokio::time::timeout_at(
+            lookup_deadline,
             self.legacy_receiver_incarnation(endpoint),
         )
         .await
@@ -84,6 +102,14 @@ impl ProviderHostedControlTransport {
                 None
             }
         };
+        let first_deadline = if deadline.is_some() {
+            if tokio::time::Instant::now() >= lookup_deadline {
+                return Err(negotiation_budget_expired());
+            }
+            lookup_deadline
+        } else {
+            attempt_deadline(None)?
+        };
         authority.register_receiver(Arc::new(ReceiverFence {
             identity: identity.clone(),
             template,
@@ -93,7 +119,14 @@ impl ProviderHostedControlTransport {
             authority: Arc::downgrade(&authority),
             legacy_incarnation,
         }))?;
-        self.renew_receiver(endpoint, &authority, &identity).await?;
+        self.negotiate_and_revoke_on_failure(
+            endpoint,
+            &authority,
+            &identity,
+            first_deadline,
+            deadline,
+        )
+        .await?;
         authority.receiver_confirmed(&identity);
         let lease_authority = authority.clone();
         let lease_endpoint = endpoint.clone();
@@ -113,7 +146,13 @@ impl ProviderHostedControlTransport {
                 let mut current = transport.clone();
                 current.state = state;
                 if current
-                    .renew_receiver(&endpoint, &authority, &identity)
+                    .negotiate_and_revoke_on_failure(
+                        &endpoint,
+                        &authority,
+                        &identity,
+                        tokio::time::Instant::now() + NEGOTIATION_DEADLINE,
+                        None,
+                    )
                     .await
                     .is_err()
                 {
@@ -130,120 +169,60 @@ impl ProviderHostedControlTransport {
         }))
     }
 
-    async fn renew_receiver(
+    async fn negotiate_and_revoke_on_failure(
         &self,
         endpoint: &RuntimeEndpoint,
         authority: &Arc<dyn TransportAuthority>,
         identity: &str,
+        first_deadline: tokio::time::Instant,
+        deadline: Option<tokio::time::Instant>,
     ) -> crate::Result<()> {
-        let phase = std::sync::Mutex::new(Phase::Challenge);
         let evidence = authority.retry_evidence();
         let _negotiation = evidence.as_ref().map(|evidence| evidence.negotiation());
-        let receiver = endpoint.native_binding().and_then(|(handle, binding)| {
-            crate::owner_protocol::OwnershipReceiver::from_native(handle, binding)
-        });
-        let challenge_valid = std::sync::atomic::AtomicBool::new(false);
-        let status = Arc::new(NativeHttpObservation::default());
-        let interrupted = |reason| {
-            let mut failure = OwnershipFailure::new(*phase.lock().unwrap(), reason);
-            failure.http_status = status.status();
-            OwnershipExchangeFailure::from(failure)
+        let mut failed = match self
+            .negotiate_attempt(endpoint, authority, identity, first_deadline, false)
+            .await
+        {
+            Ok(()) => return Ok(()),
+            Err(failed) => failed,
         };
-        let operation = async {
-            authority
-                .check_for_phase(Phase::Challenge)
-                .await
-                .map_err(|error| {
-                    OwnershipFailure::new(Phase::Challenge, Reason::AuthorityLost).with_error(error)
-                })?;
-            let owner = authority.owner();
-            let (challenge, challenge_status): (OwnerChallenge, _) = self
-                .owner_exchange(endpoint, &owner, Phase::Challenge, &owner, &status)
-                .await?;
-            authority.receiver_observed(identity);
-            challenge_valid.store(
-                uuid::Uuid::parse_str(&challenge.nonce).is_ok(),
-                std::sync::atomic::Ordering::Release,
-            );
-            let reason = if challenge.protocol != OWNER_PROTOCOL_VERSION {
-                Some(Reason::ProtocolMismatch)
-            } else if challenge.valid_for_ms != RECEIVER_LEASE_MS {
-                Some(Reason::LeaseMismatch)
-            } else if uuid::Uuid::parse_str(&challenge.nonce).is_err() {
-                Some(Reason::MalformedReply)
-            } else {
-                None
-            };
-            if let Some(reason) = reason {
-                return Err(OwnershipFailure {
-                    phase: Phase::Challenge,
-                    reason,
-                    http_status: Some(challenge_status),
-                    protocol: Some(challenge.protocol),
-                    lease_ms: Some(challenge.valid_for_ms),
-                }
-                .into());
-            }
-            // Causal ordering is essential. Never confirm with a cached renewal.
-            *phase.lock().unwrap() = Phase::Renew;
-            status.clear();
-            authority.renew_for_challenge().await.map_err(|error| {
-                OwnershipFailure::new(Phase::Renew, Reason::AuthorityLost).with_error(error)
-            })?;
-            let request = OwnerConfirmation {
-                owner: owner.clone(),
-                nonce: challenge.nonce,
-            };
-            *phase.lock().unwrap() = Phase::Confirm;
-            authority
-                .begin_receiver_confirmation(identity)
-                .map_err(|error| {
-                    OwnershipFailure::new(Phase::Confirm, Reason::AuthorityLost).with_error(error)
-                })?;
-            if let Some(evidence) = &evidence {
-                evidence.confirmation(receiver.as_ref(), false);
-            }
-            let (confirmed, status): (OwnerAcknowledgement, _) = self
-                .owner_exchange(endpoint, &owner, Phase::Confirm, &request, &status)
-                .await?;
-            validate_acknowledgement(&confirmed, &owner, Phase::Confirm, status)?;
-            if let Some(evidence) = &evidence {
-                evidence.confirmation(receiver.as_ref(), true);
-            }
-            authority
-                .check_for_phase(Phase::Confirm)
-                .await
-                .map_err(|error| {
-                    OwnershipFailure::new(Phase::Confirm, Reason::AuthorityLost).with_error(error)
-                })
-        };
-        let result = tokio::select! { biased;
-            _ = authority.revoked() => Err(interrupted(Reason::AuthorityLost)),
-            result = tokio::time::timeout(NEGOTIATION_DEADLINE, operation) => result.unwrap_or_else(|_| Err(interrupted(Reason::Deadline))),
-        };
-        if let Err(failure) = result {
-            if failure.observation.phase == Phase::Challenge
-                && failure
-                    .observation
-                    .http_status
-                    .is_some_and(|status| (200..300).contains(&status))
-            {
-                authority.receiver_observed(identity);
-            }
-            if let Some(evidence) = &evidence {
-                evidence.record(
-                    authority.owner(),
-                    receiver,
-                    failure.observation,
-                    challenge_valid.load(std::sync::atomic::Ordering::Acquire),
-                );
-            }
-            authority
-                .record_failure_and_revoke(failure.observation)
+        let retry_deadline = deadline
+            .filter(|_| {
+                failed.retryable && authority.is_current() && crate::file_read_retry::take()
+            })
+            .and_then(|deadline| attempt_deadline(Some(deadline)).ok());
+        if let Some(retry_deadline) = retry_deadline {
+            let reason = failed.failure.observation.reason.as_str();
+            let result = self
+                .negotiate_attempt(endpoint, authority, identity, retry_deadline, true)
                 .await;
-            return Err(failure.error);
+            metrics::counter!(
+                "cma_agent_file_receiver_retries_total",
+                "reason" => reason,
+                "outcome" => if result.is_ok() { "recovered" } else { "failed" },
+            )
+            .increment(1);
+            match result {
+                Ok(()) => return Ok(()),
+                Err(retry) => failed = retry,
+            }
         }
-        Ok(())
+        let failure = failed.failure;
+        if let Some(evidence) = evidence.as_ref() {
+            let receiver = endpoint.native_binding().and_then(|(handle, binding)| {
+                crate::owner_protocol::OwnershipReceiver::from_native(handle, binding)
+            });
+            evidence.record(
+                authority.owner(),
+                receiver,
+                failure.observation,
+                failed.challenge_valid,
+            );
+        }
+        authority
+            .record_failure_and_revoke(failure.observation)
+            .await;
+        Err(failure.error)
     }
 
     async fn owner_exchange<T: Serialize + Sync, R: DeserializeOwned>(
@@ -407,6 +386,22 @@ struct ReceiverFence {
 
 #[path = "provider_ownership_settlement.rs"]
 mod settlement;
+
+fn attempt_deadline(window: Option<tokio::time::Instant>) -> crate::Result<tokio::time::Instant> {
+    let now = tokio::time::Instant::now();
+    match window {
+        Some(deadline) if deadline <= now => Err(negotiation_budget_expired()),
+        Some(deadline) => Ok(deadline.min(now + NEGOTIATION_DEADLINE)),
+        None => Ok(now + NEGOTIATION_DEADLINE),
+    }
+}
+
+fn negotiation_budget_expired() -> crate::AdapterError {
+    crate::AdapterError::Unavailable("file read receiver negotiation budget expired".into())
+}
+
+#[path = "provider_ownership_attempt.rs"]
+mod attempt;
 
 #[cfg(test)]
 #[path = "provider_ownership_settlement_tests.rs"]

@@ -28,6 +28,8 @@ pub(crate) fn for_tag(tag: &str) -> Option<WireOperation> {
         "remove_agent_home" => WireOperation::RemoveAgentHome,
         "open_agent" => WireOperation::OpenAgent,
         "close_agent" => WireOperation::CloseAgent,
+        "prove_agent_process_closed" => WireOperation::ProveAgentProcessClosed,
+        "fence_agent_restart" => WireOperation::FenceAgentRestart,
         "capture_agent" => WireOperation::CaptureAgent,
         "checkpoint" => WireOperation::Checkpoint,
         "checkpoint_for_teardown" => WireOperation::CheckpointForTeardown,

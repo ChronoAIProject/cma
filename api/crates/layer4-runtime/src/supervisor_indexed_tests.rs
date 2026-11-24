@@ -61,6 +61,9 @@ async fn close_store(supervisor: Arc<Supervisor>, ledger: Arc<Ledger>) {
         .unwrap();
 }
 
+#[path = "supervisor_indexed_restart_teardown_tests.rs"]
+mod restart_teardown;
+
 #[tokio::test]
 async fn indexed_same_runtime_restart_recovers_an_interrupted_close_for_the_exact_process() {
     use crate::mutation_ledger::ProcessFilter;

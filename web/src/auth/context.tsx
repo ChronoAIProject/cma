@@ -14,6 +14,7 @@ import { retainDocumentShareToken } from '../documents/shareToken';
 import { retainAgentShareForSignIn } from '../resources/agentShareToken';
 import { retainTaskViewer } from '../create/taskIdentity';
 import { retainAgentDraftOwner } from '../agent/draftIdentity';
+import { retainPreparationDraftOwner } from '../preparation/preparationDraftIdentity';
 import { releaseNavigationGuard } from '../routing/navigationGuard';
 
 /**
@@ -81,10 +82,13 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         .current()
         .then((next) => {
           if (live && version === currentRead.current) {
-            if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
-            else if (next.status === 'anonymous') {
+            if (next.status === 'authenticated') {
+              retainAgentDraftOwner(next.user.id);
+              retainPreparationDraftOwner(next.user.id);
+            } else if (next.status === 'anonymous') {
               releaseNavigationGuard();
               retainAgentDraftOwner();
+              retainPreparationDraftOwner();
             }
             if (next.status !== 'error') last = next;
             let leavingSilently = false;
@@ -195,9 +199,14 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         await provider.signIn(returnTo, options);
         const next = await provider.current();
         if (version !== currentRead.current) return;
-        if (next.status === 'authenticated') retainTaskViewer(next.user.id);
-        if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
-        else if (next.status === 'anonymous') retainAgentDraftOwner();
+        if (next.status === 'authenticated') {
+          retainTaskViewer(next.user.id);
+          retainAgentDraftOwner(next.user.id);
+          retainPreparationDraftOwner(next.user.id);
+        } else if (next.status === 'anonymous') {
+          retainAgentDraftOwner();
+          retainPreparationDraftOwner();
+        }
         allowSessionReads(next.status === 'authenticated');
         setOutage(undefined);
         setState(next);
@@ -219,6 +228,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     try {
       retainTaskViewer();
       retainAgentDraftOwner();
+      retainPreparationDraftOwner();
       setState({ status: 'checking' });
       await provider.signOut();
       if (version !== currentRead.current) return;

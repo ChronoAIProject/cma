@@ -29,7 +29,8 @@ async fn usage_save_retries_known_aborts_without_refreshing_revision_or_replayin
                 unknown,
             )
             .await;
-            let save = crate::store::sandbox_usage::save::save(&f.store, expected, &next, None);
+            let save =
+                crate::store::sandbox_usage::save::save(&f.store, expected, &next, None, None);
             if scoped {
                 crate::store::work_publication::scope(&f.store, save).await
             } else {

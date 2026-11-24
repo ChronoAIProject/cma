@@ -124,6 +124,18 @@ pub trait SandboxStore: Send + Sync {
         None
     }
 
+    fn capture_released_runtime(&self) -> Option<layer3_adapter::ReleasedRuntime> {
+        self.managed_runtime_version()
+            .map(|agent| layer3_adapter::ReleasedRuntime {
+                revision: 0,
+                agent,
+                machine: None,
+                lane_revisions: None,
+            })
+    }
+
+    async fn refresh_released_runtime(&self) {}
+
     async fn unpublished_runtime_recovery_snapshot(
         &self,
         _id: &SandboxId,
@@ -147,6 +159,26 @@ pub trait SandboxStore: Send + Sync {
         expected_revision: u64,
         sandbox: Sandbox,
     ) -> Result<(), SandboxStoreError>;
+
+    async fn save_sandbox_against_release(
+        &self,
+        expected_revision: u64,
+        sandbox: Sandbox,
+        _release: &layer3_adapter::ReleasedRuntime,
+        _lane: crate::released_runtime::ReleasedLane,
+    ) -> Result<(), SandboxStoreError> {
+        self.save_sandbox(expected_revision, sandbox).await
+    }
+
+    /// Bind a default image before the first dispatch of an unpooled generation.
+    async fn reserve_initial_runtime_image(
+        &self,
+        _sandbox: &Sandbox,
+        _generation: u64,
+        image: &str,
+    ) -> Result<String, SandboxStoreError> {
+        Ok(image.into())
+    }
     async fn list_sandboxes(
         &self,
         owner: &SubjectId,
