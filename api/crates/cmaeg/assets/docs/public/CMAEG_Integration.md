@@ -13,10 +13,15 @@ for an overview of channel setup, ingress, execution, tools, delivery and recove
 
 ## Addresses and discovery
 
-| Interface | Production address |
+The served guide uses the configured public Event Gateway base for direct links.
+If you see `gateway.example.com` in a source copy, replace that placeholder with
+your gateway's host. For NyxID proxy calls, replace `nyxid.example.com` with your
+NyxID API host.
+
+| Interface | Address |
 | --- | --- |
 | Direct REST base | `https://gateway.example.com/event-gateway/v1` |
-| NyxID REST proxy base | `https://gateway.example.com/api/v1/proxy/s/cmaeg` |
+| NyxID REST proxy base (example) | `https://nyxid.example.com/api/v1/proxy/s/cmaeg` |
 | Native MCP | `https://gateway.example.com/event-gateway/mcp` |
 | OpenAPI | <https://gateway.example.com/event-gateway/openapi.json> |
 | Integration guide | <https://gateway.example.com/event-gateway/docs> |
@@ -46,10 +51,10 @@ Clients reconnect and atomically apply the server's latest activity snapshot;
 no periodic history polling is needed.
 
 
-Existing `https://gateway.example.com` API, webhook and setup URLs continue
-to work. Keep retained callback URLs and signatures unchanged during migration;
-an installed Telegram webhook on the old host is preserved. Newly generated
-channel, setup and media links use the canonical namespace.
+Keep existing API, webhook and setup URLs issued by your deployment during
+migration. Retain callback URLs and signatures, including an installed Telegram
+webhook on the old host. Newly generated channel, setup and media links use the
+canonical namespace.
 
 The NyxID catalog display name is **Agent Event Gateway**, with slug `cmaeg`.
 It is a public, automatically connected service. Refresh `GET /api/v1/keys` in
@@ -218,6 +223,10 @@ depends on the gateway's supported connections and enabled setup capabilities.
 5. Check **Review and create**, then select **Create consumer**. If creation is
    unconfirmed, use **Recover creation** to reconcile the same request. Wait for
    the consumer's setup to complete before testing messages and replies.
+
+For a document created in **Artifacts**, use **Retry creation** while the
+original dialog is open. After leaving the dialog, use **Resume creation** in
+**Artifacts** to reopen the saved request, then use **Retry creation**.
 
 CMA's Profile authoring pages are retired. New consumers use the connection and
 inline settings above. Saved Profile definitions and revisions remain readable
@@ -726,9 +735,8 @@ Exact bodies, canonical digests, error codes and conformance levels are in the
 Channel owners can inspect every channel their NyxID account, or an
 organization they administer, owns at
 <https://gateway.example.com/event-gateway/legacy-console>. This compatibility entry
-redirects to the existing console OAuth authority at
-`https://gateway.example.com/console`; its login, callback and existing tabs
-remain valid. It is read-only apart from
+uses the configured gateway address and retains the existing console OAuth
+authority for login, callback and existing tabs. It is read-only apart from
 source attach and detach; change consumers and routing through the REST API.
 
 1. **Sign in.** Choose "Sign in with NyxID" and approve the console. Use the
