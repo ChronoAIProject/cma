@@ -1,4 +1,41 @@
 use super::*;
+use crate::sandbox::title_scheduler::AgentTitleScheduler;
+use crate::store::request_limits::MongoRequestLimits;
+
+pub(crate) fn scheduled_title_fixture() -> (Sandbox, Agent) {
+    (sandbox(), agent())
+}
+
+pub(crate) fn start_title_scheduler(
+    service: Arc<AgentTitleService>,
+    store: Arc<dyn AgentLifecycleStore>,
+    sandbox: &Sandbox,
+    budget: Arc<MongoRequestLimits>,
+    origin: String,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
+    let credentials = Arc::new(Credentials(
+        Mutex::new(Some(CredentialMaterial {
+            source: Default::default(),
+            sandbox_id: sandbox.id.clone(),
+            owner: sandbox.owner.clone(),
+            authority: sandbox.credential.current.clone().unwrap(),
+            value: SecretValue::new(KEY.into()),
+        })),
+        AtomicUsize::new(0),
+    ));
+    let worker = AgentTitleWorker::new(
+        service,
+        store,
+        credentials,
+        Arc::new(PlatformTitleEndpoint {
+            platform_base_url: origin,
+        }),
+        MODEL.into(),
+        budget,
+    );
+    AgentTitleScheduler::new(worker).spawn(shutdown)
+}
 
 pub(super) fn sandbox() -> Sandbox {
     Sandbox {
