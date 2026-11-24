@@ -12,10 +12,7 @@ use crate::{
     Caller, Capability, DetailKey, SandboxId, SubjectId, WorkspaceId, WorktreeId,
 };
 
-use super::reviewed_retirement::{
-    ReviewedRetirementMember, ReviewedRetirementOutcome, ReviewedRetirementReceipt,
-    ReviewedRetirementStore,
-};
+use super::reviewed_retirement::ReviewedRetirementStore;
 use super::store::{
     Page, PageRequest, SandboxStore, SandboxStoreError, SandboxTransaction, SandboxTransactionStore,
 };
@@ -248,6 +245,7 @@ pub enum OperatorError {
 
 mod always_on;
 mod errors;
+mod reviewed_retirement;
 
 pub struct SandboxOperatorService {
     sandboxes: Arc<dyn SandboxAdminStore>,
@@ -278,72 +276,6 @@ impl SandboxOperatorService {
             maintenance: None,
             activity,
         }
-    }
-
-    pub fn with_reviewed_retirement(
-        mut self,
-        store: Arc<dyn ReviewedRetirementStore>,
-        admit: bool,
-    ) -> Self {
-        self.reviewed_retirement = Some(ReviewedRetirementAccess { store, admit });
-        self
-    }
-
-    pub async fn admit_reviewed_retirement(
-        &self,
-        caller: &Caller,
-        id: &SandboxId,
-        member: &ReviewedRetirementMember,
-    ) -> Result<ReviewedRetirementOutcome, OperatorError> {
-        require(caller, Capability::ControlAnySandbox)?;
-        let store = self
-            .reviewed_retirement
-            .as_ref()
-            .filter(|access| access.admit)
-            .ok_or(OperatorError::NotFound)?;
-        let now = now_rfc3339();
-        if id != &member.sandbox_id || !member.validate(&now) {
-            return Err(OperatorError::InvalidRequest(
-                "invalid reviewed retirement member".into(),
-            ));
-        }
-        let mut record = activity(caller, ActivityAction::Delete, &sandbox_target(id));
-        record
-            .detail
-            .record(DetailKey::Status, "reviewed_retirement_requested");
-        self.append(record).await?;
-        store
-            .store
-            .admit_reviewed_retirement(member, &now)
-            .await
-            .map_err(OperatorError::from_sandbox_store)
-    }
-
-    pub async fn reviewed_retirement_receipt(
-        &self,
-        caller: &Caller,
-        id: &SandboxId,
-        batch: &str,
-        member: &str,
-    ) -> Result<ReviewedRetirementReceipt, OperatorError> {
-        require(caller, Capability::ControlAnySandbox)?;
-        let store = self
-            .reviewed_retirement
-            .as_ref()
-            .ok_or(OperatorError::NotFound)?;
-        if !super::store::valid_admission_fingerprint(batch)
-            || !super::store::valid_admission_fingerprint(member)
-        {
-            return Err(OperatorError::InvalidRequest(
-                "invalid reviewed retirement receipt lookup".into(),
-            ));
-        }
-        store
-            .store
-            .reviewed_retirement_receipt(id, batch, member)
-            .await
-            .map_err(OperatorError::from_sandbox_store)?
-            .ok_or(OperatorError::NotFound)
     }
 
     pub async fn list_sandboxes(

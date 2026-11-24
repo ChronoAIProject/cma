@@ -119,7 +119,7 @@ pub(super) fn compose(
 pub(super) fn sandbox_operators(
     stores: &MongoStores,
     activity: &Arc<ActivityService>,
-    reviewed_retirement: bool,
+    features: crate::config::FeatureFlags,
 ) -> Arc<SandboxOperatorService> {
     let retirement = Arc::new(StoredSandboxRetirement::new(stores.sandbox_model.clone()));
     Arc::new(
@@ -130,6 +130,9 @@ pub(super) fn sandbox_operators(
             Arc::clone(activity),
         )
         .with_maintenance(stores.sandbox_model.clone())
-        .with_reviewed_retirement(stores.sandbox_model.clone(), reviewed_retirement),
+        .with_reviewed_retirement(
+            stores.sandbox_model.clone(),
+            features.reviewed_sandbox_retirement_enabled,
+        ),
     )
 }

@@ -256,7 +256,7 @@ pub(super) async fn apply_with_sources(
             requested_at,
         } => {
             if super::evidence::queued_control(store, &current.id, session).await?
-                || !super::evidence::agentless_commands_clear(store, &agents, session).await?
+                || !super::evidence::agent_commands_clear(store, &agents, session).await?
                 || open_session(store, &current, requested_at, session).await?
             {
                 return Ok(MaintenanceReceipt {
