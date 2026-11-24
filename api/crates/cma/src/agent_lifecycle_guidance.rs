@@ -63,6 +63,10 @@ impl layer2_core::sandbox::AgentInstructionPolicy for ManagedInstructionPolicy {
     fn owner_prompt(&self, agent: &layer2_core::sandbox::Agent) -> String {
         split_managed(agent.system_prompt()).1.to_owned()
     }
+    fn matches_retained_prompt(&self, agent: &layer2_core::sandbox::Agent, retained: &str) -> bool {
+        // An upgraded guidance revision is independent of the owner's prompt.
+        split_managed(agent.system_prompt()).1 == split_managed(retained).1
+    }
     fn compose(&self, agent: &layer2_core::sandbox::Agent, owner: &str) -> String {
         let managed = (agent.conversation.managed_guidance_revision >= 1)
             .then_some(managed_v3())

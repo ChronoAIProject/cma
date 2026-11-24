@@ -40,7 +40,10 @@ impl BindingCredentialCustody for Custody {
     }
 }
 pub(super) fn service() -> Arc<BindingService> {
-    let store = Arc::new(InMemorySandboxStore::default());
+    service_for_store(Arc::new(InMemorySandboxStore::default()))
+}
+
+pub(super) fn service_for_store(store: Arc<InMemorySandboxStore>) -> Arc<BindingService> {
     let profiles = Arc::new(InMemoryProfileStore::default());
     let resources = BindingResources {
         sandboxes: SandboxService::new(

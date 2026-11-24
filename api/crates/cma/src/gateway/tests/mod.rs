@@ -8,6 +8,7 @@ mod fixture;
 mod key_expiry;
 mod lifecycle;
 mod nyxid_fixture;
+mod profile_drift_tests;
 mod provider_fixture;
 mod rest;
 mod route_inventory;

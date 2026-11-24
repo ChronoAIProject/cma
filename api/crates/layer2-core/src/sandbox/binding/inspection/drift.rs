@@ -38,9 +38,13 @@ impl BindingProfileDrift {
             system_prompt: match &agent.conversation.settings {
                 None => DriftState::Unknown,
                 Some(_) => {
-                    let expected =
-                        instruction_policy.compose(agent, &binding.profile.agent.system_prompt);
-                    if agent.system_prompt() == expected {
+                    let baseline = &binding.profile.agent.system_prompt;
+                    let matches = if binding.existing_agent.is_some() {
+                        instruction_policy.matches_retained_prompt(agent, baseline)
+                    } else {
+                        agent.system_prompt() == instruction_policy.compose(agent, baseline)
+                    };
+                    if matches {
                         DriftState::Match
                     } else {
                         DriftState::Drift

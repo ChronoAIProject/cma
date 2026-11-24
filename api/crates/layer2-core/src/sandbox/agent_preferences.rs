@@ -9,6 +9,12 @@ use crate::{now_rfc3339, AgentId, Caller};
 pub trait AgentInstructionPolicy: Send + Sync {
     fn owner_prompt(&self, agent: &Agent) -> String;
     fn compose(&self, agent: &Agent, owner_prompt: &str) -> String;
+
+    /// Compare with a retained effective prompt, such as a borrowed Agent's
+    /// admission profile, which may already contain managed guidance.
+    fn matches_retained_prompt(&self, agent: &Agent, retained: &str) -> bool {
+        agent.system_prompt() == retained
+    }
 }
 
 pub(super) struct UnmanagedInstructions;
