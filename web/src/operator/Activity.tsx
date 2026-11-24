@@ -32,6 +32,13 @@ function actionWord(action: ActivityAction): string {
   return action.charAt(0).toUpperCase() + action.slice(1);
 }
 
+function actorLabel(row: ActivitySummary): string {
+  if (row.actor === null) return 'No actor recorded';
+  const name = row.actor_name?.trim();
+  if (name) return name;
+  return row.actor_reference ? `Unresolved actor · ${row.actor_reference}` : 'Unresolved actor';
+}
+
 const actions: readonly ActivityAction[] = [
   'authenticate',
   'create',
@@ -61,7 +68,7 @@ export function Activity({ client }: { readonly client: OperatorClient }) {
         if (row.actor === null || known.has(row.actor)) continue;
         known.set(row.actor, {
           value: row.actor,
-          label: row.actor_name?.trim() || 'Name unavailable',
+          label: actorLabel(row),
         });
       }
       return [...known.values()].sort((a, b) => a.label.localeCompare(b.label));
@@ -155,9 +162,7 @@ function ActivitySummarys({
             <TableCell>
               <Timestamp value={row.at} />
             </TableCell>
-            <TableCell>
-              {row.actor === null ? 'Not signed in' : row.actor_name?.trim() || 'Name unavailable'}
-            </TableCell>
+            <TableCell>{actorLabel(row)}</TableCell>
             <TableCell>{actionWord(row.action)}</TableCell>
             <TableCell>
               {row.target === null ? null : row.target.kind === 'subject' ? (

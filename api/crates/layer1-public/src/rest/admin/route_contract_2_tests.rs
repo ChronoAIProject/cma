@@ -141,6 +141,70 @@ async fn runtime_inventory_and_activity_each_require_their_exact_capability() {
 }
 
 #[tokio::test]
+async fn activity_actor_references_survive_view_changes_and_name_resolution_failures() {
+    let fixture = fixture(true);
+    let mut expected = std::collections::BTreeMap::new();
+    for subject in [
+        Some("operator-a"),
+        Some("unknown-directory-subject"),
+        Some("fixture-service-principal"),
+        None,
+    ] {
+        let mut record = ActivityRecord::new(ActivityAction::Read, ActivityOutcome::Succeeded);
+        record.actor = subject.map(SubjectId::new);
+        expected.insert(record.id.0.clone(), subject);
+        fixture.activity.append(&record).await.unwrap();
+    }
+
+    let mut references = std::collections::BTreeMap::new();
+    for query in ["", "?view=summary"] {
+        let response = send(
+            &fixture.app,
+            Method::GET,
+            &format!("/api/v1/admin/activity{query}"),
+            None,
+            [Capability::ReadActivityLog],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        let rows = body["items"].as_array().unwrap();
+        assert_eq!(rows.len(), expected.len());
+        for row in rows {
+            let id = row["id"].as_str().unwrap();
+            match expected[id] {
+                Some(subject) => {
+                    let reference = row["actor_reference"].as_str().unwrap();
+                    assert!(reference.starts_with("actor-"));
+                    assert_eq!(reference.len(), 22);
+                    assert!(!reference.contains(subject));
+                    match references.insert(id.to_owned(), reference.to_owned()) {
+                        Some(previous) => assert_eq!(previous, reference),
+                        None => assert!(query.is_empty()),
+                    }
+                    if subject == "operator-a" {
+                        assert_eq!(row["actor_name"], "Morgan Park");
+                    } else {
+                        assert!(row["actor_name"].is_null());
+                    }
+                }
+                None => {
+                    assert!(row["actor"].is_null());
+                    assert!(row.get("actor_reference").is_none());
+                }
+            }
+        }
+    }
+    assert_eq!(
+        references
+            .values()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        3
+    );
+}
+
+#[tokio::test]
 async fn activity_summary_is_explicit_preserves_full_records_and_refuses_bad_queries() {
     let available = fixture(true);
     let mut row = ActivityRecord::new(ActivityAction::Read, ActivityOutcome::Succeeded)
