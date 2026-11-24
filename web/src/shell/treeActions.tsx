@@ -13,6 +13,7 @@ import {
 } from '../ui/icons';
 import type { TreePermissions } from './Tree';
 import type { TreeRowAction } from './TreeRow';
+import { agentDeletionReason } from '../agent/deletionEligibility';
 
 export function sandboxActions(
   sandbox: SandboxSummary,
@@ -180,9 +181,7 @@ export function agentActions(
         ? 'Resume the Sandbox before deleting this Agent and its Worktree.'
         : !runtimeAvailable
           ? REQUIRES_ACTIVE_SANDBOX
-          : !terminal
-            ? 'Stop this Agent before deleting it and its Worktree.'
-            : undefined);
+          : agentDeletionReason(status, permissions, sandbox!, viewerId));
     if (
       paused &&
       sandbox.lifecycle &&

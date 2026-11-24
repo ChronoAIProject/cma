@@ -441,7 +441,6 @@ impl ControlPlaneComposition {
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
         let worker_observations = runtime::worker_observations(config, &stores);
         let workers = crate::worker_supervision::Workers::new();
-        let health = crate::health::router_with_workers(stores.clone(), workers.clone());
         let relay = agent_manager::relay(
             config,
             &agent_manager,
@@ -463,7 +462,7 @@ impl ControlPlaneComposition {
             recorder,
             (limits, config),
             (
-                health,
+                crate::health::router_with_workers(stores.clone(), workers.clone()),
                 tool_routes.merge(service_portal::router(
                     auth.clone(),
                     config.gateway.as_ref(),
@@ -478,6 +477,7 @@ impl ControlPlaneComposition {
             worker_observations,
             router: agent_manager::internal_router(&relay, &agent_manager, router),
             agent_manager,
+            agent_relay: relay,
             auth,
             bindings,
             bots,

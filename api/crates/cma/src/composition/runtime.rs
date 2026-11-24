@@ -113,6 +113,7 @@ pub(super) fn lifecycle_config(
         retry_single_marker_enabled: config.features.retry_single_marker_enabled,
         work_retry_policy_enabled: config.features.work_retry_policy_enabled,
         native_create_retry_enabled: config.features.native_create_retry_enabled,
+        reopen_output_refusal_enabled: config.features.reopen_output_refusal_enabled,
         cleanup_continuation_enabled: config.features.cleanup_continuation_enabled,
         bounded_live_fragments: config.features.bounded_live_fragments,
         coordinated_ingress: config.features.coordinated_ingress,
@@ -121,6 +122,7 @@ pub(super) fn lifecycle_config(
         managed_documents_enabled: config.document_storage.is_some(),
         event_driven_reconciliation: config.features.event_driven_reconciliation,
         stale_turn_reconciliation: config.features.stale_turn_reconciliation,
+        stale_turn_terminal: config.features.stale_turn_terminal,
         skip_ineligible_reconciliation: config
             .agent_manager_replicas
             .as_ref()

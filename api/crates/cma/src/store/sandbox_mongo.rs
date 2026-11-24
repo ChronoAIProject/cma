@@ -112,6 +112,7 @@ pub struct MongoSandboxStore {
     pub(super) sandboxes: Collection<Document>,
     pub(super) lifecycle_operations: Collection<Document>,
     pub(super) sandbox_sessions: Collection<Document>,
+    pub(super) strict_inactivity_session_evidence: bool,
     pub(super) workspaces: Collection<Document>,
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
@@ -218,6 +219,11 @@ impl MongoSandboxStore {
         self
     }
 
+    pub(crate) fn with_strict_inactivity_session_evidence(mut self, enabled: bool) -> Self {
+        self.strict_inactivity_session_evidence = enabled;
+        self
+    }
+
     #[cfg(test)]
     pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
         Self::open_with_storage(client, name, super::checkpoint_storage::test_storage(name)).await
@@ -292,6 +298,7 @@ impl MongoSandboxStore {
                 super::agent_lifecycle_operations::COLLECTION,
             ),
             sandbox_sessions: majority_collection(&database, SANDBOX_SESSIONS),
+            strict_inactivity_session_evidence: false,
             workspaces: majority_collection(&database, WORKSPACES),
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),

@@ -13,7 +13,7 @@ export function PrivacyExportDialog({
   readonly owner: string;
   readonly onClose: () => void;
 }) {
-  const [cursor, setCursor] = useState<string>();
+  const [inventoryRequest, setInventoryRequest] = useState<{ cursor?: string }>({});
   const [page, setPage] = useState<PrivacyExportInventory>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -22,6 +22,7 @@ export function PrivacyExportDialog({
   const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
+    const { cursor } = inventoryRequest;
     const request = new AbortController();
     void client.inventory(owner, cursor, { signal: request.signal }).then(
       (result) => {
@@ -32,12 +33,16 @@ export function PrivacyExportDialog({
       },
       () => {
         if (request.signal.aborted) return;
-        setError('The Agent list could not be loaded. Reopen account export to try again.');
+        setError(
+          cursor === undefined
+            ? 'The Agent list could not be loaded. Reopen account export to try again.'
+            : 'The next page could not be loaded. Select More Agents to try again.',
+        );
         setLoading(false);
       },
     );
     return () => request.abort();
-  }, [owner, cursor]);
+  }, [owner, inventoryRequest]);
 
   useLayoutEffect(
     () => () => {
@@ -120,9 +125,9 @@ export function PrivacyExportDialog({
           disabled={downloading}
           onClick={() => {
             setLoading(true);
-            setSelected('');
             setError(undefined);
-            setCursor(page.next ?? undefined);
+            // Each attempt must run, even when it retries the same continuation.
+            setInventoryRequest({ cursor: page.next ?? undefined });
           }}
         >
           More Agents

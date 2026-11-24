@@ -17,6 +17,7 @@ pub(crate) struct ControlPlaneComposition {
         Option<Arc<dyn layer2_core::document_artifacts::DocumentBlobMaintenance>>,
     pub router: Router,
     pub agent_manager: Option<Arc<crate::agent_manager::AgentManager>>,
+    pub agent_relay: Option<Arc<crate::agent_manager::relay::Relay>>,
     pub activity_worker: Option<crate::activity::queue::ActivityWorker>,
     pub workers: crate::worker_supervision::Workers,
     pub worker_observations: crate::store::worker_observations::Observations,

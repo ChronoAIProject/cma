@@ -77,13 +77,15 @@ pub use agent_admission::{
 mod agent_conversation;
 mod agent_conversation_capacity;
 pub use agent_conversation_capacity::AgentConversationCapacitySettlement;
+mod stale_turn_settlement;
+pub use stale_turn_settlement::StaleTurnSettlement;
 mod agent_message_checkpoint;
 mod agent_reopen;
 pub use agent_conversation::{
     validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
 };
 pub use agent_message_checkpoint::{AgentMessageCheckpoint, AgentMessageSnapshot};
-pub use agent_reopen::AgentReopenGuard;
+pub use agent_reopen::{AgentReopenGuard, ReopenRefusalFence};
 mod agent_lifecycle;
 mod agent_skill_result;
 pub use agent_skill_result::{requires_agent_skill_result_guard, AgentSkillResultGuard};

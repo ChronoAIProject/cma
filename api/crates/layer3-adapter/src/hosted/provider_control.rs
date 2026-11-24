@@ -1,6 +1,11 @@
 use super::*;
 
 impl ProviderHostedControlTransport {
+    pub fn with_native_close_agent_lane(mut self, enabled: bool) -> Self {
+        self.native_close_agent_lane = enabled;
+        self
+    }
+
     pub(super) async fn control(
         &self,
         endpoint: &RuntimeEndpoint,
@@ -41,6 +46,14 @@ impl ProviderHostedControlTransport {
             let reads_status = matches!(request, RequestFrame::RuntimeStatus(_));
             let exchange = async {
                 if endpoint.native_binding().is_some() {
+                    let lane = if self.native_close_agent_lane
+                        && matches!(request, RequestFrame::CloseAgent(_))
+                        && crate::owner_protocol::current_authority().is_some()
+                    {
+                        native_pool::NativeHttpLane::CloseAgent
+                    } else {
+                        native_pool::NativeHttpLane::Control
+                    };
                     let body = serde_json::to_vec(request).map_err(|_| {
                         AdapterError::Rejected("runtime request could not be encoded".into())
                     })?;
@@ -51,10 +64,7 @@ impl ProviderHostedControlTransport {
                             url,
                             body,
                             super::super::provider_http::CONTROL_RESPONSE_BYTES,
-                            (
-                                native_pool::NativeHttpLane::Control,
-                                request_capacity_class(request),
-                            ),
+                            (lane, request_capacity_class(request)),
                         )
                         .await?;
                     if reads_status {
