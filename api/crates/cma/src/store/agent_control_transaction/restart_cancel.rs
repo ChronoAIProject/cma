@@ -3,6 +3,7 @@
 use super::restart::ACTIVE_RESTART_FIELD;
 use super::restart_dispatch::{read_work, DISPATCH_FIELD};
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     agent_control_receipt::{restore_owner_stop, RESTART_PREDECESSOR_FIELD, STOP_RECEIPT_FIELD},
     agent_log_integrity::{AppendCapacity, TransactionLogError},
@@ -52,11 +53,11 @@ pub(super) async fn schedule(
         } = match Box::pin(apply(store, operation, scope)).await {
             Ok(Attempt::Scheduled(result)) => *result,
             Ok(Attempt::Existing(current)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(AgentControlResult::Existing(*current));
             }
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 match error {
                     ApplyError::Driver(error) if is_transient(&error) => continue,
                     ApplyError::Driver(error) => return Err(unavailable(error)),

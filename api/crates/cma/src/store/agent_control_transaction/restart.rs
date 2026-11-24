@@ -1,5 +1,6 @@
 use super::restart_receipt as receipts;
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     agent_control_lineage::fence_restart_lineage,
     agent_control_receipt::{
@@ -53,7 +54,7 @@ pub(in crate::store) async fn schedule_restart(
         let (acceptance, publication, fresh) = match apply(store, &request, scope).await {
             Ok(result) => result,
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 match error {
                     ApplyError::Driver(error)
                         if is_transient(&error) || is_duplicate_key(&error) =>

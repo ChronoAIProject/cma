@@ -5,6 +5,7 @@ use super::{
     restart_dispatch::{live_lease_expression, read_restart_record, DISPATCH_FIELD},
     *,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     agent_control_receipt::{restore_owner_stop, RESTART_PREDECESSOR_FIELD, STOP_RECEIPT_FIELD},
     agent_log_integrity::{AppendCapacity, TransactionLogError},
@@ -120,7 +121,7 @@ pub(in crate::store) async fn publish(
         let (settled, next, segmented) = match Box::pin(apply(store, publication, scope)).await {
             Ok(result) => result,
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 match error {
                     TransactionLogError::Driver(error) if is_transient(&error) => continue,
                     TransactionLogError::Driver(error) => return Err(driver(error)),

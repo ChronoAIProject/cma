@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     agent_control_lineage::fence_restart_lineage,
     agent_control_receipt::matches_restart_predecessor,
@@ -79,7 +80,7 @@ pub(in crate::store) async fn prepare_restart_dispatch(
         let (next, publication, fresh) = match apply(store, request, scope).await {
             Ok(output) => output,
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 match error {
                     DispatchError::Driver(error) if is_transient(&error) => continue,
                     DispatchError::Driver(error) => return Err(driver_domain(error)),
