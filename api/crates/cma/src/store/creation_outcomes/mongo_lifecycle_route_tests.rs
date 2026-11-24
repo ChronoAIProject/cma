@@ -136,6 +136,7 @@ async fn original_create_replay_resumes_a_waiting_operation_without_allocating_a
             &lease,
             vec!["fixture-service".into()],
             serde_json::json!({}),
+            None,
         )
         .await
         .unwrap();
