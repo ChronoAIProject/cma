@@ -52,7 +52,8 @@ async fn held_workspace_cannot_take_discovery_slots_or_obtain_worker_authority()
 
     let fixture = Fixture::new().await;
     let parent = sandbox("sbx_held_workspace");
-    let sibling = sandbox("sbx_unheld_workspace");
+    let mut sibling = sandbox("sbx_unheld_workspace");
+    sibling.name = "unheld workspace parent".into();
     fixture
         .independent
         .create_sandbox(parent.clone())
