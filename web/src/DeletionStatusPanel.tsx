@@ -7,6 +7,7 @@ import { activityEntries } from './sandbox/activity';
 import { Button } from './ui/Button';
 import { IconCheckOutline16, IconCopyOutline16, IconWarningOutline16 } from './ui/icons';
 import './DeletionPresentation.css';
+import { stoppedProofMissing, deleteMayHaveBeenSent } from './agent/stopDeletion';
 
 export function DeletionReference({ request }: { readonly request: DeletionRequest }) {
   const [copy, setCopy] = useState<'copied' | 'failed'>();
@@ -42,31 +43,44 @@ export function DeletionReference({ request }: { readonly request: DeletionReque
 export function DeletionStatusPanel({
   request,
   observation,
+  completedInBackground = false,
   sending,
   readError,
   commandError,
 }: {
   readonly request: DeletionRequest;
   readonly observation?: DeletionObservation;
+  readonly completedInBackground?: boolean;
   readonly sending: boolean;
   readonly readError?: string;
   readonly commandError?: string;
 }) {
   const target = deletionTarget(request.action);
-  const complete = observation?.complete === true;
+  const complete = observation?.complete === true || completedInBackground;
+  const unknownDelete = !request.accepted && deleteMayHaveBeenSent(request);
+  const blocked = request.stop?.phase === 'blocked' && !request.accepted;
+  const stopping =
+    request.stop !== undefined &&
+    !request.accepted &&
+    !unknownDelete &&
+    observation?.agent?.status !== 'stopped';
   const state = complete
     ? 'Deleted'
-    : readError
-      ? 'Status unavailable'
-      : sending
-        ? 'Submitting'
-        : observation?.failure
-          ? 'Cleanup needs attention'
-          : observation?.inProgress
-            ? 'Deleting'
-            : request.accepted
-              ? 'Deletion requested'
-              : 'Request unconfirmed';
+    : blocked
+      ? 'Needs attention'
+      : readError
+        ? 'Status unavailable'
+        : sending
+          ? 'Submitting'
+          : observation?.failure
+            ? 'Cleanup needs attention'
+            : observation?.inProgress
+              ? 'Deleting'
+              : request.accepted
+                ? 'Deletion requested'
+                : !unknownDelete && request.stop?.phase === 'accepted'
+                  ? 'Stopping'
+                  : 'Request unconfirmed';
   return (
     <section className="deletion-status" aria-label="Deletion status">
       <span className="deletion-status__badge" data-complete={complete}>
@@ -76,14 +90,28 @@ export function DeletionStatusPanel({
       <p role="status">
         {complete
           ? `${target} deletion is confirmed.`
-          : sending
-            ? 'Submitting delete request.'
-            : request.accepted
-              ? 'Delete request accepted. Cleanup continues even if you close this page.'
-              : 'The delete request has not been confirmed. Check the same request before trying another action.'}
+          : unknownDelete
+            ? 'Delete may already have started. Its result is unconfirmed; keep checking the original request.'
+            : blocked
+              ? stoppedProofMissing
+              : stopping
+                ? 'Waiting for the Agent to stop. Deletion will follow only after stopping is confirmed.'
+                : sending
+                  ? 'Submitting delete request.'
+                  : request.accepted
+                    ? 'Delete request accepted. Cleanup continues even if you close this page.'
+                    : 'The delete request has not been confirmed. Check the same request before trying another action.'}
       </p>
       {!complete && !request.accepted ? (
-        <p>Check request retries the original delete request with the same reference.</p>
+        <p>
+          {blocked && unknownDelete
+            ? 'End this request stops automatic steps and keeps this deletion available for status checks and allowed retries.'
+            : blocked
+              ? 'End this request to stop further steps. Commands already sent may still finish. Deleting later requires a new confirmation.'
+              : stopping
+                ? 'Stop and delete keeps the original requests. Close preserves them; reopen to check or continue.'
+                : 'Check request retries the original delete request with the same reference.'}
+        </p>
       ) : null}
       {target === 'Agent' ? (
         <p>
@@ -112,17 +140,21 @@ export function DeletionStatusPanel({
           </time>
         </p>
       ) : null}
-      {observation?.failure === undefined ? null : (
+      {completedInBackground || observation?.failure === undefined ? null : (
         <p role="alert">
           Cleanup reported: {observation.failure.detail}. Deletion is not complete.
         </p>
       )}
-      {commandError === undefined ? null : <p role="alert">{commandError}</p>}
-      {readError === undefined ? null : <p role="alert">{readError}</p>}
+      {completedInBackground ||
+      commandError === undefined ||
+      (blocked && commandError === stoppedProofMissing) ? null : (
+        <p role="alert">{commandError}</p>
+      )}
+      {completedInBackground || readError === undefined ? null : <p role="alert">{readError}</p>}
       <DeletionReference key={request.key} request={request} />
       <details className="deletion-status__details">
         <summary>Cleanup progress</summary>
-        {observation === undefined ? null : (
+        {completedInBackground || observation === undefined ? null : (
           <ProvisioningProgress title="Deletion progress" steps={observation.steps} />
         )}
         <LiveActivity

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 311,
+  "openapi_operations": 312,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -159,6 +159,16 @@
     "GET /api/v1/admin/activity": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/activity/actors": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/activity.rs# The actor search requires Activity and directory read capabilities and exposes bounded identity options.",
       "required_problems": [
         "forbidden",
         "invalid_admin_request",
@@ -3915,6 +3925,7 @@
         "missing_idempotency_key",
         "retained_recovery_consent_required",
         "retained_recovery_authority_changed",
+        "retained_recovery_revision_passed",
         "retained_recovery_not_proved",
         "retained_recovery_unavailable",
         "hierarchy_service_unavailable"

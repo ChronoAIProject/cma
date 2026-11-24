@@ -291,7 +291,7 @@ describe('parked task environment deletion eligibility', () => {
       const terminal = status === 'stopped' || status === 'failed';
       expect(actions.find((action) => action.id === 'delete_agent')).toMatchObject({
         label: 'Delete',
-        disabled: !terminal,
+        disabled: false,
       });
       expect(actions.find((action) => action.id === 'stop_agent')).toMatchObject({
         disabled: terminal,

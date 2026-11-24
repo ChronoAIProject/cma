@@ -78,6 +78,38 @@ pub(in crate::store) async fn sandbox(
     .await
 }
 
+/// An admitted inline Launch can independently carry an Image Manager pin.
+pub(in crate::store) async fn inline_image(
+    db: &Database,
+    sandbox: &Sandbox,
+    launch_id: &str,
+    session: &mut ClientSession,
+) -> mongodb::error::Result<bool> {
+    let Some((_, revision)) = accepted(
+        db,
+        &sandbox.owner,
+        launch_id,
+        LaunchEffectKind::CreateSandbox,
+        session,
+    )
+    .await?
+    else {
+        return Ok(false);
+    };
+    let target = &revision.content.target;
+    let Some(pin) = target
+        .inline
+        .as_ref()
+        .and_then(|inline| inline.image.as_ref())
+        .and_then(|image| image.reference.as_ref())
+    else {
+        return Ok(false);
+    };
+    Ok(sandbox.profile.id == target.sandbox_profile.id
+        && sandbox.profile.revision == target.sandbox_profile.revision
+        && sandbox.profile.content.runtime_image.as_ref() == Some(pin))
+}
+
 pub(in crate::store) async fn workspace(
     db: &Database,
     candidate: &Workspace,

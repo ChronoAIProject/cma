@@ -97,9 +97,13 @@ export function SandboxActivity({
     };
   }, [client, sandboxId, settled, parked]);
   const current = observation?.id === sandboxId ? observation : undefined;
+  // Stable sorting keeps sequence order for events recorded at the same time.
+  const displayedEntries = current?.entries
+    .slice()
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   return (
     <LiveActivity
-      entries={current?.entries ?? []}
+      entries={displayedEntries ?? []}
       syncedAt={current?.syncedAt}
       stale={current?.stale}
       loading={current?.loading ?? true}

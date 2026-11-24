@@ -6,6 +6,8 @@
 
 mod adapter;
 mod agent;
+mod agent_process_identity;
+pub use agent_process_identity::AgentProcessAction;
 mod agent_attachment;
 pub mod agent_capacity_recovery;
 mod agent_filesystem;
@@ -17,6 +19,7 @@ mod browser;
 mod browser_control;
 pub mod file_read_diagnostics;
 pub mod permanent_custody;
+pub mod stale_turn;
 pub use browser::{
     BrowserAdapter, BrowserFrame, BrowserObservation, BrowserOperation, BrowserReceipt,
     BrowserRequest, BrowserState,
@@ -67,6 +70,7 @@ mod runtime_ledger_status;
 mod runtime_output;
 mod runtime_output_update;
 mod runtime_recovery;
+mod runtime_startup_policy;
 mod runtime_status;
 pub mod runtime_versions;
 mod tool_proxy;
@@ -186,6 +190,9 @@ pub use runtime_recovery::{
     RuntimeRecoveryQuiescence, RuntimeRecoveryQuiescenceRequest,
 };
 pub use runtime_startup::{RuntimeStartupFailure, RuntimeStartupFailureClass, RuntimeStartupProbe};
+pub use runtime_startup_policy::{
+    RuntimeStartupPolicyObservation, RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE,
+};
 pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
 pub use tool_proxy::{ToolProxyRequest, ToolProxyStatus, LOCAL_TOOL_PROXY_URL};
 pub use workspace::{

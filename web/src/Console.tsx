@@ -46,7 +46,6 @@ import { ArtifactPublicationScope } from './resources/artifactRecovery';
 import { SandboxAccessPage } from './resources/SandboxAccessPage';
 import { WorkspaceAccessPage } from './resources/WorkspaceAccessPage';
 import { scopeValue } from './resources/scope';
-import { useNavigationScope } from './resources/NavigationScope';
 import { useConsoleScope } from './resources/useConsoleScope';
 import { OwnerViewsProvider } from './resources/retainedOwnerViews';
 import { useDeletionNoticeReconciliation } from './useDeletionNoticeReconciliation';
@@ -106,7 +105,6 @@ function ConsoleContent({
     select: setNavigationScope,
     ready: scopeReady,
   } = useConsoleScope(scopeClient, user.id, route);
-  const scopeChoices = useNavigationScope(scopeClient, navigationScope);
   const draft = useAgentDraft(client, user.id, route.kind === 'agent' ? route.agentId : undefined);
   const sandboxCommandScope = useMemo(() => ({ client, viewerId: user.id }), [client, user.id]);
   const {
@@ -120,11 +118,8 @@ function ConsoleContent({
   const operator = useOperatorClient();
   const publisher = usePublisherClient();
   const usagePrincipal = useReportOwner(user.id, user.capabilities, authEpoch);
-  const navigation = useNavigation(client);
+  const navigation = useNavigation(client, hierarchyRevision);
   const refreshNavigation = navigation.refresh;
-  useEffect(() => {
-    refreshNavigation();
-  }, [hierarchyRevision, refreshNavigation]);
   const refresh = useCallback(() => {
     refreshNavigation();
     setRevision((value) => value + 1);
@@ -156,6 +151,8 @@ function ConsoleContent({
     if (!accessUncertain && agent.state.status === 'ready')
       agent.state.v2?.journal.reconcileDraft();
   }, [accessUncertain, agent.state, draft.recoveryBlocked]);
+  const { canStartNewAgent, canCreateInScope, newAgentUnavailable, permissions } =
+    consoleCreationAccess(user, navigationScope, scopeReady, accessUncertain, Boolean(onCreate));
   const actions = useResourceActions(
     client,
     (target) => {
@@ -166,16 +163,9 @@ function ConsoleContent({
     user.id,
     onNavigate,
     !accessUncertain,
+    permissions,
     settlements,
   );
-  const { canStartNewAgent, canCreateInScope, newAgentUnavailable, permissions } =
-    consoleCreationAccess(
-      user,
-      navigationScope,
-      scopeReady,
-      accessUncertain,
-      onCreate !== undefined,
-    );
   const canOpenTriggers = !user.visitor && user.capabilities.includes('publish_triggers');
   const [commandsOpen, setCommandsOpen] = useState(false);
   const newAgent = useCallback(() => onCreate?.({ kind: 'new_agent' }), [onCreate]);
@@ -433,7 +423,6 @@ function ConsoleContent({
               <ManagerNavigation
                 client={scopeClient}
                 scope={navigationScope}
-                choices={scopeChoices}
                 onScope={setNavigationScope}
                 route={route}
                 viewerId={user.id}

@@ -12,6 +12,43 @@ const session = {
   expires_at: 9999999999,
 };
 const json = (value: unknown) => new Response(JSON.stringify(value));
+
+it.each(['keyboard', 'pointer'])(
+  'returns from a channel draft to the landing page by %s',
+  async (input) => {
+    const actor = userEvent.setup();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async () => json({ items: [channel('Existing')] })),
+    );
+    render(<EventGateway session={session} denied={vi.fn()} />);
+    const sidebar = within(screen.getByRole('region', { name: 'Channels' }));
+    await actor.click(await sidebar.findByRole('button', { name: /^Existing/ }));
+    await actor.click(screen.getByRole('button', { name: 'New channel' }));
+    const draft = screen.getByRole('textbox', { name: 'Channel name' });
+    await actor.type(draft, 'Retained draft');
+    const crumb = within(screen.getByRole('navigation', { name: 'Breadcrumb' })).getByRole('link', {
+      name: 'Event Gateway',
+    });
+    expect(crumb).toHaveAttribute('href', '/event-gateway');
+    if (input === 'keyboard') {
+      crumb.focus();
+      expect(crumb).toHaveFocus();
+      await actor.keyboard('{Enter}');
+    } else {
+      await actor.click(crumb);
+    }
+    expect(screen.getByRole('region', { name: 'Channel workspace' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Existing' })).not.toBeInTheDocument();
+    await actor.click(
+      within(screen.getByRole('region', { name: 'Channel workspace' })).getByRole('button', {
+        name: 'New channel',
+      }),
+    );
+    expect(screen.getByRole('textbox', { name: 'Channel name' })).toHaveValue('Retained draft');
+  },
+);
+
 function channel(id: string, version = 1): Channel {
   return {
     record_id: `${id}-record`,

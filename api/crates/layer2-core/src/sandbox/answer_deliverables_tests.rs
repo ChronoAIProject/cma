@@ -654,6 +654,8 @@ impl crate::sandbox::agent_access_tool::AgentAccessToolAuthenticator for Confirm
 
 #[tokio::test]
 async fn agent_deliverable_paths_resolve_within_the_agents_own_worktree() {
+    use sha2::{Digest as _, Sha256};
+
     let root = std::env::temp_dir().join(format!(
         "cma-deliverable-paths-{}-{}",
         std::process::id(),
@@ -662,7 +664,8 @@ async fn agent_deliverable_paths_resolve_within_the_agents_own_worktree() {
             .unwrap()
             .as_nanos()
     ));
-    let worktree_dir = root.join("project/.worktrees/wt-1");
+    // The runtime file API opens paths under /home. Agent worktrees are under /home/cma.
+    let worktree_dir = root.join("cma/project/.worktrees/wt-1");
     std::fs::create_dir_all(worktree_dir.join("out")).unwrap();
     std::fs::write(worktree_dir.join("report.docx"), b"docx").unwrap();
     std::fs::write(worktree_dir.join("out/tables.csv"), b"a,b\n").unwrap();
@@ -734,33 +737,70 @@ async fn agent_deliverable_paths_resolve_within_the_agents_own_worktree() {
             DeliverableResource::LiveFile { path: path.into() },
         )
     };
-    let report = "project/.worktrees/wt-1/report.docx";
-    for (input, resolved) in [
-        ("report.docx", report),
-        ("./report.docx", report),
-        ("/home/cma/project/.worktrees/wt-1/report.docx", report),
-        (report, report),
-        ("out/tables.csv", "project/.worktrees/wt-1/out/tables.csv"),
-        // The documented home-relative path wins when both exist.
-        ("both.txt", "both.txt"),
+    let report = "cma/project/.worktrees/wt-1/report.docx";
+    let mut descriptions = Vec::new();
+    for input in [
+        "report.docx",
+        "./report.docx",
+        "/home/cma/project/.worktrees/wt-1/report.docx",
+        report,
     ] {
-        let described = describe(input).await.unwrap();
+        descriptions.push((input, describe(input).await));
+    }
+    assert!(
+        descriptions.iter().all(|(_, result)| result.is_ok()),
+        "{descriptions:?}"
+    );
+    let marker = &descriptions[3].1.as_ref().unwrap().marker;
+    for (input, result) in &descriptions {
+        let described = result.as_ref().unwrap();
         assert_eq!(
             described.reference.resource,
             DeliverableResource::LiveFile {
-                path: resolved.into()
+                path: report.into()
             },
             "{input}"
         );
+        assert_eq!(described.reference.size_bytes, 4, "{input}");
+        assert_eq!(
+            described.reference.sha256,
+            format!("{:x}", Sha256::digest(b"docx")),
+            "{input}"
+        );
+        assert_eq!(&described.marker, marker, "{input}");
     }
-    assert_eq!(describe("both.txt").await.unwrap().reference.size_bytes, 4);
+    let table = describe("out/tables.csv").await.unwrap().reference;
+    assert_eq!(
+        table.resource,
+        DeliverableResource::LiveFile {
+            path: "cma/project/.worktrees/wt-1/out/tables.csv".into()
+        }
+    );
+    assert_eq!(table.media_type, "text/csv");
+    // The canonical /home-relative path wins when both files exist.
+    let shared_name = describe("both.txt").await.unwrap().reference;
+    assert_eq!(
+        shared_name.resource,
+        DeliverableResource::LiveFile {
+            path: "both.txt".into()
+        }
+    );
+    assert_eq!(shared_name.sha256, format!("{:x}", Sha256::digest(b"home")));
     assert!(matches!(
         describe("absent.docx").await,
         Err(DeliverableError::File(
             crate::sandbox::agent_filesystem::AgentFileError::NotFound
         ))
     ));
-    for refused in ["/etc/hosts", "../report.docx", "", "./", "/home/cma/"] {
+    for refused in [
+        "/etc/hosts",
+        "../report.docx",
+        "",
+        ".",
+        "./",
+        "/home/cma",
+        "/home/cma/",
+    ] {
         assert!(
             matches!(
                 describe(refused).await,

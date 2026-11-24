@@ -13,6 +13,7 @@ use tokio::sync::Semaphore;
 use super::agent_skills::AgentSkillResolver;
 use super::live_agents::{DurableAgentConnectionLossHandler, LiveAgentRegistry};
 
+mod acquisition_backoff;
 mod attempt;
 mod capacity;
 #[cfg(test)]
@@ -40,6 +41,7 @@ mod ownership_pacing;
 mod prepared_open_ready;
 mod prepared_replay;
 mod reconcile;
+pub(crate) use reconcile::ConnectionSweep;
 mod startup;
 mod startup_hold_work;
 mod startup_holds;
@@ -81,6 +83,7 @@ pub(crate) struct AgentWorkerConfig {
         Option<Arc<dyn crate::store::native_retirement_action::RetirementRecords>>,
     pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     skip_ineligible_reconciliation: bool,
+    defer_foreign_reconciliation: bool,
     pub parent_not_ready_pacing_enabled: bool,
     startup_sibling_hold_enabled: bool,
     pub retry_single_marker_enabled: bool,
@@ -103,6 +106,7 @@ impl AgentWorkerConfig {
             retirement_reporter: None,
             ownership: None,
             skip_ineligible_reconciliation: false,
+            defer_foreign_reconciliation: false,
             ownership_retry_hints: None,
             parent_not_ready_pacing_enabled: false,
             startup_sibling_hold_enabled: false,
@@ -155,6 +159,11 @@ impl AgentWorkerConfig {
         self
     }
 
+    pub(crate) fn with_defer_foreign_reconciliation(mut self, enabled: bool) -> Self {
+        self.defer_foreign_reconciliation = enabled;
+        self
+    }
+
     pub(crate) fn with_startup_sibling_hold(mut self, enabled: bool) -> Self {
         self.startup_sibling_hold_enabled = enabled;
         self
@@ -184,6 +193,7 @@ impl AgentWorkerConfig {
 pub(crate) struct AgentWorker {
     dependencies: AgentWorkerDependencies,
     config: AgentWorkerConfig,
+    acquisition_backoff: acquisition_backoff::Backoff,
     startup_holds: Option<startup_holds::StartupHolds>,
     maintenance: reconcile::MaintenanceChecks,
     capacity_restart: Arc<OnceLock<Arc<dyn CapacityRecoveryReconnect>>>,
@@ -208,6 +218,7 @@ impl AgentWorker {
                 .startup_sibling_hold_enabled
                 .then(startup_holds::StartupHolds::default),
             config,
+            acquisition_backoff: acquisition_backoff::Backoff::default(),
             maintenance: reconcile::MaintenanceChecks::default(),
             capacity_restart,
             startup_timings: Mutex::new(HashMap::new()),
@@ -268,25 +279,24 @@ impl AgentWorker {
     }
 
     async fn execute(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
-        if matches!(
+        let started = tokio::time::Instant::now();
+        let claimed = agent.clone();
+        let result = if matches!(
             agent.work.step,
             AgentWorkStep::RemoveHome
                 | AgentWorkStep::RemoveWorktree
                 | AgentWorkStep::EnsureProcessClosed
         ) {
-            let parent = self
-                .dependencies
-                .store
-                .get_sandbox(&agent.sandbox_id)
-                .await?
-                .ok_or(SandboxStoreError::NotFound)?;
-            if parent.retirement_archive_pending() {
-                return Err(SandboxStoreError::Conflict);
+            let preflight = self.prepare_retired_cleanup(&agent).await;
+            let at = now + started.elapsed();
+            match preflight {
+                Ok(Some(parents)) => self.complete_retired_cleanup(&agent, parents, at).await,
+                Ok(None) => self.execute_step(agent, at).await,
+                Err(error) => return self.finish_cleanup_preflight(&agent, error, at).await,
             }
-        }
-        let started = tokio::time::Instant::now();
-        let claimed = agent.clone();
-        let result = self.execute_step(agent, now).await;
+        } else {
+            self.execute_step(agent, now).await
+        };
         let result = self
             .finish_capacity_attempt(&claimed, result, now + started.elapsed())
             .await;

@@ -421,24 +421,7 @@ impl Sandbox {
                     next.lifecycle.rotation.account(&checkpoint)?;
                 }
             }
-            if next.admitted_runtime_update_target().is_some() {
-                if let Some(request) = next
-                    .lifecycle
-                    .runtime_update
-                    .as_mut()
-                    .and_then(|state| state.request.as_mut())
-                {
-                    if next
-                        .runtime
-                        .as_ref()
-                        .is_none_or(|binding| binding.runtime_version != request.target_version)
-                    {
-                        return Err(invalid_execution());
-                    }
-                    request.completed_at = Some(at.clone());
-                    request.failure = None;
-                }
-            }
+            next.complete_runtime_update_publication(&at)?;
             next.lifecycle.operation = None;
             next.lifecycle.home_recovery = None;
             next.lifecycle.unpublished_recovery = None;

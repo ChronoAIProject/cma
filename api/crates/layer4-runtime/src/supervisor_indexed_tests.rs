@@ -62,6 +62,72 @@ async fn close_store(supervisor: Arc<Supervisor>, ledger: Arc<Ledger>) {
 }
 
 #[tokio::test]
+async fn indexed_same_runtime_restart_recovers_an_interrupted_close_for_the_exact_process() {
+    use crate::mutation_ledger::ProcessFilter;
+
+    let mut config = indexed_config();
+    config.agent_process_restart_enabled = true;
+    let (supervisor, ledger) = indexed(&config, 32_768).await;
+    let workspace = prepare_workspace(&supervisor).await;
+    let (_, worktree) = add_worktree(&supervisor, workspace.resolved_commit).await;
+    let home = home_plan("agent-1", b"retained conversation fixture");
+    assert!(matches!(
+        supervisor.dispatch(materialize_home_request(home)).await,
+        ResponseFrame::MaterializeAgentHome(_)
+    ));
+    let mut launch = launch(&config, &worktree, "while IFS= read -r line; do :; done");
+    assert!(matches!(
+        supervisor
+            .dispatch(open_agent_request(launch.clone()))
+            .await,
+        ResponseFrame::OpenAgent(_)
+    ));
+    let old = AgentCloseRequest::new("agent:agent-1:close:v1", launch.agent_id.clone());
+    let old_close = RequestFrame::CloseAgent(FencedRequest::new(2, old));
+    let closed = supervisor.dispatch(old_close.clone()).await;
+    assert!(matches!(closed, ResponseFrame::CloseAgent(_)));
+    launch.operation_id = "agent:agent-1:open:2:v1".into();
+    launch.request_sha256 = "c".repeat(64);
+    let opened = supervisor
+        .dispatch(RequestFrame::OpenAgent(FencedRequest::new(
+            3,
+            launch.clone(),
+        )))
+        .await;
+    assert!(matches!(opened, ResponseFrame::OpenAgent(_)), "{opened:?}");
+    assert_eq!(supervisor.dispatch(old_close.clone()).await, closed);
+    assert!(ledger
+        .active(ProcessFilter::Agent("agent-1".into()))
+        .await
+        .unwrap());
+    close_store(supervisor, ledger).await;
+
+    config.agent_process_restart_enabled = false;
+    let (supervisor, ledger) = indexed(&config, 32_768).await;
+    assert_eq!(supervisor.dispatch(old_close).await, closed);
+    assert!(ledger.active(ProcessFilter::Any).await.unwrap());
+    let close = AgentCloseRequest::new("agent:agent-1:close:2:v1", launch.agent_id);
+    let operation = Operation::close_agent(&close);
+    ledger.admit(4, vec![operation.clone()]).await.unwrap();
+    assert!(ledger.begin(operation.clone()).await.unwrap().new);
+    close_store(supervisor, ledger).await;
+
+    let (supervisor, ledger) = indexed(&config, 32_768).await;
+    let response = supervisor
+        .dispatch(RequestFrame::CloseAgent(FencedRequest::new(4, close)))
+        .await;
+    assert!(
+        matches!(response, ResponseFrame::CloseAgent(_)),
+        "{response:?}"
+    );
+    assert!(ledger.completed(operation).await.unwrap());
+    assert!(!ledger.active(ProcessFilter::Any).await.unwrap());
+    assert!(config.agent_home("agent-1").join("config.toml").is_file());
+    close_store(supervisor, ledger).await;
+    cleanup(&config);
+}
+
+#[tokio::test]
 async fn indexed_supervisor_replays_exactly_and_checks_bridge_before_completed_open() {
     let config = indexed_config();
     let (supervisor, ledger) = indexed(&config, 32_768).await;

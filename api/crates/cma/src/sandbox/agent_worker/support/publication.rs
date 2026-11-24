@@ -98,8 +98,25 @@ impl AgentWorker {
         original: Agent,
         observed_parents: Option<PublicationParents>,
         now: SystemTime,
-        mut publish: F,
+        publish: F,
     ) -> Result<(), SandboxStoreError>
+    where
+        F: FnMut(Agent, SystemTime, Option<AgentWorkPublicationParents>) -> Fut,
+        Fut: Future<Output = Result<AgentWorkPublication, SandboxStoreError>>,
+    {
+        publication_result(
+            self.try_publish_lifecycle_work(original, observed_parents, now, publish)
+                .await?,
+        )
+    }
+
+    pub(in crate::sandbox::agent_worker) async fn try_publish_lifecycle_work<F, Fut>(
+        &self,
+        original: Agent,
+        observed_parents: Option<PublicationParents>,
+        now: SystemTime,
+        mut publish: F,
+    ) -> Result<AgentWorkPublication, SandboxStoreError>
     where
         F: FnMut(Agent, SystemTime, Option<AgentWorkPublicationParents>) -> Fut,
         Fut: Future<Output = Result<AgentWorkPublication, SandboxStoreError>>,
@@ -130,7 +147,7 @@ impl AgentWorker {
                     return Err(SandboxStoreError::Conflict);
                 }
                 let Some(parents) = self.publication_parents(&original).await? else {
-                    return publication_result(publish(original, now, None).await?);
+                    return publish(original, now, None).await;
                 };
                 (parents.clone(), parents)
             }
@@ -158,15 +175,17 @@ impl AgentWorker {
         Fut: Future<Output = Result<AgentWorkPublication, SandboxStoreError>>,
     {
         // A retry must retain the exact revisions that established the rejection.
-        self.publish_with_parent_proof(
-            original,
-            rejection,
-            None,
-            now,
-            tokio::time::Instant::now(),
-            publish,
+        publication_result(
+            self.publish_with_parent_proof(
+                original,
+                rejection,
+                None,
+                now,
+                tokio::time::Instant::now(),
+                publish,
+            )
+            .await?,
         )
-        .await
     }
 
     async fn publish_with_parent_proof<F, Fut>(
@@ -177,7 +196,7 @@ impl AgentWorker {
         now: SystemTime,
         started: tokio::time::Instant,
         mut publish: F,
-    ) -> Result<(), SandboxStoreError>
+    ) -> Result<AgentWorkPublication, SandboxStoreError>
     where
         F: FnMut(Agent, SystemTime, Option<AgentWorkPublicationParents>) -> Fut,
         Fut: Future<Output = Result<AgentWorkPublication, SandboxStoreError>>,
@@ -207,7 +226,7 @@ impl AgentWorker {
                 }
             }
             match publish(current.clone(), at, Some(proof)).await? {
-                AgentWorkPublication::Published => return Ok(()),
+                AgentWorkPublication::Published => return Ok(AgentWorkPublication::Published),
                 AgentWorkPublication::KnownAborted if attempt + 1 == ATTEMPTS => break,
                 AgentWorkPublication::KnownAborted => {}
             }
@@ -229,7 +248,7 @@ impl AgentWorker {
             }
             tokio::task::yield_now().await;
         }
-        Err(SandboxStoreError::Conflict)
+        Ok(AgentWorkPublication::KnownAborted)
     }
 
     pub(in crate::sandbox::agent_worker) async fn commit_lifecycle_publication(

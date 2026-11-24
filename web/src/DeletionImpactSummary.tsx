@@ -101,6 +101,9 @@ function ImpactPreview({ client, viewerId, action, observation, available }: Imp
       <strong className="deletion-impact__target">{name ?? 'Checking deletion target…'}</strong>
       {action.kind === 'delete_agent' ? (
         <span>
+          {observation?.stopsAgent
+            ? 'This first stops the Agent and ends its active work, then deletes it after stopping is confirmed. '
+            : ''}
           Delete "{name ?? 'Agent'}" and its Worktree. This cannot be undone. Its Sandbox
           environment remains and still counts toward your environment limit.{' '}
           {observation?.sandboxId ? (

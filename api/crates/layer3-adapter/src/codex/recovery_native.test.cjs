@@ -124,7 +124,9 @@ test('bridge-only SIGTERM gives pinned native stdio EOF, flushes interrupted tur
     '84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c',
     'ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66',
     'fc9f74358c6ce5aeda4ac164c1daf83c513fb0f18df4b75f3d20bd0816fc6fa7',
-    '8f0c023269496f9ad21aa2958491772fefe65011b9aebaf674c67d2aaa9fbcf4'].includes(sha(fs.readFileSync(bridgeProgram))), 'bridge must match reviewed source');
+    '8f0c023269496f9ad21aa2958491772fefe65011b9aebaf674c67d2aaa9fbcf4',
+    'ddb625f66a5a14d94df3512a525c4a674a359e564602c09085769c8b61e2bca1',
+    'e26bce27dbdcf4d665e081b4a81762542795e2af6453da2a2f050fab5110f484'].includes(sha(fs.readFileSync(bridgeProgram))), 'bridge must match reviewed source');
   assert(['cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40',
     'e23d0be344d2496986c985cd3db61e6f649b1ddd900e6afc1b5aaabbffcbb4e2',
     '19c4f144c5226a9f17c58e6f0fa854843b0f77a6eb420f40e2745a12f10f5d37',
@@ -265,7 +267,9 @@ test('cold load preserves a crashed previous process turn without restarting it 
     '84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c',
     'ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66',
     'fc9f74358c6ce5aeda4ac164c1daf83c513fb0f18df4b75f3d20bd0816fc6fa7',
-    '8f0c023269496f9ad21aa2958491772fefe65011b9aebaf674c67d2aaa9fbcf4'].includes(sha(fs.readFileSync(bridgeProgram))));
+    '8f0c023269496f9ad21aa2958491772fefe65011b9aebaf674c67d2aaa9fbcf4',
+    'ddb625f66a5a14d94df3512a525c4a674a359e564602c09085769c8b61e2bca1',
+    'e26bce27dbdcf4d665e081b4a81762542795e2af6453da2a2f050fab5110f484'].includes(sha(fs.readFileSync(bridgeProgram))));
   const directory = fs.mkdtempSync(join(evidence, 'cma-preboot-history-'));
   const home = join(directory, 'home'); fs.mkdirSync(home);
   let modelCalls = 0, bridge;

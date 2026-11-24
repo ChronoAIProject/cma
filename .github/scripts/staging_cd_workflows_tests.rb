@@ -144,7 +144,9 @@ class StagingWorkflowTest < Minitest::Test
       name = File.basename(file, File.extname(file))
       YAML.load_file(file)['jobs'].each do |id, job|
         next unless [promote, writer].include?(job['uses'])
-        if name == 'staging-promote' && id == 'deploy'
+        if name == 'staging-promote' && %w[deploy redeploy].include?(id)
+          # Jobs inside one reusable call share the caller's slot; a nested
+          # acquisition of the same group would deadlock the retry.
           refute job.key?('concurrency'), 'the outer promotion already owns the writer lock'
         else
           assert_equal lock, job['concurrency'], "#{name}/#{id} must own the writer lock"
@@ -320,13 +322,65 @@ class StagingWorkflowTest < Minitest::Test
                  steps.drop(verify + 1).select { |step| step['if'].to_s.start_with?('always()') }.map { |s| s['name'] }
     promote = workflow('staging-promote')
     trigger = promote['on'] || promote.fetch(true)
-    assert_equal '${{ jobs.deploy.outputs.disposition }}',
+    assert_equal "${{ fromJSON(jobs.readmit.result == 'skipped' && toJSON(jobs.deploy.outputs.disposition) || " \
+                 'toJSON(jobs.redeploy.outputs.disposition)) }}',
                  trigger.dig('workflow_call', 'outputs', 'deploy_disposition', 'value')
-    assert_equal '${{ jobs.admit.outputs.disposition }}',
+    assert_equal "${{ fromJSON(jobs.readmit.result == 'skipped' && toJSON(jobs.admit.outputs.disposition) || " \
+                 'toJSON(jobs.readmit.outputs.disposition)) }}',
                  trigger.dig('workflow_call', 'outputs', 'admit_disposition', 'value')
     admit = promote['jobs']['admit']
     assert_equal '${{ steps.set.outputs.disposition }}', admit.dig('outputs', 'disposition')
     assert_equal 'automatic', admit['steps'].find { |step| step['id'] == 'set' }.dig('env', 'CD_RESOLVE_MODE')
+  end
+
+  def test_one_automatic_retry_re_admits_after_a_transient_refusal_and_its_outcome_counts
+    promote = workflow('staging-promote')
+    jobs = promote['jobs']
+    assert_equal %w[admit deploy readmit redeploy], jobs.keys
+    deploy = workflow('staging-deploy')
+    inputs = (deploy['on'] || deploy.fetch(true))['workflow_call']['inputs']
+    assert_equal({'type' => 'boolean', 'default' => false}, inputs['retry_allowed'])
+    assert_equal true, jobs['deploy'].dig('with', 'retry_allowed')
+    # The manual redeploy and the retry itself never hand over again.
+    refute workflow('redeploy-staging')['jobs']['deploy']['with'].key?('retry_allowed')
+    assert_equal false, jobs['redeploy'].dig('with', 'retry_allowed')
+    writer = deploy['jobs']['deploy']
+    assert_equal '${{ steps.coordinate.outputs.retryable }}', writer.dig('outputs', 'retryable')
+    assert_equal '${{ jobs.deploy.outputs.retryable }}',
+                 (deploy['on'] || deploy.fetch(true)).dig('workflow_call', 'outputs', 'retryable', 'value')
+    coordinate = writer['steps'].find { |step| step['id'] == 'coordinate' }
+    assert_equal '${{ inputs.retry_allowed }}', coordinate.dig('env', 'CD_RETRY_ALLOWED')
+
+    readmit = jobs['readmit']
+    assert_equal 'deploy', readmit['needs']
+    assert_equal "always() && !cancelled() && needs.deploy.outputs.retryable == 'true'", readmit['if']
+    # Re-admission is the reviewed admission, unchanged, with its own evidence name.
+    first, again = jobs['admit']['steps'], readmit['steps']
+    assert_equal first[0..-2], again[0..-2]
+    assert_equal first.last.merge('with' => first.last['with'].merge(
+      'name' => 'staging-admission-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.lane }}-retry')), again.last
+    assert_equal jobs['admit']['outputs'], readmit['outputs']
+
+    redeploy = jobs['redeploy']
+    assert_equal 'readmit', redeploy['needs']
+    assert_includes redeploy['if'], "needs.readmit.result == 'success'"
+    assert_includes redeploy['if'], "needs.readmit.outputs.changed == 'true'"
+    assert_equal jobs['deploy']['uses'], redeploy['uses']
+    assert_equal jobs['deploy']['secrets'], redeploy['secrets']
+    assert_equal '${{ needs.readmit.outputs.release_set }}', redeploy.dig('with', 'release_set')
+    assert_equal '${{ needs.readmit.outputs.started_at }}', redeploy.dig('with', 'started_at')
+    assert_equal "${{ format('-{0}-retry', inputs.lane) }}", redeploy.dig('with', 'evidence_suffix')
+    refute redeploy.key?('concurrency')
+
+    outputs = (promote['on'] || promote.fetch(true))['workflow_call']['outputs']
+    {'component_result' => %w[deploy redeploy component_result], 'deploy' => %w[deploy redeploy status],
+     'deploy_disposition' => %w[deploy redeploy disposition], 'admit' => %w[admit readmit status],
+     'admit_disposition' => %w[admit readmit disposition], 'admitted' => %w[admit readmit admitted],
+     'failures' => %w[admit readmit failures]}.each do |name, (initial, second, field)|
+      assert_equal "${{ fromJSON(jobs.readmit.result == 'skipped' && toJSON(jobs.#{initial}.outputs.#{field}) || " \
+                   "toJSON(jobs.#{second}.outputs.#{field})) }}", outputs[name]['value'], name
+    end
+    assert_equal "${{ jobs.readmit.result != 'skipped' }}", outputs['retried']['value']
   end
 
   def test_a_production_set_a_newer_release_owns_deploys_and_reports_nothing

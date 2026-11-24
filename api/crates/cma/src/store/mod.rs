@@ -55,6 +55,7 @@ mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
 pub(crate) mod stale_turns;
+pub(crate) mod transaction_barrier;
 #[cfg(test)]
 pub(crate) use agent_worker_transaction::adoption_probe;
 #[cfg(test)]
@@ -62,6 +63,7 @@ pub(crate) use agent_worker_transaction::skill_result_test_support;
 mod agent_worktree_recovery;
 mod agent_worktree_recovery_records;
 mod agent_write_coordination;
+pub(crate) use agent_write_coordination::CLEANUP_RETRY_DEADLINE;
 mod agents;
 pub mod auth;
 mod billing_authority;
@@ -91,6 +93,7 @@ pub(crate) mod legal_consents;
 mod media_uploads;
 pub(crate) mod provenance_progress;
 pub(crate) mod registration_capacity;
+mod retained_consents;
 mod segment_response;
 mod transaction_scope;
 pub(crate) use segment_response::emit as emit_response_reads;
@@ -176,6 +179,8 @@ pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_normal_c
 #[cfg(test)]
 pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_to as fill_agent_capacity_to_fixture;
 #[cfg(test)]
+pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fingerprint as agent_capacity_fixture_fingerprint;
+#[cfg(test)]
 mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;
 mod sandbox_reconciliation;
@@ -222,11 +227,12 @@ pub use admission_control::MongoAdmissionControlStore;
 #[cfg(test)]
 pub(crate) use agent_access_tools::fixtures as agent_access_fixtures;
 pub(crate) use agent_access_tools::MongoAgentAccessToolSource;
+pub(crate) use agent_lifecycle_operations::canary_key;
 #[cfg(test)]
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
-    CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput, LifecycleLease,
-    MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
+    CanaryProfiles, CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput,
+    LifecycleLease, MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
 };
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};
@@ -240,6 +246,9 @@ pub use mongo::MongoStores;
 pub use operation::MongoOperationStore;
 pub use registration_capacity::MongoRegistrationCapacityStore;
 pub(crate) use sandbox_credentials::MongoSandboxCredentialStore;
+pub(crate) use sandbox_mongo::{
+    commit_transaction, is_confirmed_body_retry, is_duplicate_key, start_transaction, CommitOutcome,
+};
 pub use sandbox_mongo::{MongoProfileStore, MongoSandboxStore};
 pub use settings::MongoPlatformSettingsStore;
 pub use trigger_definitions::MongoTriggerDefinitionStore;
