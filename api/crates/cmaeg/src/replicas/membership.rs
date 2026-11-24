@@ -6,7 +6,7 @@ use super::{
     Error,
 };
 use crate::{
-    http::readiness::Readiness,
+    readiness::Readiness,
     records::mongo::{LeaseCondition, ReplicaKind, ReplicaProjection},
 };
 use serde::{Deserialize, Serialize};

@@ -23,6 +23,7 @@ pub mod openapi;
 pub mod outbound;
 pub mod providers;
 mod readback;
+mod readiness;
 pub mod records;
 pub mod replicas;
 pub mod runtime;
