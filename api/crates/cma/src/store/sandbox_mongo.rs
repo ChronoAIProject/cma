@@ -115,6 +115,7 @@ pub struct MongoSandboxStore {
     pub(super) sandbox_sessions: Collection<Document>,
     pub(super) strict_inactivity_session_evidence: bool,
     pub(super) workspaces: Collection<Document>,
+    pub(super) bounded_inactivity_legacy_log: bool,
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
     pub(super) agent_writes: std::sync::Arc<super::agent_write_coordination::AgentWrites>,
@@ -223,6 +224,11 @@ impl MongoSandboxStore {
 
     pub(crate) fn with_agent_control_write_coordination(mut self, enabled: bool) -> Self {
         self.agent_control_write_coordination = enabled;
+        self
+    }
+
+    pub(crate) fn with_bounded_inactivity_legacy_log(mut self, enabled: bool) -> Self {
+        self.bounded_inactivity_legacy_log = enabled;
         self
     }
 

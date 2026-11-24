@@ -56,6 +56,7 @@ impl MongoSandboxStore {
             sandbox_sessions: majority_collection(&database, SANDBOX_SESSIONS),
             strict_inactivity_session_evidence: false,
             workspaces: majority_collection(&database, WORKSPACES),
+            bounded_inactivity_legacy_log: false,
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
             agent_writes: Default::default(),

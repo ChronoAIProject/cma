@@ -193,6 +193,10 @@ async fn apply_indexes(
                     _ = renewal.tick() => ledger.renew(&lease).await?,
                 }
             };
+            #[cfg(test)]
+            if created && step == Step::BindingIndexes {
+                tests::startup_ddl::pause_after_binding_index().await?;
+            }
             changed += i64::from(created);
         }
         if !step.inspect(database).await?.is_empty() {
@@ -239,5 +243,6 @@ pub(in crate::store) fn missing_activity_indexes(
 
 #[cfg(test)]
 pub(in crate::store) use tests::startup_ddl::{
-    apply_binding_indexes_for_test, prepare_bindings_for_test,
+    apply_binding_indexes_for_test, apply_binding_indexes_with_pause_for_test,
+    prepare_bindings_for_test,
 };

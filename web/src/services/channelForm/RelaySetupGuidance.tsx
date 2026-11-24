@@ -1,8 +1,7 @@
 /** Public NyxID setup remains in NyxID; CMA never fabricates owner credentials. */
 export function RelaySetupGuidance({ platform }: { platform: string }) {
   const guidance: Record<string, string> = {
-    telegram:
-      'Connect your Telegram bot in NyxID, then select a relay route for that bot. Direct Telegram credentials and CMA-managed Telegram connections are separate connection choices.',
+    telegram: 'Connect your Telegram bot in NyxID, then select a relay route for that bot.',
     lark: 'Connect your Lark app in NyxID and complete its event subscriptions and bot permissions before attaching its relay route.',
     feishu:
       'Connect your Feishu app in NyxID and complete its event subscriptions and bot permissions before attaching its relay route.',
