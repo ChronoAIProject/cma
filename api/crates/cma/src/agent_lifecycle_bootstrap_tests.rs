@@ -12,6 +12,8 @@ use fixture::{work, Fixture};
 mod failure_tests;
 #[path = "agent_lifecycle_bootstrap_title_tests.rs"]
 mod title_tests;
+#[path = "agent_lifecycle_bootstrap_upgrade_tests.rs"]
+mod upgrade_tests;
 
 fn start(
     service: Arc<InlineAgentLifecycle>,

@@ -32,8 +32,12 @@ class Registry:
         # An absolute budget on the retry clock: it shortens each read and ends repeats.
         self.deadline = deadline
 
-    def read(self, url, headers, *, absent=False):
-        policy = ci_retry.bounded(self.retry, self.deadline)
+    # A tag or digest written moments ago can be briefly unknown at another
+    # registry edge. Verification after a write waits for it, inside the budget.
+    SETTLE = {"attempts": 6, "base": 2.0, "cap": 15.0}
+
+    def read(self, url, headers, *, absent=False, settle=False):
+        policy = ci_retry.bounded({**self.SETTLE, **self.retry} if settle else self.retry, self.deadline)
 
         def once():
             timeout = ci_retry.attempt_timeout(30, self.deadline, policy.get("clock", time.monotonic))
@@ -47,6 +51,8 @@ class Registry:
             except urllib.error.HTTPError as error:
                 if absent and error.code == 404:
                     return None
+                if settle and error.code == 404:
+                    raise Refusal("Registry write is not visible yet") from ci_retry.TransientError()
                 raise Refusal("Registry request failed") from error
             except (OSError, urllib.error.URLError, http.client.HTTPException) as error:
                 # A truncated body or dropped connection is a transport failure too.
@@ -68,12 +74,12 @@ class Registry:
                 "Registry authentication is invalid")
         return token
 
-    def manifest(self, repository, reference, *, absent=False):
+    def manifest(self, repository, reference, *, absent=False, settle=False):
         require(matches(SEMVER, reference) or matches(r"sha256:[0-9a-f]{64}", reference),
                 "Registry reference is not immutable")
         token = self.token(repository)
         result = self.read("https://ghcr.io/v2/" + repository[len("ghcr.io/"):] + "/manifests/" + reference,
-                           {"Authorization": "Bearer " + token, "Accept": MEDIA}, absent=absent)
+                           {"Authorization": "Bearer " + token, "Accept": MEDIA}, absent=absent, settle=settle)
         if result is None:
             return None
         data, headers = result
@@ -88,6 +94,6 @@ class Registry:
                 "Staging registry manifest must be a single platform image")
         return digest, body
 
-    def exists(self, repository, digest):
-        return self.manifest(repository, digest) is not None
+    def exists(self, repository, digest, *, settle=False):
+        return self.manifest(repository, digest, settle=settle) is not None
 

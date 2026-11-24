@@ -107,11 +107,6 @@
   min-width: 0;
 }
 
-.menu[aria-label='Model'] .menu__itemlabel {
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
 .model-effort__model {
   display: inline-flex;
   align-items: center;

@@ -1,5 +1,6 @@
 //! Shared document shape, indexes, and paging for schema-v1 profiles.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 pub(super) mod summaries;
 
 use futures_util::TryStreamExt;
@@ -278,7 +279,7 @@ pub(super) async fn read_after_unknown_commit(
         .max_time(UNKNOWN_COMMIT_READ_LIMIT)
         .session(&mut *session)
         .await;
-    let _ = session.abort_transaction().await;
+    let _ = session.abort_guarded().await;
     row.map_err(|error| ProfileStoreError::Unavailable(error.to_string()))
 }
 

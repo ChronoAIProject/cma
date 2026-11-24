@@ -69,6 +69,7 @@ use collections::SANDBOX_COLLECTIONS;
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) creation_writer_epoch: Option<String>,
     pub(super) usage_capture: Option<super::sandbox_usage_export::CaptureStore>,
     pub(super) initial_settings: super::settings_defaults::InitialSettings,
     pub(super) ownership_retry_hints_enabled: bool,
@@ -270,6 +271,7 @@ impl MongoSandboxStore {
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
+            creation_writer_epoch: None,
             usage_capture: None,
             initial_settings,
             empty_discovery: Default::default(),

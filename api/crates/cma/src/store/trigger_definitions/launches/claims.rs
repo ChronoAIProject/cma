@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::LaunchId;
 use layer2_core::trigger_domain::{Launch, LaunchStoreError};
 use mongodb::bson::doc;
@@ -43,26 +44,26 @@ pub(super) async fn claim(
         let receipt =
             match claim_once(store, id, holder, &now, &lease_expires_at, &mut session).await {
                 Ok(None) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Ok(None);
                 }
                 Ok(Some(receipt)) => receipt,
                 Err(AttemptError::Retry(reason)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(reason.into());
                     continue;
                 }
                 Err(AttemptError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(AttemptError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(AttemptError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(unavailable(error));
                 }
             };

@@ -28,6 +28,8 @@ pub const AGENT_COMPUTER_STATUS_MEDIA_TYPE: &str =
 
 pub const AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE: &str =
     "application/vnd.chrono.cma.agent-process-restart-status.v1+json";
+pub const GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE: &str =
+    "application/vnd.chrono.cma.github-credential-route-status.v1+json";
 
 /// A stable reference to one agent slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -287,6 +289,11 @@ pub enum RequestFrame {
     ResumeCheckpointWriters(CheckpointWriterResumeRequest),
     Restore(RestoreRequest),
     Credential(CredentialFrame),
+    CredentialForReceiver {
+        receiver: crate::RuntimeStatusRequest,
+        boot_id: String,
+        credential: CredentialFrame,
+    },
     Resources,
 }
 
@@ -348,7 +355,7 @@ impl RequestFrame {
             Self::CheckpointForTeardown(_) => WireOperation::CheckpointForTeardown,
             Self::ResumeCheckpointWriters(_) => WireOperation::ResumeCheckpointWriters,
             Self::Restore(_) => WireOperation::Restore,
-            Self::Credential(_) => WireOperation::Credential,
+            Self::Credential(_) | Self::CredentialForReceiver { .. } => WireOperation::Credential,
             Self::Resources => WireOperation::Resources,
         }
     }

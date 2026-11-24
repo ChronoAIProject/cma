@@ -32,6 +32,8 @@ pub struct ConversationState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_turn: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_timeout: Option<super::turn_timeout::TurnTimeout>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<AgentOperationRecord>,
     #[serde(default)]
     pub queued_messages: Vec<QueuedAgentMessage>,
@@ -172,6 +174,7 @@ impl Agent {
             || self.conversation.runtime_generation.is_some()
             || self.conversation.last_seq != 1
             || self.conversation.active_turn.is_some()
+            || self.conversation.turn_timeout.is_some()
             || self.conversation.settings.is_some()
             || !self.conversation.preferences.is_empty()
             || self.conversation.managed_guidance_revision != 0
@@ -213,6 +216,16 @@ impl Agent {
 
     pub fn validate_conversation(&self) -> Result<(), SandboxModelError> {
         self.validate_worktree_recoveries()?;
+        if self
+            .conversation
+            .turn_timeout
+            .as_ref()
+            .is_some_and(|timeout| {
+                timeout.validate().is_err() || !timeout.binding().matches_incarnation(self)
+            })
+        {
+            return Err(SandboxModelError::invalid_value("agent.turn_timeout"));
+        }
         let identity_shape = match (
             self.conversation.conversation_id.as_deref(),
             self.conversation.runtime_generation,

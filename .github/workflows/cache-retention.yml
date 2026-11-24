@@ -5,6 +5,11 @@ on:
     types: [completed]
     branches: [develop]
   workflow_dispatch:
+    inputs:
+      inspect_buildkit:
+        description: "Inventory cache layers referenced by BuildKit indexes"
+        type: boolean
+        default: false
 permissions: {}
 jobs:
   sweep:
@@ -38,6 +43,40 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 -B .github/scripts/actions_cache_sweep.py --preview-recovery
+  inspect_buildkit:
+    if: >-
+      github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
+      github.event_name == 'workflow_dispatch' && inputs.inspect_buildkit
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Read the cache runtime environment
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        with:
+          script: |
+            for (const name of ['ACTIONS_RUNTIME_TOKEN', 'ACTIONS_RESULTS_URL']) {
+              const value = process.env[name];
+              if (!value) throw new Error('Build cache runtime is unavailable');
+              core.setSecret(value);
+              core.exportVariable(name, value);
+            }
+      - name: Inventory referenced layers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/actions_cache_buildkit_inventory.py "$RUNNER_TEMP/buildkit-cache-inventory.json"
+      - name: Retain the read-only report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: buildkit-cache-inventory
+          path: ${{ runner.temp }}/buildkit-cache-inventory.json
+          if-no-files-found: error
+          retention-days: 3
   recover:
     outputs:
       status: ${{ steps.recovery.outputs.status }}

@@ -24,6 +24,7 @@ mod response_readers_tests;
 mod rest;
 
 pub(crate) struct AgentProjectionServices {
+    external_review_origin: String,
     bounded_replay: bool,
     sandbox_profile_readability: bool,
     sandbox_profiles: Arc<dyn SandboxProfileStore>,
@@ -42,11 +43,6 @@ pub(crate) struct AgentProjectionServices {
 }
 
 impl AgentProjectionServices {
-    pub(crate) fn command_service(
-        &self,
-    ) -> Option<Arc<layer2_core::sandbox::agent_io::AgentCommandService>> {
-        self.commands.clone()
-    }
     pub(crate) fn with_observation(
         mut self,
         observation: Arc<layer2_core::sandbox::agent_observation::AgentObservationService>,
@@ -184,6 +180,7 @@ impl AgentProjectionServices {
         );
         Self {
             bounded_replay: false,
+            external_review_origin: String::new(),
             sandbox_profile_readability: false,
             sandbox_profiles: profiles,
             suggestions: None,
