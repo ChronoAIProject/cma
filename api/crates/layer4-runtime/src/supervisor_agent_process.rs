@@ -12,10 +12,11 @@ impl Supervisor {
     ) -> Result<Operation> {
         let incarnation = agent_validation::open(&request.request)?;
         let operation = Operation::open_agent(&request.request);
-        if incarnation == 1 || self.mutations.admitted(&operation).await? {
+        if incarnation == 1 {
             return Ok(operation);
         }
-        if !self.config.agent_process_restart_enabled {
+        let replay = self.mutations.admitted(&operation).await?;
+        if !self.config.agent_process_restart_enabled && !replay {
             return Err(RuntimeError::rejected(
                 "agent_process_restart_disabled",
                 "Agent process restart is disabled",
@@ -42,11 +43,12 @@ impl Supervisor {
                 "the previous Agent process has no completed open and close on this home and worktree",
             ));
         }
-        if self
-            .mutations
-            .recovery_fence(&predecessor)
-            .await?
-            .is_none_or(|fence| fence >= request.authority_fence)
+        if !replay
+            && self
+                .mutations
+                .recovery_fence(&predecessor)
+                .await?
+                .is_none_or(|fence| fence >= request.authority_fence)
         {
             return Err(RuntimeError::rejected(
                 "mutation_authority_stale",

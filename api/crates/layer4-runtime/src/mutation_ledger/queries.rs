@@ -1,13 +1,13 @@
 //! Read-only point/range queries: terminal history is never recovery work.
 use std::sync::Arc;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 use serde::Serialize;
 
 use super::{authority, invalid, journal, storage_error, Ledger};
 use crate::failure::Result;
 use crate::mutation_authority as v1;
-use crate::mutation_journal::{Operation, Record, Status, Subject};
+use crate::mutation_journal::{process_history, Operation, Record, Status, Subject};
 
 pub(super) const STARTED_PAGE: &str = "SELECT identity,record FROM operations INDEXED BY outstanding WHERE scope=? AND status IN (0,1) AND status=1 AND operation_id>? ORDER BY operation_id LIMIT 64";
 
@@ -53,26 +53,7 @@ impl Ledger {
                 let scope = crate::mutation_scope::generation(&config, &scope_subject)
                     .unwrap_or(0)
                     .to_be_bytes();
-                let identity: Option<Vec<u8>> = db.query_row(
-                "SELECT identity FROM operations WHERE scope=? AND operation_id=? AND status>0",
-                params![scope.as_slice(), operation_id], |row| row.get(0),
-            ).optional().map_err(|_| storage_error())?;
-                let Some(identity) = identity else {
-                    return Ok(None);
-                };
-                if identity.len() > 65536 {
-                    return Err(invalid());
-                }
-                let operation: Operation =
-                    serde_json::from_slice(&identity).map_err(|_| invalid())?;
-                if operation.operation_id != operation_id
-                    || journal::scope(&config, &operation) != scope
-                {
-                    return Err(invalid());
-                }
-                let record =
-                    journal::load(db, &config, &operation)?.and_then(|stored| stored.record);
-                Ok(Some(record.ok_or_else(invalid)?))
+                journal::load_id(db, &config, &scope, &operation_id)
             })
             .await
     }
@@ -83,9 +64,15 @@ impl Ledger {
         let config = Arc::clone(&self.config);
         self.storage
             .call(move |db| {
-                Ok(journal::load(db, &config, &operation)?
-                    .and_then(|stored| stored.record)
-                    .map(|record| record.status()))
+                let record =
+                    journal::load(db, &config, &operation)?.and_then(|stored| stored.record);
+                if record.is_some() {
+                    let scope = journal::scope(&config, &operation);
+                    process_history::validate(&operation, |id| {
+                        journal::load_id(db, &config, &scope, id)
+                    })?;
+                }
+                Ok(record.map(|record| record.status()))
             })
             .await
     }
@@ -162,6 +149,10 @@ impl Ledger {
                     if record.status() != crate::mutation_journal::Status::Started {
                         return Err(invalid());
                     }
+                    let scope = generation.to_be_bytes();
+                    process_history::validate(&operation, |id| {
+                        journal::load_id(db, &config, &scope, id)
+                    })?;
                     records.push(record);
                 }
                 Ok(records)

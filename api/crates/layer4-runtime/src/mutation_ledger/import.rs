@@ -11,7 +11,7 @@ use crate::config::RuntimeConfig;
 use crate::failure::Result;
 use crate::ledger_storage::Storage;
 use crate::mutation_authority::Record as Authority;
-use crate::mutation_journal::{Record, Status, Subject};
+use crate::mutation_journal::{process_history, Record, Status, Subject};
 
 pub(crate) struct HeldImport {
     storage: Storage,
@@ -153,20 +153,23 @@ impl HeldImport {
         }).await
     }
 
-    /// Recheck each original Open after every Close has been imported. Close
-    /// authority alone never counts as a successfully completed process close.
+    /// Recheck process lineage after all Opens and Closes have been imported.
     pub(crate) async fn verify_process(&self, scope: u64, bytes: Vec<u8>) -> Result<bool> {
         let config = self.scoped(scope)?;
         self.storage.call(move |db| {
             use rusqlite::OptionalExtension;
             let record = Record::decode(&bytes, &config)?;
             let operation = record.operation();
+            let scope = scope.to_be_bytes();
+            if journal::scope(&config, &operation) != scope {
+                return Err(invalid());
+            }
+            process_history::validate(&operation, |id| journal::load_id(db, &config, &scope, id))?;
             let Subject::OpenAgent { agent_id, .. } = operation.subject else {
                 return Ok(false);
             };
             use layer3_adapter::AgentProcessAction::{Close, Open};
             let incarnation = Open.incarnation(&agent_id, &operation.operation_id).ok_or_else(invalid)?;
-            let scope = scope.to_be_bytes();
             let closed: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM operations WHERE scope=? AND operation_id=? AND status=2)",
                 params![scope.as_slice(),Close.operation_id(&agent_id, incarnation)], |r| r.get(0))
                 .map_err(|_| storage_error())?;

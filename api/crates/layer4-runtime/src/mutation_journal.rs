@@ -16,6 +16,8 @@ mod io;
 mod lookup;
 #[path = "mutation_operation.rs"]
 mod operation;
+#[path = "mutation_process_history.rs"]
+pub(crate) mod process_history;
 #[path = "mutation_journal_validation.rs"]
 mod validation;
 pub(crate) use operation::{ActiveAgent, Operation, Subject};
@@ -334,7 +336,12 @@ fn read_records(config: &RuntimeConfig, apply: bool) -> Result<Vec<Record>> {
             ));
         }
     }
-    io::reconcile(files, apply).map(|files| files.into_iter().map(|file| file.record).collect())
+    let records: Vec<_> = io::reconcile(files, apply)?
+        .into_iter()
+        .map(|file| file.record)
+        .collect();
+    process_history::validate_records(&records)?;
+    Ok(records)
 }
 
 fn resolve_existing<T: DeserializeOwned>(
