@@ -214,3 +214,53 @@ async fn assert_semantic_counter(failure: bool) {
         assert!(!text.contains(private));
     }
 }
+
+pub(super) fn request(
+    method: Method,
+    path: &str,
+    subject: &str,
+    body: Option<Value>,
+) -> Request<Body> {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("content-type", "application/json")
+        .header("idempotency-key", "composed-reader")
+        .body(body.map_or_else(Body::empty, |value| Body::from(value.to_string())))
+        .unwrap();
+    attach_identity(&mut request, subject);
+    request
+}
+
+pub(super) fn attach_identity(request: &mut Request<Body>, subject: &str) {
+    let caller = Caller::new(
+        SubjectId::new(subject),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    let context = CallerContext {
+        credential_source: CredentialSource::Retained,
+        actor: ResourceActor::Api {
+            subject: caller.subject.clone(),
+            delegation_id: None,
+        },
+        credential: CredentialContext {
+            issuer: "https://fixture.test".into(),
+            subject: caller.subject.clone(),
+            credential_id: "composed-reader".into(),
+        },
+        caller: caller.clone(),
+        memberships: vec![],
+    };
+    request
+        .extensions_mut()
+        .insert(layer1_public::AuthenticatedSubject(caller.subject));
+    request
+        .extensions_mut()
+        .insert(Authorization::new([Capability::UseOwnSandboxes]));
+    request.extensions_mut().insert(context);
+    request
+        .extensions_mut()
+        .insert(layer1_public::DelegatedCredential::new(
+            "fixture-credential".into(),
+        ));
+}
