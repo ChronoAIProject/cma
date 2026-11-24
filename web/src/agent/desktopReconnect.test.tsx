@@ -6,6 +6,9 @@ import { agentClient } from '../test/agent';
 import { DesktopPanel } from './DesktopPanel';
 import type { ComponentProps } from 'react';
 
+// Clock timers are covered separately; these assertions isolate connection retries.
+vi.mock('./DesktopLocalTime', () => ({ DesktopLocalTime: () => null }));
+
 type Connection = EventTarget & {
   viewOnly: boolean;
   canvas: HTMLCanvasElement;
