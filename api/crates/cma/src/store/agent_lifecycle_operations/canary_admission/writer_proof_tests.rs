@@ -33,8 +33,13 @@ async fn canary_commit_proof_requires_grant_and_exact_redemption_at_the_observat
         &database,
         0,
         true,
-        grant_request.catalog_sha256.clone(),
-        grant_request.owner_scope_sha256.clone(),
+        grant_request.fresh.as_ref().unwrap().catalog_sha256.clone(),
+        grant_request
+            .fresh
+            .as_ref()
+            .unwrap()
+            .owner_scope_sha256
+            .clone(),
     )
     .await
     .unwrap();

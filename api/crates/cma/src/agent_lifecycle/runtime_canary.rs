@@ -2,8 +2,8 @@
 use super::*;
 use crate::config::{runtime_canary, RuntimeConfig};
 use crate::store::runtime_canary::{
-    CanaryLane, CanaryPolicy, CanaryWriteError, FreshCanaryRedemption, PrepareCanaryGrant,
-    PreparedCanaryRedemption, RevokeCanaryGrant,
+    CanaryLane, CanaryPolicy, CanaryWriteError, FreshCanaryGrant, FreshCanaryRedemption,
+    PrepareCanaryGrant, PreparedCanaryRedemption, RevokeCanaryGrant,
 };
 use layer1_public::rest::runtime_canary::{
     CanaryGrantRequest, CanaryGrantView, CanaryPolicyRequest, CanaryPolicyView,
@@ -58,13 +58,17 @@ impl RuntimeCanaryService for Canaries {
     }
 
     async fn grant(&self, request: CanaryGrantRequest) -> Result<CanaryGrantView, CanaryRefusal> {
-        if !self.scope.allows(&request.owner) {
-            return Err(CanaryRefusal::Forbidden);
-        }
-        let release = self
-            .catalog
-            .release(&request.release_key)
-            .ok_or(CanaryRefusal::Invalid)?;
+        let fresh = self
+            .scope
+            .allows(&request.owner)
+            .then(|| self.catalog.release(&request.release_key))
+            .flatten()
+            .map(|release| FreshCanaryGrant {
+                lane: lane(release.lane),
+                release: release.into(),
+                catalog_sha256: self.catalog_sha256.clone(),
+                owner_scope_sha256: self.owner_scope_sha256.clone(),
+            });
         let expires = mongodb::bson::DateTime::parse_rfc3339_str(&request.expires_at)
             .map_err(|_| CanaryRefusal::Invalid)?;
         let store = &self.lifecycle.operations;
@@ -74,13 +78,11 @@ impl RuntimeCanaryService for Canaries {
                 &PrepareCanaryGrant {
                     owner: request.owner,
                     expected_revision: request.expected_revision,
-                    lane: lane(release.lane),
-                    release: release.into(),
+                    release_key: request.release_key,
                     policy_revision: request.policy_revision,
-                    catalog_sha256: self.catalog_sha256.clone(),
-                    owner_scope_sha256: self.owner_scope_sha256.clone(),
                     consent_sha256: request.consent_sha256,
                     expires_at: expires,
+                    fresh,
                 },
             )
             .await
@@ -94,17 +96,12 @@ impl RuntimeCanaryService for Canaries {
     }
 
     async fn revoke(&self, request: CanaryRevokeRequest) -> Result<CanaryGrantView, CanaryRefusal> {
-        let release = self
-            .catalog
-            .release(&request.release_key)
-            .ok_or(CanaryRefusal::Invalid)?;
         let store = &self.lifecycle.operations;
         let grant = store
             .revoke_canary_grant(
                 &store.canary_database(),
                 &RevokeCanaryGrant {
                     owner: request.owner,
-                    lane: lane(release.lane),
                     release_key: request.release_key,
                     grant_id: request.grant_id,
                     revision: request.expected_revision,
@@ -130,18 +127,7 @@ impl RuntimeCanaryService for Canaries {
             return Err(CanaryRefusal::Unavailable);
         }
         let owner = &context.caller.subject;
-        let fresh = self
-            .scope
-            .allows(owner)
-            .then(|| self.catalog.release(&request.release_key))
-            .flatten()
-            .map(|release| FreshCanaryRedemption {
-                lane: lane(release.lane),
-                policy_revision: request.policy_revision,
-                catalog_sha256: self.catalog_sha256.clone(),
-                owner_scope_sha256: self.owner_scope_sha256.clone(),
-                release: release.into(),
-            });
+        let fresh = self.fresh_redemption(owner, &request).await;
         let lifecycle_request = AgentLifecycleCreateRequest {
             name: request.name,
             title_mode: None,
@@ -200,6 +186,36 @@ impl RuntimeCanaryService for Canaries {
         Ok(AgentLifecycleCreateReceipt {
             id,
             status: "provisioning".into(),
+        })
+    }
+}
+
+impl Canaries {
+    async fn fresh_redemption(
+        &self,
+        owner: &SubjectId,
+        request: &CanaryRedeemRequest,
+    ) -> Option<FreshCanaryRedemption> {
+        if !self.scope.allows(owner) {
+            return None;
+        }
+        let release = self.catalog.release(&request.release_key)?;
+        if release.lane == runtime_canary::Lane::DebianDesktop {
+            let desktop = self.lifecycle.desktop.as_ref()?;
+            if !desktop
+                .canary_capability(&release.image.uri, release.capacity)
+                .await
+                .available()
+            {
+                return None;
+            }
+        }
+        Some(FreshCanaryRedemption {
+            lane: lane(release.lane),
+            policy_revision: request.policy_revision,
+            catalog_sha256: self.catalog_sha256.clone(),
+            owner_scope_sha256: self.owner_scope_sha256.clone(),
+            release: release.into(),
         })
     }
 }

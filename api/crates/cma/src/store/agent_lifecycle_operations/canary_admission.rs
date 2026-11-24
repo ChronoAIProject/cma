@@ -4,7 +4,8 @@ use super::*;
 
 mod policy;
 pub(crate) use policy::{
-    CanaryLane, CanaryPolicy, CanaryWriteError, PrepareCanaryGrant, RevokeCanaryGrant,
+    CanaryLane, CanaryPolicy, CanaryWriteError, FreshCanaryGrant, PrepareCanaryGrant,
+    RevokeCanaryGrant,
 };
 mod writer;
 pub(crate) use writer::{FreshCanaryRedemption, PreparedCanaryRedemption};

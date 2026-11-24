@@ -75,6 +75,7 @@ pub struct CanaryRedeemRequest {
     pub initial_message: String,
 }
 
+#[derive(Debug)]
 pub enum CanaryRefusal {
     Forbidden,
     Invalid,
@@ -147,7 +148,7 @@ pub(crate) async fn configure(
 
 #[utoipa::path(
     post, path = "/api/v1/admin/runtime-canary-grants", tag = "administration", request_body = CanaryGrantRequest,
-    description = "Issue one time-limited grant for the specified owner and exact catalog release. The consent hash records the owner's approval.",
+    description = "Issue one time-limited grant for the owner and exact catalog release. Repeat the issuance body to recover its original receipt while the slot is retained. The consent hash records the owner's approval.",
     responses(
         (status = 201, body = CanaryGrantView),
         (status = 403, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),
@@ -172,7 +173,7 @@ pub(crate) async fn grant(
 
 #[utoipa::path(
     post, path = "/api/v1/admin/runtime-canary-grants/revoke", tag = "administration", request_body = CanaryRevokeRequest,
-    description = "Revoke an unconsumed grant at the expected revision. An accepted redemption keeps running.",
+    description = "Revoke an unconsumed stored grant at the expected revision, including after a catalog change. An accepted redemption keeps running.",
     responses(
         (status = 200, body = CanaryGrantView),
         (status = 403, body = crate::rest::ProblemDocument, content_type = "application/problem+json"),

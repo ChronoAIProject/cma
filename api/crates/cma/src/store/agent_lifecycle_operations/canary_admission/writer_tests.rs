@@ -30,13 +30,16 @@ pub(super) fn issue(
     PrepareCanaryGrant {
         owner: owner.clone(),
         expected_revision,
-        lane: CanaryLane::Agent,
-        release,
+        release_key: release.release_key.clone(),
         policy_revision,
-        catalog_sha256: "a".repeat(64),
-        owner_scope_sha256: "b".repeat(64),
         consent_sha256: "f".repeat(64),
         expires_at: DateTime::now().saturating_add_duration(Duration::from_secs(600)),
+        fresh: Some(FreshCanaryGrant {
+            lane: CanaryLane::Agent,
+            release,
+            catalog_sha256: "a".repeat(64),
+            owner_scope_sha256: "b".repeat(64),
+        }),
     }
 }
 
@@ -45,18 +48,19 @@ pub(super) fn redeem(
     grant: &CanaryGrantSlot,
     key: &str,
 ) -> PreparedCanaryRedemption {
+    let authority = issue.fresh.as_ref().unwrap();
     PreparedCanaryRedemption {
         owner: issue.owner.clone(),
         grant_id: grant.id.clone(),
-        release_key: issue.release.release_key.clone(),
+        release_key: issue.release_key.clone(),
         policy_revision: issue.policy_revision,
         key: key.into(),
         fresh: Some(FreshCanaryRedemption {
-            lane: issue.lane,
+            lane: authority.lane,
             policy_revision: issue.policy_revision,
-            catalog_sha256: issue.catalog_sha256.clone(),
-            owner_scope_sha256: issue.owner_scope_sha256.clone(),
-            release: issue.release.clone(),
+            catalog_sha256: authority.catalog_sha256.clone(),
+            owner_scope_sha256: authority.owner_scope_sha256.clone(),
+            release: authority.release.clone(),
         }),
         input: LifecycleInput {
             behavior: LifecycleBehavior::Legacy,
@@ -138,8 +142,8 @@ async fn concurrent_canary_redemption_replays_after_slot_replacement_and_closure
         &database,
         0,
         true,
-        initial.catalog_sha256.clone(),
-        initial.owner_scope_sha256.clone(),
+        initial.fresh.as_ref().unwrap().catalog_sha256.clone(),
+        initial.fresh.as_ref().unwrap().owner_scope_sha256.clone(),
     )
     .await
     .unwrap();
@@ -171,8 +175,8 @@ async fn concurrent_canary_redemption_replays_after_slot_replacement_and_closure
         &database,
         1,
         false,
-        next.catalog_sha256.clone(),
-        next.owner_scope_sha256.clone(),
+        next.fresh.as_ref().unwrap().catalog_sha256.clone(),
+        next.fresh.as_ref().unwrap().owner_scope_sha256.clone(),
     )
     .await
     .unwrap();
@@ -229,16 +233,15 @@ async fn canary_revocation_and_redemption_share_the_same_owner_fence() {
         &database,
         0,
         true,
-        request.catalog_sha256.clone(),
-        request.owner_scope_sha256.clone(),
+        request.fresh.as_ref().unwrap().catalog_sha256.clone(),
+        request.fresh.as_ref().unwrap().owner_scope_sha256.clone(),
     )
     .await
     .unwrap();
     let grant = store.issue_canary_grant(&database, &request).await.unwrap();
     let revocation = RevokeCanaryGrant {
         owner: owner.clone(),
-        lane: request.lane,
-        release_key: request.release.release_key.clone(),
+        release_key: request.release_key.clone(),
         grant_id: grant.id.clone(),
         revision: grant.revision,
     };
@@ -264,5 +267,93 @@ async fn canary_revocation_and_redemption_share_the_same_owner_fence() {
         assert!(matches!(replay, CreateResult::Existing(_)));
         assert_eq!(operation_id(replay), id);
     }
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn canary_grant_receipt_and_revocation_survive_catalog_reassignment() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let client = Client::with_uri_str(&uri).await.unwrap();
+    let reader = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_canary_issuance_{}", uuid::Uuid::new_v4().simple());
+    let database = client.database(&name);
+    let peer_database = reader.database(&name);
+    let store = MongoAgentLifecycleStore::open(&database).await.unwrap();
+    let peer = MongoAgentLifecycleStore::open(&peer_database)
+        .await
+        .unwrap();
+    let owner = SubjectId::new("grant-recovery-owner");
+    let mut old = issue(&owner, release('1', "reassigned"), 1, 0);
+    CanaryPolicy::configure(&database, 0, true, "a".repeat(64), "b".repeat(64))
+        .await
+        .unwrap();
+    let original = store.issue_canary_grant(&database, &old).await.unwrap();
+    let consumed_request = issue(&owner, release('3', "consumed"), 1, 0);
+    let other = SubjectId::new("grant-consumed-owner");
+    let consumed_request = PrepareCanaryGrant {
+        owner: other,
+        ..consumed_request
+    };
+    let consumed = store
+        .issue_canary_grant(&database, &consumed_request)
+        .await
+        .unwrap();
+    let operation = operation_id(
+        store
+            .redeem_canary(
+                &database,
+                redeem(&consumed_request, &consumed, "original-consumed"),
+            )
+            .await
+            .unwrap(),
+    );
+
+    CanaryPolicy::configure(&database, 1, true, "c".repeat(64), "b".repeat(64))
+        .await
+        .unwrap();
+    let mut replacement = issue(&owner, release('2', "reassigned"), 2, 0);
+    let authority = replacement.fresh.as_mut().unwrap();
+    authority.lane = CanaryLane::DebianDesktop;
+    authority.catalog_sha256 = "c".repeat(64);
+    let replacement_receipt = store
+        .issue_canary_grant(&database, &replacement)
+        .await
+        .unwrap();
+    old.fresh = None;
+    let replay = peer.issue_canary_grant(&peer_database, &old).await.unwrap();
+    assert_eq!(replay.id, original.id);
+    assert_eq!(replay.revision, original.revision);
+    assert_eq!(replay.policy_revision, original.policy_revision);
+
+    let revoked = peer
+        .revoke_canary_grant(
+            &peer_database,
+            &RevokeCanaryGrant {
+                owner,
+                release_key: old.release_key,
+                grant_id: replay.id.clone(),
+                revision: replay.revision,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(revoked.id, replay.id);
+    assert_eq!(revoked.revision, replay.revision + 1);
+    assert_eq!(
+        store
+            .issue_canary_grant(&database, &replacement)
+            .await
+            .unwrap()
+            .id,
+        replacement_receipt.id
+    );
+    let mut exact = redeem(&consumed_request, &consumed, "original-consumed");
+    exact.fresh = None;
+    assert_eq!(
+        operation_id(peer.redeem_canary(&peer_database, exact).await.unwrap()),
+        operation
+    );
+    assert_eq!(store.operations.count_documents(doc! {}).await.unwrap(), 1);
     database.drop().await.unwrap();
 }

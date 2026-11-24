@@ -425,6 +425,8 @@ use validation::{
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::desktop_canary_config;
 
 #[cfg(test)]
 mod graduation_tests;
