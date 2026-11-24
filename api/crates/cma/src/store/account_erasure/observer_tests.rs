@@ -108,6 +108,7 @@ async fn observer_cleanup_waits_until_its_source_agent_is_removed() {
         billing_enabled: false,
         allocation_rollups_enabled: Some(false),
         agent_shared_observation: Some(true),
+        retain_legal_consents: false,
     };
     let mut batch = Batch::default();
     let rows = [row];

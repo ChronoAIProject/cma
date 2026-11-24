@@ -2,6 +2,7 @@ mod conversation;
 mod desktop;
 mod desktop_control;
 mod ownership;
+mod runtime_status;
 mod upload;
 use conversation::conversation;
 use upload::TemporaryUpload;
@@ -195,41 +196,12 @@ async fn control(
             tokio::spawn(async move { ownership::dispatch(&supervisor, request, owner).await });
         return heartbeat_json(result, CONTROL_HEARTBEAT);
     }
-    let mut response = ownership::dispatch(&supervisor, request, owner).await;
-    if let layer3_adapter::wire::ResponseFrame::RuntimeStatus(status) = &mut response {
-        // Retained API readers deny unknown fields. Only an explicit opt-in may
-        // receive the new capability; the request JSON remains compatible.
-        let accepts = |media_type| {
-            headers
-                .get_all(header::ACCEPT)
-                .iter()
-                .filter_map(|value| value.to_str().ok())
-                .flat_map(|value| value.split(','))
-                .any(|value| value.trim() == media_type)
-        };
-        status.agent_skill_upgrade =
-            accepts(layer3_adapter::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE);
-        status.agent_resource_preparation =
-            accepts(layer3_adapter::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE);
-        status.agent_browser = accepts(layer3_adapter::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE);
-        status.exact_github_credential_route =
-            accepts(layer3_adapter::wire::GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE)
-                && supervisor.supports_exact_github_credential_route();
-        if accepts(layer3_adapter::RUNTIME_LEDGER_STATUS_MEDIA_TYPE) {
-            return match supervisor.ledger_observation(status.clone()).await {
-                Ok(observation) => (
-                    [(
-                        header::CONTENT_TYPE,
-                        layer3_adapter::RUNTIME_LEDGER_STATUS_MEDIA_TYPE,
-                    )],
-                    Json(observation),
-                )
-                    .into_response(),
-                Err(error) => Json(error.response(operation)).into_response(),
-            };
+    match ownership::dispatch(&supervisor, request, owner).await {
+        layer3_adapter::wire::ResponseFrame::RuntimeStatus(status) => {
+            runtime_status::response(&supervisor, &headers, status).await
         }
+        response => Json(response).into_response(),
     }
-    Json(response).into_response()
 }
 
 fn heartbeat_json<T: Serialize + Send + 'static>(

@@ -4,7 +4,8 @@ mod relay;
 mod text;
 use crate::tools::Capabilities;
 use cmaeg_core::message::{OutboundMessage, RenderingReport};
-pub use relay::RelayText;
+pub use relay::{LiteralText, RelayText};
+pub use text::literal_platform;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedPart {

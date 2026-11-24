@@ -4,7 +4,7 @@ use super::{
     gate::expired,
     intents::{DeliveryOutcome, IntentReceipt},
     relay_client::{unknown, Credential, RelayClient},
-    render::RelayText,
+    render::{LiteralText, RelayText},
     send::{refused, unsupported, SendContext, SendEffects, Sender},
 };
 use crate::tools::Capabilities;
@@ -40,7 +40,11 @@ impl Sender {
             capabilities.buttons = "numbered_text".into();
         }
         let commonmark = self.relay.commonmark_for(&event.reply);
-        let (part, rendering) = RelayText.whole_with_commonmark(message, &capabilities, commonmark);
+        let (part, rendering) = if !commonmark && super::render::literal_platform(*platform) {
+            LiteralText.whole(message, &capabilities)
+        } else {
+            RelayText.whole_with_commonmark(message, &capabilities, commonmark)
+        };
         if part.text.is_empty()
             && message.native_attachments.is_empty()
             && message.whatsapp_template.is_none()

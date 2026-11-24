@@ -24,7 +24,6 @@ mod usage;
 use crate::{
     auth::{service_portal, AuthState},
     config::Config,
-    profile_authoring::CmaProfileAuthoringSource,
     profile_policy::profile_route_policy,
     projections::{AdapterAgentHistoryExporter, AdapterSandboxResources, AgentProjectionServices},
     sandbox::{
@@ -36,7 +35,6 @@ use crate::{
 };
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
 use layer2_core::{
-    profiles::authoring::ProfileAuthoringService,
     sandbox::{AgentContextService, HierarchyReadService, SandboxService, WorkspaceService},
     ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
 };
@@ -156,6 +154,7 @@ impl ControlPlaneComposition {
         )
         .with_released_runtime(stores.released_runtime.clone())
         .with_task_experience(config.task_experience.clone())
+        .with_session_guidance_v4(config.features.session_guidance_v4)
         .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
         .with_managed_repository_preflight(config.features.github_repository_preflight);
         let lifecycle_drain = inline_lifecycle.drain_handle();
@@ -222,16 +221,7 @@ impl ControlPlaneComposition {
             Arc::new(layer2_core::sandbox::colors::SystemColorRandom::new()),
         ));
         let (recorder, activity_worker) = activity::compose(config, &activity, &stores);
-        let profile_authoring = ProfileAuthoringService::new(
-            authoring_bounds,
-            CmaProfileAuthoringSource::production(config, Arc::clone(&auth))?,
-        );
-        let nyxid_public_origin = config
-            .nyxid_public_url
-            .as_deref()
-            .map(reqwest::Url::parse)
-            .transpose()
-            .map_err(|_| "NyxID public origin is invalid".to_string())?;
+        let profile_authoring = profiles::authoring_router(config, &auth, authoring_bounds)?;
         let sandbox_credentials =
             credentials::sandbox_credentials(config, auth.clone(), &stores, broker.clone());
         let model_routes = routes::models(
@@ -396,10 +386,7 @@ impl ControlPlaneComposition {
                 config.features.capacity_recovery_enabled,
             ))
             .merge(rest::resource_access_router(resource_access.clone()))
-            .merge(rest::profile_authoring_router(
-                profile_authoring,
-                nyxid_public_origin,
-            ))
+            .merge(profile_authoring)
             .merge(rest::hierarchy_router(hierarchy))
             .merge(projections.router(Arc::clone(&operations)))
             .merge(desktop::router(

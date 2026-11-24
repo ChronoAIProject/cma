@@ -355,7 +355,8 @@ impl SandboxReconciler {
         let request = RuntimeAdoptionRequest::new(
             observation.generation,
             observation.handle.clone(),
-            sandbox_spec(sandbox, &self.deployment_id),
+            sandbox_spec(sandbox, &self.deployment_id)
+                .map_err(|error| corrupt(&error.to_string()))?,
         )
         .with_expected_image(&binding.runtime_version);
         if measure(
