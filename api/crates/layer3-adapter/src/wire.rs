@@ -158,6 +158,19 @@ pub struct AgentProcessCloseProof {
     pub worktree_path: String,
 }
 
+/// Fence a pending restart on its original runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentRestartFence {
+    pub predecessor: AgentProcessCloseProof,
+    pub successor_operation_id: String,
+    pub authority_fence: u64,
+    /// With a digest, close the exact journaled successor. Without a digest,
+    /// advance the predecessor Close fence only if the successor never arrived.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub successor_open_request_sha256: Option<String>,
+}
+
 /// Correlated proof that a stopped agent's home was removed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -198,6 +211,7 @@ pub enum WireOperation {
     OpenAgent,
     CloseAgent,
     ProveAgentProcessClosed,
+    FenceAgentRestart,
     CaptureAgent,
     Checkpoint,
     CheckpointForTeardown,
@@ -268,6 +282,7 @@ pub enum RequestFrame {
     OpenAgent(FencedRequest<AgentLaunch>),
     CloseAgent(FencedRequest<AgentCloseRequest>),
     ProveAgentProcessClosed(AgentProcessCloseProof),
+    FenceAgentRestart(AgentRestartFence),
     CaptureAgent(AgentRef),
     Checkpoint(CheckpointRequest),
     CheckpointForTeardown(CheckpointHoldRequest),
@@ -334,6 +349,7 @@ impl RequestFrame {
             Self::OpenAgent(_) => WireOperation::OpenAgent,
             Self::CloseAgent(_) => WireOperation::CloseAgent,
             Self::ProveAgentProcessClosed(_) => WireOperation::ProveAgentProcessClosed,
+            Self::FenceAgentRestart(_) => WireOperation::FenceAgentRestart,
             Self::CaptureAgent(_) => WireOperation::CaptureAgent,
             Self::Checkpoint(_) => WireOperation::Checkpoint,
             Self::CheckpointForTeardown(_) => WireOperation::CheckpointForTeardown,
@@ -376,6 +392,7 @@ pub enum ResponseFrame {
     OpenAgent(FencedReceipt<AgentOpenReceipt>),
     CloseAgent(FencedReceipt<AgentCloseReceipt>),
     ProveAgentProcessClosed(AgentProcessCloseProof),
+    FenceAgentRestart(AgentRestartFence),
     CaptureAgent(ConversationSnapshot),
     Checkpoint(CheckpointReceipt),
     CheckpointForTeardown(CheckpointHoldReceipt),

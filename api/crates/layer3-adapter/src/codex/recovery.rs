@@ -27,6 +27,14 @@ impl RuntimeRecovery for CodexAdapter {
         self.hosted.prove_agent_process_closed(handle, proof).await
     }
 
+    async fn fence_agent_restart(
+        &self,
+        handle: &crate::RuntimeHandle,
+        request: &crate::wire::AgentRestartFence,
+    ) -> Result<()> {
+        self.hosted.fence_agent_restart(handle, request).await
+    }
+
     async fn inspect_idle_reopen(
         &self,
         request: &RuntimeRecoveryInspectionRequest,
