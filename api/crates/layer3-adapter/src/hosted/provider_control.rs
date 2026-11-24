@@ -331,6 +331,7 @@ fn request_capacity_class(request: &RequestFrame) -> RuntimeWorkloadClass {
         | RequestFrame::InstallAgentSkill(_)
         | RequestFrame::RemoveAgentHome(_)
         | RequestFrame::CloseAgent(_)
+        | RequestFrame::FenceAgentRestart(_)
         | RequestFrame::Checkpoint(_)
         | RequestFrame::CheckpointForTeardown(_)
         | RequestFrame::ResumeCheckpointWriters(_)

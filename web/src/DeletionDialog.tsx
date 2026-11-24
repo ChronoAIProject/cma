@@ -3,7 +3,7 @@ import { usePresenceExiting } from './ui/Presence';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CmaWebClient } from './api/client';
 import { detailReadSource } from './api/detailReads';
-import { deletionWasSettled } from './useDeletionNoticeReconciliation';
+import { deletionWasSettled, type DeletionSettlements } from './useDeletionNoticeReconciliation';
 import {
   DeletionBlocked,
   stopDeletionBlock,
@@ -19,14 +19,18 @@ import {
   type DeletionRequest,
   type AgentDeletionPermissions,
 } from './deletion';
-import { forgetDeletion, persistDeletion, acknowledgeRetainedDeletion } from './deletionRecovery';
+import {
+  forgetDeletion,
+  persistDeletion,
+  acknowledgeRetainedDeletion,
+  sameDeletionRequest,
+} from './deletionRecovery';
 import { Modal } from './ui/Modal';
 import { Button } from './ui/Button';
 import { DeletionConfirmation } from './DeletionConfirmation';
 import { DeletionStatusPanel } from './DeletionStatusPanel';
 import { transitionRefreshDelay } from './sandbox/lifecycle';
 import { readableError } from './vocabulary/errors';
-
 export function DeletionDialog({
   client,
   viewerId,
@@ -39,6 +43,7 @@ export function DeletionDialog({
   backgroundOnAcceptance = false,
   agentPermissions,
   enabled = true,
+  settlements,
   onClose,
 }: {
   readonly client: CmaWebClient;
@@ -52,6 +57,7 @@ export function DeletionDialog({
   readonly backgroundOnAcceptance?: boolean;
   readonly agentPermissions?: AgentDeletionPermissions;
   readonly enabled?: boolean;
+  readonly settlements?: DeletionSettlements;
   readonly onClose: () => void;
 }) {
   const exiting = usePresenceExiting();
@@ -87,7 +93,15 @@ export function DeletionDialog({
     () => ({ client, viewerId, key: initial.key, enabled, exiting, authority }),
     [client, viewerId, initial.key, enabled, exiting, authority],
   );
-  const sending = sendingScope === scope;
+  const complete =
+    observation?.complete === true ||
+    (enabled &&
+      settlements?.client === identity.client &&
+      client === identity.client &&
+      settlements.viewerId === identity.viewerId &&
+      viewerId === identity.viewerId &&
+      settlements.requests.some((item) => sameDeletionRequest(item, request)));
+  const sending = sendingScope === scope && !complete;
   const activeScope = useRef<{ token: object; controller: AbortController } | undefined>(undefined);
   useLayoutEffect(() => {
     const lifetime = { token: scope, controller: new AbortController() };
@@ -120,7 +134,6 @@ export function DeletionDialog({
     },
     [identity.viewerId, request.key],
   );
-
   const block = useCallback(
     (message: string) => {
       const value = latestRequest.current;
@@ -133,7 +146,6 @@ export function DeletionDialog({
     },
     [persist],
   );
-
   useEffect(() => {
     if (exiting) return;
     backgrounded.current = false;
@@ -238,7 +250,6 @@ export function DeletionDialog({
       document.removeEventListener('visibilitychange', poll);
     };
   }, [client, request, revision, viewerId, exiting, authority, identity, enabled, block, persist]);
-
   const submit = useCallback(
     async (source: 'user' | 'observation' = 'user') => {
       const lifetime = activeScope.current;
@@ -430,13 +441,6 @@ export function DeletionDialog({
     onClose();
   };
   const name = observation?.name ?? target;
-  const completedInBackground =
-    request.accepted &&
-    identity.client === client &&
-    identity.viewerId === viewerId &&
-    deletionWasSettled(client, request) &&
-    observation?.complete !== true;
-  const complete = observation?.complete === true || completedInBackground;
   if (!started && !complete)
     return (
       <DeletionConfirmation
@@ -467,9 +471,7 @@ export function DeletionDialog({
             <Button
               variant="primary"
               disabled={sending || blockedBeforeDelete(request) || !enabled}
-              onClick={() => {
-                void submit();
-              }}
+              onClick={() => void submit()}
             >
               {request.stop?.phase === 'requested' && !deleteMayHaveBeenSent(request)
                 ? 'Retry stop request'
@@ -479,7 +481,7 @@ export function DeletionDialog({
           {request.stop?.phase === 'blocked' && !request.accepted && !complete ? (
             <Button onClick={abandon}>End this request</Button>
           ) : null}
-          {complete || readError === undefined ? null : (
+          {readError === undefined || complete ? null : (
             <Button onClick={() => setRevision((value) => value + 1)}>Refresh status</Button>
           )}
         </>
@@ -488,7 +490,7 @@ export function DeletionDialog({
       <DeletionStatusPanel
         request={request}
         observation={observation}
-        completedInBackground={completedInBackground}
+        complete={complete}
         sending={sending}
         commandError={commandError}
         readError={readError}

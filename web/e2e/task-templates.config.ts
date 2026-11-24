@@ -5,7 +5,7 @@ import { defineConfig } from '@playwright/test';
 const baseURL = 'http://127.0.0.1:4657';
 export default defineConfig({
   testDir: '.',
-  testMatch: 'task-templates.check.ts',
+  testMatch: ['task-templates.check.ts', 'spreadsheet-admission.check.ts'],
   workers: 1,
   retries: 0,
   forbidOnly: true,

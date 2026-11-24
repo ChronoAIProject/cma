@@ -4,6 +4,7 @@ pub(crate) mod activity;
 mod adapter;
 mod agent_manager;
 pub(crate) mod backend_free;
+mod binding_diagnostics;
 mod bindings;
 mod bots;
 mod capacity_recovery;
@@ -258,6 +259,13 @@ impl ControlPlaneComposition {
             runtime::lifecycle_config(config, worker_holder.clone(), ownership.clone(), &stores),
         )?;
         sandbox_lifecycle.register_inline_lifecycle(lifecycle_drain);
+        let (admin, binding_diagnostics) = binding_diagnostics::compose(
+            config,
+            &agent_manager,
+            &stores,
+            &sandbox_lifecycle,
+            admin,
+        )?;
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
             standing: standing.clone(),
             common_first_messages: config.features.trigger_command_admission,
@@ -470,6 +478,7 @@ impl ControlPlaneComposition {
             ),
             relay.as_ref(),
         );
+        let router = binding_diagnostics::router(binding_diagnostics, router);
         Ok(Self {
             creation_outcomes,
             activity_worker,

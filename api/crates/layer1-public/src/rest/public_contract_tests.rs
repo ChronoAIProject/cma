@@ -182,6 +182,12 @@ async fn scenario(name: &str) -> Scenario {
     if let Some(scenario) = creation_outcome_cases::scenario(name) {
         return scenario;
     }
+    if let Some(scenario) = super::admin::tests::binding_holds_tests::contract_scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = super::agent_original_request::tests::contract_scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = runtime_canary_cases::scenario(name) {
         return scenario;
     }

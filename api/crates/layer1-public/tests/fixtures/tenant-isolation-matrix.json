@@ -188,5 +188,7 @@
   {"operation":"GET /api/v2/responses/{response_id}/retained-output","positive":"responses-v2-retained-output-success","negative":"responses-v2-retained-output-foreign","proof":"contract"},
   {"operation":"POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets","positive":"binding-reset-reserved","negative":"binding-reset-foreign","proof":"binding-contract"},
   {"operation":"GET /api/v1/sandboxes/capacity","positive":"sandbox-capacity","negative":"sandbox-capacity-forbidden","proof":"filtered-inventory"},
+  {"operation": "GET /api/v1/agents/{id}/original-request", "positive": "original-request-owner", "negative": "original-request-agent_not_found", "proof": "probe"},
+  {"operation": "GET /api/v1/agents/{id}/reply-preview", "positive": "reply-preview-owner", "negative": "reply-preview-agent_not_found", "proof": "probe"},
   {"operation":"POST /api/v1/sandbox-creation-outcomes/lookup","positive":"creation-outcome-valid","negative":"creation-outcome-foreign","proof":"receipt-contract"}
 ]
