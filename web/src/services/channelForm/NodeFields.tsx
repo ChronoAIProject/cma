@@ -74,6 +74,19 @@ export function NodeFields({
     // A new channel's grouping follows its producers; saved channels are never rewritten.
     onChange(create && key === 'sources' ? fitPartition(discovery, value) : value);
   };
+  function removeProducer(index: number) {
+    const drafts = sourceDrafts.current;
+    drafts.delete(index);
+    for (let next = index + 1; next < sources.length; next++) {
+      const retained = drafts.get(next);
+      drafts.delete(next);
+      if (retained) drafts.set(next - 1, retained);
+    }
+    set(
+      'sources',
+      sources.filter((_, i) => i !== index),
+    );
+  }
   return (
     <>
       <SetupSection
@@ -213,6 +226,11 @@ export function NodeFields({
                       }
                       hmac={customUsesHmac(source)}
                     />
+                  ) : null}
+                  {create && index > 0 ? (
+                    <Button onClick={() => removeProducer(index)}>
+                      Remove producer {index + 1}
+                    </Button>
                   ) : null}
                 </Section>
               ) : null,
