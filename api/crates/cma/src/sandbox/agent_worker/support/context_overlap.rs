@@ -21,6 +21,7 @@ impl AgentWorker {
             self.dependencies.store.get_workspace(&agent.workspace_id),
             self.dependencies.store.get_worktree(&agent.worktree_id),
             |sandbox, admission| async move {
+                let inspection = self.inspection_correlation(agent);
                 let inspection_started = std::time::Instant::now();
                 let attached = crate::sandbox::runtime_attachment::inspect_bound_runtime_after(
                     self.dependencies.adapter.as_ref(),
@@ -29,14 +30,12 @@ impl AgentWorker {
                     &admission,
                 )
                 .await;
-                tracing::info!(
-                    agent_id = %agent.id,
-                    sandbox_id = %sandbox.id,
-                    step = ?agent.work.step,
-                    elapsed_ms = inspection_started.elapsed().as_millis() as u64,
-                    succeeded = attached.is_ok(),
-                    parent_overlap = true,
-                    "Agent runtime inspection completed"
+                report_inspection(
+                    &inspection,
+                    agent.work.step,
+                    inspection_started.elapsed(),
+                    true,
+                    attached.as_ref().err(),
                 );
                 attached
             },
