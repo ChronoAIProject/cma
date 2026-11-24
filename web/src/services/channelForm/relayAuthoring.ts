@@ -7,7 +7,7 @@ import {
   type RelayDiscovery,
 } from '../RelayCapabilities';
 import { credentialsPatch, object, records, strings, text, without, type Fields } from './model';
-import { telegramMemberJoinGroupIds } from './telegramMemberJoins';
+import { telegramMemberJoinGroupIds, telegramRelayJoinIdentityReady } from './telegramMemberJoins';
 
 export function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) =>
@@ -165,27 +165,36 @@ export function validateRelayAuthoring(
         );
       continue;
     }
-    if (source.type === 'telegram') {
+    if (source.type === 'telegram' || source.type === 'nyxid_relay') {
+      const relay = source.type === 'nyxid_relay';
       const memberJoinChats = strings(source.member_join_chat_ids);
       if (memberJoinChats.length > 0) {
         const allowed = telegramMemberJoinGroupIds(source);
         if (
-          source.message_events !== true ||
+          (relay ? !telegramRelayJoinIdentityReady(source) : source.message_events !== true) ||
           memberJoinChats.length > 16 ||
           new Set(memberJoinChats).size !== memberJoinChats.length ||
           memberJoinChats.some((id) => !allowed.includes(id))
         )
           throw new Error(
-            'Telegram member joins require message events and exact group IDs from Chat admission.',
+            relay
+              ? 'Telegram member joins require a bot ID, bound relay routes and exact group IDs from Chat admission.'
+              : 'Telegram member joins require message events and exact group IDs from Chat admission.',
           );
         const retained = oldSources.some(
           (old) =>
-            old.type === 'telegram' &&
+            old.type === source.type &&
             old.bot_id === source.bot_id &&
             canonical(old.admission) === canonical(source.admission) &&
+            (!relay ||
+              canonical(without(old, ['member_join_chat_ids'])) ===
+                canonical(without(source, ['member_join_chat_ids']))) &&
             memberJoinChats.every((id) => strings(old.member_join_chat_ids).includes(id)),
         );
-        if (discovery.authoring?.native_telegram_member_joins_enabled !== true && !retained)
+        const enabled = relay
+          ? discovery.authoring?.relay_telegram_member_joins_enabled
+          : discovery.authoring?.native_telegram_member_joins_enabled;
+        if (enabled !== true && !retained)
           throw new Error('New Telegram member join settings are disabled on this gateway.');
       }
     }

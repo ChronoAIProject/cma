@@ -238,32 +238,13 @@ fn validate_source(
                 ));
             }
             if !member_join_chat_ids.is_empty() {
-                let field = format!("{pointer}/member_join_chat_ids");
-                validate_nonempty_unique(member_join_chat_ids, &field, 16)?;
-                let AdmissionPolicy::Scoped {
-                    senders: IdentityAdmission::Open,
-                    chats: IdentityAdmission::Allowlist(allowed_chats),
-                    groups: GroupAdmission::All,
-                    ..
-                } = admission
-                else {
+                if !message_events {
                     return Err(ValidationError::new(
-                        &field,
-                        "member join events require open senders and explicitly allowed groups",
-                    ));
-                };
-                if !message_events
-                    || member_join_chat_ids.iter().any(|id| {
-                        !id.parse::<i64>()
-                            .is_ok_and(|number| number < 0 && number.to_string() == *id)
-                            || !allowed_chats.contains(id)
-                    })
-                {
-                    return Err(ValidationError::new(
-                        &field,
-                        "member join events require message_events and exact allowed Telegram group IDs",
+                        format!("{pointer}/member_join_chat_ids"),
+                        "native Telegram member join events require message_events",
                     ));
                 }
+                validate_telegram_member_join_chats(member_join_chat_ids, admission, pointer)?;
             }
             telegram::validate(bot_id, bot_username.as_deref(), admission, secrets, pointer)
         }
@@ -279,8 +260,22 @@ fn validate_source(
             verify_raw_event,
             lark_message_effects,
             lark_resources,
+            member_join_chat_ids,
             admission,
         } => {
+            if !member_join_chat_ids.is_empty() {
+                if *platform != Platform::Telegram
+                    || *trust_normalized
+                    || route_ids.is_empty()
+                    || bot_id.is_none()
+                {
+                    return Err(ValidationError::new(
+                        format!("{pointer}/member_join_chat_ids"),
+                        "requires a verified Telegram relay with bound routes and a pinned bot ID",
+                    ));
+                }
+                validate_telegram_member_join_chats(member_join_chat_ids, admission, pointer)?;
+            }
             if let Some(binding) = lark_message_effects {
                 let field = format!("{pointer}/lark_message_effects");
                 binding.validate(&field)?;
@@ -414,4 +409,36 @@ fn validate_source(
             Ok(())
         }
     }
+}
+
+fn validate_telegram_member_join_chats(
+    group_ids: &[String],
+    admission: &AdmissionPolicy,
+    pointer: &str,
+) -> Result<(), ValidationError> {
+    let field = format!("{pointer}/member_join_chat_ids");
+    validate_nonempty_unique(group_ids, &field, 16)?;
+    let AdmissionPolicy::Scoped {
+        senders: IdentityAdmission::Open,
+        chats: IdentityAdmission::Allowlist(allowed_chats),
+        groups: GroupAdmission::All,
+        ..
+    } = admission
+    else {
+        return Err(ValidationError::new(
+            &field,
+            "member join events require open senders and explicitly allowed groups",
+        ));
+    };
+    if group_ids.iter().any(|id| {
+        !id.parse::<i64>()
+            .is_ok_and(|number| number < 0 && number.to_string() == *id)
+            || !allowed_chats.contains(id)
+    }) {
+        return Err(ValidationError::new(
+            &field,
+            "member join events require exact allowed Telegram group IDs",
+        ));
+    }
+    Ok(())
 }

@@ -25,6 +25,8 @@ pub struct RelayAuthoringCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_telegram_member_joins_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_telegram_member_joins_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub native_discord_thread_history_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub native_telegram_topic_lifecycle_enabled: Option<bool>,
@@ -148,6 +150,7 @@ pub(super) fn view(state: &ManagementState) -> RelayAuthoringCapabilities {
                 && state.multi_consumer_writes_enabled,
         ),
         native_telegram_member_joins_enabled: Some(state.telegram_member_join_authoring()),
+        relay_telegram_member_joins_enabled: Some(state.relay_telegram_member_join_authoring()),
         native_telegram_topic_lifecycle_enabled: Some(
             state.native_telegram_topic_lifecycle_enabled
                 && state.native_telegram_durable_admission_enabled

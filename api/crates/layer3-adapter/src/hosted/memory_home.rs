@@ -76,7 +76,7 @@ pub(super) fn attach(
     if next.generation > previous.generation {
         runtime
             .authorities
-            .retain(|resource, _| !matches!(resource, ResourceKey::AgentProcess(_)));
+            .retain(|resource, _| !matches!(resource, ResourceKey::AgentProcess(..)));
         runtime.operations.retain(|_, operation| {
             !matches!(
                 operation.response,
