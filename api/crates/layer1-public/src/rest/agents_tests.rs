@@ -11,6 +11,7 @@ mod lifecycle_templates;
 pub(super) mod message_feedback;
 mod models;
 mod pagination;
+mod profile_readability;
 mod settings;
 mod shared_settings;
 pub(super) mod skill_result_fixture;

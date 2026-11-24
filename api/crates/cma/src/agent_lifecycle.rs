@@ -93,6 +93,7 @@ pub(crate) struct InlineAgentLifecycle {
     task_experience: OnceLock<Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>>,
     failure_metadata_enabled: OnceLock<bool>,
     repository_preflight: OnceLock<Arc<dyn repository_preflight::RepositoryReadiness>>,
+    managed_repository_preflight: OnceLock<bool>,
     worker_slots: Arc<tokio::sync::Semaphore>,
     tasks: LifecycleDrain,
 }
@@ -149,6 +150,7 @@ impl InlineAgentLifecycle {
             task_experience: OnceLock::new(),
             failure_metadata_enabled: OnceLock::new(),
             repository_preflight: OnceLock::new(),
+            managed_repository_preflight: OnceLock::new(),
             worker_slots: Arc::new(tokio::sync::Semaphore::new(crate::store::DISCOVERY_BATCH)),
             tasks: LifecycleDrain::new(crate::store::DISCOVERY_BATCH + 1),
         });
