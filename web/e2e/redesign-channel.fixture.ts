@@ -158,6 +158,30 @@ async function captureActivityErrors(page: Page, baseURL: string) {
   return { browserErrors: errors, layoutDiagnostics, layoutTelemetry, setPhase };
 }
 
+// Exercise the classifier with native browser events and the real telemetry script,
+// independently of the channel map's incidental layout deliveries.
+export async function setupActivityDiagnosticPage(page: Page, baseURL: string) {
+  const boundary = new LocalStartup();
+  await boundary.route(page, baseURL);
+  const diagnostics = await captureActivityErrors(page, baseURL);
+  await page.route(new URL('/event-gateway', baseURL).href, (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: '<!doctype html><title>Activity diagnostic control</title><script src="/browser-telemetry.js"></script>',
+    }),
+  );
+  await page.goto('/event-gateway');
+  await diagnostics.setPhase('reading Activity');
+  expect(await page.evaluate(() => typeof Reflect.get(window, 'cmaReportFatal'))).toBe('function');
+  expect(diagnostics.browserErrors).toEqual([]);
+  expect(diagnostics.layoutDiagnostics).toEqual([]);
+  expect(diagnostics.layoutTelemetry).toEqual([]);
+  expect(boundary.errors).toEqual([]);
+  expect(boundary.unexpected).toEqual([]);
+  expect(boundary.writes).toEqual([]);
+  return { boundary, ...diagnostics };
+}
+
 // Keep each synthetic stream open after its HTTP snapshot, without native reconnect timers.
 // The app still owns subscription, refresh, snapshot parsing and scope cleanup.
 async function localStreams(page: Page) {

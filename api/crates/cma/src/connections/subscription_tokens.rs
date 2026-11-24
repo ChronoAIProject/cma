@@ -8,6 +8,17 @@ use crate::auth::persistence::SecretValue;
 
 use super::SubscriptionError;
 
+#[path = "subscription_tokens_ingress.rs"]
+mod ingress;
+
+const MAX_CACHE_BYTES: usize = 128 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CacheDecodeError {
+    Refused(layer3_adapter::ingress_budget::AdmissionRefusal),
+    Account(SubscriptionError),
+}
+
 /// Native Codex owns the OAuth protocol. Only its private, encrypted cache enters
 /// this boundary; neither browser-submitted JWTs nor sandbox auth files do.
 #[derive(Debug, Clone)]
@@ -55,7 +66,7 @@ struct AccountClaims {
 
 impl SubscriptionTokens {
     pub(crate) fn from_native_cache(cache: &SecretValue) -> Result<Self, SubscriptionError> {
-        if cache.expose().len() > 128 * 1024 {
+        if cache.expose().len() > MAX_CACHE_BYTES {
             return Err(SubscriptionError::InvalidAccount);
         }
         let native: NativeAuth =
@@ -69,13 +80,15 @@ impl SubscriptionTokens {
         {
             return Err(SubscriptionError::InvalidAccount);
         }
-        let segments = token.access_token.split('.').collect::<Vec<_>>();
-        if segments.len() != 3 {
+        let mut segments = token.access_token.split('.');
+        let _header = segments.next();
+        let payload = segments.next().ok_or(SubscriptionError::InvalidAccount)?;
+        if segments.next().is_none() || segments.next().is_some() {
             return Err(SubscriptionError::InvalidAccount);
         }
         let decoded = Zeroizing::new(
             URL_SAFE_NO_PAD
-                .decode(segments[1])
+                .decode(payload)
                 .map_err(|_| SubscriptionError::InvalidAccount)?,
         );
         let claims: Claims =

@@ -55,7 +55,10 @@ fn golden(own_credential: bool, permission: PermissionLevel, effort: ReasoningEf
              name = \"CMA Loopback\"\n\
              base_url = \"http://127.0.0.1:9091\"\n\
              env_key = \"CMA_MODEL_PROXY_PLACEHOLDER\"\n\
-             wire_api = \"responses\"\n",
+             wire_api = \"responses\"\n\
+             request_max_retries = 2\n\
+             stream_max_retries = 1\n\
+             stream_idle_timeout_ms = 300000\n",
             effort.as_str()
         )
     }
@@ -87,6 +90,33 @@ fn config_goldens_cover_both_access_modes_permissions_and_all_efforts() {
             }
         }
     }
+}
+
+#[test]
+fn managed_stream_limits_bound_a_silent_model_call() {
+    use super::config::{
+        MANAGED_REQUEST_MAX_RETRIES, MANAGED_STREAM_IDLE_TIMEOUT_MS, MANAGED_STREAM_MAX_RETRIES,
+    };
+    // Codex re-runs a sampling request after an idle or failed stream, and
+    // each run retries its HTTP request first. The two limits multiply.
+    let attempts = MANAGED_STREAM_MAX_RETRIES + 1;
+    let silent_ms = attempts * MANAGED_STREAM_IDLE_TIMEOUT_MS;
+    assert!(
+        silent_ms <= 10 * 60 * 1000,
+        "silent stream bound {silent_ms} ms"
+    );
+    // A gateway timeout answers after about 100 s on each request.
+    let gateway_timeouts = attempts * (MANAGED_REQUEST_MAX_RETRIES + 1);
+    assert!(gateway_timeouts * 100_000 <= 10 * 60 * 1000);
+    // Codex's implicit defaults: six idle runs of 300 s, thirty timeouts.
+    assert!(silent_ms < 6 * 300_000 && gateway_timeouts < 6 * 5);
+
+    let own = render_config(
+        &options(true, PermissionLevel::Autonomous, ReasoningEffort::High),
+        &CodexConfig::default(),
+    )
+    .unwrap();
+    assert!(!own.contains("max_retries") && !own.contains("stream_idle_timeout_ms"));
 }
 
 #[test]

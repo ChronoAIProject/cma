@@ -4,6 +4,8 @@ import { useAuth } from './auth/context';
 import { BrandLoading } from './landing/LandingCharacter';
 import { ShellLoading } from './ui/Skeleton';
 import { SignInLanding } from './landing/SignInLanding';
+import { legalTermsOf } from './auth/types';
+import { LegalConsentDialog } from './auth/LegalConsentDialog';
 import { parseRoute, useAppRouter } from './routing/routes';
 import './styles/tokens.css';
 import './styles/design-platform.css';
@@ -42,7 +44,7 @@ const AUTHENTICATED_HOME_ROUTE: AppRoute = { kind: 'agent_manager' };
 
 export function App() {
   const browserRouter = useAppRouter();
-  const { state: identity } = useAuth();
+  const { state: identity, signOut } = useAuth();
   const identityScope =
     identity.status === 'authenticated'
       ? JSON.stringify([identity.user.id, [...identity.user.capabilities].sort()])
@@ -76,6 +78,18 @@ export function App() {
           onClose={() => browserRouter.closeUsage?.()}
         />
       </Suspense>
+    ) : null;
+  const legalTerms = identity.status === 'authenticated' ? identity.user.legalTerms : undefined;
+  const legalConsent =
+    identity.status === 'authenticated' &&
+    legalTerms !== undefined &&
+    client.legalConsent !== undefined ? (
+      <LegalConsentDialog
+        key={`${identity.user.id}:${legalTerms.version}`}
+        terms={legalTerms}
+        client={client.legalConsent}
+        onSignOut={() => void signOut()}
+      />
     ) : null;
   const redirectHome = identity.status === 'authenticated' && browserRouter.route.kind === 'home';
   useLayoutEffect(() => {
@@ -143,6 +157,7 @@ export function App() {
         <IdentityNotice />
         <AgentApp router={router} authEpoch={authEpoch} />
         {usageDialog}
+        {legalConsent}
       </div>
     );
   const navigateService = (next: AppRoute) =>
@@ -151,6 +166,7 @@ export function App() {
     <div className="service-shell">
       <IdentityNotice />
       {usageDialog}
+      {legalConsent}
       {home ? (
         <ServiceBody>
           <PortalFrame route={router.route} onNavigate={navigateService} {...sidebar}>
@@ -192,6 +208,7 @@ function HomeLanding({ router }: { readonly router: AppRouter }) {
   if (state.status === 'checking') return <BrandLoading />;
   return (
     <SignInLanding
+      legalTerms={legalTermsOf(state)}
       onSignIn={async (returnTo = '/agent-manager') => {
         if (state.status === 'authenticated') router.navigate(parseRoute(returnTo));
         else {
@@ -264,6 +281,7 @@ function AgentApp({
         landing
       >
         <SignInLanding
+          legalTerms={state.legalTerms}
           onSignIn={async (returnTo) => {
             retainFatherDraftForSignIn();
             await signIn(

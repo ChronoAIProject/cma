@@ -92,8 +92,13 @@ impl AgentWorker {
                     .publish_connection(agent, now + started.elapsed())
                     .await;
             }
-            self.finish_connection_publication(agent, &attachment, now + started.elapsed())
-                .await?;
+            self.finish_connection_publication(
+                agent,
+                &attachment,
+                context.as_ref().map(AgentContext::publication_parents),
+                now + started.elapsed(),
+            )
+            .await?;
             let identity = attachment.identity();
             let live_connected =
                 self.dependencies

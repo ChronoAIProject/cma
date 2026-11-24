@@ -1,8 +1,10 @@
 //! Authenticated peer relay. Public credentials and durable command IDs survive a hop.
 mod authentication;
 mod control;
-pub(crate) use control::prestop;
+pub(crate) use control::{prestop, DRAIN};
 mod environment_diagnostics;
+mod file_read;
+mod forward;
 mod http;
 mod ingress;
 mod live;
@@ -17,7 +19,7 @@ pub(crate) use queued_cancellation::{
     Charged as ChargedQueuedCancellation, DeferQueuedCancellationActivity,
 };
 mod reopen;
-pub(crate) use reopen::ReopenCall;
+pub(crate) use reopen::{output_refused, ReopenCall, OUTPUT_REFUSED};
 
 use environment_diagnostics::Refusal;
 use layer2_core::agent_ownership::{
@@ -52,6 +54,7 @@ pub(crate) struct Relay {
     public_access: std::sync::OnceLock<Arc<dyn public_access::PublicAuthorization>>,
     settings_owner_routing: std::sync::OnceLock<()>,
     client: reqwest::Client,
+    reopen_client: reqwest::Client,
     slots: Arc<Semaphore>,
     capacity: crate::config::RelayCapacityConfig,
     capacity_gate: std::sync::Mutex<()>,
@@ -88,13 +91,15 @@ impl Relay {
             authentication: authentication::Authentication::new(key),
             public_access: std::sync::OnceLock::new(),
             settings_owner_routing: std::sync::OnceLock::new(),
-            client: reqwest::Client::builder()
-                .connect_timeout(Duration::from_secs(2))
+            client: peer_client()
                 .read_timeout(Duration::from_secs(10))
-                .redirect(reqwest::redirect::Policy::none())
-                .no_proxy()
                 .build()
                 .map_err(|_| "peer relay client is unavailable")?,
+            // The owner sends its reply only after the retained conversation
+            // opens. The reopen call supplies the absolute response deadline.
+            reopen_client: peer_client()
+                .build()
+                .map_err(|_| "peer reopen client is unavailable")?,
             slots: Arc::new(Semaphore::new(capacity.limit)),
             capacity,
             capacity_gate: std::sync::Mutex::new(()),
@@ -237,6 +242,13 @@ impl Relay {
                 http::route,
             ))
     }
+}
+
+fn peer_client() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(2))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
 }
 
 #[cfg(test)]

@@ -28,6 +28,8 @@ pub enum AdapterError {
     InputAuthorityUnavailable(String),
     #[error("runtime unavailable: {0}")]
     Unavailable(String),
+    #[error("the desktop has stopped recovering")]
+    DesktopFailed,
     /// A create readiness observation; it does not prove runtime loss or permit replacement.
     #[error("native claim is not ready: {0}")]
     NativeClaimNotReady(crate::agent_sandbox::NativeClaimGuardReason),
@@ -71,6 +73,7 @@ impl AdapterError {
                 context(Self::InputAuthorityUnavailable, message, detail)
             }
             Self::Unavailable(message) => context(Self::Unavailable, message, detail),
+            Self::DesktopFailed => Self::DesktopFailed,
             held @ Self::RuntimeStartupHold(_) => held,
             guarded @ Self::NativeClaimNotReady(_) => guarded,
             Self::Rejected(message) => context(Self::Rejected, message, detail),
