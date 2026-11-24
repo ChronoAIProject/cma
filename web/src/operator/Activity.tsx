@@ -137,9 +137,23 @@ function ActivitySummarys({
   useEffect(() => {
     if (records.page !== undefined) onItemsLoaded(records.page.items);
   }, [records.page, onItemsLoaded]);
+  const count = records.page?.items.length ?? 0;
   return (
     <>
-      <RecordControls {...records} />
+      <RecordControls
+        {...records}
+        position={
+          records.page && !records.loading ? (
+            <span role="status">
+              Page {records.pageNumber} ·{' '}
+              {count === 0
+                ? '0 records'
+                : `Records ${records.offset + 1}–${records.offset + count}`}{' '}
+              · {records.next ? 'More records available' : 'Last page'}
+            </span>
+          ) : undefined
+        }
+      />
       <FailureNotice failure={records.error} />
       <Table
         label="Activity"
