@@ -49,7 +49,7 @@ if (command === 'openssl') {
   console.log(scenario === 'entropy-malformed' ? 'bad-suffix' : process.pid.toString(16).padStart(24, '0'));
   process.exit(0);
 }
-fs.appendFileSync(log, JSON.stringify({command,args,uri:process.env.CHRONO_TEST_MONGODB_URI,authenticatedUri:process.env.CMA_IM_TEST_MONGODB_URI})+'\\n');
+fs.appendFileSync(log, JSON.stringify({command,args,uri:process.env.CHRONO_TEST_MONGODB_URI,authenticatedUri:process.env.CMA_IM_TEST_MONGODB_URI,retriesEnv:process.env.NEXTEST_RETRIES,flakyResultEnv:process.env.NEXTEST_FLAKY_RESULT})+'\\n');
 if (command === 'cargo') {
   if (args[1] === 'run' && args.filter(value => value === '--no-tests').length !== 1) process.exit(24);
   if (args[1] === 'list') {
