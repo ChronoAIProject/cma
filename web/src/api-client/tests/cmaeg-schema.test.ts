@@ -575,6 +575,16 @@ it('keeps native Lark history consent optional and accepts bounded empty thread 
   expect(ConversationHistoryPageSchema(page)).toEqual(page);
 });
 
+it('accepts omitted, null, empty and populated Telegram member-join lists in writes', () => {
+  const source = { type: 'telegram', bot_id: '77', admission: { type: 'all' } };
+  expect(SourceRequestSchema(source)).toEqual(source);
+  for (const ids of [null, [], ['-100']]) {
+    const request = { ...source, member_join_chat_ids: ids };
+    expect(SourceRequestSchema(request)).toEqual(request);
+  }
+  expect(() => SourceSchema({ ...source, member_join_chat_ids: null })).toThrow();
+});
+
 it('keeps Telegram topic consent independent and discovers only close/reopen', () => {
   const source = { type: 'telegram', bot_id: '77', admission: { type: 'all' } };
   expect(SourceSchema(source)).toEqual(source);
