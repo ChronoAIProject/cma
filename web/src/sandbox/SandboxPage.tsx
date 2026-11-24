@@ -439,7 +439,9 @@ export function SandboxPage({
           ownerId={viewerId}
           revision={sandbox.revision}
           failed={sandbox.status === 'failed'}
-          disabled={busy || stale || needsConnections}
+          stale={stale}
+          lifecycle={sandbox.lifecycle}
+          disabled={busy || needsConnections}
           onAccepted={() => setRetry((value) => value + 1)}
         />
       ) : null}

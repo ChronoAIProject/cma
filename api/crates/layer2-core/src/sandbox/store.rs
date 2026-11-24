@@ -398,7 +398,7 @@ struct State {
     admission_control: crate::admission::AdmissionControl,
     admission_audit: Vec<crate::ActivityRecord>,
     admission_history: Vec<crate::admission::AdmissionChange>,
-    retained_reopen_receipts: HashMap<SandboxId, super::RetainedReopenReceipt>,
+    retained_reopen_receipts: HashMap<SandboxId, Vec<super::RetainedReopenReceipt>>,
     suggestions: HashMap<String, super::suggestions::SuggestionWork>,
     binding_association_index: std::collections::BTreeMap<(SubjectId, AgentId, String), ()>,
     binding_resets: HashMap<String, super::binding::ConversationResetState>,

@@ -38,7 +38,8 @@ impl RuntimeServices {
                     inspector.clone(),
                     config.features.retained_reopen_enabled,
                 )
-                .with_suspended_admission(config.features.retained_suspended_reopen_enabled),
+                .with_suspended_admission(config.features.retained_suspended_reopen_enabled)
+                .with_repeat_admission(config.features.retained_repeat_reopen_enabled),
             ),
             recovery: Arc::new(layer2_core::sandbox::RetainedRecoveryService::new(
                 stores.sandbox_model.clone(),
