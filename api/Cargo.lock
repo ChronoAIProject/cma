@@ -660,6 +660,7 @@ dependencies = [
  "axum",
  "pulldown-cmark",
  "reqwest",
+ "ring",
 ]
 
 [[package]]
