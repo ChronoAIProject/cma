@@ -178,7 +178,7 @@ def sweep(api, policy, apply=False, revision=None, *, recovery_only=False):
     for action in proposed:
         item, successor = action.entry, action.successor
         day = item.created.astimezone(timezone.utc).date()
-        kind = recovery_kind(action, today)
+        kind = recovery_kind(action, today, policy)
         if recovery_only and not kind:
             holds["outside-proven-recovery-scope"] += item.size
             continue
