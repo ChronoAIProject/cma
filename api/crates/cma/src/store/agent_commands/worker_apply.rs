@@ -158,7 +158,8 @@ async fn claim_next(
             return Ok(None);
         }
         if !fence_parent(store, agent.as_ref(), session).await? {
-            return Ok(None);
+            // An empty selection permits queued preparation in the worker.
+            return Err(CommandLedgerError::StaleClaim.into());
         }
         write(store, &command, revision, &lane, session).await?;
         return Ok(Some(command));
