@@ -361,15 +361,7 @@ impl ControlPlaneComposition {
             config.gateway.as_ref(),
             config.features,
         )?;
-        let event_workers = layer2_core::event_workers::EventWorkerProfileService::new(
-            stores.event_workers.clone(),
-            layer2_core::bots::PublishedBotProfiles::new(
-                stores.sandbox_profiles.clone(),
-                settings.clone(),
-                config.default_profiles.agent_model.clone(),
-            ),
-            "cma_codex".into(),
-        );
+        let event_workers = bots::event_worker_profiles(config, &stores, &settings);
         let metadata = routes::agent_metadata(&stores, resource_access.clone(), config);
         let accounts = routes::accounts(config, &stores, deletions, standing, projections.reads());
         let resource_routes = rest::profiles_router(profiles)
