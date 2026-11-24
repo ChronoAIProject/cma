@@ -4,6 +4,13 @@ use layer2_core::sandbox::binding::BindingAdmissionFence;
 use layer2_core::sandbox::store::{AgentAdmission, SandboxAdmission, WorkspaceAdmission};
 use mongodb::ClientSession;
 
+fn admission_filter(fence: &BindingAdmissionFence) -> Result<Document, SandboxStoreError> {
+    Ok(doc! {
+        "_id": &fence.binding_id, "revision": integer(fence.revision)?,
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+    })
+}
+
 impl BindingCollections {
     async fn fence(
         &self,
@@ -20,15 +27,21 @@ impl BindingCollections {
         fence: &BindingAdmissionFence,
         session: &mut ClientSession,
     ) -> Result<ProviderBinding, HelperError> {
+        self.write_admission_fence(fence, session).await?;
+        self.read_admission_binding(fence, session).await
+    }
+
+    pub(in crate::store) async fn write_admission_fence(
+        &self,
+        fence: &BindingAdmissionFence,
+        session: &mut ClientSession,
+    ) -> Result<(), HelperError> {
         // Every conversation mutation also writes this document, so this fence
         // serializes creation with both parent and conversation retirement.
         let result = self
             .records
             .update_one(
-                doc! {
-                    "_id": &fence.binding_id, "revision": integer(fence.revision)?,
-                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                },
+                admission_filter(fence)?,
                 doc! {"$inc": {"admission_fence": 1_i64}},
             )
             .session(&mut *session)
@@ -37,8 +50,16 @@ impl BindingCollections {
         if result.matched_count != 1 {
             return Err(SandboxStoreError::Conflict.into());
         }
+        Ok(())
+    }
+
+    async fn read_admission_binding(
+        &self,
+        fence: &BindingAdmissionFence,
+        session: &mut ClientSession,
+    ) -> Result<ProviderBinding, HelperError> {
         self.records
-            .find_one(doc! {"_id": &fence.binding_id})
+            .find_one(admission_filter(fence)?)
             .session(&mut *session)
             .await
             .map_err(HelperError::Driver)?
@@ -72,13 +93,13 @@ impl BindingCollections {
         Ok(())
     }
 
-    pub(in crate::store) async fn admit_agent(
+    pub(in crate::store) async fn validate_agent_admission(
         &self,
         admission: &AgentAdmission,
         session: &mut ClientSession,
     ) -> Result<(), HelperError> {
         if let Some(fence) = &admission.binding {
-            let binding = self.fence_transaction(fence, session).await?;
+            let binding = self.read_admission_binding(fence, session).await?;
             let proof = fence
                 .conversation
                 .as_ref()

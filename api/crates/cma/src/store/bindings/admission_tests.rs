@@ -106,7 +106,7 @@ async fn advance<S: BindingStore>(
         .unwrap();
 }
 
-async fn contract<S>(store: &S)
+async fn contract<S>(store: &S, mongo: Option<&MongoSandboxStore>)
 where
     S: BindingStore
         + SandboxStore
@@ -229,10 +229,46 @@ where
     );
     let created = store.admit_agent(input.clone()).await.unwrap();
     assert_eq!(created.creation().agent.id, conversation.agent_id);
-    assert!(matches!(
-        store.admit_agent(input.clone()).await,
-        Ok(AgentAdmissionResult::Existing(_))
-    ));
+    let binding_filter = doc! {"_id": &value.binding_id};
+    let hold_filter = doc! {"_id": parent.id.as_str()};
+    let binding_before = match mongo {
+        Some(mongo) => {
+            use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
+            let updated = mongo
+                .sandboxes
+                .update_one(
+                    hold_filter.clone(),
+                    doc! {"$set": {LEDGER_MAINTENANCE_FIELD: null}},
+                )
+                .await
+                .unwrap();
+            assert_eq!(updated.matched_count, 1);
+            Some(
+                mongo
+                    .bindings
+                    .records
+                    .find_one(binding_filter.clone())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            )
+        }
+        None => None,
+    };
+    let replay = store.admit_agent(input.clone()).await.unwrap();
+    assert!(matches!(replay, AgentAdmissionResult::Existing(_)));
+    assert_eq!(replay.creation(), created.creation());
+    if let (Some(mongo), Some(binding_before)) = (mongo, binding_before) {
+        assert_eq!(
+            mongo
+                .bindings
+                .records
+                .find_one(binding_filter)
+                .await
+                .unwrap(),
+            Some(binding_before)
+        );
+    }
     let mut retiring = conversation.clone();
     retiring.state = BindingConversationState::Retiring;
     retiring.revision += 1;
@@ -244,6 +280,14 @@ where
         store.admit_agent(input.clone()).await,
         Err(SandboxStoreError::Conflict)
     );
+    if let Some(mongo) = mongo {
+        use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
+        mongo
+            .sandboxes
+            .update_one(hold_filter, doc! {"$unset": {LEDGER_MAINTENANCE_FIELD: ""}})
+            .await
+            .unwrap();
+    }
 
     let other = BindingConversation::new(&value, "conversation_two".into(), NOW.into()).unwrap();
     store
@@ -276,13 +320,13 @@ where
 
 #[tokio::test]
 async fn memory_binding_fences_resource_admission_and_conversation_retirement() {
-    contract(&InMemorySandboxStore::default()).await;
+    contract(&InMemorySandboxStore::default(), None).await;
 }
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn mongo_binding_fences_resource_admission_and_conversation_retirement() {
     let (client, database, store) = fixture().await;
-    contract(&store).await;
+    contract(&store, Some(&store)).await;
     client.database(&database).drop().await.unwrap();
 }
