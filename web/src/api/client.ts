@@ -141,7 +141,11 @@ export interface AgentLifecycleOperationView {
   readonly error?: string;
   readonly failure?: import('@cma/client').AgentLifecycleFailure;
   readonly events: readonly AgentLifecycleOperationEvent[];
-  readonly connection?: { readonly services: readonly string[]; readonly target: ConnectionTarget };
+  readonly connection?: {
+    readonly services: readonly string[];
+    readonly target: ConnectionTarget;
+    readonly repository_access?: 'verification_unavailable';
+  };
 }
 
 export interface AgentLifecycleConnectionRequired {

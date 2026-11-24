@@ -96,6 +96,7 @@ pub(crate) struct FeatureFlags {
     pub paged_response_events: bool,
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
+    pub github_repository_preflight: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
     /// Gated writer for the stable proxy replay principal (reader floor landed first).
@@ -329,6 +330,10 @@ impl FeatureFlags {
             paged_response_events: flag(lookup, "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")?,
             v2_ui_transport: flag(lookup, "CHRONO_V2_UI_TRANSPORT_ENABLED")?,
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
+            github_repository_preflight: flag(
+                lookup,
+                "CHRONO_GITHUB_REPOSITORY_PREFLIGHT_ENABLED",
+            )?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
             nyxid_proxy: flag(lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
             nyxid_proxy_replay_principal: flag(
