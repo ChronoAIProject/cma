@@ -1,4 +1,9 @@
-use super::*;
+use std::sync::Arc;
+
+use layer2_core::StoreError;
+
+use super::MongoStores;
+use crate::store::creation_outcomes::CreationOutcomes;
 
 impl MongoStores {
     pub(crate) fn with_creation_writer_epoch(mut self, epoch: Option<&str>) -> Self {
@@ -11,11 +16,7 @@ impl MongoStores {
     pub(crate) async fn creation_outcomes(
         &self,
         config: crate::config::CreationOutcomesConfig,
-    ) -> Result<super::creation_outcomes::CreationOutcomes, StoreError> {
-        super::creation_outcomes::CreationOutcomes::open(
-            self.client.database(&self.database),
-            config,
-        )
-        .await
+    ) -> Result<CreationOutcomes, StoreError> {
+        CreationOutcomes::open(self.client.database(&self.database), config).await
     }
 }
