@@ -17,6 +17,8 @@ mod ingress_coordinator_tests;
 mod native_close_lane_tests;
 #[cfg(test)]
 mod resource_list_tests;
+mod rollout_tail;
+pub(super) use rollout_tail::{flag, GRADUATED};
 #[cfg(test)]
 mod segmentation_tests;
 #[cfg(test)]
@@ -134,35 +136,11 @@ pub(crate) struct FeatureFlags {
     pub sandbox_reconciliation_reserved_lane: bool,
     pub sandbox_binding_hold_metrics: bool,
 }
-/// Rollout gates graduated to default-on after their rollout completed in
-/// every environment. Unset means enabled; an explicit `false` remains the
-/// emergency off-switch, and any other value keeps the strict-boolean error.
-/// No startup validation ties these gates to another setting.
-pub(super) const GRADUATED: &[&str] = &[
-    "CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED",
-    "CHRONO_COMMAND_RECONCILE_PACING_ENABLED",
-    "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED",
-    "CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED",
-    "CHRONO_V2_UI_TRANSPORT_ENABLED",
-];
-
-/// Read one strict boolean rollout gate. Unset is off unless it graduated.
-pub(super) fn flag(
-    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
-    key: &str,
-) -> Result<bool, String> {
-    match lookup(key)?.as_deref() {
-        None => Ok(GRADUATED.contains(&key)),
-        Some("false") => Ok(false),
-        Some("true") => Ok(true),
-        _ => Err(format!("{key} must be true or false")),
-    }
-}
-
 impl FeatureFlags {
     pub(crate) fn from_lookup(
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
+        let tail = rollout_tail::read(lookup)?;
         let flags = Self {
             binding_diagnostics: flag(lookup, "CHRONO_BINDING_DIAGNOSTICS_ENABLED")?,
             session_guidance_v4: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED")?,
@@ -351,26 +329,17 @@ impl FeatureFlags {
             privacy_export_enabled: flag(lookup, "CHRONO_ACCOUNT_PRIVACY_EXPORT_ENABLED")?,
             bounded_usage_reads: flag(lookup, "CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED")?,
             capacity_recovery_enabled: flag(lookup, "CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED")?,
-            segment_adoption_enabled: flag(lookup, "CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED")?,
-            paged_response_events: flag(lookup, "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")?,
-            v2_ui_transport: flag(lookup, "CHRONO_V2_UI_TRANSPORT_ENABLED")?,
-            trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
-            github_repository_preflight: flag(
-                lookup,
-                "CHRONO_GITHUB_REPOSITORY_PREFLIGHT_ENABLED",
-            )?,
-            nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
-            nyxid_proxy: flag(lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
-            nyxid_proxy_replay_principal: flag(
-                lookup,
-                "CHRONO_NYXID_PROXY_REPLAY_PRINCIPAL_ENABLED",
-            )?,
-            service_authorization: flag(lookup, "CHRONO_SERVICE_AUTHORIZATION_ENABLED")?,
-            silent_sign_in: flag(lookup, "CHRONO_SILENT_SIGN_IN_ENABLED")?,
-            document_revocation_reserve: flag(
-                lookup,
-                "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
-            )?,
+            segment_adoption_enabled: tail.segment_adoption_enabled,
+            paged_response_events: tail.paged_response_events,
+            v2_ui_transport: tail.v2_ui_transport,
+            trigger_command_admission: tail.trigger_command_admission,
+            github_repository_preflight: tail.github_repository_preflight,
+            nyxid_resource_request: tail.nyxid_resource_request,
+            nyxid_proxy: tail.nyxid_proxy,
+            nyxid_proxy_replay_principal: tail.nyxid_proxy_replay_principal,
+            service_authorization: tail.service_authorization,
+            silent_sign_in: tail.silent_sign_in,
+            document_revocation_reserve: tail.document_revocation_reserve,
         };
         if flags.usage_strict_cursors_enabled && !flags.usage_signed_cursors_enabled {
             return Err(
