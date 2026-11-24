@@ -1,6 +1,23 @@
 use super::*;
 
 impl HostedAdapter {
+    pub(crate) async fn prove_agent_process_closed(
+        &self,
+        handle: &RuntimeHandle,
+        proof: &crate::wire::AgentProcessCloseProof,
+    ) -> crate::Result<()> {
+        self.known_state(handle).await?;
+        match self
+            .exchange(handle, RequestFrame::ProveAgentProcessClosed(proof.clone()))
+            .await?
+        {
+            ResponseFrame::ProveAgentProcessClosed(observed) if &observed == proof => Ok(()),
+            _ => Err(AdapterError::Rejected(
+                "runtime returned a mismatched Agent Close proof".into(),
+            )),
+        }
+    }
+
     pub(super) async fn exchange(
         &self,
         handle: &RuntimeHandle,

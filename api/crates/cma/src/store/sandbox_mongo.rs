@@ -163,6 +163,7 @@ pub struct MongoSandboxStore {
     /// The process's released-default authority. When set it supersedes the
     /// two fixed pins above, which remain only for store fixtures.
     pub(super) released: Option<std::sync::Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
+    pub(super) released_lanes: Option<super::released_runtimes::MongoReleasedRuntimes>,
     pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
     pub(crate) native_prepared_changed: std::sync::Arc<tokio::sync::Notify>,
@@ -202,6 +203,7 @@ impl MongoSandboxStore {
                 revision: 0,
                 agent: self.managed_runtime_version.clone().unwrap_or_default(),
                 machine: self.managed_machine_runtime_version.clone(),
+                lane_revisions: None,
             },
         }
     }
@@ -211,14 +213,6 @@ impl MongoSandboxStore {
         match &self.released {
             Some(released) => Some(released.snapshot().agent),
             None => self.managed_runtime_version.clone(),
-        }
-    }
-
-    /// The current machine-lane release, when the deployment has one.
-    pub(crate) fn managed_machine_release(&self) -> Option<String> {
-        match &self.released {
-            Some(released) => released.snapshot().machine,
-            None => self.managed_machine_runtime_version.clone(),
         }
     }
 
@@ -370,6 +364,7 @@ impl MongoSandboxStore {
             native_prepared: majority_collection(&database, super::native_prepared::COLLECTION),
             warm_runtime_version: None,
             managed_runtime_version: None,
+            released_lanes: None,
             managed_machine_runtime_version: None,
             released: None,
             warm_home_policy: None,

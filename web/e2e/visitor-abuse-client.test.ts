@@ -164,6 +164,9 @@ describe('TC-117 public API mechanics', () => {
     expect(text).not.toContain('unpublished');
     expect(text).not.toContain('local-fixture-credential');
     expect(JSON.parse(text)).toMatchObject({
+      schema: 'cma-tc117-scenario-v1',
+      run,
+      journalRun: client.journal.run,
       status: 'failed',
       metrics: { collateral_error_rate: 1 },
       counts: { collateralAttempts: 1, collateralErrors: 1 },

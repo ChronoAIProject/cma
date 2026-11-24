@@ -148,6 +148,16 @@ pub struct AgentCloseReceipt {
     pub agent_id: AgentSlot,
 }
 
+/// Read back the exact Open and Close on one observed supervisor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentProcessCloseProof {
+    pub runtime: crate::AgentRestartRuntime,
+    pub close: AgentCloseRequest,
+    pub open_request_sha256: String,
+    pub worktree_path: String,
+}
+
 /// Correlated proof that a stopped agent's home was removed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -187,6 +197,7 @@ pub enum WireOperation {
     RemoveAgentHome,
     OpenAgent,
     CloseAgent,
+    ProveAgentProcessClosed,
     CaptureAgent,
     Checkpoint,
     CheckpointForTeardown,
@@ -256,6 +267,7 @@ pub enum RequestFrame {
     RemoveAgentHome(FencedRequest<AgentHomeRemoveRequest>),
     OpenAgent(FencedRequest<AgentLaunch>),
     CloseAgent(FencedRequest<AgentCloseRequest>),
+    ProveAgentProcessClosed(AgentProcessCloseProof),
     CaptureAgent(AgentRef),
     Checkpoint(CheckpointRequest),
     CheckpointForTeardown(CheckpointHoldRequest),
@@ -321,6 +333,7 @@ impl RequestFrame {
             Self::RemoveAgentHome(_) => WireOperation::RemoveAgentHome,
             Self::OpenAgent(_) => WireOperation::OpenAgent,
             Self::CloseAgent(_) => WireOperation::CloseAgent,
+            Self::ProveAgentProcessClosed(_) => WireOperation::ProveAgentProcessClosed,
             Self::CaptureAgent(_) => WireOperation::CaptureAgent,
             Self::Checkpoint(_) => WireOperation::Checkpoint,
             Self::CheckpointForTeardown(_) => WireOperation::CheckpointForTeardown,
@@ -362,6 +375,7 @@ pub enum ResponseFrame {
     RemoveAgentHome(FencedReceipt<AgentHomeRemoveReceipt>),
     OpenAgent(FencedReceipt<AgentOpenReceipt>),
     CloseAgent(FencedReceipt<AgentCloseReceipt>),
+    ProveAgentProcessClosed(AgentProcessCloseProof),
     CaptureAgent(ConversationSnapshot),
     Checkpoint(CheckpointReceipt),
     CheckpointForTeardown(CheckpointHoldReceipt),

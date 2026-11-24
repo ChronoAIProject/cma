@@ -61,6 +61,7 @@ async fn publish_with(
         "work_lease_expires_at":&lease.expires_at,
         "work_next_fence":signed(current.work.next_fence,"next fence").map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
     };
+    owner_stop::fence_live_lease(&mut filter, mutation);
     let input = PublicationInput {
         operation: &operation,
         current,

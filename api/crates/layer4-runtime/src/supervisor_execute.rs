@@ -157,7 +157,8 @@ impl Supervisor {
             RequestFrame::Resources => Ok(ResponseFrame::Resources(
                 self.resources.sample(std::time::Instant::now()).into(),
             )),
-            RequestFrame::WorkspaceRemovalSupport(_)
+            RequestFrame::ProveAgentProcessClosed(_)
+            | RequestFrame::WorkspaceRemovalSupport(_)
             | RequestFrame::ReconcileWorkspaceRemoval(_)
             | RequestFrame::RuntimeStatus(_)
             | RequestFrame::ToolProxyStatus(_) => {

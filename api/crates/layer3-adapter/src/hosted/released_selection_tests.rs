@@ -93,6 +93,7 @@ async fn pool_selection_uses_the_admitted_release_with_this_builds_contract() {
         revision: 3,
         agent: released.clone(),
         machine: None,
+        lane_revisions: None,
     });
     adapter.select_native_pool(&admitted, &home).await.unwrap();
     adapter

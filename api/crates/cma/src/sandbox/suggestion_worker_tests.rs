@@ -375,6 +375,7 @@ async fn owner_scope_revision_during_reservation_blocks_the_old_credential() {
     f.store
         .commit(store::SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision: previous_revision,
             sandbox: Box::new(sandbox),
             event_at: at,

@@ -14,11 +14,12 @@ use layer3_adapter::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod candidate;
 mod current;
 mod defaults;
 mod released;
 mod retirement;
-mod startup;
+pub(crate) mod startup;
 mod supervision;
 mod telemetry;
 
@@ -104,6 +105,18 @@ impl PoolTarget {
 
 #[async_trait]
 pub(crate) trait PoolTargetStore: Send + Sync {
+    async fn candidate_protected(&self, _target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        Ok(false)
+    }
+    async fn begin_candidate_effect(&self, _target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        Ok(false)
+    }
+    async fn candidate_pending(&self, _target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        Ok(false)
+    }
+    async fn confirm_candidate_barrier(&self, _target: &PoolTarget) -> Result<(), WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
     async fn activate(&self, _id: &str) -> Result<(), WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
@@ -223,8 +236,14 @@ impl NativeWarmPools {
         let Some(target) = self.store.claim().await? else {
             return Ok(false);
         };
-        if target.retiring || !self.current_plan(&target)? {
+        if target.retiring {
             return self.retire_claimed(provider, target).await;
+        }
+        if !self.current_plan(&target)? {
+            if !self.store.candidate_protected(&target).await? {
+                return self.retire_claimed(provider, target).await;
+            }
+            return self.reconcile_candidate(provider, target).await;
         }
         reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing).await
     }
