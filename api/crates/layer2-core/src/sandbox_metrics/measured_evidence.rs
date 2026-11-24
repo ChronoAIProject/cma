@@ -35,6 +35,10 @@ impl MeasuredObservation {
         digest(self)
     }
 
+    pub fn attribution_id(&self) -> Result<String, EvidenceError> {
+        digest(&self.0.attribution())
+    }
+
     /// Call after looking up the physical sample ID. An equivalent attribution
     /// is a replay even when a subsequent proof has a different revision.
     pub fn verify_replay(&self, incoming: &Self) -> Result<(), EvidenceError> {
@@ -87,19 +91,38 @@ impl RetainedObservation {
     pub fn verify_retained_replay(&self, incoming: &Self) -> Result<(), EvidenceError> {
         self.0.verify_replay(&incoming.0)
     }
+
+    pub fn attribution_id(&self) -> Result<String, EvidenceError> {
+        digest(&self.0.attribution())
+    }
+}
+
+#[derive(PartialEq, Serialize)]
+struct Attribution<'a> {
+    physical_sample_id: &'a str,
+    source_value_be: [u8; 8],
+    owner_subject: &'a str,
+    sandbox_id: &'a str,
+    compute_lineage: Option<(Option<u64>, &'a str, &'a str)>,
 }
 
 impl ObservationV1 {
+    fn attribution(&self) -> Attribution<'_> {
+        Attribution {
+            physical_sample_id: &self.physical_sample_id,
+            source_value_be: self.source_value_be,
+            owner_subject: &self.binding.owner_subject,
+            sandbox_id: &self.binding.sandbox_id,
+            compute_lineage: (!self.metric.is_pvc()).then_some((
+                self.binding.runtime_generation,
+                self.binding.native_sandbox_uid.as_str(),
+                self.binding.claim_uid.as_str(),
+            )),
+        }
+    }
+
     fn verify_replay(&self, incoming: &Self) -> Result<(), EvidenceError> {
-        if self.physical_sample_id != incoming.physical_sample_id
-            || self.source_value_be != incoming.source_value_be
-            || self.binding.owner_subject != incoming.binding.owner_subject
-            || self.binding.sandbox_id != incoming.binding.sandbox_id
-            || (!self.metric.is_pvc()
-                && (self.binding.runtime_generation != incoming.binding.runtime_generation
-                    || self.binding.native_sandbox_uid != incoming.binding.native_sandbox_uid
-                    || self.binding.claim_uid != incoming.binding.claim_uid))
-        {
+        if self.attribution() != incoming.attribution() {
             return Err(EvidenceError::ConflictingObservation);
         }
         Ok(())

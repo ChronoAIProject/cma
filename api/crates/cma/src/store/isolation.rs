@@ -195,7 +195,7 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     "resource_revocation_operations_v1",
 ];
 const MEASURED_CUSTODY: &str = super::migrations::measured_custody::COLLECTION;
-const MEASURED_CUSTODY_ACTIONS: &[&str] = &["find", "insert", "listIndexes"];
+pub(super) const MEASURED_CUSTODY_ACTIONS: &[&str] = &["find", "insert", "listIndexes"];
 const INDEPENDENT_CUSTODY_COLLECTIONS: &[&str] = &[super::migrations::measured_custody::COLLECTION];
 
 // Billing custody is authorized separately from the frozen archive census.

@@ -30,6 +30,10 @@ type Result<T> = std::result::Result<T, &'static str>;
 const DEADLINE: Duration = Duration::from_secs(45);
 const IO: Duration = Duration::from_secs(5);
 
+pub(in crate::store) async fn measured_custody_ready(database: &mongodb::Database) -> Result<bool> {
+    Ok(measured_custody::inspect(database).await?.is_empty())
+}
+
 pub(crate) fn is_command(arguments: &[String]) -> bool {
     if index_toolkit::is_command(arguments) {
         return true;

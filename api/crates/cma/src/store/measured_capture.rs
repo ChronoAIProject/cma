@@ -10,11 +10,12 @@ use mongodb::{
 };
 
 use super::durability::majority_collection;
+use super::migrations::measured_custody::COLLECTION;
 use super::sandbox_mongo::{
     commit_transaction, is_confirmed_body_retry, start_transaction, CommitOutcome,
 };
 
-pub(crate) const COLLECTION: &str = "sandbox_billing_measured_observations_v1";
+pub(crate) mod command;
 const SCHEMA_VERSION: i64 = 1;
 const ATTEMPTS: usize = 3;
 const DEADLINE: Duration = Duration::from_secs(6);
@@ -150,23 +151,26 @@ impl MeasuredCapture {
                 Ok(dispute.map_or((Capture::Replay, primary), |row| (Capture::Disputed, row)))
             }
             Err(EvidenceError::ConflictingObservation) => {
-                let id = conflict_id(physical, digest);
-                let record = encode(&id, physical, "conflict", digest, payload);
+                let identity = observation
+                    .attribution_id()
+                    .map_err(|_| CaptureError::Corrupt)?;
+                let id = conflict_id(physical, &identity);
                 if let Some(current) = self
                     .rows
                     .find_one(doc! {"_id": &id})
                     .session(&mut *session)
                     .await?
                 {
-                    if current != record {
-                        return Err(CaptureError::Corrupt.into());
-                    }
-                } else {
-                    self.rows
-                        .insert_one(record.clone())
-                        .session(session)
-                        .await?;
+                    decode(&current, physical, true)?
+                        .verify_replay(observation)
+                        .map_err(|_| CaptureError::Corrupt)?;
+                    return Ok((Capture::Disputed, current));
                 }
+                let record = encode(&id, physical, "conflict", digest, payload);
+                self.rows
+                    .insert_one(record.clone())
+                    .session(session)
+                    .await?;
                 Ok((Capture::Disputed, record))
             }
             Err(_) => Err(CaptureError::Corrupt.into()),
@@ -249,8 +253,8 @@ fn sample_id(physical: &str) -> String {
     format!("sample:{physical}")
 }
 
-fn conflict_id(physical: &str, digest: &str) -> String {
-    format!("conflict:{physical}:{digest}")
+fn conflict_id(physical: &str, attribution: &str) -> String {
+    format!("conflict:{physical}:{attribution}")
 }
 
 fn encode(id: &str, physical: &str, kind: &str, digest: &str, payload: &str) -> Document {
@@ -269,16 +273,20 @@ fn decode(
         .get_str("evidence_sha256")
         .map_err(|_| CaptureError::Corrupt)?;
     let payload = row.get_str("payload").map_err(|_| CaptureError::Corrupt)?;
+    let evidence = RetainedObservation::decode(payload.as_bytes(), physical, digest)
+        .map_err(|_| CaptureError::Corrupt)?;
     let (id, kind) = if conflict {
-        (conflict_id(physical, digest), "conflict")
+        let identity = evidence
+            .attribution_id()
+            .map_err(|_| CaptureError::Corrupt)?;
+        (conflict_id(physical, &identity), "conflict")
     } else {
         (sample_id(physical), "sample")
     };
     if row != &encode(&id, physical, kind, digest, payload) {
         return Err(CaptureError::Corrupt);
     }
-    RetainedObservation::decode(payload.as_bytes(), physical, digest)
-        .map_err(|_| CaptureError::Corrupt)
+    Ok(evidence)
 }
 
 #[cfg(test)]

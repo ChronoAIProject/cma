@@ -3,7 +3,10 @@ use layer2_core::sandbox_metrics::{
     measured_evidence::capture_observations, Binding, BindingKind, ProofStatus, Range,
 };
 use layer3_adapter::sandbox_metrics::{decode_raw_export, Selection, SourceMetric};
-use mongodb::{options::IndexOptions, IndexModel};
+use mongodb::{
+    options::{ClientOptions, IndexOptions},
+    IndexModel,
+};
 
 fn observation(owner: &str, mapping_revision: u64, value: f64) -> MeasuredObservation {
     let selection = Selection {
@@ -24,13 +27,26 @@ fn observation(owner: &str, mapping_revision: u64, value: f64) -> MeasuredObserv
         "timestamps": [30_001], "values": [value],
     });
     let source = decode_raw_export(raw.to_string().as_bytes(), &selection).unwrap();
-    let binding = Binding {
+    let binding = fixture_binding(owner);
+    capture_observations(
+        &binding,
+        mapping_revision,
+        selection.metric,
+        &source,
+        Range { from: 20, to: 40 },
+    )
+    .unwrap()
+    .remove(0)
+}
+
+pub(super) fn fixture_binding(owner: &str) -> Binding {
+    Binding {
         id: "binding-synthetic".into(),
         schema_version: 1,
         revision: 1,
         deployment: "synthetic".into(),
-        cluster: selection.cluster,
-        namespace: selection.namespace,
+        cluster: "synthetic".into(),
+        namespace: "runtime".into(),
         native_sandbox_uid: "native-synthetic".into(),
         claim_uid: "claim-synthetic".into(),
         sandbox_id: "sbx_synthetic".into(),
@@ -50,16 +66,7 @@ fn observation(owner: &str, mapping_revision: u64, value: f64) -> MeasuredObserv
         observed_at: 40,
         proof_version: 1,
         proof_status: ProofStatus::Verified,
-    };
-    capture_observations(
-        &binding,
-        mapping_revision,
-        selection.metric,
-        &source,
-        Range { from: 20, to: 40 },
-    )
-    .unwrap()
-    .remove(0)
+    }
 }
 
 #[tokio::test]
@@ -77,7 +84,7 @@ async fn measured_capture_keeps_first_evidence_and_durable_disputes_across_repli
                 .keys(doc! {"physical_sample_id": 1, "kind": 1, "_id": 1})
                 .options(
                     IndexOptions::builder()
-                        .name("measured_physical_sample_v1".into())
+                        .name("measured_physical_sample_v1".to_owned())
                         .build(),
                 )
                 .build(),
@@ -99,7 +106,9 @@ async fn measured_capture_keeps_first_evidence_and_durable_disputes_across_repli
     assert_eq!(left_outcome.unwrap(), Capture::Disputed);
     assert_eq!(right_outcome.unwrap(), Capture::Disputed);
     let restarted = MeasuredCapture::new(&right.database(&name));
-    for sample in [&original, &mapped_again, &competing] {
+    let competing_again = observation("owner-b", 4, 8.0);
+    let conflict_before = a.rows.find_one(doc! {"kind": "conflict"}).await.unwrap();
+    for sample in [&original, &mapped_again, &competing, &competing_again] {
         assert_eq!(restarted.capture(sample).await.unwrap(), Capture::Disputed);
     }
     assert_eq!(
@@ -111,6 +120,20 @@ async fn measured_capture_keeps_first_evidence_and_durable_disputes_across_repli
         Some(before)
     );
     assert_eq!(restarted.rows.count_documents(doc! {}).await.unwrap(), 2);
+    assert_eq!(
+        restarted
+            .rows
+            .find_one(doc! {"kind": "conflict"})
+            .await
+            .unwrap(),
+        conflict_before
+    );
+    let new_competitor = observation("owner-b", 5, 9.0);
+    assert_eq!(
+        restarted.capture(&new_competitor).await.unwrap(),
+        Capture::Disputed
+    );
+    assert_eq!(restarted.rows.count_documents(doc! {}).await.unwrap(), 3);
     restarted
         .rows
         .update_one(doc! {"kind": "sample"}, doc! {"$set": {"payload": "{}"}})
@@ -121,4 +144,46 @@ async fn measured_capture_keeps_first_evidence_and_durable_disputes_across_repli
         Err(CaptureError::Corrupt)
     ));
     left.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn measured_capture_recovers_only_exact_evidence_after_an_uncertain_commit() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    let app_name = format!("measured-commit-{}", uuid::Uuid::new_v4().simple());
+    options.app_name = Some(app_name.clone());
+    let client = Client::with_options(options).unwrap();
+    let name = format!("cma_measured_commit_{}", uuid::Uuid::new_v4().simple());
+    let database = client.database(&name);
+    database.create_collection(COLLECTION).await.unwrap();
+    let store = MeasuredCapture::new(&database);
+    let sample = observation("owner-a", 1, 8.0);
+    admin
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint": "failCommand", "mode": "alwaysOn",
+            "data": {
+                "failCommands": ["commitTransaction"], "appName": app_name,
+                "errorLabels": ["UnknownTransactionCommitResult"],
+                "writeConcernError": {"code": 64, "errmsg": "fixture uncertain result"},
+            },
+        })
+        .await
+        .unwrap();
+    let uncertain = store.capture(&sample).await;
+    admin
+        .database("admin")
+        .run_command(doc! {"configureFailPoint": "failCommand", "mode": "off"})
+        .await
+        .unwrap();
+    crate::store::test_visibility::majority_barrier(&admin, &name).await;
+    assert!(matches!(
+        uncertain,
+        Ok(Capture::Inserted) | Err(CaptureError::Unavailable)
+    ));
+    assert_eq!(store.rows.count_documents(doc! {}).await.unwrap(), 1);
+    assert_eq!(store.capture(&sample).await.unwrap(), Capture::Replay);
+    database.drop().await.unwrap();
 }
