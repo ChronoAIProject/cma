@@ -575,6 +575,30 @@ it('keeps native Lark history consent optional and accepts bounded empty thread 
   expect(ConversationHistoryPageSchema(page)).toEqual(page);
 });
 
+it.each([
+  { type: 'telegram', bot_id: '77', admission: { type: 'all' } },
+  {
+    type: 'nyxid_relay',
+    platform: 'telegram',
+    issuer: 'https://fixture.example',
+    key_id: 'fixture-key',
+    route_ids: ['fixture-route'],
+    admission: { type: 'all' },
+  },
+])('accepts optional and nullable member-join lists when writing $type sources', (source) => {
+  expect(SourceRequestSchema(source)).toEqual(source);
+  for (const ids of [null, [], ['-100']]) {
+    const request = { ...source, member_join_chat_ids: ids };
+    expect(SourceRequestSchema(request)).toEqual(request);
+  }
+  const response =
+    source.type === 'nyxid_relay'
+      ? { ...source, jwks_url: 'https://fixture.example/keys' }
+      : source;
+  expect(SourceSchema(response)).toEqual(response);
+  expect(() => SourceSchema({ ...response, member_join_chat_ids: null })).toThrow();
+});
+
 it('keeps Telegram topic consent independent and discovers only close/reopen', () => {
   const source = { type: 'telegram', bot_id: '77', admission: { type: 'all' } };
   expect(SourceSchema(source)).toEqual(source);

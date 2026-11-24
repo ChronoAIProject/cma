@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::body::Body;
 use axum::http::{header, HeaderMap, StatusCode};
+use axum::response::IntoResponse as _;
 use axum::routing::any;
 use layer3_adapter::{CredentialFrame, RuntimeCredential};
 use tokio::sync::mpsc;
@@ -325,7 +326,7 @@ async fn github_response_cannot_return_scoped_credentials() {
 
 #[tokio::test]
 #[ignore = "requires the pinned genuine gh executable"]
-async fn genuine_cli_uses_managed_socket_for_rest_and_graphql() {
+async fn genuine_cli_status_rest_and_graphql_share_the_current_grant() {
     let executable = std::env::var("CMA_GH_CONTRACT_EXECUTABLE").expect("explicit gh executable");
     let version = tokio::process::Command::new(&executable)
         .arg("--version")
@@ -354,10 +355,12 @@ async fn genuine_cli_uses_managed_socket_for_rest_and_graphql() {
                 if granted {
                     (
                         StatusCode::OK,
+                        [("x-oauth-scopes", "public_repo, read:user")],
                         axum::Json(serde_json::json!({
                             "login":"viewer", "data":{"viewer":{"login":"viewer"}}
                         })),
                     )
+                        .into_response()
                 } else {
                     (
                         StatusCode::FORBIDDEN,
@@ -365,6 +368,7 @@ async fn genuine_cli_uses_managed_socket_for_rest_and_graphql() {
                             "message":"service not granted"
                         })),
                     )
+                        .into_response()
                 }
             }
         }));
@@ -419,6 +423,35 @@ async fn genuine_cli_uses_managed_socket_for_rest_and_graphql() {
                 format!("Bearer scoped-fixture-generation-{generation}")
             );
         }
+        let status = tokio::process::Command::new(&executable)
+            .env_clear()
+            .envs(&fixture.environment)
+            .env("HOME", &fixture.root)
+            .args(["auth", "status", "--hostname", "github.com"])
+            .output()
+            .await
+            .unwrap();
+        assert_eq!(
+            status.status.success(),
+            generation == 2,
+            "unexpected gh auth status: {}",
+            String::from_utf8_lossy(&status.stderr)
+        );
+        let expected_paths = if generation == 2 {
+            assert!(String::from_utf8_lossy(&status.stdout).contains("account viewer"));
+            &["graphql", ""][..]
+        } else {
+            &["graphql"][..]
+        };
+        for path in expected_paths {
+            let (observed_path, credential) = received.try_recv().unwrap();
+            assert_eq!(observed_path, format!("/api/v1/proxy/s/api-github/{path}"));
+            assert_eq!(
+                credential,
+                format!("Bearer scoped-fixture-generation-{generation}")
+            );
+        }
+        assert!(received.try_recv().is_err());
     }
     let output = tokio::process::Command::new(&executable)
         .env_clear()

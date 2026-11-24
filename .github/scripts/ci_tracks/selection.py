@@ -10,7 +10,6 @@ import subprocess
 import sys
 import tempfile
 
-from ci_events import full_ci_required
 from image_inputs import NAMES, changed_input_maps, image_inputs, recipes, validate_recipe_sources
 from git_comparison import check_sha, comparison_details, git
 from policy import Workspace, select
@@ -133,6 +132,8 @@ def determine(root, event, event_name, *, release=False):
 
 
 def determine_ci(root, event, event_name, repository):
+    from ci_events import full_ci_required
+
     full = full_ci_required(event, event_name, repository)
     result = determine(root, event, event_name, release=full and event_name == 'pull_request')
     if full:

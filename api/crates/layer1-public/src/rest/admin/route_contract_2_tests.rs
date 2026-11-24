@@ -259,3 +259,39 @@ async fn activity_summary_is_explicit_preserves_full_records_and_refuses_bad_que
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{suffix}");
     }
 }
+
+#[tokio::test]
+async fn activity_audit_filter_keeps_security_events_and_requires_read_authority() {
+    let fixture = fixture(true);
+    for row in [
+        ActivityRecord::new(ActivityAction::Read, ActivityOutcome::Succeeded),
+        ActivityRecord::new(
+            ActivityAction::Read,
+            ActivityOutcome::Refused("forbidden".into()),
+        ),
+        ActivityRecord::new(ActivityAction::Configure, ActivityOutcome::Succeeded),
+    ] {
+        fixture.activity.append(&row).await.unwrap();
+    }
+    let path = "/api/v1/admin/activity?view=summary&exclude_successful_reads=true";
+    let denied = send(&fixture.app, Method::GET, path, None, []).await;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let response = send(
+        &fixture.app,
+        Method::GET,
+        path,
+        None,
+        [Capability::ReadActivityLog],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    let items = body["items"].as_array().unwrap();
+    assert!(items.iter().any(|row| row["action"] == "configure"));
+    assert!(items
+        .iter()
+        .any(|row| row["outcome"]["status"] == "refused"));
+    assert!(items
+        .iter()
+        .all(|row| { row["action"] != "read" || row["outcome"]["status"] != "succeeded" }));
+}
