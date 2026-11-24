@@ -220,7 +220,12 @@ async fn ordinary_input_reserves_private_stop_with_the_runtime_switch_off() {
             .send(br#"{"method":"cma/codex/stop-exact-turn"}"#.to_vec())
             .await
     );
-    let prompt = br#"{"method":"session/prompt","id":"fixture"}"#.to_vec();
+    let mut ambiguous = br#"{"method":"cma/codex/stop-exact-turn","params":{"label":""#.to_vec();
+    ambiguous.push(0xff);
+    ambiguous.extend_from_slice(b"\"}}");
+    assert!(serde_json::from_slice::<serde_json::Value>(&ambiguous).is_err());
+    assert!(!bridge.send(ambiguous).await);
+    let prompt = br#"{"method":"session/prompt","id":"fixture","params":{"sessionId":"conversation","prompt":[{"type":"text","text":"cma/codex/stop-exact-turn"}]}}"#.to_vec();
     assert!(bridge.send(prompt.clone()).await);
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(2), events.recv())

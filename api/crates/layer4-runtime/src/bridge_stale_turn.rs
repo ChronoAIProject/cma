@@ -91,7 +91,7 @@ pub(super) fn is_untrusted_stop(frame: &[u8]) -> bool {
         {
             return false;
         }
-        serde_json::from_slice::<Value>(line).is_ok_and(|value| {
+        serde_json::from_slice::<Value>(line).map_or(true, |value| {
             is_stop(&value)
                 || value
                     .as_array()
