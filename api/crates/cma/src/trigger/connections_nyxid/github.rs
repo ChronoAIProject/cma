@@ -274,6 +274,7 @@ impl NyxidServiceConnectionBroker {
                 .github_detail(connection_id, &row.slug, &catalog_id, credential, deadline)
                 .await?;
             if !valid_browser_id(&catalog_id)
+                || !detail.active_oauth
                 || !detail
                     .granted_scopes
                     .is_some_and(|scopes| scopes.iter().any(|scope| scope == "repo"))

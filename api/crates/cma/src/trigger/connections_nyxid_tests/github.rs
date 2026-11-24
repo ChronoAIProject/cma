@@ -267,14 +267,21 @@ async fn verifies_only_the_selected_active_user_service_and_its_live_grant() {
         "is_active":true, "credential_source":{"type":"personal"}});
     let weak = json!({"id":"weak", "slug":"strong", "catalog_service_id":"github-catalog",
         "is_active":true, "credential_source":{"type":"personal"}});
+    let default = json!({"id":"default", "slug":"api-github",
+        "catalog_service_id":"github-catalog", "is_active":true,
+        "credential_source":{"type":"personal"}});
+    let strong_detail = json!({"id":"strong", "slug":"api-github-2",
+        "catalog_service_id":"github-catalog", "label":"Repository access",
+        "granted_scopes":["repo"], "credential_type":"oauth2", "is_active":true,
+        "status":"active", "connection_status":"active"});
     provider.state.credential_replies.lock().unwrap().extend([
-        ("strong".into(), Reply::json(json!({"id":"strong","slug":"api-github-2",
-            "catalog_service_id":"github-catalog","label":"Repository access","granted_scopes":["repo"]}))),
+        ("strong".into(), Reply::json(strong_detail.clone())),
         ("weak".into(), Reply::json(json!({"id":"weak","slug":"strong",
-            "catalog_service_id":"github-catalog","label":"Profile access","granted_scopes":["read:user"]}))),
+            "catalog_service_id":"github-catalog","label":"Profile access","granted_scopes":["read:user"],
+            "credential_type":"oauth2","is_active":true,"status":"active","connection_status":"active"}))),
     ]);
     provider.state.set_services_reply(Reply::json(
-        json!({"services":[strong.clone(), weak.clone()]}),
+        json!({"services":[default, strong.clone(), weak.clone()]}),
     ));
     let broker = broker(&provider, Tokens::available());
     let owner = SubjectId::new("visitor");
@@ -301,6 +308,43 @@ async fn verifies_only_the_selected_active_user_service_and_its_live_grant() {
     assert_eq!(proof.catalog_id(), "github-catalog");
     let reads = provider.state.github_proxy_reads.lock().unwrap().clone();
     assert_eq!(reads, vec![("github-catalog".into(), "strong".into()); 3]);
+
+    for (field, value) in [
+        ("status", Some(json!("revoked"))),
+        ("connection_status", Some(json!("expired"))),
+        ("credential_type", None),
+        ("is_active", None),
+        ("status", None),
+        ("connection_status", None),
+    ] {
+        let mut detail = strong_detail.clone();
+        let fields = detail.as_object_mut().unwrap();
+        match value {
+            Some(value) => {
+                fields.insert(field.into(), value);
+            }
+            None => {
+                fields.remove(field);
+            }
+        }
+        provider
+            .state
+            .credential_replies
+            .lock()
+            .unwrap()
+            .insert("strong".into(), Reply::json(detail));
+        assert!(matches!(
+            broker.verify_github_repo_connection(&owner, "strong").await,
+            Err(ServiceConnectionError::Refused)
+        ));
+    }
+    assert_eq!(*provider.state.github_proxy_reads.lock().unwrap(), reads);
+    provider
+        .state
+        .credential_replies
+        .lock()
+        .unwrap()
+        .insert("strong".into(), Reply::json(strong_detail));
 
     let mut inactive = strong.clone();
     inactive["is_active"] = json!(false);
