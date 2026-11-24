@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { AgentLifecycleCreateInput } from '../api/client';
 import {
   compileTaskTemplate,
@@ -23,6 +23,10 @@ const saveError =
 const discarded = new Set<
   (key: string, body: AgentLifecycleCreateInput, revision: string | undefined) => void
 >();
+const mountedDrafts = new Map<string, number>();
+export function taskDraftIsMounted(key: string) {
+  return (mountedDrafts.get(key) ?? 0) > 0;
+}
 
 export function discardSubmittedTaskDraft(
   owner: string,
@@ -57,6 +61,14 @@ export function useTaskDraft(
   allowV2 = false,
 ) {
   const key = taskDraftStorageKey(owner, workspaceId, sandboxId);
+  useLayoutEffect(() => {
+    mountedDrafts.set(key, (mountedDrafts.get(key) ?? 0) + 1);
+    return () => {
+      const count = (mountedDrafts.get(key) ?? 1) - 1;
+      if (count) mountedDrafts.set(key, count);
+      else mountedDrafts.delete(key);
+    };
+  }, [key]);
   const [initial] = useState(() => {
     const store = openTaskDraftStore(owner, workspaceId, sandboxId);
     try {

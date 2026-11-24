@@ -1,6 +1,6 @@
 //! Public projections and sanitized management refusals.
 use super::{
-    management::{ChannelListItem, ChannelResponse, EndpointResponse, ProviderResponse},
+    management::{ChannelListItem, ChannelResponse, ProviderResponse},
     problems::{no_store, problem},
 };
 use crate::channels::management::{ManagementError, ManagementState};
@@ -31,39 +31,7 @@ pub(super) fn channel_response(
         record_id: record_id.to_string(),
         version,
         provider,
-        endpoints: EndpointResponse {
-            native_lark_webhook_url: definition
-                .sources
-                .iter()
-                .any(|s| matches!(s, cmaeg_core::channel::Source::NativeLark(_)))
-                .then(|| {
-                    format!(
-                        "{}/v1/native-lark/{}",
-                        state.advertised_api_url(),
-                        channel_id
-                    )
-                }),
-            whatsapp_webhook_url: definition
-                .sources
-                .iter()
-                .any(|source| matches!(source, cmaeg_core::channel::Source::Whatsapp { .. }))
-                .then(|| format!("{}/v1/whatsapp/{}", state.advertised_api_url(), channel_id)),
-            nyxid_callback_url: format!(
-                "{}/v1/callbacks/{}",
-                state.advertised_api_url(),
-                channel_id
-            ),
-            telegram_webhook_url: definition
-                .sources
-                .iter()
-                .any(|source| matches!(source, cmaeg_core::channel::Source::Telegram { .. }))
-                .then(|| format!("{}/v1/telegram/{}", state.advertised_api_url(), channel_id)),
-            custom_event_url: format!(
-                "{}/v1/channels/{}/events",
-                state.advertised_api_url(),
-                channel_id
-            ),
-        },
+        endpoints: super::channel_endpoints::channel_endpoints(state, channel_id, definition),
         definition: super::schema::PublicChannelDefinition::new(definition, version),
     })
 }

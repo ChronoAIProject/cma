@@ -1,4 +1,4 @@
-import { Input } from '../ui/Input';
+import { ValidatedNumberInput } from './ValidatedNumberInput';
 
 export function WarmPoolNumber({
   label,
@@ -18,8 +18,8 @@ export function WarmPoolNumber({
   return (
     <label className="operator-field">
       <span>{label}</span>
-      <Input
-        type="number"
+      <ValidatedNumberInput
+        aria-label={label}
         required
         min={minimum}
         max={maximum}
