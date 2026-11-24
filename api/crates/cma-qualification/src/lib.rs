@@ -17,12 +17,16 @@ use tokio::{
 #[cfg(unix)]
 pub mod transport;
 
+mod renewal;
+pub use renewal::{RenewalArm, RenewalEvidence, RenewalOutcome};
+
 const MAX_ARMS: usize = 32;
 const MAX_LIFETIME: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Default)]
 pub struct Registry {
     entries: Arc<Mutex<HashMap<ControlContext, Entry>>>,
+    renewal: Arc<Mutex<Option<renewal::Entry>>>,
 }
 
 struct Entry {

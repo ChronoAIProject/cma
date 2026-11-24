@@ -1,5 +1,5 @@
 use super::*;
-use layer2_core::qualification::{ControlCheckpoint, ControlSchedule};
+use layer2_core::qualification::{ControlCheckpoint, ControlSchedule, ScheduleEffect};
 use serde_json::{json, Value};
 
 const BUILD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -81,7 +81,7 @@ async fn local_socket_replays_exact_commands_and_disconnect_releases_the_handler
     let digest = plan.digest;
     let context = plan.context;
     let registry = Registry::default();
-    let server = ControlServer::bind(fixture.socket(), plan, registry.clone(), None).unwrap();
+    let server = ControlServer::bind(fixture.socket(), plan, registry.clone(), None, None).unwrap();
     assert_eq!(
         fs::symlink_metadata(fixture.socket()).unwrap().mode() & 0o777,
         0o600

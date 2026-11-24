@@ -106,3 +106,16 @@ impl From<&crate::sandbox::store::AgentControlResult> for ControlSchedule {
         }
     }
 }
+
+/// Instrument only an already captured local renewal invocation.
+#[async_trait::async_trait]
+pub trait RenewalHook: Send + Sync {
+    fn selected(&self, authority: &std::sync::Arc<crate::agent_ownership::Authority>) -> bool;
+
+    async fn renew_selected(
+        &self,
+        authority: &std::sync::Arc<crate::agent_ownership::Authority>,
+    ) -> Option<
+        Result<crate::agent_ownership::OwnershipLease, crate::agent_ownership::OwnershipError>,
+    >;
+}

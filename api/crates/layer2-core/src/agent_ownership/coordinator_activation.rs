@@ -34,6 +34,8 @@ impl OwnershipCoordinator {
                 .then(Mutex::default),
             store,
             owned: Mutex::new(BTreeMap::new()),
+            #[cfg(feature = "qualification-hooks")]
+            qualification_renewal: std::sync::OnceLock::new(),
             acquisition: Mutex::new(()),
             cancelled_cursor: AtomicUsize::new(0),
             // Already passed: nothing is ready until registration sets it.
