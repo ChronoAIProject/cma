@@ -14,13 +14,12 @@ use layer1_public::rest::{
 };
 use layer2_core::{now_rfc3339, Capability, StoreError, SubjectId};
 use mongodb::{
-    bson::{doc, spec::BinarySubtype, Binary, Bson, DateTime},
+    bson::{doc, Binary, Bson, DateTime},
     error::{Error, ErrorKind, WriteFailure},
     options::{IndexOptions, ReturnDocument},
     Collection, Database, IndexModel,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VERSION};
 
@@ -392,49 +391,6 @@ fn same_request(
 }
 
 impl LifecycleRecord {
-    fn for_admission(
-        id: String,
-        owner: &SubjectId,
-        key: &str,
-        input: LifecycleInput,
-    ) -> Result<Self, StoreError> {
-        let bytes = serde_json::to_vec(&input.request)
-            .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
-        let fingerprint = Binary {
-            subtype: BinarySubtype::Generic,
-            bytes: Sha256::digest(&bytes).to_vec(),
-        };
-        let now = DateTime::now();
-        Ok(Self {
-            id,
-            owner: owner.to_string(),
-            key: key.to_owned(),
-            fingerprint,
-            creation_wire: None,
-            creation_fence: None,
-            input,
-            canary_admission: None,
-            canary_manifest_digest: None,
-            canary_redemption_key: None,
-            status: "queued".into(),
-            phase: "queued".into(),
-            events: Vec::new(),
-            sandbox_id: None,
-            agent_id: None,
-            repository_commit: None,
-            error: None,
-            failure: None,
-            connection: None,
-            lease_expires_at: None,
-            lease_token: None,
-            attempts: 0,
-            retry_at: None,
-            created_at: now,
-            updated_at: now,
-            document_schema_version: DOCUMENT_SCHEMA_VERSION,
-        })
-    }
-
     pub(crate) fn lease(&self) -> Result<LifecycleLease, StoreError> {
         Ok(LifecycleLease {
             id: self.id.clone(),

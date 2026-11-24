@@ -1,6 +1,7 @@
 //! Committed canary authority travels with the immutable lifecycle input.
 
 use super::*;
+use sha2::{Digest, Sha256};
 
 mod policy;
 pub(crate) use policy::{
