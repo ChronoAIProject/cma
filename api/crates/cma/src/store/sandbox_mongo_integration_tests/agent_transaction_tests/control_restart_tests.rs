@@ -10,6 +10,7 @@ use layer3_adapter::{
 use std::time::{Duration, SystemTime};
 
 mod cancellation;
+mod publication_tests;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]

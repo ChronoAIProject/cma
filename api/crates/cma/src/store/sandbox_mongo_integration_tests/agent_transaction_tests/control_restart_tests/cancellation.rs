@@ -258,7 +258,7 @@ async fn exercise_cancellation(segmented: bool, delete: bool) {
     client.database(&name).drop().await.unwrap();
 }
 
-async fn adopt(client: &Client, name: &str, store: &MongoSandboxStore, agent: &Agent) {
+pub(super) async fn adopt(client: &Client, name: &str, store: &MongoSandboxStore, agent: &Agent) {
     use crate::store::agent_log::log_document;
     for (seq, kind) in [
         (
