@@ -316,7 +316,7 @@ jobs:
         run: "python3 .github/scripts/export-ci-native-image.py \"$IMAGE_COMPONENT\" \"$GITHUB_SHA\" \"$RUNNER_TEMP/ci-native-image\""
       -
         name: "Install pinned image secret scanner"
-        if: "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
+        if: "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/tl/release/')))"
         timeout-minutes: 5
         env:
           CD_COMPONENT: "${{ matrix.component == 'api' && 'am' || matrix.component == 'cmaeg' && 'eg' || matrix.component }}"
@@ -325,7 +325,7 @@ jobs:
           bash .github/scripts/install-image-gitleaks.sh
       -
         name: "Scan tested image as staging publication does"
-        if: "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
+        if: "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/tl/release/')))"
         timeout-minutes: 30
         env:
           IMAGE_COMPONENT: "${{ matrix.component }}"

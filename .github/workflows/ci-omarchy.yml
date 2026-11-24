@@ -217,7 +217,7 @@ jobs:
         run: "python3 .github/scripts/export-ci-native-image.py runtime-omarchy \"$GITHUB_SHA\" \"$RUNNER_TEMP/ci-native-image\""
       -
         name: "Install pinned image secret scanner"
-        if: "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
+        if: "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/tl/release/')))"
         timeout-minutes: 5
         env:
           CD_COMPONENT: "runtime-omarchy"
@@ -226,7 +226,7 @@ jobs:
           bash .github/scripts/install-image-gitleaks.sh
       -
         name: "Scan tested Omarchy image as staging publication does"
-        if: "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
+        if: "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/tl/release/')))"
         timeout-minutes: 30
         run: "python3 -B .github/scripts/ci_image_secret_scan.py runtime-omarchy \"$RUNNER_TEMP/ci-native-image\" \"$GITHUB_SHA\""
       -

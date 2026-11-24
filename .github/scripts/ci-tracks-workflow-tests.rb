@@ -121,7 +121,7 @@ def require_runtime_inventory(documents)
   end
 end
 
-IMAGE_SCAN_IF = "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
+IMAGE_SCAN_IF = "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/tl/release/')))"
 
 # Staging CD refuses an image whose secret scan leaves a blocking finding. CI
 # runs the same gate on its exported image before retaining it, so a PR or
@@ -381,7 +381,7 @@ def validate(documents, actions)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
   require_check(events.keys.sort == %w[merge_group pull_request push], 'CI must cover PRs, develop pushes and merge groups')
-  require_check(events['push'] == {'branches' => ['develop']}, 'CI push must cover develop without path filters')
+  require_check(events['push'] == {'branches' => ['develop', 'tl/release/**']}, 'CI push must cover develop and isolated candidates without path filters')
   # Without a branch or path filter every queue entry creates the required
   # checks; a non-develop queue is refused by the selector, not left pending.
   require_check(events['merge_group'] == {'types' => ['checks_requested']}, 'CI must report on every merge group')
@@ -813,6 +813,10 @@ mutations = [
   ->(d) { d['ci'][true].delete('push') },
   ->(d) { d['ci'][true]['push']['paths'] = ['web/**'] },
   ->(d) { d['ci'][true]['pull_request']['branches'].delete('main') },
+  ->(d) { d['ci'][true]['push']['branches'].delete('tl/release/**') },
+  ->(d) { d['ci'][true]['push']['branches'] << '**' },
+  ->(d) { d['ci'][true]['push']['paths'] = ['api/**'] },
+  ->(d) { d['ci']['concurrency']['group'] = 'ci-shared' },
   ->(d) { d['ci']['jobs']['changes']['steps'].last['run'] = 'python3 -B .github/scripts/ci_tracks/selection.py' },
   ->(d) { d['ci']['jobs']['am']['if'] = 'false' },
   ->(d) { d['ci']['jobs']['eg']['if'] = 'false' },
