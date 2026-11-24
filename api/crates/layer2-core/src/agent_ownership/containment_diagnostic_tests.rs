@@ -24,6 +24,92 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Output {
 }
 
 #[tokio::test(start_paused = true)]
+async fn typed_cleanup_failure_keeps_its_class_and_hashed_receiver_lineage() {
+    use layer3_adapter::owner_protocol::{
+        ReceiverCleanup, ReceiverConfirmationCustody, ReceiverRevocation,
+        ReceiverSettlementFailure as Failure, ReceiverSettlementWatch, TransportAuthority,
+    };
+    use sha2::{Digest, Sha256};
+
+    struct ClassifiedReceiver(Failure);
+    #[async_trait::async_trait]
+    impl ReceiverRevocation for ClassifiedReceiver {
+        fn identity(&self) -> String {
+            "raw-receiver-sentinel".into()
+        }
+        fn sandbox_id(&self) -> Option<&str> {
+            Some("raw-sandbox-sentinel")
+        }
+        async fn revoke(&self) -> layer3_adapter::Result<()> {
+            panic!("containment must use typed settlement")
+        }
+        async fn settle_typed(
+            &self,
+            _: ReceiverConfirmationCustody,
+            _: &ReceiverSettlementWatch,
+        ) -> Result<ReceiverCleanup, Failure> {
+            Err(self.0)
+        }
+    }
+
+    for (failure, reason) in [
+        (Failure::Unavailable, "transport_unavailable"),
+        (Failure::Invalid, "authority_lost"),
+    ] {
+        let store = Arc::new(Store::default());
+        let manager = manager(store.clone(), false, 2).await;
+        let owner = manager
+            .acquire(&AgentId("raw-agent-sentinel".into()))
+            .await
+            .unwrap()
+            .unwrap();
+        owner
+            .register_receiver(Arc::new(ClassifiedReceiver(failure)))
+            .unwrap();
+        let output = Output::default();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_writer(output.clone())
+            .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let parent = tracing::info_span!("caller", identity = "raw-parent-sentinel");
+        let _entered = parent.enter();
+        let error = owner
+            .revoke_transports_after_local_drain()
+            .await
+            .unwrap_err();
+        assert_eq!(
+            matches!(error, OwnershipError::Invalid(_)),
+            failure == Failure::Invalid
+        );
+        assert_eq!(owner.receivers.lock().unwrap().len(), 1);
+        assert_eq!(
+            store
+                .release_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        let captured = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(captured.trim()).unwrap();
+        let fields = &event["fields"];
+        assert_eq!(fields["reason"], reason);
+        assert_eq!(fields["stage"], "receiver_revocation");
+        assert_eq!(fields["after_local_drain"], true);
+        for (key, raw) in [
+            ("agent_sha256", owner.token.agent_id.as_str()),
+            ("instance_sha256", owner.token.instance_id.as_str()),
+            ("receiver_sha256", "raw-receiver-sentinel"),
+            ("sandbox_sha256", "raw-sandbox-sentinel"),
+        ] {
+            assert_eq!(fields[key], format!("{:x}", Sha256::digest(raw.as_bytes())));
+            assert!(!captured.contains(raw), "{captured}");
+        }
+        assert!(!captured.contains("raw-parent-sentinel"), "{captured}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn containment_events_distinguish_proofs_and_exclude_raw_identity_error_and_parent_fields() {
     let store = Arc::new(Store::default());
     let manager = manager(store.clone(), false, 2).await;
