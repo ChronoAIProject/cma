@@ -126,6 +126,81 @@ async fn reservation(
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn held_sandbox_binding_replay_validates_authority_without_writing() {
+    use super::super::queued_cancellation_tests::set_test_hold;
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum ControlOutcome {
+        Edit(QueuedInputOutcome),
+        Cancel(QueuedCancellationOutcome),
+    }
+
+    for edit in [false, true] {
+        let (client, name) = database("binding_queued_control_hold").await;
+        let (store, agent, parent, _, _, _) = composed(&client, &name).await;
+        let (binding, _, _) = binding_for(&store, &agent).await;
+        let mut command = reservation(&store, &agent, &parent, &binding).await;
+        let source = record(store.reserve_command(command.clone()).await.unwrap());
+        command.envelope.command_id = AgentCommandId::generate();
+        command.envelope.command = AgentCommand::Interrupt;
+        command.envelope.request_fingerprint = command.envelope.command.fingerprint().unwrap();
+        command.key_sha256 = command_key_digest("binding-queued-control").unwrap();
+        command.response_id = None;
+        let request = QueuedCancellationReservation {
+            command,
+            target: QueuedCancellationTarget {
+                response_id: source.receipt.response_id.clone().unwrap(),
+                source_command_id: source.receipt.envelope.command_id.clone(),
+                expected_command_revision: source.revision,
+            },
+            observed_agent_revision: agent.revision,
+            agent_created_at: agent.created_at.clone(),
+        };
+        let apply = || async {
+            if edit {
+                store
+                    .edit_queued_input(QueuedInputReservation {
+                        cancellation: request.clone(),
+                        text: "Updated queued input".into(),
+                    })
+                    .await
+                    .map(ControlOutcome::Edit)
+            } else {
+                store
+                    .cancel_queued_response(request.clone())
+                    .await
+                    .map(ControlOutcome::Cancel)
+            }
+        };
+        let original = apply().await.unwrap();
+        set_test_hold(&store, &parent, true).await;
+        let key = doc! {"_id": &binding.binding_id};
+        let before = store.bindings.records.find_one(key.clone()).await.unwrap();
+        assert_eq!(apply().await.unwrap(), original);
+        assert_eq!(
+            store.bindings.records.find_one(key.clone()).await.unwrap(),
+            before
+        );
+
+        let rotated = binding
+            .rotate_credential("b".repeat(64), layer2_core::now_rfc3339())
+            .unwrap();
+        store
+            .save_binding(Some(binding.revision), rotated)
+            .await
+            .unwrap();
+        let after_rotation = store.bindings.records.find_one(key.clone()).await.unwrap();
+        assert_eq!(apply().await, Err(CommandLedgerError::Conflict));
+        assert_eq!(
+            store.bindings.records.find_one(key).await.unwrap(),
+            after_rotation
+        );
+        client.database(&name).drop().await.unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn binding_key_rotation_preserves_replay_and_deferred_native_dispatch() {
     let (client, name) = database("binding_command_rotation").await;
     let (store, agent, parent, execution, _, sends) = composed(&client, &name).await;

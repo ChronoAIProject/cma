@@ -49,6 +49,87 @@ fn applied(outcome: QueuedCancellationOutcome) -> AdmittedQueuedCancellation {
     }
 }
 
+pub(super) async fn set_test_hold(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+    held: bool,
+) -> Document {
+    use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
+
+    let update = if held {
+        doc! {"$set": {LEDGER_MAINTENANCE_FIELD: Bson::Null}}
+    } else {
+        doc! {"$unset": {LEDGER_MAINTENANCE_FIELD: ""}}
+    };
+    let key = doc! {"_id": sandbox.id.as_str()};
+    assert_eq!(
+        store
+            .sandboxes
+            .update_one(key.clone(), update)
+            .await
+            .unwrap()
+            .matched_count,
+        1
+    );
+    store.sandboxes.find_one(key).await.unwrap().unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn held_sandbox_refuses_fresh_queued_cancellation_and_replays_without_writes() {
+    let (client, name) = database("queued_cancellation_hold").await;
+    let (store, agent, parent, request, source) = queued(&name, &client).await;
+    let replica = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let held = set_test_hold(&store, &parent, true).await;
+    assert_eq!(
+        replica.cancel_queued_response(request.clone()).await,
+        Err(CommandLedgerError::Conflict),
+    );
+    assert_eq!(
+        store
+            .get_admitted_command(&source.scope(), &source.key_sha256)
+            .await
+            .unwrap(),
+        Some(source)
+    );
+    assert_eq!(
+        store.agent_commands.count_documents(doc! {}).await.unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .sandboxes
+            .find_one(doc! {"_id": parent.id.as_str()})
+            .await
+            .unwrap(),
+        Some(held)
+    );
+
+    set_test_hold(&store, &parent, false).await;
+    let cancelled = store.cancel_queued_response(request.clone()).await.unwrap();
+    let held = set_test_hold(&store, &parent, true).await;
+    let agent_key = doc! {"_id": agent.id.as_str()};
+    let before = store.agents.find_one(agent_key.clone()).await.unwrap();
+    assert_eq!(
+        replica.cancel_queued_response(request).await.unwrap(),
+        cancelled
+    );
+    assert_eq!(store.agents.find_one(agent_key).await.unwrap(), before);
+    assert_eq!(
+        store
+            .sandboxes
+            .find_one(doc! {"_id": parent.id.as_str()})
+            .await
+            .unwrap(),
+        Some(held)
+    );
+    assert_eq!(
+        store.agent_commands.count_documents(doc! {}).await.unwrap(),
+        2
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn queued_cancellation_commits_terminal_effect_and_receipt_across_replicas() {

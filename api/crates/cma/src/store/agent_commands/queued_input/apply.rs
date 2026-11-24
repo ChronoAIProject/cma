@@ -35,8 +35,9 @@ pub(super) async fn apply(
             Ok::<_, CommandLedgerError>((record, binding))
         })
         .transpose()?;
-    let Some((agent, parent)) =
-        fences::current_with_observation(store, &request.cancellation, session).await?
+    let Some((agent, parent, held)) =
+        fences::current_with_observation(store, &request.cancellation, retained.is_some(), session)
+            .await?
     else {
         return Ok(QueuedInputOutcome::StaleObservation);
     };
@@ -51,7 +52,9 @@ pub(super) async fn apply(
             .transpose()?
             .ok_or(CommandLedgerError::Corrupt)?;
         let result = request.replay(record, Some(binding), response)?;
-        fences::resources(store, &agent, &parent, session).await?;
+        if !held {
+            fences::resources(store, &agent, &parent, session).await?;
+        }
         return Ok(QueuedInputOutcome::Applied(Box::new(result)));
     }
     let mut response = store
