@@ -56,6 +56,7 @@ mod agent_worker_store;
 mod agent_worker_transaction;
 pub(crate) mod stale_turns;
 pub(crate) mod transaction_barrier;
+pub(crate) mod turn_timeouts;
 #[cfg(test)]
 pub(crate) use agent_worker_transaction::adoption_probe;
 #[cfg(test)]

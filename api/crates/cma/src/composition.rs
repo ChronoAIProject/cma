@@ -54,7 +54,6 @@ impl ControlPlaneComposition {
         let authoring_bounds = profile_policy.capacity_bounds;
         let profile_scanner = Arc::clone(&profile_policy.public_value_scanner);
         profiles::seed_profiles(&stores, config, &profile_policy).await?;
-        let sandbox_operators = access::sandbox_operators(&stores, &activity);
         let settings = profiles::platform_settings(config, &stores, &activity);
         let sandbox_policy = Arc::new(LiveSandboxPolicy::new(
             Arc::clone(&settings),
@@ -129,6 +128,7 @@ impl ControlPlaneComposition {
         .with_sessions(stores.sandbox_model.clone())
         .with_resource_access(resource_access.clone())
         .with_response_logs(stores.sandbox_model.response_log_reader())
+        .with_external_approval_review_origin(auth.approval_review_origin())
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
         let (projections, observations) =
             observation::prepare(config, &stores, &agent_manager, projections).await?;
@@ -183,7 +183,7 @@ impl ControlPlaneComposition {
         let admin = runtime_inventory::admin_state(
             config.features,
             Arc::clone(&settings),
-            sandbox_operators,
+            access::sandbox_operators(&stores, &activity),
             Arc::clone(&activity),
             Arc::clone(&adapter),
         )
