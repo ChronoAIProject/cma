@@ -4,6 +4,16 @@ use super::{Phase, Supervisor};
 use crate::failure::{Result, RuntimeError};
 
 impl Supervisor {
+    pub(crate) fn startup_policy_observation(
+        &self,
+        runtime: RuntimeStatus,
+    ) -> layer3_adapter::RuntimeStartupPolicyObservation {
+        layer3_adapter::RuntimeStartupPolicyObservation {
+            runtime,
+            legacy_journal_recovery_enabled: self.config.legacy_journal_recovery_enabled,
+        }
+    }
+
     pub(crate) async fn ledger_observation(
         &self,
         runtime: RuntimeStatus,

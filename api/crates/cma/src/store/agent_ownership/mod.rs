@@ -42,6 +42,20 @@ pub(in crate::store) enum FenceError {
     Driver(mongodb::error::Error),
 }
 
+pub(in crate::store) enum ObservedFenceError {
+    Read(mongodb::error::Error),
+    Fence(FenceError),
+}
+
+impl ObservedFenceError {
+    pub(in crate::store) fn into_fence_error(self) -> FenceError {
+        match self {
+            Self::Read(error) => FenceError::Driver(error),
+            Self::Fence(error) => error,
+        }
+    }
+}
+
 impl FenceError {
     /// Callers without their own bounded retry keep the historical classification.
     pub(in crate::store) fn into_store(self) -> SandboxStoreError {
@@ -143,9 +157,29 @@ impl MongoAgentOwnership {
         token: &OwnershipToken,
         session: &mut ClientSession,
     ) -> Result<(), FenceError> {
+        self.fence_transaction_observed(token, session)
+            .await
+            .map_err(ObservedFenceError::into_fence_error)
+    }
+
+    pub(super) async fn fence_transaction_observed(
+        &self,
+        token: &OwnershipToken,
+        session: &mut ClientSession,
+    ) -> Result<(), ObservedFenceError> {
         self.open_with_read(&token.instance_id, session)
             .await
-            .map_err(FenceError::Driver)?;
+            .map_err(ObservedFenceError::Read)?;
+        self.fence_transaction_writes(token, session)
+            .await
+            .map_err(ObservedFenceError::Fence)
+    }
+
+    async fn fence_transaction_writes(
+        &self,
+        token: &OwnershipToken,
+        session: &mut ClientSession,
+    ) -> Result<(), FenceError> {
         let member = self
             .members
             .update_one(

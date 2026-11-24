@@ -33,6 +33,7 @@ it('retains separate producer drafts and secrets across type switches without se
   choose('Producer 1 connection type', 'Direct Telegram bot');
   expect(screen.getByLabelText('Bot ID')).toHaveValue('123456');
   expect(screen.getByLabelText('Telegram bot token')).toHaveValue('synthetic-bot-value');
+  change('Channel name', 'Recovery channel');
   change('Provider agent key', 'synthetic-provider-value');
   fireEvent.submit(screen.getByRole('button', { name: 'Create channel' }).closest('form')!);
   await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
@@ -63,6 +64,7 @@ it('clears a rejected editable error when the producer type changes', async () =
   vi.stubGlobal('fetch', fetcher);
   render(<ChannelEditor onDone={vi.fn()} denied={vi.fn()} />);
   choose('Producer 1 connection type', 'Direct Telegram bot');
+  change('Channel name', 'Recovery channel');
   change('Bot ID', '123');
   change('Provider agent key', 'synthetic-provider-value');
   fireEvent.submit(screen.getByRole('button', { name: 'Create channel' }).closest('form')!);
@@ -80,6 +82,7 @@ it('keeps unknown-write errors and the original request through edits and retry,
   vi.stubGlobal('fetch', fetcher);
   render(<ChannelEditor onDone={vi.fn()} denied={vi.fn()} />);
   choose('Producer 1 connection type', 'Direct Telegram bot');
+  change('Channel name', 'Recovery channel');
   change('Bot ID', '123');
   change('Provider agent key', 'synthetic-provider-value');
   fireEvent.submit(screen.getByRole('button', { name: 'Create channel' }).closest('form')!);
@@ -91,7 +94,7 @@ it('keeps unknown-write errors and the original request through edits and retry,
   expect(fetcher.mock.calls[1]![0]).toBe(fetcher.mock.calls[0]![0]);
   for (const key of ['method', 'body', 'headers'])
     expect(fetcher.mock.calls[1]![1][key]).toEqual(fetcher.mock.calls[0]![1][key]);
-  expect(unload()).toBe(false);
+  await waitFor(() => expect(unload()).toBe(false));
 });
 
 it('clears the rejected field validity and description after correction', async () => {
@@ -103,6 +106,7 @@ it('clears the rejected field validity and description after correction', async 
   vi.stubGlobal('fetch', fetcher);
   render(<ChannelEditor onDone={vi.fn()} denied={vi.fn()} />);
   choose('Producer 1 connection type', 'Direct Telegram bot');
+  change('Channel name', 'Recovery channel');
   change('Bot ID', '123');
   change('Provider agent key', 'synthetic-provider-value');
   fireEvent.submit(screen.getByRole('button', { name: 'Create channel' }).closest('form')!);

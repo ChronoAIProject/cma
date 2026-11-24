@@ -2,6 +2,8 @@
 use super::*;
 use crate::store::HEARTBEAT;
 
+pub(super) const PREPARATION_FAILED: &str = "Agent runtime preparation failed";
+
 // Warm creation should observe committed readiness promptly. Bound the faster
 // polling window; sequential reads and the worker-slot limit cap its load.
 pub(super) fn readiness_delay(started: tokio::time::Instant) -> Duration {
@@ -61,7 +63,7 @@ impl InlineAgentLifecycle {
                     | AgentStatus::Paused => return Ok(()),
                     _ => {
                         return Err(AgentLifecycleProvisioningError::Conflict(
-                            "Agent runtime preparation failed".into(),
+                            PREPARATION_FAILED.into(),
                         ))
                     }
                 }
