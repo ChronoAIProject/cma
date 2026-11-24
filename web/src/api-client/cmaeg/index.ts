@@ -15,6 +15,8 @@ import { CmaegTools } from './tools.js';
 import type { CreateThreadRequest, ManageThreadRequest, ThreadListView } from './types.js';
 import {
   CmaegActivity,
+  type ChannelActivityHistoryDetailsOptions,
+  type ChannelActivityHistoryOptions,
   type ChannelActivityOptions,
   type EventMediaResponseOptions,
   type StreamChannelActivityOptions,
@@ -120,6 +122,18 @@ export class Cmaeg {
   }
   getChannelActivity(id: string, options?: ChannelActivityOptions) {
     return this.#activity.getChannelActivity(id, options);
+  }
+  /** Fetch one page of retained receipts, with coverage for the requested range. */
+  getChannelActivityHistory(id: string, options: ChannelActivityHistoryOptions) {
+    return this.#activity.getChannelActivityHistory(id, options);
+  }
+  /** Fetch one page of detail fragments using an item's opaque history_event_id. */
+  getChannelActivityHistoryDetails(
+    id: string,
+    historyEventId: string,
+    options: ChannelActivityHistoryDetailsOptions,
+  ) {
+    return this.#activity.getChannelActivityHistoryDetails(id, historyEventId, options);
   }
   getEventMediaResponses(id: string, eventId: string, options?: EventMediaResponseOptions) {
     return this.#activity.getEventMediaResponses(id, eventId, options);
@@ -256,6 +270,8 @@ export type { EventOptions, StreamEventOptions } from './events.js';
 export type { GatewayStreamEvent, GatewayMediaStreamEvent } from './stream.js';
 export type {
   EventMediaResponseOptions,
+  ChannelActivityHistoryDetailsOptions,
+  ChannelActivityHistoryOptions,
   ChannelActivityOptions,
   StreamChannelActivityOptions,
   ChannelActivityEvent,
