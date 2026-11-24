@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 315,
+  "openapi_operations": 316,
   "operations": {
     "PUT /api/v1/admin/runtime-canary-policy": {
       "classification": "openapi",
@@ -208,6 +208,16 @@
     "GET /api/v1/admin/activity": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/activity/actors": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/activity.rs# The actor search requires Activity and directory read capabilities and exposes bounded identity options.",
       "required_problems": [
         "forbidden",
         "invalid_admin_request",

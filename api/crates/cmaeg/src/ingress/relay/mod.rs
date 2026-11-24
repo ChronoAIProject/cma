@@ -18,6 +18,7 @@ mod seeded_rng;
 pub(crate) mod telegram;
 mod telegram_managed;
 pub(crate) mod telegram_media;
+pub(crate) mod telegram_member_joins;
 mod verified_media;
 pub mod verify;
 mod whatsapp;
