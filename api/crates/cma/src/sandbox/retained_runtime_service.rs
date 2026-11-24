@@ -175,21 +175,33 @@ impl RetainedRuntimeService {
         owner: &SubjectId,
         grant: RetainedRuntimeGrant,
     ) -> Result<RetainedRuntimeReceipt, CanaryRefusal> {
-        let (current, preflight_error) = if grant.receipt.is_some() {
-            (None, None)
+        let preflight = if grant.receipt.is_some() {
+            Ok(None)
         } else {
-            match self.fresh_redemption_policy(owner, &grant).await {
-                Ok(policy) => (Some(policy), None),
-                Err(error) => (None, Some(error)),
-            }
+            self.fresh_redemption_policy(owner, &grant).await.map(Some)
+        };
+        self.finish_redemption(grant.request, preflight).await
+    }
+
+    async fn finish_redemption(
+        &self,
+        request: RetainedRuntimeTransitionRequest,
+        preflight: Result<Option<RetainedRuntimeGrantPolicy<'_>>, CanaryRefusal>,
+    ) -> Result<RetainedRuntimeReceipt, CanaryRefusal> {
+        let (current, preflight_error) = match preflight {
+            Ok(policy) => (policy, None),
+            Err(error) => (None, Some(error)),
         };
         // Without fresh policy the store can only read back an exact committed
         // receipt. A concurrent redemption can win after the initial grant read.
         let receipt = self
             .store
-            .redeem_retained_runtime_grant(&self.database, grant.request, current)
+            .redeem_retained_runtime_grant(&self.database, request, current)
             .await
-            .map_err(|error| preflight_error.unwrap_or_else(|| refusal(error)))?;
+            .map_err(|error| match refusal(error) {
+                CanaryRefusal::Conflict => preflight_error.unwrap_or(CanaryRefusal::Conflict),
+                error => error,
+            })?;
         Ok(RetainedRuntimeReceipt {
             operation_id: receipt.operation_id,
             successor_generation: receipt.successor_generation,

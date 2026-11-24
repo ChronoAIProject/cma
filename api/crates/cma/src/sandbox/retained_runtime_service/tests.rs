@@ -3,6 +3,7 @@ use crate::store::sandbox_maintenance::{
     mongo_integration_tests::database, retained_transition::tests::retained_fixture,
 };
 use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
+use mongodb::bson::doc;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
@@ -49,6 +50,19 @@ async fn retained_runtime_grant_owner_reconciles_when_the_other_redemption_wins_
         .await
         .unwrap();
     assert!(loaded.receipt.is_none());
+    assert!(matches!(
+        service
+            .finish_redemption(loaded.request.clone(), Err(CanaryRefusal::Closed))
+            .await,
+        Err(CanaryRefusal::Closed),
+    ));
+    assert!(service
+        .store
+        .read_retained_runtime_grant(&sandbox.owner, &grant.request.grant_id)
+        .await
+        .unwrap()
+        .receipt
+        .is_none());
     let winner = service
         .store
         .redeem_retained_runtime_grant(
@@ -64,12 +78,27 @@ async fn retained_runtime_grant_owner_reconciles_when_the_other_redemption_wins_
         )
         .await
         .unwrap();
-    assert!(matches!(
-        service
-            .fresh_redemption_policy(&sandbox.owner, &loaded)
-            .await,
-        Err(CanaryRefusal::Conflict),
-    ));
+    let preflight = service
+        .fresh_redemption_policy(&sandbox.owner, &loaded)
+        .await
+        .map(Some);
+    assert!(matches!(&preflight, Err(CanaryRefusal::Conflict)));
+    let admin = client.database("admin");
+    admin
+        .run_command(doc! {
+            "configureFailPoint": "failCommand", "mode": {"times": 1},
+            "data": {"failCommands": ["find"], "errorCode": 2_i32},
+        })
+        .await
+        .unwrap();
+    let failed_lookup = service
+        .finish_redemption(loaded.request.clone(), preflight)
+        .await;
+    admin
+        .run_command(doc! {"configureFailPoint": "failCommand", "mode": "off"})
+        .await
+        .unwrap();
+    assert!(matches!(failed_lookup, Err(CanaryRefusal::Unavailable)));
     let replay = service
         .redeem_loaded_grant(&sandbox.owner, loaded)
         .await
