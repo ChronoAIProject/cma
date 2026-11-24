@@ -129,7 +129,7 @@ pub(super) fn credential(sandbox_id: &str, plaintext: &str) -> CredentialMateria
     }
 }
 
-pub(super) fn encryption_key() -> AuthEncryptionKey {
+pub(in crate::store) fn encryption_key() -> AuthEncryptionKey {
     AuthEncryptionKey::from_base64("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
         .expect("test encryption key")
 }
