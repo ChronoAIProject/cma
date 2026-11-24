@@ -48,6 +48,7 @@ mod ownership_tests;
 mod session_ceilings_tests;
 mod stale_turn_tests;
 mod supervision_tests;
+mod turn_timeout_tests;
 
 struct Authority(Mutex<Result<Caller, CommandAuthorizationError>>);
 #[async_trait::async_trait]
