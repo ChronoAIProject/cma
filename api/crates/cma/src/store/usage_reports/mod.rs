@@ -3,8 +3,6 @@ mod admission;
 mod allocation_deadline;
 pub(super) use allocation_deadline::{allocation_operation, ALLOCATION_DB_DEADLINE};
 mod budget;
-mod chart_encoding;
-mod charts;
 mod control;
 mod controlled_updates;
 mod diagnostics;
@@ -26,7 +24,8 @@ mod view_authority;
 mod view_finish;
 mod views;
 mod work;
-pub(crate) use charts::chart_documents;
+pub(crate) use cma_am_reporting::{chart_documents, unavailable};
+use cma_am_reporting::{decode, encode, expires};
 pub(crate) use views::ViewLease;
 pub(crate) use work::ReportLease;
 
@@ -37,7 +36,6 @@ use mongodb::{
     options::ClientOptions,
     Client, Collection, Database,
 };
-use serde::{de::DeserializeOwned, Serialize};
 use std::{sync::Arc, time::Duration};
 
 pub(crate) const JOBS: &str = "sandbox_usage_reports";
@@ -180,35 +178,12 @@ fn configure_pool(options: &mut ClientOptions, pool_size: u32) {
     options.connect_timeout = Some(DB_DEADLINE);
     options.server_selection_timeout = Some(DB_DEADLINE);
 }
-pub(crate) fn unavailable(error: impl std::fmt::Display) -> MetricsError {
-    tracing::warn!(error=%error,"reporting store unavailable");
-    MetricsError::Unavailable
-}
-pub(super) fn encode<T: Serialize>(record: &T) -> Result<mongodb::bson::Bson> {
-    mongodb::bson::serialize_to_bson(record).map_err(unavailable)
-}
-pub(super) fn decode<T: DeserializeOwned>(document: &Document) -> Result<T> {
-    if document.get_i64("document_schema_version").ok() != Some(1) {
-        return Err(MetricsError::Unavailable);
-    }
-    mongodb::bson::deserialize_from_bson(
-        document
-            .get("record")
-            .cloned()
-            .ok_or(MetricsError::Unavailable)?,
-    )
-    .map_err(unavailable)
-}
 pub(crate) fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
 }
-pub(super) fn expires(at: u64) -> mongodb::bson::DateTime {
-    mongodb::bson::DateTime::from_millis((at * 1000) as i64)
-}
-
 #[cfg(test)]
 mod tests;
 
