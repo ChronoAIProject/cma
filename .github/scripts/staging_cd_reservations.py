@@ -15,6 +15,11 @@ KNOWN_DEPLOYABLES = known_components()
 FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump", "run_id", "run_attempt"}
 # A pending tag and its final belong to one owner exactly when these agree.
 OWNER = ("source", "run_id", "run_attempt", "version", "pr")
+# GitHub acknowledges a ref push before its REST ref listing shows it, so a
+# readback right after the push can still see the old state for seconds. Re-read
+# only that lag, after each delay in turn; never repeat the write or hide an
+# API error.
+READBACK_SETTLE_SECONDS = (1, 2, 4, 8)
 # One finalization prunes at most this many burned reservations; the next prunes the rest.
 PRUNE_LIMIT = 128
 # No pruning Git call starts with less of the finalization budget than this.
@@ -108,6 +113,16 @@ class Reservations:
         require(len({pending_name(item) for item in result}) == len(result), "Duplicate pending version")
         return result
 
+    def settled_list(self, component, done):
+        """The lane's reservations once done(rows) holds, else the last read of a bounded settle."""
+        rows = self.list(component)
+        for delay in READBACK_SETTLE_SECONDS:
+            if done(rows):
+                break
+            self.sleep(delay)
+            rows = self.list(component)
+        return rows
+
     def inventory(self, key, rows=None):
         """One lane's validated reservations, each with the tag object its live ref names."""
         if rows is None:
@@ -180,7 +195,8 @@ class Reservations:
             return False
         require(any(line.startswith("*\t") and "[new tag]" in line for line in result.stdout.splitlines()),
                 "An up-to-date push is not a new version reservation")
-        require(value in self.list(value["component"]), "Reservation push was not verified")
+        rows = self.settled_list(value["component"], lambda rows: value in rows)
+        require(value in rows, "Reservation push was not verified")
         return True
 
     def require_current(self, value, *, build_started):
@@ -257,8 +273,9 @@ class Reservations:
         self.mark("cleanup_delete")
         self.command("push", REMOTE, ":refs/tags/" + pending_name(matches[0]))
         self.mark("cleanup_read")
-        remaining = [item for item in self.list(component) if item["version"] == receipt["identity"]["version"]]
-        require(not remaining, "Published reservation cleanup failed")
+        version = receipt["identity"]["version"]
+        rows = self.settled_list(component, lambda rows: all(item["version"] != version for item in rows))
+        require(all(item["version"] != version for item in rows), "Published reservation cleanup failed")
 
     def prune_burned(self, receipt, *, deadline=None, clock=time.monotonic):
         """Remove this lane's reservations that its verified finals have made unusable.
