@@ -141,6 +141,18 @@ pub(super) fn validate_current(
                         == crate::telegram::messaging_source(&plan.source)
                         && (!member_joins::is_member_join(&plan.activity)
                             || member_joins::group_opted_in(source, &plan.activity.conversation.id))
+                } else if matches!(
+                    source,
+                    cmaeg_core::channel::Source::NyxidRelay {
+                        platform: cmaeg_core::channel::Platform::Telegram,
+                        ..
+                    }
+                ) {
+                    use crate::ingress::telegram::member_joins;
+                    member_joins::relay_messaging_source(source)
+                        == member_joins::relay_messaging_source(&plan.source)
+                        && (!member_joins::is_member_join(&plan.activity)
+                            || member_joins::group_opted_in(source, &plan.activity.conversation.id))
                 } else {
                     crate::native_lark::same_messaging_source(source, &plan.source)
                 }

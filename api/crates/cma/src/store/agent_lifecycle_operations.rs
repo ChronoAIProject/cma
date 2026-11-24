@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VERSION};
 
 mod admission;
-mod canary_admission;
+pub(super) mod canary_admission;
 pub(crate) mod canary_key;
 pub(crate) use canary_admission::CanaryProfiles;
 #[cfg(test)]
@@ -117,6 +117,8 @@ pub(crate) struct LifecycleRecord {
     pub input: LifecycleInput,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     canary_admission: Option<canary_admission::CanaryAdmission>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canary_manifest_digest: Option<String>,
     pub status: String,
     pub phase: String,
     pub events: Vec<LifecycleEvent>,
@@ -196,6 +198,7 @@ impl MongoAgentLifecycleStore {
             )
             .await
             .map_err(driver)?;
+        canary_admission::ensure_admission_indexes(&operations).await?;
         Ok(Self {
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
@@ -241,6 +244,7 @@ impl MongoAgentLifecycleStore {
             fingerprint,
             input,
             canary_admission: None,
+            canary_manifest_digest: None,
             status: "queued".into(),
             phase: "queued".into(),
             events: Vec::new(),

@@ -9,6 +9,7 @@ real-model-suggestion-samples = []
 
 [dependencies]
 cma-allocator-qualification = { path = "../cma-allocator-qualification" }
+cma-am-auth = { path = "../cma-am-auth" }
 cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }
 cma-am-reporting = { path = "../cma-am-reporting" }
 async-trait = { workspace = true }
