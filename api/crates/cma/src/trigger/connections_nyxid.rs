@@ -36,7 +36,7 @@ use response::decode;
     reason = "exported for the production Trigger composition introduced by #824"
 )]
 pub(crate) use composition::CmaServiceConnectionBroker;
-pub(crate) use github::{GitHubConnections, GITHUB_SERVICE};
+pub(crate) use github::{GitHubConnections, VerifiedGitHubConnection, GITHUB_SERVICE};
 
 const CONNECT_LINKS_PATH: &str = "/api/v1/connect-links";
 const USER_SERVICES_PATH: &str = "/api/v1/user-services";

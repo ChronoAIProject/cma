@@ -20,7 +20,10 @@ mod worker_tests;
     unused_imports,
     reason = "exported for the production Trigger composition introduced by #824"
 )]
-pub(crate) use self::{connections_nyxid::CmaServiceConnectionBroker, policy::LiveLaunchPolicy};
+pub(crate) use self::{
+    connections_nyxid::{CmaServiceConnectionBroker, VerifiedGitHubConnection},
+    policy::LiveLaunchPolicy,
+};
 pub(crate) use composition::{TriggerComposition, TriggerCompositionDependencies};
 pub(crate) use connections_nyxid::{GitHubConnections, GITHUB_SERVICE};
 pub(crate) use inline::InlineTriggerProfileMaterializer;

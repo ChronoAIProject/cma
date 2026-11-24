@@ -76,6 +76,51 @@ impl KeyIssuer {
     ) -> Result<PreparedMint, KeyIssuerError> {
         validate_credential_id(credential_id)?;
         let allowed = self.resolve_exact(owner_token, services).await?;
+        self.prepare_allowed_mint(credential_id, owner, owner_token, allowed)
+            .await
+    }
+
+    pub(crate) async fn prepare_github_mint(
+        &self,
+        credential_id: &str,
+        owner: &layer2_core::SubjectId,
+        owner_token: &str,
+        services: &[ServiceId],
+        connection: &crate::trigger::VerifiedGitHubConnection,
+    ) -> Result<PreparedMint, KeyIssuerError> {
+        use crate::trigger::GITHUB_SERVICE;
+        if !services
+            .iter()
+            .any(|service| service.as_str() == GITHUB_SERVICE)
+        {
+            return Err(KeyIssuerError::UnexpectedAuthority);
+        }
+        let others = services
+            .iter()
+            .filter(|service| service.as_str() != GITHUB_SERVICE)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut allowed = if others.is_empty() {
+            Vec::new()
+        } else {
+            self.resolve_exact(owner_token, &others).await?
+        };
+        if allowed.iter().any(|id| id == connection.id()) {
+            return Err(KeyIssuerError::UnexpectedAuthority);
+        }
+        allowed.push(connection.id().to_owned());
+        self.prepare_allowed_mint(credential_id, owner, owner_token, allowed)
+            .await
+    }
+
+    async fn prepare_allowed_mint(
+        &self,
+        credential_id: &str,
+        owner: &layer2_core::SubjectId,
+        owner_token: &str,
+        allowed: Vec<String>,
+    ) -> Result<PreparedMint, KeyIssuerError> {
+        validate_credential_id(credential_id)?;
         let plan = self
             .scope_plan(
                 owner_token,
