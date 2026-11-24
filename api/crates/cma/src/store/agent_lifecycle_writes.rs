@@ -3,7 +3,7 @@ use super::*;
 use mongodb::bson::Document;
 
 impl LifecycleLease {
-    fn filter(&self) -> Document {
+    pub(super) fn filter(&self) -> Document {
         doc! { "_id": &self.id, "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "status": "running", "lease_token": &self.token,
         "$expr": { "$and": [
@@ -193,11 +193,29 @@ impl MongoAgentLifecycleStore {
         lease: &LifecycleLease,
         sandbox_id: &str,
     ) -> Result<(), StoreError> {
-        self.write(
-            lease,
-            doc! { "$set": { "sandbox_id": sandbox_id, "updated_at": DateTime::now() } },
-        )
-        .await
+        let mut filter = lease.filter();
+        filter.insert(
+            "$or",
+            [
+                doc! {"canary_admission": {"$exists": false}},
+                doc! {"sandbox_id": sandbox_id},
+            ],
+        );
+        let result = self
+            .operations
+            .update_one(
+                filter,
+                doc! {"$set": {"sandbox_id": sandbox_id, "updated_at": DateTime::now()}},
+            )
+            .await
+            .map_err(driver)?;
+        if result.matched_count != 1 {
+            return Err(StoreError::RevisionConflict {
+                expected: 0,
+                actual: 1,
+            });
+        }
+        Ok(())
     }
 
     /// Pin the original probe result before allocating or building profiles.
