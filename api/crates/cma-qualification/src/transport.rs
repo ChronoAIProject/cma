@@ -133,8 +133,15 @@ impl ControlServer {
                     .peer_cred()
                     .is_ok_and(|peer| peer.uid() == effective_owner())
                 {
-                    let _ =
-                        serve(stream, &plan, &registry, coordinator.as_deref(), &mut used).await;
+                    let _ = session::serve(
+                        stream,
+                        &plan,
+                        &registry,
+                        coordinator.as_deref(),
+                        isolated_renewal_store.as_ref(),
+                        &mut used,
+                    )
+                    .await;
                 }
             }
         });
