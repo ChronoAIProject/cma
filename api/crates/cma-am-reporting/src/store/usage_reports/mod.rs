@@ -1,7 +1,9 @@
 mod chart_encoding;
 mod charts;
+mod owners;
 
 pub use charts::{chart_documents, read_series};
+pub use owners::{read_owner_page, validate_owner_page};
 
 use layer2_core::sandbox_metrics::{MetricsError, Result};
 use mongodb::{
