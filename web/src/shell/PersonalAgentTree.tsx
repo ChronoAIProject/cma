@@ -236,6 +236,7 @@ export function PersonalAgentTree({
     >
       <RuntimeAttentionDisclosure
         attention={observedAttention}
+        revealAgents={statusFilter === 'needs_attention'}
         selectedSandboxId={route.kind === 'sandbox' ? route.sandboxId : undefined}
         selectedAgentId={route.kind === 'agent' ? route.agentId : undefined}
         onSelect={(sandboxId) => onNavigate({ kind: 'sandbox', sandboxId })}

@@ -92,14 +92,16 @@ it('reconciles accepted notices when an existing page read proves retirement aft
     </CmaClientProvider>
   );
   const view = render(draw(false));
-  await screen.findByText('Sandbox delete request accepted. Cleanup continues in the background.');
+  expect(await screen.findByRole('region', { name: 'Deletion request' })).toHaveTextContent(
+    'Deleting 1 environment',
+  );
   view.rerender(draw(true));
   await act(async () => {});
   expect(restoreDeletions('owner')).toEqual([request]);
   readSandbox.mockResolvedValue(sandboxFixture('retired'));
   view.rerender(draw(false));
   await act(async () => {});
-  expect(screen.queryByText(/Cleanup continues in the background/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();
   expect(screen.queryByText('Cleaning up 1 sandboxes')).not.toBeInTheDocument();
   expect(restoreDeletions('owner')).toEqual([]);
 });
