@@ -62,6 +62,8 @@ pub(crate) use model_request_budget::tests::assert_metered_title_refusal;
 pub(crate) use policy::LiveSandboxPolicy;
 pub(crate) use runtime_mapping::{runtime_capabilities, runtime_options};
 pub(crate) use title_worker::PlatformTitleEndpoint;
+#[cfg(test)]
+pub(crate) use title_worker::{scheduled_title_fixture, start_title_scheduler};
 pub(crate) use unavailable_credentials::UnavailableSandboxCredentials;
 
 #[cfg(test)]
