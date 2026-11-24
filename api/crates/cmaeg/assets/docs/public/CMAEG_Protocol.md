@@ -42,10 +42,10 @@ flowchart TB
 | Downstream agent provider | Implement Agent Card, binding, conversation, Responses SSE, durable idempotency and authenticated event-context reads | [Flow F](#flow-f-implement-a-downstream-agent-provider) and [§9](#9-provider-contract) |
 | Channel owner / operator | Reconcile versions and uncertain mutations; manage credentials and lifecycle within the correct authority | [Flow G](#flow-g-update-policy-rotate-credentials-and-delete), [Flow H](#flow-h-replica-restart-and-recovery-boundaries) and [§5](#5-management-api) |
 
-The REST base is `https://gateway.example.com/event-gateway/v1`. Through the globally
-auto-connected NyxID service, use
-`https://gateway.example.com/api/v1/proxy/s/cmaeg` and append the same relative
-path, without another `/v1`. Native MCP uses the separate gateway `/mcp` endpoint.
+Find the direct REST base in the served OpenAPI document's `servers` entry.
+Through the globally auto-connected NyxID service, use the
+`/api/v1/proxy/s/cmaeg` path on your NyxID API origin and append the same relative
+path without another `/v1`. Native MCP uses the separate gateway `/mcp` endpoint.
 
 ### Flow A — Create, inspect and test a channel
 
@@ -2830,11 +2830,9 @@ at expires_at; run it in your workspace` and `download`:
 | `authorization` | `{scheme:"Bearer",token:"<link>"}` for clients that cannot execute shell text. The token is scoped to this event attachment and is accepted once. |
 | `curl` | `curl -fsSL -H 'Authorization: Bearer <link>' -o '<name>' '<url>'`, a compatibility command carrying the same link; `<name>` is the safe file name described below. |
 
-With `CMAEG_ADVERTISE_PUBLIC_API_URL=true`, the base is `CMAEG_PUBLIC_API_URL`;
-otherwise it is `CMAEG_PUBLIC_URL`. The checked-in deployment advertises
-`https://gateway.example.com/event-gateway/v1/media/content`. Clients pin the base from
-operator configuration and compare it with the returned URL before sending the
-capability. This configuration is not evidence that a particular image is live.
+With `CMAEG_ADVERTISE_PUBLIC_API_URL=true`, the base is `CMAEG_PUBLIC_API_URL`.
+Otherwise, the base is `CMAEG_PUBLIC_URL`. Clients pin the base from operator
+configuration and compare it with the returned URL before sending the capability.
 
 The REST twin returns the same view. When the media response budget defers an
 MCP result, the deferred `pending` view carries no `download`, so a link never
