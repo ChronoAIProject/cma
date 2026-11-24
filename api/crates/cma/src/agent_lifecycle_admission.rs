@@ -102,6 +102,7 @@ impl InlineAgentLifecycle {
         delegated_credential: Option<&str>,
         request: AgentLifecycleCreateRequest,
         idempotency_key: &str,
+        instructions: &str,
     ) -> Result<CreateResult, AgentLifecycleProvisioningError> {
         use crate::store::LifecycleCreateError;
         use layer2_core::released_runtime::ReleasedLane;
@@ -145,7 +146,7 @@ impl InlineAgentLifecycle {
                 .await?;
             let input = LifecycleInput {
                 behavior: LifecycleBehavior::PromptRepository,
-                managed_agent_instructions: Some(guidance::managed_v3().into()),
+                managed_agent_instructions: Some(instructions.into()),
                 setup_message: Some(validation::setup_message(&request)),
                 request: request.clone(),
                 resolved_image,

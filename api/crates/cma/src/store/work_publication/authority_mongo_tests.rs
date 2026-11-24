@@ -21,6 +21,8 @@ use std::time::Duration;
 use tokio::time::Instant;
 #[path = "authority_mongo_tests/fixture.rs"]
 mod fixture;
+#[path = "authority_mongo_tests/ledger_maintenance.rs"]
+mod ledger_maintenance;
 #[path = "authority_mongo_tests/purge.rs"]
 mod purge;
 #[path = "authority_mongo_tests/usage.rs"]

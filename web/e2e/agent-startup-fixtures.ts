@@ -236,7 +236,14 @@ export class LocalStartup {
             policy_revision: 1,
           });
         case '/api/v1/profile-authoring/services':
-          return reply([{ id: 'api-github', catalog_id: 'catalog-github', name: 'GitHub' }]);
+          return reply([
+            {
+              id: 'api-github',
+              catalog_id: 'catalog-github',
+              name: 'GitHub',
+              detail_url: 'https://catalog.example.test/services/catalog-github',
+            },
+          ]);
         case '/api/v1/profile-authoring/skills':
           return reply({
             items: [{ id: url.searchParams.get('q'), name: 'TypeScript', versions: ['1.2'] }],

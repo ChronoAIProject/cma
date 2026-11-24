@@ -10,12 +10,14 @@ mod digest;
 mod marketplace;
 mod owned_creation;
 pub use owned_creation::{
+    private_agent_profile_id, private_sandbox_profile_id, private_workspace_profile_id,
     PrivateProfileCreationService, PrivateSandboxProfileInput, ProfileCreationError,
 };
 mod public_values;
 pub mod references;
 mod sandbox;
 pub use availability::SandboxProfileAvailability;
+pub(crate) use sandbox::valid_runtime_image;
 mod validation;
 mod workspace;
 

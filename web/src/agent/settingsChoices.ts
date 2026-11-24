@@ -32,9 +32,26 @@ export function permissionLabel(permission: Permission): string {
   return PERMISSION_CHOICES.find((choice) => choice.value === permission)?.label ?? permission;
 }
 
-/** The catalog's name for a model, or its id when the catalog does not list it. */
+function modelNames(models: readonly AgentModelOption[]): Map<string, string> {
+  const names = models.map((model) => ({
+    model,
+    key: model.label.replace(/[()]/g, ' ').trim().replace(/\s+/g, ' ').toLowerCase(),
+  }));
+  const counts = new Map<string, number>();
+  for (const { key } of names) counts.set(key, (counts.get(key) ?? 0) + 1);
+
+  // The catalog ID distinguishes rows whose labels differ only by presentation.
+  return new Map(
+    names.map(({ model, key }) => [
+      model.id,
+      counts.get(key) === 1 ? model.label : `${model.label} · ${model.id}`,
+    ]),
+  );
+}
+
+/** The catalog's name for a model, disambiguated with its ID when needed. */
 export function modelLabel(models: readonly AgentModelOption[], model: string): string {
-  return models.find((option) => option.id === model)?.label ?? model;
+  return modelNames(models).get(model) ?? model;
 }
 
 /**
@@ -42,8 +59,9 @@ export function modelLabel(models: readonly AgentModelOption[], model: string): 
  * catalog no longer lists it, each unavailable row keeping its reason (§12.3).
  */
 export function modelEntries(models: readonly AgentModelOption[], current: string): MenuEntry[] {
+  const names = modelNames(models);
   return [
-    ...(models.some((model) => model.id === current)
+    ...(names.has(current)
       ? []
       : [
           {
@@ -55,7 +73,7 @@ export function modelEntries(models: readonly AgentModelOption[], current: strin
         ]),
     ...models.map((model) => ({
       id: model.id,
-      label: model.label,
+      label: names.get(model.id) ?? model.label,
       disabled: !model.available,
       reason: model.available ? undefined : 'This Agent cannot select this model yet.',
     })),

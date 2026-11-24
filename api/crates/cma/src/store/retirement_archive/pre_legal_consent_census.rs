@@ -1,4 +1,4 @@
-//! Archive census before adding the released runtime collections.
+//! Archive census in the predecessor before adding legal consent retention.
 pub(super) const SHA256: &str = "c75c5dc57ddbcab6d18543510bf2ddbf5beb4387622c48914909bed80df10a8a";
 pub(super) const COLLECTIONS: &[&str] = &[
     "account_deletions",

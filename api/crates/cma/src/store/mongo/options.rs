@@ -2,10 +2,14 @@
 use layer2_core::StoreError;
 use mongodb::options::ClientOptions;
 
-pub(super) async fn connection_options(uri: &str) -> Result<ClientOptions, StoreError> {
+pub(super) async fn connection_options(
+    uri: &str,
+    database: &str,
+) -> Result<ClientOptions, StoreError> {
     let mut options = ClientOptions::parse(uri)
         .await
         .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
+    super::super::transaction_barrier::bind(&mut options, database);
     // Replica ownership changes authority, not the deployment's connection
     // budget. Preserve explicit URI options and driver defaults in both modes.
     super::super::mongo_latency::observe(&mut options);

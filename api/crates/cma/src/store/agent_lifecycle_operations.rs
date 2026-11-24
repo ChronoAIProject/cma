@@ -25,6 +25,9 @@ use sha2::{Digest, Sha256};
 use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VERSION};
 
 mod admission;
+pub(super) mod canary_admission;
+pub(crate) mod canary_key;
+pub(crate) use canary_admission::CanaryProfiles;
 #[cfg(test)]
 mod operator_stop_tests;
 pub(super) mod released;
@@ -116,6 +119,10 @@ pub(crate) struct LifecycleRecord {
     /// Present when the operation's resolved image passed the durable lane fence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub released_lane: Option<layer2_core::released_runtime::ReleasedLane>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canary_admission: Option<canary_admission::CanaryAdmission>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canary_manifest_digest: Option<String>,
     pub status: String,
     pub phase: String,
     pub events: Vec<LifecycleEvent>,
@@ -196,6 +203,7 @@ impl MongoAgentLifecycleStore {
             )
             .await
             .map_err(driver)?;
+        canary_admission::ensure_admission_indexes(&operations).await?;
         Ok(Self {
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
@@ -223,6 +231,9 @@ impl MongoAgentLifecycleStore {
             layer2_core::released_runtime::ReleasedLane,
         )>,
     ) -> Result<CreateResult, LifecycleCreateError> {
+        if canary_key::is_reserved(key) {
+            return Err(StoreError::Malformed("reserved lifecycle key".into()).into());
+        }
         let bytes = serde_json::to_vec(&input.request)
             .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
         let fingerprint = Binary {
@@ -253,6 +264,8 @@ impl MongoAgentLifecycleStore {
             fingerprint,
             input,
             released_lane: None,
+            canary_admission: None,
+            canary_manifest_digest: None,
             status: "queued".into(),
             phase: "queued".into(),
             events: Vec::new(),

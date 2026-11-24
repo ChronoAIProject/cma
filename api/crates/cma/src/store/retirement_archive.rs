@@ -21,14 +21,14 @@ mod census_catalog;
 mod completion;
 mod export;
 mod schema;
-#[cfg(test)]
-pub(crate) use census_catalog::persisted_collections;
 pub(crate) use export::capture;
+#[cfg(test)]
+pub(crate) use schema::manifest_collections;
 pub(crate) use schema::{matches_current, schema_sha256, validate_manifest_census};
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-pub(super) use tests::prepare_source;
+pub(super) use tests::{prepare_source, verify_legal_consent_census};
 const ORIGINAL: &str = "retirement_archive_original_v1";
 const MANIFEST: &str = "retirement_archive_manifest_v1";
 const RESTORE: &str = "retirement_archive_restore_v1";

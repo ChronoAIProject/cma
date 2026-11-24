@@ -1,7 +1,10 @@
 //! Exact archive census versions. Compatibility never means an arbitrary subset.
-use super::{census_catalog, *};
+use super::{
+    census_catalog::{AUDIT, DEPLOYMENT_ONLY, OUTSIDE_MANIFEST},
+    *,
+};
 use crate::retirement_archive::Manifest;
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::LazyLock};
 
 #[path = "legacy_census.rs"]
 mod legacy;
@@ -17,9 +20,13 @@ mod pre_capture_accounts;
 mod pre_capture_backups;
 #[path = "pre_resource_execution_census.rs"]
 mod pre_execution;
+#[path = "pre_legal_consent_census.rs"]
 #[cfg(test)]
-#[path = "pre_released_runtime_census.rs"]
-mod pre_release;
+mod pre_legal_consent;
+#[cfg(test)]
+pub(super) const PRE_LEGAL_CONSENT_SHA256: &str = pre_legal_consent::SHA256;
+#[cfg(test)]
+pub(super) const PRE_LEGAL_CONSENT_COLLECTIONS: &[&str] = pre_legal_consent::COLLECTIONS;
 
 #[cfg(test)]
 pub(super) const PRE_BACKUP_COLLECTIONS: &[&str] = pre_backup::COLLECTIONS;
@@ -31,43 +38,56 @@ pub(super) const PRE_BACKUP_ACCOUNT_COLLECTIONS: &[&str] = pre_backup_accounts::
 pub(super) const PRE_BACKUP_ACCOUNT_SHA256: &str = pre_backup_accounts::SHA256;
 
 #[cfg(test)]
-pub(super) const PRE_RELEASE_COLLECTIONS: &[&str] = pre_release::COLLECTIONS;
-#[cfg(test)]
-pub(super) const PRE_RELEASE_SHA256: &str = pre_release::SHA256;
-
-#[cfg(test)]
 pub(super) const LEGACY_COLLECTIONS: &[&str] = legacy::COLLECTIONS;
 #[cfg(test)]
 pub(super) const LEGACY_SHA256: &str = legacy::SHA256;
 
-pub(crate) fn schema_sha256() -> String {
-    let audit: Vec<_> = census_catalog::persisted_policies().collect();
-    let names: Vec<_> = census_catalog::persisted_collections().collect();
-    digest(format!("archive-census-v2\n{audit:?}\n{}", names.join("\n")).as_bytes())
+pub(crate) fn manifest_collections() -> &'static [&'static str] {
+    static NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+        super::super::isolation::COLLECTIONS
+            .iter()
+            .copied()
+            .filter(|name| !OUTSIDE_MANIFEST.contains(name) && !DEPLOYMENT_ONLY.contains(name))
+            .collect()
+    });
+    &NAMES
 }
 
-fn collections(schema: &str) -> Result<Vec<&'static str>> {
+pub(crate) fn schema_sha256() -> String {
+    let audit: Vec<_> = AUDIT
+        .iter()
+        .copied()
+        .filter(|(name, _)| !DEPLOYMENT_ONLY.contains(name))
+        .collect();
+    digest(
+        format!(
+            "archive-census-v2\n{audit:?}\n{}",
+            manifest_collections().join("\n")
+        )
+        .as_bytes(),
+    )
+}
+
+fn collections(schema: &str) -> Result<&'static [&'static str]> {
     if schema == schema_sha256() {
-        return Ok(census_catalog::persisted_collections().collect());
-    }
-    let names = if schema == pre_execution::SHA256 {
-        pre_execution::COLLECTIONS
+        Ok(manifest_collections())
+    } else if schema == pre_execution::SHA256 {
+        Ok(pre_execution::COLLECTIONS)
     } else if schema == pre_capture::SHA256 {
-        pre_capture::COLLECTIONS
+        Ok(pre_capture::COLLECTIONS)
     } else if schema == pre_capture_accounts::SHA256 {
-        pre_capture_accounts::COLLECTIONS
+        Ok(pre_capture_accounts::COLLECTIONS)
     } else if schema == pre_capture_backups::SHA256 {
-        pre_capture_backups::COLLECTIONS
+        Ok(pre_capture_backups::COLLECTIONS)
     } else if schema == pre_backup::SHA256 {
-        pre_backup::COLLECTIONS
+        Ok(pre_backup::COLLECTIONS)
     } else if schema == pre_backup_accounts::SHA256 {
-        pre_backup_accounts::COLLECTIONS
+        Ok(pre_backup_accounts::COLLECTIONS)
     } else if schema == legacy::SHA256 {
-        legacy::COLLECTIONS
+        Ok(legacy::COLLECTIONS)
     } else {
-        return Err(REFUSED);
-    };
-    Ok(names.to_vec())
+        Err(REFUSED)
+    }
 }
 
 pub(crate) fn validate_manifest_census(manifest: &Manifest) -> Result<()> {

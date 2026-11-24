@@ -186,7 +186,7 @@ impl MongoStores {
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
         policy: MongoConnectionPolicy,
     ) -> Result<Self, StoreError> {
-        let options = connection_options(uri).await?;
+        let options = connection_options(uri, database).await?;
         let client = Client::with_options(options)
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
         super::isolation::replicas::verify(

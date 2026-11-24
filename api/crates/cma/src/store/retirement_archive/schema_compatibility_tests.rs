@@ -1,5 +1,5 @@
 use super::super::schema::{
-    LEGACY_COLLECTIONS, LEGACY_SHA256, PRE_RELEASE_COLLECTIONS, PRE_RELEASE_SHA256,
+    LEGACY_COLLECTIONS, LEGACY_SHA256, PRE_LEGAL_CONSENT_COLLECTIONS, PRE_LEGAL_CONSENT_SHA256,
 };
 use super::*;
 
@@ -17,7 +17,7 @@ async fn legacy_archive_readback_survives_upgrade_without_omitting_new_owned_dat
         .copied()
         .filter(|(name, _)| LEGACY_COLLECTIONS.contains(name))
         .collect();
-    let names: Vec<_> = crate::store::isolation::COLLECTIONS
+    let names: Vec<_> = crate::store::retirement_archive::manifest_collections()
         .iter()
         .copied()
         .filter(|name| LEGACY_COLLECTIONS.contains(name))
@@ -127,14 +127,14 @@ async fn populated_release_lanes_preserve_pre_pointer_archive_readback() {
         .await
         .unwrap();
     // These are the preceding reader's exact schema and namespace checks.
-    assert_eq!(current.schema_sha256, PRE_RELEASE_SHA256);
+    assert_eq!(current.schema_sha256, PRE_LEGAL_CONSENT_SHA256);
     assert_eq!(
         current
             .database
             .iter()
             .map(|row| row.collection.as_str())
             .collect::<Vec<_>>(),
-        PRE_RELEASE_COLLECTIONS,
+        PRE_LEGAL_CONSENT_COLLECTIONS,
     );
     assert!(super::super::matches_current(&predecessor, current).unwrap());
     for name in release_collections {

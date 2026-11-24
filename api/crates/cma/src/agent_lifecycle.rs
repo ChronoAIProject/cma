@@ -71,7 +71,7 @@ use validation::{
     workspace_error,
 };
 
-pub(crate) use profiles::prepared_default_agent_profile;
+pub(crate) use profiles::{canary_sandbox_content, prepared_default_agent_profile};
 
 pub(crate) struct InlineAgentLifecycle {
     sandbox: Arc<SandboxService>,
@@ -91,6 +91,7 @@ pub(crate) struct InlineAgentLifecycle {
     desktop: Option<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>>,
     self_ref: OnceLock<Weak<Self>>,
     task_experience: OnceLock<Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>>,
+    session_guidance_v4: OnceLock<bool>,
     failure_metadata_enabled: OnceLock<bool>,
     repository_preflight: OnceLock<Arc<dyn repository_preflight::RepositoryReadiness>>,
     managed_repository_preflight: OnceLock<bool>,
@@ -111,6 +112,7 @@ struct ProvisionInput {
     existing_sandbox_id: Option<String>,
     existing_agent_id: Option<String>,
     actor: Option<layer2_core::resource_access::ResourceActor>,
+    canary_profiles: Option<crate::store::CanaryProfiles>,
 }
 
 impl InlineAgentLifecycle {
@@ -148,6 +150,7 @@ impl InlineAgentLifecycle {
             desktop,
             self_ref: OnceLock::new(),
             task_experience: OnceLock::new(),
+            session_guidance_v4: OnceLock::new(),
             failure_metadata_enabled: OnceLock::new(),
             repository_preflight: OnceLock::new(),
             managed_repository_preflight: OnceLock::new(),
@@ -156,6 +159,13 @@ impl InlineAgentLifecycle {
         });
         let _ = instance.self_ref.set(Arc::downgrade(&instance));
         instance
+    }
+
+    pub(crate) fn with_session_guidance_v4(self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        self.session_guidance_v4
+            .set(enabled)
+            .expect("session guidance writer is configured once before use");
+        self
     }
 
     async fn provision(
@@ -182,6 +192,7 @@ impl InlineAgentLifecycle {
             existing_sandbox_id,
             existing_agent_id,
             actor,
+            canary_profiles,
         } = input;
         let profile_started = tokio::time::Instant::now();
         let profile_result = profiles::create_profiles(
@@ -204,6 +215,17 @@ impl InlineAgentLifecycle {
             "inline Agent lifecycle preparation phase completed"
         );
         let (agent_revision, workspace_profile, sandbox_profile) = profile_result?;
+        if let Some(expected) = canary_profiles {
+            if expected.agent.id != agent_revision.profile_id
+                || expected.agent.revision != agent_revision.revision
+                || expected.workspace != workspace_profile
+                || expected.sandbox != sandbox_profile
+            {
+                return Err(AgentLifecycleProvisioningError::Conflict(
+                    "The canary profiles do not match the admitted operation.".into(),
+                ));
+            }
+        }
         self.progress(
             &lease,
             "sandbox_ready",
@@ -220,7 +242,7 @@ impl InlineAgentLifecycle {
                 caller,
                 sandbox_profile.clone(),
                 &request.name,
-                &lease.id,
+                &lease,
             )
             .await;
             tracing::info!(
@@ -362,6 +384,11 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
         if self.tasks.is_closed() {
             return Err(AgentLifecycleProvisioningError::Unavailable);
         }
+        if crate::store::canary_key::is_reserved(idempotency_key) {
+            return Err(AgentLifecycleProvisioningError::Invalid(
+                "The idempotency key is reserved.".into(),
+            ));
+        }
         validate_request(&request)?;
         caller
             .authorization
@@ -396,9 +423,12 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
                 .await?;
         }
         let profile = request.profile.clone().unwrap_or_default();
+        let instructions = guidance::admission_instructions(
+            self.session_guidance_v4.get().copied().unwrap_or_default(),
+        );
         agent_content(&guidance::profile_with_instructions(
             profile.clone(),
-            Some(guidance::managed_v3()),
+            Some(instructions),
         ))?;
         services(&profile.permissions)?;
         if request.machine_included && request.image.is_some() {
@@ -419,6 +449,7 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
                 delegated_credential,
                 request,
                 idempotency_key,
+                instructions,
             )
             .await?;
         let operation_id = match operation {

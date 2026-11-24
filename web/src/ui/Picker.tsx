@@ -66,11 +66,9 @@ export function Picker<Value extends string>({
   const [search, setSearch] = useState('');
   const chosen = options.find((option) => option.value === value);
 
+  const query = search.trim().toLocaleLowerCase();
   const items: MenuEntry[] = options
-    .filter(
-      (option) =>
-        !searchable || option.label.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
-    )
+    .filter((option) => !searchable || option.label.toLocaleLowerCase().includes(query))
     .map((option) => ({
       id: option.value,
       /*

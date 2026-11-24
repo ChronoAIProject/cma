@@ -57,6 +57,9 @@ pub(super) fn relay(
     if config.features.agent_settings_owner_relay {
         relay.enable_settings_owner_routing();
     }
+    if config.features.agent_file_write_handoff {
+        relay.enable_file_write_handoff();
+    }
     relay.install_controls(stores.clone(), controls);
     relay.install_reopen(lifecycle.reopen_worker.clone(), stores);
     updates.install_live_source(relay.live_source());

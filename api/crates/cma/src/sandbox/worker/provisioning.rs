@@ -34,7 +34,6 @@ impl SandboxWorker {
                 .await;
         }
         timing.completed("home_preparation");
-        let spec = sandbox_spec(&sandbox, &self.config.deployment_id);
         if sandbox.work.execution.is_none() {
             let expected = sandbox.revision;
             sandbox.work.execution = Some(self.config.execution);
@@ -63,6 +62,8 @@ impl SandboxWorker {
             };
             sandbox = next;
         }
+        let spec = sandbox_spec(&sandbox, &self.config.deployment_id)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
         let generation = sandbox.lifecycle.runtime_generation_high_water.max(1);
         let (released, runtime_version) = self
             .initial_runtime_release(&sandbox, &spec, generation)
@@ -88,7 +89,7 @@ impl SandboxWorker {
                 timing.completed("runtime_provision");
                 let boot_id = match crate::sandbox::runtime_attachment::provisioned_runtime_status(
                     self.dependencies.adapter.as_ref(),
-                    &sandbox_spec(&sandbox, &self.config.deployment_id),
+                    &request.spec,
                     &handle,
                     generation,
                 )

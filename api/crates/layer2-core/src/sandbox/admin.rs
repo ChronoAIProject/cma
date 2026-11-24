@@ -151,6 +151,7 @@ pub trait SandboxRetirement: Send + Sync {
         &self,
         id: &SandboxId,
         requested_at: String,
+        expected_revision: Option<u64>,
     ) -> Result<SandboxRetirementResult, OperatorError>;
 }
 
@@ -177,6 +178,7 @@ impl SandboxRetirement for StoredSandboxRetirement {
         &self,
         id: &SandboxId,
         requested_at: String,
+        expected_revision: Option<u64>,
     ) -> Result<SandboxRetirementResult, OperatorError> {
         let mut sandbox = self
             .store
@@ -184,6 +186,11 @@ impl SandboxRetirement for StoredSandboxRetirement {
             .await
             .map_err(OperatorError::from_sandbox_store)?
             .ok_or(OperatorError::NotFound)?;
+        if expected_revision.is_some_and(|revision| revision != sandbox.revision) {
+            return Err(OperatorError::InvalidState(
+                "sandbox retirement revision changed".into(),
+            ));
+        }
         if matches!(
             sandbox.status,
             SandboxStatus::Retiring | SandboxStatus::Retired
@@ -365,9 +372,13 @@ impl SandboxOperatorService {
         &self,
         caller: &Caller,
         id: &SandboxId,
+        expected_revision: Option<u64>,
     ) -> Result<SandboxRetirementResult, OperatorError> {
         require(caller, Capability::ControlAnySandbox)?;
-        let result = self.retirement.retire(id, now_rfc3339()).await?;
+        let result = self
+            .retirement
+            .retire(id, now_rfc3339(), expected_revision)
+            .await?;
         let mut record = activity(caller, ActivityAction::Delete, &sandbox_target(id));
         record
             .detail

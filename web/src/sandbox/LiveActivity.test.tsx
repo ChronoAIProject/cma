@@ -53,6 +53,26 @@ it('translates only lifecycle vocabulary, never payloads or unknown values', () 
   ).toBe('Remove agent files: completed');
 });
 
+it('distinguishes a scheduled provisioning retry from a terminal Sandbox failure', () => {
+  const events = [
+    event(1, {
+      type: 'work_step_failed',
+      step: { kind: 'provision_runtime' },
+      failure: { class: 'retryable_transient', detail: 'private runtime diagnostic' },
+    }),
+    event(2, {
+      type: 'failed',
+      failure: { class: 'configuration', detail: 'private configuration diagnostic' },
+    }),
+  ];
+
+  render(<LiveActivity entries={activityEntries(events, 'sandbox')} />);
+  expect(screen.getByText('Start sandbox environment: retry scheduled')).toBeVisible();
+  expect(screen.queryByText('Start sandbox environment: needs attention')).toBeNull();
+  expect(screen.getByText('Sandbox needs attention')).toBeVisible();
+  expect(screen.queryByText(/private .* diagnostic/)).toBeNull();
+});
+
 it('caps translated entries and display rows without retaining raw payloads', () => {
   const entries = activityEntries(
     Array.from({ length: 160 }, (_, n) => event(n + 1)),
@@ -116,6 +136,28 @@ it('catches up in bounded batches, caps memory and advances sync time only when 
   );
   await act(() => vi.advanceTimersByTimeAsync(1500));
   expect(screen.getAllByRole('listitem')).toHaveLength(100);
+});
+
+it('shows Sandbox Activity by event time, using sequence order for ties across pages', async () => {
+  const readSandboxEvents = vi
+    .fn<CmaWebClient['readSandboxEvents']>()
+    .mockResolvedValueOnce([
+      { ...event(1, { type: 'workspace_ready' }), appendedAt: '2026-09-09T00:00:02Z' },
+      { ...event(2), appendedAt: '2026-09-09T00:00:01Z' },
+    ])
+    .mockResolvedValueOnce([
+      { ...event(3, { type: 'workspace_created' }), appendedAt: '2026-09-09T08:00:01+08:00' },
+      { ...event(4, { type: 'status_changed', to: 'active' }), appendedAt: '2026-09-09T00:00:03Z' },
+    ])
+    .mockResolvedValue([]);
+  render(<SandboxActivity client={agentClient({ readSandboxEvents })} sandboxId="sbx_1" settled />);
+  await screen.findByText('Sandbox: Live');
+
+  const list = within(screen.getByRole('region', { name: 'Recorded activity' }));
+  expect(
+    list.getAllByRole('listitem').map((row) => row.querySelector('span')?.textContent),
+  ).toEqual(['Sandbox created', 'Workspace created', 'Workspace ready', 'Sandbox: Live']);
+  expect(readSandboxEvents.mock.calls.map(([, options]) => options?.cursor)).toEqual([0, 2, 4]);
 });
 
 it.each([401, 403, 404])(

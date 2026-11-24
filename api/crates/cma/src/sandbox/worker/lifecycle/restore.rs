@@ -89,7 +89,8 @@ impl SandboxWorker {
                 return self.handle_lifecycle_failure(sandbox, failure, now).await;
             }
         }
-        let mut spec = sandbox_spec(&sandbox, &self.config.deployment_id);
+        let mut spec = sandbox_spec(&sandbox, &self.config.deployment_id)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
         if let Some(target) = sandbox.admitted_runtime_update_target() {
             spec.runtime_image = Some(target.into());
         }
@@ -205,7 +206,8 @@ impl SandboxWorker {
         } else {
             match crate::sandbox::runtime_attachment::provisioned_runtime_status(
                 self.dependencies.adapter.as_ref(),
-                &sandbox_spec(&sandbox, &self.config.deployment_id),
+                &sandbox_spec(&sandbox, &self.config.deployment_id)
+                    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?,
                 &handle,
                 generation,
             )

@@ -20,19 +20,9 @@ pub(super) const DEPLOYMENT_ONLY: &[&str] = &[
     crate::store::released_runtimes::TRANSITIONS_COLLECTION,
 ];
 
-pub(crate) fn persisted_collections() -> impl Iterator<Item = &'static str> {
-    super::super::isolation::COLLECTIONS
-        .iter()
-        .copied()
-        .filter(|name| !DEPLOYMENT_ONLY.contains(name))
-}
-
-pub(super) fn persisted_policies() -> impl Iterator<Item = (&'static str, Policy)> {
-    AUDIT
-        .iter()
-        .copied()
-        .filter(|(name, _)| !DEPLOYMENT_ONLY.contains(name))
-}
+// Detached receipts have no Sandbox ownership or read grant. The schema
+// authority inventories them, but there is no receipt entry in a Sandbox manifest.
+pub(super) const OUTSIDE_MANIFEST: &[&str] = &[super::super::retained_consents::COLLECTION];
 pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("account_deletions", Independent),
     ("account_deletion_events", Independent),
