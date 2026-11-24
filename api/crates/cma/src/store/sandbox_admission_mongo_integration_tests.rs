@@ -361,6 +361,9 @@ mod pending_home_ceilings;
 #[path = "sandbox_owner_admission_mongo_tests.rs"]
 mod owner_replicas;
 
+#[path = "sandbox_admission/public_owner_mongo_tests.rs"]
+mod public_owner;
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn exact_admission_replay_precedes_deletion_but_new_admission_is_refused() {

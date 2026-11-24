@@ -79,6 +79,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
   };
   return {
     usageViews: createUsageClient(sdk),
+    legalConsent: sdk.legalConsent,
     deliverables: sdk.agents,
     documents: documentsClient(sdk.documents),
     browser: sdk.agentBrowser,
@@ -118,6 +119,8 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     resourceViews: sdk,
     readTaskTemplateSupport: async (options) =>
       (await sdk.readOpenApi(options))['x-cma-task-templates-v1'] === true,
+    readTaskTemplateV2Support: async (options) =>
+      (await sdk.readOpenApi(options))['x-cma-task-templates-v2'] === true,
     readTaskRepositorySupport: async (options) =>
       (await sdk.readOpenApi(options))['x-cma-task-repository'] === true,
     readTaskTitleModeSupport: async (options) =>

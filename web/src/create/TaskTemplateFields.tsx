@@ -12,27 +12,36 @@ import './TaskTemplateFields.css';
 
 export type TaskTemplateAvailability = 'checking' | 'supported' | 'unsupported' | 'error';
 
-export function useTaskTemplateAvailability(client: CmaWebClient): TaskTemplateAvailability {
+export function useTaskTemplateAvailability(
+  client: CmaWebClient,
+  version: 1 | 2 = 1,
+): TaskTemplateAvailability {
+  const read = version === 2 ? client.readTaskTemplateV2Support : client.readTaskTemplateSupport;
   const [result, setResult] = useState<{
     client: CmaWebClient;
+    version: 1 | 2;
     availability: TaskTemplateAvailability;
   }>();
   useEffect(() => {
     const abort = new AbortController();
-    if (!client.readTaskTemplateSupport) return;
-    void client.readTaskTemplateSupport({ signal: abort.signal }).then(
+    if (!read) return;
+    void read({ signal: abort.signal }).then(
       (value) => {
         if (!abort.signal.aborted)
-          setResult({ client, availability: value ? 'supported' : 'unsupported' });
+          setResult({
+            client,
+            version,
+            availability: value === true ? 'supported' : 'unsupported',
+          });
       },
       () => {
-        if (!abort.signal.aborted) setResult({ client, availability: 'error' });
+        if (!abort.signal.aborted) setResult({ client, version, availability: 'error' });
       },
     );
     return () => abort.abort();
-  }, [client]);
-  return client.readTaskTemplateSupport
-    ? result?.client === client
+  }, [client, read, version]);
+  return read
+    ? result?.client === client && result.version === version
       ? result.availability
       : 'checking'
     : 'unsupported';
@@ -48,12 +57,14 @@ export function TaskTemplateFields({
   errorId,
   onChange,
   onClear,
+  allowV2 = false,
 }: {
   readonly template: TaskTemplate;
   readonly issue?: TemplateIssue;
   readonly errorId: string;
   readonly onChange: (template: TaskTemplate) => void;
   readonly onClear?: () => void;
+  readonly allowV2?: boolean;
 }) {
   const definition = templateDefinition(template.id);
   const fields: Readonly<Record<string, string>> = template.fields;
@@ -70,7 +81,9 @@ export function TaskTemplateFields({
             required
             aria-invalid={issue?.field === key || undefined}
             aria-describedby={issue?.field === key ? errorId : undefined}
-            onChange={(event) => onChange(changeTemplateField(template, key, event.target.value))}
+            onChange={(event) =>
+              onChange(changeTemplateField(template, key, event.target.value, allowV2))
+            }
           />
         </label>
       ))}

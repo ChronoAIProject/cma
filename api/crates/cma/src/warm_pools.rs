@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 
 mod current;
 mod defaults;
+mod released;
 mod retirement;
 mod startup;
 mod supervision;
@@ -74,12 +75,12 @@ impl PoolTarget {
             "unavailable"
         } else if self.applied_revision != self.revision || !observed {
             "pending"
-        } else if self.target_replicas == 0 && ready == Some(0) {
-            "disabled"
-        } else if ready.is_some_and(|count| count >= self.target_replicas) {
-            "ready"
         } else {
-            "pending"
+            match (self.target_replicas, ready) {
+                (0, Some(0)) => "disabled",
+                (target, Some(count)) if target > 0 && count >= target => "ready",
+                _ => "pending",
+            }
         };
         WarmPoolView {
             id: self.id.clone(),
@@ -193,11 +194,11 @@ pub(crate) const RELEASE_SETTLE: Duration = Duration::from_secs(120);
 pub(crate) struct NativeWarmPools {
     store: Arc<dyn PoolTargetStore>,
     adapter: Arc<dyn SandboxAdapter>,
-    image: RuntimeImage,
+    released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
     home: Option<HomeVolumePolicy>,
     default_capacity: layer3_adapter::SandboxCapacity,
     default_target: u32,
-    machine: Option<(RuntimeImage, u32)>,
+    machine_target: u32,
     target_fencing: bool,
 }
 
@@ -211,14 +212,15 @@ impl NativeWarmPools {
         default_target: u32,
         machine: Option<(String, u32)>,
     ) -> Arc<Self> {
+        let (released, machine_target) = released::pinned(image, machine);
         Arc::new(Self {
             store,
             adapter,
-            image: deployment_image(image),
+            released,
             home,
             default_capacity,
             default_target,
-            machine: machine.map(|(image, target)| (deployment_image(image), target)),
+            machine_target,
             target_fencing: false,
         })
         .with_target_fencing(false)
@@ -246,7 +248,7 @@ impl NativeWarmPools {
     fn default_config_sha256(&self) -> Option<String> {
         default_config_sha256(
             self.adapter.native_pools(),
-            &self.image,
+            &self.released_images().agent,
             self.home.as_ref(),
             &self.default_capacity,
         )
@@ -274,6 +276,7 @@ fn default_config_sha256(
 impl WarmPoolAdministration for NativeWarmPools {
     async fn list(&self, caller: &Caller) -> Result<WarmPoolList, WarmPoolError> {
         authorize(caller)?;
+        let released = self.released_images();
         let targets = self.store.list().await?;
         let inventory = match self.adapter.native_pools() {
             Some(provider) if self.home.is_some() => {
@@ -296,12 +299,12 @@ impl WarmPoolAdministration for NativeWarmPools {
                     target.view(status, available)
                 })
                 .collect(),
-            default_image: self.image.uri.clone(),
+            default_image: released.agent.uri,
             default_cpu_millis: self.default_capacity.cpu_millis,
             default_memory_mib: self.default_capacity.memory_mib,
             default_config_sha256: self.default_config_sha256(),
             available,
-            machine_image: self.machine.as_ref().map(|(image, _)| image.uri.clone()),
+            machine_image: released.machine.map(|(image, _)| image.uri),
         })
     }
 
@@ -331,7 +334,7 @@ impl WarmPoolAdministration for NativeWarmPools {
             .ok_or(WarmPoolError::Unavailable)?;
         let plan = provider
             .plan(&NativePoolSpec {
-                image: self.image.clone(),
+                image: self.released_images().agent,
                 cpu_millis: body.cpu_millis,
                 memory_mib: body.memory_mib,
                 home: self.home.clone().ok_or(WarmPoolError::Unavailable)?,
