@@ -55,7 +55,7 @@ mod resource_request {
     use cma_am_auth::auth::test_support::request_descriptor as descriptor;
     pub(super) use cma_am_auth::auth::test_support::RESOURCE_REQUEST_HEADER as HEADER;
     use layer2_core::{
-        resource_access::{CallerContext, CredentialContext},
+        resource_access::{CallerContext, CredentialContext, CredentialSource, ResourceActor},
         Caller,
     };
     use std::{sync::Arc, time::SystemTime};
@@ -69,7 +69,7 @@ pub(crate) mod service_authorization {
     use super::{
         persistence::{SecretDigest, SecretValue},
         token::random_token,
-        AuthState, AUTH_COOKIE_DOMAIN,
+        AuthMode, AuthState, AUTH_COOKIE_DOMAIN,
     };
     use axum::{
         http::{header, StatusCode},
