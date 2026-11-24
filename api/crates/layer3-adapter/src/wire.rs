@@ -26,6 +26,9 @@ pub const AGENT_RESOURCES_STATUS_MEDIA_TYPE: &str =
 pub const AGENT_COMPUTER_STATUS_MEDIA_TYPE: &str =
     "application/vnd.chrono.cma.agent-computer-status+json";
 
+pub const AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE: &str =
+    "application/vnd.chrono.cma.agent-process-restart-status.v1+json";
+
 /// A stable reference to one agent slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,6 +44,8 @@ pub struct AgentRef {
 pub struct FencedRequest<T> {
     pub authority_fence: u64,
     pub request: T,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_runtime: Option<crate::AgentRestartRuntime>,
 }
 
 impl<T> FencedRequest<T> {
@@ -48,6 +53,7 @@ impl<T> FencedRequest<T> {
         Self {
             authority_fence,
             request,
+            restart_runtime: None,
         }
     }
 }

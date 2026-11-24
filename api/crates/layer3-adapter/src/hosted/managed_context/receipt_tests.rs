@@ -10,6 +10,7 @@ fn status() -> RuntimeStatus {
         agent_skill_upgrade: false,
         agent_model_catalog: false,
         agent_resource_preparation: false,
+        agent_process_restart: false,
         sandbox_id: "sandbox".into(),
         generation: 3,
         home_identity: "a".repeat(43),

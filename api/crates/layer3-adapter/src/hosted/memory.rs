@@ -11,7 +11,6 @@ use crate::wire::{
     AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame, WireFailure,
     WireOperation,
 };
-use crate::AgentProcessAction::Open;
 use crate::{
     AdapterError, AgentHomePlan, AgentLaunch, AgentSlot, CheckpointHoldReceipt,
     CheckpointHoldRequest, ConversationChannel, ConversationSnapshot, ConversationUpdate,
@@ -23,7 +22,7 @@ use crate::{
 mod state;
 use state::{
     channel, digest, fingerprint, memory_observation, refused, remember_operation,
-    replay_operation, require_credential, valid_sha256,
+    replay_operation, require_credential,
 };
 #[path = "memory_authority.rs"]
 mod authority;
@@ -374,16 +373,9 @@ impl HostedBackend for InMemoryHostedBackend {
             return refused(WireOperation::OpenAgent, "checkpoint_writers_held");
         }
         require_credential(runtime, WireOperation::OpenAgent)?;
+        let incarnation = mutations::authorize_process_open(runtime, &launch)?;
         let authority_fence = launch.authority_fence;
         let launch = launch.request;
-        let agent = launch.agent_id.as_str();
-        let Some(incarnation) = Open.incarnation(agent, &launch.operation_id) else {
-            return refused(WireOperation::OpenAgent, "operation_request_invalid");
-        };
-        if !valid_sha256(&launch.request_sha256) || authority_fence == 0 {
-            return refused(WireOperation::OpenAgent, "operation_request_invalid");
-        }
-        mutations::authorize_process_open(runtime, &launch, incarnation, authority_fence)?;
         let payload = fingerprint(&launch)?;
         authority::admit(
             runtime,

@@ -218,14 +218,42 @@ pub(super) fn materialize_home(
 
 pub(super) fn authorize_process_open(
     runtime: &MemoryRuntime,
-    launch: &AgentLaunch,
-    incarnation: u64,
-    authority_fence: u64,
-) -> crate::Result<()> {
-    if incarnation == 1 || runtime.operations.contains_key(&launch.operation_id) {
-        return Ok(());
-    }
+    request: &FencedRequest<AgentLaunch>,
+) -> crate::Result<u64> {
+    let launch = &request.request;
     let agent = launch.agent_id.as_str();
+    let Some(incarnation) = Open.incarnation(agent, &launch.operation_id) else {
+        return refused(WireOperation::OpenAgent, "operation_request_invalid");
+    };
+    if !valid_sha256(&launch.request_sha256) || request.authority_fence == 0 {
+        return refused(WireOperation::OpenAgent, "operation_request_invalid");
+    }
+    if incarnation == 1 {
+        return Ok(incarnation);
+    }
+    let Some(writer) = &request.restart_runtime else {
+        return refused(
+            WireOperation::OpenAgent,
+            "agent_process_restart_runtime_missing",
+        );
+    };
+    let ResponseFrame::RuntimeStatus(status) =
+        super::status::inspect(runtime, writer.runtime.clone())?
+    else {
+        return refused(
+            WireOperation::OpenAgent,
+            "agent_process_restart_runtime_changed",
+        );
+    };
+    if status.boot_id != writer.boot_id {
+        return refused(
+            WireOperation::OpenAgent,
+            "agent_process_restart_runtime_changed",
+        );
+    }
+    if runtime.operations.contains_key(&launch.operation_id) {
+        return Ok(incarnation);
+    }
     let predecessor = Open.operation_id(agent, incarnation - 1);
     let close = Close.operation_id(agent, incarnation - 1);
     let previous_open = runtime.operations.get(&predecessor).map(|op| &op.response);
@@ -239,11 +267,11 @@ pub(super) fn authorize_process_open(
         );
     }
     if authority::completed_close_fence(runtime, &launch.agent_id, incarnation - 1, &close)
-        .is_none_or(|fence| fence >= authority_fence)
+        .is_none_or(|fence| fence >= request.authority_fence)
     {
         return refused(WireOperation::OpenAgent, "mutation_authority_stale");
     }
-    Ok(())
+    Ok(incarnation)
 }
 
 pub(super) fn close_agent(

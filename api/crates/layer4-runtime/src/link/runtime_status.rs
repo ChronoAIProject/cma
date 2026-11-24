@@ -29,6 +29,8 @@ pub(super) async fn response(
     status.agent_resource_preparation =
         accepts(layer3_adapter::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE);
     status.agent_browser = accepts(layer3_adapter::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE);
+    status.agent_process_restart = supervisor.agent_process_restart_enabled()
+        && accepts(layer3_adapter::wire::AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE);
     if accepts(RUNTIME_LEDGER_STATUS_MEDIA_TYPE) {
         return match supervisor.ledger_observation(status).await {
             Ok(observation) => (

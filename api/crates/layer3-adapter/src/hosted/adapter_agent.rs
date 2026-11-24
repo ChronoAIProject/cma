@@ -234,7 +234,7 @@ pub(super) async fn reconnect_agent(
     .await;
     match result {
         Err(AdapterError::OperationIdentityConflict(_))
-            if request.resume_conversation.is_none() =>
+            if request.resume_conversation.is_none() && request.restart_runtime.is_none() =>
         {
             // Older restores included resume identity in the durable launch digest.
             // Only an exact pre-effect refusal permits this one canonical replay.
@@ -296,6 +296,14 @@ pub(super) async fn open_agent(
         AgentProcessAction::Open,
         request.options.slot.as_str(),
     )?;
+    let restart = AgentProcessAction::Open
+        .incarnation(request.options.slot.as_str(), &request.operation_id)
+        .is_some_and(|incarnation| incarnation > 1);
+    if restart != request.restart_runtime.is_some() {
+        return Err(AdapterError::Rejected(
+            "invalid Agent restart runtime authority".into(),
+        ));
+    }
     validate_fence(authority_fence)?;
     let launch = adapter.runtime.launch(request)?;
     let mut settings = adapter.runtime.open_settings(request)?;
@@ -371,11 +379,13 @@ pub(super) async fn open_agent(
     settings.context_refresh = adapter
         .bind_context_refresh(handle, request, &settings)
         .await?;
+    let mut fenced = FencedRequest::new(authority_fence, launch);
+    fenced.restart_runtime.clone_from(&request.restart_runtime);
     let (channel, receipt) = adapter
         .backend
         .open_agent(
             handle,
-            FencedRequest::new(authority_fence, launch),
+            fenced,
             held_conversation
                 .map(str::to_owned)
                 .or_else(|| request.resume_conversation.clone()),

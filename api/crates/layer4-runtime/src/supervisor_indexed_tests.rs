@@ -67,6 +67,8 @@ async fn indexed_same_runtime_restart_recovers_an_interrupted_close_for_the_exac
 
     let mut config = indexed_config();
     config.agent_process_restart_enabled = true;
+    config.home_identity = Some("a".repeat(43));
+    std::fs::create_dir_all(&config.home).unwrap();
     let (supervisor, ledger) = indexed(&config, 32_768).await;
     let workspace = prepare_workspace(&supervisor).await;
     let (_, worktree) = add_worktree(&supervisor, workspace.resolved_commit).await;
@@ -89,10 +91,11 @@ async fn indexed_same_runtime_restart_recovers_an_interrupted_close_for_the_exac
     launch.operation_id = "agent:agent-1:open:2:v1".into();
     launch.request_sha256 = "c".repeat(64);
     let opened = supervisor
-        .dispatch(RequestFrame::OpenAgent(FencedRequest::new(
+        .dispatch(super::persistent_home_tests::restart_open(
+            &supervisor,
             3,
-            launch.clone(),
-        )))
+            &launch,
+        ))
         .await;
     assert!(matches!(opened, ResponseFrame::OpenAgent(_)), "{opened:?}");
     assert_eq!(supervisor.dispatch(old_close.clone()).await, closed);
