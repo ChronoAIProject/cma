@@ -28,6 +28,11 @@ async fn public_docs_are_real_html_and_exact_markdown_without_authentication() {
             .contains("default-src 'none'"));
         let body = response.text().await.unwrap();
         assert!(body.contains(expected));
+        assert!(body.contains("NyxID REST proxy base (example)"));
+        assert!(body.contains("https://nyxid.example.com/api/v1/proxy/s/cmaeg"));
+        assert!(body.contains("<strong>Retry creation</strong>"));
+        assert!(body.contains("<strong>Resume creation</strong>"));
+        assert!(!body.contains("Production address"));
         assert!(body.contains("<nav aria-label=\"Sections\">"));
         assert!(body.contains("<main id=\"content\"><h1"));
         assert!(body.contains("href=\"/openapi.json\""));
@@ -68,6 +73,10 @@ async fn public_docs_are_real_html_and_exact_markdown_without_authentication() {
         "Full event context and restart recovery",
         "Flow H — Replica restart",
         "8. Tools API and MCP",
+        "NyxID REST proxy base (example)",
+        "https://nyxid.example.com/api/v1/proxy/s/cmaeg",
+        "**Retry creation**",
+        "**Resume creation**",
     ] {
         assert!(markdown.contains(text));
     }

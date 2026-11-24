@@ -329,7 +329,7 @@ test('LOCAL pending owner report resolves and empty selections are explicit', as
   await expect(dialog.getByRole('button', { name: 'Research Sandbox', exact: true })).toBeVisible();
   expect(metrics.creates).toHaveLength(1);
   metrics.pending = false;
-  await dialog.getByRole('searchbox', { name: 'Usage Sandbox search' }).fill('empty');
+  await dialog.getByRole('searchbox', { name: 'Sandbox name or ID starts with' }).fill('empty');
   await dialog.getByRole('button', { name: 'Apply usage filters' }).click();
   await expect(dialog.getByText('No Sandboxes match this selection.')).toBeVisible();
   if (!measured)

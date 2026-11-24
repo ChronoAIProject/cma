@@ -27,6 +27,13 @@ pub(super) async fn run(
             .await
             .map_err(|_| CommandLedgerError::Unavailable)?;
         let result = match apply::apply(store, &request, &mut session).await {
+            Ok(QueuedInputOutcome::StaleObservation) => {
+                session
+                    .abort_guarded()
+                    .await
+                    .map_err(|_| CommandLedgerError::Unavailable)?;
+                return Ok(QueuedInputOutcome::StaleObservation);
+            }
             Ok(result) => result,
             Err(ApplyError::Domain(error)) => {
                 let _ = session.abort_guarded().await;

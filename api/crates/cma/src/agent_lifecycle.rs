@@ -91,6 +91,7 @@ pub(crate) struct InlineAgentLifecycle {
     desktop: Option<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>>,
     self_ref: OnceLock<Weak<Self>>,
     task_experience: OnceLock<Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>>,
+    session_guidance_v4: OnceLock<bool>,
     failure_metadata_enabled: OnceLock<bool>,
     repository_preflight: OnceLock<Arc<dyn repository_preflight::RepositoryReadiness>>,
     managed_repository_preflight: OnceLock<bool>,
@@ -148,6 +149,7 @@ impl InlineAgentLifecycle {
             desktop,
             self_ref: OnceLock::new(),
             task_experience: OnceLock::new(),
+            session_guidance_v4: OnceLock::new(),
             failure_metadata_enabled: OnceLock::new(),
             repository_preflight: OnceLock::new(),
             managed_repository_preflight: OnceLock::new(),
@@ -156,6 +158,13 @@ impl InlineAgentLifecycle {
         });
         let _ = instance.self_ref.set(Arc::downgrade(&instance));
         instance
+    }
+
+    pub(crate) fn with_session_guidance_v4(self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        self.session_guidance_v4
+            .set(enabled)
+            .expect("session guidance writer is configured once before use");
+        self
     }
 
     async fn provision(
@@ -396,9 +405,12 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
                 .await?;
         }
         let profile = request.profile.clone().unwrap_or_default();
+        let instructions = guidance::admission_instructions(
+            self.session_guidance_v4.get().copied().unwrap_or_default(),
+        );
         agent_content(&guidance::profile_with_instructions(
             profile.clone(),
-            Some(guidance::managed_v3()),
+            Some(instructions),
         ))?;
         services(&profile.permissions)?;
         if request.machine_included && request.image.is_some() {
@@ -435,7 +447,7 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             .await?;
         let input = LifecycleInput {
             behavior: LifecycleBehavior::PromptRepository,
-            managed_agent_instructions: Some(guidance::managed_v3().into()),
+            managed_agent_instructions: Some(instructions.into()),
             setup_message: Some(validation::setup_message(&request)),
             request,
             resolved_image,

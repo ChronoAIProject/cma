@@ -12,6 +12,10 @@ use super::{
 use crate::{now_rfc3339, AgentId, RuntimeCapability};
 use recovery::RefreshRecoveryOnDrop;
 
+fn valid_guidance(guidance: &str) -> bool {
+    !guidance.is_empty() && guidance.len() <= 16 * 1024 && !guidance.contains('\0')
+}
+
 impl AgentOperationService {
     pub(super) fn managed_context_input_guard(
         &self,
@@ -46,13 +50,9 @@ impl AgentOperationService {
         service_origin: Option<&str>,
     ) -> Result<bool, AgentOperationError> {
         if revision == 0
-            || guidance.is_empty()
-            || guidance.len() > 16 * 1024
-            || guidance.contains('\0')
+            || !valid_guidance(guidance)
             || previous_guidance.len() > 8
-            || previous_guidance
-                .iter()
-                .any(|p| p.is_empty() || p.len() > 16 * 1024 || p.contains('\0'))
+            || previous_guidance.iter().any(|p| !valid_guidance(p))
         {
             return Err(AgentOperationError::InvalidRequest(
                 "invalid managed context revision".into(),
@@ -69,6 +69,15 @@ impl AgentOperationService {
                 || !super::agent_live_skills::idle(&current)
             {
                 return Ok(false);
+            }
+            let guidance = self
+                .instruction_policy
+                .pinned_managed_guidance(&current)
+                .unwrap_or(guidance);
+            if !valid_guidance(guidance) {
+                return Err(AgentOperationError::InvalidRequest(
+                    "invalid pinned managed context guidance".into(),
+                ));
             }
             if current.conversation.operation.as_ref().is_some_and(|operation| {
                 matches!(operation.intent,AgentOperationIntent::RefreshContext{revision:prior,..} if prior==revision)
