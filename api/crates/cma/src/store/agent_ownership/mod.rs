@@ -118,7 +118,7 @@ impl MongoAgentOwnership {
         }
     }
 
-    #[cfg(feature = "qualification-hooks")]
+    #[cfg(all(feature = "qualification-hooks", test))]
     pub(crate) async fn prepare_qualification_renewal(
         uri: &str,
         name: &str,
