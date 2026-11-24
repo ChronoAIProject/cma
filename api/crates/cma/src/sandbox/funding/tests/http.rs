@@ -10,6 +10,15 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::collections::VecDeque;
+use tokio::sync::oneshot;
+
+pub(super) const WINDOW_ID: &str = "9e660487-dba4-4be9-ae06-4593b41c4a30";
+
+struct EvidenceGate {
+    observed: oneshot::Sender<()>,
+    respond: oneshot::Receiver<()>,
+}
+
 pub(super) struct Reply {
     status: u16,
     body: String,
@@ -19,6 +28,8 @@ pub(super) struct Reply {
 pub(super) struct HttpState {
     replies: Mutex<VecDeque<Reply>>,
     pub(super) calls: Mutex<Vec<(Method, String, HeaderMap, Value)>>,
+    window_start: u64,
+    evidence_gate: Mutex<Option<EvidenceGate>>,
 }
 pub(super) struct Server {
     pub(super) state: Arc<HttpState>,
@@ -49,6 +60,13 @@ async fn handler(
         .unwrap()
         .pop_front()
         .expect("unexpected provider call");
+    if uri.path().ends_with("/evidence") {
+        let gate = state.evidence_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            gate.observed.send(()).unwrap();
+            gate.respond.await.unwrap();
+        }
+    }
     let body = if reply.body == "$quote" {
         let calls = state.calls.lock().unwrap();
         let payload = &calls.last().unwrap().3;
@@ -62,9 +80,9 @@ async fn handler(
             .unwrap()
             .3;
         let mut value = payload.clone();
-        value["window_id"] = json!("9e660487-dba4-4be9-ae06-4593b41c4a30");
-        value["covered_from"] = json!(100);
-        value["covered_until"] = json!(400);
+        value["window_id"] = json!(WINDOW_ID);
+        value["covered_from"] = json!(state.window_start);
+        value["covered_until"] = json!(state.window_start + 300);
         value["components"] = json!([]);
         value.to_string()
     } else {
@@ -86,8 +104,13 @@ async fn handler(
 }
 impl Server {
     pub(super) async fn new(replies: Vec<Reply>) -> Self {
+        Self::with_window_start(replies, 100).await
+    }
+
+    pub(super) async fn with_window_start(replies: Vec<Reply>, window_start: u64) -> Self {
         let state = Arc::new(HttpState {
             replies: Mutex::new(replies.into()),
+            window_start,
             ..Default::default()
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -114,6 +137,22 @@ impl Server {
             task,
         }
     }
+
+    pub(super) fn hold_evidence_response(&self) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (observed, posted) = oneshot::channel();
+        let (respond, release) = oneshot::channel();
+        let previous = self
+            .state
+            .evidence_gate
+            .lock()
+            .unwrap()
+            .replace(EvidenceGate {
+                observed,
+                respond: release,
+            });
+        assert!(previous.is_none());
+        (posted, respond)
+    }
 }
 pub(super) fn reply(status: u16, body: Value) -> Reply {
     Reply {
@@ -122,6 +161,15 @@ pub(super) fn reply(status: u16, body: Value) -> Reply {
         retry_after: None,
     }
 }
+
+pub(super) fn funding_reply(body: &str) -> Reply {
+    Reply {
+        status: 200,
+        body: body.into(),
+        retry_after: None,
+    }
+}
+
 fn window_json(request: &ReserveRequest) -> Value {
     json!({"request_id":request.request_id,"quote_id":request.quote_id,"window_id":"8e660487-dba4-4be9-ae06-4593b41c4a30","owner_id":request.owner_id,"sandbox_id":request.sandbox_id,"runtime_generation":request.runtime_generation,"covered_from":100,"covered_until":400,"allocation":{"cpu_millis":1000,"memory_mib":2048,"disk_gib":64},"components":[],"evidence_accepted":false,"last_evidence_revision":null})
 }
