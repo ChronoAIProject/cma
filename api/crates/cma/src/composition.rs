@@ -20,6 +20,7 @@ mod profiles;
 mod routes;
 mod runtime;
 mod runtime_inventory;
+mod runtime_migration;
 mod state;
 mod stores;
 mod usage;
@@ -184,7 +185,7 @@ impl ControlPlaneComposition {
             .with_detail_timings(config.features.sandbox_detail_timings)
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone())?;
-        let native_warm_pools = runtime.warm_pools;
+        let native_warm_pools = runtime.warm_pools.clone();
         let admin = runtime_inventory::admin_state(
             config.features,
             Arc::clone(&settings),
@@ -193,12 +194,12 @@ impl ControlPlaneComposition {
             Arc::clone(&adapter),
         )
         .with_user_directory(Arc::clone(&users))
-        .with_runtime_updates(runtime.updates.clone())
         .with_maintenance(stores.sandbox_model.clone())
         .with_warm_pools(native_warm_pools.clone())
         .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))
         .with_admission_ceilings(stores::admission_ceilings(&stores, config))
         .with_admission_control(stores::admission_control(&stores, config));
+        let admin = runtime.attach_admin(admin, &stores);
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
             stores.sandbox_profiles.clone(),

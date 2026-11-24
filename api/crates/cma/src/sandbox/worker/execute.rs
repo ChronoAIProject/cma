@@ -125,36 +125,49 @@ impl SandboxWorker {
                     .await;
             }
         }
+        self.execute_step(sandbox, now).await
+    }
+
+    // Keep the selected work future off the dispatch frame, as AgentWorker
+    // does. Provisioning and teardown otherwise accumulate large nested poll
+    // frames even when execute itself is boxed by its caller.
+    fn execute_step(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Pin<Box<dyn Future<Output = Result<(), SandboxStoreError>> + Send + '_>> {
         match sandbox.work.step {
-            SandboxWorkStep::ProvisionRuntime => self.provision(sandbox, now).await,
-            SandboxWorkStep::RunInstall => self.install(sandbox, now).await,
+            SandboxWorkStep::ProvisionRuntime => Box::pin(self.provision(sandbox, now)),
+            SandboxWorkStep::RunInstall => Box::pin(self.install(sandbox, now)),
             SandboxWorkStep::MintInitialCredential | SandboxWorkStep::MintRotatedCredential => {
-                self.mint(sandbox, now).await
+                Box::pin(self.mint(sandbox, now))
             }
             SandboxWorkStep::DeliverInitialCredential
-            | SandboxWorkStep::DeliverRotatedCredential => self.deliver(sandbox, now).await,
+            | SandboxWorkStep::DeliverRotatedCredential => Box::pin(self.deliver(sandbox, now)),
             SandboxWorkStep::CreateProfileWorkspace(index) => {
-                self.create_workspace(sandbox, index, now).await
+                Box::pin(self.create_workspace(sandbox, index, now))
             }
-            SandboxWorkStep::Activate => self.activate(sandbox, now).await,
-            SandboxWorkStep::WaitForCredentialRotation => self.begin_rotation(sandbox, now).await,
-            SandboxWorkStep::RevokeRotatedCredential => self.revoke_rotated(sandbox, now).await,
-            SandboxWorkStep::FinishCredentialRotation => self.finish_rotation(sandbox, now).await,
-            SandboxWorkStep::RunLifecycleOperation => {
-                Box::pin(self.run_lifecycle(sandbox, now)).await
+            SandboxWorkStep::Activate => Box::pin(self.activate(sandbox, now)),
+            SandboxWorkStep::WaitForCredentialRotation => {
+                Box::pin(self.begin_rotation(sandbox, now))
             }
-            SandboxWorkStep::StopAgents => self.stop_agents(sandbox, now).await,
+            SandboxWorkStep::RevokeRotatedCredential => Box::pin(self.revoke_rotated(sandbox, now)),
+            SandboxWorkStep::FinishCredentialRotation => {
+                Box::pin(self.finish_rotation(sandbox, now))
+            }
+            SandboxWorkStep::RunLifecycleOperation => Box::pin(self.run_lifecycle(sandbox, now)),
+            SandboxWorkStep::StopAgents => Box::pin(self.stop_agents(sandbox, now)),
             SandboxWorkStep::RevokeRetirementCredentials => {
-                self.revoke_for_retirement(sandbox, now).await
+                Box::pin(self.revoke_for_retirement(sandbox, now))
             }
-            SandboxWorkStep::TeardownRuntime => self.teardown(sandbox, now).await,
-            SandboxWorkStep::MarkRetired => self.mark_retired(sandbox, now).await,
+            SandboxWorkStep::TeardownRuntime => Box::pin(self.teardown(sandbox, now)),
+            SandboxWorkStep::MarkRetired => Box::pin(self.mark_retired(sandbox, now)),
             SandboxWorkStep::RetryRetiredRevocations => {
-                self.retry_retired_revoke(sandbox, now).await
+                Box::pin(self.retry_retired_revoke(sandbox, now))
             }
-            SandboxWorkStep::WaitForPurge => self.ready_to_purge(sandbox, now).await,
-            SandboxWorkStep::Purge => self.purge(sandbox, now).await,
-            SandboxWorkStep::None => self.fail_corrupt_claim(sandbox, now).await,
+            SandboxWorkStep::WaitForPurge => Box::pin(self.ready_to_purge(sandbox, now)),
+            SandboxWorkStep::Purge => Box::pin(self.purge(sandbox, now)),
+            SandboxWorkStep::None => Box::pin(self.fail_corrupt_claim(sandbox, now)),
         }
     }
 }

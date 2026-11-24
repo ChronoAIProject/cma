@@ -1,12 +1,9 @@
-use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::{
     apply_image_rotation, apply_proved_inactivity_pause, apply_retained_runtime_abort,
-    apply_retained_runtime_transition, SandboxImageRotationRequest, SandboxInactivityPauseRequest,
-    SandboxMaintenanceApplication, SandboxMaintenanceOutcome, SandboxStoreError,
+    apply_retained_runtime_transition, SandboxMaintenanceApplication, SandboxMaintenanceOutcome,
+    SandboxStoreError,
 };
-use layer2_core::sandbox::{
-    RetainedRuntimeTransition, RetainedRuntimeTransitionRequest, Sandbox, SandboxEvent,
-};
+use layer2_core::sandbox::{Sandbox, SandboxEvent};
 use mongodb::bson::{doc, Bson};
 use mongodb::ClientSession;
 
@@ -23,42 +20,11 @@ use super::evidence::{
 };
 
 mod reconciliation;
+mod request;
 mod scoped;
 pub(super) use reconciliation::reconcile;
+pub(super) use request::MaintenanceRequest;
 pub(super) use scoped::attempt;
-
-pub(super) enum MaintenanceRequest {
-    Inactivity(SandboxInactivityPauseRequest),
-    Rotation(SandboxImageRotationRequest),
-    RetainedTransition {
-        request: Box<RetainedRuntimeTransitionRequest>,
-        requested_at: String,
-    },
-    RetainedTransitionAbort {
-        receipt: Box<RetainedRuntimeTransition>,
-        requested_at: String,
-    },
-}
-
-impl MaintenanceRequest {
-    fn sandbox_id(&self) -> &SandboxId {
-        match self {
-            Self::Inactivity(request) => &request.sandbox_id,
-            Self::Rotation(request) => &request.sandbox_id,
-            Self::RetainedTransition { request, .. } => &request.sandbox_id,
-            Self::RetainedTransitionAbort { receipt, .. } => &receipt.request.sandbox_id,
-        }
-    }
-
-    fn requested_at(&self) -> &str {
-        match self {
-            Self::Inactivity(request) => &request.requested_at,
-            Self::Rotation(request) => &request.requested_at,
-            Self::RetainedTransition { requested_at, .. }
-            | Self::RetainedTransitionAbort { requested_at, .. } => requested_at,
-        }
-    }
-}
 
 pub(super) struct MaintenanceReceipt {
     pub(super) sandbox: Sandbox,
@@ -171,7 +137,22 @@ pub(super) async fn apply_with_sources(
             )))
         }
     };
+    if let MaintenanceRequest::Custom(admission) = request {
+        if admission.is_replay(&current).map_err(ApplyError::Domain)? {
+            return Ok(MaintenanceReceipt {
+                sandbox: current,
+                event: None,
+                outcome: SandboxMaintenanceOutcome::AlreadyScheduled,
+            });
+        }
+    }
     let agents = load_sandbox_agents(store, &current.id, session).await?;
+    if let Some(basis) = request.basis() {
+        super::custom_runtime::validate_admission(
+            store, &document, &current, &agents, basis, session,
+        )
+        .await?;
+    }
     let application = match request {
         MaintenanceRequest::Inactivity(request) => {
             let bounded_legacy_log =
@@ -251,6 +232,16 @@ pub(super) async fn apply_with_sources(
             apply_proved_inactivity_pause(&current, &activities, request, agentless_idle)
         }
         MaintenanceRequest::Rotation(request) => apply_image_rotation(&current, &agents, request),
+        MaintenanceRequest::FleetRotation(request, basis) => {
+            layer2_core::sandbox::store::apply_scoped_image_rotation(
+                &current, &agents, request, basis,
+            )
+        }
+        MaintenanceRequest::Custom(admission) => {
+            layer2_core::sandbox::store::apply_custom_runtime_migration(
+                &current, &agents, admission,
+            )
+        }
         MaintenanceRequest::RetainedTransition {
             request,
             requested_at,
@@ -338,7 +329,10 @@ pub(super) async fn apply_with_sources(
     // from committing after the evidence read without conflicting with admission.
     if matches!(
         request,
-        MaintenanceRequest::Rotation(_) | MaintenanceRequest::RetainedTransition { .. }
+        MaintenanceRequest::Rotation(_)
+            | MaintenanceRequest::FleetRotation(..)
+            | MaintenanceRequest::Custom(_)
+            | MaintenanceRequest::RetainedTransition { .. }
     ) {
         if !super::evidence::fence_idle_workspaces(store, &current, session).await? {
             return Ok(MaintenanceReceipt {
@@ -388,6 +382,13 @@ pub(super) async fn apply_with_sources(
             signed(desktop_activity_fence, "desktop activity fence")
                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
         );
+    }
+    if sandbox.lifecycle.custom_runtime.is_some()
+        || sandbox.lifecycle.runtime_migration_admission.is_some()
+    {
+        crate::store::work_schema::floor::retain_runtime_migration(store, session)
+            .await
+            .map_err(ApplyError::Driver)?;
     }
     let advanced = store
         .sandboxes

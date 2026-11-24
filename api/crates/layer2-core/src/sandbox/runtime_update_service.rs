@@ -71,7 +71,7 @@ impl SandboxRuntimeUpdateService {
 
     /// `can_update` against a release the caller already captured.
     pub fn can_update_to(&self, sandbox: &Sandbox, latest: &str) -> bool {
-        if sandbox.profile.content.runtime_image.is_some() {
+        if sandbox.profile.content.runtime_image.is_some() || scoped_explicit_retry(sandbox) {
             return false;
         }
         if sandbox.unpublished_recovery_candidate() {
@@ -101,6 +101,7 @@ impl SandboxRuntimeUpdateService {
     /// Whether a retry of the pinned target may recover onto the observed release.
     pub fn retry_uses_latest(&self, sandbox: &Sandbox, pinned: &str, latest: &str) -> bool {
         sandbox.profile.content.runtime_image.is_none()
+            && !scoped_explicit_retry(sandbox)
             && self.recovery.is_some()
             && sandbox.unpublished_recovery_candidate()
             && recover_on_latest(sandbox, pinned, latest)
@@ -220,7 +221,10 @@ impl SandboxRuntimeUpdateService {
                 .map_err(store_error)?
                 .filter(|sandbox| owner.is_none_or(|owner| sandbox.owner == *owner))
                 .ok_or(SandboxRuntimeUpdateError::NotFound)?;
-            if sandbox.profile.content.runtime_image.is_some() {
+            // Custom authority is admitted only by the operator migration path,
+            // including recovery. The ordinary latest-image route cannot select
+            // a target before the custom model's stronger admission runs.
+            if sandbox.profile.content.runtime_image.is_some() || scoped_explicit_retry(&sandbox) {
                 return Err(SandboxRuntimeUpdateError::NotAvailable);
             }
             let pinned = sandbox.runtime_update_request().is_some_and(|request| {
@@ -335,6 +339,14 @@ fn recover_on_latest(sandbox: &Sandbox, requested: &str, latest: &str) -> bool {
                 ..
             })
         )
+}
+
+fn scoped_explicit_retry(sandbox: &Sandbox) -> bool {
+    sandbox.lifecycle.runtime_migration_admission.is_some()
+        && (sandbox.unpublished_recovery_candidate()
+            || sandbox
+                .runtime_update_request()
+                .is_some_and(|request| request.completed_at.is_none() && request.failure.is_some()))
 }
 
 fn store_error(error: SandboxStoreError) -> SandboxRuntimeUpdateError {

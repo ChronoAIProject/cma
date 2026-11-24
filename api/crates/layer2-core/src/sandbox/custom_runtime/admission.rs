@@ -112,6 +112,7 @@ impl Sandbox {
             migration: request,
             source_generation,
             completed_at: None,
+            admission_basis: None,
         }));
         next.touch_custom_runtime(at)?;
         tracing::info!(

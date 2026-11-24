@@ -25,6 +25,9 @@ impl MongoSandboxStore {
             #[cfg(test)]
             request_budget_clock: None,
             bounded_admission_agents: Default::default(),
+            runtime_migration_authority: None,
+            runtime_migration_verifier: None,
+            runtime_migration_enabled: false,
             renewable_work: false,
             segment_adoption_enabled: false,
             bounded_approval_reads: false,

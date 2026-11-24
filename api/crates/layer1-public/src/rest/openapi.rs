@@ -1,4 +1,5 @@
 use utoipa::OpenApi;
+mod admin_runtime;
 pub mod agent_delegations;
 mod agent_manager;
 mod composition;
@@ -204,7 +205,6 @@ use super::trigger_openapi_shapes::*;
         super::admin::sandboxes::read,
         super::admin::sandboxes::events,
         super::admin::sandboxes::retire, super::admin::sandboxes::always_on, super::admin::auto_pause::preview, super::admin::auto_pause::pause_idle_now,
-        super::admin::runtime_update::update,
         super::admin::profiles::list,
         super::admin::profiles::retire,
         super::admin::triggers::pause,
@@ -213,9 +213,6 @@ use super::trigger_openapi_shapes::*;
         super::admin::binding_holds::read,
         super::admin::activity,
         super::admin::activity_actors,
-        super::admin::warm_pools::list,
-        super::admin::warm_pools::configure,
-        super::admin::warm_pools::resize,
         super::bindings::put_binding, super::bindings::get_binding, super::bindings::delete_binding, super::bindings::put_conversation, super::bindings::delete_conversation,
     ),
     components(schemas(
@@ -462,10 +459,6 @@ use super::trigger_openapi_shapes::*;
         ProfilePageView,
         RuntimeEntryView,
         RuntimeInventoryView,
-        super::admin::warm_pools::WarmPoolList,
-        super::admin::warm_pools::WarmPoolView,
-        super::admin::warm_pools::ConfigureWarmPoolBody,
-        super::admin::warm_pools::ResizeWarmPoolBody,
         ActivityView,
         ActivityPageView,
         ActivityActorView,
