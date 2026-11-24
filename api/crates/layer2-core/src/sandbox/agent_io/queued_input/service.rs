@@ -38,7 +38,8 @@ impl AgentCommandService {
         let deadline = command
             .authority_deadline
             .map_or(deadline, |limit| limit.min(deadline));
-        command.authority_deadline = Some(deadline);
+        let mut attempt_deadline = deadline;
+        command.authority_deadline = Some(attempt_deadline);
         let resource = ResourceTarget::Agent {
             agent_id: edit.agent_id.clone(),
         };
@@ -60,16 +61,22 @@ impl AgentCommandService {
                 },
             };
             request.validate()?;
-            let result = self
-                .with_authority_bound(
+            let result = tokio::time::timeout_at(
+                attempt_deadline,
+                self.with_authority_bound(
                     &authorized,
                     capability,
                     self.store.edit_queued_input(request.clone()),
-                )
-                .await;
-            tokio::time::timeout_at(deadline, self.fence(&authorized, &resource, capability))
-                .await
-                .map_err(|_| CommandLedgerError::Unavailable)??;
+                ),
+            )
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)?;
+            tokio::time::timeout_at(
+                attempt_deadline,
+                self.fence(&authorized, &resource, capability),
+            )
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)??;
             match result?? {
                 QueuedInputOutcome::NotAdmitted => {
                     return Err(super::super::QueuedCancellationError::NotAdmitted);
@@ -121,11 +128,10 @@ impl AgentCommandService {
             command.expected_agent_revision = fresh.expected_agent_revision;
             command.parent = fresh.parent;
             command.admission_audit = fresh.admission_audit;
-            command.authority_deadline = Some(
-                fresh
-                    .authority_deadline
-                    .map_or(deadline, |limit| limit.min(deadline)),
-            );
+            attempt_deadline = fresh
+                .authority_deadline
+                .map_or(deadline, |limit| limit.min(deadline));
+            command.authority_deadline = Some(attempt_deadline);
             authorized = fresh_authorized;
         }
         Err(CommandLedgerError::Conflict.into())

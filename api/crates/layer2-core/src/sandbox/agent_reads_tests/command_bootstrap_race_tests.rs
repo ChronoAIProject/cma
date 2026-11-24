@@ -20,6 +20,7 @@ enum Progress {
     Policy,
     EveryAttempt,
     SlowRefresh,
+    SlowFirstPreparation,
     ChangedScope,
 }
 
@@ -39,6 +40,9 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
         owner: &AgentOwner,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call == 0 && matches!(self.progress, Progress::SlowFirstPreparation) {
+            tokio::time::sleep(Duration::from_secs(14)).await;
+        }
         if call > 0 && matches!(self.progress, Progress::SlowRefresh) {
             tokio::time::sleep(Duration::from_secs(16)).await;
         }
@@ -74,6 +78,7 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
                     }
                     self.store.save_agent(revision, agent).await.unwrap();
                 }
+                Progress::SlowFirstPreparation => {}
                 Progress::ModelChange => prepared::complete_then_change_model(&self.store).await,
                 Progress::Policy => {
                     share(&self.store, None).await;

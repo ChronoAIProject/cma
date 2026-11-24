@@ -111,10 +111,17 @@ async fn queued_edit_refuses_changed_authority_and_limits_repreparation() {
     }
 }
 
+#[derive(Clone, Copy)]
+enum FirstEditReply {
+    Conflict,
+    Lost,
+    Delayed,
+}
+
 struct EditStore {
     inner: Arc<InMemorySandboxStore>,
     requests: Mutex<Vec<QueuedInputReservation>>,
-    first_conflicts: bool,
+    first_reply: FirstEditReply,
 }
 
 #[async_trait]
@@ -128,13 +135,18 @@ impl AgentCommandStore for EditStore {
             requests.push(request.clone());
             requests.len() == 1
         };
-        if first && self.first_conflicts {
+        if first && matches!(self.first_reply, FirstEditReply::Conflict) {
             return Err(CommandLedgerError::Conflict);
         }
         let result = self.inner.edit_queued_input(request).await?;
         if first {
             assert!(matches!(result, QueuedInputOutcome::Applied(_)));
-            return Err(CommandLedgerError::Unavailable);
+            match self.first_reply {
+                FirstEditReply::Conflict | FirstEditReply::Lost => {
+                    return Err(CommandLedgerError::Unavailable);
+                }
+                FirstEditReply::Delayed => tokio::time::sleep(Duration::from_secs(10)).await,
+            }
         }
         Ok(result)
     }
@@ -161,19 +173,32 @@ impl AgentCommandStore for EditStore {
     }
 }
 
-#[tokio::test]
-async fn queued_edit_leaves_generic_conflicts_and_lost_replies_for_explicit_recovery() {
-    for first_conflicts in [true, false] {
+#[tokio::test(start_paused = true)]
+async fn queued_edit_leaves_generic_conflicts_and_ambiguous_replies_for_explicit_recovery() {
+    for first_reply in [
+        FirstEditReply::Conflict,
+        FirstEditReply::Lost,
+        FirstEditReply::Delayed,
+    ] {
+        let first_conflicts = matches!(first_reply, FirstEditReply::Conflict);
+        let delayed = matches!(first_reply, FirstEditReply::Delayed);
         let (store, authority, edit) = queued_edit_fixture().await;
         let edits = Arc::new(EditStore {
             inner: store.clone(),
             requests: Mutex::default(),
-            first_conflicts,
+            first_reply,
         });
+        let (_, slow_authority) =
+            service(&store, authority.clone(), Progress::SlowFirstPreparation);
+        let command_authority: Arc<dyn AgentCommandAdmissionAuthority> = if delayed {
+            slow_authority
+        } else {
+            authority.clone()
+        };
         let service = AgentCommandService::new(
             edits.clone(),
-            Arc::new(ResourceAccessService::new(store.clone(), authority.clone())),
-            authority,
+            Arc::new(ResourceAccessService::new(store.clone(), authority)),
+            command_authority,
         );
         let submit = || async {
             service
@@ -190,11 +215,15 @@ async fn queued_edit_leaves_generic_conflicts_and_lost_replies_for_explicit_reco
         } else {
             CommandLedgerError::Unavailable
         };
+        let started = tokio::time::Instant::now();
         assert!(matches!(
             submit().await,
             Err(QueuedCancellationError::Admission(CommandAdmissionError::Ledger(error)))
                 if error == expected
         ));
+        if delayed {
+            assert!((Duration::from_secs(15)..Duration::from_secs(16)).contains(&started.elapsed()));
+        }
         let first_command = {
             let requests = edits.requests.lock().unwrap();
             assert_eq!(requests.len(), 1);
