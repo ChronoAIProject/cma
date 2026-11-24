@@ -650,6 +650,7 @@ dependencies = [
  "cmaeg-core",
  "cmaeg-engine",
  "dashmap",
+ "futures-util",
  "metrics",
  "metrics-exporter-prometheus",
  "sha2 0.10.9",

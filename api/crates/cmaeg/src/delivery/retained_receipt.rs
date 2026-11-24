@@ -10,6 +10,7 @@ use cmaeg_core::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::ops::Deref;
 
 pub(crate) const INLINE_LIMIT: usize = 16 * 1024;
 // Escaping doubles at most 17 text sections. Two consecutive renderer chunks
