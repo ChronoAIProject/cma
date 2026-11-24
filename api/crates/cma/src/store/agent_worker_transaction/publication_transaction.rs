@@ -164,7 +164,7 @@ async fn run(
             Ok(receipt) => receipt,
             Err(ApplyError::StagePending(source)) => {
                 session
-                    .abort_transaction()
+                    .abort_guarded()
                     .await
                     .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
                 drop(writer);
@@ -176,7 +176,7 @@ async fn run(
             }
             Err(ApplyError::PendingReplayed) => {
                 session
-                    .abort_transaction()
+                    .abort_guarded()
                     .await
                     .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
                 cohort(Stage::Completed, Outcome::Replay);
@@ -216,7 +216,7 @@ async fn run(
             .as_ref()
             .is_some_and(|prepared| !prepared.lease_live())
         {
-            if let Err(error) = session.abort_transaction().await {
+            if let Err(error) = session.abort_guarded().await {
                 tracing::warn!(error_kind = ?error.kind, "Expired pending publication abort was not acknowledged");
             }
             cohort(Stage::Blocked, Outcome::KnownAbort);
@@ -225,7 +225,7 @@ async fn run(
         // Once commit is sent, the original transaction must settle or
         // reconcile even if the work lease expires while waiting for Mongo.
         if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(SandboxStoreError::Conflict);
         }
         match commit_transaction(&mut session).await {

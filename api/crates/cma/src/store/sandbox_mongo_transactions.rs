@@ -76,7 +76,7 @@ pub(crate) async fn start_transaction(session: &mut ClientSession) -> Result<(),
         .await?;
     // Read before the work-publication fence's Sandbox or Workspace write.
     if let Err(error) = crate::store::transaction_barrier::open(session).await {
-        if let Err(abort) = session.abort_transaction().await {
+        if let Err(abort) = session.abort_guarded().await {
             tracing::warn!(error = %abort, "ordinary work transaction abort was not acknowledged");
         }
         return Err(error);
