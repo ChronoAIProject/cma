@@ -16,6 +16,8 @@ from actions_cache_sweep import Actions
 
 
 CACHE_VERSION = hashlib.sha256(b"|go-actionscache-1.0").hexdigest()
+INDEX_PREFIX = "index-"
+BLOB_PREFIX = "buildkit-blob-1-sha256:"
 INDEX = re.compile(r"index-[a-z0-9-]+-1-[a-f0-9]{8}(?:-sig)?#[1-9][0-9]*")
 DIGEST = r"sha256:[a-f0-9]{64}"
 BLOB = re.compile("buildkit-blob-1-(" + DIGEST + ")")
@@ -122,23 +124,43 @@ def read_index(results_url, token, key, expected_size):
     return layers(read_json(signed_url, MAX_INDEX_BYTES, expected_size=expected_size))
 
 
+def entries_with_prefix(api, prefix, **filters):
+    entries = api.entries(key=prefix, sort="created_at", direction="desc", **filters)
+    if any(not entry.key.startswith(prefix) for entry in entries):
+        raise ValueError("cache response included a key outside the requested prefix")
+    return entries
+
+
+def develop_blobs(api):
+    # A mutation only forces a pagination retry in its own digest partition.
+    entries = {}
+    for digit in "0123456789abcdef":
+        for entry in entries_with_prefix(api, BLOB_PREFIX + digit, ref=DEVELOP):
+            if entry.ref != DEVELOP or not BLOB.fullmatch(entry.key) or entry.id in entries:
+                raise ValueError("invalid BuildKit blob inventory")
+            entries[entry.id] = entry
+    return entries
+
+
 def snapshot(api, reader, revision, now):
     api.require_live_policy(revision)
-    before = api.entries(sort="created_at", direction="desc")
-    pinned = indexes(before)
+    # The exact index key/version must be unique across all refs. Only blob
+    # candidates are scoped to develop.
+    pinned = indexes(entries_with_prefix(api, INDEX_PREFIX))
+    before = develop_blobs(api)
     with ThreadPoolExecutor(max_workers=8) as pool:
         reachable = set().union(*pool.map(lambda row: reader(row.key, row.size), pinned.values()))
-    after = api.entries(sort="created_at", direction="desc")
-    if indexes(after) != pinned:
+    after = develop_blobs(api)
+    if indexes(entries_with_prefix(api, INDEX_PREFIX)) != pinned:
         raise ValueError("BuildKit indexes changed during inventory")
     api.require_live_policy(revision)
-    unchanged = {entry.id: entry for entry in before}
     cutoff = now - timedelta(hours=24)
-    candidates = [entry for entry in after if entry.ref == DEVELOP and entry.version == CACHE_VERSION
-                  and BLOB.fullmatch(entry.key) and entry.key not in reachable and entry.accessed <= cutoff
-                  and unchanged.get(entry.id) == entry]
+    candidates = [entry for entry in after.values() if entry.version == CACHE_VERSION
+                  and entry.key not in reachable and entry.accessed <= cutoff
+                  and before.get(entry.id) == entry]
     return {"develop": revision, "observed_at": now.isoformat(), "index_count": len(pinned),
-            "reachable_layer_count": len(reachable), "observed_bytes": sum(entry.size for entry in after),
+            "reachable_layer_count": len(reachable),
+            "observed_develop_blob_bytes": sum(entry.size for entry in after.values()),
             "candidate_bytes": sum(entry.size for entry in candidates),
             "candidates": [asdict(entry) for entry in sorted(candidates, key=lambda entry: (-entry.size, entry.id))]}
 

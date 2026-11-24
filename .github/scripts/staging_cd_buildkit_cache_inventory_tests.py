@@ -1,10 +1,12 @@
+from collections import Counter
 from dataclasses import replace
 from datetime import timedelta
 from io import BytesIO
 import unittest
 from unittest.mock import Mock, patch
 
-from actions_cache_buildkit_inventory import CACHE_VERSION, layers, read_index, read_json, snapshot
+from actions_cache_buildkit_inventory import BLOB_PREFIX, CACHE_VERSION, INDEX_PREFIX, layers, read_index, read_json, snapshot
+from actions_cache_retention import DEVELOP
 from staging_cd_cache_retention_tests import CLOCK, entry
 
 
@@ -19,24 +21,44 @@ def blob(number, digest):
     return replace(entry(number, "buildkit-blob-1-sha256:" + digest * 64), version=CACHE_VERSION)
 
 
+def inventory(before, after):
+    calls = Counter()
+
+    def entries(*, key, sort, direction, ref=None):
+        observation = before if calls[key] == 0 else after
+        calls[key] += 1
+        if key == INDEX_PREFIX:
+            if ref is not None:
+                raise AssertionError("index lookup must span all refs")
+            return [entry for entry in observation if entry.key.startswith(key)]
+        if ref != DEVELOP or key[:-1] != BLOB_PREFIX:
+            raise AssertionError("blob lookup must use the develop ref and a digest partition")
+        return [entry for entry in observation if entry.key.startswith(key) and entry.ref == ref]
+
+    return Mock(entries=Mock(side_effect=entries))
+
+
 class BuildKitCacheInventory(unittest.TestCase):
     def test_all_index_generations_protect_their_layers(self):
         current, old = index(1), index(2)
         recent = replace(blob(6, "d"), accessed=CLOCK + timedelta(hours=30))
         referenced, old_ref, unused = blob(3, "a"), blob(4, "b"), blob(5, "c")
-        rows = [current, old, referenced, old_ref, unused, recent]
-        updated = [replace(current, accessed=recent.accessed), *rows[1:]]
-        api = Mock(entries=Mock(side_effect=[rows, updated]))
+        accessed_during_inventory = blob(7, "e")
+        rows = [current, old, referenced, old_ref, unused, recent, accessed_during_inventory]
+        updated = [replace(current, accessed=recent.accessed), *rows[1:-1],
+                   replace(accessed_during_inventory, accessed=CLOCK + timedelta(hours=1))]
+        api = inventory(rows, updated)
         refs = {current.key: {referenced.key}, old.key: {old_ref.key}}
         reader = Mock(side_effect=lambda key, size: refs[key])
         result = snapshot(api, reader, "a" * 40, CLOCK + timedelta(hours=48))
         reader.assert_any_call(current.key, current.size)
         self.assertEqual((result["index_count"], result["reachable_layer_count"]), (2, 2))
+        self.assertEqual(result["observed_develop_blob_bytes"], sum(entry.size for entry in rows[2:]))
         self.assertEqual([candidate["id"] for candidate in result["candidates"]], [unused.id])
         api.delete.assert_not_called()
 
     def test_added_generation_invalidates_the_snapshot(self):
-        api = Mock(entries=Mock(side_effect=[[index(1)], [index(1), index(2)]]))
+        api = inventory([index(1)], [index(1), index(2)])
         with self.assertRaisesRegex(ValueError, "indexes changed"):
             snapshot(api, lambda key, size: set(), "a" * 40, CLOCK)
 
