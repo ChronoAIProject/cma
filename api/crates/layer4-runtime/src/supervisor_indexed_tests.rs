@@ -90,14 +90,11 @@ async fn indexed_same_runtime_restart_recovers_an_interrupted_close_for_the_exac
     assert!(matches!(closed, ResponseFrame::CloseAgent(_)));
     launch.operation_id = "agent:agent-1:open:2:v1".into();
     launch.request_sha256 = "c".repeat(64);
-    let opened = supervisor
-        .dispatch(super::persistent_home_tests::restart_open(
-            &supervisor,
-            3,
-            &launch,
-        ))
-        .await;
+    let pinned = super::persistent_home_tests::restart_open(&supervisor, 3, &launch);
+    let opened = supervisor.dispatch(pinned.clone()).await;
     assert!(matches!(opened, ResponseFrame::OpenAgent(_)), "{opened:?}");
+    // An uncertain caller can replay the same request while its bridge remains live.
+    assert_eq!(supervisor.dispatch(pinned.clone()).await, opened);
     assert_eq!(supervisor.dispatch(old_close.clone()).await, closed);
     assert!(ledger
         .active(ProcessFilter::Agent("agent-1".into()))
@@ -107,6 +104,11 @@ async fn indexed_same_runtime_restart_recovers_an_interrupted_close_for_the_exac
 
     config.agent_process_restart_enabled = false;
     let (supervisor, ledger) = indexed(&config, 32_768).await;
+    assert_eq!(
+        failure(supervisor.dispatch(pinned).await).code,
+        "agent_process_restart_runtime_changed"
+    );
+    assert!(supervisor.bridge("agent-1").await.is_none());
     assert_eq!(supervisor.dispatch(old_close).await, closed);
     assert!(ledger.active(ProcessFilter::Any).await.unwrap());
     let close = AgentCloseRequest::new("agent:agent-1:close:2:v1", launch.agent_id);
