@@ -1,7 +1,8 @@
 import { selectAgentAction } from './agentActionDispatch';
 import { useTreeFocus } from './useTreeFocus';
 import { Presence } from '../ui/Presence';
-import { useId, useState } from 'react';
+import { useId } from 'react';
+import { useTreeCollapse } from './useTreeCollapse';
 import {
   sandboxChildrenAvailable,
   sandboxChildrenReadable,
@@ -36,23 +37,6 @@ import { sandboxFilterEmpty, sandboxNavigation } from './navigationStatuses';
 
 import type { TreeProps } from './treeTypes';
 export type { TreeAction, TreePermissions, TreeProps } from './treeTypes';
-
-function storageKey(viewerId: string): string {
-  return `cma:tree:${viewerId}:collapsed`;
-}
-
-function restored(viewerId: string): Set<string> {
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(storageKey(viewerId)) ?? '[]');
-    return new Set(
-      Array.isArray(parsed)
-        ? parsed.filter((value): value is string => typeof value === 'string')
-        : [],
-    );
-  } catch {
-    return new Set();
-  }
-}
 
 export function Tree({
   currentTask,
@@ -97,16 +81,7 @@ export function Tree({
   );
   const groupId = useId();
   const focus = useTreeFocus();
-  const [collapsed, setCollapsed] = useState(() => restored(viewerId));
-  const toggle = (node: string) => {
-    setCollapsed((current) => {
-      const next = new Set(current);
-      if (next.has(node)) next.delete(node);
-      else next.add(node);
-      localStorage.setItem(storageKey(viewerId), JSON.stringify([...next]));
-      return next;
-    });
-  };
+  const { collapsed, toggle } = useTreeCollapse(viewerId);
 
   return (
     <div className="resource-tree" {...focus}>

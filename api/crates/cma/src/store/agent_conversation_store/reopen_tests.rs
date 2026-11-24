@@ -83,6 +83,7 @@ async fn run_case(count: usize, park: bool) {
                     started_at: None,
                     completed_at: None,
                     failure: None,
+                    retained_transition: None,
                 }),
             });
         }

@@ -90,6 +90,51 @@ impl ProviderHostedControlTransport {
             .map_err(|_| AdapterError::Unavailable("startup policy status timed out".into()))?
     }
 
+    pub(super) async fn verify_retained_policy(
+        &self,
+        handle: &RuntimeHandle,
+        readback: &crate::RetainedStartupPolicyReadback<'_>,
+    ) -> crate::Result<crate::RuntimeStartupPolicyObservation> {
+        let RuntimeDiscovery::AgentSandbox(client) = &self.client else {
+            return Err(AdapterError::Unsupported(
+                "retained startup policy requires a native Sandbox".into(),
+            ));
+        };
+        if !readback
+            .config_digest
+            .strip_prefix("sha256:")
+            .is_some_and(crate::hosted::reply::valid_sha256)
+        {
+            return Err(AdapterError::Rejected(
+                "retained runtime config digest is invalid".into(),
+            ));
+        }
+        crate::hosted::validate_runtime_image(readback.image)?;
+        let pod = client.pod_binding(handle).await?;
+        let incarnation = client.receiver_incarnation(handle, &pod).await?;
+        if !incarnation.matches_retained_startup_policy(readback) {
+            return Err(AdapterError::Unavailable(
+                "admitted runtime image is not observed".into(),
+            ));
+        }
+        let observed = self
+            .observe_native_startup_policy(handle, &pod, readback.runtime, readback.boot_id)
+            .await?
+            .ok_or_else(|| {
+                AdapterError::Unavailable(
+                    "admitted runtime startup policy is not observable".into(),
+                )
+            })?;
+        if observed.legacy_journal_recovery_enabled != readback.journal_recovery
+            || client.receiver_incarnation(handle, &pod).await? != incarnation
+        {
+            return Err(AdapterError::Unavailable(
+                "admitted runtime startup policy evidence changed".into(),
+            ));
+        }
+        Ok(observed)
+    }
+
     pub fn with_native_close_agent_lane(mut self, enabled: bool) -> Self {
         self.native_close_agent_lane = enabled;
         self
@@ -100,7 +145,17 @@ impl ProviderHostedControlTransport {
         endpoint: &RuntimeEndpoint,
         request: &RequestFrame,
     ) -> crate::Result<ResponseFrame> {
-        let _ownership = self.receiver_lease(endpoint).await?;
+        let file_read = matches!(
+            request,
+            RequestFrame::RuntimeStatus(_)
+                | RequestFrame::ListAgentFiles(_)
+                | RequestFrame::ReadAgentFile(_)
+        );
+        let _ownership = if file_read {
+            self.receiver_lease_for_read(endpoint).await?
+        } else {
+            self.receiver_lease(endpoint).await?
+        };
         self.control_exchange(endpoint, request).await
     }
 

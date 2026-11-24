@@ -8,6 +8,7 @@ members = [
     "crates/cma",
     "crates/cma-am-auth",
     "crates/cma-am-mongo-primitives",
+    "crates/cma-qualification",
     "crates/cmaeg-core",
     "crates/cmaeg-engine",
     "crates/cmaeg-execution",

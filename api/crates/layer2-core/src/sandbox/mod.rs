@@ -196,6 +196,11 @@ mod custom_runtime;
 pub use custom_runtime::{
     SandboxCustomRuntimeMigration, SandboxCustomRuntimeOrigin, SandboxCustomRuntimeState,
 };
+mod retained_runtime_transition;
+pub use retained_runtime_transition::{
+    next_replacement_runtime_generation, RetainedRuntimePolicyBinding, RetainedRuntimeTransition,
+    RetainedRuntimeTransitionRequest,
+};
 mod runtime_update;
 mod runtime_update_resume;
 pub use runtime_update::{

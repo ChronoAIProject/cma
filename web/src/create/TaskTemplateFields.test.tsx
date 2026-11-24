@@ -335,7 +335,7 @@ it.each([true, false])(
         }),
     });
     await ready();
-    fireEvent.click(screen.getByRole('button', { name: 'Write code' }));
+    selectTaskTemplate('Write code');
     const behavior = 'Create a small accessible page on a new branch.';
     fill('Language', 'JavaScript');
     fill('What should the code do?', behavior);
