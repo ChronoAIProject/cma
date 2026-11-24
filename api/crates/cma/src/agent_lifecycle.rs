@@ -63,7 +63,7 @@ mod image;
 mod repository_preflight;
 #[path = "agent_lifecycle_policy.rs"]
 mod task_policy;
-pub(crate) use image::{ImageManagerResolver, ImageResolver};
+pub(crate) use image::{valid_immutable_image, ImageManagerResolver, ImageResolver};
 #[path = "agent_lifecycle_validation.rs"]
 pub(crate) mod validation;
 use validation::{
