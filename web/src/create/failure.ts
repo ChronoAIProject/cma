@@ -13,7 +13,7 @@ const messages: Readonly<Record<string, string>> = {
   forbidden: 'You do not have permission to create this resource.',
   invalid_sandbox_name: 'Use a nonempty sandbox name no longer than 64 bytes.',
   sandbox_name_conflict: 'A sandbox already has this name. Choose another name.',
-  workspace_name_conflict: 'This workspace name is already in use. Choose another profile.',
+  workspace_name_conflict: 'This workspace name is already in use. Choose another workspace name.',
   sandbox_not_ready: 'The sandbox is not ready. Wait for preparation or choose another sandbox.',
   workspace_not_ready:
     'The workspace is not ready. Wait for preparation or choose another workspace.',

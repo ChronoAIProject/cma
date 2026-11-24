@@ -1,13 +1,10 @@
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex};
 
 use layer2_core::{
     sandbox::{binding::BindingStore, store::SandboxStoreError},
     ActivityAction, ActivityOutcome, ActivityRecord, ActivityStore,
 };
-use mongodb::{
-    event::{command::CommandEvent, EventHandler},
-    options::ClientOptions,
-};
+use mongodb::event::{command::CommandEvent, EventHandler};
 use tokio::sync::oneshot;
 
 use super::*;
@@ -16,7 +13,7 @@ use crate::store::{
         insert_retained_binding_fixture,
         schema::{COLLECTIONS, LEGACY_AGENT_INDEX},
     },
-    migrations::apply_binding_indexes_for_test,
+    migrations::{apply_binding_indexes_for_test, apply_binding_indexes_with_pause_for_test},
     mongo::STARTUP_COMMANDS,
     schema_mongo_integration_tests::activity_retention::prepare_activity_schema,
 };
@@ -80,38 +77,6 @@ async fn connect_observed(
     stores
 }
 
-async fn pause_after_first_index(
-    db: &Database,
-) -> (Database, oneshot::Receiver<()>, mpsc::Sender<()>) {
-    let (created, first_index) = oneshot::channel();
-    let (resume, release) = mpsc::channel();
-    let barrier = Mutex::new(Some((created, release)));
-    let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
-        .await
-        .unwrap();
-    // The synchronous callback runs after the server reply and before the
-    // driver returns control to the migration. Keep the other workers free
-    // for startup and catalog reads while that migration awaits release.
-    options.command_event_handler = Some(EventHandler::callback(move |event| {
-        let CommandEvent::Succeeded(event) = event else {
-            return;
-        };
-        if event.command_name != "createIndexes" {
-            return;
-        }
-        let barrier = barrier.lock().unwrap().take();
-        if let Some((created, release)) = barrier {
-            assert!(!event.reply.contains_key("writeConcernError"));
-            tokio::task::block_in_place(|| {
-                created.send(()).unwrap();
-                release.recv_timeout(BARRIER_TIMEOUT).unwrap();
-            });
-        }
-    }));
-    let migrator = Client::with_options(options).unwrap().database(db.name());
-    (migrator, first_index, resume)
-}
-
 async fn retained_rows(db: &Database) -> Vec<Document> {
     let mut rows = Vec::new();
     for collection in [BINDINGS, CONVERSATIONS, ACTIVITY] {
@@ -129,9 +94,18 @@ async fn retained_rows(db: &Database) -> Vec<Document> {
     rows
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn production_startup_during_partial_binding_index_migration() {
+    tokio::time::timeout(
+        Duration::from_secs(120),
+        exercise_partial_binding_migration(),
+    )
+    .await
+    .expect("partial binding migration contract did not finish");
+}
+
+async fn exercise_partial_binding_migration() {
     let (admin, name) = database().await;
     let db = admin.database(&name);
     let uri = runtime_uri(&db).await;
@@ -166,9 +140,12 @@ async fn production_startup_during_partial_binding_index_migration() {
     let conversation_indexes = index_documents(&db, CONVERSATIONS).await;
     let ledger = db.collection::<Document>("agent_manager_migrations");
 
-    let (migrator, first_index, resume) = pause_after_first_index(&db).await;
-    let migration_db = migrator.clone();
-    let run = tokio::spawn(async move { apply_binding_indexes_for_test(&migration_db).await });
+    let (created, first_index) = oneshot::channel();
+    let (resume, release) = oneshot::channel();
+    let migration_db = db.clone();
+    let run = tokio::spawn(async move {
+        apply_binding_indexes_with_pause_for_test(&migration_db, created, release).await
+    });
     tokio::time::timeout(BARRIER_TIMEOUT, first_index)
         .await
         .expect("migrator did not acknowledge its first additive index")
@@ -275,7 +252,7 @@ async fn production_startup_during_partial_binding_index_migration() {
     );
     drop(reopened);
     assert_eq!(
-        apply_binding_indexes_for_test(&migrator).await.unwrap()["outcome"],
+        apply_binding_indexes_for_test(&db).await.unwrap()["outcome"],
         "already_completed"
     );
     assert_eq!(

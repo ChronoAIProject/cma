@@ -184,6 +184,7 @@ async fn native_reply_target_survives_restart_and_refuses_changed_bot_before_dis
         topic_creation: false,
         message_events: false,
         channel_posts: false,
+        member_join_chat_ids: Vec::new(),
         bot_id: "77".into(),
         bot_username: Some("fixture_bot".into()),
         admission: cmaeg_core::channel::AdmissionPolicy::All {},

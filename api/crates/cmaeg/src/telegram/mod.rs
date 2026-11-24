@@ -273,7 +273,7 @@ pub fn route_chat<'a>(route: &'a str, bot_id: &str) -> Option<&'a str> {
     .then_some(chat)
 }
 
-/// Topic management consent never changes retained ordinary messaging custody.
+/// Separate source opt-ins never change retained ordinary messaging custody.
 pub(crate) fn messaging_source(
     source: &cmaeg_core::channel::Source,
 ) -> cmaeg_core::channel::Source {
@@ -281,11 +281,13 @@ pub(crate) fn messaging_source(
     if let cmaeg_core::channel::Source::Telegram {
         topic_lifecycle,
         topic_creation,
+        member_join_chat_ids,
         ..
     } = &mut source
     {
         *topic_lifecycle = false;
         *topic_creation = false;
+        member_join_chat_ids.clear();
     }
     source
 }

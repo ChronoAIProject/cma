@@ -113,27 +113,34 @@ async fn acknowledge(session: &OwnerSession, output: &crate::bridge::OutputReten
 
 #[tokio::test(start_paused = true)]
 async fn takeover_waits_for_effect_in_progress_and_rechecks_queued_input() {
+    use std::{
+        future::{poll_fn, Future},
+        task::Poll,
+    };
     let fixture = Fixture::new();
     let registry = Arc::new(fixture.registry());
     confirm(&registry, owner(1)).await;
     let old = registry.session("agent", Some(owner(1))).await.unwrap();
     let challenge = registry.challenge(owner(2)).await.unwrap();
     let permit = old.permit().await.unwrap();
-    let takeover = tokio::spawn({
-        let registry = registry.clone();
-        async move {
-            registry
-                .confirm(OwnerConfirmation {
-                    owner: owner(2),
-                    nonce: challenge.nonce,
-                })
-                .await
-        }
-    });
-    tokio::task::yield_now().await;
-    assert!(!takeover.is_finished());
+    let mut takeover = Box::pin(registry.confirm(OwnerConfirmation {
+        owner: owner(2),
+        nonce: challenge.nonce,
+    }));
+    poll_fn(|cx| {
+        assert!(takeover.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    let mut queued_old_input = Box::pin(old.permit());
+    poll_fn(|cx| {
+        assert!(queued_old_input.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
     drop(permit);
-    takeover.await.unwrap().unwrap();
+    takeover.await.unwrap();
+    assert!(queued_old_input.await.is_err());
     assert!(old.permit().await.is_err());
     assert!(registry.session("agent", Some(owner(2))).await.is_ok());
 }

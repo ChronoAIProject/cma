@@ -4,6 +4,7 @@ import { HmacCredentialsScope } from './channelForm/HmacCredentialsScope';
 import { ValidationMessageScope } from './channelForm/ValidationPath';
 import { useDraftReloadWarning } from './channelForm/useDraftReloadWarning';
 import { validateConnectorFields } from './channelForm/connectorValidation';
+import { channelNameRequired } from './channelForm/ChannelPolicyFields';
 import { validateReplyFields } from './channelForm/replyValidation';
 import { revealInvalidField } from './channelForm/AdvancedFields';
 import { ValidationError } from './channelForm/ValidationError';
@@ -18,6 +19,7 @@ import {
   ConsumerPolicyFields,
   initialRouting,
   RoutingFields,
+  routingLimitErrors,
   routingRequest,
 } from './channelForm/RoutingFields';
 import {
@@ -28,6 +30,7 @@ import {
   object,
   records,
   selectedDraft,
+  text,
   type EditorSection,
   type Fields,
 } from './channelForm/model';
@@ -92,6 +95,9 @@ export function ChannelEditor({
   }
   const checkingCustomSupport = create && customExecutionWaiting(discovery, draft);
   const additional = section.kind === 'consumer' && section.id !== 'default';
+  const limitErrors = routingLimitErrors(routing);
+  const invalidRoutingLimits =
+    section.kind === 'channel' && Object.values(limitErrors).some(Boolean);
   async function send(request: Pending) {
     if (!canWrite() || busy) return;
     setBusy(true);
@@ -154,9 +160,15 @@ export function ChannelEditor({
       void send(pending);
       return;
     }
+    if (kind === 'routing' && invalidRoutingLimits) return;
     try {
       const record = baseline?.record_id ?? crypto.randomUUID();
-      const projected = baseline ? selectedDraft(channelDraft(baseline), draft, section) : draft;
+      let projected = baseline ? selectedDraft(channelDraft(baseline), draft, section) : draft;
+      if (kind === 'channel' && (create || section.kind === 'channel')) {
+        const name = text(projected.name).trim();
+        if (!name) throw new Error(`/name: ${channelNameRequired}`);
+        projected = { ...projected, name };
+      }
       const selectedCredentials = baseline
         ? nodeCredentials(credentials, section, projected)
         : channelCredentials(credentials, projected, true);
@@ -310,7 +322,7 @@ export function ChannelEditor({
             disabled={!writable || pending !== undefined || busy}
           >
             {section.kind === 'channel' ? (
-              <RoutingFields value={routing} onChange={setRouting} />
+              <RoutingFields value={routing} onChange={setRouting} limitErrors={limitErrors} />
             ) : activeConsumer ? (
               <>
                 {additional ? (
@@ -342,7 +354,12 @@ export function ChannelEditor({
           {!pending ? (
             <Button
               type="submit"
-              disabled={!writable || busy || (section.kind === 'consumer' && !activeConsumer)}
+              disabled={
+                !writable ||
+                busy ||
+                invalidRoutingLimits ||
+                (section.kind === 'consumer' && !activeConsumer)
+              }
             >
               {section.kind === 'channel' ? 'Save routing' : 'Save consumer policy'}
             </Button>

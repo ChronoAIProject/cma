@@ -105,3 +105,21 @@ it('narrows Sandbox discovery by the draft owner and applies one report while th
   expect(api.create).toHaveBeenCalledTimes(2);
   expect(api.create.mock.calls[0]![0].filters).not.toHaveProperty('owner');
 });
+
+it.each([' Live', 'Live '])('finds a status with surrounding whitespace %j', async (search) => {
+  const actor = userEvent.setup();
+  const apply = vi.fn();
+  render(
+    <OpsMetricFilters
+      api={metricsClient(true)}
+      selection={defaultSelection}
+      active
+      onApply={apply}
+    />,
+  );
+  await actor.click(screen.getByRole('button', { name: 'Usage Sandbox status' }));
+  await actor.type(screen.getByRole('textbox', { name: 'Search usage sandbox status' }), search);
+  await actor.click(screen.getByRole('menuitemradio', { name: 'Live' }));
+  await actor.click(screen.getByRole('button', { name: 'Apply usage filters' }));
+  expect(apply).toHaveBeenCalledWith(expect.objectContaining({ status: 'active' }));
+});

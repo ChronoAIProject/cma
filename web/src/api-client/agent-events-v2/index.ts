@@ -5,6 +5,12 @@ import { query, segment } from '../resources.js';
 import { eventStream } from '../streaming.js';
 import { cursor, identifier, pageCursor, type V2AgentCursor } from './schema.js';
 import { readAgentJson } from './read.js';
+import {
+  externalApprovalProjection,
+  externalApprovalPreference,
+  type ExternalApprovalProjection,
+} from './external-approval.js';
+export type { ExternalApprovalProjection } from './external-approval.js';
 import { agentFrames } from './stream.js';
 import {
   v2AgentEventHead,
@@ -16,7 +22,11 @@ export type * from './types.js';
 export type { V2AgentEventKind } from './kinds.js';
 export type { V2AgentCursor, V2AgentPageCursor } from './schema.js';
 
-export interface V2AgentSnapshotOptions extends OperationOptions {
+export interface V2AgentProjectionOptions extends OperationOptions {
+  readonly externalApprovals?: boolean;
+  readonly onExternalApprovalProjection?: (projection: ExternalApprovalProjection) => void;
+}
+export interface V2AgentSnapshotOptions extends V2AgentProjectionOptions {
   readonly toolOutput?: boolean;
   /** Request typed retained partial-output discovery; older servers may omit it. */
   readonly retainedOutput?: boolean;
@@ -25,7 +35,7 @@ export interface V2AgentSnapshotOptions extends OperationOptions {
   readonly limit?: number;
   readonly pageCursor?: string;
 }
-export interface V2AgentEventsOptions extends OperationOptions {
+export interface V2AgentEventsOptions extends V2AgentProjectionOptions {
   readonly toolOutput?: boolean;
   /** Request typed retained partial-output discovery; older servers may omit it. */
   readonly retainedOutput?: boolean;
@@ -51,13 +61,25 @@ export class AgentEventsV2 {
     return v2UiTransport(await readAgentJson(this.config, '/api/v2/ui/transport', options));
   }
   /** Capture a current tail baseline while historical snapshot pages load independently. */
-  async head(agentId: string, options: OperationOptions = {}) {
+  async head(agentId: string, options: V2AgentProjectionOptions = {}) {
     const id = preflight(identifier, agentId);
-    return v2AgentEventHead(
-      await readAgentJson(this.config, `/api/v2/agents/${segment(id)}/events/head`, options),
-      id,
+    let projection: ExternalApprovalProjection = { supported: false, canReview: false };
+    const value = await readAgentJson(
+      this.config,
+      `/api/v2/agents/${segment(id)}/events/head`,
+      options,
+      options.externalApprovals ? { Prefer: externalApprovalPreference } : undefined,
+      (headers) => {
+        projection = externalApprovalProjection(headers, options.externalApprovals === true);
+      },
     );
+    const result = v2AgentEventHead(value, id);
+    options.onExternalApprovalProjection?.(projection);
+    return options.externalApprovals
+      ? { ...result, externalApprovalProjection: projection }
+      : result;
   }
+
   /** Fetch one fixed-head page. Apply every page before acknowledging through_cursor for tail startup. */
   async snapshot(agentId: string, options: V2AgentSnapshotOptions = {}) {
     const id = preflight(identifier, agentId);
@@ -66,6 +88,7 @@ export class AgentEventsV2 {
     const limit = options.limit ?? 100;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200)
       throw new ValidationError('Agent snapshot limit must be 1 through 200');
+    let projection: ExternalApprovalProjection = { supported: false, canReview: false };
     const value = await readAgentJson(
       this.config,
       query(`/api/v2/agents/${segment(id)}/events/snapshot`, {
@@ -73,9 +96,13 @@ export class AgentEventsV2 {
         page_cursor: previous,
       }),
       options,
-      options.messageBindings || options.toolOutput || options.retainedOutput
+      options.externalApprovals ||
+        options.messageBindings ||
+        options.toolOutput ||
+        options.retainedOutput
         ? {
             Prefer: [
+              options.externalApprovals ? externalApprovalPreference : undefined,
               options.messageBindings ? 'cma-message-bindings' : undefined,
               options.toolOutput ? 'cma-tool-output' : undefined,
               options.retainedOutput ? 'cma-retained-output' : undefined,
@@ -84,8 +111,15 @@ export class AgentEventsV2 {
               .join(', '),
           }
         : undefined,
+      (headers) => {
+        projection = externalApprovalProjection(headers, options.externalApprovals === true);
+      },
     );
-    return v2AgentEventPage(value, id, limit, previous);
+    const result = v2AgentEventPage(value, id, limit, previous, projection.supported);
+    options.onExternalApprovalProjection?.(projection);
+    return options.externalApprovals
+      ? { ...result, externalApprovalProjection: projection }
+      : result;
   }
   /** Open one read-only tail. Reconnect explicitly with the last successfully persisted Agent cursor. */
   async events(agentId: string, options: V2AgentEventsOptions): Promise<void> {
@@ -114,17 +148,26 @@ export class AgentEventsV2 {
       this.config,
       path,
       options,
-      (response, signal) => agentFrames(response, signal, id, after),
+      (response, signal) => {
+        const projection = externalApprovalProjection(
+          response.headers,
+          options.externalApprovals === true,
+        );
+        options.onExternalApprovalProjection?.(projection);
+        return agentFrames(response, signal, id, after, projection.supported);
+      },
       'Agent events v2',
       undefined,
       {
         ...(headerCursor === undefined ? {} : { 'Last-Event-ID': headerCursor }),
-        ...(options.messageBindings ||
+        ...(options.externalApprovals ||
+        options.messageBindings ||
         options.liveTimestamps ||
         options.toolOutput ||
         options.retainedOutput
           ? {
               Prefer: [
+                options.externalApprovals ? externalApprovalPreference : undefined,
                 options.messageBindings ? 'cma-message-bindings' : undefined,
                 options.liveTimestamps ? 'cma-live-observed-at' : undefined,
                 options.toolOutput ? 'cma-tool-output' : undefined,

@@ -2,6 +2,7 @@ use super::*;
 use crate::store::agent_log_segments::{
     command_worker, terminal, transaction_scope::TransactionScope,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::agent_io::{CommandFailureCode, CommandLedgerError};
 
 pub(in crate::store) async fn reject_unclaimed(
@@ -27,7 +28,7 @@ pub(in crate::store) async fn reject_unclaimed(
     let receipt = match result {
         Ok(receipt) => receipt,
         Err(error) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(error);
         }
     };

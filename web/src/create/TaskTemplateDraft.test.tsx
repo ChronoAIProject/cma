@@ -11,6 +11,7 @@ import {
 } from './taskDraft';
 import { emptyTemplate, taskTemplates } from './taskTemplateModel';
 import { retainTaskViewer } from './taskIdentity';
+import { selectTaskTemplate } from '../test/taskTemplateSelection';
 
 afterEach(() => {
   sessionStorage.clear();
@@ -25,6 +26,7 @@ function setup(overrides: Partial<CmaWebClient> = {}) {
       taskExperience: taskExperience('owner'),
       readTaskCreationSupport: async () => true,
       readTaskTemplateSupport: async () => true,
+      readTaskTemplateV2Support: async () => true,
       readSandboxCapacity: async () => AVAILABLE_CAPACITY,
       createAgentLifecycle: create,
       ...overrides,
@@ -35,7 +37,10 @@ function setup(overrides: Partial<CmaWebClient> = {}) {
   };
   return { ...render(<TaskHome {...props} />), props, create };
 }
-const click = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
+const click = (name: string) =>
+  taskTemplates.some((template) => template.name === name)
+    ? selectTaskTemplate(name)
+    : fireEvent.click(screen.getByRole('button', { name }));
 const fill = (label: string, value: string) =>
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 const draftRevision = (): string =>
@@ -282,7 +287,10 @@ it('keeps drafts isolated by owner and task scope and clears them on account cha
 it.each([false, true])(
   'retains partial fields when template support is %s without bypassing submit validation',
   async (support) => {
-    const { create } = setup({ readTaskTemplateSupport: async () => support });
+    const { create } = setup({
+      readTaskTemplateSupport: async () => support,
+      readTaskTemplateV2Support: async () => support,
+    });
     await waitFor(() => expect(screen.queryByText('Checking task creation…')).toBeNull());
     click('Write a document');
     fill('Subject', 'Incomplete task');
@@ -377,12 +385,12 @@ it.each(['text', 'template'] as const)(
           initial_message:
             mode === 'text'
               ? 'Same text'
-              : 'Research Same topic and summarize the key findings, with links to sources.',
+              : 'Research the following topic:\n\nSame topic\n\nSummarize the key findings, with links to sources.',
           ...(mode === 'template'
             ? {
                 template: {
                   id: 'research' as const,
-                  version: 1 as const,
+                  version: 2 as const,
                   fields: { topic: 'Same topic' },
                 },
               }

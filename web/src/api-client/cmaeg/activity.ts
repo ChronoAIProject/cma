@@ -4,11 +4,32 @@ import { ProtocolError, ValidationError } from '../errors.js';
 import { raceWithAbortSignal, type OperationOptions } from '../http.js';
 import { query, read, segment } from '../resources.js';
 import { eventStream } from '../streaming.js';
-import { ActivityPageSchema, MediaResponsePageSchema, type ActivityPage } from './types.js';
+import { ownerHeaders } from './owner.js';
+import {
+  ActivityPageSchema,
+  HistoryDetailsSchema,
+  HistoryPageSchema,
+  MediaResponsePageSchema,
+  type ActivityPage,
+} from './types.js';
 
 export interface ChannelActivityOptions extends OperationOptions {
   /** Organization subject; omitted selects the authenticated creator. */
   readonly owner?: string;
+}
+
+/** Use a UTC RFC 3339 range for the first page or the opaque next_cursor to continue. */
+export type ChannelActivityHistoryOptions = ChannelActivityOptions & {
+  /** Page size from 1 to 200. If repeated, it must match the initial request. */
+  readonly limit?: number;
+} & (
+    | { readonly from: string; readonly until: string; readonly cursor?: never }
+    | { readonly cursor: string; readonly from?: string; readonly until?: string }
+  );
+
+export interface ChannelActivityHistoryDetailsOptions extends ChannelActivityOptions {
+  /** The item's opaque detail_cursor or the previous detail page's next_cursor. */
+  readonly cursor: string;
 }
 
 export interface EventMediaResponseOptions extends ChannelActivityOptions {
@@ -30,13 +51,6 @@ export interface ChannelActivityEvent {
   readonly data: ActivityPage;
 }
 
-function ownerHeaders(owner: string | undefined): Record<string, string> {
-  if (owner === undefined) return {};
-  if (!/^[\x21-\x7e]{1,512}$/.test(owner))
-    throw new ValidationError('owner must contain 1–512 visible ASCII bytes');
-  return { 'X-CMAEG-Owner': owner };
-}
-
 export class CmaegActivity {
   constructor(private readonly config: ResolvedConfig) {}
 
@@ -45,6 +59,36 @@ export class CmaegActivity {
       ...options,
       headers: ownerHeaders(options.owner),
     });
+  }
+
+  getChannelActivityHistory(channelId: string, options: ChannelActivityHistoryOptions) {
+    return read(
+      this.config,
+      query(`/v1/channels/${segment(channelId)}/activity/history`, {
+        from: options.from,
+        until: options.until,
+        limit: options.limit,
+        cursor: options.cursor,
+      }),
+      HistoryPageSchema,
+      { ...options, headers: ownerHeaders(options.owner) },
+    );
+  }
+
+  getChannelActivityHistoryDetails(
+    channelId: string,
+    historyEventId: string,
+    options: ChannelActivityHistoryDetailsOptions,
+  ) {
+    return read(
+      this.config,
+      query(
+        `/v1/channels/${segment(channelId)}/activity/history/events/${segment(historyEventId)}/details`,
+        { cursor: options.cursor },
+      ),
+      HistoryDetailsSchema,
+      { ...options, headers: ownerHeaders(options.owner) },
+    );
   }
 
   /** Metadata only; never follows a Manager response URL or resends the event. */

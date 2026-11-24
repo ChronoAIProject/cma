@@ -121,6 +121,7 @@ export function ComputerScreen({
 
       {!lifecycleHeld &&
       !shared &&
+      !machineAvailable &&
       policy.desktop_enable &&
       features?.browser.state === 'not_enabled' &&
       features.runtime_incarnation &&

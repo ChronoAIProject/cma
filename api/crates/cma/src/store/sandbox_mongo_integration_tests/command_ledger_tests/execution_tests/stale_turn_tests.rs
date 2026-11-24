@@ -3,8 +3,10 @@ use mongodb::bson::{doc, DateTime};
 use super::*;
 use crate::{
     sandbox::LiveAgentRegistry,
-    store::stale_turns::{Candidate, Observation, StaleTurnStore},
+    store::stale_turns::{Candidate, Observation, ProofBudget, StaleTurnStore},
 };
+
+pub(super) mod settlement;
 
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
@@ -67,8 +69,12 @@ async fn stale_turn_scan_holds_a_silent_dispatch_and_the_recorder_completes_it_o
     assert!(Candidate::from_row(row, DateTime::now()).is_none());
     let future = DateTime::from_millis(DateTime::now().timestamp_millis() + 16 * 60 * 1000);
     let candidate = Candidate::from_row(row, future).unwrap();
-    match scan.observe(&candidate, future).await.unwrap() {
-        Observation::Quiet { target, age } => {
+    match scan
+        .observe(&candidate, future, &mut ProofBudget::default())
+        .await
+        .unwrap()
+    {
+        Observation::Quiet { target, age, .. } => {
             assert_eq!(target.agent_id, agent.id);
             assert!(age >= 15 * 60);
         }
@@ -95,7 +101,9 @@ async fn stale_turn_scan_holds_a_silent_dispatch_and_the_recorder_completes_it_o
     assert_eq!(after.status, AgentStatus::Ready);
     assert_eq!(after.conversation.active_turn, None);
     assert!(matches!(
-        scan.observe(&candidate, future).await.unwrap(),
+        scan.observe(&candidate, future, &mut ProofBudget::default())
+            .await
+            .unwrap(),
         Observation::Hold("canonical_result")
     ));
     assert_eq!(sends.load(Ordering::SeqCst), 1);

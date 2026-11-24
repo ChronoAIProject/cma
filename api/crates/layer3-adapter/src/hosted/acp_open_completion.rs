@@ -121,6 +121,118 @@ impl Bridge {
     }
 }
 
+/// What an initialized bridge proves about its own completed opens when the
+/// caller holds no conversation identifier.
+pub(super) enum CurrentOpen {
+    /// Exactly one completed, live open on this bridge process, with this
+    /// Agent's exact binding. It is the open an interrupted attempt created.
+    Adopt(String),
+    /// An open is still running on this bridge; retry instead of duplicating it.
+    InFlight,
+    /// Nothing provable: an older runtime, no open, several, or another binding.
+    Unproven,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CurrentOpens {
+    version: u64,
+    challenge: String,
+    process_nonce: String,
+    opening: bool,
+    sessions: Vec<CurrentSession>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CurrentSession {
+    session_id: String,
+    binding_digest: String,
+}
+
+impl Bridge {
+    /// Read-only: lists the process's completed opens. Adoption is verified
+    /// again through the exact completion receipt before any use.
+    pub(super) async fn current_open_completion(
+        &self,
+        protocol: HostedOpenCompletionProtocol,
+        digest: &str,
+    ) -> crate::Result<CurrentOpen> {
+        let HostedOpenCompletionProtocol::V1 = protocol;
+        let _request_storage = super::acp::ingress::identity::json_storage(
+            self.ingress.as_ref(),
+            &(digest, uuid::Uuid::nil()),
+        )?;
+        // A runtime without the action keeps today's refusal; never guess.
+        let Ok(support) = self
+            .call_within(
+                "cma/open-completion",
+                json!({"action": "support"}),
+                Duration::from_secs(3),
+            )
+            .await
+        else {
+            return Ok(CurrentOpen::Unproven);
+        };
+        if support.get("current") != Some(&Value::Bool(true)) {
+            return Ok(CurrentOpen::Unproven);
+        }
+        let challenge = uuid::Uuid::new_v4().to_string();
+        let result = self
+            .call_within(
+                "cma/open-completion",
+                json!({"action": "current", "challenge": challenge}),
+                Duration::from_secs(3),
+            )
+            .await
+            .map_err(|_| unavailable())?;
+        let opens = match &self.ingress {
+            Some(policy) => {
+                let admission = super::acp::ingress::typed::TypedAdmission::new::<CurrentOpens>(
+                    &result, policy,
+                )?;
+                let decoded = admission
+                    .decode::<CurrentOpens>(&result)
+                    .map_err(|_| unavailable())?;
+                current_choice(&decoded, &challenge, digest)?
+            }
+            None => current_choice(
+                &CurrentOpens::deserialize(&*result).map_err(|_| unavailable())?,
+                &challenge,
+                digest,
+            )?,
+        };
+        Ok(opens)
+    }
+}
+
+fn current_choice(
+    opens: &CurrentOpens,
+    challenge: &str,
+    digest: &str,
+) -> crate::Result<CurrentOpen> {
+    if opens.version != 1
+        || opens.challenge != challenge
+        || !uuid4(&opens.process_nonce)
+        || opens.sessions.len() > 32
+        || opens.sessions.iter().any(|session| {
+            session.session_id.is_empty()
+                || session.session_id.len() > 256
+                || session.session_id.chars().any(char::is_control)
+                || session.binding_digest.len() != 67
+        })
+    {
+        return Err(unavailable());
+    }
+    if opens.opening {
+        return Ok(CurrentOpen::InFlight);
+    }
+    Ok(match opens.sessions.as_slice() {
+        [only] if only.binding_digest == digest => CurrentOpen::Adopt(only.session_id.clone()),
+        _ => CurrentOpen::Unproven,
+    })
+}
+
 pub(super) fn binding_digest(cwd: &str, servers: &[Value]) -> crate::Result<String> {
     if !std::path::Path::new(cwd).is_absolute() || servers.len() > 32 {
         return Err(unavailable());

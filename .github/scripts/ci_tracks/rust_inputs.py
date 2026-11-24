@@ -1,6 +1,11 @@
 """Prove cfg(test)-only module edges from a Rust syntax tree."""
 
+from functools import lru_cache
+
 from syntax import RUST, descendants, parse, string_value
+
+# Keep the reuse inside one selector process and bound retained source bytes.
+MAX_CACHED_SOURCE_BYTES = 64 * 1024
 
 
 def attributes(items):
@@ -23,7 +28,7 @@ def attributes(items):
     return gated and not ambiguous, path, ambiguous
 
 
-def module_edges(container, source, directory, inherited=False):
+def module_declarations(container, directory=(), inherited=False):
     attrs = []
     for item in container.named_children:
         if item.type in {'line_comment', 'block_comment'}:
@@ -39,20 +44,13 @@ def module_edges(container, source, directory, inherited=False):
         name = item.child_by_field_name('name').text.decode()
         body = item.child_by_field_name('body')
         if body is not None:
-            yield from module_edges(body, source, directory / name, inherited or gated)
-            continue
-        candidates = [source.parent / explicit] if explicit else [directory / (name + '.rs'), directory / name / 'mod.rs']
-        matches = [path for path in candidates if path.is_file()]
-        if len(matches) != 1 or ambiguous:
-            # Opaque path attributes or unresolved module expansions cannot
-            # prove the absence of a production edge.
-            raise ValueError('ambiguous Rust module location')
-        yield matches[0], inherited or gated
+            yield from module_declarations(body, (*directory, name), inherited or gated)
+        else:
+            yield directory, name, explicit, inherited or gated, ambiguous
 
 
-def source_edges(source):
+def declarations(data):
     try:
-        data = source.read_bytes()
         tree = parse(data, RUST)
         # A node's text is a slice of the source. Without these bytes no
         # include invocation can exist, even inside a nested expression.
@@ -60,10 +58,33 @@ def source_edges(source):
                 node.type == 'macro_invocation' and node.child_by_field_name('macro').text == b'include'
                 for node in descendants(tree)):
             raise ValueError('item include needs explicit input modeling')
-        parent = source.parent if source.stem in {'lib', 'main', 'mod'} else source.with_suffix('')
-        return list(module_edges(tree, source, parent))
+        return tuple(module_declarations(tree))
     except ValueError:
         return None
+
+
+cached_declarations = lru_cache(maxsize=12000)(declarations)
+
+
+def source_edges(source):
+    data = source.read_bytes()
+    modules = (cached_declarations(data) if len(data) <= MAX_CACHED_SOURCE_BYTES
+               else declarations(data))
+    if modules is None:
+        return None
+    # Parsing depends on the exact bytes. Module resolution also depends on
+    # the available files, so each snapshot resolves those paths again.
+    parent = source.parent if source.stem in {'lib', 'main', 'mod'} else source.with_suffix('')
+    edges = []
+    for relative, name, explicit, gated, ambiguous in modules:
+        directory = parent.joinpath(*relative)
+        candidates = ([source.parent / explicit] if explicit
+                      else [directory / (name + '.rs'), directory / name / 'mod.rs'])
+        matches = [path for path in candidates if path.is_file()]
+        if len(matches) != 1 or ambiguous:
+            return None
+        edges.append((matches[0], gated))
+    return edges
 
 
 def test_modules(root, directories, source_cache=None):

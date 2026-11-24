@@ -9,6 +9,9 @@ import { selectionKey, type ChannelSelection } from './channelTopology';
 type Result = {
   text: string;
   uncertain?: boolean;
+  completed?: boolean;
+  providerText?: string;
+  acceptedAfterMs?: number;
   checks?: readonly Check[];
   requestedVersion?: number;
 };
@@ -52,11 +55,14 @@ export function ChannelNodeTests({
           ? `/consumers/${segment(selection.id)}/test`
           : '/test');
     try {
-      const value = await serviceRequest<{ first_text?: string; checks?: readonly Check[] }>(
-        'event-gateway',
-        path,
-        { method: 'POST', signal: AbortSignal.timeout(125_000) },
-      );
+      const value = await serviceRequest<{
+        first_text?: string;
+        accepted_after_ms?: number;
+        checks?: readonly Check[];
+      }>('event-gateway', path, { method: 'POST', signal: AbortSignal.timeout(125_000) });
+      if (!source && typeof value?.first_text !== 'string') {
+        throw new Error('Invalid channel test response');
+      }
       setResults((values) => ({
         ...values,
         [key]: source
@@ -67,7 +73,10 @@ export function ChannelNodeTests({
             }
           : {
               requestedVersion: channelVersion,
-              text: value.first_text ?? 'The provider returned no text.',
+              completed: true,
+              text: 'Test turn completed',
+              providerText: value.first_text?.trim(),
+              acceptedAfterMs: value.accepted_after_ms,
             },
       }));
     } catch (error) {
@@ -113,8 +122,29 @@ export function ChannelNodeTests({
       </Button>
       <Presence>
         {result?.text ? (
-          <Alert tone={result.uncertain ? 'warning' : 'info'} title="Test result">
-            <p>{result.text}</p>
+          <Alert
+            tone={result.uncertain ? 'warning' : result.completed ? 'success' : 'info'}
+            title={result.completed ? result.text : 'Test result'}
+          >
+            {result.completed ? (
+              <>
+                {typeof result.acceptedAfterMs === 'number' &&
+                Number.isFinite(result.acceptedAfterMs) &&
+                result.acceptedAfterMs >= 0 ? (
+                  <p>Accepted after {result.acceptedAfterMs} ms.</p>
+                ) : null}
+                {result.providerText ? (
+                  <>
+                    <p>Provider response</p>
+                    <p>{result.providerText}</p>
+                  </>
+                ) : (
+                  <p>The provider returned no text.</p>
+                )}
+              </>
+            ) : (
+              <p>{result.text}</p>
+            )}
             {result.requestedVersion !== channelVersion ? (
               <p>
                 Configuration changed since this test was requested. Run a new test for the current

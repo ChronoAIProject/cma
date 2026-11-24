@@ -32,6 +32,7 @@ use std::{
 use tokio::{sync::mpsc, task::JoinHandle};
 pub const DEFAULT_KEY: &str = "nyx_fixture_thread_default";
 mod model;
+mod mongo;
 pub use model::{App, Memory};
 pub fn thread(id: &str, kind: u8, parent: &str, archived: bool) -> Value {
     json!({"id":id,"type":kind,"guild_id":"100","parent_id":parent,"owner_id":"77","name":"Review",
@@ -153,11 +154,16 @@ impl App {
         Self::with_origin(thread_kind.unwrap_or(0), named).await
     }
     pub async fn with_origin(origin_type: u8, named: bool) -> Self {
+        Self::with_records(origin_type, named, None).await
+    }
+    async fn with_records(
+        origin_type: u8,
+        named: bool,
+        database: Option<crate::records::mongo::MongoRecords>,
+    ) -> Self {
         let thread_kind = matches!(origin_type, 10..=12).then_some(origin_type);
         let backend = Arc::new(fake_cma::FakeCma::start(false).await);
-        let records = RecordClient::new(&backend.base_url, "cma-service")
-            .unwrap()
-            .with_thread_fences_fixture();
+        let records = mongo::record_client(&backend, database);
         let keys =
             Arc::new(MasterKeyRing::parse(&format!("1:{}", STANDARD.encode([3; 32]))).unwrap());
         let mut value = routing_fixture::routed_with_key(DEFAULT_KEY);
@@ -258,7 +264,7 @@ impl App {
             )))),
             discord_thread_history: None,
             complete_replies_enabled: false,
-            commonmark_relay_enabled: false,
+            commonmark_relay: Default::default(),
             telegram_effects_issuance_enabled: false,
             native_telegram_media_controls_enabled: false,
             native_telegram_media_control_edits_enabled: false,
@@ -319,6 +325,7 @@ impl App {
             "native_channel":{"status":"verified","channel_id":origin,"channel_type":origin_type,"guild_id":"100","parent_id":thread_kind.map(|_|"98")}});
         let mut app = Self {
             backend,
+            platform_base,
             memory,
             state,
             definition,
@@ -329,7 +336,7 @@ impl App {
             base: String::new(),
             servers: vec![server],
         };
-        app.save();
+        app.seed_initial_record().await;
         app.admit().await;
         app.mount().await;
         app

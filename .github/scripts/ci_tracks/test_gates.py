@@ -48,6 +48,33 @@ class GateTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 evaluate('am', data)
 
+    def test_split_am_requires_runtime_images_for_eg_only_changes(self):
+        data = needs('am', False)
+        outputs = data['changes']['outputs']
+        tracks = json.loads(outputs['test_tracks'])
+        tracks['eg'] = True
+        outputs.update(eg='true', eg_packages='["cmaeg"]', test_tracks=json.dumps(tracks))
+        for job in ('runtime-images', 'omarchy'):
+            data[job]['result'] = 'success'
+        self.assertEqual(evaluate('am', data, split=True), 'passed')
+        for job in ('runtime-images', 'omarchy', 'changes'):
+            for status in ('skipped', 'failure', 'cancelled', None):
+                mutated = copy.deepcopy(data)
+                mutated[job]['result'] = status
+                with self.subTest(job=job, status=status), self.assertRaises(ValueError):
+                    evaluate('am', mutated, split=True)
+
+    def test_split_eg_expects_no_runtime_jobs(self):
+        for selected in (True, False):
+            data = needs('eg', selected)
+            for job in ('runtime-images', 'omarchy'):
+                del data[job]
+            self.assertEqual(evaluate('eg', data, split=True),
+                             'passed' if selected else 'skipped-by-path')
+            data['eg']['result'] = 'cancelled'
+            with self.assertRaises(ValueError):
+                evaluate('eg', data, split=True)
+
     def test_reusable_result_requires_all_children(self):
         for track in ['am', 'eg']:
             data = {job: {'result': 'success'} for job in ['lint', 'tests', 'timing', 'mongo', 'isolation']}

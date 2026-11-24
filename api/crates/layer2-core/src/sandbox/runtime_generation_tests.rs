@@ -286,6 +286,7 @@ async fn generic_store_writes_cannot_lower_high_water_or_forget_a_bound_generati
             store
                 .commit(SandboxTransaction::SaveSandboxAndAppend {
                     command_revival: None,
+                    released_runtime: None,
                     expected_revision: 1,
                     sandbox: Box::new(next),
                     event_at: LATER.into(),

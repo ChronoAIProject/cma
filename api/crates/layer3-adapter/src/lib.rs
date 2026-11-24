@@ -6,6 +6,8 @@
 
 mod adapter;
 mod agent;
+mod agent_process_identity;
+pub use agent_process_identity::AgentProcessAction;
 mod agent_attachment;
 pub mod agent_capacity_recovery;
 mod agent_filesystem;
@@ -16,7 +18,9 @@ pub mod binding_diagnostics;
 mod browser;
 mod browser_control;
 pub mod file_read_diagnostics;
+pub mod file_read_retry;
 pub mod permanent_custody;
+pub mod stale_turn;
 pub use browser::{
     BrowserAdapter, BrowserFrame, BrowserObservation, BrowserOperation, BrowserReceipt,
     BrowserRequest, BrowserState,
@@ -67,6 +71,7 @@ mod runtime_ledger_status;
 mod runtime_output;
 mod runtime_output_update;
 mod runtime_recovery;
+mod runtime_startup_policy;
 mod runtime_status;
 pub mod runtime_versions;
 mod tool_proxy;
@@ -165,14 +170,17 @@ pub use provider_finality::{
     RuntimeProvisionReceipt,
 };
 pub use released_runtime::{
-    PinnedReleasedRuntime, ReleasedRuntime, ReleasedRuntimeSource, StaleReleasedRuntime,
+    released_image, PinnedReleasedRuntime, ReleasedLaneRevisions, ReleasedRuntime,
+    ReleasedRuntimeSource, StaleReleasedRuntime,
 };
+pub use runtime::PlatformServiceRoute;
 pub use runtime::{
-    CommandReceipt, CredentialFrame, InstallReceipt, InstallRequest, RuntimeAdoptionRequest,
-    RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeInspection, RuntimeLifecycle,
-    RuntimeObservation, RuntimeProvisionRequest, RuntimeTermination, SandboxCapacity, SandboxSpec,
-    DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES, DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY,
-    DEFAULT_SUPERVISOR_PROGRAM, DEFAULT_TOTAL_TIMEOUT_SECONDS,
+    CommandReceipt, CredentialFrame, GithubCredentialRoute, InstallReceipt, InstallRequest,
+    RuntimeAdoptionRequest, RuntimeCredential, RuntimeHandle, RuntimeImage, RuntimeInspection,
+    RuntimeLifecycle, RuntimeObservation, RuntimeProvisionRequest, RuntimeTermination,
+    SandboxCapacity, SandboxSpec, DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
+    DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY, DEFAULT_SUPERVISOR_PROGRAM,
+    DEFAULT_TOTAL_TIMEOUT_SECONDS,
 };
 pub use runtime_ledger_status::{
     RuntimeLedgerCounters, RuntimeLedgerObservation, RuntimeLedgerStatus,
@@ -186,7 +194,14 @@ pub use runtime_recovery::{
     RuntimeRecoveryQuiescence, RuntimeRecoveryQuiescenceRequest,
 };
 pub use runtime_startup::{RuntimeStartupFailure, RuntimeStartupFailureClass, RuntimeStartupProbe};
-pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
+pub use runtime_startup_policy::{
+    RetainedStartupPolicyControl, RetainedStartupPolicyPredecessor, RetainedStartupPolicyReadback,
+    RetainedStartupPolicyUpgrade, RuntimeStartupPolicyObservation,
+    RUNTIME_STARTUP_POLICY_STATUS_MEDIA_TYPE,
+};
+pub use runtime_status::{
+    valid_home_identity, AgentRestartRuntime, RuntimeStatus, RuntimeStatusRequest,
+};
 pub use tool_proxy::{ToolProxyRequest, ToolProxyStatus, LOCAL_TOOL_PROXY_URL};
 pub use workspace::{
     SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,

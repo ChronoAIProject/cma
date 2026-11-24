@@ -1,7 +1,16 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ChannelEditor } from '../ChannelEditor';
-import { channel } from './NativeLarkSourceFields.fixtures';
+import { RelayCapabilitiesContext } from '../RelayCapabilities';
+import {
+  available,
+  channel,
+  enter,
+  enterBundle,
+  identity,
+  response,
+  source,
+} from './NativeLarkSourceFields.fixtures';
 import { SourceFields } from './SourceFields';
 import { defaultSource } from './model';
 
@@ -54,6 +63,40 @@ it.each([
   expect(target).toHaveFocus();
   expect(screen.getByRole('alert').textContent).not.toContain('/sources/');
 });
+
+it('returns focus to the Direct Lark webhook confirmation before sending a request', () => {
+  const fetcher = vi.fn();
+  vi.stubGlobal('fetch', fetcher);
+  const saved = {
+    ...channel,
+    definition: {
+      ...channel.definition,
+      sources: [{ ...defaultSource('telegram'), bot_id: '123' }, source],
+    },
+  };
+  render(
+    <RelayCapabilitiesContext value={available}>
+      <ChannelEditor
+        channel={saved}
+        section={{ kind: 'producer', index: 1 }}
+        onDone={vi.fn()}
+        denied={vi.fn()}
+      />
+    </RelayCapabilitiesContext>,
+  );
+  const confirmation = screen.getByRole('checkbox', { name: /This is a separate app/ });
+  fireEvent.click(confirmation);
+  expect(confirmation).not.toBeChecked();
+  fireEvent.submit(screen.getByRole('button', { name: 'Save producer' }).closest('form')!);
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(screen.getByRole('alert')).toHaveTextContent('Confirm that this is a separate app');
+  const review = screen.getByRole('button', { name: 'Review channel fields' });
+  review.focus();
+  fireEvent.click(review);
+  expect(confirmation).toHaveFocus();
+  expect(confirmation).toHaveAccessibleDescription(/Confirm that this is a separate app/);
+});
+
 it.each([
   ['telegram', 'Bot ID', { bot_id: '9223372036854775807' }],
   ['telegram', 'Bot username', { bot_username: 'valid_bot' }],
@@ -62,4 +105,53 @@ it.each([
 ])('accepts the backend boundary for %s %s', (type, label, fields) => {
   render(<SourceFields value={{ ...defaultSource(type), ...fields }} onChange={vi.fn()} />);
   expect(screen.getByLabelText(label)).toBeValid();
+});
+
+it('requires an allowed sender in a new direct Lark channel, including after removing the last sender', async () => {
+  const fetcher = vi.fn().mockImplementation(async () => response());
+  vi.stubGlobal('fetch', fetcher);
+  render(
+    <RelayCapabilitiesContext value={available}>
+      <ChannelEditor ownerSubject="local-owner" onDone={vi.fn()} denied={vi.fn()} />
+    </RelayCapabilitiesContext>,
+  );
+  enter('Channel name', 'Lark channel');
+  enter('Provider agent key', 'fixture-agent-key');
+  fireEvent.click(screen.getByRole('button', { name: 'Producer 1 connection type' }));
+  fireEvent.click(screen.getByRole('menuitemradio', { name: 'Direct Lark / Feishu app' }));
+  enter('App ID', identity.app_id);
+  enter('Tenant key', identity.tenant_key);
+  enter('Bot open ID', identity.bot_open_id);
+  fireEvent.click(screen.getByRole('checkbox', { name: /This is a separate app/ }));
+  enterBundle();
+
+  const create = screen.getByRole('button', { name: 'Create channel' });
+  const senders = within(screen.getByRole('group', { name: 'Allowed sender IDs' }));
+  const add = senders.getByRole('button', { name: 'Add Allowed sender IDs' });
+  fireEvent.click(create);
+  expect(senders.getByText('Add at least one allowed sender ID.')).toBeVisible();
+  expect(add).toHaveFocus();
+  expect(fetcher).not.toHaveBeenCalled();
+
+  fireEvent.click(add);
+  enter('Allowed sender IDs 1', '   ');
+  fireEvent.click(create);
+  expect(senders.getByLabelText('Allowed sender IDs 1')).toHaveFocus();
+  expect(senders.getByText('Enter a sender ID.')).toBeVisible();
+  expect(fetcher).not.toHaveBeenCalled();
+
+  enter('Allowed sender IDs 1', 'ou_fixture_sender');
+  fireEvent.click(senders.getByRole('button', { name: 'Remove Allowed sender IDs 1' }));
+  fireEvent.click(create);
+  expect(add).toHaveFocus();
+  expect(fetcher).not.toHaveBeenCalled();
+
+  fireEvent.click(add);
+  enter('Allowed sender IDs 1', 'ou_fixture_sender');
+  fireEvent.click(create);
+  await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+  expect(JSON.parse(fetcher.mock.calls[0]![1].body).sources[0].admission).toEqual({
+    type: 'allowlist',
+    sender_ids: ['ou_fixture_sender'],
+  });
 });

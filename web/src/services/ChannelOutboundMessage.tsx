@@ -1,13 +1,14 @@
-import { useChannelWriteGuard } from './useChannelWriteGuard';
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { Presence } from '../ui/Presence';
 import type { Channel } from './ChannelEditor';
+import { OpenProducerConfiguration } from './ConfigurationSections';
 import { Choice, TextField, Toggle } from './channelForm/Fields';
 import { object, list, text, type ChannelSelection } from './channelTopology';
 import { segment, serviceRequest, ServiceError, type Denied } from './client';
 import { useRelayCapabilities } from './RelayCapabilities';
+import { useChannelWriteGuard } from './useChannelWriteGuard';
 import { OutboundMediaFields, OutboundMediaReview } from './OutboundMediaFields';
 import {
   composeOutboundMessage,
@@ -34,6 +35,7 @@ export function ChannelOutboundMessage(props: Props) {
 }
 function Composer({ owner, channel, selection, denied, onAvailability, writable = true }: Props) {
   const canWrite = useChannelWriteGuard(writable);
+  const configureRoutes = useContext(OpenProducerConfiguration);
   const capabilities = useRelayCapabilities();
   const journal = useOutboundJournal(owner, channel.record_id);
   const { draft, receipt, uncertain = false, preparationExpired = false } = journal.intent ?? {};
@@ -49,11 +51,13 @@ function Composer({ owner, channel, selection, denied, onAvailability, writable 
   const source =
     selection.kind === 'producer' ? object(channel.definition.sources[selection.index]) : {};
   const routes = list(source.route_ids).filter(
-    (value): value is string => typeof value === 'string',
+    (value): value is string => typeof value === 'string' && value.trim().length > 0,
   );
   const selectedRoute = routes.includes(route) ? route : (routes[0] ?? '');
   const base = `/v1/channels/${segment(channel.channel_id)}/outbound-messages`;
   const enabled = capabilities.authoring?.outbound_messages_writes_enabled === true;
+  const relay = source.type === 'nyxid_relay';
+  const canCompose = enabled && relay && routes.length > 0;
   const mediaEnabled =
     capabilities.authoring?.native_media_writes_enabled === true &&
     ['telegram', 'lark', 'feishu', 'discord', 'whatsapp'].includes(
@@ -68,7 +72,7 @@ function Composer({ owner, channel, selection, denied, onAvailability, writable 
   const hasMedia = (draft?.body.message.native_attachments?.length ?? media.length) > 0;
   const mediaUnavailable = hasMedia && !mediaEnabled;
   const canReview =
-    !!selectedRoute && (!!message.trim() || media.length > 0) && !mediaError && !mediaUnavailable;
+    canCompose && (!!message.trim() || media.length > 0) && !mediaError && !mediaUnavailable;
 
   async function act(action: 'prepare' | 'send' | 'read' | 'cancel') {
     if ((action === 'prepare' || action === 'send') && !canWrite()) return;
@@ -84,7 +88,7 @@ function Composer({ owner, channel, selection, denied, onAvailability, writable 
     if (action === 'cancel' && !status?.cancel) return;
     // A retained preparation recovers its exact existing operation. New writes
     // still require current capabilities; a gate change cannot hide its status.
-    if (action === 'prepare' && !draft && (!enabled || !canReview)) return;
+    if (action === 'prepare' && !draft && !canReview) return;
     const captured = draft ?? {
       key: crypto.randomUUID(),
       body: {
@@ -179,11 +183,7 @@ function Composer({ owner, channel, selection, denied, onAvailability, writable 
     }
   }
   const available = Boolean(
-    receipt ||
-    draft ||
-    journal.previous ||
-    journal.recoveryError ||
-    (enabled && source.type === 'nyxid_relay'),
+    receipt || draft || journal.previous || journal.recoveryError || (enabled && relay),
   );
   useEffect(() => {
     onAvailability?.(available);
@@ -202,7 +202,13 @@ function Composer({ owner, channel, selection, denied, onAvailability, writable 
         Send through a saved NyxID conversation that permits initiated messages. Review the message
         before sending it.
       </p>
-      {!receipt && !draft && enabled ? (
+      {!receipt && !draft && enabled && relay && !routes.length ? (
+        <div>
+          <p>No saved destinations. Add a NyxID route ID to this producer and save it.</p>
+          {configureRoutes ? <Button onClick={configureRoutes}>Configure routes</Button> : null}
+        </div>
+      ) : null}
+      {!receipt && !draft && canCompose ? (
         <fieldset
           disabled={!writable || pending || !!journal.error}
           className="channel-form-section"
@@ -224,7 +230,8 @@ function Composer({ owner, channel, selection, denied, onAvailability, writable 
             </p>
           ) : null}
         </fieldset>
-      ) : (
+      ) : null}
+      {receipt || draft ? (
         <div>
           <p className="channel-field-hint">
             Destination: {draft?.body.route_id ?? receipt?.route_id}
@@ -232,7 +239,7 @@ function Composer({ owner, channel, selection, denied, onAvailability, writable 
           <p>{draft?.body.message.text}</p>
           <OutboundMediaReview items={draft?.body.message.native_attachments ?? []} />
         </div>
-      )}
+      ) : null}
       {mediaUnavailable ? (
         <p className="channel-field-hint" role="status">
           Your attachments are retained. Media sending is currently unavailable on this gateway.
@@ -251,11 +258,9 @@ function Composer({ owner, channel, selection, denied, onAvailability, writable 
         />
       ) : null}
       <div className="channel-form-actions">
-        {!receipt && (draft || enabled) ? (
+        {!receipt && (draft || canCompose) ? (
           <Button
-            disabled={
-              !writable || pending || !!journal.error || (!draft && (!enabled || !canReview))
-            }
+            disabled={!writable || pending || !!journal.error || (!draft && !canReview)}
             onClick={() => void act('prepare')}
           >
             {draft ? 'Check saved request' : 'Review message'}

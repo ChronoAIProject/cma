@@ -215,6 +215,7 @@ async fn request(fixture: &Fixture, failed: &Sandbox, now: SystemTime) -> Retain
     );
     let proof = verifier.verify(&snapshot).await.unwrap();
     RetainedReopenRequest {
+        repeat_authorized: false,
         snapshot,
         proof,
         key_sha256: "e".repeat(64),

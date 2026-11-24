@@ -1,5 +1,6 @@
 //! A worker's execution-policy save fences its parent in the same transaction.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::{store::SandboxStoreError, Workspace};
 use mongodb::bson::doc;
 
@@ -29,7 +30,7 @@ pub(in crate::store) async fn save(
         Ok(())
     }.await;
     if let Err(error) = outcome {
-        if let Err(abort) = session.abort_transaction().await {
+        if let Err(abort) = session.abort_guarded().await {
             tracing::warn!(error = %abort, "Workspace publication abort was not acknowledged");
         }
         return Err(error);

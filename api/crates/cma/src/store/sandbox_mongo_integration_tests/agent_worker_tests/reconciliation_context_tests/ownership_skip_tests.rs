@@ -3,7 +3,11 @@ use layer2_core::agent_ownership::{
     Member, OwnershipCoordinator, OwnershipStore, PROTOCOL_VERSION,
 };
 use layer3_adapter::ConversationUpdate;
+use mongodb::event::cmap::CmapEvent;
 use tokio::sync::mpsc;
+
+#[path = "continuation_tests.rs"]
+mod continuation;
 
 #[derive(Default)]
 struct MaintenanceProbe(AtomicU64);
@@ -55,6 +59,21 @@ fn worker(
     registry: Arc<LiveAgentRegistry>,
     skip: bool,
 ) -> Arc<AgentWorker> {
+    configured_worker(
+        store,
+        registry,
+        AgentWorkerConfig::new("reconcile-ownership", "reconcile-ownership")
+            .with_ownership(Some(coordinator))
+            .with_skip_ineligible_reconciliation(skip)
+            .with_managed_documents(true),
+    )
+}
+
+fn configured_worker(
+    store: Arc<MongoSandboxStore>,
+    registry: Arc<LiveAgentRegistry>,
+    config: AgentWorkerConfig,
+) -> Arc<AgentWorker> {
     AgentWorker::new(
         AgentWorkerDependencies {
             store: store.clone(),
@@ -67,11 +86,95 @@ fn worker(
             operations: AgentOperationService::new(store, registry.clone()),
             registry,
         },
-        AgentWorkerConfig::new("reconcile-ownership", "reconcile-ownership")
-            .with_ownership(Some(coordinator))
-            .with_skip_ineligible_reconciliation(skip)
-            .with_managed_documents(true),
+        config,
     )
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn foreign_ownership_deferral_saves_checkouts_and_rechecks_after_handoff() {
+    let (_, name) = database("reconcile_foreign_owner").await;
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let checkouts = Arc::new(AtomicU64::new(0));
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    let observed = checkouts.clone();
+    options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+        if matches!(event, CmapEvent::ConnectionCheckedOut(_)) {
+            observed.fetch_add(1, Ordering::Relaxed);
+        }
+    }));
+    let client = Client::with_options(options).unwrap();
+    let fixture = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let mut agent = idle_connection_fixture(&fixture, "foreign", AgentStatus::Paused).await;
+    let (left_store, left) = manager(&fixture, "left").await;
+    let owner = left.acquire(&agent.id).await.unwrap().unwrap();
+    let build = |store: Arc<MongoSandboxStore>, coordinator: Arc<OwnershipCoordinator>, enabled| {
+        configured_worker(
+            store,
+            Arc::new(LiveAgentRegistry::default()),
+            AgentWorkerConfig::new("reconcile-foreign-owner", "reconcile-foreign-owner")
+                .with_ownership(Some(coordinator))
+                .with_defer_foreign_reconciliation(enabled),
+        )
+    };
+    let left_baseline = build(left_store.clone(), left.clone(), false);
+    let left_enabled = build(left_store, left.clone(), true);
+    let measure = |worker: Arc<AgentWorker>| {
+        let checkouts = checkouts.clone();
+        async move {
+            let before = checkouts.load(Ordering::Relaxed);
+            assert_eq!(
+                worker
+                    .reconcile_connections(SystemTime::now())
+                    .await
+                    .unwrap(),
+                0
+            );
+            checkouts.load(Ordering::Relaxed) - before
+        }
+    };
+    let single_baseline = measure(left_baseline.clone()).await;
+    let single_enabled = measure(left_enabled.clone()).await;
+    assert_eq!(single_enabled, single_baseline);
+
+    let (right_store, right) = manager(&fixture, "right").await;
+    let right_baseline = build(right_store.clone(), right.clone(), false);
+    let right_enabled = build(right_store.clone(), right.clone(), true);
+    let paired_baseline = measure(left_baseline).await + measure(right_baseline).await;
+    let paired_enabled = measure(left_enabled).await + measure(right_enabled.clone()).await;
+    assert_eq!(paired_enabled, single_enabled + 2);
+    assert!(paired_baseline >= paired_enabled + 3);
+    println!("reconciliation checkout count N=1 {single_baseline}->{single_enabled} N=2 {paired_baseline}->{paired_enabled}");
+    assert_eq!(
+        right.store.owner(&agent.id).await.unwrap().unwrap().token,
+        owner.token
+    );
+    assert_eq!(
+        fixture.get_agent(&agent.id).await.unwrap().as_ref(),
+        Some(&agent)
+    );
+
+    agent.status = AgentStatus::Ready;
+    agent.revision += 1;
+    replace_agent_fixture(&fixture, &agent).await;
+    assert_eq!(measure(right_enabled.clone()).await, 2);
+    assert_eq!(
+        fixture.get_agent(&agent.id).await.unwrap().as_ref(),
+        Some(&agent)
+    );
+
+    left.begin_drain().await;
+    left.handoff(&owner, async { Ok(()) }).await.unwrap();
+    let now = SystemTime::now();
+    assert_eq!(right_enabled.reconcile_connections(now).await.unwrap(), 1);
+    assert_eq!(right_enabled.reconcile_connections(now).await.unwrap(), 0);
+    let saved = fixture.get_agent(&agent.id).await.unwrap().unwrap();
+    assert_eq!(saved.revision, agent.revision + 1);
+    assert_eq!(saved.work.step, AgentWorkStep::PublishConnection);
+    let successor = right.store.owner(&agent.id).await.unwrap().unwrap();
+    assert_eq!(successor.token.instance_id, "right");
+    assert!(successor.token.epoch > owner.token.epoch);
+    client.database(&name).drop().await.unwrap();
 }
 
 fn attach(
