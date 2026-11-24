@@ -33,7 +33,11 @@ pub(crate) async fn command(sandbox: &str, destination: &Path) -> Result<()> {
     let authority = cma_service_auth::mongodb_authority::MongoAuthorityMode::parse(mode.as_deref())
         .map_err(|_| INVALID)?;
     let snapshot = tokio::time::timeout(Duration::from_secs(60), async {
-        let client = Client::with_uri_str(uri).await.map_err(|_| INVALID)?;
+        let mut options = mongodb::options::ClientOptions::parse(uri)
+            .await
+            .map_err(|_| INVALID)?;
+        super::transaction_barrier::bind(&mut options, &database);
+        let client = Client::with_options(options).map_err(|_| INVALID)?;
         let database = client.database(&database);
         super::isolation::verify_with_authority(&database, authority)
             .await

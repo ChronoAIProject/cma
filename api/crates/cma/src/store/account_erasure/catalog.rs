@@ -76,12 +76,10 @@ pub(crate) use entries::ERASURE;
 
 pub(crate) fn validate_catalog() -> Result<(), &'static str> {
     use std::collections::BTreeSet;
-    let expected: BTreeSet<_> = super::super::isolation::authority_collections()
-        .chain(
-            super::super::isolation::replicas::COLLECTIONS
-                .iter()
-                .copied(),
-        )
+    let expected: BTreeSet<_> = super::super::isolation::COLLECTIONS
+        .iter()
+        .chain(super::super::isolation::replicas::COLLECTIONS)
+        .copied()
         .collect();
     let actual: BTreeSet<_> = ERASURE.iter().map(|entry| entry.collection).collect();
     if actual != expected || actual.len() != ERASURE.len() {

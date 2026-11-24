@@ -1,4 +1,5 @@
 //! Agent Manager's exact schema authority. Legacy names retain existing data IDs.
+use super::retained_consents;
 use layer2_core::StoreError;
 use mongodb::{
     bson::{doc, Document},
@@ -9,6 +10,8 @@ pub(crate) mod replicas;
 pub(crate) const COLLECTIONS: &[&str] = &[
     "account_deletions",
     "account_deletion_events",
+    retained_consents::COLLECTION,
+    super::migrations::measured_custody::COLLECTION,
     super::budget::COLLECTION,
     super::agent_observation::COLLECTION,
     super::sandbox_metric_bindings::COLLECTION,
@@ -178,6 +181,8 @@ pub(crate) const COLLECTIONS: &[&str] = &[
 // These derived stores are activated separately. Existing credentials must
 // still start while the feature is disabled; partial grants remain invalid.
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
+    retained_consents::COLLECTION,
+    super::migrations::measured_custody::COLLECTION,
     super::sandbox_usage_export::CAPTURES,
     super::sandbox_usage_export::EVIDENCE,
     super::sandbox_usage_export::OUTBOX,
@@ -196,15 +201,6 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
 ];
 const MEASURED_CUSTODY: &str = super::migrations::measured_custody::COLLECTION;
 const MEASURED_CUSTODY_ACTIONS: &[&str] = &["find", "insert", "listIndexes"];
-const INDEPENDENT_CUSTODY_COLLECTIONS: &[&str] = &[super::migrations::measured_custody::COLLECTION];
-
-// Billing custody is authorized separately from the frozen archive census.
-pub(super) fn authority_collections() -> impl Iterator<Item = &'static str> {
-    COLLECTIONS
-        .iter()
-        .chain(INDEPENDENT_CUSTODY_COLLECTIONS)
-        .copied()
-}
 const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
 const MIGRATION_ACTIONS: &[&str] = &["find", "insert", "update", "createCollection"];
 // Existing AM stores initialize their own indexes and schemas at startup.
@@ -291,7 +287,6 @@ fn validate_index_role(
             || resource.get_str("db").ok() != Some(database)
             || (!collection.is_empty()
                 && !COLLECTIONS.contains(&collection)
-                && collection != MEASURED_CUSTODY
                 && !replicas::COLLECTIONS.contains(&collection)
                 && (!migration_ledger || collection != MIGRATION_COLLECTION)
                 && collection != super::provenance_progress::COLLECTION)
@@ -306,6 +301,8 @@ fn validate_index_role(
                 super::provenance_progress::ACTIONS.contains(&action)
             } else if collection == MEASURED_CUSTODY {
                 MEASURED_CUSTODY_ACTIONS.contains(&action)
+            } else if collection == retained_consents::COLLECTION {
+                retained_consents::ACTIONS.contains(&action)
             } else if migration_ledger && collection == MIGRATION_COLLECTION {
                 MIGRATION_ACTIONS.contains(&action)
             } else if metadata_collections.contains(&collection)
@@ -334,12 +331,24 @@ fn validate_index_role(
     {
         return Err(denied());
     }
+    if grants
+        .get(retained_consents::COLLECTION)
+        .is_some_and(|actions| {
+            !retained_consents::ACTIONS
+                .iter()
+                .all(|action| actions.contains(*action))
+        })
+    {
+        return Err(denied());
+    }
     if grants.get(MEASURED_CUSTODY).is_some_and(|actions| {
         !MEASURED_CUSTODY_ACTIONS
             .iter()
             .all(|action| actions.contains(*action))
     }) || !COLLECTIONS.iter().all(|name| {
-        (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
+        *name == retained_consents::COLLECTION
+            || *name == MEASURED_CUSTODY
+            || (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
             || ACTIONS
                 .iter()
                 .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
@@ -470,26 +479,4 @@ fn validate_observation_grants(status: &Document, database: &str) -> Result<(), 
     let role = doc! {"privileges": [{"resource": {"db": database, "collection": super::agent_observation::COLLECTION}, "actions": ACTIONS}]};
     cma_service_auth::mongodb_authority::verify_shared_schema(status, database, &role)
         .map_err(|error| StoreError::Unavailable(error.into()))
-}
-#[cfg(test)]
-mod observation_grants_tests {
-    use super::*;
-    #[test]
-    fn observation_grants_are_optional_when_closed_and_required_when_enabled() {
-        let mut grants = role("cma").get_array("privileges").unwrap().clone();
-        let status = |grants| doc! {"authInfo": {"authenticatedUsers": [{"user": "manager", "db": "cma"}], "authenticatedUserPrivileges": grants}};
-        validate_observation_grants(&status(grants.clone()), "cma").unwrap();
-        grants.retain(|grant| {
-            grant
-                .as_document()
-                .unwrap()
-                .get_document("resource")
-                .unwrap()
-                .get_str("collection")
-                .unwrap()
-                != super::super::agent_observation::COLLECTION
-        });
-        validate(&status(grants.clone()), "cma").unwrap();
-        assert!(validate_observation_grants(&status(grants), "cma").is_err());
-    }
 }

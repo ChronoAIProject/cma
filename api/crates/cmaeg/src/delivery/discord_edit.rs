@@ -3,7 +3,7 @@ use super::{
     discord::outcome,
     gate::expired,
     intents::{DeliveryOutcome, IntentReceipt},
-    render::RelayText,
+    render::LiteralText,
     send::{refused, unsupported, SendContext, Sender},
 };
 use crate::{channels::resolver::ResolvedChannel, discord::rest::token, tools::Capabilities};
@@ -147,7 +147,7 @@ impl Sender {
         let Some(credential) = token(ctx.channel, &destination.bot_id) else {
             return unsupported();
         };
-        let (part, rendering) = RelayText.whole(message, &Capabilities::native_discord());
+        let (part, rendering) = LiteralText.whole(message, &Capabilities::native_discord());
         if part.text.is_empty() || part.text.encode_utf16().count() > 2000 {
             return refused(
                 rendering,

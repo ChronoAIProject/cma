@@ -100,20 +100,6 @@ class MigrationInventoryTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.source().collections()
 
-    def test_discovers_new_runtime_custody_outside_the_archive_registry(self):
-        path = "store/isolation.rs"
-        registry = "INDEPENDENT_CUSTODY_COLLECTIONS"
-        self.git.files[NEW][path] += f'''
-const {registry}: &[&str] = &[super::measured::COLLECTION];
-'''
-        self.git.files[NEW]["store/measured.rs"] = 'const COLLECTION: &str = "measured_custody";'
-        rows = {r["name"]: r for r in inventory.compare(self.source(OLD), self.source())["collections"]}
-        self.assertIsNone(rows["measured_custody"]["old"])
-        self.assertEqual(rows["measured_custody"]["new"]["role"], "runtime")
-        self.git.files[NEW][path] = self.git.files[NEW][path].replace("&[super::measured::COLLECTION]", "dynamic()")
-        with self.assertRaisesRegex(ValueError, "unrecognized collection registry"):
-            self.source().collections()
-
     def test_refuses_duplicate_across_runtime_and_replica_catalogs(self):
         self.git.files[NEW]["store/ownership/mod.rs"] = '''
 const MEMBERS: &str = "agents";

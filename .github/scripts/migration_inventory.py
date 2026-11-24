@@ -84,13 +84,11 @@ class Source:
                 prefix.pop()
         return "::".join(prefix + parts)
 
-    def registry(self, module, registry="COLLECTIONS", optional=False):
+    def registry(self, module):
         path, source = self.module(module)
-        declaration = rf'\bconst\s+{re.escape(registry)}\b'
-        match = re.search(declaration + r'\s*:\s*&\[&str\]\s*=\s*&\[(.*?)\];', source, re.S)
+        match = re.search(r'\bconst\s+COLLECTIONS:\s*&\[&str\]\s*=\s*&\[(.*?)\];',
+                          source, re.S)
         if not match:
-            if optional and not re.search(declaration, source):
-                return []
             raise ValueError("unrecognized collection registry: " + path)
         body = re.sub(r"//[^\n]*", "", match[1])
         rows = []
@@ -98,7 +96,7 @@ class Source:
             if re.fullmatch(r'"[a-z0-9_]+"', expression):
                 name = json.loads(expression)
                 definition = {"path": path, "sha256": digest(source.encode()),
-                              "symbol": module + "::" + registry}
+                              "symbol": module + "::COLLECTIONS"}
             elif re.fullmatch(r"[A-Za-z_][\w:]*", expression):
                 name, definition = self.constant(self.resolve(module, expression))
             else:
@@ -110,12 +108,11 @@ class Source:
 
     def collections(self):
         result = {}
-        rows = [row for module in REGISTRIES for row in self.registry(module)]
-        rows.extend(self.registry("store::isolation", "INDEPENDENT_CUSTODY_COLLECTIONS", optional=True))
-        for name, definition in rows:
-            if name in result:
-                raise ValueError("duplicate runtime/replica collection: " + name)
-            result[name] = {"role": "runtime", "definition": definition}
+        for module in REGISTRIES:
+            for name, definition in self.registry(module):
+                if name in result:
+                    raise ValueError("duplicate runtime/replica collection: " + name)
+                result[name] = {"role": "runtime", "definition": definition}
         for symbol in EXTRA_SYMBOLS:
             name, definition = self.constant(symbol)
             result[name] = {"role": "separate-or-retained", "definition": definition}
