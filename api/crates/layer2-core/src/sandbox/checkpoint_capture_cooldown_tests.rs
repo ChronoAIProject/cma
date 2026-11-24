@@ -240,6 +240,7 @@ async fn memory_cooldown_rejects_forged_begin_and_generic_timestamp_changes_atom
             store
                 .commit(SandboxTransaction::SaveSandboxAndAppend {
                     command_revival: None,
+                    released_runtime: None,
                     expected_revision: current.revision,
                     sandbox: Box::new(forged),
                     event_at: RELEASED.into(),

@@ -39,6 +39,7 @@ async fn connect(
             startup_schema: mode,
             initial_settings: Default::default(),
             released: None,
+            runtime_pointer_required: false,
         },
     )
     .await

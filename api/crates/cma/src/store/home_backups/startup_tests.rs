@@ -187,6 +187,7 @@ async fn production_connection_accepts_existing_credentials_without_backup_grant
             startup_schema: crate::config::StartupSchemaMode::Observe,
             initial_settings: Default::default(),
             released: None,
+            runtime_pointer_required: false,
         },
     )
     .await;

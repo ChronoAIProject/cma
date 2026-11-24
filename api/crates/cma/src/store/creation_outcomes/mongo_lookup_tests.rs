@@ -162,6 +162,7 @@ async fn opaque_lifecycle_key_requires_original_wire_evidence_and_exact_new_orig
                 fence: None,
                 replay_operation_id: None,
             }),
+            None,
         )
         .await
         .unwrap()

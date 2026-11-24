@@ -5,6 +5,7 @@ import { Button } from '../ui/Button';
 import { IconCloseOutline16 } from '../ui/icons';
 import { StateDot } from '../ui/StateDot';
 import { DesktopFeedback, useDesktopNotice } from './DesktopFeedback';
+import { DesktopLocalTime } from './DesktopLocalTime';
 import { useDesktopConnection } from './useDesktopConnection';
 import type { DesktopPreparationScope } from './desktopPreparation';
 import './DesktopPanel.css';
@@ -183,6 +184,7 @@ export function DesktopPanel({
               </p>
             </>
           )}
+          {!hidden ? <DesktopLocalTime /> : null}
           {fullScreenError ? <p role="status">{fullScreenError}</p> : null}
         </div>
         <div className="agent-desktop__actions">
