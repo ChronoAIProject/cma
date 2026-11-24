@@ -328,7 +328,7 @@ async fn apply(
                     ClaimError::domain(error)
                 }
                 super::agent_log_integrity::TransactionLogError::Driver(error) => {
-                    ClaimError::driver(error)
+                    ClaimError::read(error)
                 }
             })?;
         envelope_filter(&current, current_row).map_err(ClaimError::domain)?

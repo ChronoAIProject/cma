@@ -1,6 +1,12 @@
 use super::*;
+use crate::store::agent_log_segments::AUDITS;
+use crate::store::sandbox_mongo_integration_tests::agent_capacity_recovery_tests::ready_with_created;
 use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
-use layer2_core::sandbox::store::AgentWorkClaimDetail;
+use crate::store::skill_result_test_support::{assert_format, enable_segments};
+use layer2_core::agent_ownership::{
+    Member, OwnershipCoordinator, DEFAULT_MAX_OWNED_AGENTS, PROTOCOL_VERSION,
+};
+use layer2_core::sandbox::store::{AgentLogPublicationIdentity, AgentWorkClaimDetail};
 use mongodb::event::command::CommandEvent;
 use mongodb::event::EventHandler;
 use std::sync::{Arc, Mutex};
@@ -289,5 +295,132 @@ async fn agent_claim_distinguishes_read_driver_and_publication_custody_failures(
         error.store_error,
         SandboxStoreError::Unavailable(_)
     ));
+    f.client.database(&f.name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
+async fn owned_agent_claim_classifies_segmented_source_read_after_fencing() {
+    let f = Fixture::new().await;
+    let agent = ready_with_created(&f.store, "claim-source-read").await;
+    enable_segments(&f.store, &agent).await;
+    f.store
+        .append_agent_log_keyed(
+            &agent.id,
+            &AgentLogPublicationIdentity {
+                key: "claim-source-adoption".into(),
+                fingerprint: [7; 32],
+                appended_at: NOW.into(),
+            },
+            AgentLogKind::ConversationGap { frames: 1 },
+        )
+        .await
+        .unwrap();
+    assert_format(&f.store, &agent.id, true).await;
+    let agent = f.store.get_agent(&agent.id).await.unwrap().unwrap();
+    let parent_filter = doc! { "_id": agent.sandbox_id.as_str() };
+    let original_fence = f
+        .store
+        .sandboxes
+        .find_one(parent_filter.clone())
+        .await
+        .unwrap()
+        .unwrap()
+        .get_i64("runtime_writer_claim_fence")
+        .unwrap();
+    let store = f
+        .store
+        .clone()
+        .enable_agent_ownership("writer".into())
+        .await
+        .unwrap();
+    let coordinator = OwnershipCoordinator::register(
+        store.agent_ownership.as_ref().unwrap().clone(),
+        Member {
+            instance_id: "writer".into(),
+            protocol: PROTOCOL_VERSION,
+            relay_address: "http://localhost:8080".into(),
+            expires_at_ms: 0,
+            draining: false,
+            owned_agents: 0,
+            max_owned_agents: DEFAULT_MAX_OWNED_AGENTS,
+        },
+    )
+    .await
+    .unwrap();
+    let authority = coordinator.acquire(&agent.id).await.unwrap().unwrap();
+
+    // The audit read is inside segmented source validation after both fences.
+    let namespace = format!("{}.{AUDITS}", f.name);
+    f.boundaries.lock().unwrap().clear();
+    f.admin
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint": "failCommand", "mode": { "times": 1 },
+            "data": { "failCommands": ["find"], "appName": &f.name,
+                "namespace": &namespace, "errorCode": 2 }
+        })
+        .await
+        .unwrap();
+    let result = authority
+        .run(store.claim_agent_work_observed(&agent.id, "writer", NOW.into(), MINUTE.into()))
+        .await;
+    let boundaries = f.disable().await;
+    let failure = result.unwrap().unwrap_err();
+    assert_eq!(failure.detail, Some(AgentWorkClaimDetail::Read));
+    assert!(matches!(
+        failure.store_error,
+        SandboxStoreError::Unavailable(_)
+    ));
+    assert!(matches!(
+        &boundaries[..],
+        [Boundary::Begin(_), Boundary::Aborted(_)]
+    ));
+    assert_eq!(
+        store.get_agent(&agent.id).await.unwrap(),
+        Some(agent.clone())
+    );
+
+    // Preserve the raw Mongo error so a known abort at the same read retries.
+    f.boundaries.lock().unwrap().clear();
+    f.admin
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint": "failCommand", "mode": { "times": 1 },
+            "data": { "failCommands": ["find"], "appName": &f.name,
+                "namespace": &namespace, "errorCode": 112,
+                "errorLabels": ["TransientTransactionError"] }
+        })
+        .await
+        .unwrap();
+    let result = authority
+        .run(store.claim_agent_work_observed(&agent.id, "writer", NOW.into(), MINUTE.into()))
+        .await;
+    let boundaries = f.disable().await;
+    let claimed = result
+        .unwrap()
+        .map_err(|failure| failure.detail)
+        .unwrap()
+        .expect("claim succeeds after the known abort");
+    assert_eq!(claimed.revision, agent.revision + 1);
+    assert!(matches!(
+        &boundaries[..],
+        [
+            Boundary::Begin(_),
+            Boundary::Aborted(_),
+            Boundary::Begin(_),
+            Boundary::Committed
+        ]
+    ));
+    let row = store
+        .sandboxes
+        .find_one(parent_filter)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row.get_i64("runtime_writer_claim_fence").unwrap(),
+        original_fence + 1
+    );
     f.client.database(&f.name).drop().await.unwrap();
 }
