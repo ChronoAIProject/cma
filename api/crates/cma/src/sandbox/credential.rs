@@ -100,6 +100,16 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
                 "credential generation does not cover the current service access".into(),
             ));
         }
+        if sandbox
+            .credential
+            .service_scope
+            .as_ref()
+            .is_some_and(|scope| scope.connection.is_some())
+        {
+            return Err(CredentialError::Unavailable(
+                "selected connection issuance is unavailable".into(),
+            ));
+        }
         if sandbox.work.authority_protocol.is_some()
             || self
                 .custody
