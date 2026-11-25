@@ -85,6 +85,7 @@ impl Authority {
         })
     }
 
+    #[cfg(test)]
     pub(super) fn with_store(
         token: OwnershipToken,
         deadline: Instant,
@@ -123,13 +124,12 @@ impl Authority {
         })
     }
 
-    pub(super) fn unpublished(token: OwnershipToken, store: Arc<dyn OwnershipStore>) -> Arc<Self> {
-        let mut authority = Self::with_store_policy(
-            token,
-            Instant::now(),
-            store,
-            super::MaintenancePolicy::ContainFailures,
-        );
+    pub(super) fn unpublished(
+        token: OwnershipToken,
+        store: Arc<dyn OwnershipStore>,
+        policy: super::MaintenancePolicy,
+    ) -> Arc<Self> {
+        let mut authority = Self::with_store_policy(token, Instant::now(), store, policy);
         let inner = Arc::get_mut(&mut authority).unwrap();
         inner.validity.send_replace(Validity::Unpublished);
         inner.cleanup.get_mut().local_quiescent = true;
@@ -137,6 +137,10 @@ impl Authority {
             .retiring
             .store(true, std::sync::atomic::Ordering::Release);
         authority
+    }
+
+    pub(super) fn is_unpublished(&self) -> bool {
+        self.observe_validity() == Validity::Unpublished
     }
 
     pub fn is_current(&self) -> bool {

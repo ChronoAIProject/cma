@@ -13,6 +13,7 @@ pub(super) enum WriteOutcome {
         now_ms: i64,
         lease: Option<OwnershipLease>,
     },
+    ReconciledAcquisition(Option<OwnershipToken>),
     Renewed(OwnershipLease),
     RenewalRefused(OwnershipError),
     NotIssued(OwnershipError),
