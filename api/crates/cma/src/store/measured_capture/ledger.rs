@@ -304,10 +304,27 @@ fn encode(evidence: &FrozenEvidence) -> Result<Document, CaptureError> {
     if payload.len() > MAX_BATCH_PAYLOAD {
         return Err(CaptureError::Unavailable);
     }
-    Ok(
-        doc! {"_id":evidence.evidence_id(),"schema_version":1_i64,"stream_id":evidence.scope().stream_id().map_err(|_|CaptureError::Corrupt)?,
-        "revision":i64::try_from(evidence.revision()).map_err(|_|CaptureError::Corrupt)?,"evidence_sha256":evidence.evidence_sha256(),"payload":payload},
-    )
+    let scope = evidence.scope();
+    let mut document = doc! {
+        "_id": evidence.evidence_id(),
+        "schema_version": 1_i64,
+        "stream_id": scope.stream_id().map_err(|_| CaptureError::Corrupt)?,
+        "revision": i64::try_from(evidence.revision()).map_err(|_| CaptureError::Corrupt)?,
+        "evidence_sha256": evidence.evidence_sha256(),
+        "payload": payload,
+    };
+    if evidence.revision() == 1 {
+        // One immutable initial row claims every allocation second. The unique
+        // multikey index rejects overlapping windows atomically, even when two
+        // clients independently compute their batches at different snapshots.
+        let seconds = (scope.from_ms / 1000..scope.to_ms / 1000)
+            .map(|second| i64::try_from(second).map_err(|_| CaptureError::Corrupt))
+            .collect::<Result<Vec<_>, _>>()?;
+        document.insert("sandbox_id", &scope.sandbox_id);
+        document.insert("window_id", &scope.window_id);
+        document.insert("window_seconds", seconds);
+    }
+    Ok(document)
 }
 fn decode(row: &Document) -> Result<FrozenEvidence, CaptureError> {
     let payload = row.get_str("payload").map_err(|_| CaptureError::Corrupt)?;

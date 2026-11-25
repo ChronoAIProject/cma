@@ -23,6 +23,9 @@ const BILLABLE_METRICS: [SourceMetric; 3] = [
 mod quantity;
 pub use quantity::ExactQuantity;
 use quantity::{allocation_quantity, exact, whole, Exact};
+#[path = "coverage_estimation.rs"]
+mod estimation;
+use estimation::{continuously_allocated, estimate_interior};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -311,74 +314,13 @@ fn candidates(
             .collect();
         for candidate in &mut series_candidates {
             if !candidate.interval.metric.is_pvc() {
-                candidate.attributed &= continuously_running(
-                    allocation,
-                    candidate.interval.from_ms,
-                    candidate.interval.to_ms,
-                );
+                candidate.attributed &= continuously_allocated(allocation, candidate);
             }
         }
-        estimate_interior(&mut series_candidates, cutoff_ms);
         result.extend(series_candidates);
     }
+    estimate_interior(&mut result, cutoff_ms, allocation);
     Ok(result)
-}
-
-fn continuously_running(allocation: &[AllocationSpan<'_>], from: u64, to: u64) -> bool {
-    let mut cursor = from;
-    for span in allocation
-        .iter()
-        .filter(|span| span.from_ms < to && from < span.to_ms)
-    {
-        if span.from_ms > cursor || !span.event.allocation.running {
-            return false;
-        }
-        cursor = cursor.max(span.to_ms);
-    }
-    cursor >= to
-}
-
-fn estimate_interior(candidates: &mut [Candidate], cutoff_ms: u64) {
-    for index in 1..candidates.len().saturating_sub(1) {
-        let (left, gap, right) = (
-            &candidates[index - 1],
-            &candidates[index],
-            &candidates[index + 1],
-        );
-        let elapsed = gap.interval.to_ms - gap.interval.from_ms;
-        if !gap.attributed
-            || gap.interval.quantity != Err(Unresolved::Coverage)
-            || elapsed > MAX_INTERIOR_GAP_MS
-            || cutoff_ms.saturating_sub(gap.interval.to_ms) < LATE_GRACE_MS
-            || !left.attributed
-            || !right.attributed
-            || left.binding != gap.binding
-            || right.binding != gap.binding
-            || left.interval.to_ms != gap.interval.from_ms
-            || gap.interval.to_ms != right.interval.from_ms
-        {
-            continue;
-        }
-        let (Ok(a), Ok(b)) = (left.interval.quantity, right.interval.quantity) else {
-            continue;
-        };
-        let left_rate = exact(a) / whole(left.interval.to_ms - left.interval.from_ms);
-        let right_rate = exact(b) / whole(right.interval.to_ms - right.interval.from_ms);
-        let estimate = (left_rate + right_rate) * whole(elapsed) / whole(2_u64);
-        let mut references = Vec::new();
-        for reference in left
-            .references
-            .iter()
-            .chain(&gap.references)
-            .chain(&right.references)
-        {
-            if references.last() != Some(reference) {
-                references.push(reference.clone());
-            }
-        }
-        candidates[index].estimate = Some(estimate);
-        candidates[index].references = references;
-    }
 }
 
 fn classify(

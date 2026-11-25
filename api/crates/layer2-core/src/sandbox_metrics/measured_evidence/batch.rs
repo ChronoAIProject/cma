@@ -103,6 +103,8 @@ impl EvidenceScope {
         .into_iter()
         .any(|value| value.is_empty() || value.len() > 256)
             || self.rate_card_version == 0
+            || !self.from_ms.is_multiple_of(1000)
+            || !self.to_ms.is_multiple_of(1000)
             || self.from_ms >= self.to_ms
             || self.to_ms - self.from_ms > MAX_WINDOW_MS
         {
@@ -113,13 +115,14 @@ impl EvidenceScope {
 
     pub fn stream_id(&self) -> Result<String, BatchError> {
         self.validate()?;
-        // The rate card is pinned by the original batch, rather than defining a
-        // second stream that could charge the same owner/window again.
+        // The time bounds define the stream. The original batch pins the
+        // provider window label and rate card.
         digest(&(
             "measured-evidence-stream-v1",
             &self.owner_id,
             &self.sandbox_id,
-            &self.window_id,
+            self.from_ms,
+            self.to_ms,
         ))
         .map_err(|_| BatchError::Invalid)
     }

@@ -257,3 +257,33 @@ fn frozen_batches_replay_stably_and_bind_corrections_to_original_scope() {
     other.rate_card_version = 2;
     assert!(FrozenEvidence::freeze(other, 60_000, &samples, &events, Some(&before)).is_err());
 }
+
+#[test]
+fn resets_and_ambiguous_neighbors_cannot_fund_an_interior_estimate() {
+    let compute = binding(BindingKind::Compute);
+    let events = [event(1, 0, 300, allocation(true), allocation(true))];
+    let gap = |rows: Vec<CoverageInterval>| {
+        rows.into_iter()
+            .find(|row| row.metric == SourceMetric::CpuCounter && row.from_ms == 60_000)
+            .unwrap()
+    };
+    let reset = [(0, 0.0), (60_000, 60.0), (180_000, 5.0), (240_000, 65.0)]
+        .map(|(time, value)| sample(&compute, SourceMetric::CpuCounter, time, value));
+    let row = gap(settle(&reset, &events, 0, 300_000, 180_000 + LATE_GRACE_MS));
+    assert_eq!(row.reason, Some(CoverageReason::CounterReset));
+    assert_eq!(row.quantity, None);
+    let mut another = compute.clone();
+    another.id = "other-compute".into();
+    another.pod_uid = Some("other-pod".into());
+    another.runtime_container_id = Some("other-container".into());
+    let mut raw = [(0, 0.0), (60_000, 60.0), (180_000, 180.0), (240_000, 240.0)]
+        .map(|(time, value)| sample(&compute, SourceMetric::CpuCounter, time, value))
+        .to_vec();
+    raw.extend([
+        sample(&another, SourceMetric::CpuCounter, 0, 0.0),
+        sample(&another, SourceMetric::CpuCounter, 60_000, 60.0),
+    ]);
+    let row = gap(settle(&raw, &events, 0, 300_000, 180_000 + LATE_GRACE_MS));
+    assert_eq!(row.measurement_status, MeasurementStatus::Pending);
+    assert_eq!(row.quantity, None);
+}

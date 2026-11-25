@@ -21,12 +21,13 @@ async fn measured_batches_are_immutable_and_corrections_are_idempotent_across_cl
         .unwrap();
     let a = MeasuredLedger::new(&database);
     let b = MeasuredLedger::new(&right.database(&name));
-    let index = measured_batches::inspect(&database)
+    for (_, index) in measured_batches::inspect(&database).await.unwrap() {
+        measured_batches::create(&database, index).await.unwrap();
+    }
+    assert!(measured_batches::inspect(&database)
         .await
         .unwrap()
-        .pop()
-        .unwrap();
-    measured_batches::create(&database, index.1).await.unwrap();
+        .is_empty());
     let sandbox_id = SandboxId("sbx_synthetic".into());
     let owner = SubjectId::new("owner-a");
     let allocation = Allocation {
@@ -92,6 +93,24 @@ async fn measured_batches_are_immutable_and_corrections_are_idempotent_across_cl
     let (first, peer) = tokio::join!(a.freeze(request.clone()), b.freeze(request.clone()));
     let first = first.unwrap();
     assert_eq!(first, peer.unwrap());
+    let relabeled = FreezeRequest {
+        scope: EvidenceScope {
+            window_id: "another-label".into(),
+            ..scope.clone()
+        },
+        ..request.clone()
+    };
+    assert!(b.freeze(relabeled).await.is_err());
+    let overlapping = FreezeRequest {
+        scope: EvidenceScope {
+            window_id: "overlapping-window".into(),
+            from_ms: 38_000,
+            to_ms: 40_000,
+            ..scope.clone()
+        },
+        ..request.clone()
+    };
+    assert!(b.freeze(overlapping).await.is_err());
     let original = a
         .rows
         .find_one(doc! {"_id":first.evidence_id()})
@@ -160,5 +179,31 @@ async fn measured_batches_are_immutable_and_corrections_are_idempotent_across_cl
         })
         .await
         .is_err());
+    let left_scope = EvidenceScope {
+        window_id: "left".into(),
+        from_ms: 40_000,
+        to_ms: 43_000,
+        ..request.scope.clone()
+    };
+    let right_scope = EvidenceScope {
+        window_id: "right".into(),
+        from_ms: 42_000,
+        to_ms: 45_000,
+        ..request.scope.clone()
+    };
+    let (left_result, right_result) = tokio::join!(
+        a.freeze(FreezeRequest {
+            scope: left_scope,
+            source_cutoff_ms: 45_000,
+            correction_of: None
+        }),
+        b.freeze(FreezeRequest {
+            scope: right_scope,
+            source_cutoff_ms: 45_000,
+            correction_of: None
+        })
+    );
+    assert_ne!(left_result.is_ok(), right_result.is_ok());
+    assert_eq!(a.rows.count_documents(doc! {}).await.unwrap(), 3);
     database.drop().await.unwrap();
 }

@@ -59,7 +59,12 @@ pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
     let source = MetricsClient::internal(&source).map_err(|_| UNAVAILABLE)?;
     tokio::time::timeout(Duration::from_secs(90), async {
         verify_authority(&database).await?;
-        execute(&database, &source, sandbox, range).await
+        let receipt = execute(&database, &source, sandbox, range).await?;
+        if receipt["status"] == "no_attributable_observations" {
+            eprintln!("{receipt}");
+            return Err("measured capture has no attributable observations in the window");
+        }
+        Ok(receipt)
     })
     .await
     .map_err(|_| UNAVAILABLE)?
@@ -244,7 +249,12 @@ async fn execute(
         }
     }
     if observations.is_empty() {
-        return Err("measured capture has no attributable observations in the window");
+        return Ok(json!({
+            "status": "no_attributable_observations", "inserted": 0,
+            "replayed": 0, "disputed": 0, "incomplete_metric_intervals": incomplete,
+            "bindings": bindings.len(), "unattributed_source_series": unattributed_series,
+            "unattributed_source_samples": unattributed_samples,
+        }));
     }
     let store = MeasuredCapture::new(database);
     let (mut inserted, mut replayed, mut disputed) = (0, 0, 0);
