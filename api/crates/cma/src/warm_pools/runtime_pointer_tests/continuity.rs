@@ -215,7 +215,7 @@ async fn promotion_preserves_the_first_claim_of_a_persisted_home_request() {
     let (requested, resume) = rig.second.provider.hold_claim_request();
     let change_release = async {
         let request = at_gate(requested).await;
-        let stored = lifecycle.sandbox(&creating.id).await.unwrap();
+        let stored = follower.sandbox(&creating.id).await;
         let reservation = stored.lifecycle.home.unwrap().native_pool.unwrap();
         assert_eq!(reservation.request, request);
         assert!(reservation.claim.is_none());
