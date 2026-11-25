@@ -225,6 +225,21 @@ class CIEventSelectionTests(unittest.TestCase):
                 selection.determine_ci(self.root, pull('main', 'develop'), 'pull_request', repository)
 
 
+    def test_develop_verification_is_full_and_uses_the_exact_event_commit(self):
+        from unittest import mock
+        repository = 'example/repository'
+        event = {'repository': {'full_name': repository}}
+        environment = {'GITHUB_REF': 'refs/heads/develop', 'GITHUB_SHA': self.third}
+        for name in ('schedule', 'workflow_dispatch'):
+            with self.subTest(event=name), mock.patch.dict('os.environ', environment):
+                result = selection.determine_ci(self.root, event, name, repository)
+                self.assertEqual((result['base'], result['head']), (self.second, self.third))
+                self.assertEqual(result['test_tracks'], dict(repo=True, am=True, eg=True, web=True))
+            for change in ({'GITHUB_REF': 'refs/heads/main'}, {'GITHUB_SHA': '0' * 40}):
+                with self.subTest(event=name, change=change), mock.patch.dict('os.environ', environment | change):
+                    with self.assertRaises(ValueError):
+                        selection.determine_ci(self.root, event, name, repository)
+
     def test_isolated_candidate_push_requires_a_live_commit_and_exact_namespace(self):
         from ci_events import full_ci_required
 

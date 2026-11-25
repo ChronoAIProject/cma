@@ -234,7 +234,9 @@ def validate(documents, actions)
   check_merge_group_artifacts(documents)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
-  require_check(events.keys.sort == %w[merge_group push], 'post-merge CI must cover pushes and retained merge-group events')
+  require_check(events.keys.sort == %w[merge_group push schedule workflow_dispatch], 'post-merge CI must cover pushes and verification events')
+  require_check(events['schedule'] == [{'cron' => '17 */2 * * *'}] && events['workflow_dispatch'] == {},
+    'develop verification must use the scheduled or manually selected GitHub revision')
   require_check(events['push'] == {'branches' => ['develop', 'tl/release/**']}, 'CI push must cover develop and isolated candidates without path filters')
   # Without a branch or path filter every queue entry creates the required
   # checks; a non-develop queue is refused by the selector, not left pending.
@@ -247,11 +249,11 @@ def validate(documents, actions)
   end
   # Queue entries run on refs/heads/gh-readonly-queue/develop/pr-N-SHA: their
   # own ref, so a PR (refs/pull/N/merge) or develop push run never cancels one.
-  # Develop pushes write the caches PRs restore, so they finish instead of
-  # being cancelled; every other ref still cancels its superseded run.
-  require_check(ci['concurrency'] == {'group' => 'ci-${{ github.workflow }}-${{ github.ref }}',
-    'cancel-in-progress' => "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"},
-    'CI concurrency must remain per ref and keep develop cache writers running')
+  verification = "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '-verification' || ''"
+  require_check(ci['concurrency'] == {
+    'group' => "ci-${{ github.workflow }}-${{ github.ref }}${{ #{verification} }}",
+    'cancel-in-progress' => "${{ github.ref != 'refs/heads/develop' }}"},
+    'CI must protect active develop runs and isolate verification from pushes')
   jobs = ci.fetch('jobs')
   require_check(jobs.keys.none? { |key| key.start_with?('trigger-') }, 'Trigger job retained')
   required = {

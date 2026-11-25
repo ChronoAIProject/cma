@@ -9,14 +9,14 @@ on:
   merge_group:
     types:
       - "checks_requested"
+  schedule:
+    - cron: "17 */2 * * *"
+  workflow_dispatch: {}
 concurrency:
-  group: "ci-${{ github.workflow }}-${{ github.ref }}"
-  # A develop push run is the only writer of the image and cargo caches every
-  # PR restores, so a newer merge must not cancel it mid-build (14 of 15 were
-  # cancelled on 20 Nov). The group still runs one at a time, and a newer
-  # pending run still replaces an older pending one. PRs and release refs
-  # keep cancelling superseded runs.
-  cancel-in-progress: "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"
+  # Verification keeps its own active run and latest pending snapshot.
+  # Develop pushes retain their separate cache-writer group.
+  group: "ci-${{ github.workflow }}-${{ github.ref }}${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '-verification' || '' }}"
+  cancel-in-progress: "${{ github.ref != 'refs/heads/develop' }}"
 permissions:
   contents: "read"
   # ci-images.yml and ci-omarchy.yml request it for the runtime vulnerability
