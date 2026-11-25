@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { TreeRow } from '../shell/TreeRow';
 import { keyboardNavigation } from '../shell/treePresentation';
 import type { SidebarNewAgent } from '../shell/Sidebar';
@@ -53,6 +53,26 @@ function EventGatewayBody({
   const [selected, setSelected] = useState<string>();
   const [visited, setVisited] = useState<readonly string[]>([]);
   const [creating, setCreating] = useState(false);
+  const contentId = useId();
+  const [createOrigin, setCreateOrigin] = useState<HTMLElement | null>(null);
+  const [restoreRevision, setRestoreRevision] = useState(0);
+  const restoredRevision = useRef(0);
+  useLayoutEffect(() => {
+    if (!active) return;
+    const content = document.getElementById(contentId);
+    if (creating) {
+      content?.querySelector<HTMLElement>('.gateway-create-header h1')?.focus();
+    } else if (restoreRevision !== restoredRevision.current) {
+      restoredRevision.current = restoreRevision;
+      if (createOrigin?.isConnected && !createOrigin.closest('[hidden], [inert]')) {
+        createOrigin.focus();
+        if (document.activeElement === createOrigin) return;
+      }
+      const welcome = content?.querySelector<HTMLButtonElement>('.gateway-welcome button');
+      const heading = content?.querySelector<HTMLElement>('.gateway-detail:not([hidden]) h1');
+      (welcome ?? heading)?.focus();
+    }
+  }, [active, creating, restoreRevision, createOrigin, contentId]);
   const [createStarted, setCreateStarted] = useState(false);
   const [created, setCreated] = useState<Channel>();
   const [deleted, setDeleted] = useState<readonly string[]>([]);
@@ -94,11 +114,15 @@ function EventGatewayBody({
   };
   const startCreate = () => {
     retain();
+    setCreateOrigin(document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setCreateStarted(true);
     setCreating(true);
     onNavigate?.();
   };
-  const exitCreate = () => setCreating(false);
+  const exitCreate = () => {
+    setRestoreRevision((value) => value + 1);
+    setCreating(false);
+  };
   const showChannels = () => {
     retain();
     setSelected(undefined);
@@ -178,7 +202,7 @@ function EventGatewayBody({
   );
   const createActive = active && creating;
   const content = (
-    <div className="gateway-content">
+    <div className="gateway-content" id={contentId}>
       {createStarted ? (
         <section className="gateway-detail gateway-detail--create" hidden={!createActive}>
           <PageHeader
@@ -195,6 +219,7 @@ function EventGatewayBody({
               { label: 'New channel' },
             ]}
             title="New channel"
+            placement="gateway-create-header"
             description="Connect an event source to your agent."
           />
           <ChannelEditor
