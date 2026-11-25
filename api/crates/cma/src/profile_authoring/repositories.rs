@@ -17,6 +17,8 @@ struct Repository {
     default_branch: String,
     private: bool,
     disabled: bool,
+    #[serde(default)]
+    visibility: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -34,9 +36,45 @@ struct GitObject {
 }
 
 #[derive(Deserialize)]
+struct Commit {
+    sha: String,
+}
+
+#[derive(Deserialize)]
 struct Tag {
     sha: String,
     object: GitObject,
+}
+
+/// Resolve public visibility and an exact revision using an anonymous client.
+/// Confirm that the same fixed public archive endpoint is available before allocation.
+pub(super) async fn resolve_public_snapshot(
+    request: &RepositoryRequest,
+) -> Result<RepositoryResolution, AuthoringSourceError> {
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent("CMA-public-source/1.0")
+        .build()
+        .map_err(|_| unavailable("public repository client unavailable"))?;
+    let resolver = RepositoryResolver {
+        http: http.clone(),
+        origin: reqwest::Url::parse("https://api.github.com").expect("fixed GitHub origin"),
+    };
+    let resolved = resolver.resolve_with_visibility(request, true).await?;
+    let archive =
+        layer3_adapter::public_repository_archive_url(&resolved.url, &resolved.commit_sha)
+            .ok_or_else(|| invalid("public repository archive identity is invalid"))?;
+    let response = http
+        .head(archive)
+        .send()
+        .await
+        .map_err(|_| unavailable("public archive verification failed"))?;
+    if response.status() != reqwest::StatusCode::OK {
+        return Err(unavailable("public archive verification was refused"));
+    }
+    Ok(resolved)
 }
 
 impl RepositoryResolver {
@@ -44,11 +82,22 @@ impl RepositoryResolver {
         &self,
         request: &RepositoryRequest,
     ) -> Result<RepositoryResolution, AuthoringSourceError> {
+        self.resolve_with_visibility(request, false).await
+    }
+
+    async fn resolve_with_visibility(
+        &self,
+        request: &RepositoryRequest,
+        require_public_visibility: bool,
+    ) -> Result<RepositoryResolution, AuthoringSourceError> {
         let (owner, name) = repository_parts(&request.url)?;
         let response = self.get(&["repos", &owner, &name]).await?;
         let repository: Repository = json(response).await?;
         let expected_name = format!("{owner}/{name}");
-        if repository.private || repository.disabled {
+        if repository.private
+            || repository.disabled
+            || (require_public_visibility && repository.visibility.as_deref() != Some("public"))
+        {
             return Err(AuthoringSourceError::RepositoryNotFound);
         }
         if !repository.full_name.eq_ignore_ascii_case(&expected_name)
@@ -63,13 +112,28 @@ impl RepositoryResolver {
             .reference
             .as_deref()
             .unwrap_or(&repository.default_branch);
-        let branch = self.reference(&owner, &name, "heads", reference).await;
-        let mut object = match branch {
-            Err(AuthoringSourceError::ReferenceNotFound) if request.reference.is_some() => {
-                self.reference(&owner, &name, "tags", reference).await?
-            }
-            result => result?,
-        };
+        let mut object =
+            if require_public_visibility && request.reference.is_some() && valid_sha(reference) {
+                let response = self
+                    .get(&["repos", &owner, &name, "commits", reference])
+                    .await?;
+                let commit: Commit = json(response).await?;
+                if commit.sha != reference {
+                    return Err(invalid("repository commit response changed its identity"));
+                }
+                GitObject {
+                    sha: commit.sha,
+                    kind: "commit".into(),
+                }
+            } else {
+                let branch = self.reference(&owner, &name, "heads", reference).await;
+                match branch {
+                    Err(AuthoringSourceError::ReferenceNotFound) if request.reference.is_some() => {
+                        self.reference(&owner, &name, "tags", reference).await?
+                    }
+                    result => result?,
+                }
+            };
         // Annotated tags name tag objects, not commits. Resolve only the exact
         // observed object so a branch/tag moving during verification cannot
         // change the checked revision between requests.

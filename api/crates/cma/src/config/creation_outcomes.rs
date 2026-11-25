@@ -6,6 +6,7 @@ pub(crate) struct CreationOutcomesConfig {
     pub(crate) epoch: String,
     pub(crate) first_day: i64,
     pub(crate) legacy_custody: bool,
+    pub(crate) terminal_settlement: bool,
 }
 
 impl CreationOutcomesConfig {
@@ -45,11 +46,16 @@ impl CreationOutcomesConfig {
             .ok_or_else(|| format!("{day_key} must be a positive UTC Unix day"))?;
         let legacy_custody =
             super::features::flag(lookup, "CHRONO_SANDBOX_CREATION_OUTCOME_LEGACY_CUSTODY")?;
+        let terminal_settlement = super::features::flag(
+            lookup,
+            "CHRONO_SANDBOX_CREATION_TERMINAL_SETTLEMENT_ENABLED",
+        )?;
         Ok(Some(Self {
             deployment,
             epoch,
             first_day,
             legacy_custody,
+            terminal_settlement,
         }))
     }
 }
