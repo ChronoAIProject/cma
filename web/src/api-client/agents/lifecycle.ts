@@ -1,6 +1,7 @@
 import { taskTemplate } from './task-template.js';
 import type { ResolvedConfig } from '../config.js';
 import type { OperationOptions } from '../http.js';
+import { ProtocolError } from '../errors.js';
 import { command, identity, input, read, segment, type CommandOptions } from '../resources.js';
 import { agent } from './types.js';
 import {
@@ -78,16 +79,30 @@ export const agentLifecycleFailure = object({
 });
 export type AgentLifecycleFailure = Output<typeof agentLifecycleFailure>;
 
+export const repositoryAccessRefusal = enumeration('verification_unavailable');
+export type RepositoryAccessRefusal = Output<typeof repositoryAccessRefusal>;
+
 export const agentLifecycleOperation = object({
   callback_url: optional(nullable(text)),
   id: text,
+  accepted_at: optional((value) => {
+    const time = text(value);
+    if (!Number.isFinite(Date.parse(time))) throw new ProtocolError('invalid acceptance time');
+    return time;
+  }),
   status: enumeration('queued', 'running', 'waiting_for_connection', 'succeeded', 'failed'),
   phase: text,
   agent_id: optional(text),
   error: optional(text),
   failure: optional(agentLifecycleFailure),
   events: array(agentLifecycleEvent),
-  connection: optional(object({ services: array(text), target: agentLifecycleConnectionTarget })),
+  connection: optional(
+    object({
+      services: array(text),
+      target: agentLifecycleConnectionTarget,
+      repository_access: optional(repositoryAccessRefusal),
+    }),
+  ),
 });
 /** Phase readiness is separate from the terminal operation status. */
 export type AgentLifecycleOperation = Output<typeof agentLifecycleOperation>;

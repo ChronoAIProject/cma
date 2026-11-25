@@ -178,7 +178,7 @@ def sweep(api, policy, apply=False, revision=None, *, recovery_only=False):
     for action in proposed:
         item, successor = action.entry, action.successor
         day = item.created.astimezone(timezone.utc).date()
-        kind = recovery_kind(action, today)
+        kind = recovery_kind(action, today, policy)
         if recovery_only and not kind:
             holds["outside-proven-recovery-scope"] += item.size
             continue
@@ -192,7 +192,9 @@ def sweep(api, policy, apply=False, revision=None, *, recovery_only=False):
             holds["reader-or-open-pr"] += item.size
             continue
         if apply or recovery_only:
-            if (successor and not api.visible(successor)) or api.visible(item) != item:
+            if ((successor and not api.visible(successor))
+                    or (action.spare and not api.visible(action.spare))
+                    or api.visible(item) != item):
                 holds["candidate-or-successor-changed"] += item.size
                 continue
             if recovery_only and kind == "prior-day-v4-seed":

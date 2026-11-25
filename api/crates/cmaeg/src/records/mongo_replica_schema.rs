@@ -7,6 +7,10 @@ use mongodb::{
     Database, IndexModel,
 };
 
+#[cfg(test)]
+#[path = "mongo_replica_schema_tests.rs"]
+mod tests;
+
 const INDEX: &str = "replica_active_discovery_v1";
 
 pub(super) fn projection_schema() -> Document {

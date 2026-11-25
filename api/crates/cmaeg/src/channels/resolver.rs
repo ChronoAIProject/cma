@@ -63,11 +63,7 @@ impl ResolveError {
                 503,
                 "stored channel is invalid",
             ),
-            Self::CreationPending => (
-                ProblemCode::Conflict,
-                409,
-                "channel_creation_pending: the channel owner must complete the original creation request before sending events",
-            ),
+            Self::CreationPending => (ProblemCode::Conflict, 409, super::creation::PENDING_DETAIL),
             Self::RateLimited => (
                 ProblemCode::RateLimited,
                 429,
@@ -179,13 +175,14 @@ impl ChannelResolver {
             .open(&self.inner.keys)
             .map_err(|_| ResolveError::Tampered)?
             .payload;
-        if self
-            .inner
+        self.inner
             .records
             .record_url(pointer.record_id.as_str())
-            .map_err(|_| ResolveError::Invalid)?
-            .as_str()
-            != pointer.record_url
+            .map_err(|_| ResolveError::Invalid)?;
+        if !self
+            .inner
+            .records
+            .names_record(&pointer.record_url, pointer.record_id.as_str())
         {
             return Err(ResolveError::Tampered);
         }
@@ -224,13 +221,14 @@ impl ChannelResolver {
                 _ => ResolveError::Tampered,
             })?;
             let pointer = opened.payload;
-            if self
-                .inner
+            self.inner
                 .records
                 .record_url(pointer.record_id.as_str())
-                .map_err(|_| ResolveError::Invalid)?
-                .as_str()
-                != pointer.record_url
+                .map_err(|_| ResolveError::Invalid)?;
+            if !self
+                .inner
+                .records
+                .names_record(&pointer.record_url, pointer.record_id.as_str())
             {
                 return Err(ResolveError::Tampered);
             }
@@ -483,3 +481,7 @@ impl ChannelResolver {
         .await
     }
 }
+
+#[cfg(test)]
+#[path = "resolver_retained_origin_tests.rs"]
+mod retained_origin_tests;

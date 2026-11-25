@@ -9,6 +9,7 @@ use std::time::Instant;
 use tracing::instrument::WithSubscriber;
 const DAY: u64 = 86400;
 const MEMBERS: usize = 435;
+mod day_rollover;
 
 fn checkpoint_history(
     state: &SandboxUsage,
@@ -36,11 +37,18 @@ fn checkpoint_history(
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn retained_ranges_measure_435_members_at_checkpoint_cadence_with_exact_first_pages() {
     let (original, commands) = observed_store().await;
-    let from = (now() / DAY - 31) * DAY;
-    let to = now() / 3600 * 3600;
+    let fixture_at = now();
+    let from = (fixture_at / DAY - 31) * DAY;
+    let to = fixture_at / 3600 * 3600;
     let prepared = Instant::now();
     original.initialize_allocation_buckets(true).await.unwrap();
     let mut states = Vec::new();
+    let mut tail_events = Vec::new();
+    let mut prepared_to = if to.is_multiple_of(DAY) {
+        to + 3600
+    } else {
+        to
+    };
     let mut source_count = 0;
     for id in 0..MEMBERS {
         let mut s = state(id, from);
@@ -61,12 +69,13 @@ async fn retained_ranges_measure_435_members_at_checkpoint_cadence_with_exact_fi
             .unwrap();
         // At UTC midnight the live worker prepares the first hour's tail
         // inputs even before a complete hour exists. Exercise that same case.
-        let prepared_to = if to.is_multiple_of(DAY) {
-            to + 3600
-        } else {
-            to
-        };
         prepare_days(&original, &s, &events, from, prepared_to).await;
+        tail_events.push(
+            events
+                .into_iter()
+                .filter(|event| event.ended_at > to / DAY * DAY)
+                .collect(),
+        );
         states.push(s);
     }
     seed(&original, &states).await;
@@ -134,6 +143,18 @@ async fn retained_ranges_measure_435_members_at_checkpoint_cadence_with_exact_fi
                 .unwrap()
                 .unwrap();
             assert_eq!(pending["report"]["report_id"], lease.report.report_id);
+            let tail_preparation = Instant::now();
+            if bucketed && !lagging {
+                day_rollover::prepare_report_tail(
+                    &store,
+                    &states,
+                    &tail_events,
+                    &mut prepared_to,
+                    lease.report.effective_range.to,
+                )
+                .await;
+            }
+            let tail_preparation_us = tail_preparation.elapsed().as_micros();
             let generation = Instant::now();
             let subscriber = tracing_subscriber::fmt()
                 .with_max_level(tracing::Level::INFO)
@@ -192,7 +213,7 @@ async fn retained_ranges_measure_435_members_at_checkpoint_cadence_with_exact_fi
             assert!(rows.iter().all(|r| r["owner"]["display_name"].is_string()));
             assert_eq!(page["total_count"], MEMBERS);
             assert_eq!(view["report"]["summary"]["sandbox_count"], MEMBERS);
-            eprintln!("range_measurement window={window} bucketed={bucketed} lagging={lagging} status=ready admission_us={admission_us} generation_us={generation_us} finalization_us={finalization_us} first_page_us={} committed_reads_us={} event_reads={event_reads} rows=50 labels=50 summary_bytes={} page_bytes={}",began.elapsed().as_micros(),reads.elapsed().as_micros(),serde_json::to_vec(&view).unwrap().len(),serde_json::to_vec(&page).unwrap().len());
+            eprintln!("range_measurement window={window} bucketed={bucketed} lagging={lagging} status=ready admission_us={admission_us} tail_preparation_us={tail_preparation_us} generation_us={generation_us} finalization_us={finalization_us} first_page_us={} committed_reads_us={} event_reads={event_reads} rows=50 labels=50 summary_bytes={} page_bytes={}",began.elapsed().as_micros(),reads.elapsed().as_micros(),serde_json::to_vec(&view).unwrap().len(),serde_json::to_vec(&page).unwrap().len());
         }
     }
     store_cleanup(&original).await;

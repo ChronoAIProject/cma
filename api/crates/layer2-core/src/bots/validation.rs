@@ -159,6 +159,37 @@ impl Bot {
         {
             return Err(super::BotError::Conflict);
         }
+        if let Some(prior) = previous.work.as_ref().filter(|work| work.effect.is_some()) {
+            let next = self.work.as_ref().ok_or(super::BotError::Conflict)?;
+            // Only the exact effect holder may publish its result. It cannot
+            // change operation, generation, state, or replace the reservation.
+            if next.id != prior.id
+                || next.holder != prior.holder
+                || next.operation != prior.operation
+                || next.generation != prior.generation
+                || next.effect_protocol != prior.effect_protocol
+                || next.step != prior.step
+                || self.generation != previous.generation
+                || self.state != previous.state
+                || next
+                    .effect
+                    .as_ref()
+                    .is_some_and(|effect| Some(effect) != prior.effect.as_ref())
+            {
+                return Err(super::BotError::Conflict);
+            }
+        }
+        if previous
+            .work
+            .as_ref()
+            .is_some_and(|work| work.effect_protocol == 1)
+            && self
+                .work
+                .as_ref()
+                .is_some_and(|work| work.effect_protocol != 1)
+        {
+            return Err(super::BotError::Conflict);
+        }
         Ok(())
     }
     pub fn validate(&self) -> Result<(), super::BotError> {
@@ -211,6 +242,28 @@ impl Bot {
                 return Err(super::BotError::Invalid(
                     "Event Worker Profile pin differs from request".into(),
                 ))
+            }
+        }
+        if let Some(work) = &self.work {
+            if work.effect_protocol > 1 {
+                return Err(super::BotError::Invalid(
+                    "unsupported Bot effect protocol".into(),
+                ));
+            }
+            if let Some(effect) = &work.effect {
+                if work.effect_protocol != 1
+                    || work.holder.as_deref().is_none_or(str::is_empty)
+                    || uuid::Uuid::parse_str(&effect.id).is_err()
+                    || effect.step != work.step
+                    || effect.step.is_empty()
+                    || work.generation != self.generation
+                    || work.expires_at.as_deref() != Some(effect.deadline.as_str())
+                    || crate::seconds_from_rfc3339(&effect.deadline).is_none()
+                {
+                    return Err(super::BotError::Invalid(
+                        "invalid Bot effect reservation".into(),
+                    ));
+                }
             }
         }
         if self.profiles.resolved_model.trim().is_empty()

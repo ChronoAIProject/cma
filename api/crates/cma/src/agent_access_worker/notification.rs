@@ -154,6 +154,9 @@ fn notification_ready(
                     scope.revision == expected_scope
                         && scope.authorized_by == record.requester.owner
                         && scope.services == approved
+                        && record
+                            .approved_connection()
+                            .is_none_or(|connection| scope.connection.as_ref() == Some(connection))
                         && Some(scope.credential_generation_floor)
                             == record.progress.grant_generation_floor
                 })

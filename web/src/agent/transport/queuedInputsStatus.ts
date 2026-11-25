@@ -7,6 +7,7 @@ import { recoverQueuedCancellation } from './queuedCancellation';
 import { observeRead } from './readObserver';
 import { QueuedCommandTracker } from './queuedCommandTracker';
 import type { QueuedInputOutcome } from './queuedCommandOutcomes';
+import type { ConversationMessage } from '../model';
 
 export interface QueuedInputRow {
   readonly responseId: string;
@@ -16,6 +17,7 @@ export interface QueuedInputRow {
   readonly busy?: boolean;
   readonly error?: string;
   readonly needsRecovery?: boolean;
+  readonly pendingEdit?: string;
 }
 export interface QueuedInputsControl {
   readonly items: readonly QueuedInputRow[];
@@ -35,6 +37,7 @@ export function useQueuedInputs(
   eventRevision: string,
   onIdentityChange: (error: unknown) => boolean,
   requestRevision = 0,
+  messages?: readonly ConversationMessage[],
 ): QueuedInputsControl {
   const tracker = useMemo(
     () => (session && enabled ? new QueuedCommandTracker(session) : undefined),
@@ -52,9 +55,11 @@ export function useQueuedInputs(
   const actions = useRef(new Map<string, AbortController>());
   const errors = useRef(new Map<string, string>());
   const active = useRef(activeTurn);
+  const scope = useRef({ session, enabled, messages });
   useLayoutEffect(() => {
     active.current = activeTurn;
-  }, [activeTurn]);
+    scope.current = { session, enabled, messages };
+  }, [session, enabled, activeTurn, messages]);
   const schedule = useRef<ReturnType<typeof observeRead> | undefined>(undefined);
   const refresh = useCallback(() => {
     tracker?.refresh();
@@ -96,14 +101,33 @@ export function useQueuedInputs(
         if (changed) setStored(undefined);
         return changed;
       };
+      const current = () =>
+        !signal.aborted && scope.current.enabled && scope.current.session === session;
       try {
-        const result = await tracker.observe(signal, active.current, identityChanged);
-        if (signal.aborted || changed) return;
+        const result = await tracker.observe(
+          signal,
+          active.current,
+          identityChanged,
+          (commandId, responseId) =>
+            scope.current.messages?.some(
+              (message) =>
+                message.role === 'user' &&
+                message.status === 'complete' &&
+                !message.liveOnly &&
+                message.commandId === commandId &&
+                message.responseId === responseId,
+            ) ?? false,
+          (responseId) => {
+            if (errors.current.delete(responseId)) bump();
+          },
+          current,
+        );
+        if (!current() || changed) return;
         publish();
         failures = 0;
         return result;
       } catch (error) {
-        if (signal.aborted || changed || identityChanged(error)) return;
+        if (!current() || changed || identityChanged(error)) return;
         const next = rateLimitDelay(error, Math.min(2000 * 2 ** ++failures, 10000), failures);
         setStored({
           tracker,
@@ -120,7 +144,7 @@ export function useQueuedInputs(
       observer.dispose();
       if (schedule.current === observer) schedule.current = undefined;
     };
-  }, [tracker, enabled, onIdentityChange, publish]);
+  }, [tracker, session, enabled, onIdentityChange, publish, bump]);
 
   useEffect(() => {
     const previous = observed.current;
@@ -240,6 +264,14 @@ export function useQueuedInputs(
           ...item,
           busy: item.busy || local?.busy.has(item.responseId),
           needsRecovery: intents.some((intent) => intent.responseId === item.responseId),
+          pendingEdit: storageError
+            ? undefined
+            : intents.find(
+                (intent) =>
+                  intent.action === 'edit' &&
+                  intent.responseId === item.responseId &&
+                  intent.commandId === item.commandId,
+              )?.text,
           error: local?.errors.get(item.responseId),
         }))
       : [],

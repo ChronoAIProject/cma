@@ -122,3 +122,78 @@ async fn native_reply_targets_refuse_revoked_source_without_transport_fallback()
         assert_eq!(app.sends(), 0, "{variant:?}");
     }
 }
+
+#[tokio::test]
+async fn event_side_message_has_its_own_receipt_and_leaves_native_answer_authority() {
+    for failure in [false, true] {
+        let app = App::new(Variant::DiscordThread, failure).await;
+        let side_messages = app.side_messages();
+        assert!(app
+            .state
+            .side_message_available(app.caller, &app.event)
+            .await
+            .unwrap());
+        let first = app
+            .state
+            .send_side_message(
+                app.caller,
+                &app.event,
+                "same-key",
+                &side_messages,
+                "progress".into(),
+            )
+            .await
+            .unwrap();
+        if failure {
+            assert!(matches!(first.delivery, DeliveryOutcome::Unknown { .. }));
+        } else {
+            assert!(matches!(first.delivery, DeliveryOutcome::Confirmed { .. }));
+        }
+        let replay = app
+            .state
+            .send_side_message(
+                app.caller,
+                &app.event,
+                "same-key",
+                &side_messages,
+                "progress".into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(first).unwrap(),
+            serde_json::to_value(replay).unwrap()
+        );
+        let edited = app
+            .state
+            .send_side_message(
+                app.caller,
+                &app.event,
+                "same-key",
+                &side_messages,
+                "changed".into(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(edited.status, 409);
+        assert_eq!(app.sends(), 1);
+        assert!(!app
+            .state
+            .tracker
+            .has_tool_reply(app.event.as_str(), super::now()));
+
+        *app.discord.memory.broken.lock().unwrap() = false;
+        let reply = app.target().await;
+        let final_answer = app.send(&reply, "same-key").await;
+        assert!(matches!(
+            final_answer.delivery,
+            DeliveryOutcome::Confirmed { .. }
+        ));
+        assert_eq!(app.sends(), 2);
+        let calls = app.discord.memory.calls.lock().unwrap();
+        assert!(calls
+            .iter()
+            .filter(|call| call.method == "POST")
+            .all(|call| call.path == "/api/v10/channels/101/messages"));
+    }
+}

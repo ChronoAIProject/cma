@@ -8,6 +8,8 @@ export const scenarioNames = ['cross_replica', 'am_mid_stream', 'am_mid_command'
   'eg_10_trials', 'eg_partition_load', 'performance'];
 
 export const haScenarioNames = ['deterministic_contract', 'replica_sweep', 'am_101_trials', 'eg_10_trials', 'ha_evidence'];
+export const sw04Selection = 'sw04-cancel';
+export const sw04Scenario = 'sw04_cancel';
 export const selections = ['all', 'baseline-n1', 'ha'];
 export const selectedScenarioNames = (selection) => selection === 'ha' ? haScenarioNames
   : selection === 'baseline-n1' ? ['n1_capture'] : scenarioNames;
@@ -95,10 +97,15 @@ export function missingPerformance(code = 'not_run') {
 export async function saveReport(directory, report) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   report.catalog_sha256 = catalogSha256;
-  if (report.selection !== 'ha' && !report.performance?.length) report.performance = missingPerformance();
+  const sw04 = report.selection === sw04Selection;
+  if (!sw04 && report.selection !== 'ha' && !report.performance?.length) report.performance = missingPerformance();
   const json = JSON.stringify(report, null, 2) + '\n';
   await writeFile(join(directory, 'results.json'), json, { mode: 0o600 });
-  const lines = ['# Local cma-scale results', '', `Overall: **${report.status}**. Environment: local.`, '',
+  const summary = sw04
+    ? [`SW04 Cancel fixture: **${report.scenarios[0].status}**.`,
+      `Overall scale qualification: **${report.track_status}**. Environment: local.`]
+    : [`Overall: **${report.status}**. Environment: local.`];
+  const lines = ['# Local cma-scale results', '', ...summary, '',
     '| Scenario | Result | Evidence / blocker |', '|---|---|---|',
     ...report.scenarios.map((r) => `| ${r.scenario} | ${r.status} | ${r.code ?? r.evidence_hash ?? 'see results.json'} |`),
     '', 'A unit-test pass is not a local-cluster acceptance pass. Failures and missing prerequisites remain in the matrix.', '',

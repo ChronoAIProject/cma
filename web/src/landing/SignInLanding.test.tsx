@@ -20,6 +20,31 @@ describe('the signed-out landing', () => {
     );
   });
 
+  it('links the published terms beside the way in, and only when they exist', () => {
+    const { rerender } = render(<SignInLanding onSignIn={vi.fn()} />);
+    expect(screen.queryByRole('link', { name: 'Terms of Service' })).toBeNull();
+    rerender(
+      <SignInLanding
+        onSignIn={vi.fn()}
+        legalTerms={{
+          version: '2026-11-30',
+          termsUrl: 'https://legal.example.test/terms',
+          privacyUrl: 'https://legal.example.test/privacy',
+        }}
+      />,
+    );
+    expect(screen.getByText(/By continuing, you agree to the/)).toBeInTheDocument();
+    for (const [name, href] of [
+      ['Terms of Service', 'https://legal.example.test/terms'],
+      ['Privacy Notice', 'https://legal.example.test/privacy'],
+    ]) {
+      const link = screen.getByRole('link', { name });
+      expect(link).toHaveAttribute('href', href);
+      expect(link).toHaveAttribute('target', '_blank');
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    }
+  });
+
   it('never names the agent provider in its branding', () => {
     const { container } = render(<SignInLanding onSignIn={vi.fn()} />);
     expect(container.textContent).not.toMatch(/codex/i);

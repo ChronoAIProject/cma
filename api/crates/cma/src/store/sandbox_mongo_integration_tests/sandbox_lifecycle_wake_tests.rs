@@ -26,6 +26,7 @@ async fn lifecycle_admission_wake_follows_committed_pause_resume_and_delete_only
         assert!(store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision: 999,
                 sandbox: Box::new(invalid),
                 event_at: MINUTE.into(),
@@ -47,6 +48,7 @@ async fn lifecycle_admission_wake_follows_committed_pause_resume_and_delete_only
                 writer
                     .commit(SandboxTransaction::SaveSandboxAndAppend {
                         command_revival: None,
+                        released_runtime: None,
                         expected_revision: input.revision,
                         sandbox: Box::new(next),
                         event_at: MINUTE.into(),

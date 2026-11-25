@@ -46,7 +46,7 @@ it('invalidates queued drafts on account change and refuses late receipt writes'
   expect(second.queuedInputs.read()).toEqual([]);
 });
 
-function queueHarness() {
+function queueHarness(observedCommandStatus: 'queued' | 'cancelled' = 'cancelled') {
   let rows = ['one', 'two', 'three'].map((id, index) => {
     const response = queuedObservation(`resp_${id}`).response;
     return {
@@ -75,7 +75,7 @@ function queueHarness() {
       return json({
         ...source,
         receipt: { ...source.receipt, command_id: commandId },
-        status: 'cancelled',
+        status: observedCommandStatus,
       });
     }
     const id = String(url).split('/').at(-2)!;
@@ -171,11 +171,14 @@ it('recovers a lost edit reply with the same key/body after reload while another
     await expect(first.result.current.edit(original, 'revised one')).rejects.toThrow('lost reply');
   });
   expect(first.result.current.items[0]?.needsRecovery).toBe(true);
+  expect(first.result.current.items[0]?.pendingEdit).toBe('revised one');
   await act(() => first.result.current.remove(first.result.current.items[1]!));
   expect(first.result.current.items.map((x) => x.commandId)).toEqual(['cmd_one', 'cmd_three']);
   first.unmount();
   const second = renderHook(() => useQueuedInputs(h.session, true, true, '0', identity));
   await waitFor(() => expect(second.result.current.items).toHaveLength(2));
+  expect(second.result.current.items[0]?.pendingEdit).toBe('revised one');
+  expect(second.result.current.items[1]?.pendingEdit).toBeUndefined();
   await act(() => second.result.current.recover(second.result.current.items[0]!));
   const edits = h.fetch.mock.calls.filter(([url]) => String(url).endsWith('/queued-input'));
   expect(edits).toHaveLength(2);
@@ -184,8 +187,34 @@ it('recovers a lost edit reply with the same key/body after reload while another
     new Headers(edits[0]?.[1]?.headers).get('idempotency-key'),
   );
   expect(second.result.current.items[0]?.needsRecovery).toBe(false);
+  expect(second.result.current.items[0]?.pendingEdit).toBeUndefined();
   expect(h.rows().map((x) => x.text)).toEqual(['revised one', 'original three']);
   second.unmount();
+});
+
+it('projects only matching saved edits and hides them while access is suspended', async () => {
+  const h = queueHarness('queued');
+  h.session.journal.queuedInputs.retain({ ...intent('one'), commandId: 'foreign_command' });
+  h.session.journal.queuedInputs.retain(intent('two'));
+  h.session.journal.queuedInputs.retain({ ...intent('three'), action: 'remove', text: undefined });
+  const hook = renderHook(
+    ({ enabled }) => useQueuedInputs(h.session, enabled, true, '0', identity),
+    {
+      initialProps: { enabled: true },
+    },
+  );
+  await waitFor(() =>
+    expect(hook.result.current.items.some((row) => row.commandId === 'cmd_one')).toBe(true),
+  );
+  for (const id of ['one', 'two', 'three'])
+    expect(
+      hook.result.current.items.find((row) => row.commandId === `cmd_${id}`)?.pendingEdit,
+    ).toBe(id === 'two' ? 'changed two' : undefined);
+  hook.rerender({ enabled: false });
+  expect(hook.result.current.items).toEqual([]);
+  expect(h.session.journal.queuedInputs.read()).toHaveLength(3);
+  expect(h.fetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toEqual([]);
+  hook.unmount();
 });
 
 it('retains managed source identity after cancellation, reload and access suspension', async () => {

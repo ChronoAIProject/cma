@@ -6,7 +6,7 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::any;
 use axum::Router;
-use layer3_adapter::CredentialFrame;
+use layer3_adapter::{CredentialFrame, GithubCredentialRoute};
 use tokio::sync::RwLock;
 
 use crate::config::{ProxyConfig, RuntimeConfig};
@@ -16,10 +16,11 @@ use crate::upstream_target::TargetBase;
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CREDENTIAL_BYTES: usize = 64 * 1024;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct Credential {
     value: String,
     generation: Option<u64>,
+    github_route: Option<GithubCredentialRoute>,
 }
 
 #[derive(Clone, Default)]
@@ -51,9 +52,20 @@ impl CredentialHolder {
                 "credential custody generation must be positive",
             ));
         }
+        if frame
+            .github_route
+            .as_ref()
+            .is_some_and(|route| frame.custody_generation.is_none() || !route.is_valid())
+        {
+            return Err(RuntimeError::rejected(
+                "credential_github_route_invalid",
+                "GitHub route requires a valid selector and credential generation",
+            ));
+        }
         let candidate = Credential {
             value: value.to_string(),
             generation: frame.custody_generation,
+            github_route: frame.github_route.clone(),
         };
         let mut current = self.inner.write().await;
         if let Some(installed) = current.as_ref() {
@@ -64,10 +76,10 @@ impl CredentialHolder {
                         "credential custody generation moved backwards",
                     ));
                 }
-                (Some(old), Some(new)) if new == old && installed.value != candidate.value => {
+                (Some(old), Some(new)) if new == old && installed != &candidate => {
                     return Err(RuntimeError::rejected(
                         "credential_generation_conflict",
-                        "credential custody generation was reused with another value",
+                        "credential custody generation was reused with another value or route",
                     ));
                 }
                 (Some(_), None) => {
@@ -222,11 +234,7 @@ fn proxy_router(
     model_proxy: bool,
     model_credit_required: bool,
 ) -> Router {
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(600))
-        .build()
-        .expect("credential proxy HTTP client builds");
+    let client = proxy_client(reqwest::Client::builder());
     let state = ProxyState {
         target,
         credential,
@@ -236,6 +244,14 @@ fn proxy_router(
         model_credit_required,
     };
     Router::new().fallback(any(forward)).with_state(state)
+}
+
+fn proxy_client(builder: reqwest::ClientBuilder) -> reqwest::Client {
+    builder
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .expect("credential proxy HTTP client builds")
 }
 
 async fn forward(State(state): State<ProxyState>, request: Request) -> Response {
@@ -257,7 +273,14 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
             .into_response();
     };
     let (parts, body) = request.into_parts();
-    let target = match state.target.join(&parts.uri) {
+    let target = match (state.allowed_host, &credential.github_route) {
+        (Some("api.github.com"), Some(route)) => state.target.join_github(&parts.uri, route),
+        (None, Some(route)) if !state.model_proxy => {
+            state.target.join_selected_platform(&parts.uri, route)
+        }
+        _ => state.target.join(&parts.uri),
+    };
+    let target = match target {
         Ok(target) => target,
         Err(error) => return (StatusCode::BAD_REQUEST, error.detail).into_response(),
     };
@@ -302,7 +325,7 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
     let response = match state.client.execute(outbound).await {
         Ok(response) => response,
         Err(error) => {
-            tracing::warn!(%error, "credential proxy upstream request failed");
+            tracing::warn!(error = %error.without_url(), "credential proxy upstream request failed");
             return (StatusCode::BAD_GATEWAY, "upstream request failed").into_response();
         }
     };

@@ -12,6 +12,7 @@ struct Budget {
     failure: Option<BudgetError>,
     reserved: AtomicUsize,
     settled: Mutex<Vec<RequestUsage>>,
+    holds: Mutex<Vec<RequestHold>>,
 }
 
 #[async_trait::async_trait]
@@ -27,11 +28,13 @@ impl RequestBudget for Budget {
         self.reserved.fetch_add(1, Ordering::SeqCst);
         assert_eq!(request.max_output_tokens, 1024);
         assert!(request.input_bytes > 0);
-        Ok(Some(RequestHold {
+        let hold = RequestHold {
             scope: scope.clone(),
             request: request.clone(),
             input_tokens_bound: request.input_bytes + 64,
-        }))
+        };
+        self.holds.lock().unwrap().push(hold.clone());
+        Ok(Some(hold))
     }
     async fn settle_request(
         &self,
@@ -48,8 +51,14 @@ fn budget(failure: Option<BudgetError>) -> Arc<Budget> {
         failure,
         reserved: AtomicUsize::new(0),
         settled: Mutex::new(Vec::new()),
+        holds: Mutex::new(Vec::new()),
     })
 }
+
+#[path = "model_request_budget_tests/durable_http.rs"]
+pub(crate) mod durable_http;
+#[path = "model_request_budget_tests/uncertain_http.rs"]
+mod uncertain_http;
 
 fn context(budget: Arc<Budget>, kind: &str) -> RequestBudgetContext {
     RequestBudgetContext {
@@ -106,13 +115,14 @@ async fn title_with_context(
     origin: &str,
     budget: RequestBudgetContext,
 ) -> Result<AgentTitleOutcome, AgentTitleServiceError> {
-    let id = AgentId("agt_request_budget".into());
+    let id = budget.scope.agent_id.clone();
+    let turn_sequence = budget.scope.turn_sequence;
     let store = Arc::new(InMemoryAgentTitleStore::default());
     store.register_agent(id.clone()).unwrap();
     for kind in [
         AgentLogKind::TurnStarted {
             model: None,
-            turn_sequence: 1,
+            turn_sequence,
             origin_key: None,
         },
         AgentLogKind::OwnerMessage {
@@ -121,7 +131,7 @@ async fn title_with_context(
         AgentLogKind::AgentMessage {
             content: "Reserve before requesting".into(),
         },
-        AgentLogKind::TurnCompleted { turn_sequence: 1 },
+        AgentLogKind::TurnCompleted { turn_sequence },
     ] {
         store
             .append_agent_log(&id, "2026-11-11T00:00:00Z", kind)
@@ -145,11 +155,46 @@ async fn title_with_context(
         .await
 }
 
-/// Exercise the real HTTP adapter with the Mongo reservation implementation.
-pub(crate) async fn assert_metered_title_refusal(
+struct MeteredRefusals {
+    inner: Arc<dyn RequestBudget>,
+    reason: BudgetError,
+    count: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl RequestBudget for MeteredRefusals {
+    async fn reserve_request(
+        &self,
+        scope: &RequestScope,
+        request: &ModelRequest,
+    ) -> Result<Option<RequestHold>, BudgetError> {
+        let outcome = self.inner.reserve_request(scope, request).await;
+        if outcome == Err(self.reason) {
+            self.count.fetch_add(1, Ordering::SeqCst);
+        }
+        outcome
+    }
+
+    async fn settle_request(
+        &self,
+        hold: &RequestHold,
+        usage: RequestUsage,
+    ) -> Result<(), BudgetError> {
+        self.inner.settle_request(hold, usage).await
+    }
+}
+
+/// Exercise both HTTP adapters with the Mongo reservation implementation.
+pub(crate) async fn assert_metered_auxiliary_refusal(
     budget: Arc<dyn RequestBudget>,
     scope: RequestScope,
+    reason: BudgetError,
 ) {
+    let observed = Arc::new(MeteredRefusals {
+        inner: budget,
+        reason,
+        count: AtomicUsize::new(0),
+    });
     let calls = Arc::new(AtomicUsize::new(0));
     let captured = calls.clone();
     let app = Router::new().route(
@@ -167,29 +212,60 @@ pub(crate) async fn assert_metered_title_refusal(
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    let result = title_with_context(&origin, RequestBudgetContext { budget, scope }).await;
+    let title_result = title_with_context(
+        &origin,
+        RequestBudgetContext {
+            budget: observed.clone(),
+            scope: scope.clone(),
+        },
+    )
+    .await;
+    let suggestion_result = suggestion_with_context(
+        &origin,
+        RequestBudgetContext {
+            budget: observed.clone(),
+            scope: RequestScope {
+                request_id: format!("{}-suggestion", scope.request_id),
+                ..scope
+            },
+        },
+    )
+    .await;
     server.abort();
+    assert_eq!(
+        observed.count.load(Ordering::SeqCst),
+        2,
+        "both HTTP adapters must reach the expected Mongo budget refusal"
+    );
     assert_eq!(
         calls.load(Ordering::SeqCst),
         0,
         "no model request without a valued hold"
     );
-    assert_eq!(
-        result,
-        Err(AgentTitleServiceError::Budget(BudgetError::Unavailable))
-    );
+    assert_eq!(title_result, Err(AgentTitleServiceError::Budget(reason)));
+    assert!(matches!(
+        suggestion_result,
+        Err(SuggestionFailure::Unavailable)
+    ));
 }
 
 async fn suggestion(
     origin: &str,
     budget: Arc<Budget>,
 ) -> Result<SuggestionGeneration, SuggestionFailure> {
+    suggestion_with_context(origin, context(budget, "suggestion-proof")).await
+}
+
+async fn suggestion_with_context(
+    origin: &str,
+    budget: RequestBudgetContext,
+) -> Result<SuggestionGeneration, SuggestionFailure> {
     let work = SuggestionWork {
-        id: "suggestion-proof".into(),
+        id: budget.scope.request_id.clone(),
         owner: SubjectId("budget-owner".into()),
-        agent_id: AgentId("agt_request_budget".into()),
+        agent_id: budget.scope.agent_id.clone(),
         scope: agent_io::AnswerContext {
-            turn_sequence: 1,
+            turn_sequence: budget.scope.turn_sequence,
             answer_sequence: 3,
         },
         completed_sequence: 4,
@@ -214,7 +290,7 @@ async fn suggestion(
         None,
     )
     .unwrap()
-    .with_request_budget(context(budget, "suggestion-proof"));
+    .with_request_budget(budget);
     generator.generate(&work).await
 }
 

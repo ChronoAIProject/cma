@@ -254,6 +254,8 @@ impl AgentLogCheckpoint {
             | AgentLogKind::ToolOutputReported { .. }
             | AgentLogKind::ApprovalRequested { .. }
             | AgentLogKind::ApprovalResolved { .. }
+            | AgentLogKind::ExternalApprovalRequested { .. }
+            | AgentLogKind::ExternalApprovalResolved { .. }
             | AgentLogKind::Usage { .. }
             | AgentLogKind::RuntimeMetadataChanged { .. }
             | AgentLogKind::UsageUpdated { .. }

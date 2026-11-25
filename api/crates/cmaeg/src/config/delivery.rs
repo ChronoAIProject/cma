@@ -1,7 +1,10 @@
 use super::{positive_duration, ConfigError};
+use cmaeg_core::channel::Platform;
 use std::{env, time::Duration};
 pub const CMAEG_NYXID_REPLY_TIMEOUT_MS: &str = "CMAEG_NYXID_REPLY_TIMEOUT_MS";
 pub const CMAEG_NYXID_COMMONMARK_RELAY_ENABLED: &str = "CMAEG_NYXID_COMMONMARK_RELAY_ENABLED";
+pub(crate) const CMAEG_NYXID_COMMONMARK_LARK_FEISHU_DISCORD_ENABLED: &str =
+    "CMAEG_NYXID_COMMONMARK_LARK_FEISHU_DISCORD_ENABLED";
 pub const CMAEG_NYXID_COMPLETE_REPLIES: &str = "CMAEG_NYXID_COMPLETE_REPLIES";
 pub const CMAEG_NYXID_NATIVE_MEDIA_ENABLED: &str = "CMAEG_NYXID_NATIVE_MEDIA_ENABLED";
 pub const CMAEG_RELAY_TEXT_EDITS_ENABLED: &str = "CMAEG_RELAY_TEXT_EDITS_ENABLED";
@@ -56,8 +59,29 @@ impl DeliveryConfig {
         })
     }
 }
-pub(crate) fn nyxid_commonmark_relay_from_env() -> Result<bool, ConfigError> {
-    super::routing::write_flag(CMAEG_NYXID_COMMONMARK_RELAY_ENABLED)
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CommonmarkRelay {
+    pub telegram: bool,
+    pub lark_feishu_discord: bool,
+}
+
+impl CommonmarkRelay {
+    pub(crate) fn from_env() -> Result<Self, ConfigError> {
+        Ok(Self {
+            telegram: super::routing::write_flag(CMAEG_NYXID_COMMONMARK_RELAY_ENABLED)?,
+            lark_feishu_discord: super::routing::write_flag(
+                CMAEG_NYXID_COMMONMARK_LARK_FEISHU_DISCORD_ENABLED,
+            )?,
+        })
+    }
+
+    pub(crate) fn enabled_for(self, platform: Platform) -> bool {
+        match platform {
+            Platform::Telegram => self.telegram,
+            Platform::Lark | Platform::Feishu | Platform::Discord => self.lark_feishu_discord,
+            Platform::Slack | Platform::Whatsapp => false,
+        }
+    }
 }
 
 pub(crate) fn nyxid_complete_replies_from_env() -> Result<bool, ConfigError> {

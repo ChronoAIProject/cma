@@ -28,6 +28,8 @@ pub enum AdapterError {
     InputAuthorityUnavailable(String),
     #[error("runtime unavailable: {0}")]
     Unavailable(String),
+    #[error("the desktop has stopped recovering")]
+    DesktopFailed,
     /// A create readiness observation; it does not prove runtime loss or permit replacement.
     #[error("native claim is not ready: {0}")]
     NativeClaimNotReady(crate::agent_sandbox::NativeClaimGuardReason),
@@ -57,6 +59,14 @@ pub enum AdapterError {
 }
 
 impl AdapterError {
+    pub(crate) const NATIVE_HOME_IDENTITY_REFUSAL: &str =
+        "native home identity changed or disappeared";
+
+    #[must_use]
+    pub fn is_native_home_identity_refusal(&self) -> bool {
+        matches!(self, Self::Rejected(detail) if detail == Self::NATIVE_HOME_IDENTITY_REFUSAL)
+    }
+
     /// Add diagnostic context without changing the failure category.
     #[must_use]
     pub fn context(self, context: &str) -> Self {
@@ -71,6 +81,7 @@ impl AdapterError {
                 context(Self::InputAuthorityUnavailable, message, detail)
             }
             Self::Unavailable(message) => context(Self::Unavailable, message, detail),
+            Self::DesktopFailed => Self::DesktopFailed,
             held @ Self::RuntimeStartupHold(_) => held,
             guarded @ Self::NativeClaimNotReady(_) => guarded,
             Self::Rejected(message) => context(Self::Rejected, message, detail),

@@ -1,5 +1,6 @@
 //! Transactional operator ceilings and its activity evidence on one singleton.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::admission::{
     AdmissionCeilingsRead, AdmissionCeilingsState, AdmissionCeilingsStore,
 };
@@ -266,14 +267,14 @@ impl AdmissionCeilingsStore for MongoAdmissionCeilingsStore {
                     }
                 },
                 Err(ApplyError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     if is_transient(&error) || is_duplicate_key(&error) {
                         continue;
                     }
                     return Err(unavailable(&format!("write admission change: {error}")));
                 }
                 Err(ApplyError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
             }

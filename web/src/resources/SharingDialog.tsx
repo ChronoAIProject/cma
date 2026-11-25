@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { ResourceViewsClient } from './client';
 import { CommandKeys } from '../api/client';
+import { useAuthenticatedSubject } from '../auth/context';
 import { Modal } from '../ui/Modal';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { ShareScopeEditor } from './ShareScopeEditor';
@@ -54,6 +55,7 @@ export function SharingDialog({
   readonly open: boolean;
   readonly onClose: () => void;
 }) {
+  const ownerId = useAuthenticatedSubject();
   const [keys] = useState(() => new CommandKeys());
   return (
     <Modal
@@ -65,7 +67,8 @@ export function SharingDialog({
       <p className="resource-sharing__scope">Sharing applies to the whole Sandbox.</p>
       {open ? (
         <ShareScopeEditor
-          key={`${target.kind}:${target.id}`}
+          key={`${ownerId ?? ''}:${target.kind}:${target.id}`}
+          ownerId={ownerId}
           client={client}
           target={target}
           keys={keys}

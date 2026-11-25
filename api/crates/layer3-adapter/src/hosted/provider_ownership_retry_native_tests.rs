@@ -1,5 +1,8 @@
 use super::*;
-use crate::owner_protocol::{OwnershipEvidence, ReceiverRevocation, TransportOwner};
+use crate::owner_protocol::{
+    OwnershipEvidence, ReceiverCleanup, ReceiverConfirmationCustody, ReceiverRevocation,
+    TransportOwner,
+};
 
 struct ObservedAuthority {
     inner: Arc<TestAuthority>,
@@ -178,4 +181,121 @@ async fn direct_endpoint_missing_route_does_not_claim_verified_receiver_context(
     assert_eq!(first.failure().reason, Reason::MissingRoute);
     assert!(first.receiver().is_none());
     assert!(!first.confirmation_sent());
+}
+
+async fn confirmed_receiver_after_transport_drop(
+    fixture: &mut Fixture,
+) -> (Arc<TestAuthority>, Arc<dyn ReceiverRevocation>) {
+    let endpoint = fixture.endpoint().await;
+    assert!(endpoint.native_binding().is_some());
+    let authority = TestAuthority::new(7);
+    let lease = scope(
+        authority.clone(),
+        fixture.transport.receiver_lease(&endpoint),
+    )
+    .await
+    .expect("original receiver must confirm")
+    .expect("the confirmed receiver must have a renewal lease");
+    assert_eq!(
+        fixture.state.ownership_confirmations.load(Ordering::SeqCst),
+        1
+    );
+    let receiver = authority.receivers.lock().unwrap()[0].clone();
+    drop(lease);
+
+    // Keep the loopback server alive while dropping the state of the actual
+    // transport that opened and confirmed the receiver.
+    let original_state = Arc::downgrade(&fixture.transport.state);
+    let mut fresh_transport = fixture.transport.as_ref().clone();
+    fresh_transport.state = Arc::new(Mutex::new(TransportState::default()));
+    fixture.transport = Arc::new(fresh_transport);
+    assert!(
+        original_state.upgrade().is_none(),
+        "original transport state must be gone"
+    );
+    authority.revoke();
+    (authority, receiver)
+}
+
+#[tokio::test]
+async fn native_revocation_after_transport_drop_reaches_the_original_receiver() {
+    let mut fixture = fixture().await;
+    let (authority, receiver) = confirmed_receiver_after_transport_drop(&mut fixture).await;
+    let before = fixture.state.requests.lock().unwrap().len();
+
+    let settled = receiver
+        .settle(ReceiverConfirmationCustody::PossiblyDelivered)
+        .await;
+
+    let requests = fixture.state.requests.lock().unwrap();
+    assert!(
+        matches!(settled, Ok(ReceiverCleanup::Acknowledged)),
+        "retained custody must obtain an ACK from the original receiver after dropping its transport. Failure: {:?}; runtime requests sent: {}",
+        authority.failure.get(),
+        requests.len() - before,
+    );
+    let [revoke] = &requests[before..] else {
+        panic!("expected exactly one revoke, with no renewal or replay");
+    };
+    let (head, body) = revoke
+        .split_once("\r\n\r\n")
+        .expect("complete revoke request");
+    let original_owner = authority.owner();
+    let route = format!(
+        "/runtime/agents/{}/manager-ownership/revoke",
+        original_owner.agent_id
+    );
+    let mut request_line = head
+        .lines()
+        .next()
+        .expect("request line")
+        .split_ascii_whitespace();
+    assert_eq!(request_line.next(), Some("POST"));
+    assert!(
+        request_line.next() == Some(route.as_str()),
+        "revoke must target the original agent"
+    );
+    let revoked: TransportOwner = serde_json::from_str(body).expect("revoke owner payload");
+    assert!(
+        revoked == original_owner,
+        "revoke must carry the exact original owner"
+    );
+}
+
+async fn assert_post_drop_incarnation_refused(replace: impl FnOnce(&State)) {
+    let mut fixture = fixture().await;
+    let (_authority, receiver) = confirmed_receiver_after_transport_drop(&mut fixture).await;
+    replace(&fixture.state);
+    let reads_before = fixture.state.pod_reads.load(Ordering::SeqCst);
+    let requests_before = fixture.state.requests.lock().unwrap().len();
+
+    let settled = receiver
+        .settle(ReceiverConfirmationCustody::PossiblyDelivered)
+        .await;
+
+    assert!(
+        settled.is_err(),
+        "replacement cannot settle the original receiver's custody"
+    );
+    assert_eq!(
+        fixture.state.requests.lock().unwrap().len(),
+        requests_before,
+        "replacement must receive no ownership request"
+    );
+    assert!(
+        fixture.state.pod_reads.load(Ordering::SeqCst) > reads_before,
+        "revoke must reach the native replacement check instead of refusing on the dropped local state"
+    );
+}
+
+#[tokio::test]
+async fn native_revocation_after_transport_drop_refuses_a_replacement_pod() {
+    assert_post_drop_incarnation_refused(|state| state.replaced.store(true, Ordering::SeqCst))
+        .await;
+}
+
+#[tokio::test]
+async fn native_revocation_after_transport_drop_refuses_a_restarted_container() {
+    assert_post_drop_incarnation_refused(|state| state.restarted.store(true, Ordering::SeqCst))
+        .await;
 }

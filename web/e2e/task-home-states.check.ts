@@ -10,6 +10,60 @@ async function settle(page: Page, width: number) {
   await page.evaluate(() => document.fonts.ready);
 }
 
+async function expectMobileToolbarFits(page: Page) {
+  const footer = page.locator('.task-home__footer');
+  await footer.scrollIntoViewIfNeeded();
+  const controls = footer.getByRole('button');
+  expect(await controls.count()).toBeGreaterThanOrEqual(3);
+  for (const control of await controls.all()) {
+    await expect(control).toBeVisible();
+    await control.scrollIntoViewIfNeeded();
+    await expect(control).toBeInViewport({ ratio: 1 });
+    await control.click({ trial: true });
+  }
+  const geometry = await footer.evaluate((node) => {
+    const rect = (element: Element) => {
+      const { left, right, top, bottom, width, height } = element.getBoundingClientRect();
+      return { left, right, top, bottom, width, height };
+    };
+    return {
+      footer: rect(node),
+      composer: rect(node.closest('.task-home__composer')!),
+      buttons: [...node.querySelectorAll('button')].map((button) => ({
+        name: button.getAttribute('aria-label') ?? button.textContent ?? 'Toolbar control',
+        container: rect(button.closest('.task-home__repo, .task-home__toolbar') ?? node),
+        ...rect(button),
+      })),
+    };
+  });
+  for (const [index, button] of geometry.buttons.entries()) {
+    expect(button.width, button.name).toBeGreaterThanOrEqual(44);
+    expect(button.height, button.name).toBeGreaterThanOrEqual(44);
+    for (const container of [button.container, geometry.footer, geometry.composer]) {
+      expect(button.left, button.name).toBeGreaterThanOrEqual(container.left);
+      expect(button.right, button.name).toBeLessThanOrEqual(container.right);
+      expect(button.top, button.name).toBeGreaterThanOrEqual(container.top);
+      expect(button.bottom, button.name).toBeLessThanOrEqual(container.bottom);
+    }
+    for (const other of geometry.buttons.slice(index + 1)) {
+      expect(
+        button.right <= other.left ||
+          other.right <= button.left ||
+          button.bottom <= other.top ||
+          other.bottom <= button.top,
+        `${button.name} must not overlap ${other.name}`,
+      ).toBe(true);
+    }
+  }
+  expect(
+    await page
+      .locator('.task-home__toolbar')
+      .evaluate((node) => node.scrollWidth <= node.clientWidth),
+  ).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  return geometry;
+}
+
 for (const theme of ['light', 'dark']) {
   for (const width of [1440, 390]) {
     test(`LOCAL task home states ${theme} ${width}`, async ({ page, baseURL }, info) => {
@@ -98,6 +152,11 @@ for (const theme of ['light', 'dark']) {
       await page.keyboard.press('Escape');
       const toolbar = page.locator('.task-home__toolbar');
       const before = await toolbar.boundingBox();
+      if (width > 600) {
+        expect((await toolbar.getByRole('button').nth(0).boundingBox())!.y).toBe(
+          (await toolbar.getByRole('button').nth(1).boundingBox())!.y,
+        );
+      }
       await page.getByRole('button', { name: 'Add git repo' }).click();
       const repository = page.getByRole('dialog', { name: 'Add git repo' });
       const repo = repository.getByLabel('GitHub repository');
@@ -115,15 +174,38 @@ for (const theme of ['light', 'dark']) {
       if (width > 600) {
         expect((await toolbar.boundingBox())!.height).toBe(before!.height);
         expect((await toolbar.boundingBox())!.y).toBe(before!.y);
+        expect((await toolbar.getByRole('button').nth(0).boundingBox())!.y).toBe(
+          (await toolbar.getByRole('button').nth(1).boundingBox())!.y,
+        );
       }
       await capture('repository');
       await page.getByLabel('Your task').fill('Research the project and summarize the findings.');
       await page.getByRole('button', { name: 'Start task' }).click();
-      await expect(page.getByRole('region', { name: 'Submitted task' })).toBeVisible();
-      await expect(page.getByText('Preparing a cloud computer for your Agent…')).toBeVisible();
-      await expect(page.getByRole('region', { name: 'Agent provisioning progress' })).toBeVisible();
+      await expect(page.getByRole('region', { name: 'Original request' })).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: 'Getting its cloud computer ready' }),
+      ).toBeVisible();
+      const details = page.locator('.preparation__details');
+      const summary = details.locator('summary');
+      const progress = page.getByRole('region', {
+        name: 'Agent provisioning progress',
+        includeHidden: true,
+      });
+      await expect(summary).toHaveText('Setup details');
+      await expect(details).toHaveJSProperty('open', false);
+      await expect(progress).toHaveCount(1);
+      await expect(progress).toBeHidden();
       await showFeedback();
       await capture('submitted-preparing');
+      await summary.focus();
+      await summary.press('Enter');
+      await expect(details).toHaveJSProperty('open', true);
+      await expect(progress).toBeVisible();
+      await showFeedback();
+      await capture('submitted-preparing-details');
+      await summary.press('Enter');
+      await expect(details).toHaveJSProperty('open', false);
+      await expect(progress).toBeHidden();
       expect(writes).toBe(1);
       outcome = 'uncertain';
       await reset();
@@ -193,44 +275,105 @@ for (const theme of ['light', 'dark']) {
   }
 }
 
-for (const width of [320, 360, 390]) {
-  test(`LOCAL task toolbar fits ${width}px with and without a repository`, async ({
-    page,
-    baseURL,
-  }) => {
-    await page.setViewportSize({ width, height: 844 });
-    const boundary = new LocalStartup();
-    await boundary.route(page, baseURL!);
-    await page.goto('/');
-    await settle(page, width);
-    const cloud = page.getByRole('button', { name: /^Cloud computer/ });
-    const add = page.getByRole('button', { name: 'Add git repo' });
-    await expect(add).toBeEnabled();
-    await expect(page.locator('.task-home__divider')).toBeVisible();
-    if (width === 390) expect((await cloud.boundingBox())!.y).toBe((await add.boundingBox())!.y);
-    const fits = async () => {
-      expect(
-        await page
-          .locator('.task-home__toolbar')
-          .evaluate((node) => node.scrollWidth <= node.clientWidth),
-      ).toBe(true);
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
-        true,
+for (const theme of ['light', 'dark'] as const) {
+  for (const width of [320, 360, 390]) {
+    test(`LOCAL task toolbar fits ${width}px with and without a repository${theme === 'dark' ? ' dark' : ''}`, async ({
+      page,
+      baseURL,
+    }, info) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' });
+      await page.addInitScript((value) => localStorage.setItem('cma:appearance', value), theme);
+      const boundary = new LocalStartup();
+      await boundary.route(page, baseURL!);
+      await page.route('**/api/v2/ui/task-experience', (route) =>
+        route.fulfill({
+          json: {
+            object: 'cma.ui.task_experience',
+            schema_version: 1,
+            account_id: 'local-owner',
+            capabilities: {
+              task_home_admission: true,
+              desktop_enable: false,
+              suggested_followup_admission: false,
+              browser_takeover: false,
+              replay_presentation: false,
+            },
+          },
+        }),
       );
-    };
-    await fits();
-    await add.click();
-    const dialog = page.getByRole('dialog', { name: 'Add git repo' });
-    await dialog.getByLabel('GitHub repository').fill('owner/repository-with-a-long-name');
-    await dialog.getByLabel('Repository ref').fill('feature/a-long-branch-name');
-    await dialog.getByRole('button', { name: 'Add repo', exact: true }).click();
-    await expect(dialog).toHaveCount(0);
-    await expect(page.locator('.task-home__divider')).toBeHidden();
-    await fits();
-    await page.getByRole('button', { name: 'Remove repository' }).click();
-    await expect(page.locator('.task-home__divider')).toBeVisible();
-    if (width === 390) expect((await cloud.boundingBox())!.y).toBe((await add.boundingBox())!.y);
-    await fits();
-    expect(boundary.writes).toEqual([]);
-  });
+      await page.goto('/');
+      await settle(page, width);
+      const cloud = page.getByRole('button', { name: /^Cloud computer/ });
+      const add = page.getByRole('button', { name: 'Add git repo' });
+      const task = page.getByLabel('Your task');
+      const start = page.getByRole('button', { name: 'Start task' });
+      const draft = 'Keep this draft while choosing a repository.';
+      await task.fill(draft);
+      await expect(add).toBeEnabled();
+      await expect(page.locator('.task-home__divider')).toBeVisible();
+      const fits = async (state: string) => {
+        const geometry = await expectMobileToolbarFits(page);
+        await info.attach(`${state}-geometry`, {
+          body: JSON.stringify(geometry, null, 2),
+          contentType: 'application/json',
+        });
+        await page.screenshot({ path: info.outputPath(`${theme}-${width}-${state}.png`) });
+        await expect(task).toHaveValue(draft);
+        await expect(start).toBeEnabled();
+      };
+      await fits('without-repository');
+      const templates = page.getByRole('button', { name: 'Templates', exact: true });
+      await task.focus();
+      await page.keyboard.press('Tab');
+      await expect(templates).toBeFocused();
+      await page.keyboard.press('Tab');
+      await expect(cloud).toBeFocused();
+      await expect(cloud).not.toHaveCSS('box-shadow', 'none');
+      await page.keyboard.press('Shift+Tab');
+      await expect(templates).toBeFocused();
+      await page.keyboard.press('Shift+Tab');
+      await expect(task).toBeFocused();
+      await page.keyboard.press('Tab');
+      await page.keyboard.press('Tab');
+      await cloud.press('Enter');
+      await expect(page.getByRole('menu', { name: 'Run this task on' })).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(cloud).toBeFocused();
+      await page.keyboard.press('Tab');
+      await expect(add).toBeFocused();
+      await expect(add).not.toHaveCSS('box-shadow', 'none');
+      await page.keyboard.press('Tab');
+      await expect(start).toBeFocused();
+      await expect(start).toBeInViewport({ ratio: 1 });
+      await expect(start).not.toHaveCSS('box-shadow', 'none');
+      await page.keyboard.press('Shift+Tab');
+      await expect(add).toBeFocused();
+      await add.press('Enter');
+      const dialog = page.getByRole('dialog', { name: 'Add git repo' });
+      await dialog.getByLabel('GitHub repository').fill('owner/repository-with-a-long-name');
+      await dialog.getByLabel('Repository ref').fill('feature/a-long-branch-name');
+      await dialog.getByLabel('Repository ref').press('Enter');
+      await expect(dialog).toHaveCount(0);
+      await expect(page.locator('.task-home__divider')).toBeHidden();
+      await expect(
+        page.getByRole('button', { name: 'owner/repository-with-a-long-name' }),
+      ).toBeFocused();
+      await fits('with-repository');
+      await page.keyboard.press('Tab');
+      const remove = page.getByRole('button', { name: 'Remove repository' });
+      await expect(remove).toBeFocused();
+      await expect(remove).not.toHaveCSS('box-shadow', 'none');
+      await page.keyboard.press('Tab');
+      await expect(start).toBeFocused();
+      await page.keyboard.press('Shift+Tab');
+      await expect(remove).toBeFocused();
+      await remove.press('Enter');
+      await expect(add).toBeFocused();
+      await expect(page.locator('.task-home__divider')).toBeVisible();
+      await fits('removed-repository');
+      expect(boundary.writes).toEqual([]);
+      expect(boundary.errors).toEqual([]);
+    });
+  }
 }

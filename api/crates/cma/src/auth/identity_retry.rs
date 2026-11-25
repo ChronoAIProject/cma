@@ -153,12 +153,7 @@ pub(super) async fn verify_detailed(
             )?;
             let stamp = auth.identity_store.evidence_stamp(
                 &live_key,
-                super::identity_evidence::EvidenceScope::new(
-                    auth,
-                    &metadata,
-                    token,
-                    expected_subject,
-                ),
+                super::identity_evidence::EvidenceScope::new(auth, &metadata, token),
                 &evidence,
             )?;
             let completed = auth

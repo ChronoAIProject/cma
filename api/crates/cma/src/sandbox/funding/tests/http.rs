@@ -13,7 +13,7 @@ use std::collections::VecDeque;
 pub(super) struct Reply {
     status: u16,
     body: String,
-    retry_after: Option<String>,
+    pub(super) retry_after: Option<String>,
 }
 #[derive(Default)]
 pub(super) struct HttpState {

@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
+import { proof, receipt } from '../../test/runtimeRecovery';
 import { ProtocolError, type AgentEventKind, type SandboxEventKind } from '../index.js';
 import { agentEventKind } from '../agents/events.js';
 import { sandboxEventKind, sandboxWorkStep } from '../instances/events.js';
@@ -177,7 +178,20 @@ const sandboxEvents = {
     },
   },
   checkpoint_sealed: { type: 'checkpoint_sealed', object_reference: 'checkpoint-1' },
+  runtime_recovery_admitted: {
+    type: 'runtime_recovery_admitted',
+    previous_status: 'failed',
+    target_runtime_version: 'runtime-next',
+    proof,
+  },
+  runtime_recovery_quiesced: { type: 'runtime_recovery_quiesced', receipt },
   revived: { type: 'revived' },
+  home_restored: {
+    type: 'home_restored',
+    restore_id: 'restore-1',
+    backup_id: 'backup-1',
+    restored_to: '2026-09-09T00:00:00Z',
+  },
   rotated: { type: 'rotated', runtime_version: 'runtime-2' },
   failed: { type: 'failed', failure },
 } satisfies Record<SandboxEventKind['type'], SandboxEventKind>;
@@ -200,6 +214,13 @@ describe('closed public event projections', () => {
     expect(
       agentEventKind({ ...agentEvents.approval_requested, runtime_locator: 'private-locator' }),
     ).toEqual(agentEvents.approval_requested);
+  });
+
+  it('rejects unknown prior status and incomplete home restoration', () => {
+    expect(() =>
+      sandboxEventKind({ ...sandboxEvents.runtime_recovery_admitted, previous_status: 'unknown' }),
+    ).toThrow(ProtocolError);
+    expect(() => sandboxEventKind({ type: 'home_restored' })).toThrow(ProtocolError);
   });
 
   it('rejects malformed, unknown and incomplete events with a field path', () => {

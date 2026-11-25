@@ -30,28 +30,28 @@ pub(super) async fn advance_agent(
             .map_err(SandboxStoreError::Corrupt)
             .map_err(ApplyError::Domain)?,
     );
+    let mut filter = doc! {
+        "_id": current.id.as_str(),
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "revision": signed(mutation.expected_agent_revision, "agent revision")
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+        "last_seq": signed(current.conversation.last_seq, "agent log sequence")
+            .map_err(SandboxStoreError::Corrupt)
+            .map_err(ApplyError::Domain)?,
+        "channel_reuse_cleanup_execution": { "$exists": false },
+        "channel_history_seal": { "$exists": false },
+        "work_lease_holder": &mutation.holder,
+        "work_lease_fence": signed(mutation.fence, "agent work lease fence")
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+        "work_lease_expires_at": &lease.expires_at,
+        "work_next_fence": signed(current.work.next_fence, "agent work next fence")
+            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+    };
+    owner_stop::fence_live_lease(&mut filter, mutation);
+    restart_ready::fence_live_lease(&mut filter, current);
     let advanced = store
         .agents
-        .update_one(
-            doc! {
-                "_id": current.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "revision": signed(mutation.expected_agent_revision, "agent revision")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                "last_seq": signed(current.conversation.last_seq, "agent log sequence")
-                    .map_err(SandboxStoreError::Corrupt)
-                    .map_err(ApplyError::Domain)?,
-                "channel_reuse_cleanup_execution": { "$exists": false },
-                "channel_history_seal": { "$exists": false },
-                "work_lease_holder": &mutation.holder,
-                "work_lease_fence": signed(mutation.fence, "agent work lease fence")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                "work_lease_expires_at": &lease.expires_at,
-                "work_next_fence": signed(current.work.next_fence, "agent work next fence")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-            },
-            doc! { "$set": fields },
-        )
+        .update_one(filter, doc! { "$set": fields })
         .session(session)
         .await
         .map_err(classify_aggregate_write)?;

@@ -30,7 +30,7 @@ impl Fixture {
             )
             .unwrap(),
         );
-        let management = ManagementState::new(
+        let mut management = ManagementState::new(
             providers.clone(),
             Arc::new(records),
             Arc::new(CreatorAuthenticator::new(&self.base).unwrap()),
@@ -48,6 +48,7 @@ impl Fixture {
             },
             Default::default(),
         );
+        management.managed_telegram_setup_enabled = true;
         let (delivery, _receiver) = tokio::sync::mpsc::channel(1);
         let tools = ToolsState {
             discord_thread_history: None,
@@ -56,7 +57,7 @@ impl Fixture {
             native_lark_conversation_history: None,
             discord_conversation_history: None,
             complete_replies_enabled: false,
-            commonmark_relay_enabled: false,
+            commonmark_relay: Default::default(),
             resolver: management.resolver.clone(),
             keys: self.keys.clone(),
             providers,

@@ -88,11 +88,48 @@ impl SandboxLifecycleExecutionStore for InMemorySandboxStore {
         &self,
         mutation: SandboxLifecycleMutation,
     ) -> Result<(), SandboxStoreError> {
+        self.commit_lifecycle(mutation, None)
+    }
+
+    async fn reopen_refusal_snapshot(
+        &self,
+        id: &AgentId,
+    ) -> Result<Option<crate::sandbox::store::AgentMessageSnapshot>, SandboxStoreError> {
+        crate::sandbox::store::AgentConversationStore::agent_message_snapshot(self, id).await
+    }
+
+    async fn park_sandbox_reopen_refusal(
+        &self,
+        mutation: SandboxLifecycleMutation,
+        fence: crate::sandbox::store::ReopenRefusalFence,
+    ) -> Result<(), SandboxStoreError> {
+        self.commit_lifecycle(mutation, Some(fence))
+    }
+}
+
+impl InMemorySandboxStore {
+    fn commit_lifecycle(
+        &self,
+        mutation: SandboxLifecycleMutation,
+        refusal: Option<crate::sandbox::store::ReopenRefusalFence>,
+    ) -> Result<(), SandboxStoreError> {
         let mut state = self.lock();
         let current = state
             .sandboxes
             .get(&mutation.guard.sandbox_id)
             .ok_or(SandboxStoreError::NotFound)?;
+        if let Some(refusal) = refusal {
+            let agent_matches = state.agents.get(&refusal.agent_id).is_some_and(|agent| {
+                agent.sandbox_id == current.id && agent.revision == refusal.agent_revision
+            });
+            if refusal.owner.is_some()
+                || !agent_matches
+                || state.agent_message_checkpoints.get(&refusal.agent_id)
+                    != refusal.checkpoint.as_deref()
+            {
+                return Err(SandboxStoreError::Conflict);
+            }
+        }
         let agents = sandbox_agent_log_rows(&state, &current.id);
         validate_lifecycle_mutation(current, &agents, &mutation)?;
         if current.lifecycle.checkpoint_capture.is_none()

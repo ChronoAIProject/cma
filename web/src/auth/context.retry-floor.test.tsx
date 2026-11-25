@@ -21,12 +21,13 @@ const response = (status: number, body: unknown, after = '90') =>
   });
 
 function View() {
-  const { state, retry, signOut, signIn } = useAuth();
+  const { state, retry, signOut, signIn, sessionReadSignal } = useAuth();
   const uncertain = useIdentityUncertain();
   return (
     <>
       <p>{state.status}</p>
       <p>{uncertain ? 'uncertain' : 'verified'}</p>
+      <p>{sessionReadSignal.aborted ? 'reads paused' : 'reads allowed'}</p>
       <button onClick={retry}>Retry</button>
       <button onClick={() => void signOut()}>Sign out</button>
       <button onClick={() => void signIn()}>Sign in</button>
@@ -119,6 +120,30 @@ it('coalesces completed-request hints without shortening or extending the monoto
   expect(current).toHaveBeenCalledTimes(2);
   await act(async () => finish(signedIn));
   expect(screen.getByText('verified')).toBeInTheDocument();
+});
+
+it('keeps queued refreshes and session reads behind the floor returned by an in-flight check', async () => {
+  const { provider, current } = fixture(signedIn);
+  mount(provider);
+  await act(async () => {});
+  expect(screen.getByText('reads allowed')).toBeInTheDocument();
+
+  let finish: (state: AuthState) => void = () => {};
+  current.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+  await hints();
+  expect(current).toHaveBeenCalledTimes(2);
+  expect(screen.getByText('reads paused')).toBeInTheDocument();
+  await act(async () => finish(outage));
+  expect(screen.getByText('uncertain')).toBeInTheDocument();
+  expect(screen.getByText('reads paused')).toBeInTheDocument();
+  await advance(89_999);
+  expect(current).toHaveBeenCalledTimes(2);
+  await advance(1);
+  expect(current).toHaveBeenCalledTimes(3);
+  expect(screen.getByText('verified')).toBeInTheDocument();
+  expect(screen.getByText('reads allowed')).toBeInTheDocument();
+  await advance(90_000);
+  expect(current).toHaveBeenCalledTimes(3);
 });
 
 it.each(['not-a-date', '-1', '0', '2147484', '99999999999999999999'])(

@@ -61,7 +61,20 @@ module CIContract
       "path" => "${{ runner.temp }}/ci-native-image/",
       "if-no-files-found" => "error", "compression-level" => 0, "retention-days" => 1,
     }, "native images must remain exact, required and short-lived")
-    order(images, ["Vulnerability scan", "Require passing runtime image evidence", "Export tested native image", "Retain tested native image"])
+    # The exported CI image gets the staging publication secret scan before it
+    # is retained, so a blocking finding fails the pull request or merge group.
+    scan_if = "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
+    install = step(images, "Install pinned image secret scanner",
+      "bash .github/scripts/staging_cd_transport.sh\nbash .github/scripts/install-image-gitleaks.sh\n", scan_if)
+    require!(install["timeout-minutes"] == 5 && install["env"] == {
+      "CD_COMPONENT" => "${{ matrix.component == 'api' && 'am' || matrix.component == 'cmaeg' && 'eg' || matrix.component }}",
+    }, "image scanner install must keep its component and bound")
+    scan = step(images, "Scan tested image as staging publication does",
+      'python3 -B .github/scripts/ci_image_secret_scan.py "$IMAGE_COMPONENT" "$RUNNER_TEMP/ci-native-image" "$GITHUB_SHA"', scan_if)
+    require!(scan["timeout-minutes"] == 30 && scan["env"] == { "IMAGE_COMPONENT" => "${{ matrix.component }}" },
+      "CI image secret scan must keep its component and bound")
+    order(images, ["Vulnerability scan", "Require passing runtime image evidence", "Export tested native image",
+      "Install pinned image secret scanner", "Scan tested image as staging publication does", "Retain tested native image"])
   end
 
   def self.api_cargo_cache(ci, images)
@@ -249,6 +262,37 @@ module CIContract
     require!(commands.first == "set -euo pipefail" && commands.count(BUNDLE_ABSENT) == 1 && push.positive? &&
       commands[push - 1] == BUNDLE_ABSENT && script.scan(/omarchy-package-bundle\.py absent /).size == 2,
       "package bundle must prove its tag absent immediately before pushing")
+  end
+
+  KEY_EXPIRY_STEPS = [
+    { "uses" => "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", "with" => { "persist-credentials" => false } },
+    { "name" => "Check Arch packager key expiry",
+      "run" => "python3 -B .github/scripts/omarchy_key_expiry.py --verify-record --fail-days 30" },
+  ].freeze
+
+  # The weekly key expiry check fails by name once a key that signs a pinned
+  # Omarchy package expires within 30 days, so the failed-run notification
+  # reaches someone (#3040), and fails when the committed signing-key record
+  # no longer matches the one derived from the locked URLs. It only reads the
+  # repository and public package servers, runs on its schedule or an explicit
+  # dispatch, and every step runs so that its failure fails the run.
+  def self.omarchy_key_expiry_authority(inputs)
+    workflow = inputs.fetch("omarchy-key-expiry")
+    events = workflow["on"] || workflow[true]
+    schedule = events.is_a?(Hash) ? events["schedule"] : nil
+    require!(events.is_a?(Hash) && events.keys.sort == %w[schedule workflow_dispatch] && events["workflow_dispatch"] == {} &&
+      schedule.is_a?(Array) && schedule.length == 1 && schedule.first.keys == ["cron"] &&
+      schedule.first["cron"].to_s.match?(/\A[0-5]?[0-9] (?:1?[0-9]|2[0-3]) \* \* [0-6]\z/),
+      "key expiry check runs only weekly or on dispatch")
+    require!(workflow["permissions"] == { "contents" => "read" } && workflow.fetch("jobs").keys == ["expiry"],
+      "key expiry check authority changed")
+    check = job(workflow, "expiry", "Arch packager key expiry")
+    require!(check.keys.sort == %w[if name permissions runs-on steps timeout-minutes] &&
+      check["if"] == "github.repository == 'ChronoAIProject/cma'" && check["permissions"] == { "contents" => "read" } &&
+      check["runs-on"] == "ubuntu-24.04" && check["timeout-minutes"].is_a?(Integer) && check["timeout-minutes"].between?(1, 30),
+      "key expiry check must stay read-only, bounded and on a hosted runner")
+    require!(check.fetch("steps") == KEY_EXPIRY_STEPS,
+      "key expiry check must run exactly the pinned checkout and the unconditional check")
   end
 
   def self.provider(inputs)
