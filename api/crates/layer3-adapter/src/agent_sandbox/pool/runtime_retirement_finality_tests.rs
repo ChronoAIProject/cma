@@ -470,6 +470,14 @@ async fn finality_reads_every_pvc_page_and_refuses_a_label_less_owned_survivor()
     let state = fixture.state.lock().unwrap();
     assert!(state.list_replies.is_empty());
     assert_eq!(state.list_queries.len(), 6);
+    assert_eq!(
+        state
+            .calls
+            .iter()
+            .filter(|(call, _)| call.strip_prefix("GET ") == Some(PVCS))
+            .count(),
+        6
+    );
     assert!(state
         .list_queries
         .iter()
