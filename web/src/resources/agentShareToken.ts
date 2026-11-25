@@ -39,7 +39,7 @@ export function readAgentShareToken(id: string): string | undefined {
 }
 
 /** Keep the bearer fragment out of OAuth URLs, HTTP requests and browser history. */
-export function retainAgentShareToken(id: string): string | undefined {
+export function retainAgentShareToken(id: string, requireStorage = false): string | undefined {
   const token = window.location.hash.slice(1);
   if (valid(token)) {
     try {
@@ -48,7 +48,9 @@ export function retainAgentShareToken(id: string): string | undefined {
         JSON.stringify({ token, expiresAt: Date.now() + lifetime }),
       );
     } catch {
-      // The active page can still redeem it; a sign-in redirect needs storage.
+      if (requireStorage) {
+        throw new Error('Allow session storage, then reopen the share link to sign in.');
+      }
     }
     window.history.replaceState(
       window.history.state,
@@ -71,11 +73,7 @@ export function clearAgentShareToken(id: string): void {
 }
 
 export function retainAgentShareForSignIn(id: string): void {
-  const token = retainAgentShareToken(id);
-  if (!token) throw new Error('Open the original share link before signing in.');
-  try {
-    if (!sessionStorage.getItem(prefix + id)) throw new Error('storage unavailable');
-  } catch {
-    throw new Error('Allow session storage, then reopen the share link to sign in.');
+  if (!retainAgentShareToken(id, true)) {
+    throw new Error('Open the original share link before signing in.');
   }
 }
