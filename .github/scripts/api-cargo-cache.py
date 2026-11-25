@@ -184,10 +184,13 @@ def dockerfile(operation, max_content=None, *, compact_registry=False, max_archi
     # A unique RUN environment invalidates the bridge layer without that flag.
     header = f"FROM {BRIDGE_IMAGE} AS transfer\nARG CMA_CACHE_TRANSFER\n"
     if operation in ("inject", "inject-target"):
-        archives = " ".join(f"{name}.tar.gz" for name in names)
+        # The compressed inputs are needed only while tar populates the
+        # mounts. Keep them out of BuildKit's intermediate image layers.
+        archives = " ".join(f"--mount=type=bind,source={name}.tar.gz,target=/restore/{name}.tar.gz"
+                            for name in names)
         commands = "; ".join(f"tar -xzpf /restore/{name}.tar.gz -C /cache/{name}" for name in names)
-        return (header + f"COPY {archives} /restore/\n"
-                + f'RUN --network=none {mounts} set -eu; test -n "$CMA_CACHE_TRANSFER"; {commands}\n')
+        return (header + f"RUN --network=none {mounts} {archives} "
+                + f'set -eu; test -n "$CMA_CACHE_TRANSFER"; {commands}\n')
     require(operation == "extract", "unknown cache transfer")
     bound_kib = (MAX_CONTENT_BYTES if max_content is None else max_content) // 1024
     if compact_registry:

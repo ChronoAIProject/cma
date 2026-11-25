@@ -407,12 +407,24 @@ class CacheTests(unittest.TestCase):
                 info.size = len(value)
                 tar.addfile(info, io.BytesIO(value))
         recipe = cache.dockerfile("inject-target")
-        self.assertIn("COPY target.tar.gz /restore/", recipe)
+        self.assertIn("--mount=type=bind,source=target.tar.gz,target=/restore/target.tar.gz", recipe)
+        self.assertNotIn("COPY", recipe)
         self.assertNotIn("registry", recipe)
         with patch("subprocess.run") as run:
             cache.transfer("inject-target", self.root, namespace="synthetic")
         self.assertIn("BUILDKIT_CACHE_MOUNT_NS=synthetic", run.call_args.args[0])
         self.assertEqual(run.call_args.kwargs["input"], recipe)
+
+    def test_full_restore_binds_each_archive_and_extracts_into_locked_cache_mounts(self):
+        recipe = cache.dockerfile("inject")
+        for name in cache.MOUNTS:
+            with self.subTest(mount=name):
+                self.assertIn(f"--mount=type=bind,source={name}.tar.gz,target=/restore/{name}.tar.gz", recipe)
+                self.assertIn(f"target=/cache/{name},sharing=locked", recipe)
+                self.assertIn(f"tar -xzpf /restore/{name}.tar.gz -C /cache/{name}", recipe)
+        self.assertIn("RUN --network=none", recipe)
+        self.assertNotIn("COPY", recipe)
+        self.assertNotIn(",rw", recipe)
 
     def test_bridge_mount_ids_match_the_real_api_dockerfile(self):
         definition = (cache.ROOT / "api/crates/cma/Dockerfile").read_text()
