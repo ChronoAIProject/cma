@@ -164,6 +164,11 @@ async fn handle(
             }
             let _ = receipt.send(result);
         }
+        DeliveryCommand::RetireStream { turn } => {
+            if let Some(event) = stream_event(sender, &turn) {
+                retire_stream(events, &stream_key(&event), &event);
+            }
+        }
         DeliveryCommand::StreamOutcome {
             turn,
             outcome,
@@ -171,27 +176,13 @@ async fn handle(
             recovery,
         } => {
             tracing::info!(outcome = outcome.kind(), "provider turn outcome");
-            // This is an already-admitted internal turn. Tool ingress separately enforces
-            // ref expiry; a long turn may still deliver with its retained channel key.
-            let Ok(opened) = cmaeg_core::seal::open::<cmaeg_core::seal::EventRefPayload>(
-                &sender.keys,
-                cmaeg_core::seal::TokenKind::EventRef,
-                turn.event_ref.as_str(),
-            ) else {
+            let Some(event) = stream_event(sender, &turn) else {
                 return;
             };
-            if opened.payload.validate().is_err()
-                || opened.payload.channel_id != turn.channel.id
-                || opened.payload.event_id != turn.activity.event_id
-                || opened.payload.record_id != turn.channel.pointer.record_id
-                || opened.payload.conversation_id != turn.conversation_id
-                || normalized_consumer(opened.payload.consumer.as_ref())
-                    != normalized_consumer(turn.consumer.as_ref())
-            {
-                return;
-            }
+            let id = stream_key(&event);
             if let Some(authority) = &recovery {
                 if authority.current().await.is_none() {
+                    retire_stream(events, &id, &event);
                     return;
                 }
             }
@@ -215,8 +206,8 @@ async fn handle(
                         sender
                             .observer
                             .checkpoint(
-                                &opened.payload.record_id,
-                                &opened.payload.event_id,
+                                &event.record_id,
+                                &event.event_id,
                                 crate::activity::Change::state(
                                     consumer,
                                     crate::activity::ConsumerState::Produced,
@@ -243,14 +234,9 @@ async fn handle(
             if let Some(change) = progress {
                 sender
                     .observer
-                    .checkpoint(&opened.payload.record_id, &opened.payload.event_id, change)
+                    .checkpoint(&event.record_id, &event.event_id, change)
                     .await;
             }
-            let id = key(
-                opened.payload.channel_id.as_str(),
-                opened.payload.event_id.as_str(),
-                opened.payload.consumer.as_ref(),
-            );
             if !reserve(events, &id) {
                 tracing::warn!("delivery event capacity reached");
                 return;
@@ -261,10 +247,7 @@ async fn handle(
             );
             let sync_authorized = match &recovery {
                 Some(authority)
-                    if matches!(
-                        &opened.payload.reply,
-                        cmaeg_core::seal::ReplyAddress::Sync { .. }
-                    ) =>
+                    if matches!(&event.reply, cmaeg_core::seal::ReplyAddress::Sync { .. }) =>
                 {
                     authority.permits_sync().await
                 }
@@ -272,14 +255,14 @@ async fn handle(
                 None => true,
             };
             if custom && sync_authorized {
-                let buffered = sender.custom.stream(&opened.payload, &outcome);
+                let buffered = sender.custom.stream(&event, &outcome);
                 if outcome.terminal() {
-                    sender.custom.observe_local(&opened.payload, buffered).await;
+                    sender.custom.observe_local(&event, buffered).await;
                 }
             }
             let state = events
                 .entry(id)
-                .or_insert_with(|| EventState::new(turn.channel.clone(), opened.payload));
+                .or_insert_with(|| EventState::new(turn.channel.clone(), event));
             state.tool_replied |= tracker.has_tool_reply(turn.event_ref.as_str(), now());
             if state.terminal {
                 return;
@@ -327,6 +310,48 @@ async fn handle(
         }
     }
 }
+fn stream_event(
+    sender: &Sender,
+    turn: &crate::ingress::launch::LaunchRequest,
+) -> Option<cmaeg_core::seal::EventRefPayload> {
+    use cmaeg_core::seal::{open, EventRefPayload, TokenKind};
+
+    // A retained turn can outlive the EventRef's separate tool admission window.
+    let event = open::<EventRefPayload>(&sender.keys, TokenKind::EventRef, turn.event_ref.as_str())
+        .ok()?
+        .payload;
+    event.validate().ok()?;
+    (event.channel_id == turn.channel.id
+        && event.event_id == turn.activity.event_id
+        && event.record_id == turn.channel.pointer.record_id
+        && event.conversation_id == turn.conversation_id
+        && normalized_consumer(event.consumer.as_ref())
+            == normalized_consumer(turn.consumer.as_ref()))
+    .then_some(event)
+}
+
+fn stream_key(event: &cmaeg_core::seal::EventRefPayload) -> EventKey {
+    key(
+        event.channel_id.as_str(),
+        event.event_id.as_str(),
+        event.consumer.as_ref(),
+    )
+}
+
+fn retire_stream(
+    events: &mut HashMap<EventKey, EventState>,
+    id: &EventKey,
+    event: &cmaeg_core::seal::EventRefPayload,
+) {
+    if let Some(state) = events.get_mut(id).filter(|state| {
+        !state.terminal
+            && state.event.record_id == event.record_id
+            && state.event.conversation_id == event.conversation_id
+    }) {
+        finish(state);
+    }
+}
+
 fn reserve(events: &mut HashMap<EventKey, EventState>, id: &EventKey) -> bool {
     if events.len() >= MAX_EVENTS {
         expire(events);

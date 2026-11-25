@@ -44,6 +44,9 @@ pub enum DeliveryCommand {
         answer_response_id: Option<String>,
         recovery: Option<Arc<crate::turns::RecoveryAuthority>>,
     },
+    RetireStream {
+        turn: Arc<LaunchRequest>,
+    },
 }
 impl DeliveryCommand {
     pub(crate) fn trace(&self) -> tracing::Span {
@@ -52,7 +55,7 @@ impl DeliveryCommand {
             Self::Reply { trace, .. } | Self::Update { trace, .. } | Self::Typing { trace, .. } => {
                 trace.clone()
             }
-            Self::StreamOutcome { turn, .. } => turn.trace.clone(),
+            Self::StreamOutcome { turn, .. } | Self::RetireStream { turn } => turn.trace.clone(),
         }
     }
 }

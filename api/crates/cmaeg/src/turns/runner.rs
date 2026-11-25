@@ -211,8 +211,10 @@ impl TurnRunner {
         observation.finish(error.detail);
         provider_error(provider.as_str(), error.detail);
         if error.detail == "stream_authority_changed" {
-            // Recovery can observe an authority revocation after acceptance.
-            // Sending a synthetic failure to the retained sink would use it too.
+            let _ = self
+                .delivery
+                .submit(super::outcomes::DeliveryCommand::RetireStream { turn })
+                .await;
             return;
         }
         let accepted = admitted.is_none();

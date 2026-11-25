@@ -10,10 +10,13 @@ use cmaeg::{
         relay_client::RelayClient,
         webhook_client::{TransportError, WebhookClient, WebhookTransport},
     },
-    ingress::launch::{LaunchOutcome, TurnLauncher},
+    ingress::launch::{LaunchOutcome, LaunchRequest, TurnLauncher},
     turns::outcomes::TurnOutcome,
 };
-use cmaeg_core::channel::{Secret, Sink};
+use cmaeg_core::{
+    channel::{Secret, Sink},
+    seal::{open, EventRefPayload, MasterKeyRing, TokenKind},
+};
 use futures_util::future::BoxFuture;
 use reqwest::{header::HeaderMap, Url};
 use serde_json::json;
@@ -25,7 +28,169 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{mpsc, oneshot, Semaphore};
+
+#[tokio::test]
+async fn recovery_denied_before_get_retires_the_accepted_event() {
+    assert_recovery_retires_accepted_event(true).await;
+}
+
+#[tokio::test]
+async fn recovery_denied_before_delivery_retires_the_accepted_event() {
+    assert_recovery_retires_accepted_event(false).await;
+}
+
+async fn assert_recovery_retires_accepted_event(before_get: bool) {
+    let terminal_gate = Arc::new(Semaphore::new(0));
+    let mut fixture = Fixture::new(
+        FakeProviderConfig {
+            disconnect_after: Some(2),
+            recovery_status: Some("completed"),
+            terminal_gate: Some(terminal_gate.clone()),
+            ..Default::default()
+        },
+        Default::default(),
+        4,
+    )
+    .await;
+    let mut channel = (*fixture.channel).clone();
+    channel.definition.reply.sinks = vec![Sink::ResultWebhook {
+        url: "https://result.example/hook".into(),
+        hmac_key_id: "key-1".into(),
+    }];
+    channel
+        .definition
+        .secrets
+        .hmac_secrets
+        .push(("key-1".into(), Secret::new("test-signing-value")));
+    fixture.channel = Arc::new(channel);
+    *fixture.recovery_channel.0.lock().unwrap() = Some(fixture.channel.clone());
+    let turn = Arc::new(fixture.custom_recovery_request("retired-recovery"));
+
+    let transport = Arc::new(Transport {
+        authority: fixture.recovery_channel.clone(),
+        remove_sink: false,
+        resolutions: AtomicUsize::new(0),
+        posts: AtomicUsize::new(0),
+    });
+    let mut custom = CustomDelivery::new("https://gateway.example".into(), Arc::default());
+    custom.webhooks = WebhookClient::with_transport(transport.clone());
+    let (commands, receiver) = mpsc::channel(4);
+    let engine = DeliveryEngine::start(
+        receiver,
+        fixture.keys.clone(),
+        RelayClient::new("https://relay.example", Duration::from_secs(1)).unwrap(),
+        Default::default(),
+        fixture.tracker.clone(),
+        custom,
+    );
+    let mut revoked = (*fixture.channel).clone();
+    revoked.definition.secrets.provider_credential = None;
+    let revoked = Arc::new(revoked);
+    assert!(matches!(
+        fixture.runner.launch((*turn).clone()).await,
+        LaunchOutcome::Accepted { .. }
+    ));
+    let accepted = fixture.outcomes.recv().await.unwrap();
+    assert!(matches!(
+        &accepted,
+        DeliveryCommand::StreamOutcome {
+            outcome: TurnOutcome::Accepted { .. },
+            ..
+        }
+    ));
+    commands.send(accepted).await.unwrap();
+    worker_barrier(&commands, &fixture.keys, &turn).await;
+    if before_get {
+        *fixture.recovery_channel.0.lock().unwrap() = Some(revoked.clone());
+    }
+    terminal_gate.add_permits(1);
+    let denied = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let command = fixture.outcomes.recv().await.unwrap();
+            if matches!(
+                &command,
+                DeliveryCommand::RetireStream { .. }
+                    | DeliveryCommand::StreamOutcome {
+                        recovery: Some(_),
+                        ..
+                    }
+            ) {
+                break command;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        matches!(&denied, DeliveryCommand::RetireStream { .. }),
+        before_get
+    );
+    assert_eq!(
+        fixture
+            .fake
+            .log()
+            .iter()
+            .filter(|call| call.method == "GET")
+            .count(),
+        usize::from(!before_get)
+    );
+    *fixture.recovery_channel.0.lock().unwrap() = Some(revoked);
+    commands.send(denied).await.unwrap();
+    worker_barrier(&commands, &fixture.keys, &turn).await;
+    assert_eq!(transport.posts.load(Ordering::SeqCst), 0);
+
+    *fixture.recovery_channel.0.lock().unwrap() = Some(fixture.channel.clone());
+    commands.send(completion(turn.clone())).await.unwrap();
+    worker_barrier(&commands, &fixture.keys, &turn).await;
+    assert_eq!(transport.posts.load(Ordering::SeqCst), 0);
+
+    let other = Arc::new(fixture.custom_recovery_request("another-event"));
+    fixture.fake.close().await;
+    tokio::time::pause();
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    commands.send(completion(turn.clone())).await.unwrap();
+    worker_barrier(&commands, &fixture.keys, &turn).await;
+    assert_eq!(transport.posts.load(Ordering::SeqCst), 1);
+    commands.send(completion(other.clone())).await.unwrap();
+    worker_barrier(&commands, &fixture.keys, &other).await;
+    assert_eq!(transport.posts.load(Ordering::SeqCst), 2);
+    drop(commands);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    assert!(engine.drain(deadline.into_std()).await);
+}
+
+fn completion(turn: Arc<LaunchRequest>) -> DeliveryCommand {
+    DeliveryCommand::StreamOutcome {
+        turn,
+        outcome: TurnOutcome::Completed {
+            final_text: Some("test completion".into()),
+        },
+        answer_response_id: None,
+        recovery: None,
+    }
+}
+
+async fn worker_barrier(
+    commands: &mpsc::Sender<DeliveryCommand>,
+    keys: &MasterKeyRing,
+    turn: &Arc<LaunchRequest>,
+) {
+    let event = open::<EventRefPayload>(keys, TokenKind::EventRef, turn.event_ref.as_str())
+        .unwrap()
+        .payload;
+    let (receipt, completed) = oneshot::channel();
+    commands
+        .send(DeliveryCommand::Typing {
+            trace: tracing::Span::none(),
+            channel: turn.channel.clone(),
+            event,
+            receipt,
+        })
+        .await
+        .unwrap();
+    completed.await.unwrap();
+}
 
 #[tokio::test]
 async fn recovered_webhook_rechecks_current_sink_after_dns_before_post() {
