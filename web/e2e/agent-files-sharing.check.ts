@@ -377,6 +377,7 @@ for (const { access, unavailable } of [
     await boundary.route(page, baseURL!);
     const filesystem = await files(page, access !== 'reader');
     let accessUnavailable = false;
+    let sharedTitle = 'Shared Agent';
     let revalidateAt: string | null = null;
     let revalidation: Promise<void> | undefined;
     if (access === 'reader') {
@@ -389,7 +390,7 @@ for (const { access, unavailable } of [
           json: {
             access: 'shared',
             id: 'agt_contract',
-            title: 'Shared Agent',
+            title: sharedTitle,
             status: 'ready',
             created_at: localTime,
             updated_at: localTime,
@@ -507,7 +508,15 @@ for (const { access, unavailable } of [
           await expect(
             computer.getByRole('button', { name: 'notes.md', exact: true }),
           ).toBeVisible();
+          sharedTitle = `Shared Agent checked at ${width}px`;
           await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+          if (access !== 'owner') {
+            // Observe the published access result before sending another focus event.
+            // Foreground events coalesce while an access read is pending.
+            await expect(
+              page.getByRole('heading', { name: sharedTitle, exact: true }),
+            ).toBeAttached();
+          }
           await expect(computer.getByLabel('Current directory')).toContainText('/home/cma');
         }
         if (access !== 'owner') {
