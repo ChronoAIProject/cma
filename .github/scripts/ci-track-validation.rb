@@ -262,7 +262,9 @@ def validate(documents, actions)
   check_staging_image_adoption(documents)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
-  require_check(events.keys.sort == %w[merge_group push], 'post-merge CI must cover pushes and retained merge-group events')
+  require_check(events.keys.sort == %w[merge_group push schedule workflow_dispatch], 'post-merge CI must cover pushes and verification events')
+  require_check(events['schedule'] == [{'cron' => '17 */2 * * *'}] && events['workflow_dispatch'] == {},
+    'develop verification must use the scheduled or manually selected GitHub revision')
   require_check(events['push'] == {'branches' => ['develop', 'tl/release/**']}, 'CI push must cover develop and isolated candidates without path filters')
   # Without a branch or path filter every queue entry creates the required
   # checks; a non-develop queue is refused by the selector, not left pending.
@@ -275,12 +277,15 @@ def validate(documents, actions)
   end
   # Queue entries run on refs/heads/gh-readonly-queue/develop/pr-N-SHA: their
   # own ref, so a PR (refs/pull/N/merge) or develop push run never cancels one.
-  # Develop pushes write the caches PRs restore, so they finish instead of
-  # being cancelled; every other ref still cancels its superseded run.
-  require_check(ci['concurrency'] == {'group' => 'ci-${{ github.workflow }}-${{ github.ref }}',
-    'cancel-in-progress' => "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"},
-    'CI concurrency must remain per ref and keep develop cache writers running')
+  verification = "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'verification-' || ''"
+  require_check(ci['concurrency'] == {
+    'group' => "ci-${{ github.workflow }}-${{ #{verification} }}${{ github.ref }}",
+    'cancel-in-progress' => "${{ github.ref != 'refs/heads/develop' }}"},
+    'CI must protect active develop runs and isolate verification from pushes')
   jobs = ci.fetch('jobs')
+  verification_ref = "(github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop'"
+  require_check(%w[changes repo].all? { |name| jobs.fetch(name)['if'] == verification_ref },
+    'off-develop verification may not start selection or repo checks')
   require_check(jobs.keys.none? { |key| key.start_with?('trigger-') }, 'Trigger job retained')
   required = {
     'gate-repo' => ['CI / Repo', %w[changes repo version-label]],
@@ -328,7 +333,7 @@ def validate(documents, actions)
     end
   end
   select_workflow = documents.fetch('ci-track-selection')
-  require_check(select_workflow.fetch('jobs').fetch('changes') == jobs.fetch('changes'),
+  require_check(select_workflow.fetch('jobs').fetch('changes') == jobs.fetch('changes').reject { |key, _| key == 'if' },
     'pull requests and post-merge CI must use identical selection')
   %w[ci ci-pr-repo].each { |workflow| check_version_label(documents.fetch(workflow)) }
   selector = jobs.fetch('changes').fetch('steps').find { |step| step['id'] == 'select' }

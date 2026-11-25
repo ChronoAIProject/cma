@@ -210,8 +210,8 @@ pub(super) async fn idle_workspaces(
     Ok(Some(workspaces))
 }
 
-/// With no live Agent, terminal rows and the explicit command queue still matter.
-pub(super) async fn agentless_commands_clear(
+/// Check queued work across the supplied Agent set, including terminal rows.
+pub(super) async fn agent_commands_clear(
     store: &MongoSandboxStore,
     agents: &[Agent],
     session: &mut ClientSession,

@@ -64,7 +64,7 @@ def require_repo_secret_shards(documents)
   require_check(gate['steps'] == [checkout, validate_results], 'Repo result must validate all child outcomes and shard SHAs')
   caller = documents.fetch('ci').fetch('jobs')
   require_check(caller.fetch('repo')['uses'] == './.github/workflows/ci-repo.yml' &&
-    !caller['repo'].key?('if') && !caller['repo'].key?('continue-on-error') &&
+    !caller['repo'].key?('continue-on-error') &&
     caller.fetch('gate-repo')['steps'].last['run'] == 'python3 -B .github/scripts/ci_tracks/gate.py repo',
     'CI / Repo must require the reusable Repo workflow result')
 end
