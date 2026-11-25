@@ -10,9 +10,12 @@ import urllib.request
 
 import ci_retry
 from staging_cd_common import Refusal, matches, require
+from staging_cd_targets import RUNTIME_TARGETS
 from staging_cd_versions import DEPLOYABLES, SEMVER
 
 MEDIA = "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"
+RUNTIME_REPOSITORIES = frozenset("ghcr.io/chronoaiproject/" + DEPLOYABLES[key] for key in RUNTIME_TARGETS)
+RUNTIME_POINTER_TAGS = {"staging": "staging-current", "production": "production-current"}
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -77,6 +80,15 @@ class Registry:
     def manifest(self, repository, reference, *, absent=False, settle=False):
         require(matches(SEMVER, reference) or matches(r"sha256:[0-9a-f]{64}", reference),
                 "Registry reference is not immutable")
+        return self._manifest(repository, reference, absent=absent, settle=settle)
+
+    def runtime_pointer(self, repository, environment, *, settle=False):
+        require(repository in RUNTIME_REPOSITORIES and environment in RUNTIME_POINTER_TAGS,
+                "Runtime pointer repository or environment is invalid")
+        result = self._manifest(repository, RUNTIME_POINTER_TAGS[environment], absent=not settle, settle=settle)
+        return result[0] if result else None
+
+    def _manifest(self, repository, reference, *, absent, settle):
         token = self.token(repository)
         result = self.read("https://ghcr.io/v2/" + repository[len("ghcr.io/"):] + "/manifests/" + reference,
                            {"Authorization": "Bearer " + token, "Accept": MEDIA}, absent=absent, settle=settle)

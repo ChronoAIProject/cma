@@ -55,6 +55,23 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             registry.token("ghcr.io/chronoaiproject/cma-web")
 
+    def test_runtime_pointer_reads_are_limited_to_the_two_runtime_repositories(self):
+        repository = "ghcr.io/chronoaiproject/cma-runtime"
+        opener = Mock()
+        registry = Registry(opener, retry=NO_WAIT)
+        for unsupported_repository, environment in ((repository, "sandbox"),
+                                                    ("ghcr.io/chronoaiproject/cma-web", "staging")):
+            with self.subTest(repository=unsupported_repository, environment=environment), self.assertRaises(Refusal):
+                registry.runtime_pointer(unsupported_repository, environment)
+        with self.assertRaises(Refusal):
+            registry.manifest(repository, "staging-current")
+        opener.open.assert_not_called()
+
+        missing = urllib.error.HTTPError("https://ghcr.io/fixture", 404, "private", {}, None)
+        opener.open.side_effect = [self.response({"token": "fixture"}), missing]
+        self.assertIsNone(registry.runtime_pointer(repository, "staging"))
+        self.assertTrue(opener.open.call_args.args[0].full_url.endswith("/manifests/staging-current"))
+
     def test_settle_read_waits_for_a_just_written_tag_and_names_a_lasting_absence(self):
         manifest = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
                     "config": {"digest": "sha256:" + "a" * 64}, "layers": []}
