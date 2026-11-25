@@ -346,6 +346,24 @@ impl AgentWorkerStore for MongoSandboxStore {
             .map_err(|error| error.store_error)
     }
 
+    fn agent_inspection_parking_enabled(&self) -> bool {
+        self.agent_inspection_parking
+    }
+
+    async fn agent_inspection_parked(&self, id: &AgentId) -> Result<bool, SandboxStoreError> {
+        super::agent_inspection_park::parked(self, id).await
+    }
+
+    async fn park_agent_inspection(
+        &self,
+        owner: &layer2_core::agent_ownership::OwnershipToken,
+        claimed: &Agent,
+        binding: &layer2_core::sandbox::RuntimeBinding,
+        failure: layer2_core::agent_ownership::OwnershipFailure,
+    ) -> Result<bool, SandboxStoreError> {
+        super::agent_inspection_park::park(self, owner, claimed, binding, failure).await
+    }
+
     async fn claim_agent_work_observed(
         &self,
         id: &AgentId,
@@ -367,6 +385,11 @@ impl AgentWorkerStore for MongoSandboxStore {
             else {
                 return Ok(None);
             };
+            if super::agent_inspection_park::has_marker(&row)
+                && self.agent_inspection_parked(id).await?
+            {
+                return Ok(None);
+            }
             let mut agent = super::agents::read_agent(&row)?;
             if super::agent_worker_transaction::pending_adoption::witness::blocks_claim(
                 self, &row, &agent,

@@ -149,6 +149,24 @@ async fn run() {
         }
         return;
     }
+    if arguments
+        .first()
+        .is_some_and(|name| name == "--retry-agent-inspection")
+    {
+        let [_, agent, park_id] = arguments.as_slice() else {
+            eprintln!("usage: cma --retry-agent-inspection AGENT PARK_ID");
+            std::process::exit(2);
+        };
+        match store::agent_inspection_park::command(agent, park_id).await {
+            Ok(true) => println!("inspection_retry=requeued"),
+            Ok(false) => println!("inspection_retry=unchanged"),
+            Err(reason) => {
+                eprintln!("{reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if arguments.len() == 3 && arguments[0] == "--ledger-collection-observation" {
         if let Err(error) = store::ledger_collection::command(
             std::path::Path::new(&arguments[1]),

@@ -146,6 +146,7 @@ fn build(
     ordinary.insert("work_ready_at", doc! {"$lte": now});
     ordinary.insert("$expr", doc! {"$not": [candidate.clone()]});
     let mut pipeline = vec![doc! {"$match": ordinary}];
+    pipeline.extend(crate::store::agent_inspection_park::filter(store, false));
     pipeline.extend(super::ownership::discovery::filter(store));
     pipeline.extend(page(limit));
 
@@ -165,7 +166,9 @@ fn build(
         doc! {"_id": 1, "revision": 1, FIELD: 1, "agent_command_admission_fence": 1,
         "record.sandbox_id": 1, "record.workspace_id": 1, "record.worktree_id": 1}
     };
-    let mut wake = vec![doc! {"$match": paced}, doc! {"$project": projection}];
+    let mut wake = vec![doc! {"$match": paced}];
+    wake.extend(crate::store::agent_inspection_park::filter(store, false));
+    wake.push(doc! {"$project": projection});
     let mut holds = vec![
         Bson::Document(doc! {
             "$eq": [format!("{hint}.agent_revision"), "$revision"]

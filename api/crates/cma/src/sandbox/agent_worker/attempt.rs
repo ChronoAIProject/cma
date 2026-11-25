@@ -55,6 +55,15 @@ impl AgentWorker {
                     return Ok(false);
                 }
             }
+            if self
+                .dependencies
+                .store
+                .agent_inspection_parked(id)
+                .await
+                .map_err(|error| attempt.store(Origin::Claim, error))?
+            {
+                return Ok(false);
+            }
             let Some(authority) = self
                 .acquire_pending_work(coordinator, id)
                 .await
@@ -68,15 +77,33 @@ impl AgentWorker {
                 .ownership_retry_hints
                 .as_ref()
                 .and_then(|_| authority.observe_retry_evidence());
+            let inspection = self
+                .dependencies
+                .store
+                .agent_inspection_parking_enabled()
+                .then(|| Arc::new(OnceLock::new()));
             let outcome = authority
-                .run(Box::pin(self.run_claimed(
-                    id,
-                    now,
-                    attempt,
-                    Some((&authority.token, &captured)),
-                    startup_probe.as_ref(),
-                )))
+                .run(inspection_park::ATTEMPT.scope(
+                    inspection.clone(),
+                    Box::pin(self.run_claimed(
+                        id,
+                        now,
+                        attempt,
+                        Some((&authority.token, &captured)),
+                        startup_probe.as_ref(),
+                    )),
+                ))
                 .await;
+            if let Some(inspection) =
+                inspection.filter(|_| outcome.is_err() && authority.receiver_cancelled())
+            {
+                if self
+                    .park_failed_inspection(attempt, &authority.token, &inspection)
+                    .await?
+                {
+                    return Ok(false);
+                }
+            }
             if let (Some(observed), Some(failure)) = (
                 captured.get(),
                 evidence.and_then(|evidence| evidence.first_failure()),

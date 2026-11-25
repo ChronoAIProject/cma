@@ -208,10 +208,17 @@ impl ProviderHostedControlTransport {
             }
         }
         let failure = failed.failure;
+        let receiver = endpoint.native_binding().and_then(|(handle, binding)| {
+            crate::owner_protocol::OwnershipReceiver::from_native(handle, binding)
+        });
+        if let Some(receiver) = receiver.clone() {
+            crate::owner_protocol::record_inspection_refusal(
+                authority.owner(),
+                receiver,
+                failure.observation,
+            );
+        }
         if let Some(evidence) = evidence.as_ref() {
-            let receiver = endpoint.native_binding().and_then(|(handle, binding)| {
-                crate::owner_protocol::OwnershipReceiver::from_native(handle, binding)
-            });
             evidence.record(
                 authority.owner(),
                 receiver,

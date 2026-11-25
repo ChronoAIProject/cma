@@ -308,6 +308,26 @@ pub trait AgentWorkerStore: Send + Sync {
         lease_expires_at: String,
     ) -> Result<Option<Agent>, SandboxStoreError>;
 
+    fn agent_inspection_parking_enabled(&self) -> bool {
+        false
+    }
+
+    /// Check a durable inspection park before attempting ownership acquisition.
+    async fn agent_inspection_parked(&self, _id: &AgentId) -> Result<bool, SandboxStoreError> {
+        Ok(false)
+    }
+
+    /// Persist a failed read against its original claim and runtime observation.
+    async fn park_agent_inspection(
+        &self,
+        _owner: &crate::agent_ownership::OwnershipToken,
+        _claimed: &Agent,
+        _binding: &crate::sandbox::RuntimeBinding,
+        _failure: crate::agent_ownership::OwnershipFailure,
+    ) -> Result<bool, SandboxStoreError> {
+        Ok(false)
+    }
+
     async fn claim_agent_work_observed(
         &self,
         id: &AgentId,

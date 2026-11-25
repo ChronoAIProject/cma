@@ -23,11 +23,15 @@ impl AgentWorker {
             |sandbox, admission| async move {
                 let inspection = self.inspection_correlation(agent);
                 let inspection_started = std::time::Instant::now();
-                let attached = crate::sandbox::runtime_attachment::inspect_bound_runtime_after(
-                    self.dependencies.adapter.as_ref(),
+                let attached = super::super::super::inspection_park::observe(
+                    agent,
                     &sandbox,
-                    &self.config.deployment_id,
-                    &admission,
+                    crate::sandbox::runtime_attachment::inspect_bound_runtime_after(
+                        self.dependencies.adapter.as_ref(),
+                        &sandbox,
+                        &self.config.deployment_id,
+                        &admission,
+                    ),
                 )
                 .await;
                 report_inspection(
