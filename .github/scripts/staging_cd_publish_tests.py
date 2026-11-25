@@ -1,4 +1,6 @@
 """Publication cannot pass a blocking scan or mutate the scanned image bytes."""
+from contextlib import ExitStack, redirect_stdout
+from io import StringIO
 import json
 import os
 import subprocess
@@ -97,6 +99,47 @@ class PublicationTests(unittest.TestCase):
                 publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor",
                         reservation_check=lambda: True, scanner=changed, runner=runner)
             runner.assert_not_called()
+
+    def test_corrupt_optional_ci_artifact_rebuilds_and_scans_the_reserved_source(self):
+        with tempfile.TemporaryDirectory() as folder, ExitStack() as stack:
+            root = Path(folder)
+            archive, digest, registry, scanner, runner = self.fixture(folder)
+            scanner = Mock(wraps=scanner)
+            release = fixture_identity()
+            reservation = dict(release, schema="cma-version-reservation-v1")
+            reservation.pop("build")
+            tasks = [{"component": "web", "mode": "publish", "reservation": reservation}]
+            output = root / "receipts.json"
+            env = {"CD_COMPONENT": "web", "CD_TASKS": json.dumps(tasks), "GITHUB_EVENT_NAME": "push",
+                   "GITHUB_RUN_ID": "100", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_TEMP": folder,
+                   "CD_RECEIPTS_PATH": str(output), "GH_TOKEN": "fixture", "GITHUB_ACTOR": "actor"}
+            stack.enter_context(patch.dict(os.environ, env, clear=True))
+            for name in ("event_identity", "GitHub", "snapshot"):
+                stack.enter_context(patch.object(publication, name))
+            for name, value in (("Registry", registry), ("identity", (release, {}, {})), ("inspect", digest)):
+                stack.enter_context(patch.object(publication, name, return_value=value))
+            authority = stack.enter_context(patch.object(publication, "Reservations")).return_value
+            authority.require_current.return_value = True
+            build = stack.enter_context(patch.object(publication, "build", return_value=(archive, release)))
+
+            def corrupt(_expected, _api, candidate, _token, _download, _deadline):
+                candidate.write_bytes(b"invalid optional archive")
+                return {"id": 10}, None
+
+            def scan_and_publish(*args, **kwargs):
+                self.assertFalse(kwargs["qualified"])
+                return publish(*args, **kwargs, scanner=scanner, runner=runner)
+
+            stack.enter_context(patch("staging_cd_artifacts.fetch", side_effect=corrupt))
+            stack.enter_context(patch.object(publication, "publish", side_effect=scan_and_publish))
+            stdout = stack.enter_context(redirect_stdout(StringIO()))
+
+            self.assertEqual(publication.main(), 0, stdout.getvalue())
+            build.assert_called_once()
+            self.assertEqual(build.call_args.args[1], reservation)
+            self.assertEqual(scanner.call_args.args[0], archive)
+            self.assertEqual(json.loads(output.read_text())[0]["digest"], digest)
+            self.assertIn("CI image reuse miss reason=candidate-invalid", stdout.getvalue())
 
     def test_entry_rejects_mixed_component_tasks_before_registry_access(self):
         reservation = fixture_identity(component="runtime-omarchy")
