@@ -2,8 +2,14 @@ use super::*;
 
 #[tokio::test(start_paused = true)]
 async fn desktop_retry_stays_due_after_publication_reads_cross_a_second_boundary() {
-    for millis in [0, 200, 2_100, 30_000] {
-        let read_delay = Duration::from_millis(millis);
+    for (read_ms, retry_ms) in [
+        (0, 1_000),
+        (200, 1_000),
+        (2_100, 1_000),
+        (30_000, 1_000),
+        (200, 0),
+    ] {
+        let read_delay = Duration::from_millis(read_ms);
         let mut harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
         let seconds = harness
             .now
@@ -37,7 +43,7 @@ async fn desktop_retry_stays_due_after_publication_reads_cross_a_second_boundary
         let store = lifecycle_failure_tests::fixture::Store::new(harness.store.clone());
         store.delay_read("get_sandbox", 1, read_delay);
         let mut config = AgentWorkerConfig::new("agent-worker", DEPLOYMENT_ID);
-        config.retry_delay = Duration::from_secs(1);
+        config.retry_delay = Duration::from_millis(retry_ms);
         let worker = AgentWorker::new(
             AgentWorkerDependencies {
                 store: store.clone(),
