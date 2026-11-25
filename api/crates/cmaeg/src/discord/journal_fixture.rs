@@ -31,6 +31,8 @@ pub struct Row {
     pub expiry: Option<i64>,
 }
 type OnSaved = Arc<dyn Fn(&str) + Send + Sync>;
+/// Signals entry into the channel-record read, then holds it until notified.
+pub type ChannelGate = (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
 
 pub struct Memory {
     pub rows: Mutex<BTreeMap<String, Row>>,
@@ -47,6 +49,7 @@ pub struct Memory {
     pub channel_elapsed_ms: AtomicI64,
     pub fault: Mutex<Option<(String, bool)>>,
     pub on_saved: Mutex<Option<OnSaved>>,
+    pub channel_gate: Mutex<Option<ChannelGate>>,
 }
 pub struct Fixture {
     pub memory: Arc<Memory>,
@@ -93,6 +96,7 @@ impl Fixture {
             ),
             fault: Mutex::new(None),
             on_saved: Mutex::new(None),
+            channel_gate: Mutex::new(None),
             discord_channels: Mutex::default(),
             channel_calls: Mutex::default(),
             channel_status: Mutex::new(StatusCode::OK),
@@ -221,6 +225,11 @@ async fn discord_channel(
     }
 }
 async fn channel(State(state): State<Arc<Memory>>) -> Response {
+    let gate = state.channel_gate.lock().unwrap().clone();
+    if let Some((entered, held)) = gate {
+        entered.notify_one();
+        held.notified().await;
+    }
     Json(json!({"version":1,"blob":STANDARD.encode(state.channel.lock().unwrap().as_slice())}))
         .into_response()
 }
