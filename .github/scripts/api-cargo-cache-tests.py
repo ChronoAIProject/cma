@@ -214,9 +214,8 @@ class CacheTests(unittest.TestCase):
         self.assertIn("--exclude=./src", compact)
         self.assertIn(f"max_expanded={bound}", compact)
         self.assertIn(f"max_compressed={cache.MAX_ARCHIVE_BYTES}", compact)
-        self.assertIn('archive_stream "$registry" "$registry_archive" $skip_src .', compact)
-        self.assertIn('archive_stream "$target" "$target_archive" .', compact)
-        self.assertIn('archive_stream "$target" "$target_archive" "$@"', compact)
+        self.assertIn('archive_stream "$registry" "$registry_archive" "$max_expanded" "$max_compressed"', compact)
+        self.assertIn('archive_stream "$target" "$target_archive" "$remaining_expanded" "$remaining_compressed"', compact)
         self.assertNotIn("rm -rf /cache", compact)
 
     def test_am_compaction_restores_complete_groups_and_cross_group_links(self):
@@ -320,6 +319,27 @@ class CacheTests(unittest.TestCase):
         self.assertTrue((output / "compacted").exists())
         (output / "compacted").unlink()
         cache.seal(output, self.prefix, family="example", max_archive=140000, max_content=400000)
+
+    def test_gateway_compaction_keeps_the_executable_and_gateway_crates_first(self):
+        import random
+
+        registry, target, output = (self.root / name for name in ("registry", "target", "export"))
+        registry.mkdir()
+        (registry / "package.crate").write_bytes(b"package")
+        source = random.Random(2098)
+        groups = ("aaa-other-111", "cmaeg-222", "cmaeg_core-333")
+        for name in groups:
+            group = target / "release/incremental" / name / "s-final"
+            group.mkdir(parents=True)
+            (group / "work-products.bin").write_bytes(source.randbytes(12000))
+        script = cache.export_script(1000000, 32000, 100)
+        subprocess.run(["bash", "-c", script, "export", str(registry), str(target), str(output)],
+                       env={**os.environ, "COPYFILE_DISABLE": "1"}, check=True)
+        self.assertEqual((output / "compacted").read_text().strip(), "2")
+        (output / "compacted").unlink()
+        cache.seal(output, self.prefix, family="example", max_archive=32000, max_content=1000000)
+        with tarfile.open(output / "target.tar.gz") as archive:
+            self.assertEqual({Path(member.name).parts[2] for member in archive}, set(groups[1:]))
 
     def test_am_compaction_refuses_when_no_complete_group_fits(self):
         registry = self.root / "registry"

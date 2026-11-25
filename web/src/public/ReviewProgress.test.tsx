@@ -100,7 +100,7 @@ describe('minimal review', () => {
         await vi.advanceTimersByTimeAsync(2000);
       });
       expect(client.requests.start).not.toHaveBeenCalled();
-      expect(client.requests.createOrResume).not.toHaveBeenCalled();
+      expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
       expect(changed).not.toHaveBeenCalled();
       fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
       await act(async () => {
@@ -112,7 +112,7 @@ describe('minimal review', () => {
         expect.anything(),
         expect.anything(),
       );
-      expect(client.requests.createOrResume).not.toHaveBeenCalled();
+      expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
     },
   );
   it('continues the same Draft through Start once a hosted connection is satisfied', async () => {
@@ -179,7 +179,7 @@ describe('minimal review', () => {
       { idempotencyKey: expect.any(String) },
     );
     expect(changed).toHaveBeenCalledWith(PUBLIC_RECORD);
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
   });
   it('shows only server needs, preserves commands and env data, and submits matching trust', async () => {
     const client = publicClient();
@@ -294,7 +294,7 @@ describe('minimal review', () => {
     await actor.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByText('Connect the accounts below to continue.')).toBeInTheDocument();
     await waitFor(() => expect(changed).toHaveBeenCalledWith(record));
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
   });
 });
 
@@ -412,7 +412,7 @@ describe('durable progress', () => {
         { replace: true },
       ),
     );
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
     expect(client.requests.start).not.toHaveBeenCalled();
   });
 
@@ -471,7 +471,7 @@ describe('durable progress', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(navigate).toHaveBeenCalledWith({ kind: 'agent', agentId: 'agt_prepared' });
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
     expect(client.requests.start).not.toHaveBeenCalled();
   });
 

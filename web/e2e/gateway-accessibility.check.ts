@@ -421,3 +421,53 @@ for (const settings of [
     });
   });
 }
+
+test('LOCAL New channel announces the route and restores keyboard focus on Cancel', async ({
+  page,
+  baseURL,
+}) => {
+  const boundary = new LocalStartup();
+  await boundary.route(page, baseURL!);
+  await page.route(`${baseURL}/auth/session`, (route) => route.fulfill({ json: cmaSession }));
+  await page.route(`${baseURL}/api/event-gateway/**`, (route) => {
+    const { pathname } = new URL(route.request().url());
+    if (pathname.endsWith('/auth/session')) return route.fulfill({ json: gatewaySession });
+    if (pathname.endsWith('/v1/channel-capabilities'))
+      return route.fulfill({ json: channelCapabilities });
+    return route.fulfill({ json: { items: [] } });
+  });
+  await page.goto('/event-gateway');
+  for (const width of [1440, 519]) {
+    await page.setViewportSize({ width, height: 812 });
+    const create = page
+      .getByRole('region', { name: 'Channel workspace' })
+      .getByRole('button', { name: 'New channel' });
+    await create.focus();
+    await page.keyboard.press('Enter');
+    const heading = page.getByRole('heading', { name: 'New channel' });
+    await expect(heading).toBeFocused();
+    await expect(heading).toBeInViewport();
+    await expect
+      .poll(() => heading.evaluate((el) => getComputedStyle(el).boxShadow))
+      .not.toBe('none');
+    const cancel = page.getByRole('button', { name: 'Cancel', exact: true });
+    await cancel.focus();
+    await page.keyboard.press('Enter');
+    await expect(create).toBeFocused();
+  }
+  const openNavigation = page.getByRole('button', { name: 'Show navigation', exact: true });
+  await openNavigation.click();
+  const drawerCreate = page
+    .getByRole('complementary', { name: 'Application navigation' })
+    .getByRole('button', { name: 'New channel', exact: true });
+  await drawerCreate.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'New channel' })).toBeFocused();
+  await expect(openNavigation).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(
+    page
+      .getByRole('region', { name: 'Channel workspace' })
+      .getByRole('button', { name: 'New channel' }),
+  ).toBeFocused();
+});

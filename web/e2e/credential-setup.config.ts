@@ -15,6 +15,8 @@ export default defineConfig({
     'public-entry-reload.check.ts',
     'public-entry-multiroute.check.ts',
     'public-entry-wire.check.ts',
+    'public-entry-popup.check.ts',
+    'public-entry-identity.check.ts',
   ],
   workers: 1,
   retries: 0,

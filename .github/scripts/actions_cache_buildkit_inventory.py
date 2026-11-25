@@ -4,15 +4,18 @@ import json
 import os
 import re
 import sys
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, replace
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from actions_cache_retention import DEVELOP
+from actions_cache_retention import DEVELOP, Entry
 from actions_cache_sweep import Actions
+from staging_cd_build_cache import CI_SCOPES, SCOPES
 
 
 CACHE_VERSION = hashlib.sha256(b"|go-actionscache-1.0").hexdigest()
@@ -24,6 +27,27 @@ BLOB = re.compile("buildkit-blob-1-(" + DIGEST + ")")
 RESULTS_LOOKUP = "/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL"
 MAX_INDEXES = 1000
 MAX_INDEX_BYTES = 1024 * 1024
+DEVELOP_SCOPE = hashlib.sha256(DEVELOP.encode()).hexdigest()[:8]
+MANAGED_INDEX_STEMS = frozenset(
+    f"index-{scope}-1-{DEVELOP_SCOPE}" for scope in CI_SCOPES.union(SCOPES.values())
+)
+
+
+class ProofError(ValueError):
+    """Identify the failed observation without printing remote response content."""
+
+    def __init__(self, phase, cause):
+        self.phase = phase
+        self.cause_type = type(cause).__name__
+        super().__init__(str(cause))
+
+
+@contextmanager
+def observing(phase):
+    try:
+        yield
+    except Exception as error:
+        raise ProofError(phase, error) from error
 
 
 class RejectRedirect(HTTPRedirectHandler):
@@ -142,45 +166,108 @@ def develop_blobs(api):
     return entries
 
 
-def snapshot(api, reader, revision, now):
-    api.require_live_policy(revision)
+def superseded_indexes(pinned, references, stable_keys, cutoff):
+    groups = defaultdict(list)
+    for row in pinned.values():
+        stem, _, generation = row.key.rpartition("#")
+        if stem in MANAGED_INDEX_STEMS:
+            groups[stem].append((int(generation), row))
+    retired = []
+    for group in groups.values():
+        if len(group) < 3:
+            continue
+        ordered = sorted(group, key=lambda item: (item[1].created, item[1].id))
+        generations = [generation for generation, _ in ordered]
+        if generations != sorted(generations):
+            # A reset or out-of-order upload makes the lookup order ambiguous.
+            continue
+        keep = [references[row.id] for _, row in ordered[-2:]]
+        if not all(keys and keys <= stable_keys for keys in keep):
+            continue
+        retired.extend(row for _, row in ordered[:-2] if row.created <= cutoff)
+    return tuple(sorted(retired, key=lambda row: (row.created, row.id)))
+
+
+@dataclass(frozen=True)
+class Observation:
+    pinned: dict[int, Entry]
+    candidates: tuple[Entry, ...]
+    superseded: tuple[Entry, ...]
+    projected_candidate_bytes: int
+    observed_blob_bytes: int
+    reachable_layer_count: int
+
+
+def observe(api, reader, revision, now):
+    with observing("develop-before"):
+        api.require_live_policy(revision)
     # The exact index key/version must be unique across all refs. Only blob
     # candidates are scoped to develop.
-    pinned = indexes(entries_with_prefix(api, INDEX_PREFIX))
-    before = develop_blobs(api)
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        reachable = set().union(*pool.map(lambda row: reader(row.key, row.size), pinned.values()))
-    after = develop_blobs(api)
-    if indexes(entries_with_prefix(api, INDEX_PREFIX)) != pinned:
-        raise ValueError("BuildKit indexes changed during inventory")
-    api.require_live_policy(revision)
+    with observing("indexes-before"):
+        pinned = indexes(entries_with_prefix(api, INDEX_PREFIX))
+    with observing("blobs-before"):
+        before = develop_blobs(api)
+    with observing("index-content"):
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            references = dict(zip(pinned, pool.map(lambda row: reader(row.key, row.size), pinned.values())))
+    with observing("blobs-after"):
+        after = develop_blobs(api)
+    with observing("indexes-after"):
+        if indexes(entries_with_prefix(api, INDEX_PREFIX)) != pinned:
+            raise ValueError("BuildKit indexes changed during inventory")
+    with observing("develop-after"):
+        api.require_live_policy(revision)
     cutoff = now - timedelta(hours=24)
-    candidates = [entry for entry in after.values() if entry.version == CACHE_VERSION
-                  and entry.key not in reachable and entry.accessed <= cutoff
-                  and before.get(entry.id) == entry]
-    return {"develop": revision, "observed_at": now.isoformat(), "index_count": len(pinned),
-            "reachable_layer_count": len(reachable),
-            "observed_develop_blob_bytes": sum(entry.size for entry in after.values()),
-            "candidate_bytes": sum(entry.size for entry in candidates),
-            "candidates": [asdict(entry) for entry in sorted(candidates, key=lambda entry: (-entry.size, entry.id))]}
+    stable = [row for row in after.values() if row.size and row.version == CACHE_VERSION and row.id in before
+              and replace(row, accessed=before[row.id].accessed) == before[row.id]]
+    aged = [row for row in stable if row.accessed <= cutoff and row.created <= cutoff and row == before[row.id]]
+    reachable = set().union(*references.values())
+    candidates = tuple(sorted((row for row in aged if row.key not in reachable),
+                              key=lambda row: (-row.size, row.id)))
+    superseded = superseded_indexes(pinned, references, {row.key for row in stable}, cutoff)
+    retired_ids = {row.id for row in superseded}
+    future_reachable = set().union(*(keys for index_id, keys in references.items() if index_id not in retired_ids))
+    projected = sum(row.size for row in aged if row.key not in future_reachable)
+    return Observation(pinned, candidates, superseded, projected,
+                       sum(row.size for row in after.values()), len(reachable))
 
 
-def main(path, env):
+def snapshot(api, reader, revision, now):
+    observation = observe(api, reader, revision, now)
+    return {"develop": revision, "observed_at": now.isoformat(), "index_count": len(observation.pinned),
+            "reachable_layer_count": observation.reachable_layer_count,
+            "observed_develop_blob_bytes": observation.observed_blob_bytes,
+            "candidate_bytes": sum(entry.size for entry in observation.candidates),
+            "candidates": [asdict(entry) for entry in observation.candidates],
+            "superseded_index_count": len(observation.superseded),
+            "projected_candidate_bytes_after_index_retirement": observation.projected_candidate_bytes}
+
+
+def client(env):
     results_url = env["ACTIONS_RESULTS_URL"].rstrip("/")
     url = urlsplit(results_url)
     if (url.scheme != "https" or url.hostname != "results-receiver.actions.githubusercontent.com"
             or url.username or url.password or url.path or url.query or url.fragment or url.port not in (None, 443)):
         raise ValueError("unexpected Actions Results endpoint")
     api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
-    result = snapshot(api, lambda key, size: read_index(results_url, env["ACTIONS_RUNTIME_TOKEN"], key, size),
-                      env["GITHUB_SHA"], datetime.now(timezone.utc))
+    return api, lambda key, size: read_index(results_url, env["ACTIONS_RUNTIME_TOKEN"], key, size)
+
+
+def main(path, env):
+    api, reader = client(env)
+    result = snapshot(api, reader, env["GITHUB_SHA"], datetime.now(timezone.utc))
     Path(path).write_text(json.dumps(result, default=str) + "\n")
-    print(f"BuildKit indexes={result['index_count']} candidate_bytes={result['candidate_bytes']}")
+    print(f"BuildKit indexes={result['index_count']} candidate_bytes={result['candidate_bytes']} "
+          f"superseded_indexes={result['superseded_index_count']} "
+          f"projected_candidate_bytes={result['projected_candidate_bytes_after_index_retirement']}")
 
 
 if __name__ == "__main__":
     try:
         main(sys.argv[1], os.environ)
+    except ProofError as error:
+        print(f"BuildKit cache inventory failed at {error.phase} ({error.cause_type})", file=sys.stderr)
+        sys.exit(1)
     except Exception as error:
         print(f"BuildKit cache inventory failed ({type(error).__name__})", file=sys.stderr)
         sys.exit(1)

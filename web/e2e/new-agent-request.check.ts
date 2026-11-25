@@ -1,8 +1,88 @@
 import { expect, test } from '@playwright/test';
 import { newAgentRequestFixture } from './new-agent-request.fixture';
 import { registerRedesignHomeCases } from './redesign-home.cases';
+import { LocalStartup } from './agent-startup-fixtures';
+import { noEffects, taskAdmission } from './resource-lifecycle.fixture';
 
 registerRedesignHomeCases();
+
+test('LOCAL operator cutoff after an available capacity snapshot preserves the task without retrying', async ({
+  page,
+  baseURL,
+}) => {
+  const boundary = new LocalStartup();
+  await boundary.route(page, baseURL!);
+  await taskAdmission(page);
+  let closed = false;
+  await page.route('**/api/v1/sandboxes/capacity', (route) =>
+    route.fulfill({
+      json: {
+        resource: 'sandbox',
+        limit: closed ? 0 : 2,
+        live: 1,
+        available: closed ? 0 : 1,
+        counts_by_status: { active: 1 },
+        observed_at: new Date().toISOString(),
+      },
+    }),
+  );
+  const attempts: { key?: string; body: unknown }[] = [];
+  await page.route('**/api/agent-manager/v1/agents', (route) => {
+    expect(route.request().method()).toBe('POST');
+    attempts.push({
+      key: route.request().headers()['idempotency-key'],
+      body: route.request().postDataJSON(),
+    });
+    if (attempts.length === 1) {
+      closed = true;
+      return route.fulfill({
+        status: 429,
+        json: { code: 'sandbox_limit_reached', limit: 0, live: 1 },
+      });
+    }
+    return route.fulfill({ status: 202, json: { id: 'cutoff-retry', status: 'queued' } });
+  });
+  await page.route('**/api/agent-manager/v1/agent-lifecycle/cutoff-retry', (route) =>
+    route.fulfill({
+      json: { id: 'cutoff-retry', status: 'queued', phase: 'sandbox_runtime', events: [] },
+    }),
+  );
+  const retainedCreation = () =>
+    page.evaluate(() =>
+      sessionStorage.getItem(
+        `cma:agent-creation:${JSON.stringify([location.origin, 'local-owner'])}`,
+      ),
+    );
+  await page.goto('/agent-manager');
+  const task = page.getByLabel('Your task');
+  const start = page.getByRole('button', { name: 'Start task', exact: true });
+  await task.fill('Keep this task after the operator cutoff');
+  await expect(start).toBeEnabled();
+  await start.click();
+  await expect(page.getByText(/The Sandbox environment limit is now reached/)).toBeVisible();
+  await expect(start).toBeDisabled();
+  await expect(task).toHaveValue('Keep this task after the operator cutoff');
+  await expect(page.getByRole('button', { name: 'Recover original task' })).toHaveCount(0);
+  expect(await retainedCreation()).toBeNull();
+  expect(attempts).toHaveLength(1);
+  await page.reload();
+  await expect(task).toHaveValue('Keep this task after the operator cutoff');
+  await expect(start).toBeDisabled();
+  closed = false;
+  await page.getByRole('button', { name: 'Refresh Sandbox capacity' }).click();
+  await expect(start).toBeEnabled();
+  expect(attempts).toHaveLength(1);
+  await start.click();
+  await expect
+    .poll(async () => JSON.parse((await retainedCreation()) ?? 'null')?.intent?.receipt?.id)
+    .toBe('cutoff-retry');
+  expect(attempts).toHaveLength(2);
+  expect(attempts[0]!.key).toBeTruthy();
+  expect(attempts[1]!.key).toBeTruthy();
+  expect(attempts[1]!.key).not.toBe(attempts[0]!.key);
+  expect(attempts[1]!.body).toEqual(attempts[0]!.body);
+  noEffects(boundary);
+});
 
 for (const status of ['provisioning', 'active'] as const) {
   test(`LOCAL New agent keeps hello independent of a bound ${status} Agent`, async ({

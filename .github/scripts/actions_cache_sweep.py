@@ -84,13 +84,16 @@ class Actions:
     def entries(self, **filters):
         return [Entry.parse(row) for row in self.list("caches", "actions_caches", **filters)]
 
-    def readers(self):
+    def active_runs(self):
         # A queued run can begin executing between calls. Check executing runs
         # last and include waiting/pending approvals that may have finished jobs.
         runs = []
         for state in ("requested", "queued", "pending", "waiting", "in_progress"):
             runs.extend(self.list("runs", "workflow_runs", status=state))
-        return Readers.from_runs(runs, self.run_id)
+        return runs
+
+    def readers(self):
+        return Readers.from_runs(self.active_runs(), self.run_id)
 
     def legacy_readers_expired(self):
         # A re-run uses the original workflow SHA for 30 days. Its readers can

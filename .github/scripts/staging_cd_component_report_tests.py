@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from staging_cd_component_report import main, summarize
 from staging_cd_compatibility import GROUP
+from staging_cd_set import ALREADY_VERIFIED
 from staging_cd_targets import TARGETS
 
 
@@ -132,6 +133,21 @@ class ComponentReportTests(unittest.TestCase):
                 self.assertIsNone(summarize(env)[1])
         with self.assertRaises(ValueError):
             summarize(dict(self.env(), CD_DISPOSITION_AM="source_finalized"))
+
+    def test_locked_admission_can_reuse_a_prior_proof_without_a_deploy_job(self):
+        web = {"result": "success", "outputs": {"admit": "success", "admitted": '["web"]',
+               "failures": "{}", "admit_disposition": ALREADY_VERIFIED}}
+        env = dict(self.env(), CD_PROMOTE_WEB=json.dumps(web))
+        rows, passed = summarize(env)
+        self.assertTrue(passed)
+        self.assertRow(rows, "| web | success | admitted | skipped | already-verified |")
+        self.assertIn("web deployment skipped: a previous staging deployment verified this exact release.", rows)
+        self.assertFalse(summarize(dict(env, CD_PUBLISH_AM="failure"))[1])
+        for inconsistent in ({"deploy": "success"}, {"admitted": "[]"},
+                             {"component_result": '{"components":{}}'}, {"admit": "failure"}):
+            reported = dict(web, outputs=dict(web["outputs"], **inconsistent))
+            with self.subTest(outputs=inconsistent), self.assertRaises(ValueError):
+                summarize(dict(env, CD_PROMOTE_WEB=json.dumps(reported)))
 
     def test_successful_job_without_a_result_for_admitted_web_fails_the_report(self):
         for result in (None, "", '{"components":{}}'):
