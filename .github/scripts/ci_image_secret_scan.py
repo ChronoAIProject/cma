@@ -126,31 +126,40 @@ def source_snapshot(revision, destination):
 
 
 def report_refusal(component, error):
-    evidence = error.evidence if isinstance(error.evidence, dict) else project({}, error.outcome)
+    evidence = project(error.evidence if isinstance(error.evidence, dict) else {}, error.outcome)
     outcome = evidence.get("outcome", "scan_refused")
     counts = evidence.get("counts", {})
     findings = evidence.get("findings", [])
-    names = named_paths()
-    head = (f"FAIL ci-image-scan component={component} outcome={outcome} "
-            + " ".join(f"{key}={counts[key]}" for key in ("blocking", "detected", "reviewed") if key in counts))
+    head = f"FAIL ci-image-scan component={component} outcome={outcome}"
+    if evidence.get("complete") is True:
+        head += " " + " ".join(f"{key}={counts[key]}" for key in ("blocking", "detected", "reviewed") if key in counts)
     emit(head)
     lines = []
-    for number, finding in enumerate(findings[:SHOWN_FINDINGS], 1):
-        path = finding.get("path")
-        where = names.get(path, path or "unknown")
-        lines.append(f"  finding {number}: rule={finding.get('rule')} scope={finding.get('scope', '?')} "
-                     f"layer={finding.get('layer', '?')} path={where} "
-                     f"candidate_sha256={finding.get('candidate_sha256', 'none')}")
-    hidden = len(findings) - SHOWN_FINDINGS + evidence.get("omitted_findings", 0)
-    if hidden > 0:
-        lines.append(f"  ... {hidden} more blocking findings")
-    if any(f.get("path") not in names for f in findings):
-        lines.append("  A path shown as path-sha256 is the SHA256 of the image path without a leading '/'.")
+    if evidence.get("complete") is not True:
+        lines.append(f"  Scan incomplete; partial detections={len(findings) + evidence.get('omitted_findings', 0)}")
+        diagnostic = evidence.get("diagnostic")
+        if isinstance(diagnostic, dict):
+            # The gate projects fixed diagnostic tokens and a content-free digest.
+            lines.append(f"  diagnostic={diagnostic['kind']}" +
+                         (f" diagnostic_sha256={diagnostic['sha256']}" if "sha256" in diagnostic else ""))
+    else:
+        names = named_paths()
+        for number, finding in enumerate(findings[:SHOWN_FINDINGS], 1):
+            path = finding.get("path")
+            where = names.get(path, path or "unknown")
+            lines.append(f"  finding {number}: rule={finding.get('rule')} scope={finding.get('scope', '?')} "
+                         f"layer={finding.get('layer', '?')} path={where} "
+                         f"candidate_sha256={finding.get('candidate_sha256', 'none')}")
+        hidden = len(findings) - SHOWN_FINDINGS + evidence.get("omitted_findings", 0)
+        if hidden > 0:
+            lines.append(f"  ... {hidden} more blocking findings")
+        if any(f.get("path") not in names for f in findings):
+            lines.append("  A path shown as path-sha256 is the SHA256 of the image path without a leading '/'.")
     advice = ADVICE.get(outcome, ADVICE["scan_refused"])
     for line in lines + ["What to do:"] + ["  " + line for line in advice]:
         emit(line)
     emit(f"::error title=Image secret scan refused {component}::{outcome}: staging CD would refuse to "
-         "publish this image. The job log lists each blocking finding and what to do.")
+         "publish this image. See the diagnostic and next steps in the job log.")
     summary([f"### Image secret scan refused `{component}`", "", f"`{head}`", "", "```", *lines, "```", "",
              *advice])
 
