@@ -11,6 +11,9 @@ use mongodb::{
     Client, Database, IndexModel,
 };
 
+#[path = "rename_mongo_tests.rs"]
+mod rename;
+
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn persistent_thread_fences_survive_claim_expiry_and_restart_on_real_mongo() {

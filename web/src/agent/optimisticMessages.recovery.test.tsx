@@ -55,3 +55,32 @@ it.each(['pending', 'invalidated', 'observed'] as const)(
     expect(result.current.messages[0]?.state).toBe('unconfirmed');
   },
 );
+
+it('replaces only a cancelled local attempt when an older accepted message has the same text', () => {
+  const journal = agentTransportJournal(sessionStorage, 'alice', 'agt_1');
+  journal.select(true);
+  const original = journal.retain('Retained request');
+  const oldReceipt = { responseId: 'resp_1', commandId: 'cmd_1' };
+  journal.accepted(original.key, oldReceipt);
+  const { result, pending } = setup();
+  act(() => {
+    pending.cancelled();
+    pending.settled();
+  });
+  expect(result.current.messages).toMatchObject([
+    { state: 'accepted', key: original.key, receipt: oldReceipt },
+    { state: 'not_sent', content: 'Retained request' },
+  ]);
+  act(() => {
+    result.current.begin('Retained request');
+  });
+  expect(result.current.messages).toMatchObject([
+    { state: 'accepted', key: original.key, receipt: oldReceipt },
+    { state: 'sending', content: 'Retained request' },
+  ]);
+  expect(journal.read()).toMatchObject({
+    key: original.key,
+    state: 'accepted',
+    receipt: oldReceipt,
+  });
+});

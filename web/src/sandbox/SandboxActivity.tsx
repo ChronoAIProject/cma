@@ -16,16 +16,19 @@ export function SandboxActivity({
   client,
   sandboxId,
   settled = false,
+  parked = false,
 }: {
   readonly client: CmaWebClient;
   readonly sandboxId: string;
   readonly settled?: boolean;
+  readonly parked?: boolean;
 }) {
   const [observation, setObservation] = useState<Observation>();
   useEffect(() => {
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let reading = false;
+    let retryAt = 0;
     let cursor = 0;
     let entries: ActivityEntry[] = [];
     let syncedAt: string | undefined;
@@ -33,8 +36,12 @@ export function SandboxActivity({
     const poll = async () => {
       if (abort.signal.aborted || document.hidden || reading || finished) return;
       clearTimeout(timer);
+      if (Date.now() < retryAt) {
+        timer = setTimeout(() => void poll(), retryAt - Date.now());
+        return;
+      }
       reading = true;
-      let delay = 1500;
+      let delay = parked ? 5000 : 1500;
       try {
         let caughtUp = false;
         // Bound each catch-up batch as well as retained display state.
@@ -64,6 +71,7 @@ export function SandboxActivity({
         if (caughtUp) syncedAt = new Date().toISOString();
         setObservation({ id: sandboxId, entries, syncedAt, stale: false, loading: !caughtUp });
         finished = settled && caughtUp;
+        retryAt = 0;
       } catch (error) {
         if (abort.signal.aborted) return;
         if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
@@ -72,7 +80,8 @@ export function SandboxActivity({
           syncedAt = undefined;
         }
         setObservation({ id: sandboxId, entries, syncedAt, stale: true, loading: false });
-        delay = 5000;
+        delay = Math.max(5000, error instanceof ApiError ? (error.retryAfterMs ?? 0) : 0);
+        retryAt = Date.now() + delay;
       } finally {
         reading = false;
         if (!abort.signal.aborted && !finished) timer = setTimeout(() => void poll(), delay);
@@ -86,11 +95,15 @@ export function SandboxActivity({
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', visible);
     };
-  }, [client, sandboxId, settled]);
+  }, [client, sandboxId, settled, parked]);
   const current = observation?.id === sandboxId ? observation : undefined;
+  // Stable sorting keeps sequence order for events recorded at the same time.
+  const displayedEntries = current?.entries
+    .slice()
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   return (
     <LiveActivity
-      entries={current?.entries ?? []}
+      entries={displayedEntries ?? []}
       syncedAt={current?.syncedAt}
       stale={current?.stale}
       loading={current?.loading ?? true}

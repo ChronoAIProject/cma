@@ -99,7 +99,7 @@ pub(super) async fn settle(
     sandbox_save::apply(
         store,
         session,
-        None,
+        (None, None),
         sandbox.revision,
         &retiring,
         at,

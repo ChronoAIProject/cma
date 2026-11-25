@@ -31,6 +31,7 @@ async fn committed_unknown_promotion_resumes_its_durable_cursor_without_rescanni
         .await;
     disabled.expect("disable the isolated commit failpoint before assertions");
     assert!(matches!(outcome, Err(SandboxStoreError::Unavailable(_))));
+    crate::store::test_visibility::majority_barrier(&admin, &name).await;
     let audits = db.collection::<Document>(AUDITS);
     let filter = doc! {"agent_id":agent.id.as_str(),"audit_id":"unknown"};
     let durable = audits.find_one(filter.clone()).await.unwrap().unwrap();

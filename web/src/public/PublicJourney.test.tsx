@@ -346,7 +346,12 @@ describe('public visitor admission', () => {
       const test = setup(auth(signedIn), client);
 
       expect(await screen.findByRole('alert')).toHaveTextContent('Your previous choices are saved');
-      expect(readIntent(path)).toEqual({ ...intent, owner: PUBLIC_USER.id, submitted: true });
+      expect(readIntent(path)).toEqual({
+        ...intent,
+        owner: PUBLIC_USER.id,
+        submitted: true,
+        wireBody: JSON.stringify(intent.body),
+      });
       expect(test.navigate).not.toHaveBeenCalled();
 
       await test.user.click(screen.getByRole('button', { name: 'Try again' }));

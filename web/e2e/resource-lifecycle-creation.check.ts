@@ -26,7 +26,7 @@ for (const viewport of lifecycleViewports) {
     await navigation(page, false);
     await expect(page).toHaveURL(`${baseURL}/agent-manager`);
     await expect(
-      page.getByRole('heading', { name: 'What should your Agent work on?' }),
+      page.getByRole('heading', { name: /^Good (morning|afternoon|evening)\.$/ }),
     ).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     const task = page.getByRole('textbox', { name: 'Your task', exact: true });
@@ -35,6 +35,12 @@ for (const viewport of lifecycleViewports) {
     await task.press('Shift+Enter');
     await task.pressSequentially('and this line');
     await expect(task).toHaveValue('Keep this task\nand this line');
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Templates', exact: true })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Cloud computer', exact: true })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('button', { name: 'Add git repo', exact: true })).toBeFocused();
     await page.keyboard.press('Tab');
     const start = page.getByRole('button', { name: 'Start task', exact: true });
     await expect(start).toBeFocused();

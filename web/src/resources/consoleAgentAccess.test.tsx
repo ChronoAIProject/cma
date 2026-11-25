@@ -39,7 +39,7 @@ it('reopens retained personal routes without preparing another transport and res
 });
 
 it.each(['personal', 'shared', 'denied'] as const)(
-  'keeps protected loading behind %s access classification while selecting transport',
+  'keeps transport selection and protected loading behind %s access classification',
   async (access) => {
     const h = harness();
     const sdk = createClient({ fetch: async () => Response.json({ ...WIRE_AGENT, id: 'agt_1' }) });
@@ -68,7 +68,8 @@ it.each(['personal', 'shared', 'denied'] as const)(
       });
       return { state, controller };
     });
-    await waitFor(() => expect(h.eligibility).toHaveBeenCalledOnce());
+    await act(async () => {});
+    expect(h.eligibility).not.toHaveBeenCalled();
     expect(h.snapshot).not.toHaveBeenCalled();
     expect(h.head).not.toHaveBeenCalled();
     expect(agentRead).not.toHaveBeenCalled();
@@ -92,3 +93,52 @@ it.each(['personal', 'shared', 'denied'] as const)(
     view.unmount();
   },
 );
+
+it('classifies a directly opened retired Agent without preparing any runtime projections', async () => {
+  const h = harness();
+  const sdk = createClient({
+    fetch: async () =>
+      Response.json({
+        ...WIRE_AGENT,
+        id: 'agt_1',
+        sandbox: { ...WIRE_AGENT.sandbox, status: 'retired' },
+      }),
+  });
+  const client = { ...h.client, resourceViews: sdk };
+  const prepare = vi.spyOn(client.agentTransport!, 'prepareOpening');
+  const read = vi.spyOn(client, 'readAgent');
+  const view = renderHook(() => useConsoleAgentAccess(client, 'agt_1', 'alice'));
+  await waitFor(() => expect(view.result.current.agentAccess.state.status).toBe('ready'));
+  expect(view.result.current.personalAgentId).toBe('agt_1');
+  expect(prepare).not.toHaveBeenCalled();
+  expect(h.eligibility).not.toHaveBeenCalled();
+  expect(h.snapshot).not.toHaveBeenCalled();
+  expect(h.head).not.toHaveBeenCalled();
+  expect(read).not.toHaveBeenCalled();
+  expect(h.post).not.toHaveBeenCalled();
+});
+
+it('requires a new personal classification after an authentication epoch changes', async () => {
+  const h = harness();
+  const sdk = createClient({ fetch: async () => Response.json({ ...WIRE_AGENT, id: 'agt_1' }) });
+  const read = vi.spyOn(sdk.agents, 'readAccessible');
+  const client = { ...h.client, resourceViews: sdk };
+  const view = renderHook(({ epoch }) => useConsoleAgentAccess(client, 'agt_1', 'alice', epoch), {
+    initialProps: { epoch: 7 },
+  });
+  await waitFor(() => expect(view.result.current.agentAccess.personalReady).toBe(true));
+  let finish!: (value: Awaited<ReturnType<typeof read>>) => void;
+  read.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  view.rerender({ epoch: 8 });
+  expect(view.result.current.personalAgentId).toBeUndefined();
+  expect(view.result.current.agentAccess.personalReady).toBe(false);
+  await act(async () => {
+    finish(await sdk.agents.read('agt_1'));
+  });
+  await waitFor(() => expect(view.result.current.agentAccess.personalReady).toBe(true));
+});

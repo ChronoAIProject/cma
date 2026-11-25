@@ -45,6 +45,25 @@ class VersionLabelContractTests(unittest.TestCase):
             check=True, capture_output=True, text=True, timeout=30)
         return code, output.getvalue()
 
+    def test_unsuccessful_selection_never_reaches_labels_or_passes(self):
+        # The workflow suppresses superseded jobs; the validator remains strict
+        # if an active job receives cancelled, missing or otherwise invalid input.
+        for event_name in ('pull_request', 'merge_group', 'push'):
+            for result in ('failure', 'cancelled', 'skipped', '', 'unknown', None):
+                environment = dict(self.environment, GITHUB_EVENT_NAME=event_name)
+                if result is None:
+                    environment.pop('SELECTOR_RESULT')
+                else:
+                    environment['SELECTOR_RESULT'] = result
+                output = io.StringIO()
+                with self.subTest(event=event_name, result=result), \
+                        patch.dict(os.environ, environment, clear=True), \
+                        patch.object(version_label.subprocess, 'run') as request, \
+                        redirect_stdout(output):
+                    self.assertEqual(version_label.main(), 1)
+                    request.assert_not_called()
+                    self.assertNotIn('Version policy:', output.getvalue())
+
     def test_empty_selection_cannot_turn_missing_or_invalid_live_labels_green(self):
         # A previously labeled event must not hide removal or conflicting labels.
         self.event['pull_request']['labels'] = [{'name': 'version-upgrade:patch'}]
@@ -180,10 +199,14 @@ class VersionLabelContractTests(unittest.TestCase):
         push = {'repository': {'full_name': self.repository}, 'ref': 'refs/heads/develop',
                 'before': 'a' * 40, 'after': 'b' * 40, 'deleted': False}
         self.event_path.write_text(json.dumps(push))
-        environment = dict(self.environment, GITHUB_EVENT_NAME='push', DEPLOYABLES='[]')
+        environment = dict(
+            self.environment, GITHUB_EVENT_NAME='push', GITHUB_REF='refs/heads/develop',
+            GITHUB_SHA='b' * 40, DEPLOYABLES='[]',
+        )
         for changes, expected in [({}, 0), ({'SELECTOR_RESULT': 'failure'}, 1),
                                    ({'SELECTOR_RESULT': 'skipped'}, 1), ({'DEPLOYABLES': 'null'}, 1),
-                                   ({'DEPLOYABLES': '["unknown"]'}, 1), ({'GITHUB_EVENT_NAME': 'schedule'}, 1),
+                                   ({'DEPLOYABLES': '["unknown"]'}, 1), ({'GITHUB_EVENT_NAME': 'workflow_run'}, 1),
+                                   ({'GITHUB_EVENT_NAME': 'schedule', 'GITHUB_REF': 'refs/heads/main'}, 1),
                                    ({'GITHUB_REPOSITORY': 'other/repository'}, 1)]:
             with self.subTest(changes=changes), patch.dict(os.environ, dict(environment, **changes)), \
                     patch.object(version_label.subprocess, 'run') as request, redirect_stdout(io.StringIO()):

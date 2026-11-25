@@ -7,7 +7,7 @@ fn frozen_account_pre_backup_census_matches_the_exact_develop_descriptor() {
         .copied()
         .filter(|(name, _)| pre_backup_accounts::COLLECTIONS.contains(name))
         .collect();
-    let names: Vec<_> = crate::store::isolation::COLLECTIONS
+    let names: Vec<_> = crate::store::retirement_archive::manifest_collections()
         .iter()
         .copied()
         .filter(|name| pre_backup_accounts::COLLECTIONS.contains(name))
@@ -17,7 +17,7 @@ fn frozen_account_pre_backup_census_matches_the_exact_develop_descriptor() {
         digest(format!("archive-census-v2\n{audit:?}\n{}", names.join("\n")).as_bytes()),
         pre_backup_accounts::SHA256
     );
-    let introduced: Vec<_> = crate::store::isolation::COLLECTIONS
+    let introduced: Vec<_> = crate::store::retirement_archive::manifest_collections()
         .iter()
         .copied()
         .filter(|name| !pre_backup_accounts::COLLECTIONS.contains(name))
@@ -25,6 +25,15 @@ fn frozen_account_pre_backup_census_matches_the_exact_develop_descriptor() {
     assert_eq!(
         introduced,
         [
+            "resource_execution_effects_v1",
+            "resource_execution_grants_v1",
+            "resource_execution_records_v1",
+            "resource_revocation_operations_v1",
+            crate::store::sandbox_usage_export::CAPTURES,
+            crate::store::sandbox_usage_export::EVIDENCE,
+            crate::store::sandbox_usage_export::OUTBOX,
+            crate::store::sandbox_usage_export::STREAMS,
+            crate::store::sandbox_usage_export::INVENTORY,
             crate::store::home_backups::SCHEDULES_COLLECTION,
             crate::store::home_backups::BACKUPS_COLLECTION,
         ]

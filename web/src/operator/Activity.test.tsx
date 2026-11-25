@@ -26,6 +26,127 @@ function pending() {
 }
 
 describe('Activity summary pages', () => {
+  it('announces the cursor position and actual record range through navigation and refresh', async () => {
+    const client = operatorClient();
+    client.admin.listActivitySummary.mockImplementation(async (options) => {
+      if (options?.action === 'delete') return { items: [row('filtered')], next: null };
+      if (options?.cursor === 'middle')
+        return { items: [row('third'), row('fourth'), row('fifth')], next: 'terminal' };
+      if (options?.cursor === 'terminal') return { items: [row('sixth')], next: null };
+      return { items: [row('first'), row('second')], next: 'middle' };
+    });
+    const user = userEvent.setup();
+    render(<Activity client={client} />);
+    const previous = screen.getByRole('button', { name: 'Previous page' });
+    const next = screen.getByRole('button', { name: 'Next page' });
+    const position = async (text: string) =>
+      waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(text));
+
+    await position('Page 1 · Records 1–2 · More records available');
+    expect(previous).toBeDisabled();
+    await user.click(next);
+    await position('Page 2 · Records 3–5 · More records available');
+    expect(previous).toBeEnabled();
+    await user.click(next);
+    await position('Page 3 · Records 6–6 · Last page');
+    expect(next).toBeDisabled();
+
+    await user.click(previous);
+    await position('Page 2 · Records 3–5 · More records available');
+    await user.click(screen.getByRole('button', { name: 'Refresh records' }));
+    await position('Page 2 · Records 3–5 · More records available');
+    expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: 'middle' }),
+    );
+
+    await chooseOptionValue(user, screen.getByLabelText('Activity action'), 'delete');
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+    await position('Page 1 · Records 1–1 · Last page');
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled();
+  });
+
+  it('finds an older actor on the server before paging and keeps the selection on refresh', async () => {
+    const client = operatorClient();
+    client.admin.searchActivityActors.mockResolvedValue([
+      { subject: 'historical-actor', display_name: 'Historical actor' },
+    ]);
+    client.admin.listActivitySummary
+      .mockResolvedValueOnce({ items: [row('newest')], next: '123:act_next' })
+      .mockResolvedValue({
+        items: [
+          {
+            ...row('historical record'),
+            actor: 'historical-actor',
+            actor_name: 'Historical actor',
+          },
+        ],
+        next: null,
+      });
+    const user = userEvent.setup();
+    render(<Activity client={client} canSearchActors />);
+    await screen.findByText('newest');
+    await user.type(screen.getByRole('searchbox', { name: 'Find actor by name or ID' }), 'history');
+    await waitFor(() =>
+      expect(client.admin.searchActivityActors).toHaveBeenCalledWith('history', expect.anything()),
+    );
+    await chooseOptionValue(user, screen.getByLabelText('Activity actor'), 'historical-actor');
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+    await screen.findByText('historical record');
+    expect(client.admin.listActivitySummary).toHaveBeenCalledTimes(2);
+    expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: undefined, actor: 'historical-actor' }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Refresh records' }));
+    await waitFor(() => expect(client.admin.listActivitySummary).toHaveBeenCalledTimes(3));
+    expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: undefined, actor: 'historical-actor' }),
+    );
+  });
+
+  it('looks up a known actor ID with Activity permission alone', async () => {
+    const client = operatorClient();
+    const user = userEvent.setup();
+    render(<Activity client={client} />);
+    await user.type(screen.getByRole('searchbox', { name: 'Find actor by ID' }), 'known-id');
+    await chooseOptionValue(user, screen.getByLabelText('Activity actor'), 'known-id');
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+    await waitFor(() =>
+      expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cursor: undefined, actor: 'known-id' }),
+      ),
+    );
+    expect(client.admin.searchActivityActors).not.toHaveBeenCalled();
+  });
+
+  it('shows seconds and preserves the API order for tied timestamps on refresh', async () => {
+    const client = operatorClient();
+    const latest = '2026-11-24T02:18:29.123Z';
+    const earlier = '2026-11-24T02:18:03.456Z';
+    client.admin.listActivitySummary.mockResolvedValue({
+      items: [
+        { ...row('second-tied'), at: latest },
+        { ...row('first-tied'), at: latest },
+        { ...row('earlier'), at: earlier },
+      ],
+      next: null,
+    });
+    const user = userEvent.setup();
+    const { container } = render(<Activity client={client} />);
+    await screen.findByText('earlier');
+    const times = [...container.querySelectorAll<HTMLTimeElement>('tbody time')];
+    expect(times.map((time) => time.dateTime)).toEqual([latest, latest, earlier]);
+    expect(times.map((time) => time.title)).toEqual([latest, latest, earlier]);
+    expect(times[0]).toHaveTextContent('10:18:29');
+    expect(times[2]).toHaveTextContent('10:18:03');
+    expect(screen.getByText('Newest recorded first.')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Refresh records' }));
+    await waitFor(() => expect(screen.getByRole('table')).not.toHaveAttribute('aria-busy'));
+    expect(
+      Array.from(container.querySelectorAll('tbody code'), (cell) => cell.textContent),
+    ).toEqual(['second-tied', 'first-tied', 'earlier']);
+  });
+
   it('requests one bounded first page and retains rows while explicit refresh is pending', async () => {
     const client = operatorClient();
     const held = pending();
@@ -42,6 +163,7 @@ describe('Activity summary pages', () => {
         cursor: undefined,
         actor: undefined,
         action: undefined,
+        excludeSuccessfulReads: true,
       }),
     );
     await user.click(screen.getByRole('button', { name: 'Refresh records' }));
@@ -52,6 +174,27 @@ describe('Activity summary pages', () => {
     expect(screen.queryByText('first')).not.toBeInTheDocument();
     expect(screen.getByText('fresh')).toBeInTheDocument();
     expect(client.admin.listActivitySummary).toHaveBeenCalledTimes(2);
+  });
+
+  it('offers successful reads through the explicit Read filter', async () => {
+    const client = operatorClient();
+    client.admin.listActivitySummary
+      .mockResolvedValueOnce({ items: [], next: null })
+      .mockResolvedValueOnce({ items: [row('routine read')], next: null });
+    const user = userEvent.setup();
+    render(<Activity client={client} />);
+    await screen.findByText('No records match these filters.');
+    expect(screen.getByLabelText('Activity action')).toHaveTextContent('Audit events');
+    await chooseOptionValue(user, screen.getByLabelText('Activity action'), 'read');
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+    await screen.findByText('routine read');
+    expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        cursor: undefined,
+        action: 'read',
+        excludeSuccessfulReads: undefined,
+      }),
+    );
   });
 
   it('resets cursor on filters and rejects a late abort-resistant page and unmount result', async () => {
@@ -101,6 +244,7 @@ describe('Activity summary pages', () => {
     expect(client.admin.listActivitySummary).toHaveBeenCalledTimes(2);
     await user.click(screen.getByRole('button', { name: 'Refresh records' }));
     await screen.findByText('No records match these filters.');
+    expect(screen.getByRole('status')).toHaveTextContent('Page 1 · 0 records · Last page');
     await waitFor(() => expect(client.admin.listActivitySummary).toHaveBeenCalledTimes(3));
   });
 });

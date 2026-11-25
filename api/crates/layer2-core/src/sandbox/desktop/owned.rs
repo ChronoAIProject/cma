@@ -123,6 +123,17 @@ impl DesktopService {
         runtime: RuntimeBinding,
         authorization: Arc<dyn DesktopAuthorization>,
     ) -> Result<DesktopConnection, DesktopError> {
+        let migration_guard = if self.migration_tracking {
+            let guard =
+                try_acquire_desktop_runtime_guard(&sandbox_id).map_err(|_| DesktopError::Busy)?;
+            let (current_id, current_runtime) = self.authorize(caller, id).await?;
+            if current_id != sandbox_id || current_runtime != runtime {
+                return Err(DesktopError::Unavailable);
+            }
+            Some(guard)
+        } else {
+            None
+        };
         let store = self
             .reads
             .session_store()
@@ -204,6 +215,11 @@ impl DesktopService {
             }
             return Err(DesktopError::Unavailable);
         }
+        if let Some(guard) = &migration_guard {
+            guard
+                .opened()
+                .map_err(|_| DesktopError::AuthorityUnavailable)?;
+        }
         let authority = Arc::new(Mutex::new(authority));
         let (validity, receiver) = watch::channel(Some(deadline));
         let renewal = tokio::spawn(renew(
@@ -224,6 +240,7 @@ impl DesktopService {
             session_id: request.session_id,
             runtime_id: request.runtime.runtime_id,
             _lease: None,
+            migration_guard,
             owned: Some(ConnectionState {
                 authority,
                 control,

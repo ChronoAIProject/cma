@@ -19,6 +19,35 @@ use crate::auth::persistence::SecretValue;
 
 use super::{subscription_tokens::SubscriptionTokens, SubscriptionError};
 
+#[path = "native_codex_ingress_cache.rs"]
+mod ingress_cache;
+
+#[cfg(all(
+    any(
+        all(target_os = "linux", target_env = "gnu"),
+        all(
+            target_os = "linux",
+            target_env = "musl",
+            target_vendor = "unknown",
+            target_pointer_width = "64",
+            target_endian = "little",
+        ),
+        target_os = "macos",
+    ),
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+))]
+#[path = "native_codex_ingress_home.rs"]
+mod ingress_home;
+
+#[path = "native_codex_ingress_protocol.rs"]
+mod ingress_protocol;
+
+#[path = "native_codex_ingress_request.rs"]
+mod ingress_request;
+
+#[path = "native_codex_ingress_response.rs"]
+mod ingress_response;
+
 const CALL_TIMEOUT: Duration = Duration::from_secs(8);
 pub(super) const LOGIN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const MAX_FRAME_BYTES: u64 = 256 * 1024;

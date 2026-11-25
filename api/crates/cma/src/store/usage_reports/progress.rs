@@ -27,7 +27,7 @@ impl ReportingStore {
         let changed = self
             .collection(CONTROL)
             .update_one(
-                super::control::fence(key, holder),
+                cma_am_reporting::control_fence(key, holder),
                 doc! {"$set":{"record":encode(value)?}},
             )
             .await

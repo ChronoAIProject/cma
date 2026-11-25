@@ -263,23 +263,26 @@ describe('the dialog shell', () => {
   });
 });
 
-it('retains an opted-in editor without a closed focus trap or scroll lock', async () => {
-  const user = userEvent.setup();
-  const renderDialog = (open: boolean) => (
-    <Modal open={open} keepMounted title="Retained editor" onClose={vi.fn()}>
-      <input aria-label="Draft" defaultValue="" />
-    </Modal>
-  );
-  const { rerender, unmount } = render(renderDialog(true));
-  const input = screen.getByRole('textbox', { name: 'Draft' });
-  await user.type(input, 'Keep this uncertain edit');
-  await act(async () => rerender(renderDialog(false)));
-  expect(screen.queryByRole('dialog')).toBeNull();
-  expect(document.body.style.overflow).not.toBe('hidden');
-  expect(input.closest('.modal')).toHaveAttribute('inert');
-  await act(async () => rerender(renderDialog(true)));
-  expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(input);
-  expect(input).toHaveValue('Keep this uncertain edit');
-  unmount();
-  expect(document.body.style.overflow).not.toBe('hidden');
-});
+it.each([undefined, 'sections'] as const)(
+  'retains a %s editor without a closed focus trap or scroll lock',
+  async (layout) => {
+    const user = userEvent.setup();
+    const renderDialog = (open: boolean) => (
+      <Modal open={open} keepMounted layout={layout} title="Retained editor" onClose={vi.fn()}>
+        <input aria-label="Draft" defaultValue="" />
+      </Modal>
+    );
+    const { rerender, unmount } = render(renderDialog(true));
+    const input = screen.getByRole('textbox', { name: 'Draft' });
+    await user.type(input, 'Keep this uncertain edit');
+    await act(async () => rerender(renderDialog(false)));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.body.style.overflow).not.toBe('hidden');
+    expect(input.closest('.modal')).toHaveAttribute('inert');
+    await act(async () => rerender(renderDialog(true)));
+    expect(screen.getByRole('textbox', { name: 'Draft' })).toBe(input);
+    expect(input).toHaveValue('Keep this uncertain edit');
+    unmount();
+    expect(document.body.style.overflow).not.toBe('hidden');
+  },
+);

@@ -12,16 +12,27 @@ impl MongoSandboxStore {
         &self,
         lease: &AgentAccessLease,
     ) -> Result<AgentAccessRecord, AgentAccessError> {
-        let record = transaction!(self, session, { apply(self, lease, session).await })?;
+        let at = layer2_core::now_rfc3339();
+        let record = transaction!(self, session, { apply_at(self, lease, &at, session).await })?;
         // Only a wake hint: the ordinary worker still claims the durable work.
         self.sandbox_admitted.notify_one();
         Ok(record)
     }
 }
 
+#[cfg(test)]
 async fn apply(
     store: &MongoSandboxStore,
     lease: &AgentAccessLease,
+    session: &mut ClientSession,
+) -> TxResult<AgentAccessRecord> {
+    apply_at(store, lease, &layer2_core::now_rfc3339(), session).await
+}
+
+async fn apply_at(
+    store: &MongoSandboxStore,
+    lease: &AgentAccessLease,
+    at: &str,
     session: &mut ClientSession,
 ) -> TxResult<AgentAccessRecord> {
     let mut record = super::worker::leased(store, lease, session).await?;
@@ -31,7 +42,7 @@ async fn apply(
     ) {
         return Err(AgentAccessError::Conflict.into());
     }
-    let snapshot = validate_lineage(store, &record.requester, session, false).await?;
+    let snapshot = validate_lineage_transaction(store, &record.requester, session, false).await?;
     let value = store
         .sandboxes
         .find_one(doc! {"_id": record.requester.sandbox_id.as_str()})
@@ -97,10 +108,15 @@ async fn apply(
     validate_in_transaction(store, &current.id, last_seq, session)
         .await
         .map_err(event_error)?;
-    let at = layer2_core::now_rfc3339();
+    let at = at.to_owned();
     let mut sandbox = current.clone();
     let scope = sandbox
-        .revise_live_service_access(&record.requester.owner, &services, at.clone())
+        .revise_live_service_access_with_connection(
+            &record.requester.owner,
+            &services,
+            record.approved_connection().cloned(),
+            at.clone(),
+        )
         .map_err(|_| AgentAccessError::Conflict)?;
     let floor = scope.credential_generation_floor;
     let event = SandboxEventKind::ServiceAccessRevised {
@@ -163,6 +179,9 @@ fn validate_replay(record: &AgentAccessRecord, sandbox: &Sandbox) -> Result<(), 
                 .ok_or(AgentAccessError::Invalid)?
         || scope.authorized_by != record.requester.owner
         || scope.services != record.approved_services()?
+        || record
+            .approved_connection()
+            .is_some_and(|connection| scope.connection.as_ref() != Some(connection))
         || Some(scope.credential_generation_floor) != record.progress.grant_generation_floor
     {
         return Err(AgentAccessError::Conflict);

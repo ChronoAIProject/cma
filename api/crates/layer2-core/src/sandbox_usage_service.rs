@@ -2,7 +2,7 @@
 
 use crate::sandbox::store::{Page, PageRequest, SandboxStoreError};
 use crate::sandbox_usage::{SandboxUsage, UsageEvent, UsageTotals};
-use crate::sandbox_usage_cursor::{CursorError, Scope, UsageCursors};
+use crate::sandbox_usage_cursor::{CursorError, PageView, Scope, UsageCursors, UsageSnapshot};
 use crate::{Caller, Capability, SandboxId, SubjectId};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -14,6 +14,11 @@ pub struct UsageSummary {
     pub incomplete_lifecycle_count: u64,
     pub tracking_started_at: Option<u64>,
     pub totals: UsageTotals,
+}
+
+pub struct UsageListPage {
+    pub page: Page<SandboxUsage>,
+    pub as_of: Option<u64>,
 }
 
 #[async_trait]
@@ -34,6 +39,22 @@ pub trait SandboxUsageStore: Send + Sync {
         id: &SandboxId,
         page: &PageRequest,
     ) -> Result<Page<UsageEvent>, SandboxStoreError>;
+    async fn usage_snapshot_page(
+        &self,
+        _owner: Option<&SubjectId>,
+        _page: &PageRequest,
+        _snapshot: Option<UsageSnapshot>,
+    ) -> Result<(Page<SandboxUsage>, UsageSnapshot), SandboxStoreError> {
+        Err(snapshot_unsupported())
+    }
+    async fn usage_snapshot_events(
+        &self,
+        _id: &SandboxId,
+        _page: &PageRequest,
+        _snapshot: Option<UsageSnapshot>,
+    ) -> Result<(Page<UsageEvent>, UsageSnapshot), SandboxStoreError> {
+        Err(snapshot_unsupported())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -64,7 +85,7 @@ impl SandboxUsageService {
         admin: bool,
         owner: Option<&SubjectId>,
         page: &PageRequest,
-    ) -> Result<Page<SandboxUsage>, UsageReadError> {
+    ) -> Result<UsageListPage, UsageReadError> {
         let owner = scope(caller, admin, owner)?;
         let scope = Scope {
             caller,
@@ -73,13 +94,28 @@ impl SandboxUsageService {
             sandbox: None,
             filter_owner: owner,
         };
-        let chain = self.cursors.begin(&scope, page).map_err(cursor_error)?;
-        let mut result = self.store.usage_page(owner, &chain.page).await?;
+        let mut chain = self.cursors.begin(&scope, page).map_err(cursor_error)?;
+        let mut result = match chain.view {
+            PageView::Live => self.store.usage_page(owner, &chain.page).await?,
+            PageView::Snapshot(snapshot) => {
+                let (result, observed) = self
+                    .store
+                    .usage_snapshot_page(owner, &chain.page, snapshot)
+                    .await
+                    .map_err(snapshot_error)?;
+                chain.confirm_snapshot(observed)?;
+                result
+            }
+        };
+        let as_of = chain.as_of();
         result.next = self
             .cursors
             .finish(&scope, chain, result.next)
             .map_err(cursor_error)?;
-        Ok(result)
+        Ok(UsageListPage {
+            page: result,
+            as_of,
+        })
     }
 
     pub async fn summary(
@@ -127,13 +163,35 @@ impl SandboxUsageService {
             sandbox: Some(id),
             filter_owner: owner_filter,
         };
-        let chain = self.cursors.begin(&scope, page).map_err(cursor_error)?;
-        let mut result = self.store.usage_events(id, &chain.page).await?;
+        let mut chain = self.cursors.begin(&scope, page).map_err(cursor_error)?;
+        let mut result = match chain.view {
+            PageView::Live => self.store.usage_events(id, &chain.page).await?,
+            PageView::Snapshot(snapshot) => {
+                let (result, observed) = self
+                    .store
+                    .usage_snapshot_events(id, &chain.page, snapshot)
+                    .await
+                    .map_err(snapshot_error)?;
+                chain.confirm_snapshot(observed)?;
+                result
+            }
+        };
         result.next = self
             .cursors
             .finish(&scope, chain, result.next)
             .map_err(cursor_error)?;
         Ok(result)
+    }
+}
+
+fn snapshot_unsupported() -> SandboxStoreError {
+    SandboxStoreError::Unavailable("usage snapshot reads are unavailable".into())
+}
+
+fn snapshot_error(error: SandboxStoreError) -> UsageReadError {
+    match error {
+        SandboxStoreError::InvalidPage => UsageReadError::InvalidCursor,
+        error => UsageReadError::Store(error),
     }
 }
 

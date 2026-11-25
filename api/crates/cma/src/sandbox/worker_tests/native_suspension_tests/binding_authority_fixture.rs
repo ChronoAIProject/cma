@@ -48,11 +48,12 @@ impl NativeFixture {
             layer3_adapter::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL.into(),
             "2".into(),
         );
-        let spec = crate::sandbox::runtime_mapping::sandbox_spec(sandbox, "test");
+        let spec = crate::sandbox::runtime_mapping::sandbox_spec(sandbox, "test").unwrap();
         let pool = client
             .warm_pools()
             .configure(
                 &NativePoolSpec {
+                    cold_canary: false,
                     image: deployment.image.clone(),
                     cpu_millis: spec.capacity.cpu_millis,
                     memory_mib: spec.capacity.memory_mib,
@@ -162,7 +163,7 @@ impl NativeFixture {
                 cleaned: false,
             })),
         }));
-        let spec = crate::sandbox::runtime_mapping::sandbox_spec(sandbox, "test");
+        let spec = crate::sandbox::runtime_mapping::sandbox_spec(sandbox, "test").unwrap();
         let request = deployment.render_runtime(&spec, 1).unwrap();
         let handle = client
             .admit_pool_runtime(&claim, &home, &request)

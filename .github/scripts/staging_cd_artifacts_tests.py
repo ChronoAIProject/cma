@@ -92,7 +92,7 @@ class ArtifactTests(unittest.TestCase):
                 self.assertIsNone(try_reuse(expected, Path(directory), api, "fixture", downloader, Mock()))
                 downloader.assert_not_called()
                 self.assertEqual(api.request.call_args_list[-1].args[0],
-                                 "actions/workflows/ci.yml/runs?event=pull_request&head_sha=" + "f" * 40
+                                 "actions/runs?event=pull_request&head_sha=" + "f" * 40
                                  + "&status=success&per_page=100")
 
     def test_fork_or_non_develop_prs_never_consult_queue_artifacts(self):
@@ -104,7 +104,7 @@ class ArtifactTests(unittest.TestCase):
             with self.subTest(head=head, base=base), tempfile.TemporaryDirectory() as directory:
                 self.assertIsNone(try_reuse(expected, Path(directory), api, "fixture", Mock(), Mock()))
                 self.assertEqual([call.args[0] for call in api.request.call_args_list],
-                                 ["pulls/42", "actions/workflows/ci.yml/runs?event=pull_request&head_sha=" + "f" * 40
+                                 ["pulls/42", "actions/runs?event=pull_request&head_sha=" + "f" * 40
                                   + "&status=success&per_page=100"])
 
     def test_queue_run_without_this_component_falls_back_to_the_pr_run(self):
@@ -148,12 +148,27 @@ class ArtifactTests(unittest.TestCase):
             self.assertEqual(runner.call_args.args[0][:2], ["skopeo", "copy"])
             inspect.assert_called_once_with(path, expected, runner, allow_qualified=True)
 
+    def test_split_pr_artifact_uses_only_the_component_workflow(self):
+        expected, run, _, api, download = self.fixture()
+        run["path"] = ".github/workflows/ci-pr-web.yml"
+        responses = list(api.request.side_effect)
+        responses[1]["workflow_runs"].append(
+            dict(run, id=11, path=".github/workflows/ci-pr-eg.yml")
+        )
+        api.request.side_effect = responses
+        with tempfile.TemporaryDirectory() as directory, patch("staging_cd_artifacts.inspect"):
+            self.assertIsNotNone(try_reuse(expected, Path(directory), api, "fixture", download, Mock()))
+        self.assertEqual(api.request.call_args_list[-1].args[0], "actions/runs/10/artifacts?per_page=100")
+
     def test_unqualified_manifest_falls_back_before_using_image_archive(self):
         expected, _, metadata, api, download = self.fixture()
         metadata.pop("buildFingerprint")
         with tempfile.TemporaryDirectory() as directory:
             runner = Mock()
-            self.assertIsNone(try_reuse(expected, Path(directory), api, "fixture", download, runner))
+            misses = []
+            self.assertIsNone(try_reuse(expected, Path(directory), api, "fixture", download, runner,
+                                        on_miss=misses.append))
+            self.assertEqual(misses, ["manifest:buildFingerprint"])
             runner.assert_not_called()
             self.assertFalse((Path(directory) / "qualified.docker.tar.gz").exists())
 

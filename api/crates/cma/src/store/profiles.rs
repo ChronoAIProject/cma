@@ -1,12 +1,13 @@
 //! Shared document shape, indexes, and paging for schema-v1 profiles.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 pub(super) mod summaries;
 
 use futures_util::TryStreamExt;
 use layer2_core::ids::SubjectId;
 use layer2_core::profiles::store::{ProfilePage, ProfilePageRequest, ProfileStoreError};
 use mongodb::bson::{doc, Bson, Document};
-use mongodb::options::{IndexOptions, ReturnDocument};
+use mongodb::options::{IndexOptions, ReadConcern, ReturnDocument};
 use mongodb::{ClientSession, Collection, IndexModel};
 use serde::de::DeserializeOwned;
 
@@ -238,6 +239,68 @@ pub(super) async fn get_revision<T: DeserializeOwned>(
         .transpose()
 }
 
+/// Paces a retry of initial publication after a confirmed-uncommitted
+/// conflict. The competing initial publisher holds the same unpublished row
+/// until it commits; the pause lets that commit land, so the retry reconciles
+/// its revision one instead of exhausting the budget. Ordinary publication
+/// keeps yielding.
+pub(super) async fn retry_pause(attempt: usize, initial: bool) {
+    if attempt == 0 {
+        return;
+    }
+    if initial {
+        let shift = u32::try_from(attempt - 1).unwrap_or(u32::MAX).min(4);
+        tokio::time::sleep(std::time::Duration::from_millis(10 << shift)).await;
+    } else {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// Bounds the wait for an unknown commit to become majority-visible.
+const UNKNOWN_COMMIT_READ_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Reads one exact row after a commit whose reply was lost. A read-only
+/// successor transaction in the same causally consistent session retires any
+/// open server state. Its majority read waits, within a bound, for the
+/// session's commit time, so a row it returns is durable; a read outside the
+/// session may not yet see a commit that applied.
+pub(super) async fn read_after_unknown_commit(
+    session: &mut ClientSession,
+    collection: &Collection<Document>,
+    filter: Document,
+) -> Result<Option<Document>, ProfileStoreError> {
+    session
+        .start_transaction()
+        .read_concern(ReadConcern::majority())
+        .await
+        .map_err(|error| ProfileStoreError::Unavailable(error.to_string()))?;
+    let row = collection
+        .find_one(filter)
+        .max_time(UNKNOWN_COMMIT_READ_LIMIT)
+        .session(&mut *session)
+        .await;
+    let _ = session.abort_guarded().await;
+    row.map_err(|error| ProfileStoreError::Unavailable(error.to_string()))
+}
+
+pub(super) async fn get_revision_after_unknown_commit<T: DeserializeOwned>(
+    session: &mut ClientSession,
+    collection: &Collection<Document>,
+    profile_id: &str,
+    revision: u32,
+    decode: fn(&Document) -> Result<T, ProfileStoreError>,
+) -> Result<Option<T>, ProfileStoreError> {
+    read_after_unknown_commit(
+        session,
+        collection,
+        doc! { "profile_id": profile_id, "revision": i64::from(revision) },
+    )
+    .await?
+    .as_ref()
+    .map(decode)
+    .transpose()
+}
+
 pub(super) async fn list_revisions<T: DeserializeOwned>(
     profiles: &Collection<Document>,
     revisions: &Collection<Document>,
@@ -309,18 +372,25 @@ pub(super) async fn advance_publication(
     id: &str,
     expected: u64,
     published_at: &str,
+    initial_only: bool,
 ) -> Result<(Document, u32), PublishError> {
+    let mut filter = doc! {
+        "_id": id,
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "draft_version": signed(expected, "expected profile draft version")
+            .map_err(ProfileStoreError::Corrupt)
+            .map_err(PublishError::Domain)?,
+        "retired_at": Bson::Null,
+        "account_erasure_fenced": { "$ne": true },
+    };
+    if initial_only {
+        // Same draft version can be published repeatedly by the ordinary API.
+        // Initial creation must consume the unpublished state in this write.
+        filter.insert("last_revision", 0_i64);
+    }
     let profile = collection
         .find_one_and_update(
-            doc! {
-                "_id": id,
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "draft_version": signed(expected, "expected profile draft version")
-                    .map_err(ProfileStoreError::Corrupt)
-                    .map_err(PublishError::Domain)?,
-                "retired_at": Bson::Null,
-                "account_erasure_fenced": { "$ne": true },
-            },
+            filter,
             doc! {
                 "$inc": { "last_revision": 1_i64 },
                 "$set": { "latest_published_at": published_at },

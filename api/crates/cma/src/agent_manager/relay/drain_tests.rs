@@ -62,6 +62,7 @@ async fn authenticated_prestop_drains_actual_managers_before_peer_takeover() {
                 address.clone(),
                 256,
                 false,
+                false,
             )
             .await
             .unwrap();
@@ -82,7 +83,7 @@ async fn authenticated_prestop_drains_actual_managers_before_peer_takeover() {
             }));
             manager.register_lifecycle(lifecycle).unwrap();
             lifecycle_exits.push(exited);
-            manager.activate().unwrap();
+            manager.activate().await.unwrap();
             let server = tokio::spawn(async move {
                 axum::serve(
                     listener,
@@ -204,6 +205,7 @@ async fn prestop_and_main_retain_ownership_until_blocked_lifecycle_has_joined() 
         address.clone(),
         256,
         false,
+        false,
     )
     .await
     .unwrap();
@@ -221,7 +223,7 @@ async fn prestop_and_main_retain_ownership_until_blocked_lifecycle_has_joined() 
     }));
     ready.await.unwrap();
     manager.register_lifecycle(lifecycle.clone()).unwrap();
-    manager.activate().unwrap();
+    manager.activate().await.unwrap();
     let authority = manager
         .coordinator
         .acquire(&AgentId("blocked-agent".into()))

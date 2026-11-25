@@ -10,7 +10,7 @@ pub use super::state::{
 pub use super::test_turn::{test_consumer, test_turn, TestResult};
 use crate::{
     auth::Creator,
-    providers::{BindingRequest, ToolsAdvertisement},
+    providers::{BindingRequest, ProviderError, ToolsAdvertisement},
     records::{RecordError, RecordValue},
 };
 use cmaeg_core::{
@@ -254,17 +254,7 @@ pub async fn update(
         .await?;
     validate_update_request(&request).map_err(ManagementError::Invalid)?;
     custom_attachments_allowed(state, &request.sources)?;
-    if current
-        .definition
-        .creation
-        .as_ref()
-        .is_some_and(|value| !value.ready)
-    {
-        return Err(ManagementError::Conflict {
-            expected: request.expected_version,
-            actual: Some(current.record.version),
-        });
-    }
+    super::creation::require_ready(&current.definition)?;
     if super::mutation::original_version(&current.definition, current.record.version)
         != request.expected_version
     {
@@ -280,10 +270,34 @@ pub async fn update(
             "cannot change an existing channel provider",
         )));
     }
-    state.resolver.invalidate(channel_id.as_str());
     // The write gate runs inside the build, before the provider sees anything.
     let mut definition = build_update(&request, &current.definition, state.write_flags())
         .map_err(ManagementError::Invalid)?;
+    if current.definition.mutation.is_none()
+        && current.definition.provider.target.is_profile()
+        && state
+            .providers
+            .has_cma_binding_contract(&current.definition.provider.slug)
+    {
+        let retained = &current.definition.profile;
+        let requested = &definition.profile;
+        let adds_service = requested
+            .permission
+            .service_scope
+            .iter()
+            .chain(std::iter::once(&requested.model.service))
+            .any(|service| {
+                service != &retained.model.service
+                    && !retained.permission.service_scope.contains(service)
+            });
+        if adds_service {
+            return Err(ManagementError::Provider(ProviderError::Rejected {
+                status: 409,
+                code: "binding_reconfiguration_unsupported".into(),
+            }));
+        }
+    }
+    state.resolver.invalidate(channel_id.as_str());
     definition.mutation = None;
     let fingerprint = super::mutation::fingerprint(&definition);
     super::native_telegram::initialize(state, Some(&current.definition), &mut definition)?;
@@ -385,12 +399,13 @@ pub(super) fn open_pointer(
             _ => ManagementError::NotFound,
         })?
         .payload;
-    if state
+    state
         .records
         .record_url(pointer.record_id.as_str())
-        .map_err(ManagementError::Record)?
-        .as_str()
-        != pointer.record_url
+        .map_err(ManagementError::Record)?;
+    if !state
+        .records
+        .names_record(&pointer.record_url, pointer.record_id.as_str())
     {
         return Err(ManagementError::NotFound);
     }

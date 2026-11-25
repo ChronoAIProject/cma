@@ -44,7 +44,7 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
-async function submit() {
+async function submit(returnToHome = false) {
   sessionStorage.setItem(legacyKey, JSON.stringify(original));
   let operation: AgentLifecycleOperationView = {
     id: 'draft-operation',
@@ -90,11 +90,14 @@ async function submit() {
     recoverable: [],
     revision: expect.any(String),
   });
+  // Return to Home after the bound Agent navigation, as the real shell does.
+  if (returnToHome) view.unmount();
+  const landing = returnToHome ? render(<>{home}</>) : view;
   return {
     client,
     home,
     followup,
-    view,
+    view: landing,
     finish: (status: 'succeeded' | 'failed') => {
       operation = { ...operation, status };
     },
@@ -144,7 +147,7 @@ it.each([
 it.each([false, true])(
   'synchronizes a mounted landing without overwriting an edited next draft (%s)',
   async (edited) => {
-    const task = await submit();
+    const task = await submit(true);
     if (edited)
       fireEvent.change(screen.getByLabelText('Your task'), {
         target: { value: 'Keep my next task' },
@@ -314,7 +317,7 @@ it.each([{}, { workspace_id: 'wsp_1' }, { sandbox_id: 'sbx_1' }])(
 );
 
 it('preserves an unsubmitted same-body edit in the mounted editor and storage when A completes', async () => {
-  const task = await submit();
+  const task = await submit(true);
   const originalRevision = JSON.parse(sessionStorage.getItem(draftKey)!).revision;
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Intervening edit' } });
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: original.text } });

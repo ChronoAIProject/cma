@@ -131,7 +131,7 @@ it.each([409, 503])(
     expect(documentDraft('owner', id)).toEqual(draft);
     expect(api.update).toHaveBeenCalledOnce();
     if (status === 503) {
-      fireEvent.click(screen.getByRole('button', { name: 'Retry save' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Retry same save' }));
       await waitFor(() => expect(api.update).toHaveBeenCalledTimes(2));
       const calls = vi.mocked(api.update).mock.calls;
       expect(calls[1]![1]).toEqual(calls[0]![1]);

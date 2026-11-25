@@ -1,0 +1,224 @@
+use mongodb::bson::{doc, Document};
+
+pub(super) fn sandbox() -> Document {
+    fields(&[
+        "_id",
+        "document_schema_version",
+        "revision",
+        "last_seq",
+        "status",
+        "work_pending",
+        "work_lease_expires_at",
+        "desktop_activity_fence",
+        "agent_command_admission_fence",
+        "agent_conversation_admission_fence",
+        "agent_conversation_reopen_fence",
+        "workspace_admission_fence",
+        "sandbox_maintenance_fence",
+        "resource_share_guard",
+        "record.id",
+        "record.created_at",
+        "record.updated_at",
+        "record.revision",
+        "record.status",
+        "record.last_activity_at",
+        "record.profile.id",
+        "record.profile.revision",
+        "record.profile.digest",
+        "record.profile.content.runtime_image",
+        "record.runtime",
+        "record.work.step",
+        "record.work.next_fence",
+        "record.work.lease",
+        "record.work.authority_protocol",
+        "record.lifecycle.next_authority",
+        "record.lifecycle.runtime_generation_high_water",
+        "record.lifecycle.suspended_runtime",
+        "record.lifecycle.operation.authority.operation_id",
+        "record.lifecycle.operation.authority.generation",
+        "record.lifecycle.operation.authority.writer_resume_generation",
+        "record.lifecycle.operation.checkpoint_epoch",
+        "record.lifecycle.operation.purpose",
+        "record.lifecycle.operation.phase",
+        "record.lifecycle.operation.target_runtime_version",
+        "record.lifecycle.runtime_update.request.target_version",
+        "record.lifecycle.runtime_update.request.started_at",
+        "record.lifecycle.runtime_update.request.completed_at",
+        "record.lifecycle.runtime_update.request.failure.class",
+        "record.lifecycle.home.request.volume_id",
+        "record.lifecycle.home.receipt.volume_id",
+        "record.lifecycle.home.receipt.request_sha256",
+        "record.lifecycle.home.receipt.storage_reference",
+        "record.lifecycle.home.receipt.storage_generation",
+        "record.lifecycle.home.receipt.native_authority.claim.name",
+        "record.lifecycle.home.receipt.native_authority.claim.uid",
+        "record.lifecycle.home.receipt.native_authority.claim.sandbox_name",
+        "record.lifecycle.home.receipt.native_authority.sandbox_uid",
+        "record.lifecycle.home.receipt.native_authority.pvc_uid",
+        "record.lifecycle.home.released",
+        "record.lifecycle.custom_runtime.effective_image",
+    ])
+}
+
+pub(super) fn workspace() -> Document {
+    fields(&[
+        "_id",
+        "sandbox_id",
+        "document_schema_version",
+        "revision",
+        "status",
+        "work_pending",
+        "work_lease_expires_at",
+        "owned_workspace_admission_fence",
+        "sandbox_maintenance_fence",
+        "next_worktree_number",
+        "record.id",
+        "record.sandbox_id",
+        "record.created_at",
+        "record.ready_at",
+        "record.revision",
+        "record.status",
+        "record.next_worktree_number",
+        "record.work.step",
+        "record.work.next_fence",
+        "record.work.lease",
+        "record.work.authority_protocol",
+        "record.removed_at",
+    ])
+}
+
+pub(super) fn agent() -> Document {
+    fields(&[
+        "_id",
+        "sandbox_id",
+        "workspace_id",
+        "worktree_id",
+        "creation_key",
+        "creation_fingerprint",
+        "document_schema_version",
+        "revision",
+        "last_seq",
+        "status",
+        "work_pending",
+        "work_next_fence",
+        "work_lease_holder",
+        "work_lease_fence",
+        "work_lease_expires_at",
+        "agent_command_admission_fence",
+        "agent_conversation_admission_fence",
+        "sandbox_maintenance_fence",
+        "agent_log_format",
+        "agent_log_incarnation",
+        "agent_log_head_revision",
+        "record.id",
+        "record.sandbox_id",
+        "record.workspace_id",
+        "record.worktree_id",
+        "record.creation_key",
+        "record.creation_fingerprint",
+        "record.created_at",
+        "record.updated_at",
+        "record.revision",
+        "record.status",
+        "record.deleted_at",
+        "record.stopped_at",
+        "record.conversation.conversation_id",
+        "record.conversation.runtime_generation",
+        "record.conversation.last_seq",
+        "record.conversation.active_turn",
+        "record.conversation.queued_messages.sequence",
+        "record.conversation.queued_messages.state",
+        "record.conversation.operation.sequence",
+        "record.conversation.operation.intent.type",
+        "record.conversation.operation.state",
+        "record.work.step",
+        "record.work.next_fence",
+        "record.work.lease",
+        "record.requested_stop_reason",
+        "record.work.cleanup_debt.operation_id",
+    ])
+}
+
+pub(super) fn command() -> Document {
+    fields(&[
+        "_id",
+        "document_schema_version",
+        "agent_id",
+        "agent_order",
+        "status",
+        "revision",
+        "queue_deadline",
+        "queued_cancellation_fence",
+        "record.receipt.envelope.command_id",
+        "record.receipt.envelope.agent_id",
+        "record.receipt.agent_order",
+        "record.receipt.admitted_at",
+        "record.status",
+        "record.revision",
+        "record.target_turn",
+        "record.work.lease",
+        "record.work.dispatch.claim",
+        "record.work.dispatch.operation_sequence",
+        "record.work.dispatch.turn_sequence",
+        "record.work.dispatch.runtime_generation",
+        "record.work.dispatch.fenced_at",
+        "record.work.dispatch.delivery",
+        "record.work.failure.code",
+        "record.work.failure.at",
+        "queued_input.revision",
+        "queued_input.receipt.revision",
+    ])
+}
+
+pub(super) fn order() -> Document {
+    fields(&[
+        "_id",
+        "document_schema_version",
+        "last_order",
+        "next_fence",
+        "lease",
+    ])
+}
+
+pub(super) fn log_tail() -> Document {
+    fields(&[
+        "_id",
+        "document_schema_version",
+        "agent_id",
+        "seq",
+        "record.agent_id",
+        "record.seq",
+        "record.appended_at",
+        "record.kind.type",
+    ])
+}
+
+pub(super) fn head() -> Document {
+    fields(&[
+        "_id",
+        "format_version",
+        "incarnation",
+        "revision",
+        "active_ordinal",
+        "active_start_seq",
+        "last_seq",
+        "active_count",
+        "active_bytes",
+        "previous_seal",
+        "lifetime_count",
+        "lifetime_bytes",
+        "projection_format",
+        "evidence_generation",
+        "projection_through",
+        "migration_id",
+        "required_reader",
+    ])
+}
+
+fn fields(keys: &[&str]) -> Document {
+    let mut result = doc! {};
+    for key in keys {
+        result.insert(*key, 1_i32);
+    }
+    result
+}

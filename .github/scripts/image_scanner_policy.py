@@ -16,20 +16,20 @@ APPROVED_CLASSIFICATIONS: dict[str, tuple[str, str]] = {}
 # (content manifest SHA256, authentic SA-01 review SHA256). Remains disabled
 # until the exact catalog and resolver have received that independent verdict.
 APPROVED_CONTENT_POLICY = (
-    "3cfb89bf19c4ddda0fad950c284078852a88a13e3ec91b44183504b3f306d79e",
-    "9eae89fca11ab926dbf837cd1813dd1468cf83fed418fecf80f629e50d66f8bb",
+    "aafd541c0243e1931a0d2387e4de12d71e1c265f6986c78362f3c246b430233a",
+    "6e6a175226dc22d5f681780e10a4b2b5bbc9aac163859d61a4af1fcf9bb6d818",
 )
 PACKAGE_EVIDENCE = Path(".github/scripts/image-package-evidence.json")
 OMARCHY_PACKAGE_EVIDENCE = Path(".github/scripts/image-omarchy-package-evidence.json")
 # Independently reviewed evidence and verdict digests. Evidence gathered from
 # the candidate image cannot supply either pin.
 APPROVED_PACKAGE_EVIDENCE = (
-    "6ded51680dcec4fe4d8d9d1046dbd3bd51b7a3f05a6c0fa22520d0178f4026d9",
-    "a67ebb416b97f74659bf8f62476f5705f3ff9e55d7782ff90da7cadd9ef71829",
+    "e036721f027ecd407ccb547819561c27f2300fd72984f0a4b665ebb0e066b838",
+    "0e5a4d9d1bc3f348ef1e7135d97a27d70bb37de0fcdc6e213d756d779776125e",
 )
 APPROVED_OMARCHY_PACKAGE_EVIDENCE = (
-    "18d75ea3281dda89b594a36b5d4245ff15863bff9dc484074dcc258a411e8cab",
-    "a67ebb416b97f74659bf8f62476f5705f3ff9e55d7782ff90da7cadd9ef71829",
+    "771e75fa0c399c5089624f8ea1e89cc3d0966d4340be391bcce1f7fc73e7254e",
+    "0e5a4d9d1bc3f348ef1e7135d97a27d70bb37de0fcdc6e213d756d779776125e",
 )
 # Runtime scope requires a new exact-manifest review before activation.
 CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json",

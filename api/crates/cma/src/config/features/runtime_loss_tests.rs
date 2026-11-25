@@ -1,6 +1,34 @@
 use super::FeatureFlags;
 
 #[test]
+fn native_retirement_finality_defaults_off_and_requires_explicit_selection() {
+    const KEY: &str = "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.native_retirement_finality_enabled, expected);
+        assert!(!flags.runtime_loss_bounded_proof_enabled);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "yes".into()))).is_err());
+}
+
+#[test]
+fn reviewed_retirement_admission_defaults_off_and_requires_explicit_selection() {
+    const KEY: &str = "CHRONO_REVIEWED_SANDBOX_RETIREMENT_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.reviewed_sandbox_retirement_enabled, expected);
+        assert!(!flags.native_retirement_finality_enabled);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "yes".into()))).is_err());
+}
+
+#[test]
 fn suspended_reopen_admission_is_independent_and_defaults_off() {
     const KEY: &str = "CHRONO_RETAINED_SUSPENDED_REOPEN_ENABLED";
     for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
@@ -38,4 +66,19 @@ fn runtime_loss_proof_requires_an_independent_strict_default_off_flag() {
         Ok(None)
     })
     .is_err());
+}
+
+#[test]
+fn repeat_reopen_admission_is_independent_and_defaults_off() {
+    const KEY: &str = "CHRONO_RETAINED_REPEAT_REOPEN_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.retained_repeat_reopen_enabled, expected);
+        assert!(!flags.retained_reopen_enabled);
+        assert!(!flags.retained_suspended_reopen_enabled);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "yes".into()))).is_err());
 }

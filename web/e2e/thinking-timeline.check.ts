@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 
 for (const theme of ['light', 'dark']) {
-  test(`LOCAL ${theme} Thinking stays visible, restores its clock and separates finished tools`, async ({
+  test(`LOCAL ${theme} Thinking follows the reply, restores its clock and separates finished tools`, async ({
     page,
     baseURL,
   }, info) => {
@@ -145,15 +145,25 @@ for (const theme of ['light', 'dark']) {
         }),
       );
       await page.goto('/agents/agt_contract');
-      const toggle = page.getByRole('button', { name: /^Thinking/ });
-      const elapsed = async () =>
-        Number((await page.locator('.thinking__elapsed').innerText()).match(/\d+/)?.[0]);
+      const toggle = page.getByRole('button', { name: 'View activity', exact: true });
+      const elapsed = async () => {
+        const text = await page.locator('.thinking__elapsed').innerText();
+        expect(text).toMatch(/^\d+[dhms](?: \d+[hms])?$/);
+        const seconds = { d: 86400, h: 3600, m: 60, s: 1 };
+        return [...text.matchAll(/(\d+)([dhms])/g)].reduce(
+          (total, match) => total + Number(match[1]) * seconds[match[2] as keyof typeof seconds],
+          0,
+        );
+      };
       await expect(toggle).toBeVisible();
       expect(boundary.errors).toEqual([]);
       expect(boundary.unexpected).toEqual([]);
       await expect.poll(() => stream !== undefined && !stream.destroyed).toBe(true);
       expect(await elapsed()).toBeGreaterThanOrEqual(120);
-      await toggle.click();
+      await toggle.focus();
+      await page.keyboard.press('Enter');
+      await expect(toggle).toBeFocused();
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true');
       await expect(page.locator('.thinking__activity')).toHaveCount(2);
       await expect(page.locator('.agent-event--tool')).toHaveCount(0);
       emit('REASONING_MESSAGE_CONTENT', { messageId: 'reason', delta: 'Inspecting dependencies' });
@@ -175,10 +185,12 @@ for (const theme of ['light', 'dark']) {
             .getBoundingClientRect();
           const composer = document.querySelector('.agent-composer')!.getBoundingClientRect();
           return (
-            dock.top >= history.bottom - 1 &&
-            dock.bottom <= composer.top + 1 &&
-            dock.top >= 0 &&
-            dock.bottom < innerHeight &&
+            document
+              .querySelector('.message-stream')!
+              .contains(document.querySelector('.thinking')) &&
+            dock.top >= history.top - 1 &&
+            dock.bottom <= history.bottom + 1 &&
+            history.bottom <= composer.top + 1 &&
             dock.left >= 0 &&
             dock.right <= innerWidth &&
             document.documentElement.scrollWidth <= innerWidth + 1
@@ -190,11 +202,21 @@ for (const theme of ['light', 'dark']) {
       );
       for (const width of [1440, 390, 320]) {
         await page.setViewportSize({ width, height: 900 });
+        await toggle.scrollIntoViewIfNeeded();
         await expect.poll(fits).toBe(true);
         await scroller.evaluate((element) => {
           element.scrollTop = 0;
           element.dispatchEvent(new Event('scroll'));
         });
+        await expect
+          .poll(() =>
+            page.locator('.thinking').evaluate((element) => {
+              const history = element.closest('.agent-surface__conversation')!;
+              return element.getBoundingClientRect().top >= history.getBoundingClientRect().bottom;
+            }),
+          )
+          .toBe(true);
+        await toggle.scrollIntoViewIfNeeded();
         await expect.poll(fits).toBe(true);
         await page.screenshot({
           path: info.outputPath(`thinking-${theme}-${width}.png`),
@@ -211,17 +233,15 @@ for (const theme of ['light', 'dark']) {
         append({ type: 'tool_call_updated', call_id: 'fast', status: 'completed' }),
       );
       await expect(page.locator('.thinking__activity')).toHaveCount(1);
-      await expect(page.locator('.agent-event--tool strong')).toHaveText(['Read package']);
+      await page.locator('.tool-calls__toggle[aria-expanded="false"]').click();
+      await expect(page.locator('.tool-call__literal')).toHaveText(['Read package']);
       emit(
         'TOOL_CALL_END',
         { toolCallId: 'slow', 'cma:status': 'failed' },
         append({ type: 'tool_call_updated', call_id: 'slow', status: 'failed' }),
       );
       await expect(page.locator('.thinking__activity')).toHaveCount(0);
-      await expect(page.locator('.agent-event--tool strong')).toHaveText([
-        'Read package',
-        'Run tests',
-      ]);
+      await expect(page.locator('.tool-call__literal')).toHaveText(['Read package', 'Run tests']);
       const beforeNavigation = await elapsed();
       await page.locator('.sidebar').getByRole('link', { name: 'CMA home', exact: true }).click();
       await expect(toggle).toHaveCount(0);
@@ -229,17 +249,13 @@ for (const theme of ['light', 'dark']) {
       await page.goBack();
       await expect(toggle).toBeVisible();
       expect(await elapsed()).toBeGreaterThanOrEqual(beforeNavigation);
-      await expect(page.locator('.agent-event--tool strong')).toHaveText([
-        'Read package',
-        'Run tests',
-      ]);
+      await page.locator('.tool-calls__toggle[aria-expanded="false"]').click();
+      await expect(page.locator('.tool-call__literal')).toHaveText(['Read package', 'Run tests']);
       await page.reload();
       await expect(toggle).toBeVisible();
       expect(await elapsed()).toBeGreaterThanOrEqual(beforeNavigation);
-      await expect(page.locator('.agent-event--tool strong')).toHaveText([
-        'Read package',
-        'Run tests',
-      ]);
+      await page.locator('.tool-calls__toggle[aria-expanded="false"]').click();
+      await expect(page.locator('.tool-call__literal')).toHaveText(['Read package', 'Run tests']);
       await expect.poll(() => stream !== undefined && !stream.destroyed).toBe(true);
       completed = true;
       emit(

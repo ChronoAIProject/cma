@@ -8,18 +8,19 @@ impl NativeWarmPools {
         provider: &dyn NativePoolControl,
         target: PoolTarget,
     ) -> Result<bool, WarmPoolError> {
+        let released = self.released_images();
         let image = if target.machine {
             // Removing the configured machine image does not grant an agent-only
             // release authority to retire desktop capacity.
-            let Some((image, _)) = &self.machine else {
+            let Some((image, _)) = released.machine else {
                 self.store.finish(&target, false).await?;
                 return Ok(true);
             };
-            &image.uri
+            image.uri
         } else {
-            &self.image.uri
+            released.agent.uri
         };
-        retire_claimed(self.store.as_ref(), provider, image, target).await
+        retire_claimed(self.store.as_ref(), provider, &image, target).await
     }
 }
 
@@ -37,6 +38,7 @@ pub(super) async fn retire_claimed(
         {
             return Err(WarmPoolError::Unavailable);
         }
+        target = store.begin_retirement(&target).await?;
         if target.binding.is_none() {
             // Recover an uncertain configure acknowledgement before marking
             // the original definitions. Never create positive old capacity.
@@ -47,7 +49,6 @@ pub(super) async fn retire_claimed(
             store.bind(&target, &status.binding).await?;
             target.binding = Some(status.binding);
         }
-        target = store.begin_retirement(&target).await?;
         let binding = target.binding.as_ref().ok_or(WarmPoolError::Conflict)?;
         provider
             .begin_retirement(binding)

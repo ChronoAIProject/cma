@@ -10,6 +10,8 @@ pub(super) const RENEWED_VERSION: i64 = 3;
 /// Version four is the first envelope that may contain the strict warm
 /// installation proof. Older renewed readers must refuse it before decoding.
 pub(super) const PREPARED_VERSION: i64 = 4;
+/// Custom image and scoped migration authority require compatible readers.
+pub(super) const RUNTIME_MIGRATION_VERSION: i64 = 5;
 
 pub(super) fn version(protocol: Option<WorkAuthorityProtocol>, prepared_installation: bool) -> i64 {
     if prepared_installation {
@@ -22,13 +24,13 @@ pub(super) fn version(protocol: Option<WorkAuthorityProtocol>, prepared_installa
 }
 
 pub(super) fn versions() -> Document {
-    doc! {"$in":[1_i64, RENEWED_VERSION, PREPARED_VERSION]}
+    doc! {"$in":[1_i64, RENEWED_VERSION, PREPARED_VERSION, RUNTIME_MIGRATION_VERSION]}
 }
 
 pub(super) fn require(document: &Document) -> Result<(), String> {
     match document.get("document_schema_version") {
-        Some(Bson::Int64(1 | RENEWED_VERSION | PREPARED_VERSION))
-        | Some(Bson::Int32(1 | 3 | 4)) => Ok(()),
+        Some(Bson::Int64(1 | RENEWED_VERSION | PREPARED_VERSION | RUNTIME_MIGRATION_VERSION))
+        | Some(Bson::Int32(1 | 3 | 4 | 5)) => Ok(()),
         _ => Err("unsupported ordinary-work envelope".into()),
     }
 }
@@ -51,10 +53,18 @@ pub(super) fn read<T: DeserializeOwned>(document: &Document) -> Result<T, String
         .get_document("work")
         .ok()
         .is_some_and(|work| work.contains_key("prepared_installation_digest"));
+    let migration = record
+        .get_document("lifecycle")
+        .ok()
+        .is_some_and(|lifecycle| {
+            lifecycle.contains_key("custom_runtime")
+                || lifecycle.contains_key("runtime_migration_admission")
+        });
     let valid_version = match version {
-        Some(Bson::Int64(1) | Bson::Int32(1)) => !renewed && !proof,
-        Some(Bson::Int64(RENEWED_VERSION) | Bson::Int32(3)) => renewed && !proof,
-        Some(Bson::Int64(PREPARED_VERSION) | Bson::Int32(4)) => proof,
+        Some(Bson::Int64(1) | Bson::Int32(1)) => !renewed && !proof && !migration,
+        Some(Bson::Int64(RENEWED_VERSION) | Bson::Int32(3)) => renewed && !proof && !migration,
+        Some(Bson::Int64(PREPARED_VERSION) | Bson::Int32(4)) => proof && !migration,
+        Some(Bson::Int64(RUNTIME_MIGRATION_VERSION) | Bson::Int32(5)) => migration,
         _ => false,
     };
     if !valid_version || (protocol.is_some() && !renewed) {

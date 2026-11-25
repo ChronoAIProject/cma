@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
-import { agentClient, AGENT_DETAIL } from '../test/agent';
+import { agentClient, AGENT_DETAIL, AGENT_TRANSCRIPT } from '../test/agent';
+import type { CmaWebClient } from './client';
 import { coalesceDetailReads, detailReadSource } from './detailReads';
 
 it('identifies a wrapped source without modifying clients or mixing account identities', () => {
@@ -15,6 +16,51 @@ it('identifies a wrapped source without modifying clients or mixing account iden
   wrapped.dispose();
   nested.dispose();
   expect(detailReadSource(wrapped.client)).toBe(original);
+});
+
+it('preserves retained history limits and cache policy without joining another reader', async () => {
+  const readers: (() => void)[] = [];
+  const read = vi.fn<CmaWebClient['readAgentTranscript']>(
+    () =>
+      new Promise((resolve) => {
+        readers.push(() => resolve(AGENT_TRANSCRIPT));
+      }),
+  );
+  const scope = coalesceDetailReads(agentClient({ readAgentTranscript: read }));
+  const ordinary = scope.client.readAgentTranscript('agt_1');
+  const bounded = scope.client.readAgentTranscript('agt_1', {
+    cache: 'no-store',
+    maxPages: 256,
+    maxBytes: 16 * 1024 * 1024,
+  });
+  const exportRead = scope.client
+    .readAgentTranscript('agt_1', {
+      cache: 'no-store',
+      maxPages: 512,
+      maxBytes: 32 * 1024 * 1024,
+    })
+    .catch((error: unknown) => error);
+  await Promise.resolve();
+  expect(read).toHaveBeenCalledTimes(3);
+  expect(read.mock.calls[1]?.[1]).toEqual({
+    signal: expect.any(AbortSignal),
+    cache: 'no-store',
+    maxPages: 256,
+    maxBytes: 16 * 1024 * 1024,
+  });
+  expect(read.mock.calls[2]?.[1]).toEqual({
+    signal: expect.any(AbortSignal),
+    cache: 'no-store',
+    maxPages: 512,
+    maxBytes: 32 * 1024 * 1024,
+  });
+  readers[0]!();
+  readers[1]!();
+  await expect(ordinary).resolves.toBe(AGENT_TRANSCRIPT);
+  await expect(bounded).resolves.toBe(AGENT_TRANSCRIPT);
+  scope.dispose();
+  expect(read.mock.calls[2]?.[1]?.signal?.aborted).toBe(true);
+  expect(await exportRead).toMatchObject({ name: 'AbortError' });
 });
 
 function setup() {

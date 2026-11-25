@@ -406,7 +406,7 @@ async fn runtime_retirement_preserves_uncertain_writes_when_it_interrupts_the_tu
         let current = store.get_agent(&agent.id).await.unwrap().unwrap();
         let now = crate::now_rfc3339();
         let (retired, kinds) =
-            crate::sandbox::runtime_recovery_agents::recover_agent(&parent, &current, &now)
+            crate::sandbox::runtime_recovery_agents::recover_agent(&parent, &current, &now, false)
                 .unwrap();
         let mut log = store.agent_log(&agent.id, 0, 50).await.unwrap();
         for kind in kinds {

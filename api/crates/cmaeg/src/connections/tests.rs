@@ -389,3 +389,6 @@ mod lifecycle;
 mod outbox;
 
 mod store_diagnostics;
+
+#[path = "tests/setup_gate.rs"]
+mod setup_gate;

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) struct MemoryCredentials {
+pub(crate) struct MemoryCredentials {
     pub(super) live_keys: Mutex<std::collections::BTreeSet<String>>,
     pub(super) revoke_failure_ids: Mutex<std::collections::BTreeSet<String>>,
     pub(super) census_failure: Mutex<Option<CredentialError>>,
@@ -14,7 +14,7 @@ pub(super) struct MemoryCredentials {
 }
 
 impl MemoryCredentials {
-    pub(super) fn new(actions: ActionLog) -> Arc<Self> {
+    pub(crate) fn new(actions: ActionLog) -> Arc<Self> {
         Arc::new(Self {
             live_keys: Default::default(),
             revoke_failure_ids: Default::default(),
@@ -91,6 +91,7 @@ impl SandboxCredentialController for MemoryCredentials {
         self.actions.push(format!("mint:{generation}"));
         let material = CredentialMaterial {
             source: Default::default(),
+            github_route: None,
             sandbox_id: sandbox.id.clone(),
             owner: sandbox.owner.clone(),
             authority: layer2_core::sandbox::SandboxCredentialAuthority {

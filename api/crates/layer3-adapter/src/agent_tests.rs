@@ -35,6 +35,28 @@ fn legacy_skill_payload_without_name_round_trips_unchanged() {
 }
 
 #[test]
+fn restart_runtime_identity_preserves_the_open_request_digest() {
+    let mut request = AgentOpenRequest::new("agent:agent-a:open:2:v1", options(), None);
+    let original = serde_json::to_value(&request).unwrap();
+    assert!(original.get("restart_runtime").is_none());
+    request.restart_runtime = Some(crate::AgentRestartRuntime {
+        runtime: crate::RuntimeStatusRequest {
+            sandbox_id: "sandbox".into(),
+            generation: 7,
+            home_identity: "a".repeat(43),
+        },
+        boot_id: "b".repeat(32),
+    });
+    assert!(request.has_valid_sha256());
+    let encoded = serde_json::to_value(&request).unwrap();
+    assert_eq!(encoded["request_sha256"], original["request_sha256"]);
+    assert_eq!(
+        serde_json::from_value::<AgentOpenRequest>(encoded).unwrap(),
+        request
+    );
+}
+
+#[test]
 fn agent_digest_encodings_are_stable() {
     let home = AgentHomeRequest::new(
         "agent:agent-a:home:create:v1",

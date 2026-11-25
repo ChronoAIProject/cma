@@ -1,3 +1,4 @@
+import { fieldError } from './fieldErrors';
 import { useId, useLayoutEffect, useRef, type RefObject } from 'react';
 import { Button } from '../../ui/Button';
 import { revealInvalidField } from './AdvancedFields';
@@ -6,8 +7,12 @@ const editable =
   'input:not(:disabled):not([readonly]), textarea:not(:disabled):not([readonly]), button:not(:disabled)';
 
 function errorField(root: HTMLElement, error: string) {
-  const pointer = /^(\/[^\s:]*):/.exec(error)?.[1];
-  if (!pointer) return undefined;
+  const reported = /^(\/[^\s:]*):/.exec(error)?.[1];
+  if (!reported) return undefined;
+  // Managed connection admission is validated after expansion into producer 0.
+  const pointer = root.querySelector('[data-validation-path="/connection_admission"]')
+    ? reported.replace(/^\/sources\/0\/admission(?=\/|$)/, '/connection_admission')
+    : reported;
   const candidates = [...root.querySelectorAll<HTMLElement>('[data-validation-path]')]
     .filter((element) => {
       const path = element.dataset.validationPath!;
@@ -31,6 +36,7 @@ export function ValidationError({
 }) {
   const summary = useRef<HTMLDivElement>(null);
   const id = useId();
+  const parsed = fieldError(error);
   useLayoutEffect(() => {
     const field = canEdit && root.current ? errorField(root.current, error) : undefined;
     if (!field) {
@@ -49,14 +55,26 @@ export function ValidationError({
 
   return (
     <div role="alert" tabIndex={-1} ref={summary}>
-      <p id={id}>{error}</p>
+      <p id={id}>
+        {parsed.label ? `${parsed.label}: ` : null}
+        {parsed.message}
+      </p>
       {canEdit ? (
         <Button
           onClick={() => {
-            root.current?.querySelectorAll('details').forEach((details) => {
-              details.open = true;
-            });
-            root.current?.querySelector<HTMLElement>(editable)?.focus();
+            const field = root.current && errorField(root.current, error);
+            if (field) {
+              revealInvalidField(field);
+              field.focus();
+              return;
+            }
+            const invalid = root.current?.querySelector<HTMLElement>(
+              'input:invalid, textarea:invalid',
+            );
+            if (invalid) {
+              revealInvalidField(invalid);
+              invalid.focus();
+            } else summary.current?.focus();
           }}
         >
           Review channel fields

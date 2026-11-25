@@ -1,4 +1,6 @@
 //! Public, principal-scoped measured usage reports; no source query passthrough.
+mod initial;
+mod initial_openapi;
 mod openapi;
 #[cfg(test)]
 mod options_tests;
@@ -32,6 +34,7 @@ struct Empty {}
 
 pub fn sandbox_metrics_router(service: Arc<MetricsService>) -> Router {
     let routes = Router::new()
+        .merge(initial::routes())
         .route("/view", get(view::latest))
         .route("/reports", post(create))
         .route("/reports/{report}", get(poll))
