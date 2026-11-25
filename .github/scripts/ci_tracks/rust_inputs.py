@@ -6,6 +6,59 @@ from syntax import RUST, descendants, parse, string_value
 
 # Keep the reuse inside one selector process and bound retained source bytes.
 MAX_CACHED_SOURCE_BYTES = 64 * 1024
+INCLUDE_MACROS = {b'include', b'include_str', b'include_bytes'}
+COMMENTS = {'line_comment', 'block_comment'}
+
+
+def tokens(node):
+    return [child for child in node.children if child.type not in COMMENTS]
+
+
+def arguments(tree):
+    if tree.type != 'token_tree':
+        raise ValueError('expected Rust macro arguments')
+    args = tokens(tree)[1:-1]
+    if args and args[-1].type == ',':
+        args.pop()
+    return args
+
+
+def include_path(tree):
+    args = arguments(tree)
+    if len(args) == 1:
+        return 'source', string_value(args[0])
+    if len(args) == 3 and args[0].text == b'concat' and args[1].type == '!':
+        expr = arguments(args[2])
+        if len(expr) == 5 and expr[0].text == b'env' and expr[1].type == '!' and expr[3].type == ',':
+            env = arguments(expr[2])
+            if len(env) == 1 and string_value(env[0]) == 'CARGO_MANIFEST_DIR':
+                suffix = string_value(expr[4])
+                if suffix.startswith('/') and len(suffix) > 1:
+                    return 'manifest', suffix[1:]
+    raise ValueError('computed include path is unsupported')
+
+
+def included_files(data):
+    if b'include' not in data:
+        return ()
+    result = []
+    for node in descendants(parse(data, RUST)):
+        if node.type == 'macro_invocation':
+            macro = tokens(node)[0].text.rsplit(b'::', 1)[-1].strip()
+            if macro in INCLUDE_MACROS:
+                result.append((macro, *include_path(tokens(node)[-1])))
+        if node.type == 'token_tree':
+            # Rust's syntax tree leaves nested macro bodies as tokens.
+            items = tokens(node)
+            for name, bang, tree in zip(items, items[1:], items[2:]):
+                if name.type == 'identifier' and name.text in INCLUDE_MACROS and bang.type == '!':
+                    ancestor = node.parent
+                    while ancestor:
+                        if ancestor.type == 'macro_definition':
+                            raise ValueError('include from a macro definition is unsupported')
+                        ancestor = ancestor.parent
+                    result.append((name.text, *include_path(tree)))
+    return result
 
 
 def attributes(items):
@@ -31,7 +84,7 @@ def attributes(items):
 def module_declarations(container, directory=(), inherited=False):
     attrs = []
     for item in container.named_children:
-        if item.type in {'line_comment', 'block_comment'}:
+        if item.type in COMMENTS:
             continue
         if item.type == 'attribute_item':
             attrs.append(item)
