@@ -257,7 +257,9 @@ mod tests {
                     },
                 })
                 .collect::<Vec<_>>();
-            let (agent, _) = fixtures::install(&store, agent, entries, 1, 256).await;
+            let (agent, entries) = fixtures::install(&store, agent, entries, 1, 256).await;
+            fixtures::certify(&store, &agent, &entries).await;
+            fixtures::certify_output(&store, &agent, &entries).await;
             use layer2_core::sandbox::store::AgentLogStore as _;
             let valid = AgentLogKind::ModeChanged {
                 mode: "before-erasure".into(),
@@ -371,7 +373,8 @@ mod tests {
         let database = client.database(&name);
         schema::migrate(&database).await.unwrap();
         let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-        let (agent, _) = fixtures::segmented_with_width(&store, 1, 256, 20).await;
+        let (agent, entries) = fixtures::segmented_with_width(&store, 1, 256, 20).await;
+        fixtures::certify(&store, &agent, &entries).await;
         use crate::store::migrations::agent_log_active_proofs as migration;
         for (_, index) in migration::inspect(&database).await.unwrap() {
             migration::create(&database, index).await.unwrap();
