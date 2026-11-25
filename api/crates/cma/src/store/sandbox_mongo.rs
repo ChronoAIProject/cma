@@ -112,6 +112,7 @@ pub struct MongoSandboxStore {
     pub(super) sandbox_snapshot_reads: bool,
     pub(super) sandbox_batched_reads: bool,
     pub(super) bounded_response_reads: bool,
+    pub(super) active_log_proofs: bool,
     pub(crate) writer_policy:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub(super) bindings: super::bindings::BindingCollections,

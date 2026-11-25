@@ -72,8 +72,8 @@ export class Results {
     catch { throw new CheckError('phase_capture_failed'); }
     return outcome === 'complete';
   }
-  block(name, reason) {
-    this.samples.push({ case: name, run: null, outcome: 'blocked', code: reason });
+  block(name, reason, run = null) {
+    this.samples.push({ case: name, run, outcome: 'blocked', code: reason });
   }
   async save(directory) {
     await mkdir(directory, { recursive: true });
@@ -113,7 +113,6 @@ export async function publicRead(origin, path, timeout = 30000) {
   return { status: response.status, body, contentType: response.headers.get('content-type') ?? '' };
 }
 
-export function agentReady(agent, desktop) {
-  return agent?.status === 'ready' && agent?.sandbox?.status === 'active'
-    && (desktop !== true || agent.desktop === true);
+export function agentReady(agent) {
+  return agent?.status === 'ready' && agent?.sandbox?.status === 'active';
 }

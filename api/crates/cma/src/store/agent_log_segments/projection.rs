@@ -139,6 +139,14 @@ pub(in crate::store) async fn read_budgeted(
         .map_err(TransactionLogError::Driver)?
         .ok_or_else(corrupt)?
     };
+    validate_projection(row, agent, head)
+}
+
+pub(super) fn validate_projection(
+    row: Document,
+    agent: &Agent,
+    head: &Head,
+) -> Result<AgentLogProjectionState, TransactionLogError> {
     let projection: Projection = bson::deserialize_from_document(row).map_err(|_| corrupt())?;
     if projection.agent_id == head.agent_id && projection.incarnation == head.incarnation {
         super::telemetry::lag("projection", projection.through_seq, head.last_seq);

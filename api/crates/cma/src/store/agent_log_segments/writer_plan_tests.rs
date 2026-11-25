@@ -407,3 +407,55 @@ fn segmented_recovery_refuses_empty_source_event_replay_and_terminal_reserves() 
         .is_err());
     }
 }
+
+#[test]
+fn active_proof_rollover_keeps_only_the_new_source_bytes() {
+    let current = head(10_000, 1_000_000);
+    let batch = EncodedBatch::new(
+        &current,
+        &[
+            entry(10_001, "new one".into()),
+            entry(10_002, "new two".into()),
+        ],
+    )
+    .unwrap();
+    let result = publication(
+        &current,
+        &batch,
+        AppendCapacity::Normal,
+        RolloverPermission::Normal,
+        SourceFormat::Segmented,
+    )
+    .unwrap();
+    let prior = digest::binary(vec![7; current.active_count as usize * 32]);
+    let proof = super::super::active_proof::ActiveProof::successor(
+        &current,
+        7,
+        8,
+        &result,
+        &prior,
+        batch.rows(),
+    )
+    .unwrap();
+    let document = mongodb::bson::serialize_to_document(&proof).unwrap();
+    let leaves = document.get_binary_generic("leaves").unwrap();
+    assert_eq!(leaves.len(), 64);
+    for (offset, row) in batch.rows().iter().enumerate() {
+        let expected = digest::leaf(
+            &current.agent_id,
+            &current.incarnation,
+            current.last_seq + offset as i64 + 1,
+            row.as_bytes(),
+        );
+        assert_eq!(&leaves[offset * 32..(offset + 1) * 32], &expected.bytes);
+    }
+    assert_eq!(document.get_i64("agent_revision").unwrap(), 8);
+    assert_eq!(
+        document
+            .get_document("head")
+            .unwrap()
+            .get_i64("active_start_seq")
+            .unwrap(),
+        10_001
+    );
+}
