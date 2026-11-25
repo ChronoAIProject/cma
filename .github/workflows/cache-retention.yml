@@ -48,6 +48,7 @@ jobs:
       github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
       github.event_name == 'workflow_dispatch' && inputs.inspect_buildkit
     runs-on: ubuntu-latest
+    cache-mode: read
     timeout-minutes: 12
     permissions:
       actions: read
@@ -239,8 +240,19 @@ jobs:
         if: steps.verify-restore.outcome == 'success' && steps.verify-restore.outputs.cache-hit == 'true'
         timeout-minutes: 5
         run: python3 -B .github/scripts/buildkit_cache_archive.py restore "$RUNNER_TEMP/cma-layer-cache/verified" "$RUNNER_TEMP/cma-layer-cache/archive.tar"
+      - name: Set up the actual BuildKit importer
+        if: steps.verify-archive.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
+        timeout-minutes: 3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          cache-binary: false
+      - name: Prove import of the exact restored archive
+        id: verify-import
+        if: steps.verify-archive.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
+        timeout-minutes: 5
+        run: python3 -B .github/scripts/buildkit_cache_archive.py prove-import "$RUNNER_TEMP/cma-layer-cache/verified" "$RUNNER_TEMP/cma-layer-cache/archive.tar"
       - name: Retire verified compatible archive predecessors
-        if: steps.verify-archive.outcome == 'success'
+        if: steps.verify-import.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
         timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
@@ -248,4 +260,42 @@ jobs:
           CD_LAYER_ARCHIVE_CACHE: enabled
           CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
           LAYER_EXACT_CACHE_HIT: ${{ steps.verify-restore.outputs.cache-hit }}
+          LAYER_IMPORT_ARCHIVE_DIGEST: ${{ steps.verify-import.outputs.archive_digest }}
         run: python3 -B .github/scripts/actions_layer_admission.py verify
+  recover_native_buildkit:
+    if: >-
+      vars.CMA_LEGACY_BUILDKIT_GC == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' &&
+      github.event_name == 'workflow_run' && github.ref == 'refs/heads/develop' &&
+      github.repository == 'ChronoAIProject/cma' && github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'develop' && github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.path == '.github/workflows/staging-cd.yml'
+    concurrency:
+      group: cma-develop-layer-cache-admission
+      queue: max
+      cancel-in-progress: false
+    cache-mode: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Read the cache runtime environment
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        with:
+          script: |
+            for (const name of ['ACTIONS_RUNTIME_TOKEN', 'ACTIONS_RESULTS_URL']) {
+              const value = process.env[name];
+              if (!value) throw new Error('Build cache runtime is unavailable');
+              core.setSecret(value);
+              core.exportVariable(name, value);
+            }
+      - name: Retire only proven unreachable native blobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_LEGACY_BUILDKIT_GC: ${{ vars.CMA_LEGACY_BUILDKIT_GC == 'true' && 'enabled' || '' }}
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
+        run: python3 -B .github/scripts/actions_cache_buildkit_recovery.py

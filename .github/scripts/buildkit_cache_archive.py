@@ -7,9 +7,11 @@ import os
 import re
 import shutil
 import stat
+import subprocess
 import tarfile
 from graphlib import TopologicalSorter
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
 MAX_BYTES = 4 * 1024**3
@@ -176,18 +178,48 @@ def restore(archive, root):
         raise
 
 
+def prove_import(root, archive, runner=subprocess.run):
+    """Require an affirmative import from the actual restored cache bytes."""
+    inventory(root)
+    with TemporaryDirectory(prefix="layer-cache-import-") as directory:
+        source = Path(directory)
+        (source / "Dockerfile").write_text("FROM scratch\nCOPY fixture /fixture\n")
+        (source / "fixture").write_text("cache import qualification\n")
+        result = runner(["docker", "buildx", "build", "--network=none", "--progress=rawjson",
+                         "--output", "type=cacheonly", "--cache-from", "type=local,src=" + str(root),
+                         str(source)], capture_output=True, text=True, timeout=180, check=False)
+    require(result.returncode == 0, "BuildKit cache import probe failed")
+    imported = {}
+    for line in (result.stdout + "\n" + result.stderr).splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        for vertex in event.get("vertexes", []):
+            if vertex.get("name", "").startswith("importing cache manifest from local:"):
+                require(not vertex.get("error"), "BuildKit refused the restored cache")
+                imported[vertex["digest"]] = bool(vertex.get("completed"))
+    require(len(imported) == 1 and all(imported.values()), "BuildKit did not complete the cache import")
+    with archive.open("rb") as stream:
+        return digest(stream)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("seal", "restore"))
+    parser.add_argument("mode", choices=("seal", "restore", "prove-import"))
     parser.add_argument("directory", type=Path)
     parser.add_argument("archive", type=Path)
     args = parser.parse_args()
     try:
         if args.mode == "seal":
             seal(args.directory, args.archive)
-        else:
+        elif args.mode == "restore":
             restore(args.archive, args.directory)
-    except (OSError, ValueError, TypeError, KeyError, AttributeError, tarfile.TarError) as error:
+        else:
+            proof = prove_import(args.directory, args.archive)
+            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+                output.write(f"archive_digest={proof}\n")
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, tarfile.TarError, subprocess.SubprocessError) as error:
         print(f"BuildKit cache archive withheld ({type(error).__name__})")
         return 1
     return 0

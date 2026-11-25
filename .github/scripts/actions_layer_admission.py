@@ -11,7 +11,7 @@ from pathlib import Path
 from actions_cache_retention import BUDGET, CARGO, DEVELOP
 from actions_cache_sweep import Actions
 from actions_cargo_budget import BudgetRef, MAX_CHARGE as CARGO_MAX_CHARGE, SCHEMA as CARGO_SCHEMA, stored_bound
-from buildkit_cache_archive import MAX_BYTES, inventory as validate_archive
+from buildkit_cache_archive import MAX_BYTES, digest, inventory as validate_archive
 from staging_cd_common import require
 from staging_cd_versions import REPOSITORY
 
@@ -179,6 +179,9 @@ def main(env, mode):
         return
     if mode == "verify":
         require(env.get("LAYER_EXACT_CACHE_HIT") == "true", "Fresh exact layer restore is required")
+        with archive.open("rb") as stream:
+            require(digest(stream) == env.get("LAYER_IMPORT_ARCHIVE_DIGEST"),
+                    "BuildKit import proof does not match the restored archive")
         result = retire_verified(api, key, env["GITHUB_SHA"], archive.parent / "verified")
         print(json.dumps(result), flush=True)
         return

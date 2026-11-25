@@ -88,6 +88,22 @@ class ArchiveTests(unittest.TestCase):
                 archive.restore(stored, root / "restored")
             self.assertFalse((root / "restored").exists())
 
+    def test_import_proof_requires_actual_successful_vertex(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            populate(root / 'source')
+            stored = root / 'archive.tar'
+            archive.seal(root / 'source', stored)
+            archive.restore(stored, root / 'restored')
+            vertex = {'digest': 'sha256:' + 'a' * 64,
+                      'name': 'importing cache manifest from local:synthetic', 'completed': 'now'}
+            for invalid in ([], [vertex | {'error': 'invalid synthetic cache'}], [vertex | {'completed': None}]):
+                runner = Mock(return_value=Mock(returncode=0, stdout='', stderr=json.dumps({'vertexes': invalid})))
+                with self.assertRaises(ValueError):
+                    archive.prove_import(root / 'restored', stored, runner)
+            runner = Mock(return_value=Mock(returncode=0, stdout='', stderr=json.dumps({'vertexes': [vertex]})))
+            self.assertEqual(archive.prove_import(root / 'restored', stored, runner), hashlib.sha256(stored.read_bytes()).hexdigest())
+
 
 class AdmissionTests(unittest.TestCase):
     def setUp(self):
@@ -208,7 +224,8 @@ class ProducerTests(unittest.TestCase):
         self.assertEqual(reader['needs'], 'retain_layers')
         self.assertEqual(reader['cache-mode'], 'read')
         self.assertEqual(reader['concurrency'], writer['concurrency'])
-        self.assertEqual(reader['steps'][-1]['if'], "steps.verify-archive.outcome == 'success'")
+        self.assertEqual(reader['steps'][-1]['if'],
+                         "steps.verify-import.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'")
 
     def test_runtime_prefix_excludes_omarchy_in_both_restore_paths(self):
         from actions_layer_admission import archive_key
