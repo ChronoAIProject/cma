@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 338,
+  "openapi_operations": 339,
   "operations": {
     "POST /api/v1/admin/sandboxes/{id}/runtime-migration": {
       "classification": "openapi",
@@ -4522,6 +4522,14 @@
         "reporting_budget_exceeded",
         "usage_unavailable",
         "report_expired"
+      ]
+    },
+    "POST /api/v2/triggers/public/{public_id}/launches": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launch_subject.rs# Bound admission adds a mandatory subject condition before the existing engine.",
+      "required_problems": [
+        "command_subject_condition_invalid",
+        "command_subject_mismatch"
       ]
     }
   },

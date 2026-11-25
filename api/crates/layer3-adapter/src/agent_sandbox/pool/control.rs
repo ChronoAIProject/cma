@@ -4,6 +4,13 @@ use super::{
 };
 use crate::HomeVolumeAttachment;
 
+/// Durable allocation evidence for a fenced spare drain.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct NativePoolDrain {
+    pub homes: Vec<HomeVolumeAttachment>,
+    pub claims: Vec<NativePoolClaim>,
+}
+
 /// Native pool effects exposed to durable control-plane workers and operators.
 #[async_trait::async_trait]
 pub trait NativePoolControl: Send + Sync {
@@ -18,7 +25,7 @@ pub trait NativePoolControl: Send + Sync {
     async fn drain_pool(
         &self,
         _binding: &NativePoolBinding,
-        _retained_homes: &[HomeVolumeAttachment],
+        _evidence: &NativePoolDrain,
     ) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "native pool drain is unavailable".into(),
@@ -118,9 +125,10 @@ impl NativePoolControl for AgentSandboxPools {
     async fn drain_pool(
         &self,
         binding: &NativePoolBinding,
-        retained_homes: &[HomeVolumeAttachment],
+        evidence: &NativePoolDrain,
     ) -> Result<()> {
-        self.drain_pool(binding, retained_homes).await
+        self.drain_pool(binding, &evidence.homes, &evidence.claims)
+            .await
     }
     async fn retire_pool(
         &self,

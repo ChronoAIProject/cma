@@ -37,6 +37,7 @@ pub(super) struct Provider {
     configure_gate: Arc<Mutex<Option<Gate<NativePoolConfiguration>>>>,
     lose_configuration_reply: Arc<AtomicBool>,
     claim_gate: Arc<Mutex<Option<Gate<NativePoolClaim>>>>,
+    claim_request_gate: Arc<Mutex<Option<Gate<NativePoolClaimRequest>>>>,
 }
 
 struct Gate<T> {
@@ -149,6 +150,15 @@ impl Provider {
 
     pub(super) fn hold_claim(&self) -> (oneshot::Receiver<NativePoolClaim>, oneshot::Sender<()>) {
         Gate::install(&self.claim_gate)
+    }
+
+    pub(super) fn hold_claim_request(
+        &self,
+    ) -> (
+        oneshot::Receiver<NativePoolClaimRequest>,
+        oneshot::Sender<()>,
+    ) {
+        Gate::install(&self.claim_request_gate)
     }
 
     pub(super) fn hold_configuration(
@@ -266,6 +276,7 @@ impl NativePoolControl for Provider {
     }
 
     async fn claim(&self, request: &NativePoolClaimRequest) -> Result<NativePoolClaim> {
+        Gate::pause(&self.claim_request_gate, request).await;
         let claim = self.admit_claim(request)?;
         Gate::pause(&self.claim_gate, &claim).await;
         Ok(claim)
@@ -308,12 +319,12 @@ impl NativePoolControl for Provider {
     async fn drain_pool(
         &self,
         binding: &NativePoolBinding,
-        retained_homes: &[HomeVolumeAttachment],
+        evidence: &layer3_adapter::agent_sandbox::NativePoolDrain,
     ) -> Result<()> {
         let mut inventory = self.inventory.lock().unwrap();
         inventory.effects.push(Effect::Drain(
             binding.config_sha256.clone(),
-            retained_homes.to_vec(),
+            evidence.homes.clone(),
         ));
         let pool = inventory.exact_mut(binding)?;
         assert!(
