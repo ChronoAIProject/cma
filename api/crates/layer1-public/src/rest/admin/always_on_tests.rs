@@ -57,6 +57,16 @@ async fn reviewed_retirement_requires_a_guard_and_hides_the_route_from_readers()
     assert_eq!(rejected.1["code"], "invalid_admin_request");
 
     let receipt_path = format!("{path}/{}/{}", "a".repeat(64), "b".repeat(64));
+    let denied_receipt = send(
+        &f.app,
+        Method::GET,
+        &receipt_path,
+        None,
+        &[Capability::ReadAllSandboxes],
+    )
+    .await;
+    assert_eq!(denied_receipt.0, StatusCode::NOT_FOUND);
+    assert_eq!(denied_receipt.1["code"], "sandbox_not_found");
     assert_eq!(
         send(
             &f.app,

@@ -281,7 +281,7 @@ async fn invalid_claims_configuration_and_capacity_are_separate_failures() {
             _ => {
                 permits = f.auth.verification_slots.acquire_many(64).await.unwrap();
                 assert_eq!(permits.num_permits(), 64);
-                ("verification", "admission", "capacity")
+                ("verification", "admission", "verification_capacity")
             }
         };
         let (result, events) = capture(f.request(state)).await;

@@ -104,7 +104,9 @@ it('confirms the exact 1 MiB publication only after explicit replay returns the 
         headers: { 'content-type': 'application/octet-stream' },
       }),
   );
-  expect(await test.client.agents.downloadArtifact('agent-1', id)).toEqual(new Uint8Array(bytes));
+  const downloaded = await test.client.agents.downloadArtifact('agent-1', id);
+  expect(downloaded).toBeInstanceOf(Uint8Array);
+  expect(Buffer.from(downloaded).equals(bytes)).toBe(true);
 });
 
 it('uses the original validated body after the caller changes its request object', async () => {

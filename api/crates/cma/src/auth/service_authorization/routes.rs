@@ -73,6 +73,7 @@ async fn account(
     }
     if let Some(url) = grant
         .and_then(|grant| grant.management_url)
+        .or_else(|| provider.management_url())
         .filter(|url| provider_url(&auth, url))
     {
         body["management_url"] = url.as_str().into();

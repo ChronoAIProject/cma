@@ -234,6 +234,10 @@ mutations = [
   ->(d) { d['ci-rust']['jobs']['timing']['steps'] << d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }.dup },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['continue-on-error'] = true },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['run'].sub!('--test-threads 1', '--test-threads 2') },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'Enforce Gateway latency budgets' }['run'] += ' || true' },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'Enforce Gateway latency budgets' }['continue-on-error'] = true },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].reject! { |s| s['name'] == 'Gateway latency runner regressions' } },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s.dig('with', 'name').to_s.start_with?('cmaeg-latency-') }['with']['path'] = 'api/target/cmaeg-latency.txt' },
   ->(d) { d['ci'][true].delete('merge_group') },
   ->(d) { d['ci'][true]['merge_group']['types'] = ['destroyed'] },
   ->(d) { d['ci'][true]['merge_group']['branches'] = ['main'] },
@@ -429,7 +433,7 @@ mutations.concat([
   ->(d) { repo_jobs.call(d)['result']['needs'].delete('scanner-tests') },
   ->(d) { repo_jobs.call(d)['result']['steps'].last['run'] = 'true' }
 ])
-mutations.each do |mutate|
+(mutations + KeyProviderCIContract.mutations).each do |mutate|
   copy = Marshal.load(Marshal.dump(documents))
   mutate.call(copy)
   begin

@@ -48,6 +48,7 @@ export interface AgentController {
   readonly resourceAvailability: SandboxResourceAvailability;
   readonly progressObservation?: ReturnType<typeof useSandboxInput>['progressObservation'];
   readonly pending?: AgentCommand;
+  readonly initialSendPending?: boolean;
   readonly actionError?: string;
   readonly reload: () => void;
   readonly refreshDetail: () => void;

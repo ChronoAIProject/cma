@@ -49,8 +49,11 @@ jobs:
         name: "Type check"
         run: "npm run typecheck"
       -
-        name: "Tests"
-        run: "npm run test"
+        name: "Tests and critical Agent browser coverage"
+        run: >-
+          npm run test -- --coverage.enabled --coverage.reporter=text-summary
+          --coverage.include=src/auth/context.tsx
+          --coverage.include=src/agent/transport/projection.ts
       -
         name: "Anonymous readiness proxy regressions"
         timeout-minutes: 5
@@ -335,9 +338,14 @@ jobs:
         timeout-minutes: 5
         env:
           CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
-        run: |
-          npx playwright test --config e2e/usage.config.ts
-          CMA_E2E_MEASURED_USAGE=true npx playwright test --config e2e/usage.config.ts account-usage.check.ts operations-usage.check.ts
+        run: "npx playwright test --config e2e/usage.config.ts"
+      -
+        name: "Measured Usage browser layouts and states"
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
+          CMA_E2E_MEASURED_USAGE: "true"
+        run: "npx playwright test --config e2e/usage.config.ts account-usage.check.ts operations-usage.check.ts"
       -
         name: "Document navigation and creation recovery"
         timeout-minutes: 5

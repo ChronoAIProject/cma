@@ -88,17 +88,19 @@ for (const [width, theme] of [
           },
         });
       });
+      const notice = page.getByRole('region', { name: 'Deletion request', exact: true });
+      const composer = page.getByRole('textbox', { name: 'Message', exact: true });
       await page.goto('/agents/agt_contract');
+      await expect(composer).toBeEnabled();
+      await expect(composer).toBeInViewport();
+      await expect(notice).toHaveCount(0);
+      await page.goto(`/sandboxes/${fixture.boundary.sandbox.id}`);
       await page.evaluate(
         (theme) => document.body.toggleAttribute('data-ds-dark-theme', theme === 'dark'),
         theme,
       );
-      const notice = page.getByRole('region', { name: 'Deletion request', exact: true });
-      const composer = page.getByRole('textbox', { name: 'Message', exact: true });
       await expect(notice).toHaveCount(1);
       await expect(notice).toContainText('Deleting 5 environments');
-      await expect(composer).toBeEnabled();
-      await expect(composer).toBeInViewport();
       expect((await notice.boundingBox())!.height).toBeLessThanOrEqual(72);
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
@@ -128,6 +130,7 @@ for (const [width, theme] of [
         if (remaining) await expect(notice).toContainText(`Deleting ${remaining} environment`);
       }
       await expect(notice).toHaveCount(0);
+      await page.goto('/agents/agt_contract');
       await expect(composer).toBeEnabled();
       await expect(composer).toBeInViewport();
       expect(fixture.writes).toEqual([]);
@@ -209,8 +212,16 @@ for (const restored of [false, true]) {
     await page.clock.pauseAt(anchor);
     await submit.press('Enter');
     const summary = page.getByRole('region', { name: 'Deletion request', exact: true });
-    await expect(summary.getByRole('button', { name: 'View status', exact: true })).toBeEnabled();
-    await summary.getByRole('button', { name: 'View status', exact: true }).press('Enter');
+    if (restored) {
+      await expect(summary).toHaveCount(0);
+      await page.getByRole('button', { name: 'More Agent actions', exact: true }).press('Enter');
+      await page
+        .getByRole('menuitem', { name: 'View deletion status', exact: true })
+        .press('Enter');
+    } else {
+      await expect(summary.getByRole('button', { name: 'View status', exact: true })).toBeEnabled();
+      await summary.getByRole('button', { name: 'View status', exact: true }).press('Enter');
+    }
     const reopen = page.getByRole('button', { name: 'View Agent deletion status (2)' });
     await expect(reopen).toBeEnabled();
     const original = (await receipts()).find(

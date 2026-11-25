@@ -13,6 +13,8 @@ import tarfile
 import tempfile
 import uuid
 
+from staging_cd_cache_compaction import export_script
+
 
 ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY = "ChronoAIProject/cma"
@@ -149,6 +151,8 @@ def validate_bundle(directory, prefix, *, family=None, max_archive=None, max_con
         require(path.is_file() and not path.is_symlink(), "archive must be a regular file")
         require(manifest["archives"][name] == digest(path), "archive checksum differs")
         files = 0
+        regular_members = set()
+        target_links = set()
         with tarfile.open(path, "r|gz") as archive:
             for member in archive:
                 require(member.size >= 0, "negative archive member size")
@@ -160,13 +164,19 @@ def validate_bundle(directory, prefix, *, family=None, max_archive=None, max_con
                     validate_incremental_member(member, member_path.parts)
                 require(member.isdir() or member.isfile() or member.islnk(), "cache contains a special file or symlink")
                 files += int(member.isfile())
+                if family is not None and name == "target":
+                    if member.isfile():
+                        regular_members.add(member_path)
+                    elif member.islnk():
+                        target_links.add(archive_path(member.linkname))
                 if member.islnk():
                     archive_path(member.linkname)
+        require(target_links <= regular_members, "cache hard link target is absent")
         require(files > 0, "empty mount cannot replace a warm cache")
     return manifest
 
 
-def dockerfile(operation, max_content=None, *, compact_registry=False):
+def dockerfile(operation, max_content=None, *, compact_registry=False, max_archive=None):
     names = ("target",) if operation == "inject-target" else tuple(MOUNTS)
     mounts = " ".join(f"--mount=type=cache,id={MOUNTS[name]},target=/cache/{name},sharing=locked"
                       for name in names)
@@ -180,19 +190,19 @@ def dockerfile(operation, max_content=None, *, compact_registry=False):
                 + f'RUN --network=none {mounts} set -eu; test -n "$CMA_CACHE_TRANSFER"; {commands}\n')
     require(operation == "extract", "unknown cache transfer")
     bound_kib = (MAX_CONTENT_BYTES if max_content is None else max_content) // 1024
-    compaction = ""
     if compact_registry:
-        # Cargo can reconstruct these trees from its checksummed .crate files.
-        # Keep the index, package downloads and the complete incremental target.
-        compaction = (
-            f'if [ "$total" -gt {bound_kib * 3 // 4} ] && [ -d /cache/registry/src ]; then '
-            "src=$(du -sk /cache/registry/src | cut -f1); "
-            'total=$((total - src)); skip_src="--exclude=./src"; fi; '
+        script = export_script(
+            MAX_CONTENT_BYTES if max_content is None else max_content,
+            MAX_ARCHIVE_BYTES if max_archive is None else max_archive,
+            MAX_MEMBERS,
         )
+        return (header + f"RUN --network=none {mounts} <<'CACHE_EXPORT'\n"
+                + 'set -eu\nset -- /cache/registry /cache/target /out\n'
+                + 'test -n "$CMA_CACHE_TRANSFER"\n' + script
+                + "CACHE_EXPORT\nFROM scratch\nCOPY --from=transfer /out/ /\n")
     return header + f"RUN --network=none {mounts} " + (
         'set -euo pipefail; test -n "$CMA_CACHE_TRANSFER"; mkdir /out; '
         "total=$(du -sk /cache/registry /cache/target | awk '{n += $1} END {print n}'); skip_src=; "
-        + compaction +
         f'if [ "$total" -gt {bound_kib} ]; then touch /out/oversize; exit 0; fi; '
         "tar -C /cache/registry -cf - $skip_src . | gzip -1 > /out/registry.tar.gz; "
         "tar -C /cache/target -cf - . | gzip -1 > /out/target.tar.gz\n"
@@ -200,7 +210,7 @@ def dockerfile(operation, max_content=None, *, compact_registry=False):
 
 
 def transfer(operation, directory, builder=None, *, namespace=None, timeout=150, max_content=None,
-             compact_registry=False):
+             compact_registry=False, max_archive=None):
     env = {key: value for key, value in os.environ.items()
            if key in ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")}
     command = ["docker", "buildx", "build", "--platform", "linux/amd64", "--progress=plain",
@@ -216,12 +226,14 @@ def transfer(operation, directory, builder=None, *, namespace=None, timeout=150,
     else:
         with tempfile.TemporaryDirectory(prefix="cma-cache-context-") as empty:
             command += ["--output", f"type=local,dest={directory}", "--file", "-", empty]
-            subprocess.run(command, input=dockerfile(operation, max_content, compact_registry=compact_registry),
+            subprocess.run(command, input=dockerfile(operation, max_content, compact_registry=compact_registry, max_archive=max_archive),
                            text=True, check=True, timeout=timeout, env=env)
 
 
 def seal(directory, prefix, *, family=None, max_archive=None, max_content=None):
     require(not (directory / "oversize").exists(), "expanded cache exceeds its bound")
+    require(not (directory / "oversize-compressed").exists(), "compressed cache exceeds its bound")
+    require(not (directory / "empty").exists(), "empty mount cannot replace a warm cache")
     manifest = {"format": FORMAT, "prefix": prefix,
                 "archives": {name: digest(directory / f"{name}.tar.gz") for name in MOUNTS}}
     (directory / "manifest.json").write_text(json.dumps(manifest))

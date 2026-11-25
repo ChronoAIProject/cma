@@ -52,6 +52,10 @@ impl Drop for Observer {
     }
 }
 impl RecoverySource for Observer {
+    fn start_measurement(&self) -> Option<crate::telemetry::provider_start::Measurement> {
+        self.source.start_measurement()
+    }
+
     fn page<'a>(
         &'a self,
         after: Option<&'a str>,

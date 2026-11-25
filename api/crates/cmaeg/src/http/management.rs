@@ -62,12 +62,13 @@ pub fn management_router(state: ManagementState) -> Router {
         )
         .route(
             "/v1/channel-records/{record_id}/management",
-            get(super::record_management::read),
+            get(super::record_management::read).delete(super::record_management::retire),
         )
         .route(
             "/v1/channels/{channel_id}",
             get(get_channel).put(update_channel).delete(delete_channel),
         )
+        .merge(super::profile_revisions::routes())
         .route("/v1/channels/{channel_id}/test", post(test_channel))
         .route(
             "/v1/channels/{channel_id}/sources/{source_index}/test",
@@ -141,6 +142,9 @@ pub struct TestChannelResponse {
 pub struct DeleteQuery {
     #[param(required = true, nullable = false)]
     pub expected_version: Option<u64>,
+    /// Retain the provider cleanup intent for an incomplete channel.
+    #[serde(default)]
+    pub retire_unready: bool,
 }
 
 #[utoipa::path(
@@ -252,8 +256,8 @@ pub async fn get_channel(
         Ok(channel_id) => channel_id,
         Err(error) => return management_error(error),
     };
-    let loaded = match management::load(&state, &creator, &channel_id).await {
-        Ok(loaded) => loaded,
+    let loaded = match management::inspect(&state, &creator, &channel_id).await {
+        Ok((loaded, _)) => loaded,
         Err(error) => return management_error(error),
     };
     let response = channel_response(
@@ -317,7 +321,7 @@ pub async fn update_channel(
     tag = "channels",
     security(("creatorBearer" = [])),
     params(("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator"), ("channel_id" = String, Path), DeleteQuery),
-    responses((status = 204), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
+    responses((status = 204), (status = 202, description = "Incomplete channel retired, provider cleanup pending"), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json"))
 )]
 pub async fn delete_channel(
     State(state): State<ManagementState>,
@@ -346,6 +350,14 @@ pub async fn delete_channel(
             "expected_version is required",
         ));
     };
+    if query.retire_unready {
+        return match management::retire_unready(&state, &creator, &channel_id, expected_version)
+            .await
+        {
+            Ok(()) => no_store(StatusCode::ACCEPTED.into_response()),
+            Err(error) => management_error(error),
+        };
+    }
     match management::delete(&state, &creator, &channel_id, expected_version).await {
         Ok(()) => no_store(StatusCode::NO_CONTENT.into_response()),
         Err(error) => management_error(error),

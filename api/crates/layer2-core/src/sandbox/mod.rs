@@ -1,5 +1,4 @@
 //! The Sandbox -> Workspace -> Worktree -> Agent domain hierarchy.
-
 mod desktop;
 mod runtime_migration_guard;
 pub use desktop::{
@@ -210,6 +209,8 @@ pub use retained_runtime_transition::{
     next_replacement_runtime_generation, RetainedRuntimePolicyBinding, RetainedRuntimeTransition,
     RetainedRuntimeTransitionRequest,
 };
+mod runtime_image_origin;
+pub use runtime_image_origin::SandboxRuntimeImageOrigin;
 mod runtime_update;
 mod runtime_update_resume;
 pub use runtime_update::{
@@ -335,9 +336,9 @@ pub use conversation_recorder::{
     AgentOutputCoalescePolicy, DurableAgentUpdateRecorder,
 };
 pub use credential::{
-    SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
-    SandboxServiceGrant, SandboxServiceScopeRevision, SandboxSignInState,
-    ServiceConnectionSelection,
+    InitialServiceConnection, RepositoryCredentialRequirement, SandboxCredentialAuthority,
+    SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt, SandboxServiceGrant,
+    SandboxServiceScopeRevision, SandboxSignInState, ServiceConnectionSelection,
 };
 pub use credential_prerequisite::{
     FixedSandboxCredentialPrerequisite, SandboxCredentialPrerequisite,
@@ -480,17 +481,15 @@ mod workspace_service_tests;
 
 pub mod agent_access;
 pub mod agent_access_tool;
-mod suspended_runtime;
-
 #[cfg(test)]
 mod runtime_update_lifecycle_tests;
+#[cfg(test)]
+mod runtime_update_resume_tests;
 #[cfg(test)]
 mod runtime_update_test_support;
 #[cfg(test)]
 mod runtime_update_tests;
-
-#[cfg(test)]
-mod runtime_update_resume_tests;
+mod suspended_runtime;
 
 #[cfg(test)]
 mod always_on_tests;

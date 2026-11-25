@@ -29,8 +29,22 @@ export function runtimeLifecycleNotice(
         'The latest runtime status could not be confirmed. Last reported details are shown below.',
       tone: 'warning',
     };
-  // Eligibility comes from the retained-home contract, independently of whether
-  // a pinned/custom image happens to match the current managed release.
+  if (update.state === 'up_to_date' && update.currentVersionConfirmed === false)
+    return {
+      title: 'Runtime version unconfirmed',
+      detail: 'The current Desktop runtime could not be confirmed.',
+      tone: 'neutral',
+    };
+  if (
+    update.state === 'up_to_date' &&
+    update.currentVersionConfirmed === true &&
+    update.currentVersion !== update.latestVersion
+  )
+    return {
+      title: 'Desktop runtime update unavailable',
+      detail: 'The current version is shown below.',
+      tone: 'neutral',
+    };
   if (update.state === 'up_to_date' && !update.preservesHome)
     return {
       title: 'Managed runtime updates unavailable',
@@ -57,17 +71,20 @@ export function SandboxRuntimeFacts({
   update,
   target = update?.targetVersion,
   copyable = false,
+  sandboxStatus,
 }: {
   readonly sandboxId?: string;
   readonly runtimeVersion?: string;
   readonly update?: SandboxRuntimeUpdate;
   readonly target?: string;
   readonly copyable?: boolean;
+  readonly sandboxStatus?: SandboxDetail['status'];
 }) {
   const current = update === undefined ? runtimeVersion : update.currentVersion;
   const rows = [
     ...(sandboxId === undefined ? [] : [['Sandbox ID', sandboxId]]),
     ['Current runtime', current || 'Not reported'],
+    ...(update?.imageOrigin === 'managed_desktop' ? [['Runtime channel', 'Managed Agent']] : []),
     ...(update === undefined
       ? []
       : [
@@ -82,9 +99,11 @@ export function SandboxRuntimeFacts({
       : [
           [
             'Automatic updates',
-            update.preservesHome
-              ? `Daily at ${update.schedule.localTime} SGT (${update.schedule.timezone}), when idle`
-              : 'Not available for this Sandbox',
+            !update.preservesHome
+              ? 'Not available for this Sandbox'
+              : sandboxStatus === 'failed' && !update.canUpdate
+                ? 'Unavailable while the Sandbox needs attention'
+                : `Daily at ${update.schedule.localTime} SGT (${update.schedule.timezone}), when idle`,
           ],
         ]),
   ];
@@ -96,7 +115,9 @@ export function SandboxRuntimeFacts({
           <div key={name}>
             <dt>{name}</dt>
             <dd>
-              {name === 'Automatic updates' || value === 'Not reported' ? (
+              {name === 'Automatic updates' ||
+              name === 'Runtime channel' ||
+              value === 'Not reported' ? (
                 value
               ) : (
                 <code>{value}</code>

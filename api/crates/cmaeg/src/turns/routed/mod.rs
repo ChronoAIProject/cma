@@ -17,11 +17,13 @@ mod dispatcher;
 mod dispatcher_authority;
 mod effect_roots;
 mod event_attestation;
+mod execution_port;
 mod executor;
 mod expiry;
 mod generation_provenance;
 mod journal;
 mod live_scope;
+mod measured_executor;
 mod media_delivery;
 mod media_delivery_gate;
 #[cfg(test)]
@@ -39,6 +41,8 @@ pub(crate) mod operator;
 mod operator_tests;
 mod partition_fence;
 mod preparation;
+#[cfg(test)]
+mod provider_start_tests;
 pub(crate) mod quarantine;
 pub use preparation::{BindingPreparation, PreparationIntent, PreparationReceipt};
 #[cfg(test)]

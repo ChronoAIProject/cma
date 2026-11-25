@@ -73,7 +73,8 @@ impl WorkspaceWorker {
             .await
         {
             Ok(receipt) if valid_receipt(&request, &receipt, &workspace.path) => {
-                if let WorkspaceSource::RepositorySnapshot { source_commit, .. } =
+                if let WorkspaceSource::RepositorySnapshot { source_commit, .. }
+                | WorkspaceSource::PublicRepositorySnapshot { source_commit, .. } =
                     &mut workspace.source
                 {
                     source_commit.clone_from(&receipt.prepared.source_commit);

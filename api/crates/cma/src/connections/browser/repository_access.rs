@@ -9,6 +9,8 @@ pub(super) struct RepositoryAccessRequest {
     _active: Option<ActiveConnection>,
     #[serde(default)]
     github_operation: Option<GitHubRepositoryNeed>,
+    #[serde(default)]
+    github_connection_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -46,15 +48,31 @@ pub(super) async fn report(
     {
         return Err(ConnectionError::Invalid);
     }
-    let github = broker.github_connections(&caller.subject).await;
-    let github_scope_check = request.github_operation.map(|operation| GitHubScopeReport {
-        operation,
-        check: github
-            .as_ref()
-            .map_or(GitHubScopeCheck::VerificationUnavailable, |github| {
-                github.scope_check(operation)
-            }),
-    });
+    if request.github_connection_id.is_some() && request.github_operation.is_none() {
+        return Err(ConnectionError::Invalid);
+    }
+    let observe_accounts = state.github_connection_approval
+        && matches!(&request.target, ConnectionTarget::AgentServiceAccess { .. });
+    let github = broker
+        .github_connections(&caller.subject, observe_accounts)
+        .await;
+    let github_scope_check = if let Some(operation) = request.github_operation {
+        let check = match request.github_connection_id.as_deref() {
+            Some(id) => {
+                broker
+                    .exact_github_scope_check(&caller.subject, id, operation)
+                    .await
+            }
+            None => github
+                .as_ref()
+                .map_or(GitHubScopeCheck::VerificationUnavailable, |github| {
+                    github.scope_check(operation)
+                }),
+        };
+        Some(GitHubScopeReport { operation, check })
+    } else {
+        None
+    };
     Ok(no_store(RepositoryAccessReport {
         owner: caller.subject.to_string(),
         github,

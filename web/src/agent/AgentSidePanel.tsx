@@ -70,7 +70,7 @@ export function AgentSidePanel({
   readonly controlReady?: boolean;
   readonly publicationScope: ArtifactPublicationScope;
   readonly conversation?: ConversationState;
-  readonly onSelect?: (panel: AgentPanel) => void;
+  readonly onSelect?: (panel: AgentPanel, expected?: AgentPanel) => void;
   readonly observation?: AgentComputerObservation;
   readonly viewerId?: string;
 }) {
@@ -148,7 +148,8 @@ export function AgentSidePanel({
   const historyLoaded =
     !historyLoading && (conversation !== undefined || observed?.historyLoaded === true);
   useEffect(() => {
-    if (historyLoaded && panel === 'activity' && !terminalAvailable) onSelect?.('browser');
+    if (historyLoaded && panel === 'activity' && !terminalAvailable)
+      onSelect?.('browser', 'activity');
   }, [historyLoaded, panel, terminalAvailable, onSelect]);
   const lastScreen = [...(operations?.toolCalls ?? [])]
     .reverse()
@@ -348,8 +349,9 @@ export function AgentSidePanel({
           {visited && mayRetain && client.files ? (
             <FileExplorer
               initialDirectory={homeFilePath(workingDirectory ?? '')}
+              navigationMemory={currentObservation?.fileNavigation}
               changes={changedFiles(operations?.toolCalls, workingDirectory)}
-              key={`${agentId}:${shared}:${subject}:${visitedScope?.generation}`}
+              key={`${agentId}:${shared}:${subject}:${currentObservation?.scope.authEpoch}:${visitedScope?.generation}`}
               panel
               embedded
               active={mayRead}

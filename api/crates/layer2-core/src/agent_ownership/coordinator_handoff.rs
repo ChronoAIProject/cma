@@ -44,13 +44,7 @@ impl OwnershipCoordinator {
                 .receiver_cleanup_completed(&authority.token.agent_id);
         }
         bounded(self.store.release(&authority.token)).await?;
-        let mut owned = self.owned.lock().unwrap();
-        if owned
-            .get(&authority.token.agent_id)
-            .is_some_and(|slot| slot.owns(authority))
-        {
-            owned.remove(&authority.token.agent_id);
-        }
+        self.forget_legacy_authority(authority);
         complete.settlement = Some(super::super::Settlement::Released);
         Ok(())
     }
@@ -80,13 +74,7 @@ impl OwnershipCoordinator {
         {
             return Ok(false);
         }
-        let mut owned = self.owned.lock().unwrap();
-        if owned
-            .get(&authority.token.agent_id)
-            .is_some_and(|slot| slot.owns(authority))
-        {
-            owned.remove(&authority.token.agent_id);
-        }
+        self.forget_legacy_authority(authority);
         complete.settlement = Some(super::super::Settlement::Superseded {
             newer_epoch: owner.unwrap().token.epoch,
         });
@@ -113,14 +101,19 @@ impl OwnershipCoordinator {
         if owner.is_some_and(|lease| lease.token == authority.token) {
             return Ok(false);
         }
-        let mut owned = self.owned.lock().unwrap();
-        if owned
-            .get(&authority.token.agent_id)
-            .is_some_and(|slot| slot.owns(authority))
-        {
-            owned.remove(&authority.token.agent_id);
-        }
+        self.forget_legacy_authority(authority);
         complete.legacy_forgotten = true;
         Ok(true)
+    }
+
+    fn forget_legacy_authority(&self, authority: &Arc<Authority>) {
+        let mut owned = self.owned.lock().unwrap();
+        let id = &authority.token.agent_id;
+        if let Some(slot) = owned.get_mut(id).filter(|slot| slot.owns(authority)) {
+            slot.authority = None;
+            if slot.acquisition.is_none() {
+                owned.remove(id);
+            }
+        }
     }
 }

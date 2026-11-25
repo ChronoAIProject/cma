@@ -6,13 +6,40 @@ use crate::store::agent_lifecycle_operations::{
     LifecycleLease, LifecycleRecord, COLLECTION,
 };
 use layer2_core::profiles::{content_digest, private_sandbox_profile_id};
+use layer2_core::sandbox::SandboxRuntimeImageOrigin;
 use mongodb::{ClientSession, Database};
+
+pub(super) enum ImageAdmission {
+    Canary(LifecycleLease),
+    Ordinary(Option<SandboxRuntimeImageOrigin>),
+}
+
+impl ImageAdmission {
+    pub(super) async fn record_origin(
+        &self,
+        store: &MongoSandboxStore,
+        sandbox: &mut Sandbox,
+        session: &mut ClientSession,
+    ) -> Result<(), AdmissionError> {
+        if sandbox.lifecycle.runtime_image_origin.is_some() {
+            return Err(refused());
+        }
+        if let Self::Ordinary(Some(origin)) = self {
+            crate::store::work_schema::floor::retain_runtime_image_origin(store, session)
+                .await
+                .map_err(AdmissionError::Driver)?;
+            sandbox.lifecycle.runtime_image_origin = Some(*origin);
+        }
+        Ok(())
+    }
+}
 
 pub(super) async fn verify(
     database: &Database,
     admission: &SandboxAdmission,
+    record_origin: bool,
     session: &mut ClientSession,
-) -> Result<Option<LifecycleLease>, AdmissionError> {
+) -> Result<ImageAdmission, AdmissionError> {
     let sandbox = &admission.sandbox;
     let operations = database.collection::<LifecycleRecord>(COLLECTION);
     // Match by profile ID across revisions and consumers. A private profile
@@ -38,11 +65,15 @@ pub(super) async fn verify(
     };
     if let Some(row) = row.as_ref() {
         if let Some(profiles) = row.verify_canary_worker().map_err(|_| refused())? {
-            return verify_canary(admission, row, profiles).map(Some);
+            return verify_canary(admission, row, profiles).map(ImageAdmission::Canary);
         }
     }
     verify_ordinary_pin(database, sandbox, row.as_ref(), session).await?;
-    Ok(None)
+    Ok(ImageAdmission::Ordinary(
+        row.as_ref()
+            .filter(|_| record_origin)
+            .and_then(|row| super::runtime_image_origin::selection(admission, row)),
+    ))
 }
 
 fn verify_canary(

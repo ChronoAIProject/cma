@@ -92,8 +92,16 @@ pub async fn import_with(
             tracking_checked = true;
         }
         let records = db.collection_with_options::<Document>(kind.collection(), options.clone());
-        let query = doc! {"_id":desired.get_str("_id").map_err(|_| RecordError::Rejected("invalid record ID".into()))?};
+        let id = desired
+            .get_str("_id")
+            .map_err(|_| RecordError::Rejected("invalid record ID".into()))?;
+        let query = doc! {"_id":id};
         if kind == RecordKind::Channel {
+            let version = desired
+                .get_i64("version")
+                .ok()
+                .and_then(|version| u64::try_from(version).ok())
+                .ok_or_else(|| RecordError::Rejected("invalid imported channel version".into()))?;
             let blob = desired
                 .get_binary_generic("blob")
                 .map_err(|_| RecordError::Rejected("invalid imported channel blob".into()))?;
@@ -105,12 +113,12 @@ pub async fn import_with(
                 .map_err(|_| RecordError::Unavailable("cannot read existing record".into()))?
                 .is_some_and(|stored| stored == desired);
             if !retained {
-                gate.check_new_channel(blob)?;
+                gate.check_new_channel(id, version, blob)?;
             }
             if let Some(tracking) = &tracking {
                 // Imported consumers can execute without a provider bind: record
                 // every admitted worker hash before the Channel becomes visible.
-                tracking.record_blob(blob).await?;
+                tracking.record_blob(id, version, blob).await?;
             }
         }
         if desired

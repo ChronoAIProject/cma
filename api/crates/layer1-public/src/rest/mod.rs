@@ -213,7 +213,7 @@ pub use agent_lifecycle::{
     AgentLifecycleOperationReadError, AgentLifecycleOperationReader, AgentLifecycleOperationView,
     AgentLifecyclePermissions, AgentLifecycleProfile, AgentLifecycleProvisioner,
     AgentLifecycleProvisioningError, AgentLifecycleRepository, AgentLifecycleSkill,
-    AgentLifecycleTitleMode, RepositoryAccessRefusal,
+    AgentLifecycleTitleMode, GitHubRepositoryNeed, RepositoryAccessRefusal, RepositoryScopeRepair,
 };
 pub use agent_source::agent_source_router;
 pub use agents::{

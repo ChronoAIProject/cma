@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { AgentActionOptions } from './actionOptions';
 import type { InputErrorOwner } from './actionError';
 import type { AgentCommand, ApprovalDecision, MessageAcceptance } from './controllerTypes';
@@ -41,6 +41,7 @@ export function useAgentActions({
   onIdentityChange,
   options,
 }: AgentActionOptions) {
+  const [initialSend, setInitialSend] = useState(false);
   const context = useMemo(
     () => ({
       agentId,
@@ -124,6 +125,7 @@ export function useAgentActions({
       actionAbortRef.current = controller;
       const approving = typeof approval !== 'string';
       actionKindRef.current = approving ? 'approval' : 'send';
+      setInitialSend(!approving && mode === 'send');
       setPending(approving ? 'approval' : 'send');
       setActionError(undefined);
       let accepted = false;
@@ -134,6 +136,7 @@ export function useAgentActions({
         if (session !== undefined) {
           const sendInput = (text: string) => {
             recoveringInput = session.journal.read()?.state === 'pending';
+            setInitialSend(!recoveringInput);
             return session.send(
               text,
               (receipt) => {
@@ -212,6 +215,7 @@ export function useAgentActions({
           const previous = legacy.journal.legacySuggestion.read();
           const retained = legacy.journal.legacySuggestion.retain(approval, answerContext);
           if (previous?.state === 'pending') {
+            setInitialSend(false);
             const runId = await legacy.recoverLegacySuggestion(controller.signal);
             if (!runId) throw new Error('The original suggestion is still awaiting confirmation.');
             if (!controller.signal.aborted && currentContext.current === context)
@@ -313,6 +317,7 @@ export function useAgentActions({
         if (actionAbortRef.current === controller) {
           actionAbortRef.current = undefined;
           actionKindRef.current = undefined;
+          setInitialSend(false);
           setPending(undefined);
           setRequestRevision((value) => value + 1);
           if (session === undefined) setReplayRevision((value) => value + 1);
@@ -449,6 +454,7 @@ export function useAgentActions({
     const controller = new AbortController();
     actionAbortRef.current = controller;
     actionKindRef.current = 'send';
+    setInitialSend(false);
     setPending('send');
     setActionError(undefined);
     try {
@@ -488,5 +494,5 @@ export function useAgentActions({
     }
   };
 
-  return { run, command, recoverPending };
+  return { run, command, recoverPending, initialSend };
 }

@@ -1,4 +1,8 @@
 import { useEffect, useState } from 'react';
+import type {
+  RepositoryAccessRefusal,
+  RepositoryScopeRepair,
+} from '../api-client/agents/lifecycle';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import {
@@ -20,6 +24,10 @@ interface Choice {
   readonly label: string;
   readonly granted_scopes: readonly string[] | null;
   readonly manage_url: string;
+  readonly account?: {
+    readonly login: string;
+    readonly observed_scopes: readonly string[] | null;
+  };
 }
 
 interface Inventory {
@@ -46,11 +54,26 @@ function choice(value: unknown, manage: URL): Choice | undefined {
     return undefined;
   const href = connectionUrl(value.manage_url);
   if (href !== new URL(`/keys/${value.id}`, manage).href) return undefined;
+  const account = value.account;
+  const availableAccount =
+    record(account) &&
+    typeof account.login === 'string' &&
+    /^[A-Za-z0-9_-]{1,100}$/.test(account.login) &&
+    (account.observed_scopes === null ||
+      (Array.isArray(account.observed_scopes) &&
+        account.observed_scopes.length <= 100 &&
+        account.observed_scopes.every((scope) => typeof scope === 'string')));
   return {
     id: value.id,
     label: value.label,
     granted_scopes: value.granted_scopes as readonly string[] | null,
     manage_url: href,
+    account: availableAccount
+      ? {
+          login: account.login as string,
+          observed_scopes: account.observed_scopes as string[] | null,
+        }
+      : undefined,
   };
 }
 
@@ -75,38 +98,75 @@ function inventory(value: unknown, owner: string): Inventory | undefined {
 interface Props {
   readonly target: ConnectionTarget;
   readonly owner: string;
+  readonly repository_access?: RepositoryAccessRefusal;
+  readonly repository_scope_repair?: RepositoryScopeRepair;
   readonly pending: boolean;
   readonly onRecheck: () => void;
 }
 
-export function RepositoryConnectionRepair({ target, owner, pending, onRecheck }: Props) {
+const refusalText: Record<RepositoryAccessRefusal, string> = {
+  verification_unavailable: 'GitHub repository access could not be verified',
+  insufficient_scope: 'The selected GitHub connection needs additional permissions',
+  missing_connection: 'Connect GitHub before preparing this repository',
+  repository_unavailable:
+    'The selected GitHub connection cannot access this repository for the requested operation',
+  reference_unavailable: 'The selected GitHub connection cannot read this ref',
+  runtime_unsupported: 'This runtime does not support verified GitHub repository access',
+};
+
+export function RepositoryConnectionRepair({
+  target,
+  owner,
+  repository_access: reason,
+  repository_scope_repair: repair,
+  pending,
+  onRecheck,
+}: Props) {
+  const candidate = repair && connectionUrl(repair.manage_url);
+  const exact =
+    candidate &&
+    /^[a-zA-Z0-9_-]{1,128}$/.test(repair.connection_id) &&
+    candidate === new URL(`/keys/${repair.connection_id}`, candidate).href;
   return (
     <Alert
       tone="warning"
-      title="GitHub repository access could not be verified"
+      title={refusalText[reason ?? 'verification_unavailable']}
       actions={
         <Button size="sm" disabled={pending} onClick={onRecheck}>
           Recheck repository access
         </Button>
       }
     >
-      <p>
-        Your request is saved. The current runtime pauses setup for public and private repositories
-        until CMA can verify the connection the Sandbox will use. A scope change in NyxID alone
-        cannot verify that connection.
-      </p>
-      <GitHubConnectionDetails owner={owner} target={target} />
+      <p>Your request is saved.</p>
+      {reason === 'insufficient_scope' && exact ? (
+        <p>
+          Grant <code>{repair.required_scope}</code> under{' '}
+          <a href={candidate} target="_blank" rel="noreferrer">
+            Manage permissions in NyxID
+          </a>
+          .
+        </p>
+      ) : null}
+      {reason !== 'runtime_unsupported' && !exact ? (
+        <GitHubConnectionDetails owner={owner} target={target} />
+      ) : null}
     </Alert>
   );
 }
 
-type ConnectionDetailsProps = Pick<Props, 'target' | 'owner'>;
+type ConnectionDetailsProps = Pick<Props, 'target' | 'owner'> & {
+  readonly selection?: {
+    readonly id?: string;
+    readonly disabled: boolean;
+    readonly onSelect: (id: string) => void;
+  };
+};
 
 export function GitHubConnectionDetails(props: ConnectionDetailsProps) {
   return <ConnectionDetails key={JSON.stringify([props.owner, props.target])} {...props} />;
 }
 
-function ConnectionDetails({ target, owner }: ConnectionDetailsProps) {
+function ConnectionDetails({ target, owner, selection }: ConnectionDetailsProps) {
   const [result, setResult] = useState<{ readonly inventory?: Inventory }>();
   useEffect(() => {
     const controller = new AbortController();
@@ -136,18 +196,35 @@ function ConnectionDetails({ target, owner }: ConnectionDetailsProps) {
       ) : null}
       {result?.inventory?.connections?.length ? (
         <>
-          <p>NyxID reports these connections. CMA has not verified the Agent’s connection.</p>
+          <p>
+            {selection
+              ? 'Choose the connection CMA should verify for this Sandbox.'
+              : 'NyxID reports these connections. CMA has not verified the Agent’s connection.'}
+          </p>
           <ul>
             {result.inventory.connections.map((row) => (
               <li key={row.id}>
                 <a href={row.manage_url} target="_blank" rel="noreferrer">
                   {row.label} ({row.id})
                 </a>
+                {row.account ? <p>GitHub account @{row.account.login}</p> : null}
                 <p>
-                  {row.granted_scopes === null
-                    ? 'Granted scopes unavailable'
-                    : `Reported scopes: ${row.granted_scopes.join(', ') || 'None'}`}
+                  {row.account?.observed_scopes
+                    ? `Live scopes — ${row.account.observed_scopes.join(', ') || 'None'}`
+                    : row.granted_scopes === null
+                      ? 'Granted scopes unavailable'
+                      : `Reported scopes: ${row.granted_scopes.join(', ') || 'None'}`}
                 </p>
+                {selection && row.granted_scopes?.includes('repo') ? (
+                  <Button
+                    size="sm"
+                    aria-pressed={selection.id === row.id}
+                    disabled={selection.disabled}
+                    onClick={() => selection.onSelect(row.id)}
+                  >
+                    Select {row.label} ({row.id})
+                  </Button>
+                ) : null}
               </li>
             ))}
           </ul>

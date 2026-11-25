@@ -77,6 +77,12 @@ pub(crate) trait GrantAuthority: Send + Sync {
         self.issuer()
     }
 
+    /// Browser management is a configured provider destination, independent
+    /// of whether the current credential can read a grant.
+    fn management_url(&self) -> Option<Url> {
+        None
+    }
+
     async fn account(
         &self,
         auth: &AuthState,

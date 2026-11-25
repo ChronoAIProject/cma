@@ -54,6 +54,9 @@ fn delivery_ready(
                     || scope.authorized_by != record.requester.owner
                     || scope.credential_generation_floor != floor
                     || scope.services != approved
+                    || record
+                        .approved_connection()
+                        .is_some_and(|selected| scope.connection.as_ref() != Some(selected))
             })
     {
         return Err(AgentAccessError::Invalid);
