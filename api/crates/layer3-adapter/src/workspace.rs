@@ -34,6 +34,8 @@ pub struct WorkspaceRequest {
     pub name: String,
     pub source: WorkspaceSource,
     pub clone_depth: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_connection_id: Option<String>,
 }
 
 impl WorkspaceRequest {
@@ -60,9 +62,16 @@ impl WorkspaceRequest {
             name: name.into(),
             source,
             clone_depth,
+            repository_connection_id: None,
         };
         request.request_sha256 = request.computed_sha256();
         request
+    }
+
+    pub fn with_repository_connection(mut self, connection_id: Option<String>) -> Self {
+        self.repository_connection_id = connection_id;
+        self.request_sha256 = self.computed_sha256();
+        self
     }
 
     pub fn computed_sha256(&self) -> String {
@@ -83,6 +92,9 @@ impl WorkspaceRequest {
                 optional_field(&mut digest, reference.as_deref());
             }
             WorkspaceSource::Init => digest.update([2]),
+        }
+        if let Some(connection) = &self.repository_connection_id {
+            field(&mut digest, connection);
         }
         hex(&digest.finalize())
     }

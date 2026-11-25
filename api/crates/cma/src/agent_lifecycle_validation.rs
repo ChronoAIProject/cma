@@ -1,4 +1,4 @@
-use crate::store::{LifecycleBehavior, LifecycleLease};
+use crate::store::LifecycleBehavior;
 use layer1_public::rest::{
     AgentLifecycleCreateRequest, AgentLifecyclePermissions, AgentLifecycleProfile,
     AgentLifecycleProvisioningError,
@@ -78,6 +78,17 @@ pub(super) fn validate_request(
         }
     }
     if let Some(repository) = &request.repository {
+        if repository.connection_id.as_ref().is_some_and(|id| {
+            id.is_empty()
+                || id.len() > 128
+                || !id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        }) {
+            return Err(AgentLifecycleProvisioningError::Invalid(
+                "GitHub connection id is invalid".into(),
+            ));
+        }
         let parsed = Url::parse(&repository.url).map_err(|_| {
             AgentLifecycleProvisioningError::Invalid("repository URL is invalid".into())
         })?;
@@ -236,13 +247,16 @@ pub(super) fn repository_location(
     request: &AgentLifecycleCreateRequest,
     behavior: LifecycleBehavior,
 ) -> Result<WorkspaceLocation, AgentLifecycleProvisioningError> {
-    if request.initial_message.is_some() {
-        if let Some(repository) = &request.repository {
-            return Ok(WorkspaceLocation::RepositorySnapshot {
-                url: repository.url.clone(),
-                reference: repository.reference.clone(),
-            });
-        }
+    if let Some(repository) = request
+        .repository
+        .as_ref()
+        .filter(|repository| request.initial_message.is_some() || repository.operation.is_some())
+    {
+        return Ok(WorkspaceLocation::RepositorySnapshot {
+            url: repository.url.clone(),
+            reference: repository.reference.clone(),
+            connection_id: repository.connection_id.clone(),
+        });
     }
     if behavior == LifecycleBehavior::Legacy {
         if let Some(repository) = &request.repository {
@@ -273,7 +287,7 @@ pub(super) fn admitted_first_message(input: &crate::store::LifecycleInput) -> Op
     if let Some(message) = &input.request.initial_message {
         return Some(message.clone());
     }
-    (input.behavior == LifecycleBehavior::PromptRepository).then(|| {
+    input.behavior.uses_repository_profile().then(|| {
         input
             .setup_message
             .clone()
@@ -420,64 +434,6 @@ pub(super) fn operation_error(error: layer2_core::StoreError) -> AgentLifecycleP
     }
 }
 
-pub(super) async fn create_sandbox_with_fence(
-    service: &layer2_core::sandbox::SandboxService,
-    caller: &layer2_core::Caller,
-    profile: layer2_core::profiles::SandboxProfileRef,
-    agent_name: &str,
-    lease: &LifecycleLease,
-    creation_fence: Option<layer2_core::sandbox::store::CreationFence>,
-) -> Result<layer2_core::sandbox::Sandbox, SandboxServiceError> {
-    let mut request = layer2_core::sandbox::CreateSandbox {
-        profile,
-        name: Some(sandbox_name(agent_name, &lease.id)),
-        confirmed_digest: None,
-        origin: layer2_core::sandbox::SandboxOrigin::Lifecycle {
-            operation_id: lease.id.clone(),
-        },
-    };
-    match service
-        .create_for_lifecycle_with_lease(
-            caller,
-            request.clone(),
-            &lease.token,
-            creation_fence.clone(),
-        )
-        .await
-    {
-        // A pre-update worker may have committed the old name, then lost the
-        // response before persisting its child ID. Replay still verifies the
-        // exact owner, operation, profile and historical name in the service.
-        Err(SandboxServiceError::SandboxOriginConflict) => {
-            request.name = Some(legacy_sandbox_name(agent_name));
-            service
-                .create_for_lifecycle_with_lease(caller, request, &lease.token, creation_fence)
-                .await
-        }
-        result => result,
-    }
-}
-
-fn legacy_sandbox_name(agent_name: &str) -> String {
-    let mut end = agent_name.len().min(56);
-    while !agent_name.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{} sandbox", &agent_name[..end])
-}
-
-fn sandbox_name(agent_name: &str, operation_id: &str) -> String {
-    // The durable operation's full UUID keeps repeated titles distinct and a
-    // lost admission response replayable. Reserve its bytes before truncating
-    // the display prefix to the Sandbox's 64-byte name limit.
-    let suffix = format!(" sandbox {operation_id}");
-    let mut end = agent_name.len().min(64_usize.saturating_sub(suffix.len()));
-    while !agent_name.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}{suffix}", &agent_name[..end])
-}
-
 pub(super) fn profile_error(
     error: layer2_core::profiles::ProfileCreationError,
 ) -> AgentLifecycleProvisioningError {
@@ -493,7 +449,3 @@ pub(super) fn profile_error(
         _ => AgentLifecycleProvisioningError::Invalid(error.to_string()),
     }
 }
-
-#[cfg(test)]
-#[path = "agent_lifecycle_sandbox_name_tests.rs"]
-mod sandbox_name_tests;

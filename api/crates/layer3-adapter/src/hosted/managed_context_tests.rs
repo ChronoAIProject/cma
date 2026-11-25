@@ -80,6 +80,7 @@ impl HostedBackend for Files {
                     agent_resource_preparation: false,
                     agent_process_restart: false,
                     exact_github_credential_route: false,
+                    github_repository_scope: false,
                     sandbox_id: identity.sandbox_id,
                     generation: identity.generation + u64::from(self.fault == 5),
                     home_identity: identity.home_identity,

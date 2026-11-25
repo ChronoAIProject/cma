@@ -230,6 +230,7 @@ async fn proxy_preserves_requests_rotates_custody_and_refuses_foreign_hosts() {
         github_route: Some(layer3_adapter::GithubCredentialRoute {
             service_id: "repository-connection".into(),
             catalog_id: "github-catalog".into(),
+            repository_scope: None,
             other_services: vec![layer3_adapter::PlatformServiceRoute {
                 service_id: "skill-connection".into(),
                 slug: "ornn-api".into(),

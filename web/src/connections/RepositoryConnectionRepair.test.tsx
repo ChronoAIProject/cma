@@ -49,7 +49,7 @@ test('shows reported grants for distinct connections and requires an explicit re
   ).toHaveAttribute('href', `${root}/repo-access`);
   expect(screen.getByText('Reported scopes: repo')).toBeInTheDocument();
   expect(screen.getByText('Reported scopes: read:user')).toBeInTheDocument();
-  expect(screen.getByText(/pauses setup for public and private repositories/)).toBeVisible();
+  expect(screen.getByText('Your request is saved.')).toBeVisible();
   expect(recheck).not.toHaveBeenCalled();
   expect(fetch).toHaveBeenCalledWith(
     '/auth/connections/repository-access',
@@ -100,3 +100,30 @@ test.each(['different owner', 'older API', 'invalid link'])(
     expect(screen.queryByRole('link', { name: /Hidden connection/ })).not.toBeInTheDocument();
   },
 );
+
+test('links the insufficient grant to the exact owner connection', () => {
+  const fetch = vi.fn();
+  vi.stubGlobal('fetch', fetch);
+  render(
+    <RepositoryConnectionRepair
+      owner="owner"
+      target={target}
+      repository_access="insufficient_scope"
+      repository_scope_repair={{
+        connection_id: 'weak',
+        operation: 'public_repository_write',
+        required_scope: 'public_repo',
+        manage_url: root + '/weak',
+      }}
+      pending={false}
+      onRecheck={() => {}}
+    />,
+  );
+
+  expect(screen.getByText('public_repo')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Manage permissions in NyxID' })).toHaveAttribute(
+    'href',
+    root + '/weak',
+  );
+  expect(fetch).not.toHaveBeenCalled();
+});

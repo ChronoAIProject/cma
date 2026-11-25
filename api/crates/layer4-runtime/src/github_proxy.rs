@@ -8,6 +8,8 @@ use crate::failure::{Result, RuntimeError};
 use crate::upstream::CredentialHolder;
 use crate::upstream_target::TargetBase;
 
+pub(crate) const ACCESS_PATH_ENV: &str = "CMA_GITHUB_ACCESS_PATH";
+
 const PLACEHOLDER: &str = "local-proxy-no-credential-needed";
 
 #[derive(Clone, Debug)]
@@ -66,7 +68,7 @@ pub(crate) fn configuration(
 pub(crate) fn reserved_environment(name: &str) -> bool {
     matches!(
         name,
-        "GH_CONFIG_DIR" | "GH_HOST" | "GH_TOKEN" | "GH_PROMPT_DISABLED"
+        "GH_CONFIG_DIR" | "GH_HOST" | "GH_TOKEN" | "GH_PROMPT_DISABLED" | ACCESS_PATH_ENV
     )
 }
 

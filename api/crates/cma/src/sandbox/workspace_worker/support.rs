@@ -30,8 +30,10 @@ pub(super) fn valid_prepare_receipt(
         && receipt.path == expected_path
         && valid_commit(&receipt.resolved_commit)
         && match &request.source {
-            layer3_adapter::WorkspaceSource::RepositorySnapshot { .. } => {
+            layer3_adapter::WorkspaceSource::RepositorySnapshot { reference, .. } => {
                 receipt.source_commit.as_deref().is_some_and(valid_commit)
+                    && (request.repository_connection_id.is_none()
+                        || &receipt.source_commit == reference)
             }
             _ => receipt.source_commit.is_none(),
         }

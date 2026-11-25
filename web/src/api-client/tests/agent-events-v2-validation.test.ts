@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { expect, it, vi } from 'vitest';
-import { ProtocolError, TimeoutError, ValidationError } from '../index.js';
+import { ProtocolError, TimeoutError, TransportError, ValidationError } from '../index.js';
 import {
   agent,
   incarnation,
@@ -175,7 +175,6 @@ it.each([
   ],
   ['unknown event', frame('cma.agent.ready', {})],
   ['invalid JSON', 'event: cma.agent.event\ndata: {\n\n'],
-  ['truncated frame', frame('cma.agent.event', durable(1), cursor(1)).slice(0, -1)],
   [
     'live ID',
     frame('cma.agent.live', { ...live(), turn_sequence: 1, after_sequence: 1 }, cursor(1)),
@@ -205,6 +204,26 @@ it.each([
   expect(onEvent).not.toHaveBeenCalled();
   expect(onCursor).not.toHaveBeenCalled();
 });
+it.each(['delimiter', 'UTF-8'] as const)(
+  'reports EOF inside a partial %s as a retryable interruption without acknowledging it',
+  async (cut) => {
+    const t = harness();
+    const complete = frame('cma.agent.event', durable(1), cursor(1));
+    const partial = frame(
+      'cma.agent.event',
+      durable(2, { type: 'message', role: 'assistant', content: '🙂' }),
+      cursor(2),
+    );
+    const body = new TextEncoder().encode(complete + partial);
+    const end = cut === 'delimiter' ? body.length - 1 : body.indexOf(0xf0) + 2;
+    t.fetch.mockResolvedValueOnce(sse(body.slice(0, end), 19));
+    const onEvent = vi.fn();
+    const onCursor = vi.fn();
+    await expect(t.api.events(agent, { onEvent, onCursor })).rejects.toBeInstanceOf(TransportError);
+    expect(onEvent).toHaveBeenCalledOnce();
+    expect(onCursor.mock.calls).toEqual([[cursor(1)]]);
+  },
+);
 it('rejects invalid UTF-8 and stops observation', async () => {
   const t = harness();
   t.fetch.mockResolvedValueOnce(sse(new Uint8Array([0xff])));

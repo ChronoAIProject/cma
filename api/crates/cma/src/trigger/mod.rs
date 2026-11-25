@@ -4,6 +4,8 @@ mod inline;
 
 #[cfg(test)]
 mod connections_nyxid_tests;
+#[cfg(test)]
+pub(crate) use connections_nyxid_tests::GithubRepositoryFixture;
 
 #[allow(
     dead_code,
@@ -26,7 +28,8 @@ pub(crate) use self::{
 };
 pub(crate) use composition::{TriggerComposition, TriggerCompositionDependencies};
 pub(crate) use connections_nyxid::{
-    GitHubConnections, GitHubRepositoryNeed, GitHubScopeCheck, GITHUB_SERVICE,
+    GitHubConnections, GitHubRepositoryCheck, GitHubRepositoryNeed, GitHubScopeCheck,
+    GITHUB_SERVICE,
 };
 pub(crate) use inline::InlineTriggerProfileMaterializer;
 pub(crate) use scheduler::LaunchScheduler;

@@ -102,6 +102,19 @@ pub struct AgentLifecycleRepository {
     pub url: String,
     #[serde(default, rename = "ref", skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
+    /// Credential scope required by the repository work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<GitHubRepositoryNeed>,
+    /// Select one connection from the owner's GitHub inventory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GitHubRepositoryNeed {
+    PublicRepositoryWrite,
+    PrivateRepositoryRead,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
@@ -160,12 +173,27 @@ pub struct AgentLifecycleConnectionRequired {
     pub target: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository_access: Option<RepositoryAccessRefusal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_scope_repair: Option<RepositoryScopeRepair>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RepositoryScopeRepair {
+    pub connection_id: String,
+    pub operation: GitHubRepositoryNeed,
+    pub required_scope: String,
+    pub manage_url: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RepositoryAccessRefusal {
     VerificationUnavailable,
+    InsufficientScope,
+    MissingConnection,
+    RepositoryUnavailable,
+    ReferenceUnavailable,
+    RuntimeUnsupported,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -271,6 +299,7 @@ pub enum AgentLifecycleProvisioningError {
     RepositoryAccessRequired {
         connection_target: Value,
         reason: RepositoryAccessRefusal,
+        repair: Option<Box<RepositoryScopeRepair>>,
     },
     #[error("Agent lifecycle request conflicts with existing state: {0}")]
     Conflict(String),

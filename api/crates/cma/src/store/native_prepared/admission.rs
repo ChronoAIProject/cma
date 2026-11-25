@@ -73,7 +73,7 @@ pub(in crate::store) async fn claim_ready(
     let Some(operation)=database.collection::<crate::store::agent_lifecycle_operations::LifecycleRecord>(crate::store::agent_lifecycle_operations::COLLECTION)
         .find_one(doc!{"_id":operation_id,"owner":sandbox.owner.as_str(),"status":{"$in":["queued","running"]}})
         .session(&mut *session).await.map_err(AdmissionError::Driver)? else{return Ok(ClaimOutcome::Miss("miss_operation_unavailable"))};
-    if operation.input.behavior != crate::store::LifecycleBehavior::PromptRepository
+    if !operation.input.behavior.uses_repository_profile()
         || operation.input.request.machine_included != machine
         || (machine
             && operation.admitted_machine_image() != Some(desired.warm.runtime_version.as_str()))
