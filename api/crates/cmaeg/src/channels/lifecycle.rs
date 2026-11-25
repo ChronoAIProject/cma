@@ -1,13 +1,105 @@
 //! Channel delete and master-key rekey over sealed CMA records.
 
-use super::management::{load, load_by_record, load_unowned, open_pointer, seal_definition};
+use super::inspection::{load_unowned, require_not_retired};
+use super::management::{inspect, load, load_by_record, open_pointer, seal_definition};
 use super::state::{ManagementError, ManagementState};
 use crate::{auth::Creator, records::RecordError};
 use cmaeg_core::{
-    channel::ChannelDefinition,
+    channel::{ChannelDefinition, ChannelMutationKind},
     ids::{ChannelId, RecordId},
+    seal::{open_blob, seal_retired_channel},
     ValidationError,
 };
+
+/// Retain provider cleanup without allowing the original create to activate.
+pub(crate) async fn retire_unready(
+    state: &ManagementState,
+    creator: &Creator,
+    channel_id: &ChannelId,
+    expected_version: u64,
+) -> Result<(), ManagementError> {
+    let pointer = open_pointer(state, channel_id)?;
+    let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
+    let (current, retirement_version) = inspect(state, creator, channel_id).await?;
+    let version = retirement_version.unwrap_or(current.record.version);
+    if version != expected_version {
+        return Err(ManagementError::Conflict {
+            expected: expected_version,
+            actual: Some(version),
+        });
+    }
+    if current
+        .definition
+        .creation
+        .as_ref()
+        .is_none_or(|creation| creation.ready)
+    {
+        return Err(ManagementError::Invalid(ValidationError::new(
+            "/retire_unready",
+            "only an incomplete channel may be retired",
+        )));
+    }
+    if retirement_version.is_some() {
+        return Ok(());
+    }
+    if current
+        .definition
+        .mutation
+        .as_ref()
+        .is_some_and(|mutation| {
+            !matches!(
+                mutation.operation,
+                ChannelMutationKind::Create | ChannelMutationKind::Delete
+            )
+        })
+    {
+        return Err(ManagementError::Conflict {
+            expected: expected_version,
+            actual: Some(version),
+        });
+    }
+    let successor = version
+        .checked_add(1)
+        .ok_or_else(|| ManagementError::Internal("channel record version exhausted".into()))?;
+    let record_id = &current.definition.record_id;
+    let opened = open_blob(&state.master_keys, &current.record.blob)
+        .map_err(|_| ManagementError::Internal("channel blob cannot be opened".into()))?;
+    // Retain the complete creation and cleanup state, including any tracked
+    // effect and the unresolved possibility of an earlier untracked bind.
+    // Ordinary readers refuse this seal kind before any provider or record write.
+    let blob = seal_retired_channel(
+        &state.master_keys,
+        record_id.as_str(),
+        successor,
+        &opened.payload,
+    )
+    .map_err(|_| ManagementError::Internal("retired channel cannot be sealed".into()))?;
+    let stored_version = match state
+        .records
+        .put(
+            record_id,
+            &creator.subject,
+            &blob,
+            Some(current.record.version),
+        )
+        .await
+    {
+        Ok(stored_version) => stored_version,
+        Err(error) => {
+            // A retry may have committed the same retirement under a prior request.
+            let (saved, retirement) = inspect(state, creator, channel_id).await?;
+            if retirement != Some(expected_version) {
+                return Err(error.into());
+            }
+            saved.record.version
+        }
+    };
+    state
+        .index
+        .changed(record_id, &creator.subject, stored_version);
+    state.resolver.invalidate(channel_id.as_str());
+    Ok(())
+}
 
 pub async fn delete(
     state: &ManagementState,
@@ -36,6 +128,7 @@ pub async fn delete_legacy(
 ) -> Result<(), ManagementError> {
     let _guard = state.mutation_guard(record_id.as_str()).await;
     let current = load_by_record(state, creator, record_id).await?;
+    require_not_retired(current.retirement_expected_version, current.version)?;
     if !current.valid || current.definition.creation.is_some() {
         return Err(ManagementError::Invalid(ValidationError::new(
             "/record_id",
@@ -77,7 +170,9 @@ async fn delete_owned(
                 "Provider cleanup needs the original channel credential. Contact the deployment operator.",
             ))
         } else {
-            ManagementError::Internal("channel provider credential is unavailable".into())
+            ManagementError::Provider(crate::providers::ProviderError::Unavailable(
+                "channel provider credential is unavailable".into(),
+            ))
         }
     })?;
     invalidate(state, definition, channel_id);
