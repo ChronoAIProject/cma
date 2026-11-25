@@ -14,6 +14,9 @@ use crate::failure::{Result, RuntimeError};
 use crate::upstream_target::TargetBase;
 #[path = "github_scope_proxy.rs"]
 pub(crate) mod github_scope;
+#[path = "upstream_response_headers.rs"]
+mod response_headers;
+pub(crate) use response_headers::{encoded, headers_contain};
 
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CREDENTIAL_BYTES: usize = 64 * 1024;
@@ -101,6 +104,15 @@ impl CredentialHolder {
 
     async fn get(&self) -> Option<Credential> {
         self.inner.read().await.clone()
+    }
+
+    pub(crate) async fn has_github_repository_scope(&self) -> bool {
+        self.inner.read().await.as_ref().is_some_and(|credential| {
+            credential
+                .github_route
+                .as_ref()
+                .is_some_and(|route| route.repository_scope.is_some())
+        })
     }
 
     pub(crate) async fn tool_proxy_generation(&self) -> Option<u64> {
@@ -287,25 +299,21 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
     ) {
         return (StatusCode::FORBIDDEN, "GitHub source connection changed").into_response();
     }
-    let scope_read = github_scope.as_ref().is_some_and(|(_, _, path)| {
-        state.allowed_host == Some("api.github.com")
-            && *path == github_scope::ACCESS_PATH
-            && parts.method == axum::http::Method::GET
-    });
-    if state.allowed_host == Some("api.github.com")
+    let scope_read = state.allowed_host == Some("api.github.com")
         && parts.uri.path() == github_scope::ACCESS_PATH
-        && parts.method == axum::http::Method::GET
-        && !scope_read
-    {
-        return StatusCode::NO_CONTENT.into_response();
-    }
-    let route_uri = if scope_read && state.allowed_host == Some("api.github.com") {
-        &axum::http::Uri::from_static("/user")
+        && parts.method == axum::http::Method::GET;
+    let scoped_uri = if scope_read {
+        let Some((_, scope, _)) = github_scope else {
+            return StatusCode::NO_CONTENT.into_response();
+        };
+        Some(github_scope::repository_metadata_uri(scope))
     } else {
-        &parts.uri
+        None
     };
     let target = match (state.allowed_host, &credential.github_route) {
-        (Some("api.github.com"), Some(route)) => state.target.join_github(route_uri, route),
+        (Some("api.github.com"), Some(route)) => state
+            .target
+            .join_github(scoped_uri.as_ref().unwrap_or(&parts.uri), route),
         (None, Some(route)) if !state.model_proxy => {
             state.target.join_selected_platform(&parts.uri, route)
         }
@@ -347,7 +355,11 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
             | axum::http::Method::DELETE
     );
     let mut outbound = reqwest::Request::new(parts.method, target);
-    copy_request_headers(&parts.headers, outbound.headers_mut());
+    if scope_read {
+        github_scope::metadata_request_headers(outbound.headers_mut());
+    } else {
+        copy_request_headers(&parts.headers, outbound.headers_mut());
+    }
     let bearer = match HeaderValue::from_str(&format!("Bearer {}", credential.value)) {
         Ok(value) => value,
         Err(_) => {
@@ -380,12 +392,13 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
     if let Some((route, scope, path)) = github_scope {
         if scope_read {
             return github_scope::access_report(
-                status,
-                response.headers(),
+                response,
                 route,
                 scope,
                 credential.generation.unwrap_or_default(),
-            );
+                credential.value.as_bytes(),
+            )
+            .await;
         }
         if is_write {
             if let Some(refusal) =
@@ -476,19 +489,6 @@ fn hop_header(name: &str) -> bool {
             | "transfer-encoding"
             | "upgrade"
     )
-}
-
-pub(crate) fn encoded(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::CONTENT_ENCODING)
-        .is_some_and(|value| value.as_bytes() != b"identity")
-}
-
-pub(crate) fn headers_contain(headers: &HeaderMap, credential: &[u8]) -> bool {
-    headers.iter().any(|(name, value)| {
-        crate::upstream_guard::contains(name.as_str().as_bytes(), credential)
-            || crate::upstream_guard::contains(value.as_bytes(), credential)
-    })
 }
 
 #[cfg(test)]

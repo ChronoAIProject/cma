@@ -238,7 +238,14 @@ impl InlineAgentLifecycle {
                 repository.url = format!("https://github.com/{}", binding.repository);
                 repository.connection_id = Some(binding.selection.connection_id.clone());
                 if input.request.initial_message.is_none() {
-                    input.first_message = Some(validation::setup_message(&input.request));
+                    let mut setup = format!(
+                        "CMA prepared the selected GitHub source at commit {}. Confirm the current workspace and report readiness. Preserve all files and local changes. Use gh api with the path in CMA_GITHUB_ACCESS_PATH to read the selected connection's repository access and repair details.",
+                        repository.reference.as_deref().expect("commit assigned")
+                    );
+                    if input.request.desktop {
+                        setup.push_str(" The owner can use the shared desktop for later tasks.");
+                    }
+                    input.first_message = Some(setup);
                 }
                 return Ok(());
             }

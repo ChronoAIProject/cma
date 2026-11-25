@@ -46,19 +46,88 @@ pub(super) fn operation_path<'a>(
     }
 }
 
-pub(super) fn access_report(
-    status: StatusCode,
-    headers: &HeaderMap,
+pub(super) fn repository_metadata_uri(scope: &GithubRepositoryScope) -> Uri {
+    format!("/repos/{}", scope.repository)
+        .parse()
+        .expect("validated GitHub repository path")
+}
+
+pub(super) fn metadata_request_headers(headers: &mut HeaderMap) {
+    headers.insert(
+        header::ACCEPT,
+        "application/vnd.github+json".parse().expect("static"),
+    );
+    headers.insert(header::ACCEPT_ENCODING, "identity".parse().expect("static"));
+}
+
+#[derive(serde::Deserialize)]
+struct RepositoryMetadata {
+    full_name: String,
+    private: bool,
+    disabled: bool,
+    archived: bool,
+    permissions: Option<RepositoryPermissions>,
+}
+
+#[derive(serde::Deserialize)]
+struct RepositoryPermissions {
+    push: bool,
+}
+
+impl RepositoryMetadata {
+    fn permits(&self, scope: &GithubRepositoryScope) -> bool {
+        self.full_name.eq_ignore_ascii_case(&scope.repository)
+            && !self.disabled
+            && (scope.required_scope != GithubRepositoryScopeNeed::PublicRepo
+                || (!self.private
+                    && !self.archived
+                    && self
+                        .permissions
+                        .as_ref()
+                        .is_some_and(|permissions| permissions.push)))
+    }
+}
+
+async fn metadata(
+    mut response: reqwest::Response,
+    credential: &[u8],
+) -> Option<RepositoryMetadata> {
+    const MAX_BYTES: usize = 64 * 1024;
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if body.len() + chunk.len() > MAX_BYTES {
+            return None;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    if crate::upstream_guard::contains(&body, credential) {
+        return None;
+    }
+    serde_json::from_slice(&body).ok()
+}
+
+pub(super) async fn access_report(
+    response: reqwest::Response,
     route: &GithubCredentialRoute,
     scope: &GithubRepositoryScope,
     generation: u64,
+    credential: &[u8],
 ) -> Response {
-    let observed = status
+    let live = response
+        .status()
         .is_success()
-        .then(|| scopes(headers, "x-oauth-scopes"))
+        .then(|| scopes(response.headers(), "x-oauth-scopes"))
         .flatten();
+    let satisfied = live
+        .as_ref()
+        .is_some_and(|scopes| scope.required_scope.is_satisfied_by(scopes));
+    let observed = live.map(|values| values.into_iter().map(str::to_owned).collect::<Vec<_>>());
     let scope_state = match &observed {
-        Some(granted) if scope.required_scope.is_satisfied_by(granted) => "scope_satisfied",
+        Some(_) if satisfied => match metadata(response, credential).await {
+            Some(repository) if repository.permits(scope) => "scope_satisfied",
+            Some(_) => "repository_unavailable",
+            None => "verification_unavailable",
+        },
         Some(_) => "insufficient_scope",
         None => "verification_unavailable",
     };
@@ -104,7 +173,11 @@ pub(super) fn write_refusal(
     }
     let accepted = scopes(headers, "x-accepted-oauth-scopes")?;
     let granted = scopes(headers, "x-oauth-scopes")?;
-    if accepted != ["public_repo"] || scope.required_scope.is_satisfied_by(&granted) {
+    if !matches!(
+        accepted.as_slice(),
+        ["public_repo"] | ["public_repo", "repo"] | ["repo", "public_repo"]
+    ) || scope.required_scope.is_satisfied_by(&granted)
+    {
         return None;
     }
     Some(
@@ -228,6 +301,18 @@ mod tests {
         assert_eq!(body["code"], "insufficient_scope");
         assert_eq!(body["detail"], "public_repo");
         assert_eq!(body["remediation_url"], "https://nyx.example/keys/selected");
+        for alternatives in ["public_repo, repo", "repo, public_repo"] {
+            headers.insert("x-accepted-oauth-scopes", alternatives.parse().unwrap());
+            assert!(write_refusal(StatusCode::NOT_FOUND, &headers, path, &route, scope).is_some());
+        }
+        for ambiguous in ["public_repo, public_repo", "public_repo, repo, admin:org"] {
+            headers.insert("x-accepted-oauth-scopes", ambiguous.parse().unwrap());
+            assert!(write_refusal(StatusCode::NOT_FOUND, &headers, path, &route, scope).is_none());
+        }
+        headers.insert(
+            "x-accepted-oauth-scopes",
+            "public_repo, repo".parse().unwrap(),
+        );
         for present in ["repo", "public_repo"] {
             headers.insert("x-oauth-scopes", present.parse().unwrap());
             assert!(write_refusal(StatusCode::NOT_FOUND, &headers, path, &route, scope).is_none());
