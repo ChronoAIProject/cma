@@ -1,5 +1,5 @@
 use axum::{
-    http::{header, HeaderMap, StatusCode, Uri},
+    http::{header, HeaderMap, Uri},
     response::{IntoResponse as _, Response},
     Json,
 };
@@ -22,27 +22,27 @@ pub(super) fn source_is_current(
     })
 }
 
-pub(super) fn operation_path<'a>(
+pub(super) fn is_selected_route(
     host: Option<&str>,
     model_proxy: bool,
-    uri: &'a Uri,
+    uri: &Uri,
     route: &GithubCredentialRoute,
-) -> Option<&'a str> {
+) -> bool {
     match host {
-        Some("api.github.com") => Some(uri.path()),
+        Some("api.github.com") => true,
         None if !model_proxy => {
             let path = uri
                 .path()
                 .strip_prefix("/api/v1/proxy/")
-                .or_else(|| uri.path().strip_prefix("/proxy/"))?;
-            let (selector, _) = path.split_once('/')?;
-            if selector == route.catalog_id || selector == route.service_id {
-                return Some(&path[selector.len()..]);
-            }
-            path.strip_prefix("s/api-github")
-                .filter(|remaining| remaining.starts_with('/'))
+                .or_else(|| uri.path().strip_prefix("/proxy/"));
+            path.and_then(|path| path.split_once('/'))
+                .is_some_and(|(selector, suffix)| {
+                    selector == route.catalog_id
+                        || selector == route.service_id
+                        || (selector == "s" && suffix.starts_with("api-github/"))
+                })
         }
-        _ => None,
+        _ => false,
     }
 }
 
@@ -144,57 +144,6 @@ pub(super) async fn access_report(
     .into_response()
 }
 
-pub(super) fn write_refusal(
-    status: StatusCode,
-    headers: &HeaderMap,
-    path: &str,
-    route: &GithubCredentialRoute,
-    scope: &GithubRepositoryScope,
-) -> Option<Response> {
-    if scope.required_scope != GithubRepositoryScopeNeed::PublicRepo
-        || !matches!(status, StatusCode::NOT_FOUND | StatusCode::FORBIDDEN)
-        || one_header(headers, "x-github-request-id").is_none_or(str::is_empty)
-        || headers.contains_key(header::RETRY_AFTER)
-        || headers.contains_key("x-accepted-github-permissions")
-        || (status == StatusCode::FORBIDDEN
-            && one_header(headers, "x-ratelimit-remaining")
-                .and_then(|remaining| remaining.parse::<u64>().ok())
-                .is_none_or(|remaining| remaining == 0))
-    {
-        return None;
-    }
-    let prefix = format!("/repos/{}/", scope.repository);
-    let endpoint = path.get(prefix.len()..).filter(|_| {
-        path.get(..prefix.len())
-            .is_some_and(|value| value.eq_ignore_ascii_case(&prefix))
-    })?;
-    if !matches!(endpoint, "git/refs" | "issues" | "pulls") {
-        return None;
-    }
-    let accepted = scopes(headers, "x-accepted-oauth-scopes")?;
-    let granted = scopes(headers, "x-oauth-scopes")?;
-    if !matches!(
-        accepted.as_slice(),
-        ["public_repo"] | ["public_repo", "repo"] | ["repo", "public_repo"]
-    ) || scope.required_scope.is_satisfied_by(&granted)
-    {
-        return None;
-    }
-    Some(
-        (
-            StatusCode::FORBIDDEN,
-            Json(json!({
-                "code": "insufficient_scope",
-                "message": "GitHub connection requires public_repo for this repository write",
-                "detail": "public_repo",
-                "connection_id": route.service_id,
-                "remediation_url": scope.manage_url,
-            })),
-        )
-            .into_response(),
-    )
-}
-
 fn one_header<'a>(headers: &'a HeaderMap, name: &'static str) -> Option<&'a str> {
     let mut values = headers.get_all(name).iter();
     let value = values.next()?.to_str().ok()?;
@@ -274,60 +223,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn scope_refusal_requires_exact_scope_and_preserves_independent_provider_failures() {
-        let route = route();
-        let scope = route.repository_scope.as_ref().unwrap();
-        let path = "/repos/example/project/git/refs";
-        let mut headers = HeaderMap::new();
-        headers.insert("x-github-request-id", "fixture".parse().unwrap());
-        assert!(write_refusal(StatusCode::NOT_FOUND, &headers, path, &route, scope).is_none());
-        headers.insert("x-accepted-oauth-scopes", "public_repo".parse().unwrap());
-        headers.insert("x-oauth-scopes", "read:user".parse().unwrap());
-        assert!(write_refusal(
-            StatusCode::NOT_FOUND,
-            &headers,
-            "/repos/example/other/git/refs",
-            &route,
-            scope
-        )
-        .is_none());
-        let response = write_refusal(StatusCode::NOT_FOUND, &headers, path, &route, scope).unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-        let body = axum::body::to_bytes(response.into_body(), 1024)
-            .await
-            .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(body["code"], "insufficient_scope");
-        assert_eq!(body["detail"], "public_repo");
-        assert_eq!(body["remediation_url"], "https://nyx.example/keys/selected");
-        for alternatives in ["public_repo, repo", "repo, public_repo"] {
-            headers.insert("x-accepted-oauth-scopes", alternatives.parse().unwrap());
-            assert!(write_refusal(StatusCode::NOT_FOUND, &headers, path, &route, scope).is_some());
-        }
-        for ambiguous in ["public_repo, public_repo", "public_repo, repo, admin:org"] {
-            headers.insert("x-accepted-oauth-scopes", ambiguous.parse().unwrap());
-            assert!(write_refusal(StatusCode::NOT_FOUND, &headers, path, &route, scope).is_none());
-        }
-        headers.insert(
-            "x-accepted-oauth-scopes",
-            "public_repo, repo".parse().unwrap(),
-        );
-        for present in ["repo", "public_repo"] {
-            headers.insert("x-oauth-scopes", present.parse().unwrap());
-            assert!(write_refusal(StatusCode::NOT_FOUND, &headers, path, &route, scope).is_none());
-        }
-        headers.insert("x-oauth-scopes", "read:user".parse().unwrap());
-        headers.insert("x-ratelimit-remaining", "0".parse().unwrap());
-        assert!(write_refusal(StatusCode::FORBIDDEN, &headers, path, &route, scope).is_none());
-        headers.insert("x-ratelimit-remaining", "10".parse().unwrap());
-        headers.insert(header::RETRY_AFTER, "30".parse().unwrap());
-        assert!(write_refusal(StatusCode::FORBIDDEN, &headers, path, &route, scope).is_none());
-        headers.remove(header::RETRY_AFTER);
-        headers.append("x-oauth-scopes", "repo".parse().unwrap());
-        assert!(write_refusal(StatusCode::NOT_FOUND, &headers, path, &route, scope).is_none());
-    }
-
     #[test]
     fn an_admitted_source_read_refuses_a_rotated_credential_or_replaced_connection() {
         let mut route = route();
@@ -344,20 +239,20 @@ mod tests {
     }
 
     #[test]
-    fn platform_scope_refusal_is_limited_to_exact_github_paths() {
+    fn source_authority_is_limited_to_exact_github_routes() {
         let route = route();
         for (request, expected) in [
             (
                 "/api/v1/proxy/s/api-github/repos/example/project/issues",
-                Some("/repos/example/project/issues"),
+                true,
             ),
-            ("/proxy/github-catalog/user", Some("/user")),
-            ("/api/v1/proxy/selected/user", Some("/user")),
-            ("/api/v1/proxy/s/api-github-shadow/user", None),
-            ("/api/v1/proxy/s/ornn-api/skills", None),
+            ("/proxy/github-catalog/user", true),
+            ("/api/v1/proxy/selected/user", true),
+            ("/api/v1/proxy/s/api-github-shadow/user", false),
+            ("/api/v1/proxy/s/ornn-api/skills", false),
         ] {
             assert_eq!(
-                operation_path(None, false, &request.parse().unwrap(), &route),
+                is_selected_route(None, false, &request.parse().unwrap(), &route),
                 expected
             );
         }

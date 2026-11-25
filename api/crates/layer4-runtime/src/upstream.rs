@@ -289,12 +289,12 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
     let (parts, body) = request.into_parts();
     let github_scope = credential.github_route.as_ref().and_then(|route| {
         let scoped = route.repository_scope.as_ref()?;
-        github_scope::operation_path(state.allowed_host, state.model_proxy, &parts.uri, route)
-            .map(|path| (route, scoped, path))
+        github_scope::is_selected_route(state.allowed_host, state.model_proxy, &parts.uri, route)
+            .then_some((route, scoped))
     });
     if !github_scope::source_is_current(
         &parts.headers,
-        github_scope.as_ref().map(|(route, _, _)| *route),
+        github_scope.map(|(route, _)| route),
         credential.generation,
     ) {
         return (StatusCode::FORBIDDEN, "GitHub source connection changed").into_response();
@@ -303,7 +303,7 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
         && parts.uri.path() == github_scope::ACCESS_PATH
         && parts.method == axum::http::Method::GET;
     let scoped_uri = if scope_read {
-        let Some((_, scope, _)) = github_scope else {
+        let Some((_, scope)) = github_scope else {
             return StatusCode::NO_CONTENT.into_response();
         };
         Some(github_scope::repository_metadata_uri(scope))
@@ -347,13 +347,6 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
         )
             .into_response();
     }
-    let is_write = matches!(
-        parts.method,
-        axum::http::Method::POST
-            | axum::http::Method::PUT
-            | axum::http::Method::PATCH
-            | axum::http::Method::DELETE
-    );
     let mut outbound = reqwest::Request::new(parts.method, target);
     if scope_read {
         github_scope::metadata_request_headers(outbound.headers_mut());
@@ -389,25 +382,18 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
             .into_response();
     }
     let status = response.status();
-    if let Some((route, scope, path)) = github_scope {
-        if scope_read {
-            return github_scope::access_report(
-                response,
-                route,
-                scope,
-                credential.generation.unwrap_or_default(),
-                credential.value.as_bytes(),
-            )
-            .await;
-        }
-        if is_write {
-            if let Some(refusal) =
-                github_scope::write_refusal(status, response.headers(), path, route, scope)
-            {
-                return refusal;
-            }
-        }
+    if let Some((route, scope)) = github_scope.filter(|_| scope_read) {
+        return github_scope::access_report(
+            response,
+            route,
+            scope,
+            credential.generation.unwrap_or_default(),
+            credential.value.as_bytes(),
+        )
+        .await;
     }
+    // NyxID resolves GitHub write refusals using the original provider response.
+    // The projected OAuth headers alone cannot distinguish scope from other refusals.
     let headers = response.headers().clone();
     let stream =
         crate::upstream_guard::guarded(response.bytes_stream(), credential.value.into_bytes());
