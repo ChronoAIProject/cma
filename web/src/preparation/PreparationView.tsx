@@ -75,9 +75,17 @@ export function PreparationView({
         </li>
         <li
           data-state={model.ready ? 'confirmed' : 'pending'}
-          aria-current={model.accepted && !model.ready ? 'step' : undefined}
+          aria-current={
+            model.accepted && !model.ready && model.stage !== 'failed' ? 'step' : undefined
+          }
         >
-          <strong>{model.ready ? 'Cloud computer ready' : 'Preparing cloud computer'}</strong>
+          <strong>
+            {model.ready
+              ? 'Cloud computer ready'
+              : model.stage === 'failed'
+                ? 'Setup stopped'
+                : 'Preparing cloud computer'}
+          </strong>
           {model.progressAt ? (
             <span>
               Last progress <EvidenceTime value={model.progressAt} />
@@ -85,7 +93,9 @@ export function PreparationView({
           ) : null}
         </li>
         <li data-state="pending">
-          <strong>Starts on your message</strong>
+          <strong>
+            {model.stage === 'failed' ? 'Task hasn’t started' : 'Starts on your message'}
+          </strong>
         </li>
       </ol>
       {model.error ? (
