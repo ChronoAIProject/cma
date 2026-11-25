@@ -95,14 +95,23 @@ async fn startup_native_pool_drift_holds_original_binding_and_recovers_after_rep
         .assignments
         .is_empty());
 
+    fixture
+        .control
+        .background_sweep
+        .store(true, Ordering::SeqCst);
     tokio::time::pause();
     tokio::time::advance(Duration::from_secs(30)).await;
     tokio::time::resume();
-    let _ = fixture.reconciler.run_due(fixture.now).await;
+    fixture.reconciler.run_due(fixture.now).await.unwrap();
     assert!(fixture.reconciler.binding_is_held(&fixture.original.id));
+    assert!(fixture.control.other_settled.load(Ordering::SeqCst) >= 16);
     {
         let mut api = fixture.native.api.state.lock().unwrap();
         assert!(api.assignments.is_empty());
+        assert!(!api
+            .calls
+            .iter()
+            .any(|(kind, id)| { kind == "ORPHAN_PHASE" && id == fixture.original.id.as_str() }));
         assert!(!api.calls.iter().any(|(method, resource)| {
             method == "DELETE"
                 && [fixture.native.claim_path.as_str(), api::MEMBER, api::VOLUME]
@@ -114,7 +123,7 @@ async fn startup_native_pool_drift_holds_original_binding_and_recovers_after_rep
     tokio::time::advance(Duration::from_secs(60)).await;
     tokio::time::resume();
     for _ in 0..8 {
-        let _ = fixture.reconciler.run_due(fixture.now).await;
+        fixture.reconciler.run_due(fixture.now).await.unwrap();
         if !fixture.reconciler.binding_is_held(&fixture.original.id) {
             break;
         }
@@ -237,14 +246,22 @@ async fn startup_native_pool_drift_or_absence_preserves_retained_binding() {
             Some(fixture.original.clone())
         );
 
+        fixture
+            .control
+            .background_sweep
+            .store(true, Ordering::SeqCst);
         tokio::time::pause();
         tokio::time::advance(Duration::from_secs(30)).await;
         tokio::time::resume();
-        let _ = fixture.reconciler.run_due(fixture.now).await;
+        fixture.reconciler.run_due(fixture.now).await.unwrap();
         assert!(fixture.reconciler.binding_is_held(&fixture.original.id));
+        assert!(fixture.control.other_settled.load(Ordering::SeqCst) >= 16);
         {
             let mut state = fixture.native.api.state.lock().unwrap();
             assert!(state.assignments.is_empty());
+            assert!(!state.calls.iter().any(|(kind, id)| {
+                kind == "ORPHAN_PHASE" && id == fixture.original.id.as_str()
+            }));
             assert!(!state.calls.iter().any(|(method, resource)| {
                 method == "DELETE"
                     && [fixture.native.claim_path.as_str(), api::MEMBER, api::VOLUME]
@@ -261,7 +278,7 @@ async fn startup_native_pool_drift_or_absence_preserves_retained_binding() {
         tokio::time::pause();
         tokio::time::advance(Duration::from_secs(60)).await;
         tokio::time::resume();
-        let _ = fixture.reconciler.run_due(fixture.now).await;
+        fixture.reconciler.run_due(fixture.now).await.unwrap();
         assert!(fixture.reconciler.binding_is_held(&fixture.original.id));
         // Restore provider visibility of the original objects, not recreation.
         {
@@ -275,7 +292,7 @@ async fn startup_native_pool_drift_or_absence_preserves_retained_binding() {
             tokio::time::pause();
             tokio::time::advance(Duration::from_secs(300)).await;
             tokio::time::resume();
-            let _ = fixture.reconciler.run_due(fixture.now).await;
+            fixture.reconciler.run_due(fixture.now).await.unwrap();
             if !fixture.reconciler.binding_is_held(&fixture.original.id) {
                 break;
             }

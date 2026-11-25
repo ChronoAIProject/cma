@@ -26,6 +26,7 @@ struct Control {
     other_started: AtomicUsize,
     other_settled: AtomicUsize,
     other_active: AtomicUsize,
+    background_sweep: AtomicBool,
     cancelled: AtomicUsize,
     cleanup: AtomicUsize,
     fenced: Notify,
@@ -45,6 +46,7 @@ impl Control {
             other_started: AtomicUsize::new(0),
             other_settled: AtomicUsize::new(0),
             other_active: AtomicUsize::new(0),
+            background_sweep: AtomicBool::new(false),
             cancelled: AtomicUsize::new(0),
             cleanup: AtomicUsize::new(0),
             fenced: Notify::new(),
@@ -73,6 +75,15 @@ impl Control {
             .calls
             .iter()
             .any(|(kind, _)| kind == "HOME_PHASE"));
+    }
+    fn assert_siblings_settled(&self) {
+        let settled = self.other_settled.load(Ordering::SeqCst);
+        if self.background_sweep.load(Ordering::SeqCst) {
+            assert!(settled >= 8);
+        } else {
+            assert_eq!(settled, 8);
+        }
+        assert_eq!(self.other_active.load(Ordering::SeqCst), 0);
     }
 }
 
