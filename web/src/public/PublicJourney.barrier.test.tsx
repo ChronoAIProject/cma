@@ -47,7 +47,7 @@ it.each([false, true])(
   'preserves unresolved A across same-document B and return, expired=%s',
   async (expired) => {
     const test = setup();
-    vi.mocked(test.client.requests.createOrResume).mockRejectedValueOnce(
+    vi.mocked(test.client.requests.createOrResumeBound).mockRejectedValueOnce(
       new ApiError(503, 'Unknown', 'service_unavailable'),
     );
     await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
@@ -65,17 +65,17 @@ it.each([false, true])(
       '/t/entry-a',
     );
     expect(screen.getByRole('button', { name: 'Open in CMA' })).toBeDisabled();
-    expect(test.client.requests.createOrResume).toHaveBeenCalledOnce();
+    expect(test.client.requests.createOrResumeBound).toHaveBeenCalledOnce();
     expect(sessionStorage.getItem(key)).toBe(bytes);
     expect(test.navigate).not.toHaveBeenCalled();
     test.show(a);
     if (expired) {
       expect(await screen.findByRole('alert')).toHaveTextContent('original request is saved');
-      expect(test.client.requests.createOrResume).toHaveBeenCalledOnce();
+      expect(test.client.requests.createOrResumeBound).toHaveBeenCalledOnce();
       expect(sessionStorage.getItem(key)).toBe(bytes);
     } else {
       await waitFor(() => expect(test.navigate).toHaveBeenCalledOnce());
-      const calls = vi.mocked(test.client.requests.createOrResume).mock.calls;
+      const calls = vi.mocked(test.client.requests.createOrResumeBound).mock.calls;
       expect(calls).toHaveLength(2);
       expect(calls[1]).toEqual(calls[0]);
       expect(sessionStorage.getItem(key)).toBeNull();
@@ -107,7 +107,7 @@ it.each(['button', 'external gesture'] as const)(
     );
     await act(async () => undefined);
     expect(test.provider.signIn).not.toHaveBeenCalled();
-    expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(test.client.requests.createOrResumeBound).not.toHaveBeenCalled();
     expect(sessionStorage.getItem(key)).toBe(bytes);
   },
 );
@@ -125,7 +125,7 @@ it('does not turn a corrupt recovery route into a link or a fresh dispatch', asy
   await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('could not be read safely');
   expect(screen.queryByRole('link', { name: 'Return to saved request' })).not.toBeInTheDocument();
-  expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
+  expect(test.client.requests.createOrResumeBound).not.toHaveBeenCalled();
   expect(sessionStorage.getItem(key)).toBe(bytes);
 });
 
@@ -135,7 +135,7 @@ it('returns through the router so an accepted in-memory result survives expiry',
     resolve = yes;
   });
   const test = setup();
-  vi.mocked(test.client.requests.createOrResume).mockReturnValueOnce(response);
+  vi.mocked(test.client.requests.createOrResumeBound).mockReturnValueOnce(response);
   await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
   const original = readIntent('/t/entry-a')!;
   test.show(b);
@@ -152,13 +152,13 @@ it('returns through the router so an accepted in-memory result survives expiry',
       { replace: true },
     ),
   );
-  expect(test.client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(test.client.requests.createOrResumeBound).toHaveBeenCalledOnce();
   expect(sessionStorage.getItem(key)).toBeNull();
 });
 
 it('retains and fences the original command after a fingerprint mismatch, including re-entry', async () => {
   const test = setup();
-  vi.mocked(test.client.requests.createOrResume).mockRejectedValueOnce(
+  vi.mocked(test.client.requests.createOrResumeBound).mockRejectedValueOnce(
     new ApiError(422, 'Mismatch', 'idempotency_key_reused'),
   );
   await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
@@ -168,12 +168,12 @@ it('retains and fences the original command after a fingerprint mismatch, includ
   expect(original.recoveryRequired).toBe(true);
   expect(original.wireBody).toBe(JSON.stringify(original.body));
   expect(original.key).toBe(
-    vi.mocked(test.client.requests.createOrResume).mock.calls[0]?.[2].idempotencyKey,
+    vi.mocked(test.client.requests.createOrResumeBound).mock.calls[0]?.[2].idempotencyKey,
   );
   test.show(b);
   test.show(a);
   expect(await screen.findByRole('alert')).toHaveTextContent('original request is saved');
-  expect(test.client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(test.client.requests.createOrResumeBound).toHaveBeenCalledOnce();
   expect(readIntent('/t/entry-a')).toEqual(original);
   expect(test.navigate).not.toHaveBeenCalled();
 });

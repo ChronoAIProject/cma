@@ -13,7 +13,13 @@ afterEach(() => {
   directories.splice(0).forEach((directory) => rmSync(directory, { recursive: true }));
 });
 
-async function observe(method: string, body: unknown, failure?: string, unreadable = false) {
+async function observe(
+  method: string,
+  body: unknown,
+  failure?: string,
+  unreadable = false,
+  version = 'v1',
+) {
   const fixture = fixtureDocument();
   directories.push(fixture.directory);
   for (const [key, value] of Object.entries(fixture.env)) vi.stubEnv(key, value);
@@ -42,7 +48,7 @@ async function observe(method: string, body: unknown, failure?: string, unreadab
       fixture.document.origin +
       (method === 'GET'
         ? '/api/v1/profile-authoring/services'
-        : '/api/v1/triggers/public/fixture/launches'),
+        : `/api/${version}/triggers/public/fixture/launches`),
     request: () => ({
       method: () => method,
       failure: () => (failure === undefined ? null : { errorText: failure }),
@@ -63,10 +69,20 @@ it('inspects list responses without treating catalog rows as owned resources', a
   expect(h.violations).toEqual([]);
   expect(h.journal.resources).toEqual([]);
 });
-it('does not accept array responses as command admission receipts', async () => {
-  const h = await observe('POST', [{ id: 'claimed-launch' }]);
-  expect(h.violations).toEqual(['response_inspection_failed']);
-  expect(h.journal.resources).toEqual([]);
+it.each(['v1', 'v2'])(
+  'does not accept array responses as %s command admission receipts',
+  async (version) => {
+    const h = await observe('POST', [{ id: 'claimed-launch' }], undefined, false, version);
+    expect(h.violations).toEqual(['response_inspection_failed']);
+    expect(h.journal.resources).toEqual([]);
+  },
+);
+it.each(['v1', 'v2'])('journals %s Launch responses from the browser observer', async (version) => {
+  const h = await observe('POST', { id: 'created-launch' }, undefined, false, version);
+  expect(h.violations).toEqual([]);
+  expect(h.journal.resources).toEqual([
+    { kind: 'launches', id: 'created-launch', subject: h.fixture.accounts.visitor.subject },
+  ]);
 });
 it('keeps credential checks on catalog responses', async () => {
   expect((await observe('GET', ['redacted-probe'])).violations).toEqual([

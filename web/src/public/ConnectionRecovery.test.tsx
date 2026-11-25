@@ -228,6 +228,6 @@ it.each([false, true])(
       { trust_confirmed_digest: undefined, acknowledgements: [] },
       expect.any(Object),
     );
-    expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
   },
 );

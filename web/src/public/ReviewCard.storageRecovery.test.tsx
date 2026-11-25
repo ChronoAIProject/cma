@@ -317,6 +317,6 @@ it.each(['{', 'null', '{"owner":""}'])(
     expect(test.sent).toHaveLength(0);
     expect(test.completed).not.toHaveBeenCalled();
     expect(sessionStorage.getItem(storageKey)).toBe(raw);
-    expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
+    expect(test.client.requests.createOrResumeBound).not.toHaveBeenCalled();
   },
 );
