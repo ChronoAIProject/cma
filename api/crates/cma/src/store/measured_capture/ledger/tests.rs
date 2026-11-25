@@ -172,6 +172,20 @@ async fn measured_batches_are_immutable_and_corrections_are_idempotent_across_cl
         b.read_period(period.clone()).await.unwrap(),
         vec![second.clone()]
     );
+    let replay = ExactPeriodReadRequest {
+        period: period.clone(),
+        selected: vec![SelectedWindow {
+            revision: first.revision(),
+            reference: first.reference(),
+        }],
+    };
+    assert_eq!(
+        b.read_exact_period(replay.clone()).await.unwrap(),
+        vec![first.clone()]
+    );
+    let mut changed = replay;
+    changed.selected[0].reference.evidence_sha256 = "a".repeat(64);
+    assert!(b.read_exact_period(changed).await.is_err());
     assert!(b
         .read_period(PeriodReadRequest {
             from_ms: period.from_ms - 1000,

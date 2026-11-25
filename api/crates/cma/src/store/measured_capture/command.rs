@@ -30,7 +30,10 @@ pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
     if arguments.first().is_some_and(|value| {
         matches!(
             value.as_str(),
-            "--measured-freeze" | "--measured-evidence-read" | "--measured-period-read"
+            "--measured-freeze"
+                | "--measured-evidence-read"
+                | "--measured-period-read"
+                | "--measured-period-replay"
         )
     }) {
         return batch_command(arguments).await;
@@ -71,7 +74,10 @@ pub(crate) async fn run(arguments: &[String]) -> Result<Value> {
 }
 
 async fn batch_command(arguments: &[String]) -> Result<Value> {
-    use super::ledger::{FreezeRequest, MeasuredLedger, PeriodReadRequest, ReadRequest};
+    use super::ledger::{
+        ExactPeriodReadRequest, FreezeRequest, MeasuredLedger, PeriodReadRequest, ReadRequest,
+        SelectedWindow,
+    };
     use crate::store::{ledger_census::files, migrations::measured_batches};
     use std::path::Path;
     let [command, input, output] = arguments else {
@@ -97,10 +103,15 @@ async fn batch_command(arguments: &[String]) -> Result<Value> {
             return Err("measured batch custody requires its explicit schema migration");
         }
         let ledger = MeasuredLedger::new(&database);
-        if command == "--measured-period-read" {
-            let request: PeriodReadRequest = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
-            let windows = ledger.read_period(request).await.map_err(|_| "measured period evidence is unavailable or incomplete")?;
-            let receipt = json!({"windows": windows.iter().map(|batch| json!({"evidence_id": batch.evidence_id(), "evidence_sha256": batch.evidence_sha256(), "revision": batch.revision()})).collect::<Vec<_>>()});
+        if matches!(command.as_str(), "--measured-period-read" | "--measured-period-replay") {
+            let windows = if command == "--measured-period-read" {
+                let request: PeriodReadRequest = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
+                ledger.read_period(request).await
+            } else {
+                let request: ExactPeriodReadRequest = serde_json::from_slice(&bytes).map_err(|_| INVALID)?;
+                ledger.read_exact_period(request).await
+            }.map_err(|_| "measured period evidence is unavailable or incomplete")?;
+            let receipt = json!({"selected": windows.iter().map(|batch| SelectedWindow { revision: batch.revision(), reference: batch.reference() }).collect::<Vec<_>>()});
             return Ok((serde_json::to_vec(&windows).map_err(|_| UNAVAILABLE)?, receipt));
         }
         let evidence = match command.as_str() {

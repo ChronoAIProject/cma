@@ -23,7 +23,7 @@ const MAX_BATCH_PAYLOAD: usize = 8 * 1024 * 1024;
 const MAX_HISTORY_BYTES: usize = 16 * 1024 * 1024;
 #[path = "ledger/period.rs"]
 mod period;
-pub(crate) use period::PeriodReadRequest;
+pub(crate) use period::{ExactPeriodReadRequest, PeriodReadRequest, SelectedWindow};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

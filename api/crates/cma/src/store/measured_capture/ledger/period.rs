@@ -16,6 +16,20 @@ pub(crate) struct PeriodReadRequest {
     pub windows: Vec<EvidenceScope>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SelectedWindow {
+    pub revision: u64,
+    pub reference: CorrectionReference,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ExactPeriodReadRequest {
+    pub period: PeriodReadRequest,
+    pub selected: Vec<SelectedWindow>,
+}
+
 impl MeasuredLedger {
     /// Read all named windows at one custody snapshot. A missing window or
     /// discontinuity refuses the period; no missing observation becomes zero.
@@ -23,6 +37,25 @@ impl MeasuredLedger {
         &self,
         request: PeriodReadRequest,
     ) -> Result<Vec<FrozenEvidence>, CaptureError> {
+        self.read_selected_period(request, None).await
+    }
+
+    pub(crate) async fn read_exact_period(
+        &self,
+        request: ExactPeriodReadRequest,
+    ) -> Result<Vec<FrozenEvidence>, CaptureError> {
+        self.read_selected_period(request.period, Some(&request.selected))
+            .await
+    }
+
+    async fn read_selected_period(
+        &self,
+        request: PeriodReadRequest,
+        references: Option<&[SelectedWindow]>,
+    ) -> Result<Vec<FrozenEvidence>, CaptureError> {
+        if references.is_some_and(|selected| selected.len() != request.windows.len()) {
+            return Err(CaptureError::Unavailable);
+        }
         if request.windows.is_empty()
             || request.windows.len() > MAX_WINDOWS
             || request.from_ms >= request.to_ms
@@ -54,7 +87,7 @@ impl MeasuredLedger {
             .map_err(|_| CaptureError::Unavailable)?;
         let mut selected = Vec::with_capacity(request.windows.len());
         let mut bytes = 0;
-        for scope in request.windows {
+        for (index, scope) in request.windows.into_iter().enumerate() {
             let history = self
                 .history(
                     &scope.stream_id().map_err(|_| CaptureError::Corrupt)?,
@@ -65,7 +98,14 @@ impl MeasuredLedger {
             let evidence = history
                 .into_iter()
                 .rev()
-                .find(|batch| batch.source_cutoff_ms() <= request.source_cutoff_ms)
+                .find(|batch| {
+                    batch.source_cutoff_ms() <= request.source_cutoff_ms
+                        && references.is_none_or(|selected| {
+                            let exact = &selected[index];
+                            batch.revision() == exact.revision
+                                && batch.reference() == exact.reference
+                        })
+                })
                 .ok_or(CaptureError::Unavailable)?;
             bytes += serde_json::to_vec(&evidence)
                 .map_err(|_| CaptureError::Corrupt)?
