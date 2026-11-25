@@ -159,10 +159,15 @@ class ProductionDeployTests(unittest.TestCase):
                 reads.append(head)
                 return history(head)
 
+            def run_selected(runner, script, path, _request, _receipts, started, mode,
+                             _target, _env, child_env, _limit, _masker):
+                return runner(script, path, mode, started, child_env)
+
             bounds = Mock(return_value=(RELEASED, history(newest)))
             with patch("staging_cd_watermark.advertise", side_effect=advertisement(*finals)), \
                     patch.object(invoke, "release_bounds", bounds), \
                     patch.object(invoke.DevelopHistory, "from_head", side_effect=from_head), \
+                    patch.object(invoke, "run_release", side_effect=run_selected), \
                     patch.object(invoke, "ContractPolicy", policy or Mock(side_effect=AssertionError)):
                 try:
                     code = invoke.deploy(env, Mock(), lambda _env: root / "deploy_set.py", controller,
