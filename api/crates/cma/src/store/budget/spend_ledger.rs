@@ -1,14 +1,15 @@
 //! The platform spend read model over the period row (plain reads, no session,
 //! no settings fence), the evaluator, and the operator's cloud observations.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::time::{Duration, UNIX_EPOCH};
 
 use layer2_core::budget::{
     BudgetError, CloudObservation, CloudObservationInput, Evaluation, ObservationError,
     PlatformAdmissionState, PlatformPeriodLedger, PlatformSpendLedger, PlatformSpendState,
 };
-use mongodb::bson::doc;
-use mongodb::ClientSession;
+use mongodb::bson::{doc, Document};
+use mongodb::{ClientSession, Collection, Database};
 
 use super::period::{
     ensure_period_row, load_or_open, read_snapshot, save_period, snapshot, PolicySnapshot,
@@ -25,12 +26,7 @@ mod evaluation;
 impl MongoSandboxStore {
     /// The current settings with no owner scope; `None` without a settings record.
     pub(super) async fn platform_snapshot(&self) -> Result<Option<PolicySnapshot>, BudgetError> {
-        self.budget_settings
-            .find_one(doc! {"_id": "platform"})
-            .await
-            .map_err(|_| BudgetError::Unavailable)?
-            .map(|document| snapshot(&document, None))
-            .transpose()
+        platform_snapshot_from(&self.budget_settings).await
     }
 
     pub(super) async fn period_ledger(
@@ -70,6 +66,74 @@ impl MongoSandboxStore {
     }
 }
 
+async fn platform_snapshot_from(
+    settings: &Collection<Document>,
+) -> Result<Option<PolicySnapshot>, BudgetError> {
+    settings
+        .find_one(doc! {"_id": "platform"})
+        .await
+        .map_err(|_| BudgetError::Unavailable)?
+        .map(|document| snapshot(&document, None))
+        .transpose()
+}
+
+pub(crate) struct RegistrationReader {
+    settings: Collection<Document>,
+    budget: Collection<Document>,
+    counter_shards: bool,
+}
+
+impl RegistrationReader {
+    pub(in crate::store) fn new(database: &Database, counter_shards: bool) -> Self {
+        use crate::store::durability::majority_collection;
+        Self {
+            settings: majority_collection(database, crate::store::settings::SETTINGS),
+            budget: majority_collection(database, super::COLLECTION),
+            counter_shards,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::auth::registration::RegistrationPolicy for RegistrationReader {
+    async fn admission_snapshot(
+        &self,
+        now: u64,
+    ) -> Result<crate::auth::registration::RegistrationAdmission, BudgetError> {
+        read_admission_snapshot(&self.settings, &self.budget, self.counter_shards, now).await
+    }
+}
+
+async fn read_admission_snapshot(
+    settings: &Collection<Document>,
+    budget: &Collection<Document>,
+    counter_shards: bool,
+    now: u64,
+) -> Result<crate::auth::registration::RegistrationAdmission, BudgetError> {
+    let Some(snapshot) = platform_snapshot_from(settings).await? else {
+        return Ok((PlatformAdmissionState::default(), Ok(Default::default())));
+    };
+    let ceilings = snapshot.ceilings;
+    let Some(platform) = snapshot.platform else {
+        return Ok((
+            PlatformAdmissionState {
+                operator_control: snapshot.operator_control,
+                ..Default::default()
+            },
+            ceilings,
+        ));
+    };
+    let revision = snapshot.revision;
+    let start = platform.period_bounds()?.0;
+    let ledger = match super::period_storage::read_plain(budget, start, counter_shards).await? {
+        Some(state) => state.ledger,
+        None => PlatformPeriodLedger::open(&platform, revision)?,
+    };
+    let mut state = ledger.admission_state(&platform, revision, now)?;
+    state.operator_control = snapshot.operator_control;
+    Ok((state, ceilings))
+}
+
 #[async_trait::async_trait]
 impl PlatformSpendLedger for MongoSandboxStore {
     async fn admission_state(&self, now: u64) -> Result<PlatformAdmissionState, BudgetError> {
@@ -86,27 +150,13 @@ impl PlatformSpendLedger for MongoSandboxStore {
         ),
         BudgetError,
     > {
-        let Some(snapshot) = self.platform_snapshot().await? else {
-            return Ok((PlatformAdmissionState::default(), Ok(Default::default())));
-        };
-        let ceilings = snapshot.ceilings;
-        let Some(platform) = snapshot.platform else {
-            return Ok((
-                PlatformAdmissionState {
-                    operator_control: snapshot.operator_control,
-                    ..Default::default()
-                },
-                ceilings,
-            ));
-        };
-        let revision = snapshot.revision;
-        let ledger = match self.period_ledger(platform.period_bounds()?.0).await? {
-            Some(state) => state.ledger,
-            None => PlatformPeriodLedger::open(&platform, revision)?,
-        };
-        let mut state = ledger.admission_state(&platform, revision, now)?;
-        state.operator_control = snapshot.operator_control;
-        Ok((state, ceilings))
+        read_admission_snapshot(
+            &self.budget_settings,
+            &self.model_budget,
+            self.platform_counter_shards,
+            now,
+        )
+        .await
     }
 
     async fn spend_state(&self, now: u64) -> Result<PlatformSpendState, BudgetError> {
@@ -204,10 +254,10 @@ impl MongoSandboxStore {
                     }
                 },
                 Err(Attempt::Retry) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                 }
                 Err(Attempt::Refused(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
             }

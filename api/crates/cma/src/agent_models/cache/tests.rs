@@ -111,6 +111,7 @@ async fn concurrent_stalled_catalogues_share_the_original_wait_bound() {
 struct Material {
     value: Mutex<Option<CredentialMaterial>>,
     calls: AtomicUsize,
+    wait_until: Option<SystemTime>,
 }
 #[async_trait::async_trait]
 impl SandboxCredentialController for Material {
@@ -128,6 +129,12 @@ impl SandboxCredentialController for Material {
         _: u64,
     ) -> Result<Option<CredentialMaterial>, CredentialError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(remaining) = self
+            .wait_until
+            .and_then(|deadline| deadline.duration_since(SystemTime::now()).ok())
+        {
+            tokio::time::sleep(remaining + Duration::from_millis(10)).await;
+        }
         Ok(self.value.lock().unwrap().clone())
     }
     async fn custodied(&self, _: &SandboxId) -> Result<Vec<CredentialMaterial>, CredentialError> {
@@ -148,6 +155,7 @@ async fn catalogue_hits_still_refuse_missing_mismatched_expired_or_rotated_custo
     root.validate().unwrap();
     let valid = CredentialMaterial {
         source: root.credential.source.clone(),
+        github_route: None,
         sandbox_id: root.id.clone(),
         owner: root.owner.clone(),
         authority: root.credential.current.clone().unwrap(),
@@ -156,6 +164,7 @@ async fn catalogue_hits_still_refuse_missing_mismatched_expired_or_rotated_custo
     let custody = Arc::new(Material {
         value: Mutex::new(Some(valid.clone())),
         calls: AtomicUsize::new(0),
+        wait_until: None,
     });
     let calls = Arc::new(AtomicUsize::new(0));
     let request_count = calls.clone();
@@ -218,4 +227,60 @@ async fn catalogue_hits_still_refuse_missing_mismatched_expired_or_rotated_custo
     assert!(catalog.models(&expiring).await.is_err());
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     server.abort();
+}
+
+#[tokio::test]
+async fn catalogue_does_not_send_a_bearer_that_expires_during_custody_lookup() {
+    use axum::{routing::get, Json, Router};
+    use layer2_core::dependency_diagnostics::capture;
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let request_count = calls.clone();
+    let app = Router::new().route(
+        "/api/v1/proxy/s/chrono-llm-public/models",
+        get(move || {
+            request_count.fetch_add(1, Ordering::SeqCst);
+            async { Json(serde_json::json!({"data":[{"id":"gpt-6"}]})) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    for cached in [false, true] {
+        let mut root = sandbox();
+        let authority = root.credential.current.as_mut().unwrap();
+        authority.expires_at = layer2_core::rfc3339_at(SystemTime::now() + Duration::from_secs(2));
+        let expiry = SystemTime::UNIX_EPOCH
+            + Duration::from_secs(seconds_from_rfc3339(&authority.expires_at).unwrap());
+        let custody = Arc::new(Material {
+            value: Mutex::new(Some(CredentialMaterial {
+                source: root.credential.source.clone(),
+                github_route: None,
+                sandbox_id: root.id.clone(),
+                owner: root.owner.clone(),
+                authority: authority.clone(),
+                value: SecretValue::new("synthetic-model-fixture".into()),
+            })),
+            calls: AtomicUsize::new(0),
+            wait_until: Some(expiry),
+        });
+        let catalog = ChronoAgentModels::new(&origin, custody.clone())
+            .unwrap()
+            .with_cache(cached);
+        let (result, failure) = capture(catalog.models(&root)).await;
+        assert_eq!(custody.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(result, Err(AgentModelCatalogError::Unavailable));
+        assert_eq!(
+            failure,
+            Some(Failure::new(
+                Dependency::AuthenticationAuthority,
+                Reason::CredentialExpired,
+            )),
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0, "cache enabled: {cached}");
+    }
+    server.abort();
+    assert!(server.await.unwrap_err().is_cancelled());
 }

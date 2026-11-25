@@ -1,6 +1,6 @@
 //! Service-account client for the CMA gateway-record endpoints.
 
-use std::{fmt, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use cmaeg_core::{channel::Secret, ids::RecordId};
@@ -13,6 +13,8 @@ pub(crate) use guarded::AdmissionRootWrite;
 
 #[path = "client_read.rs"]
 mod read;
+#[path = "client_retained_origins.rs"]
+mod retained_origins;
 pub(crate) use read::ReadFailure;
 
 const RECORD_PATH: &str = "/api/v1/gateway/channel-records";
@@ -87,6 +89,8 @@ pub struct RecordClient {
     channel_mutation_custody: bool,
     client: Client,
     base_url: Url,
+    /// Earlier CMA origins whose sealed record URLs still name records here.
+    retained_origins: Arc<[Url]>,
     record_path: &'static str,
     record_kind: super::RecordKind,
     retention: super::retention::InteractionRetention,
@@ -132,6 +136,7 @@ impl RecordClient {
             channel_mutation_custody: false,
             client,
             base_url,
+            retained_origins: Arc::from([]),
             record_path: RECORD_PATH,
             record_kind: super::RecordKind::Channel,
             retention: Default::default(),

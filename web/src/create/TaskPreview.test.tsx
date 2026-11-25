@@ -1,3 +1,4 @@
+import { selectTaskTemplate } from '../test/taskTemplateSelection';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { unavailableClient, type CmaWebClient } from '../api/client';
@@ -30,7 +31,7 @@ async function setup(overrides: Partial<CmaWebClient> = {}) {
   await waitFor(() =>
     expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Write a document' }));
+  selectTaskTemplate('Write a document');
   await waitFor(() => expect(screen.getByLabelText('Document type')).toHaveFocus());
   return create;
 }
@@ -52,7 +53,9 @@ it('visibly distinguishes an empty or partial preview from editable required fie
   const preview = screen.getByRole('region', { name: previewName });
   expect(screen.getByRole('heading', { name: previewName })).toBeVisible();
   expect(preview).toHaveTextContent(prompt);
-  expect(screen.queryByPlaceholderText('What would you like your Agent to do?')).toBeNull();
+  expect(
+    screen.queryByPlaceholderText('Describe the job. It gets its own cloud computer to do it.'),
+  ).toBeNull();
   expect(document.querySelector('textarea')).toBeNull();
   expect(screen.queryByText(/↵ to run/)).toBeNull();
   fill('Document type', 'guide');

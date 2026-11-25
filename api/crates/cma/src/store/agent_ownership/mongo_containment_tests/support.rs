@@ -35,6 +35,12 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) async fn new() -> Self {
+        Self::with_policy(layer2_core::agent_ownership::MaintenancePolicy::Legacy).await
+    }
+
+    pub(super) async fn with_policy(
+        policy: layer2_core::agent_ownership::MaintenancePolicy,
+    ) -> Self {
         let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").expect("use disposable Mongo");
         let client = Client::with_uri_str(&uri).await.unwrap();
         let name = format!("cma_renewal_containment_{}", uuid::Uuid::new_v4().simple());
@@ -45,9 +51,14 @@ impl Fixture {
             .await
             .unwrap();
         let router = RoutedStore::new(store.clone(), AgentId("isolated-agent".into())).await;
-        let manager = OwnershipCoordinator::register(router.clone(), member("containment-member"))
-            .await
-            .unwrap();
+        let manager = OwnershipCoordinator::register_with_policy(
+            router.clone(),
+            member("containment-member"),
+            false,
+            policy,
+        )
+        .await
+        .unwrap();
         let faulted = manager
             .acquire(&AgentId("isolated-agent".into()))
             .await
@@ -185,6 +196,11 @@ impl Fixture {
             &self.manager.local(&next.token.agent_id).await.unwrap(),
             &next
         ));
+    }
+
+    #[cfg(feature = "qualification-hooks")]
+    pub(super) fn acknowledge_receiver(&self) {
+        self.receiver.acknowledges.store(true, Ordering::SeqCst);
     }
 
     pub(super) async fn close(&self) {

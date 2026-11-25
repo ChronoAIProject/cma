@@ -26,6 +26,8 @@ use std::{
 mod execution;
 #[path = "expiry_reporting_tests.rs"]
 mod expiry_reporting;
+#[path = "history_http_tests.rs"]
+mod history_http;
 #[path = "owner_keys_tests.rs"]
 mod owner_keys;
 #[path = "privacy_tests.rs"]

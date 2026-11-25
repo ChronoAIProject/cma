@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::{
     validate_agent_conversation_admission, AgentConversationMutation, SandboxStoreError,
 };
@@ -26,7 +27,7 @@ pub(super) async fn require_current(
             .as_ref()
             .is_some_and(|fence| fence.require_current().is_err())
     {
-        let _ = session.abort_transaction().await;
+        let _ = session.abort_guarded().await;
         return Err(SandboxStoreError::Conflict);
     }
     Ok(())

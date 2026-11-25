@@ -77,16 +77,29 @@ async fn queued_input_commits_while_old_dispatch_transaction_is_paused() {
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
 async fn queued_input_unknown_commit_recovers_one_receipt_and_one_effect() {
     let (admin, client, name, app) = failpoint_fixture().await;
-    let (store, _, _, request, _) = queued(&name, &client).await;
+    let (store, _, _, request, source) = queued(&name, &client).await;
     admin.database("admin").run_command(doc! {
         "configureFailPoint":"failCommand", "mode":{"times":5_i32},
         "data":{"failCommands":["commitTransaction"], "appName":&app,
-            "writeConcernError":{"code":50_i32,"codeName":"MaxTimeMSExpired","errmsg":"injected queued cancellation ambiguity"}},
+            "writeConcernError":{"code":50_i32,"codeName":"MaxTimeMSExpired","errmsg":"injected queued edit ambiguity"}},
     }).await.unwrap();
     let result = store.edit_queued_input(request.clone()).await;
     disable(&admin).await;
     assert_eq!(result.unwrap_err(), CommandLedgerError::Unavailable);
+    crate::store::test_visibility::majority_barrier(&admin, &name).await;
+    let command = &request.cancellation.command;
+    let committed = store
+        .get_admitted_command(&command.scope(), &command.key_sha256)
+        .await
+        .unwrap()
+        .expect("the commit was durable before any replay");
     let original = applied(store.edit_queued_input(request.clone()).await.unwrap());
+    assert_eq!(original.record, committed);
+    assert_eq!(original.response.revision, source.revision + 1);
+    assert_eq!(
+        original.response.queued_input.as_ref().unwrap().text,
+        request.text
+    );
     let second = MongoSandboxStore::open(&admin, &name).await.unwrap();
     assert_eq!(
         applied(second.edit_queued_input(request).await.unwrap()),

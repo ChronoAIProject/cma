@@ -238,55 +238,62 @@ impl AgentReadService {
                     .lineage
                     .agent
                     .ok_or_else(|| corrupt("authorized output has no Agent"))?;
-                let Some(store) = &self.response_logs else {
-                    return Ok(None);
-                };
-                let flight = match &self.observation {
-                    Some(service) => service
-                        .output_flight(&agent, turn)
-                        .await
-                        .map_err(log_store_error)?,
-                    None => None,
-                };
-                if let Some(flight) = &flight {
-                    let Some(reader) = super::super::output_memo::MemoReader::open(
-                        store.as_ref(),
-                        &agent,
-                        turn,
-                        flight,
-                    )
-                    .await?
-                    else {
-                        return Ok(None);
-                    };
-                    validation::metadata(reader.metadata(), &agent, turn)?;
-                    let commit = reader.commit();
-                    let mut observation = AgentOutputObservation {
-                        reader: Box::new(reader),
-                        personal: authorization.resource().2,
-                    };
-                    let result = operation(&mut observation).await?;
-                    commit(flight);
-                    return Ok(Some(result));
-                }
-                let Some(reader) = store
-                    .agent_output_reader(&agent, turn)
+                self.read_output_observation(&agent, turn, authorization.resource().2, operation)
                     .await
-                    .map_err(log_store_error)?
-                else {
-                    return Ok(None);
-                };
-                validation::metadata(reader.metadata(), &agent, turn)?;
-                let mut observation = AgentOutputObservation {
-                    reader,
-                    personal: authorization.resource().2,
-                };
-                operation(&mut observation).await.map(Some)
             })
             .await;
         // Fence failures too: a private dependency outcome never bypasses a
         // revocation or renews authority acquired by the original request.
         self.validate_event_stream(authorization).await?;
         result
+    }
+
+    pub(super) async fn read_output_observation<T: Send, F>(
+        &self,
+        agent: &Agent,
+        turn: Option<u64>,
+        personal: bool,
+        operation: F,
+    ) -> Result<Option<T>, AgentReadError>
+    where
+        F: Send + for<'a, 'b> FnOnce(&'a mut AgentOutputObservation<'b>) -> OutputReadFuture<'a, T>,
+    {
+        let Some(store) = &self.response_logs else {
+            return Ok(None);
+        };
+        let flight = match &self.observation {
+            Some(service) => service
+                .output_flight(agent, turn)
+                .await
+                .map_err(log_store_error)?,
+            None => None,
+        };
+        if let Some(flight) = &flight {
+            let Some(reader) =
+                super::super::output_memo::MemoReader::open(store.as_ref(), agent, turn, flight)
+                    .await?
+            else {
+                return Ok(None);
+            };
+            validation::metadata(reader.metadata(), agent, turn)?;
+            let commit = reader.commit();
+            let mut observation = AgentOutputObservation {
+                reader: Box::new(reader),
+                personal,
+            };
+            let result = operation(&mut observation).await?;
+            commit(flight);
+            return Ok(Some(result));
+        }
+        let Some(reader) = store
+            .agent_output_reader(agent, turn)
+            .await
+            .map_err(log_store_error)?
+        else {
+            return Ok(None);
+        };
+        validation::metadata(reader.metadata(), agent, turn)?;
+        let mut observation = AgentOutputObservation { reader, personal };
+        operation(&mut observation).await.map(Some)
     }
 }

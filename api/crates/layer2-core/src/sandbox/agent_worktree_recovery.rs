@@ -89,7 +89,7 @@ impl Agent {
             let original = &attempt.original_worktree;
             let workspace_name = original
                 .path
-                .strip_prefix("/home/cma/")
+                .strip_prefix(super::workspace::SANDBOX_HOME)
                 .and_then(|path| path.strip_suffix(&format!("/.worktrees/{}", original.name)));
             let valid = valid_operation(&attempt.operation_id)
                 && crate::seconds_from_rfc3339(&attempt.admitted_at).is_some()

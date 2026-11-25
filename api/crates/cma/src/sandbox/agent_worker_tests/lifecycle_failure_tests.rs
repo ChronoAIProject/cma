@@ -6,6 +6,8 @@ use layer2_core::agent_ownership::{
 };
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer3_adapter::owner_protocol::{ReceiverRevocation, TransportAuthority};
+#[path = "acquisition_backoff_tests.rs"]
+mod acquisition_backoff;
 #[path = "lifecycle_failure_store.rs"]
 pub(super) mod fixture;
 
@@ -85,7 +87,14 @@ async fn acquisition_stale_and_unavailable_keep_conflict_without_claiming() {
             worker.run_one(&agent.id, h.now).await,
             Err(SandboxStoreError::Conflict)
         );
-        assert!(store.calls.lock().unwrap().is_empty());
+        {
+            let calls = store.calls.lock().unwrap();
+            assert_eq!(
+                calls.get("get_agent").copied().unwrap_or(0),
+                if stale { 2 } else { 0 }
+            );
+            assert_eq!(calls.len(), usize::from(stale));
+        }
         assert_eq!(h.stored(&agent.id).await, agent);
     }
 }
@@ -400,4 +409,39 @@ async fn paced_prefix_does_not_consume_the_discovery_limit() {
         worker.due_work(h.now, 1).await.unwrap(),
         vec![ids[1].clone()]
     );
+}
+
+#[tokio::test]
+async fn single_attempt_diagnostics_preserve_claim_and_exhausted_publication_conflicts() {
+    for (method, origin, failures) in [
+        ("claim_agent_work", Origin::Claim, 1),
+        ("commit_agent_work", Origin::Execute, 8),
+    ] {
+        let h = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+        let agent = h.admit("diagnostic-attempt", vec![]).await;
+        let store = fixture::Store::new(h.store.clone());
+        // Exhaust the existing publication budget; diagnostics must not restart the worker.
+        for call in 1..=failures {
+            store.fail(method, call, SandboxStoreError::Conflict);
+        }
+        let requests = h.backend.requests().await;
+        let worker = runner(&h, store.clone(), None);
+        let failure = worker
+            .run_one_diagnostic(&agent.id, h.now)
+            .await
+            .unwrap_err();
+        assert_eq!(failure.observation.origin, origin);
+        assert_eq!(failure.observation.cause_class, CauseClass::StoreConflict);
+        assert_eq!(failure.into_compatibility(), SandboxStoreError::Conflict);
+        assert_eq!(store.calls.lock().unwrap().get(method), Some(&failures));
+        assert_eq!(
+            store.calls.lock().unwrap().get("claim_agent_work"),
+            Some(&1)
+        );
+        assert_eq!(h.backend.requests().await, requests);
+        assert_eq!(
+            h.stored(&agent.id).await.work.lease.is_some(),
+            origin == Origin::Execute
+        );
+    }
 }

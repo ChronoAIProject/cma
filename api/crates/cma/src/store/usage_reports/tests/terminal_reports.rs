@@ -10,6 +10,8 @@ use layer2_core::sandbox_usage_service::SandboxUsageStore;
 use layer3_adapter::{HomeVolumePolicy, HomeVolumeReceipt};
 use serde_json::{json, Value};
 
+mod measured_comparison;
+
 fn at(seconds: u64) -> String {
     layer2_core::rfc3339_at(std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds))
 }

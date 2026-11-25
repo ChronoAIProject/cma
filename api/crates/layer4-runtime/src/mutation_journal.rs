@@ -16,6 +16,8 @@ mod io;
 mod lookup;
 #[path = "mutation_operation.rs"]
 mod operation;
+#[path = "mutation_process_history.rs"]
+pub(crate) mod process_history;
 #[path = "mutation_journal_validation.rs"]
 mod validation;
 pub(crate) use operation::{ActiveAgent, Operation, Subject};
@@ -94,12 +96,36 @@ pub(crate) struct Pending {
 }
 
 pub(crate) fn admitted(config: &RuntimeConfig, operation: &Operation) -> Result<bool> {
+    Ok(read_exact(config, operation)?.is_some())
+}
+
+pub(crate) fn completed(config: &RuntimeConfig, operation: &Operation) -> Result<bool> {
+    Ok(read_exact(config, operation)?.is_some_and(|record| record.status == Status::Completed))
+}
+
+pub(crate) fn find_operation(
+    config: &RuntimeConfig,
+    operation_id: &str,
+    scope_subject: &Subject,
+) -> Result<Option<Record>> {
+    lookup::find_by_id(config, operation_id, scope_subject)
+}
+
+pub(crate) fn find_proof_record(
+    config: &RuntimeConfig,
+    operation_id: &str,
+    scope_subject: &Subject,
+) -> Result<Option<Record>> {
+    lookup::find_for_proof(config, operation_id, scope_subject)
+}
+
+fn read_exact(config: &RuntimeConfig, operation: &Operation) -> Result<Option<Record>> {
     validation::validate_operation(operation, config)?;
     let Some(record) = lookup::find(config, operation)? else {
-        return Ok(false);
+        return Ok(None);
     };
     ensure_exact(&record, operation)?;
-    Ok(true)
+    Ok(Some(record))
 }
 
 pub(crate) fn validate_operation(config: &RuntimeConfig, operation: &Operation) -> Result<()> {
@@ -179,12 +205,14 @@ pub(crate) fn validate_all(config: &RuntimeConfig) -> Result<()> {
 }
 
 pub(crate) fn active_agents(config: &RuntimeConfig) -> Result<Vec<ActiveAgent>> {
+    use layer3_adapter::AgentProcessAction::{Close, Open};
+
     let records = records(config)?;
     let closed = records
         .iter()
         .filter(|record| record.status == Status::Completed)
         .filter_map(|record| match &record.subject {
-            Subject::CloseAgent { agent_id } => Some(agent_id.clone()),
+            Subject::CloseAgent { .. } => Some(record.operation_id.clone()),
             _ => None,
         })
         .collect::<BTreeSet<_>>();
@@ -198,15 +226,25 @@ pub(crate) fn active_agents(config: &RuntimeConfig) -> Result<Vec<ActiveAgent>> 
         else {
             continue;
         };
-        if record.status != Status::Failed && !closed.contains(&agent_id) {
-            active.insert(
-                agent_id.clone(),
-                ActiveAgent {
-                    agent_id,
-                    cwd,
-                    home,
-                },
-            );
+        let incarnation = Open
+            .incarnation(&agent_id, &record.operation_id)
+            .ok_or_else(|| corrupt("runtime journal contains an invalid process identity"))?;
+        if record.status != Status::Failed
+            && !closed.contains(&Close.operation_id(&agent_id, incarnation))
+            && active
+                .insert(
+                    agent_id.clone(),
+                    ActiveAgent {
+                        agent_id,
+                        cwd,
+                        home,
+                    },
+                )
+                .is_some()
+        {
+            return Err(corrupt(
+                "runtime journal contains multiple active process incarnations",
+            ));
         }
     }
     Ok(active.into_values().collect())
@@ -306,7 +344,12 @@ fn read_records(config: &RuntimeConfig, apply: bool) -> Result<Vec<Record>> {
             ));
         }
     }
-    io::reconcile(files, apply).map(|files| files.into_iter().map(|file| file.record).collect())
+    let records: Vec<_> = io::reconcile(files, apply)?
+        .into_iter()
+        .map(|file| file.record)
+        .collect();
+    process_history::validate_records(&records)?;
+    Ok(records)
 }
 
 fn resolve_existing<T: DeserializeOwned>(

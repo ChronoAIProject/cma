@@ -14,6 +14,7 @@ from staging_cd_artifacts import try_reuse
 from staging_cd_build import build, command, identity, inspect, snapshot
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHub
+from staging_cd_release_archive import load as load_prepared_archive, path_for
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_resolve import output as step_output
 from staging_cd_receipts import canonical, published_receipt, validate_receipt
@@ -113,7 +114,7 @@ def push(archive, repository, version, digest, auth, registry, runner, reservati
 
 def publish(archive, identity, directory, registry, credential, actor, *, scanner=None,
             runner=command, qualified=False, smoke=qualify_runtime, source=None, diagnostics=None, timings=None,
-            reservation_check, scan_evidence=None, retry=None):
+            reservation_check, scan_evidence=None, retry=None, prepared_checksum=None):
     require(reservation_check() is True, "Publication reservation is not current")
     retry = dict(retry or {})
     timings = timings or Timings()
@@ -148,6 +149,8 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
                 "Verified scan component differs from the release")
         timings.detector_cache(report.get("detector_cache"))
         diagnostics.mark("archive_check")
+        require(prepared_checksum is None or prepared_checksum == scanned,
+                "Scanned archive differs from the producer archive")
         require(checksum(archive) == scanned, "Scanned archive changed before publication")
         retain_package_evidence(report, scan_evidence, identity["source"], digest)
     require(isinstance(credential, str) and credential and isinstance(actor, str) and actor,
@@ -184,8 +187,9 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     with timings.stage("verify"):
         require(checksum(archive) == scanned, "Scanned archive changed during publication")
         diagnostics.mark("registry_verify")
-        remote = registry.manifest(repository, identity["version"])
-        require(remote is not None and remote[0] == digest and registry.exists(repository, digest),
+        # The copy just landed; read it back with the settle window, not the first edge answer.
+        remote = registry.manifest(repository, identity["version"], settle=True)
+        require(remote is not None and remote[0] == digest and registry.exists(repository, digest, settle=True),
                 "Registry digest differs from the scanned archive")
     # A started build ignores a successor's pending reservation, but it cannot
     # hand a receipt to finalization after a higher final has landed.
@@ -213,6 +217,8 @@ def main():
     timings = Timings()
     build_metrics = []
     cache_metrics = []
+    reuse_misses = []
+    reused_prepared = []
     layer_exports = []
     skip = {"disposition": "reservation_superseded"}
     def operation(_masker, diagnostics):
@@ -235,9 +241,13 @@ def main():
             else:
                 reservation = value
                 reservations = Reservations(api, env.get("GH_TOKEN"), root)
-                # A queued older reservation yields here, before any build work.
+                prepared_path = None
+                if env.get("CD_PREPARED_ARCHIVE") == "true":
+                    prepared_path = path_for(Path(env["RUNNER_TEMP"]) / "cma-prepared-release", reservation)
+                # A queued release can yield before a fallback build. A producer
+                # that already finished its build retains the same write fences.
                 try:
-                    reservations.require_current(reservation, build_started=False)
+                    reservations.require_current(reservation, build_started=prepared_path is not None)
                 except SourceAlreadyFinal:
                     # An older run published this source and no run is known to deploy
                     # this group, so the report fails this skip instead of handling it.
@@ -252,9 +262,22 @@ def main():
                         diagnostics.mark("validate")
                         release, _, _ = identity(reservation, source)
                     diagnostics.mark("reuse")
+                    qualified = False
+                    prepared_checksum = None
                     with timings.stage("reuse"):
-                        archive = try_reuse(release, directory, api, env.get("GH_TOKEN"))
-                    qualified = archive is not None
+                        if prepared_path is not None:
+                            prepared = load_prepared_archive(prepared_path, release)
+                            require(prepared is not None, "Prepared release archive is missing")
+                            archive = prepared.path
+                            prepared_checksum = prepared.sha256
+                            reused_prepared.append(True)
+                            if prepared.cache_namespace is not None:
+                                cache = BuildCache(root, env, source, reservation["component"])
+                                cache.namespace = prepared.cache_namespace
+                        else:
+                            archive = try_reuse(release, directory, api, env.get("GH_TOKEN"),
+                                                on_miss=reuse_misses.append)
+                            qualified = archive is not None
                     if archive is None:
                         if env.get("CD_BUILD_CACHE") == "enabled":
                             diagnostics.mark("cache_restore")
@@ -277,6 +300,7 @@ def main():
                                           env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
                                           diagnostics=diagnostics, timings=timings,
                                           scan_evidence=output.parent / "package-policy",
+                                          prepared_checksum=prepared_checksum,
                                           reservation_check=lambda: reservations.require_current(
                                               reservation, build_started=True))
                     except CleanupIncomplete as error:
@@ -337,6 +361,10 @@ def main():
         # in it names its failing tests: names matched by fixed failure
         # patterns and re-validated here, never raw build output.
         annotate_failed_tests(label, build_metrics[-1], sys.stdout)
+    if reused_prepared:
+        print("Staging image reuse result=prepared-reservation", flush=True)
+    for reason in reuse_misses:
+        print("CI image reuse miss reason=" + reason, flush=True)
     if component in APP_TARGETS:
         emit_cache_metrics(component, cache_metrics, sys.stdout)
     if layer_exports and component in SCOPES:

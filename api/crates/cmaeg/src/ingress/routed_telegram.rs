@@ -2,6 +2,16 @@
 use super::*;
 
 pub(crate) fn opted_in(request: &LaunchRequest) -> bool {
+    use crate::ingress::telegram::member_joins;
+    if member_joins::is_member_join(&request.activity) {
+        return request
+            .channel
+            .definition
+            .source_of(&request.activity.source)
+            .is_some_and(|source| {
+                member_joins::group_opted_in(source, &request.activity.conversation.id)
+            });
+    }
     matches!(
         request.activity.source,
         cmaeg_core::activity::SourceKind::Telegram { .. }

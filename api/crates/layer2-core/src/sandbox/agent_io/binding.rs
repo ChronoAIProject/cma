@@ -62,6 +62,8 @@ pub fn bind_command_dispatch(
         return Err(CommandLedgerError::Conflict);
     }
     if mutation.admission_guard.is_none()
+        || command.predates_owner_restart(current)
+        || current.work.step.fences_conversation_output()
         || command.status != AgentResponseStatus::Queued
         || command.work.dispatch.is_some()
         || command.queue_expired(now)

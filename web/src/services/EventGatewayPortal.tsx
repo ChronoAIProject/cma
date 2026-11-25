@@ -94,7 +94,17 @@ export function EventGatewayPortal({
     <>
       {visitedChannels ? (
         <ServiceBody visible={visible && !consumers}>
-          <ServicePage service="event-gateway" renderStatus={(content) => frame(content)}>
+          <ServicePage
+            service="event-gateway"
+            viewer={
+              state.status === 'authenticated'
+                ? `user:${state.user.id}`
+                : state.status === 'anonymous'
+                  ? 'anonymous'
+                  : undefined
+            }
+            renderStatus={(content) => frame(content)}
+          >
             {(session, denied, notice) => (
               <EventGateway
                 session={session}
@@ -163,6 +173,7 @@ function Consumers({
   if (state.status === 'anonymous')
     return (
       <SignInLanding
+        legalTerms={state.legalTerms}
         onSignIn={async () => {
           retainFatherDraftForSignIn();
           await signIn(routePath(route));

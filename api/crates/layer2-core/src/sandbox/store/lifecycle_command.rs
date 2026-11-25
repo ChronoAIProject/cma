@@ -106,9 +106,11 @@ where
         command: SandboxLifecycleCommand,
     ) -> Result<SandboxLifecycleCommandResult, SandboxStoreError> {
         let mut command = command;
-        command.managed_runtime_version = self.managed_runtime_version().map(str::to_owned);
+        command.managed_runtime_version = self.managed_runtime_version();
         validate_command(&command)?;
         for _ in 0..COMMAND_CAS_ATTEMPTS {
+            let release = self.capture_released_runtime();
+            command.managed_runtime_version = release.as_ref().map(|release| release.agent.clone());
             let current = self
                 .get_sandbox(&command.sandbox_id)
                 .await?
@@ -129,6 +131,7 @@ where
             match self
                 .commit(SandboxTransaction::SaveSandboxAndAppend {
                     command_revival: None,
+                    released_runtime: release,
                     expected_revision,
                     sandbox: Box::new(sandbox.clone()),
                     event_at: command.requested_at.clone(),

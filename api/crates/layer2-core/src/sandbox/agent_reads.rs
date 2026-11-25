@@ -29,8 +29,15 @@ mod authorized;
 mod composition;
 #[path = "agent_reads/observation.rs"]
 mod observation;
+#[path = "agent_reads/original_request.rs"]
+mod original_request;
+pub use original_request::AgentOriginalRequest;
+#[path = "agent_reads/privacy_export.rs"]
+pub mod privacy_export;
 #[path = "agent_reads/recovery.rs"]
 mod recovery;
+#[path = "agent_reads/reply_preview.rs"]
+mod reply_preview;
 #[path = "agent_reads/transcript_pages.rs"]
 mod transcript_pages;
 pub use authorized::{AgentDetailReading, SharedAgentDetail};
@@ -66,7 +73,7 @@ pub use cursor::AgentHistoryCursor;
 mod output_memo;
 #[path = "agent_reads/response.rs"]
 mod response;
-pub use response::indexed::AgentOutputObservation;
+pub use response::{indexed::AgentOutputObservation, AgentResponseObservation};
 #[path = "agent_reads/buffered.rs"]
 mod buffered;
 pub use buffered::AgentBufferedEventRequest;

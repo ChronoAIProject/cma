@@ -1,3 +1,4 @@
+import { channelLifecycleCases } from './channel-lifecycle-cases';
 import { test, expect } from '@playwright/test';
 import { setup } from './channel-setup.fixture';
 
@@ -134,3 +135,100 @@ for (const width of [390, 1440]) {
     expect(writes).toEqual([]);
   });
 }
+
+test('LOCAL a channel editor survives a slow CMA sign-in resolving', async ({ page, baseURL }) => {
+  let signedIn!: () => void;
+  const identity = new Promise<void>((resolve) => {
+    signedIn = resolve;
+  });
+  const capabilityReads: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith('/v1/channel-capabilities'))
+      capabilityReads.push(request.url());
+  });
+  const opened = setup(page, baseURL!, identity);
+  // Whatever the Gateway offers before sign-in resolves must survive it resolving.
+  await expect(
+    page
+      .getByRole('status', { name: 'Signing you in', exact: true })
+      .or(page.getByRole('button', { name: 'Create channel', exact: true })),
+  ).toBeVisible();
+  signedIn();
+  const writes = await opened;
+  await expect(
+    page.getByRole('button', { name: 'Account menu for Local owner', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create channel', exact: true })).toBeVisible();
+  const name = page.getByLabel('Channel name', { exact: true });
+  await name.fill('Draft across sign-in');
+  await expect(name).toHaveValue('Draft across sign-in');
+  expect(capabilityReads).toHaveLength(1);
+  expect(writes).toEqual([]);
+});
+
+test('LOCAL disabled managed setup hides new admission and retains a manual draft without connection reads', async ({
+  page,
+  baseURL,
+}) => {
+  let connectionReads = 0;
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith('/v1/channel-connections')) connectionReads++;
+  });
+  const writes = await setup(page, baseURL!, undefined, false);
+  await expect(
+    page.getByLabel('Use an existing CMA-managed Telegram connection', { exact: true }),
+  ).toHaveCount(0);
+  await page.getByLabel('Channel name', { exact: true }).fill('Retained manual draft');
+  await page.getByRole('button', { name: 'Create channel', exact: true }).click();
+  await expect(page.getByLabel('NyxID issuer', { exact: true })).toBeFocused();
+  await expect(page.getByLabel('Channel name', { exact: true })).toHaveValue(
+    'Retained manual draft',
+  );
+  await expect(
+    page.getByLabel('Use an existing CMA-managed Telegram connection', { exact: true }),
+  ).toHaveCount(0);
+  expect(connectionReads).toBe(0);
+  expect(writes).toEqual([]);
+});
+
+for (const expired of [true, false]) {
+  test(`LOCAL authorization ${expired ? 'sign-in expiry' : 'management refusal'} keeps the channel draft and makes no writes`, async ({
+    page,
+    baseURL,
+  }) => {
+    const writes = await setup(page, baseURL!, undefined, false, true);
+    await page.getByLabel('Channel name', { exact: true }).fill('Draft before authorization check');
+    await page.route('**/auth/service-authorization', (route) =>
+      route.fulfill(
+        expired
+          ? { status: 401, json: { code: 'not_authenticated' } }
+          : {
+              json: {
+                owner: 'local-owner',
+                status: 'unknown',
+                management_access: 'unsupported_credential',
+              },
+            },
+      ),
+    );
+    await page.getByRole('button', { name: 'Account menu for Local owner', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Service authorization', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Service authorization', exact: true });
+    if (expired) {
+      const login = dialog.getByRole('link', { name: 'Sign in again', exact: true });
+      await expect(login).toHaveAttribute('href', '/auth/login?return_to=%2Fevent-gateway');
+      await expect(login).toHaveAttribute('target', '_blank');
+    } else {
+      await expect(dialog).toContainText('Signing in again will not change that access.');
+      await expect(dialog.getByRole('link', { name: 'Sign in again', exact: true })).toHaveCount(0);
+    }
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+    await expect(page.getByLabel('Channel name', { exact: true })).toHaveValue(
+      'Draft before authorization check',
+    );
+    expect(writes).toEqual([]);
+  });
+}
+
+channelLifecycleCases();

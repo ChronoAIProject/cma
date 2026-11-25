@@ -6,11 +6,14 @@ mod activity_page;
 mod collection;
 mod failpoints;
 mod key_order;
+mod measured;
 mod opening;
+mod release_identity;
 mod segments;
 mod segments_runtime;
 mod source_keys;
 pub(super) mod startup_ddl;
+mod usage_capture;
 
 fn identity() -> ledger::Identity {
     ledger::Identity::new(

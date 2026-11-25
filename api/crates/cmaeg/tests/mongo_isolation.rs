@@ -8,6 +8,8 @@ use mongodb::{
     options::{ClientOptions, Credential},
     Client,
 };
+#[path = "support/activity_history_backfill.rs"]
+mod activity_history_backfill;
 #[path = "support/github_import.rs"]
 mod github_import;
 #[path = "support/record_domains.rs"]

@@ -53,14 +53,11 @@ impl LegacyReceiverImage {
     }
 
     fn matches(&self, running_image: &str) -> bool {
-        let manifest = running_image
-            .strip_prefix("docker-pullable://")
-            .unwrap_or(running_image);
-        let config = running_image
-            .strip_prefix("containerd://")
-            .or_else(|| running_image.strip_prefix("docker://"))
-            .unwrap_or(running_image);
-        manifest == self.manifest || config == self.config_digest
+        crate::runtime_startup_policy::running_image_matches(
+            running_image,
+            &self.manifest,
+            &self.config_digest,
+        )
     }
 }
 

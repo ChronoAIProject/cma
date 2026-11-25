@@ -202,7 +202,13 @@ async fn connection_ready_http_timing_with_delayed_broker() {
 
     let (browser, broker, _, caller) = fixture();
     *broker.delays.lock().unwrap() = (Duration::from_millis(180), Duration::from_millis(970));
-    let router = router(Arc::new(browser));
+    let auth = AuthState::in_memory(
+        crate::auth::AuthMode::Trusted {
+            subject: "owner".into(),
+        },
+        None,
+    );
+    let router = router(Arc::new(browser), auth);
     for (kind, id) in [("sandbox", "sandbox"), ("agent", "agent")] {
         let request = Request::builder()
             .method("POST")

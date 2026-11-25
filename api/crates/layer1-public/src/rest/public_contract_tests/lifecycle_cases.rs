@@ -86,6 +86,7 @@ impl AgentLifecycleOperationReader for Lifecycle {
             _ => {}
         }
         Ok(AgentLifecycleOperationView {
+            accepted_at: None,
             failure: None,
             callback_url: None,
             id: "operation-contract".into(),
@@ -101,6 +102,7 @@ impl AgentLifecycleOperationReader for Lifecycle {
                 occurred_at: "2026-10-13T00:00:00Z".into(),
             }],
             connection: Some(AgentLifecycleConnectionRequired {
+                repository_access: None,
                 services: vec!["api-github".into()],
                 target: serde_json::json!({"type":"sandbox_profile","profile":{"id":"internal-sandbox","revision":1}}),
             }),
@@ -126,4 +128,28 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         },
         symbols: Default::default(),
     })
+}
+
+#[tokio::test]
+async fn acceptance_time_is_optional_and_serializes_the_supplied_admission_time() {
+    let caller = Caller::new(
+        layer2_core::SubjectId::new("owner-a"),
+        Authorization::none(),
+    );
+    let mut view = AgentLifecycleOperationReader::read(
+        &Lifecycle("ready".into()),
+        &caller,
+        "operation-contract",
+    )
+    .await
+    .unwrap();
+    assert!(serde_json::to_value(&view)
+        .unwrap()
+        .get("accepted_at")
+        .is_none());
+    view.accepted_at = Some("2026-10-12T23:59:00Z".into());
+    assert_eq!(
+        serde_json::to_value(&view).unwrap()["accepted_at"],
+        "2026-10-12T23:59:00Z"
+    );
 }

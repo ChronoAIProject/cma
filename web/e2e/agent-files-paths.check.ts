@@ -128,7 +128,18 @@ for (const width of [390, 1600]) {
         `Tree root/home/${directory}`,
       );
       await computer.getByRole('button', { name: 'New file', exact: true }).click();
-      await computer.getByRole('textbox', { name: 'File name', exact: true }).fill(name);
+      const filename = computer.getByRole('textbox', { name: 'File name', exact: true });
+      for (const invalid of ['../qa2.txt', 'nested/file.txt', 'nested\\file.txt', '.', '..']) {
+        await filename.fill(invalid);
+        await expect(computer.getByRole('button', { name: 'Create', exact: true })).toBeDisabled();
+        await expect(filename).toHaveAttribute('aria-invalid', 'true');
+        await expect(filename).toHaveAccessibleDescription(
+          'Enter a file or folder name without path separators.',
+        );
+        await filename.press('Enter');
+        expect(filesystem.writes).toEqual([]);
+      }
+      await filename.fill(name);
       await computer.getByRole('button', { name: 'Create', exact: true }).click();
       const editor = computer.getByRole('textbox', { name: `Contents of ${name}` });
       await expect(editor).toHaveValue('');

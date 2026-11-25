@@ -1,27 +1,15 @@
+import { selectAgentAction } from '../shell/agentActionDispatch';
 import type { AgentDetail, AgentStatus } from '../api/types';
 import { routePath, type AppRoute } from '../routing/routes';
 import {
   agentActions,
+  OPEN_RUNTIME_UPDATE,
   OPEN_SANDBOX_TO_RESUME,
   type AgentActionContext,
 } from '../shell/treeActions';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
 import type { MenuEntry } from '../ui/Menu';
 import type { Crumb } from '../ui/PageHeader';
-
-export function selectAgentAction(
-  id: string,
-  agentId: string,
-  onAction?: (action: TreeAction) => void,
-) {
-  if (
-    id === 'stop_agent' ||
-    id === 'delete_agent' ||
-    id === 'export_history' ||
-    id === 'export_retained_conversation'
-  )
-    onAction?.({ kind: id, agentId });
-}
 
 /**
  * The Agent header's More actions: Stop agent and Export history, then
@@ -69,12 +57,13 @@ export function agentHeaderActionHandler(
   readOnly: boolean,
   onAction: ((action: TreeAction) => void) | undefined,
   onOpenSandbox: () => void,
+  parentSandboxId?: string,
 ) {
   return readOnly
     ? undefined
     : (id: string) => {
-        if (id === OPEN_SANDBOX_TO_RESUME) onOpenSandbox();
-        else selectAgentAction(id, agentId, onAction);
+        if (id === OPEN_SANDBOX_TO_RESUME || id === OPEN_RUNTIME_UPDATE) onOpenSandbox();
+        else selectAgentAction(id, agentId, onAction, parentSandboxId);
       };
 }
 

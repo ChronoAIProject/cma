@@ -212,3 +212,121 @@ fn compiler_layout_covers_a_large_inline_future_before_it_is_polled() {
     assert_eq!(probe.live(), 0);
     root.assert_idle();
 }
+
+fn custody_fixture() -> (IngressBudget, IngressOwnershipPolicy) {
+    let root = IngressBudget::new(1024 * 1024);
+    let bounds = ClassBounds::new(root.capacity_bytes(), plan(4096), plan(4096))
+        .unwrap()
+        .with_attachment_limit(2)
+        .unwrap();
+    let policy = IngressOwnershipPolicy::new(root.clone(), bounds).unwrap();
+    (root, policy)
+}
+
+#[test]
+fn operation_custody_domain_is_checked_before_polling_without_allocation() {
+    use std::sync::atomic::AtomicUsize;
+    let (root, process) = custody_fixture();
+    let (foreign_root, foreign) = custody_fixture();
+    let first = process.admit_attachment().unwrap();
+    let second = process.admit_attachment().unwrap();
+    let policies = [
+        process.clone(),
+        first.policy().clone(),
+        second.policy().clone(),
+        foreign,
+    ];
+    let calls = AtomicUsize::new(0);
+    let operations = policies.each_ref().map(|policy| {
+        let calls = &calls;
+        AdmittedOperation::from_owned(
+            policy,
+            IngressClass::Data,
+            plan(0),
+            move |scope| async move {
+                calls.fetch_add(1, Ordering::Relaxed);
+                Ok(scope.initialize_owned(|| None::<usize>))
+            },
+        )
+        .unwrap()
+    });
+    let available = root.available_bytes();
+    let mut probe = AllocationProbe::new();
+    probe.track(|| {
+        for (source, operation) in operations.iter().enumerate() {
+            for (target, policy) in policies.iter().enumerate() {
+                assert_eq!(operation.shares_custody_domain(policy), source == target);
+                assert_eq!(
+                    operation.belongs_to(policy),
+                    source == target || (target == 0 && matches!(source, 1 | 2))
+                );
+            }
+        }
+    });
+    assert_eq!(probe.allocated(), 0);
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+    assert_eq!(root.available_bytes(), available);
+    for (source, operation) in operations.into_iter().enumerate() {
+        let result = operation.now_or_never().unwrap().unwrap();
+        for (target, policy) in policies.iter().enumerate() {
+            assert_eq!(result.shares_custody_domain(policy), source == target);
+        }
+    }
+    assert_eq!(calls.load(Ordering::Relaxed), 4);
+    drop((policies, first, second));
+    root.assert_idle();
+    foreign_root.assert_idle();
+}
+
+#[test]
+fn operation_custody_does_not_certify_a_returned_envelope_or_dynamic_error() {
+    let (root, process) = custody_fixture();
+    let attachment = process.admit_attachment().unwrap();
+    let attached_policy = attachment.policy().clone();
+    let scope = IngressWorkScope::new(
+        attached_policy
+            .admit(IngressClass::Data, plan(1024))
+            .unwrap(),
+    );
+    let result = scope.initialize_owned(|| None::<usize>);
+    let operation =
+        AdmittedOperation::from_owned(&process, IngressClass::Data, plan(0), |_| async move {
+            Ok(result)
+        })
+        .unwrap();
+    assert!(operation.shares_custody_domain(&process));
+    assert!(!operation.shares_custody_domain(&attached_policy));
+    let result = operation.now_or_never().unwrap().unwrap();
+    assert!(result.belongs_to(&process));
+    assert!(!result.shares_custody_domain(&process));
+    assert!(result.shares_custody_domain(&attached_policy));
+    drop((result, scope));
+
+    let diagnostic = attached_policy
+        .admit(IngressClass::Data, plan(1024))
+        .unwrap()
+        .initialize(|| crate::AdapterError::Unavailable("synthetic source failure".into()));
+    let operation = AdmittedOperation::<()>::from_owned(
+        &process,
+        IngressClass::Data,
+        plan(0),
+        |_| async move { Err(AdmittedError::Adapter(diagnostic)) },
+    )
+    .unwrap();
+    assert!(operation.shares_custody_domain(&process));
+    let error = operation.now_or_never().unwrap().unwrap_err();
+    assert!(error.belongs_to(&process));
+    let AdmittedError::Adapter(diagnostic) = error else {
+        panic!("expected owned diagnostic")
+    };
+    assert!(!diagnostic.shares_custody_domain(&process));
+    assert!(diagnostic.shares_custody_domain(&attached_policy));
+    let last = diagnostic.clone();
+    drop((diagnostic, attachment, attached_policy));
+    let second = process.admit_attachment().unwrap();
+    assert!(process.admit_attachment().is_err());
+    drop(last);
+    drop(process.admit_attachment().unwrap());
+    drop(second);
+    root.assert_idle();
+}

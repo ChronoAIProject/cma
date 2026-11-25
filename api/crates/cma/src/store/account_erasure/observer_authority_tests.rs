@@ -26,6 +26,7 @@ async fn once(fixture: &Fixture, mode: Option<bool>, cursor: &mut Cursor) -> Res
             billing_enabled: false,
             allocation_rollups_enabled: Some(false),
             agent_shared_observation: mode,
+            retain_legal_consents: false,
         },
     )
     .await

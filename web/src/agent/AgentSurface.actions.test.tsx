@@ -26,7 +26,39 @@ const ALL_ACTIONS = {
   exportHistory: true,
 };
 
-it('offers Stop, Export and Delete from the header, with the reason Delete is unavailable', async () => {
+it.each([false, true])(
+  'offers owner restart only when the server advertises it (%s)',
+  async (restartAvailable) => {
+    const restart = vi.fn(async () => undefined);
+    const actor = userEvent.setup();
+    render(
+      <AgentSurface
+        agentId="agt_1"
+        viewerId="owner"
+        controller={controller(
+          {
+            status: 'ready',
+            detail: { ...AGENT_DETAIL, status: 'stopped', restartAvailable },
+            workspace: workspaceFixture(),
+            conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+          },
+          undefined,
+          { restart },
+        )}
+        detailsOpen={false}
+        onDetailsOpenChange={vi.fn()}
+        onNavigate={vi.fn()}
+        permissions={ALL_ACTIONS}
+      />,
+    );
+    const action = screen.queryByRole('button', { name: 'Restart Agent' });
+    if (restartAvailable) await actor.click(action!);
+    else expect(action).toBeNull();
+    expect(restart).toHaveBeenCalledTimes(Number(restartAvailable));
+  },
+);
+
+it('offers Stop, Export and Delete for a running Agent owned by the viewer', async () => {
   const onAgentAction = vi.fn();
   const actor = userEvent.setup();
   const ready = controller(
@@ -37,11 +69,12 @@ it('offers Stop, Export and Delete from the header, with the reason Delete is un
       conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
     },
     undefined,
-    { progressObservation: { sandbox: sandboxFixture(), stale: false } },
+    { progressObservation: { sandbox: { ...sandboxFixture(), owner: 'owner' }, stale: false } },
   );
   render(
     <AgentSurface
       agentId="agt_1"
+      viewerId="owner"
       controller={ready}
       detailsOpen={false}
       onDetailsOpenChange={vi.fn()}
@@ -53,9 +86,9 @@ it('offers Stop, Export and Delete from the header, with the reason Delete is un
   await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
   expect(
     screen.getByRole('menuitem', {
-      name: 'Delete task Stop this Agent before deleting it and its Worktree.',
+      name: 'Delete task',
     }),
-  ).toHaveAttribute('aria-disabled', 'true');
+  ).toHaveAttribute('aria-disabled', 'false');
   expect(screen.getByRole('menuitem', { name: 'Export raw history' })).toBeEnabled();
   const rows = screen.getAllByRole('menuitem');
   for (const [index, label] of [
@@ -74,6 +107,7 @@ it('offers Stop, Export and Delete from the header, with the reason Delete is un
   await actor.click(screen.getByRole('menuitem', { name: 'Stop agent' }));
   expect(onAgentAction).toHaveBeenCalledExactlyOnceWith({ kind: 'stop_agent', agentId: 'agt_1' });
   for (const [label, kind] of [
+    ['Delete task', 'delete_agent'],
     ['Export raw history', 'export_history'],
     ['Export retained conversation', 'export_retained_conversation'],
   ] as const) {

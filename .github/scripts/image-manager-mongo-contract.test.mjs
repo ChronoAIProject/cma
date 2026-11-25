@@ -15,11 +15,14 @@ const selections = [
   ['package(=cma-image-manager) and kind(test) and (binary(=mongo_isolation) or binary(=browser_session))', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~optional_forms_storage)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~optional_media_continuation_storage)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~transaction_terminal::)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~activity::history::mongo_tests::)', 'only', true],
   ['package(=cmaeg) and test(=worker_credentials::mongo::integration_tests::worker_history_cross_client_visibility_append_only_grants_and_cutover_barrier)', 'only', false],
   ['package(=cmaeg) and kind(lib) and test(~whatsapp_retention_on_real_mongo)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=mongo_isolation)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=management) and test(~github_integrations::)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=management) and test(~organization_channels::)', 'only', true],
+  ['package(=cmaeg) and kind(test) and binary(=management) and test(=record_management::mongo_legacy_read_is_owned_and_read_only)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=github_source)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~tools::threads::ledger::mongo_tests::)', 'only', true],
   ['package(=cma) and (test(~store::isolation::tests::real_) or test(~store::migrations::tests::segments_runtime::))', 'only', false],
@@ -27,6 +30,7 @@ const selections = [
   ['package(=cmaeg) and kind(test) and binary(=relay_ingress) and test(~runner_binary::)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=replica_admission_mongo)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~replicas::partition_discovery::)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(=records::mongo::replica_schema::tests::replica_migration_recovers_after_second_index_conflict)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~turns::routed::replica_tool_tests::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~turns::routed::replica_legacy_tool_tests::)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~turns::routed::compatibility_mongo_tests::)', 'only', true],
@@ -49,7 +53,8 @@ function fixture(reuse, scenario = 'success') {
   const metadata = join(root, 'api/target/nextest');
   mkdirSync(scripts, {recursive: true});
   mkdirSync(metadata, {recursive: true});
-  for (const name of ['image-manager-mongo-contract.sh', 'authenticated-mongo-readiness.js', 'backend-nextest.sh']) {
+  for (const name of ['image-manager-mongo-contract.sh', 'authenticated-mongo-readiness.js', 'backend-nextest.sh',
+    'pull-pinned-image.sh']) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name));
   }
   writeFileSync(join(metadata, 'cargo-metadata.json'), JSON.stringify({workspace_root: join(root, 'api'), target_directory: join(root, 'api/target')}));
@@ -94,7 +99,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 30);
+      assert.equal(selections.length, 34);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];

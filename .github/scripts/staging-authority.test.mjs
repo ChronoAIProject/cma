@@ -1,26 +1,12 @@
+import { hash, fixtures, canaries, publicDiagnostic, line, noCanaries, harness } from './staging-authority-cli.fixture.mjs';
+import { campaignFixture } from './public-journey-evidence.fixture.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createHash } from 'node:crypto';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { AuthorityError, check, classifyObserverError, formatRefusal, observerCodes, phases, refusalCodes, withPhase, privateFile, requiredCases, runObserver, validateAttestations, validateCampaign, validatePolicy, validateReceipt } from './staging-authority.mjs';
-
-const hash = (value) => createHash('sha256').update(value).digest('hex');
-function fixtures() {
-  const images = Object.fromEntries(['api', 'web', 'runtime'].map((name) => [name, `registry.example.test/cma-${name}@sha256:${'a'.repeat(64)}`]));
-  const request = { schema: 'cma-staging-attestation-request-v1', nonce: '00000000-0000-4000-8000-000000000001', expected: { origin: 'https://staging.example.test', commit: 'b'.repeat(40), nyxidCommit: 'c'.repeat(40), images } };
-  const receipt = { schema: 'cma-staging-attestation-v1', nonce: request.nonce, observedAt: new Date().toISOString(), origin: request.expected.origin, commit: request.expected.commit, nyxidCommit: request.expected.nyxidCommit, runtimePin: images.runtime, images: {} };
-  for (const name of Object.keys(images)) receipt.images[name] = {
-    reference: images[name], rootDigest: `sha256:${'a'.repeat(64)}`,
-    platformDigest: `sha256:${'d'.repeat(64)}`, configDigest: `sha256:${'e'.repeat(64)}`,
-    source: 'https://github.com/ChronoAIProject/cma', revision: request.expected.commit,
-    ...(name === 'runtime' ? {} : { runningImageID: `docker-pullable://registry.example.test/cma-${name}@sha256:${'d'.repeat(64)}` }),
-  };
-  return { request, receipt };
-}
 
 test('live environment policy requires non-bypassable review and exactly develop', () => {
   const policy = { name: 'staging-e2e-mutation', can_admins_bypass: false, deployment_branch_policy: { protected_branches: false, custom_branch_policies: true }, protection_rules: [{ type: 'required_reviewers', prevent_self_review: true, reviewers: [{ type: 'User', reviewer: { id: 7 } }] }] };
@@ -140,9 +126,9 @@ for (const outcome of ['success', 'child failure', 'invalid JSON', 'invalid rece
 }
 
 test('full campaign evidence refuses discovery, skips, owner-only runs and any unsettled cleanup', () => {
-  const results = { status: 'passed', cases: requiredCases.map((name) => ({ case: name, status: 'passed', durationMs: 1 })) };
+  const { results, journal: proofJournal } = campaignFixture(requiredCases);
   const identity = { run: 'run-test', at: new Date().toISOString(), kind: 'sandboxes', id: 'sbx_test', subject: 'owner' };
-  const journal = [{ ...identity, action: 'created' }, { ...identity, action: 'cleanup_complete' }];
+  const journal = [{ ...identity, action: 'created' }, { ...identity, action: 'cleanup_complete' }, ...proofJournal];
   validateCampaign(results, journal);
   assert.throws(() => validateCampaign({ status: 'passed', cases: [] }, journal));
   assert.throws(() => validateCampaign({ status: 'passed', cases: [{ case: 'OWNER partial', status: 'passed' }] }, journal));
@@ -156,6 +142,27 @@ test('full campaign evidence refuses discovery, skips, owner-only runs and any u
   assert.throws(() => validateCampaign(results, [journal[0], journal[0], journal[1]]));
   assert.throws(() => validateCampaign(results, [journal[0], { ...journal[1], subject: 'other' }]));
   for (const action of ['cleanup_failed', 'cleanup_pending', 'cleanup_blocked', 'external_account_cleanup_required']) assert.throws(() => validateCampaign(results, [...journal, { action }]));
+});
+
+test('task cleanup requires an owned terminal operation and its discovered Agent cleanup', () => {
+  const { results, journal: proofJournal } = campaignFixture(requiredCases);
+  const operation = { run: 'run-test', at: new Date().toISOString(), kind: 'agent-lifecycle', id: 'operation-test', subject: 'owner' };
+  const agent = { ...operation, kind: 'agents', id: 'agent-test' };
+  const journal = [
+    { ...operation, action: 'created' },
+    { ...agent, action: 'created' },
+    { ...operation, action: 'lifecycle_observed', state: 'succeeded', agent_id: agent.id },
+    { ...agent, action: 'cleanup_complete' },
+    ...proofJournal,
+  ];
+  validateCampaign(results, journal);
+  for (const state of ['queued', 'running', 'waiting_for_connection'])
+    assert.throws(() => validateCampaign(results, journal.map((row, index) => index === 2 ? { ...row, state } : row)));
+  assert.throws(() => validateCampaign(results, journal.filter((_, index) => index !== 2)));
+  assert.throws(() => validateCampaign(results, journal.filter((_, index) => index !== 3)));
+  assert.throws(() => validateCampaign(results, journal.map((row, index) => index === 2 ? { ...row, agent_id: 'other-agent' } : row)));
+  assert.throws(() => validateCampaign(results, journal.map((row, index) => index === 2 ? { ...row, subject: 'other-owner' } : row)));
+  validateCampaign(results, [journal[0], { ...operation, action: 'lifecycle_observed', state: 'failed' }, ...proofJournal]);
 });
 
 test('both attestations are validated with a bounded three-hour campaign window', () => {
@@ -177,74 +184,6 @@ test('both attestations are validated with a bounded three-hour campaign window'
   after.receipt.observedAt = new Date(now - 301000).toISOString();
   assert.throws(() => validateAttestations(before, after, now));
 });
-
-const canaries = ['CANARY_ENV_ORIGIN', 'CANARY_ENV_OWNER', 'f'.repeat(40), 'CANARY_FIXTURE_BODY', 'CANARY_OBSERVER_STDOUT', 'CANARY_OBSERVER_STDERR'];
-const publicDiagnostic = 'Synthetic command failure\n';
-const line = (mode, phase, code = phase, step = 'attestation') => `Staging authority or final evidence refused (mode=${mode}${step ? ` step=${step}` : ''} phase=${phase} code=${code}); private inputs withheld.\n`;
-function noCanaries(stdout, stderr) {
-  for (const canary of canaries) { assert.ok(!stdout.includes(canary)); assert.ok(!stderr.includes(canary)); }
-}
-function harness(t) {
-  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cma-authority-diagnostics-')));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const path = (name) => join(directory, name);
-  const write = (name, value) => writeFileSync(path(name), typeof value === 'string' ? value : JSON.stringify(value), { mode: 0o600 });
-  const before = fixtures(), after = fixtures();
-  after.request.nonce = after.receipt.nonce = '00000000-0000-4000-8000-000000000002';
-  write('before.json', before); write('after.json', after); write('output', '');
-  const results = { status: 'passed', cases: requiredCases.map((title) => ({ case: title, status: 'passed', durationMs: 1 })) };
-  const identity = { run: 'test-run', at: new Date().toISOString(), kind: 'sandboxes', id: 'test-sandbox', subject: 'test-owner' };
-  const journal = [{ ...identity, action: 'created' }, { ...identity, action: 'cleanup_complete' }];
-  write('results.json', results); write('cleanup.ndjson', journal.map((row) => JSON.stringify(row)).join('\n'));
-  const fixture = { origin: before.request.expected.origin, fixtureOwner: 'test-owner', provenance: {
-    commit: before.request.expected.commit, nyxidCommit: before.request.expected.nyxidCommit,
-    ...Object.fromEntries(Object.entries(before.request.expected.images).map(([key, value]) => [`${key}Image`, value])),
-  } };
-  write('fixture.json', fixture); write('config.json', '{}');
-  const observer = `import { readFileSync, writeFileSync } from 'node:fs';
-    const request = JSON.parse(readFileSync(0, 'utf8'));
-    const receipt = ${JSON.stringify(before.receipt)};
-    receipt.nonce = request.nonce;
-    process.stdout.write(JSON.stringify(receipt));`;
-  write('observer.mjs', observer);
-  const state = {
-    policy: { name: 'staging-e2e-mutation', can_admins_bypass: false, deployment_branch_policy: { protected_branches: false, custom_branch_policies: true }, protection_rules: [{ type: 'required_reviewers', prevent_self_review: true, reviewers: [{}] }] },
-    branches: { total_count: 1, branch_policies: [{ name: 'develop', type: 'branch' }] }, head: before.request.expected.commit,
-    listing: { errors: [], suites: [{ specs: requiredCases.map((title) => ({ title, tests: [{ expectedStatus: 'passed', annotations: [] }] })) }] },
-  };
-  // Intercept every external command before loading the CLI; gh/git/Playwright never run.
-  write('commands.mjs', `import child from 'node:child_process';
-    import { syncBuiltinESMExports } from 'node:module';
-    import { readFileSync } from 'node:fs';
-    const original = child.execFileSync;
-    const state = JSON.parse(readFileSync(${JSON.stringify(path('state.json'))}, 'utf8'));
-    child.execFileSync = (program, args, options) => {
-      if (state.fail === program) throw Object.assign(Error('${canaries[5]}'), { stderr: '${canaries[5]}' });
-      if (state.diagnosticProgram === program) return original(process.execPath, ['-e', ${JSON.stringify(`process.stderr.write(${JSON.stringify(publicDiagnostic)}); process.exit(1);`)}], options);
-      if (program === 'gh') return state.ghRaw ?? JSON.stringify(args[1].endsWith('/develop') ? { object: { sha: state.head } } : args[1].endsWith('/deployment-branch-policies') ? state.branches : state.policy);
-      if (program === 'git') return state.head + '\\n';
-      if (program === process.execPath && args.includes('--list')) return state.listingRaw ?? JSON.stringify(state.listing);
-      if (program === process.execPath && args[0] === ${JSON.stringify(path('observer.mjs'))}) return original(program, args, options);
-      throw Error('unexpected test command');
-    };
-    syncBuiltinESMExports();`);
-  const env = {
-    PATH: directory, GITHUB_REPOSITORY: 'ChronoAIProject/cma', GITHUB_REF: 'refs/heads/develop',
-    REVIEWED_SHA: state.head, GITHUB_SHA: state.head, GITHUB_ACTION: 'attestation', GITHUB_OUTPUT: path('output'),
-    CMA_ATTESTATION_VERIFIER: path('observer.mjs'), CMA_ATTESTATION_CONFIG: path('config.json'),
-    VERIFIER_SHA256: hash(observer), CONFIG_SHA256: hash('{}'), CMA_E2E_FIXTURE_FILE: path('fixture.json'),
-    CMA_E2E_MUTATION_TARGET: fixture.origin, CMA_E2E_BASE_URL: fixture.origin, CMA_E2E_FIXTURE_OWNER: fixture.fixtureOwner,
-  };
-  const run = (mode, args = mode === 'attest' ? [path('attested.json')] : mode === 'audit' ? [directory, path('before.json'), path('after.json')] : []) => {
-    write('state.json', state);
-    const result = spawnSync(process.execPath, ['--import', pathToFileURL(path('commands.mjs')).href, resolve('.github/scripts/staging-authority.mjs'), mode, ...args], { env, encoding: 'utf8', timeout: 10000 });
-    assert.ifError(result.error); assert.equal(result.signal, null);
-    noCanaries(result.stdout, result.stderr);
-    return result;
-  };
-  const setObserver = (script) => { write('observer.mjs', script); env.VERIFIER_SHA256 = hash(script); };
-  return { path, write, env, run, state, before, after, fixture, observer, setObserver, results, journal };
-}
 
 const scenarios = [
   ['plan', 'plan_reviewed_commit', (h) => { h.env.REVIEWED_SHA = canaries[2]; }],
@@ -274,8 +213,8 @@ const scenarios = [
   ['audit', 'campaign_results', (h) => h.write('results.json', canaries[3])],
   ['audit', 'cleanup_journal', (h) => h.write('cleanup.ndjson', canaries[3])],
   ['audit', 'cleanup_journal', (h) => h.write('cleanup.ndjson', h.journal[0])],
-  ['audit', 'audit_output', (h) => h.write('attestation.json', 'existing')],
-  ['audit', 'audit_output', (h) => { h.env.GITHUB_OUTPUT = h.path('absent/output'); }],
+  ['audit', 'connection_coverage', (h) => h.write('attestation.json', 'existing')],
+  ['audit', 'connection_coverage', (h) => { h.env.GITHUB_OUTPUT = h.path('absent/output'); }],
   ['inventory', 'inventory_listing', (h) => { h.state.listing.errors = [canaries[3]]; }],
   ['inventory', 'inventory_listing', (h) => { h.state.fail = process.execPath; }],
   ['inventory', 'inventory_listing', (h) => { h.state.listingRaw = canaries[4]; }],
@@ -323,19 +262,25 @@ test('CLI invocation and step metadata are bounded and never echo arguments', (t
   }
 });
 
-for (const mode of ['plan', 'inventory', 'attest', 'audit']) test(`CLI preserves ${mode} success bytes`, (t) => {
+for (const mode of ['plan', 'inventory', 'attest', 'audit']) test(`CLI preserves ${mode} output policy`, (t) => {
   const h = harness(t), result = h.run(mode);
+  if (mode === 'audit') {
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, line('audit', 'connection_coverage'));
+    assert.equal(readFileSync(h.path('output'), 'utf8'), '');
+    assert.equal(existsSync(h.path('attestation.json')), false);
+    return;
+  }
   assert.equal(result.status, 0); assert.equal(result.stdout, ''); assert.equal(result.stderr, '');
-  const output = mode === 'plan' ? `sha=${h.env.REVIEWED_SHA}\nverifier=${h.env.VERIFIER_SHA256}\nconfig=${h.env.CONFIG_SHA256}\n` : mode === 'audit' ? 'publishable=true\n' : '';
+  const output = mode === 'plan' ? `sha=${h.env.REVIEWED_SHA}\nverifier=${h.env.VERIFIER_SHA256}\nconfig=${h.env.CONFIG_SHA256}\n` : '';
   assert.equal(readFileSync(h.path('output'), 'utf8'), output);
-  if (mode === 'attest' || mode === 'audit') {
-    const path = h.path(mode === 'attest' ? 'attested.json' : 'attestation.json');
+  if (mode === 'attest') {
+    const path = h.path('attested.json');
     const bytes = readFileSync(path, 'utf8'), value = JSON.parse(bytes);
     assert.equal(lstatSync(path).mode & 0o777, 0o600);
-    if (mode === 'attest') {
-      assert.deepEqual(value.request.expected, h.before.request.expected);
-      assert.equal(bytes, JSON.stringify({ request: value.request, receipt: { ...h.before.receipt, nonce: value.request.nonce } }));
-    } else assert.equal(bytes, JSON.stringify({ before: h.before.receipt, after: h.after.receipt, scope: 'independent-deployment-identity-not-model-proof' }));
+    assert.deepEqual(value.request.expected, h.before.request.expected);
+    assert.equal(bytes, JSON.stringify({ request: value.request, receipt: { ...h.before.receipt, nonce: value.request.nonce } }));
   }
 });
 

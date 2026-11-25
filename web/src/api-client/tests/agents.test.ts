@@ -13,6 +13,19 @@ import {
 } from './resource-fixtures.js';
 
 describe('Agent resource commands', () => {
+  it('preserves optional pinned Sandbox Profile readability in Agent details', async () => {
+    const test = transport();
+    for (const readable of [true, false, undefined]) {
+      const profile = {
+        ...agent.sandbox.profile,
+        ...(readable === undefined ? {} : { readable }),
+      };
+      const detail = { ...agent, sandbox: { ...agent.sandbox, profile } };
+      test.answer(detail);
+      expect((await test.client.agents.read(agent.id)).sandbox.profile).toStrictEqual(profile);
+    }
+  });
+
   it('recovers a never-ready Agent with a keyed bodyless request and exact response identity', async () => {
     const test = transport();
     const pending = { ...agent, status: 'starting' };
