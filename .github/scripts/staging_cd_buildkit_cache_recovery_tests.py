@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import yaml
 
-from actions_cache_buildkit_recovery import authorized, recover
+from actions_cache_buildkit_recovery import MAX_INDEX_RETIREMENTS, authorized, recover
 from actions_cache_retention import BUDGET
 from staging_cd_buildkit_cache_inventory_tests import blob, index
 from staging_cd_cache_retention_tests import CLOCK, Inventory, ROOT, entry
@@ -34,8 +34,8 @@ class NativeRecovery(unittest.TestCase):
         self.api = BuildKitInventory(self.idx, self.reachable, self.orphan, self.other_orphan, self.unrelated)
         self.read_index = Mock(return_value={self.reachable.key})
 
-    def run_recovery(self):
-        return recover(self.api, self.read_index, "a" * 40, CLOCK + timedelta(hours=48))
+    def run_recovery(self, **options):
+        return recover(self.api, self.read_index, "a" * 40, CLOCK + timedelta(hours=48), **options)
 
     def test_recovery_stops_below_target_and_retains_all_indexes(self):
         result = self.run_recovery()
@@ -82,6 +82,63 @@ class NativeRecovery(unittest.TestCase):
         self.api.delete.assert_called_once_with(self.other_orphan.id)
         self.assertEqual(set(self.api.rows), {1, 2, 3, 5, 6})
 
+    def add_replacement_indexes(self):
+        for ordinal in (6, 7):
+            self.api.rows[ordinal] = index(ordinal)
+        self.read_index.side_effect = lambda key, _: (
+            {self.orphan.key, self.other_orphan.key} if key == self.idx.key else {self.reachable.key})
+
+    def test_index_retirement_is_opt_in_and_then_requires_a_fresh_blob_proof(self):
+        self.add_replacement_indexes()
+        preview = self.run_recovery()
+        self.assertEqual(preview["status"], "target-unmet")
+        self.assertEqual(preview["projected_candidate_bytes_after_index_retirement"],
+                         self.orphan.size + self.other_orphan.size)
+        self.api.delete.assert_not_called()
+        result = self.run_recovery(retire_indexes=True)
+        self.assertEqual((result["status"], result["confirmed_retired_indexes"]), ("indexes-retired", 1))
+        self.api.delete.assert_called_once_with(self.idx.id)
+        self.assertIn(self.orphan.id, self.api.rows)
+        self.assertIn(self.other_orphan.id, self.api.rows)
+
+        self.api.delete.reset_mock()
+        fresh = self.run_recovery(retire_indexes=True)
+        self.assertEqual(fresh["status"], "recovered")
+        self.api.delete.assert_called_once_with(self.orphan.id)
+        self.assertTrue({6, 7} <= self.api.rows.keys())
+
+    def test_retirement_rechecks_readers_and_limits_mutations(self):
+        self.add_replacement_indexes()
+        self.api.active_runs.side_effect = [[], [{"id": 43}]]
+        self.assertEqual(self.run_recovery(retire_indexes=True)["status"], "reader-held")
+        self.api.delete.assert_not_called()
+        self.api.active_runs.side_effect = None
+
+        old_ids = range(6, 6 + MAX_INDEX_RETIREMENTS)
+        for ordinal in old_ids:
+            self.api.rows[ordinal] = index(ordinal)
+        newest = (6 + MAX_INDEX_RETIREMENTS, 7 + MAX_INDEX_RETIREMENTS)
+        for ordinal in newest:
+            self.api.rows[ordinal] = index(ordinal)
+        result = self.run_recovery(retire_indexes=True)
+        self.assertEqual(result["confirmed_retired_indexes"], MAX_INDEX_RETIREMENTS)
+        self.assertEqual(self.api.delete.call_count, MAX_INDEX_RETIREMENTS)
+        self.assertTrue(set(newest) <= self.api.rows.keys())
+        self.assertIn(self.orphan.id, self.api.rows)
+
+    def test_retirement_stops_if_a_replacement_disappears_after_observation(self):
+        self.add_replacement_indexes()
+
+        def active_runs():
+            if self.api.active_runs.call_count == 2:
+                self.api.rows.pop(7)
+            return []
+
+        self.api.active_runs.side_effect = active_runs
+        result = self.run_recovery(retire_indexes=True)
+        self.assertEqual(result["status"], "proof-changed")
+        self.api.delete.assert_not_called()
+
     def test_mutation_requires_both_flags_and_trusted_completion(self):
         repository = 'ChronoAIProject/cma'
         with TemporaryDirectory() as temp:
@@ -105,3 +162,6 @@ class NativeRecovery(unittest.TestCase):
         self.assertIn("github.event_name == 'workflow_run'", job['if'])
         self.assertEqual(job['concurrency'], jobs['retain_layers']['concurrency'])
         self.assertEqual(jobs['inspect_buildkit']['permissions']['actions'], 'read')
+        retirement_step = next(step for step in job["steps"] if "CD_LEGACY_BUILDKIT_INDEX_RETIREMENT" in step.get("env", {}))
+        self.assertIn("vars.CMA_LEGACY_BUILDKIT_INDEX_RETIREMENT == 'true'",
+                      retirement_step["env"]["CD_LEGACY_BUILDKIT_INDEX_RETIREMENT"])
