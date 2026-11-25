@@ -11,6 +11,17 @@ LEVELS = {"version-upgrade:" + level: level for level in ("major", "minor", "pat
 BASE_VERSION = "0.10.0"
 REPOSITORY = "ChronoAIProject/cma"
 SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+RETIRED_SOURCE = "730c1bfcb804e86531e838f84bd2133013a6f4a2"
+RETIRED_SOURCES = frozenset({("runtime", RETIRED_SOURCE), ("runtime-desktop", RETIRED_SOURCE)})
+
+# Both reservations at the retired source burned v0.10.1. A pruned
+# pending ref must never make the active lane allocate that version again.
+def version_floor(component):
+    return "0.10.1" if (component, RETIRED_SOURCE) in RETIRED_SOURCES else BASE_VERSION
+
+
+def require_publishable_source(component, source):
+    require((component, source) not in RETIRED_SOURCES, "Retired source cannot be published")
 
 
 @dataclass(frozen=True)
@@ -88,10 +99,11 @@ def merged_pr_level(revision, request):
 def plan_version(component, level, tags, source_revision):
     require(component in DEPLOYABLES and matches(r"[0-9a-f]{40}", source_revision),
             "Deployable or source revision is invalid")
+    require_publishable_source(component, source_revision)
     require(isinstance(tags, list), "Version tag inventory is malformed")
     deployable = DEPLOYABLES[component]
     prefix = deployable + "/v"
-    highest, seen, published = BASE_VERSION, set(), []
+    highest, seen, published = version_floor(component), set(), []
     for tag in tags:
         require(isinstance(tag, dict) and isinstance(tag.get("name"), str), "Version tag inventory is malformed")
         if not tag["name"].startswith(prefix):

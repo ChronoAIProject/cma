@@ -20,7 +20,7 @@ from staging_cd_receipts import canonical, published_receipt, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_reservations import Reservations, SourceAlreadyFinal, validate_reservation
 from staging_cd_publication_diagnostics import PublicationDiagnostics, run_publication
-from staging_cd_versions import DEPLOYABLES
+from staging_cd_versions import DEPLOYABLES, require_publishable_source
 from staging_cd_timing import Timings
 from staging_cd_build_cache import SCOPES, BuildCache
 from staging_cd_cache_save import report_layers
@@ -47,6 +47,7 @@ def validated_tasks(tasks, env):
             require(value["component"] == component, "Reservation component differs")
             require(value["run_id"] == int(env["GITHUB_RUN_ID"])
                     and value["run_attempt"] == int(env["GITHUB_RUN_ATTEMPT"]), "Reservation owner differs")
+        require_publishable_source(component, value["source"])
         validated.append((mode, value))
     return validated
 
