@@ -165,6 +165,8 @@ pub struct MongoSandboxStore {
     pub(super) native_prepared: Collection<Document>,
     pub(super) warm_runtime_version: Option<String>,
     pub(super) managed_runtime_version: Option<String>,
+    pub(crate) runtime_image_origin_enabled: bool,
+    pub(crate) desktop_verified_runtime_image: Option<String>,
     pub(super) managed_machine_runtime_version: Option<String>,
     /// The process's released-default authority. When set it supersedes the
     /// two fixed pins above, which remain only for store fixtures.
@@ -220,6 +222,16 @@ impl MongoSandboxStore {
             Some(released) => Some(released.snapshot().agent),
             None => self.managed_runtime_version.clone(),
         }
+    }
+
+    pub(super) fn managed_agent_release_for(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+    ) -> Option<String> {
+        self.managed_agent_release().filter(|target| {
+            layer2_core::sandbox::store::SandboxStore::managed_runtime_target(self, sandbox, target)
+                .is_some()
+        })
     }
 
     pub(crate) fn with_agent_control_write_coordination(mut self, enabled: bool) -> Self {

@@ -131,6 +131,7 @@ fn unknown_version_filter(collection: &str) -> Document {
             super::work_schema::RENEWED_VERSION,
             super::work_schema::PREPARED_VERSION,
             super::work_schema::RUNTIME_MIGRATION_VERSION,
+            super::work_schema::RUNTIME_IMAGE_ORIGIN_VERSION,
         ]
     } else if matches!(collection, "agents" | "agent_reuse_bindings" | "bots") {
         vec![1_i64, 2]

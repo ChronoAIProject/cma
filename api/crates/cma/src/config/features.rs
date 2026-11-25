@@ -75,6 +75,7 @@ pub(crate) struct FeatureFlags {
     pub parent_not_ready_pacing_enabled: bool,
     pub startup_sibling_hold_enabled: bool,
     pub retained_reopen_enabled: bool,
+    pub runtime_image_origin_enabled: bool,
     pub retained_suspended_reopen_enabled: bool,
     pub retained_repeat_reopen_enabled: bool,
     pub agent_skill_upgrade_enabled: bool,
@@ -224,6 +225,7 @@ impl FeatureFlags {
                 "CHRONO_AGENT_STARTUP_SIBLING_HOLD_ENABLED",
             )?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
+            runtime_image_origin_enabled: flag(lookup, "CHRONO_RUNTIME_IMAGE_ORIGIN_ENABLED")?,
             retained_suspended_reopen_enabled: flag(
                 lookup,
                 "CHRONO_RETAINED_SUSPENDED_REOPEN_ENABLED",

@@ -1,13 +1,46 @@
 use super::*;
-use layer2_core::sandbox::store::{SandboxImageRotationRequest, SandboxMaintenanceStore};
+use layer2_core::sandbox::store::{
+    SandboxAdmission, SandboxAdmissionName, SandboxAdmissionResult, SandboxAdmissionStore,
+    SandboxImageRotationRequest, SandboxMaintenanceStore,
+};
 
 #[path = "runtime_update_reopen_refusal_tests.rs"]
 mod reopen_refusal;
 pub(crate) use reopen_refusal::exercise_runtime_update_reopen_http;
 
 async fn active() -> (Fixture, Sandbox, SystemTime) {
+    active_with_image_origin(false).await
+}
+
+async fn active_with_image_origin(managed_desktop: bool) -> (Fixture, Sandbox, SystemTime) {
     let mut f = Fixture::native().await;
-    let created = f.harness.create().await;
+    let created = if managed_desktop {
+        let seed = Harness::new(vec![], 0, Duration::from_secs(60)).await;
+        let mut created = seed.create().await;
+        created.origin = layer2_core::sandbox::SandboxOrigin::Lifecycle {
+            operation_id: "desktop-fixture".into(),
+        };
+        created.profile.content.runtime_image = Some(runtime_image());
+        created.profile.digest =
+            layer2_core::profiles::content_digest(&created.profile.content).unwrap();
+        created.lifecycle.runtime_image_origin =
+            Some(layer2_core::sandbox::SandboxRuntimeImageOrigin::ManagedDesktop);
+        let admission = SandboxAdmission::new(
+            created.clone(),
+            SandboxAdmissionName::Allocate(created.name),
+            10,
+            created.created_at,
+        )
+        .unwrap();
+        let SandboxAdmissionResult::Created(created) =
+            f.harness.store.admit_sandbox(admission).await.unwrap()
+        else {
+            panic!("expected a newly admitted Desktop Sandbox");
+        };
+        created
+    } else {
+        f.harness.create().await
+    };
     let mut now = start_time(&created);
     let value = f
         .drive(
@@ -124,7 +157,16 @@ async fn retained_transition_worker_never_suspends_a_restarted_predecessor() {
 
 #[tokio::test]
 async fn runtime_update_worker_reopens_original_conversation_on_same_pvc_after_lost_ack() {
-    let (f, active, mut now) = active().await;
+    exercise_retained_update(false).await;
+}
+
+#[tokio::test]
+async fn managed_desktop_update_reopens_original_conversation_on_same_pvc_after_lost_ack() {
+    exercise_retained_update(true).await;
+}
+
+async fn exercise_retained_update(managed_desktop: bool) {
+    let (f, active, mut now) = active_with_image_origin(managed_desktop).await;
     let agent = lifecycle_recovery_tests::prepare_agent(&f.harness, &active, now, 1).await;
     let original = f.backend.snapshot().await;
     let target = "registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -135,6 +177,11 @@ async fn runtime_update_worker_reopens_original_conversation_on_same_pvc_after_l
         .drive(&active.id, &mut now, SandboxStatus::Active, target)
         .await;
     assert_eq!(updated.id, active.id);
+    assert_eq!(updated.profile, active.profile);
+    assert_eq!(
+        updated.lifecycle.runtime_image_origin,
+        active.lifecycle.runtime_image_origin
+    );
     assert_eq!(updated.lifecycle.home, active.lifecycle.home);
     assert_eq!(
         updated.runtime.as_ref().unwrap().runtime_id,

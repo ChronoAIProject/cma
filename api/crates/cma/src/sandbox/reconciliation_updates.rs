@@ -29,6 +29,11 @@ impl SandboxReconciler {
                 return Ok(false);
             }
             if automatic_updates
+                && sandbox.managed_desktop_runtime_confirmed()
+                && self
+                    .store
+                    .managed_runtime_target(&sandbox, target)
+                    .is_some()
                 && sandbox
                     .check_daily_runtime_update(target, &stamp)
                     .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?
