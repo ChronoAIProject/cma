@@ -139,7 +139,7 @@ impl PeerProbe {
                 self.writes.fetch_add(1, SeqCst);
                 // Even a peer that erroneously marks an ambiguous write must
                 // not cause the ingress to replay that mutation.
-                file_read::refusal(Refusal::AuthorityChanged)
+                file_read::refusal(None, Refusal::AuthorityChanged)
             }
         }
     }

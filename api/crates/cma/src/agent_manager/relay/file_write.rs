@@ -25,8 +25,13 @@ pub(super) fn eligible(path: &str, method: &Method, body: &[u8]) -> bool {
         })
 }
 
-pub(super) fn refusal(relay: &Relay, proof: &[u8]) -> Response {
-    let mut response = http::unavailable();
+pub(super) fn refusal(
+    relay: &Relay,
+    proof: &[u8],
+    diagnostic: Option<&relay_diagnostics::RelayDiagnostic>,
+    reason: Refusal,
+) -> Response {
+    let mut response = http::unavailable_with(diagnostic, reason);
     response.headers_mut().insert(
         NOT_ENTERED_HEADER,
         relay.authentication.write_not_entered_tag(proof),
@@ -43,9 +48,10 @@ pub(super) async fn recover(
     deadline: tokio::time::Instant,
     target: FileWriteTarget,
 ) -> Response {
+    let diagnostic = relay_diagnostics::RelayDiagnostic::from_request(&request);
     let response = tokio::time::timeout_at(deadline, async {
         if !relay.coordinator.is_ready() {
-            return http::unavailable();
+            return http::unavailable_with(diagnostic.as_ref(), Refusal::CoordinatorNotReady);
         }
         if let Err(refusal) = http::authorize_public(relay, id, &request, None, false).await {
             return refusal;
@@ -54,6 +60,8 @@ pub(super) async fn recover(
         next.run(request).await
     })
     .await
-    .unwrap_or_else(|_| http::unavailable());
+    .unwrap_or_else(|_| {
+        http::unavailable_with(diagnostic.as_ref(), Refusal::HandoffRecoveryDeadline)
+    });
     http::retain_until(response, permit, Some(deadline))
 }

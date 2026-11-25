@@ -28,13 +28,11 @@ pub(super) async fn run(next: Next, request: Request, retry: bool) -> Response {
     }
 }
 
-pub(super) fn refusal(reason: Refusal) -> Response {
-    tracing::debug!(
-        target: "cma::agent_manager::file_read_relay",
-        ?reason,
-        "Verified file read reached an owner during handoff"
-    );
-    let mut response = http::unavailable();
+pub(super) fn refusal(
+    diagnostic: Option<&relay_diagnostics::RelayDiagnostic>,
+    reason: Refusal,
+) -> Response {
+    let mut response = http::unavailable_with(diagnostic, reason);
     mark(&mut response);
     response
 }
@@ -92,17 +90,22 @@ pub(super) async fn recover(
     deadline: tokio::time::Instant,
     reason: &'static str,
 ) -> Response {
+    let diagnostic = relay_diagnostics::RelayDiagnostic::from_request(&request);
     let response = tokio::time::timeout_at(deadline, async {
         if !relay.coordinator.is_ready() {
-            return http::unavailable();
+            return http::unavailable_with(diagnostic.as_ref(), Refusal::CoordinatorNotReady);
         }
-        if let Err(refusal) = http::authorize_public(relay, id, &request, None, false).await {
+        if let Err(refusal) =
+            http::authorize_public(relay, id, &request, diagnostic.as_ref(), false).await
+        {
             return refusal;
         }
         next.run(request).await
     })
     .await
-    .unwrap_or_else(|_| http::unavailable());
+    .unwrap_or_else(|_| {
+        http::unavailable_with(diagnostic.as_ref(), Refusal::HandoffRecoveryDeadline)
+    });
     tracing::debug!(
         target: "cma::agent_manager::file_read_relay",
         reason,
