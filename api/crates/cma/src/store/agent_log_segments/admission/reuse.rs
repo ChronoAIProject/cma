@@ -179,7 +179,7 @@ pub(super) async fn reuse_profile_agent(
         let revival = next_sandbox
             .record_creation_admission_with_managed_runtime(
                 SandboxReviveCause::TriggerLaunch,
-                store.managed_agent_release().as_deref(),
+                store.managed_agent_release_for(sandbox).as_deref(),
                 admission.event_at.clone(),
             )
             .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;

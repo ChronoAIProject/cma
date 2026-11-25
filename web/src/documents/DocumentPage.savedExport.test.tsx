@@ -69,8 +69,9 @@ it('exports freshly authorized saved content while preserving the unsaved draft 
   vi.mocked(api.source).mockResolvedValue({ id, revision: 5, markdown: saved });
   const before = documentDraft('owner', id);
   const storageWrite = vi.spyOn(Storage.prototype, 'setItem');
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   fireEvent.click(screen.getByRole('button', { name: 'Export saved JSON' }));
-  await waitFor(() => expect(createObjectURL).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(createObjectURL).toHaveBeenCalledOnce());
   const blob: Blob = createObjectURL.mock.calls[0]![0];
   const text = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -95,6 +96,8 @@ it('exports freshly authorized saved content while preserving the unsaved draft 
   const leaving = new Event('beforeunload', { cancelable: true });
   window.dispatchEvent(leaving);
   expect(leaving.defaultPrevented).toBe(true);
+  vi.advanceTimersByTime(1000);
+  expect(URL.revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:saved-document');
 });
 
 it.each([

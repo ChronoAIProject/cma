@@ -214,10 +214,7 @@ for (const width of [1440, 390]) {
       await expect(page.getByRole('dialog')).toHaveCount(0);
       await expect.poll(stored).toMatchObject({ key: deletes[0], accepted: true });
       await navigation(page, false);
-      await page
-        .getByRole('region', { name: 'Deletion request', exact: true })
-        .getByRole('button', { name: 'View status', exact: true })
-        .click();
+      await page.getByRole('button', { name: 'View deletion status', exact: true }).click();
       await page
         .getByRole('button', { name: `View ${kind} deletion status (1)`, exact: true })
         .click();

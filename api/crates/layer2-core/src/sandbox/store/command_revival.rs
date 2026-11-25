@@ -41,7 +41,9 @@ impl<T: SandboxStore + SandboxTransactionStore + Send + Sync> CommandRevivalStor
             let command = revival(
                 &current,
                 &at,
-                release.as_ref().map(|release| release.agent.as_str()),
+                release
+                    .as_ref()
+                    .and_then(|release| self.managed_runtime_target(&current, &release.agent)),
             );
             let application = apply_sandbox_lifecycle_command(current, &command)?;
             let SandboxLifecycleCommandApplication::Commit {

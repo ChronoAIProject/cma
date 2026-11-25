@@ -207,6 +207,8 @@ pub struct SandboxLifecycleState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_update: Option<super::SandboxRuntimeUpdateState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_image_origin: Option<super::SandboxRuntimeImageOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retained_startup_policy: Option<Box<super::RetainedRuntimePolicyBinding>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_runtime: Option<Box<super::SandboxCustomRuntimeState>>,
@@ -250,6 +252,7 @@ impl Default for SandboxLifecycleState {
             paused_notice: None,
             rotation: SandboxRotationAccounting::default(),
             runtime_update: None,
+            runtime_image_origin: None,
             retained_startup_policy: None,
             custom_runtime: None,
             runtime_migration_admission: None,
@@ -263,6 +266,7 @@ impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
         self.validate_home_restore(sandbox)?;
         sandbox.validate_retirement_archive()?;
+        sandbox.validate_runtime_image_origin()?;
         sandbox.validate_custom_runtime()?;
         sandbox.validate_suspended_runtime()?;
         if let Some(failed) = &self.failed_provision {

@@ -63,11 +63,7 @@ impl ResolveError {
                 503,
                 "stored channel is invalid",
             ),
-            Self::CreationPending => (
-                ProblemCode::Conflict,
-                409,
-                "channel_creation_pending: the channel owner must complete the original creation request before sending events",
-            ),
+            Self::CreationPending => (ProblemCode::Conflict, 409, super::creation::PENDING_DETAIL),
             Self::RateLimited => (
                 ProblemCode::RateLimited,
                 429,
@@ -90,13 +86,15 @@ impl std::fmt::Display for ResolveError {
 impl std::error::Error for ResolveError {}
 
 struct Flight {
+    record_id: cmaeg_core::ids::RecordId,
     notify: Notify,
     result: Mutex<Option<Result<Arc<ResolvedChannel>, ResolveError>>>,
     invalidated: std::sync::atomic::AtomicBool,
 }
 impl Flight {
-    fn new() -> Self {
+    fn new(record_id: cmaeg_core::ids::RecordId) -> Self {
         Self {
+            record_id,
             notify: Notify::new(),
             result: Mutex::new(None),
             invalidated: false.into(),
@@ -203,6 +201,17 @@ impl ChannelResolver {
                 .store(true, std::sync::atomic::Ordering::Release);
         }
     }
+    pub(crate) fn invalidate_record(&self, id: &cmaeg_core::ids::RecordId) {
+        let _guard = self.inner.publication.lock().unwrap();
+        self.inner.cache.invalidate_record(id);
+        for flight in &self.inner.flights {
+            if flight.record_id == *id {
+                flight
+                    .invalidated
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
+    }
     pub async fn resolve(&self, raw_id: &str) -> Result<Arc<ResolvedChannel>, ResolveError> {
         self.resolve_observed(raw_id, None).await
     }
@@ -250,7 +259,7 @@ impl ChannelResolver {
                         if let Some(timing) = timing {
                             timing.triggered_restore();
                         }
-                        let flight = Arc::new(Flight::new());
+                        let flight = Arc::new(Flight::new(pointer.record_id.clone()));
                         entry.insert(flight.clone());
                         let resolver = self.clone();
                         let pending = flight.clone();
@@ -450,9 +459,7 @@ impl ChannelResolver {
         )
         .await
     }
-}
 
-impl ChannelResolver {
     pub(crate) async fn whatsapp_flow_current(
         &self,
         channel: &ResolvedChannel,
@@ -468,9 +475,7 @@ impl ChannelResolver {
         )
         .await
     }
-}
 
-impl ChannelResolver {
     pub(crate) async fn whatsapp_message_change_current(
         &self,
         channel: &ResolvedChannel,

@@ -185,6 +185,7 @@ impl ChannelReader for FakeReader {
                 definition: definition.clone(),
                 version: *version,
                 record_bytes: 2_048,
+                retirement_expected_version: None,
                 valid: true,
             })
         })

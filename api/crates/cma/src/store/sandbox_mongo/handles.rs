@@ -66,6 +66,7 @@ impl MongoSandboxStore {
             agent_writes: Default::default(),
             agent_control_write_coordination: false,
             agent_ownership: None,
+            agent_inspection_parking: false,
             ownership_retry_hints_enabled: false,
             #[cfg(test)]
             ownership_retry_hint_now: None,
@@ -116,6 +117,8 @@ impl MongoSandboxStore {
             native_prepared: majority_collection(&database, store::native_prepared::COLLECTION),
             warm_runtime_version: None,
             managed_runtime_version: None,
+            runtime_image_origin_enabled: false,
+            desktop_verified_runtime_image: None,
             released_lanes: None,
             managed_machine_runtime_version: None,
             released: None,

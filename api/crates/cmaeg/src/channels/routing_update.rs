@@ -73,14 +73,10 @@ pub async fn update(
     let pointer = open_pointer(state, channel_id)?;
     let _guard = state.mutation_guard(pointer.record_id.as_str()).await;
     let current = load(state, creator, channel_id).await?;
+    super::creation::require_ready(&current.definition)?;
     super::mutation::available(&current.definition, current.record.version)?;
-    if (current.record.version != request.expected_version
-        && request.expected_version.checked_add(1) != Some(current.record.version))
-        || current
-            .definition
-            .creation
-            .as_ref()
-            .is_some_and(|value| !value.ready)
+    if current.record.version != request.expected_version
+        && request.expected_version.checked_add(1) != Some(current.record.version)
     {
         return Err(ManagementError::Conflict {
             expected: request.expected_version,
