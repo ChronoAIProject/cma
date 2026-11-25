@@ -2,8 +2,8 @@ use crate::auth::identity;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 
 use axum::{
-    extract::State,
-    http::StatusCode,
+    extract::{Form, State},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -16,6 +16,8 @@ use crate::auth::{permissions::PermissionEvidence, AuthMode};
 
 #[path = "bearer_authorization_tests/budget_tests.rs"]
 mod budget_tests;
+#[path = "bearer_authorization_tests/capacity_diagnostic_tests.rs"]
+mod capacity_diagnostic_tests;
 #[path = "bearer_authorization_tests/epoch_tests.rs"]
 mod epoch_tests;
 
@@ -36,31 +38,55 @@ struct Control {
     introspection_calls: AtomicUsize,
     status: AtomicU16,
     active: AtomicBool,
+    token_subjects: AtomicBool,
     gate: RwLock<Option<Arc<Gate>>>,
     arrivals: Semaphore,
     userinfo_body: RwLock<Option<serde_json::Value>>,
     introspection_body: RwLock<Option<serde_json::Value>>,
 }
 
-async fn userinfo(State(control): State<Arc<Control>>) -> Json<serde_json::Value> {
+async fn userinfo(
+    State(control): State<Arc<Control>>,
+    headers: HeaderMap,
+) -> Json<serde_json::Value> {
     control.userinfo_calls.fetch_add(1, Ordering::SeqCst);
+    let subject = if control.token_subjects.load(Ordering::SeqCst) {
+        format!(
+            "fixture-subject-{}",
+            headers["authorization"]
+                .to_str()
+                .unwrap()
+                .strip_prefix("Bearer ")
+                .unwrap()
+        )
+    } else {
+        "fixture-owner".into()
+    };
     Json(
         control
             .userinfo_body
             .read()
             .await
             .clone()
-            .unwrap_or_else(|| json!({"sub":"fixture-owner"})),
+            .unwrap_or_else(|| json!({"sub":subject})),
     )
 }
 
-async fn introspection(State(control): State<Arc<Control>>) -> Response {
+async fn introspection(
+    State(control): State<Arc<Control>>,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
     control.introspection_calls.fetch_add(1, Ordering::SeqCst);
     control.arrivals.add_permits(1);
     let gate = control.gate.read().await.clone();
     if let Some(gate) = gate {
         gate.release.acquire().await.unwrap().forget();
     }
+    let subject = if control.token_subjects.load(Ordering::SeqCst) {
+        format!("fixture-subject-{}", form["token"])
+    } else {
+        "fixture-owner".into()
+    };
     let status = StatusCode::from_u16(control.status.load(Ordering::SeqCst)).unwrap();
     let mut response = (
         status,
@@ -71,7 +97,7 @@ async fn introspection(State(control): State<Arc<Control>>) -> Response {
                 .await
                 .clone()
                 .unwrap_or_else(|| {
-                    json!({"sub":"fixture-owner", "active":control.active.load(Ordering::SeqCst),
+                    json!({"sub":subject, "active":control.active.load(Ordering::SeqCst),
             "permissions":["cma:sandbox:use"]})
                 }),
         ),
@@ -101,6 +127,7 @@ impl Fixture {
             introspection_calls: AtomicUsize::new(0),
             status: AtomicU16::new(200),
             active: AtomicBool::new(true),
+            token_subjects: AtomicBool::new(false),
             gate: RwLock::new(None),
             arrivals: Semaphore::new(0),
             userinfo_body: RwLock::new(None),

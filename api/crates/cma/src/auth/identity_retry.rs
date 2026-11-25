@@ -50,7 +50,7 @@ pub(super) async fn verify_detailed(
             record(
                 Endpoint::Verification,
                 Stage::Admission,
-                Reason::Capacity,
+                Reason::VerificationCapacity,
                 None,
                 error,
             )
@@ -62,7 +62,7 @@ pub(super) async fn verify_detailed(
         record(
             Endpoint::Verification,
             Stage::Admission,
-            Reason::Capacity,
+            Reason::FenceCapacity,
             None,
             &error,
         );
