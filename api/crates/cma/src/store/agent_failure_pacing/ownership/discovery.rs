@@ -65,18 +65,26 @@ fn normalized(path: &str) -> Document {
 }
 
 fn parent_schema() -> Document {
-    use crate::store::work_schema::{PREPARED_VERSION, RENEWED_VERSION};
+    use crate::store::work_schema::{
+        PREPARED_VERSION, RENEWED_VERSION, RUNTIME_IMAGE_ORIGIN_VERSION,
+    };
     let schema = "$_ownership_retry_parent.document_schema_version";
     let work = "$_ownership_retry_parent.record.work";
     let protocol = format!("{work}.authority_protocol");
     let proof = format!("{work}.prepared_installation_digest");
     let absent_proof = is_type(&proof, &["missing"]);
+    let lifecycle = "$_ownership_retry_parent.record.lifecycle";
+    let origin = format!("{lifecycle}.runtime_image_origin");
     // Match the retained work reader's version/protocol relation without
     // pulling the complete parent aggregate into every discovery lookup.
     doc! {"$and": [
         is_type(schema, &["int", "long"]), is_type(work, &["object"]),
         {"$or": [is_type(&protocol, &["missing"]), {"$eq": [&protocol, "renewed_v1"]}]},
         {"$or": [
+            {"$and": [{"$eq": [schema, RUNTIME_IMAGE_ORIGIN_VERSION]},
+                {"$in": [{"$ifNull": [&origin, Bson::Null]}, ["managed_desktop", "user_selected"]]},
+                is_type(&format!("{lifecycle}.custom_runtime"), &["missing"]),
+                is_type(&format!("{lifecycle}.runtime_migration_admission"), &["missing"])]},
             {"$and": [{"$eq": [schema, 1]}, is_type(&protocol, &["missing"]), absent_proof.clone()]},
             {"$and": [{"$eq": [schema, RENEWED_VERSION]}, {"$eq": [&protocol, "renewed_v1"]}, absent_proof.clone()]},
             {"$and": [{"$eq": [schema, PREPARED_VERSION]}, {"$not": [absent_proof]},

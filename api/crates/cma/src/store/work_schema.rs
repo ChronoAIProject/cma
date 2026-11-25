@@ -25,21 +25,28 @@ pub(super) fn version(protocol: Option<WorkAuthorityProtocol>, prepared_installa
     }
 }
 
+pub(super) const SANDBOX_VERSIONS: [i64; 5] = [
+    1,
+    RENEWED_VERSION,
+    PREPARED_VERSION,
+    RUNTIME_MIGRATION_VERSION,
+    RUNTIME_IMAGE_ORIGIN_VERSION,
+];
+
 pub(super) fn versions() -> Document {
-    doc! {"$in":[1_i64, RENEWED_VERSION, PREPARED_VERSION, RUNTIME_MIGRATION_VERSION, RUNTIME_IMAGE_ORIGIN_VERSION]}
+    doc! {"$in": SANDBOX_VERSIONS.to_vec()}
 }
 
 pub(super) fn require(document: &Document) -> Result<(), String> {
-    match document.get("document_schema_version") {
-        Some(Bson::Int64(
-            1
-            | RENEWED_VERSION
-            | PREPARED_VERSION
-            | RUNTIME_MIGRATION_VERSION
-            | RUNTIME_IMAGE_ORIGIN_VERSION,
-        ))
-        | Some(Bson::Int32(1 | 3 | 4 | 5 | 6)) => Ok(()),
-        _ => Err("unsupported ordinary-work envelope".into()),
+    let version = match document.get("document_schema_version") {
+        Some(Bson::Int64(version)) => Some(*version),
+        Some(Bson::Int32(version)) => Some(i64::from(*version)),
+        _ => None,
+    };
+    if version.is_some_and(|version| SANDBOX_VERSIONS.contains(&version)) {
+        Ok(())
+    } else {
+        Err("unsupported ordinary-work envelope".into())
     }
 }
 

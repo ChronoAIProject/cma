@@ -93,6 +93,15 @@ async fn desktop_image_origin_survives_operation_reclaim_and_release_change() {
             panic!("expected the reclaimed operation to admit the Sandbox");
         };
         assert_eq!(created.profile, admitted_profile);
+        let capacity = store.owner_capacity(&created.owner).await.unwrap();
+        let occupied = capacity
+            .counts
+            .iter()
+            .find(|(status, _)| *status == SandboxStatus::Provisioning);
+        assert_eq!(
+            occupied.map(|(_, count)| *count),
+            Some(if key == "implicit" { 1 } else { 2 })
+        );
         assert_eq!(created.lifecycle.runtime_image_origin, Some(expected));
         assert_eq!(
             store.admit_sandbox(replay).await.unwrap(),
