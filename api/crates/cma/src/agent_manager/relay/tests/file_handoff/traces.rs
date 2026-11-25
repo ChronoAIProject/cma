@@ -45,6 +45,13 @@ impl RelayLog {
             .collect()
     }
 
+    pub(super) fn refusals(&self, reason: &str) -> usize {
+        self.events()
+            .iter()
+            .filter(|event| event["reason"] == reason)
+            .count()
+    }
+
     pub(super) fn assert_correlated(
         &self,
         owner: &Self,
@@ -87,10 +94,12 @@ impl RelayLog {
             owner_events.iter().any(|event| {
                 event["operation"] == operation
                     && event["hop_hash"] == hop_hash
+                    && (event["reason"] != "admission_closed" || event["request_hash"] == "none")
                     && matches!(
                         event["reason"].as_str(),
                         Some(
-                            "coordinator_not_ready"
+                            "admission_closed"
+                                | "coordinator_not_ready"
                                 | "authority_changed"
                                 | "owner_missing"
                                 | "owner_member_unavailable"
@@ -99,5 +108,22 @@ impl RelayLog {
             }),
             "{owner_events:?}"
         );
+    }
+
+    pub(super) fn assert_outer_admission_correlated(&self, owner: &Self) {
+        let events = self.events();
+        let recovered = events
+            .iter()
+            .rev()
+            .find(|event| {
+                event["operation"] == "read"
+                    && event["trigger"] == "peer_owner_handoff"
+                    && event["outcome"] == "recovered"
+            })
+            .unwrap();
+        assert!(owner.events().iter().any(|event| {
+            event["reason"] == "admission_closed" && event["hop_hash"] == recovered["hop_hash"]
+        }));
+        self.assert_correlated(owner, "read", "peer_owner_handoff", StatusCode::OK);
     }
 }

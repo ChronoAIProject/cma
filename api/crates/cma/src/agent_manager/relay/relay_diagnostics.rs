@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Refusal {
+    AdmissionClosed,
     CoordinatorNotReady,
     AuthorizationUnavailable,
     MembershipUnavailable,
@@ -22,6 +23,7 @@ pub(super) enum Refusal {
 impl Refusal {
     const fn as_str(self) -> &'static str {
         match self {
+            Self::AdmissionClosed => "admission_closed",
             Self::CoordinatorNotReady => "coordinator_not_ready",
             Self::AuthorizationUnavailable => "authorization_unavailable",
             Self::MembershipUnavailable => "membership_unavailable",

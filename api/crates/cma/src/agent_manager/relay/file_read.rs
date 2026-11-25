@@ -72,6 +72,11 @@ impl Relay {
                 && proof.owner.protocol == layer2_core::agent_ownership::PROTOCOL_VERSION
         }) {
             mark(response);
+            if let Some(mut diagnostic) = relay_diagnostics::RelayDiagnostic::from_request(request)
+            {
+                diagnostic.correlate_hop(request.headers()[PROOF].as_bytes());
+                diagnostic.record(Refusal::AdmissionClosed);
+            }
         }
     }
 }
