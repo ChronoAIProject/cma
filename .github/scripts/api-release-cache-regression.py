@@ -11,6 +11,7 @@ import datetime
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -106,6 +107,10 @@ def exercise(source, binary, platform):
     with tempfile.TemporaryDirectory(prefix="cma-release-regression-") as directory:
         root = Path(directory)
         fixture(root, binary)
+        helper = Path("api/build_support/workspace_cache.py")
+        if (source / helper).is_file():
+            (root / helper).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source / helper, root / helper)
         (root / "api/rust-toolchain.toml").write_text((source / "api/rust-toolchain.toml").read_text())
         (root / "Dockerfile").write_text(recipe)
         run(["docker", "run", "--rm", "--platform", platform, "--mount",

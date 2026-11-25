@@ -26,10 +26,10 @@ RELEASE_AUDITS = {
     "cma": (("cma", "cma-allocator-qualification", "cma-am-auth",
              "cma-am-mongo-primitives", "cma-am-reporting", "cma-qualification",
              "cma-service-auth", "layer1-public", "layer2-core", "layer3-adapter"),
-            "f19541b452d131f40f589804ca7b6919c15bd0d6ce3bfaf56f77339b1375d00b"),
+            "dafd18fdc1527ae8c42dca0cf3f7d2a3d862b768b08c3a08a6d796f77a7a544a", "319fa8effafa060fd2373f3b94958f9412a0e6bd029d720c198ce29db16b8a3e"),
     "cmaeg": (("cma-allocator-qualification", "cma-service-auth", "cmaeg", "cmaeg-core",
                "cmaeg-engine", "cmaeg-execution", "cmaeg-http"),
-              "c5a471244d1d05c314d2a523ae750bf4acc31e6c6169580892b04ab3d4cc2453"),
+              "c5a471244d1d05c314d2a523ae750bf4acc31e6c6169580892b04ab3d4cc2453", "398ca3c0dfeecdc377e00c6add25ea7b56ef0d2ed19062f5125bf6b4ee3ce53c"),
 }
 COMPILER_ENV = (
     "AR", "CC", "CFLAGS", "CXX", "CXXFLAGS", "LDFLAGS", "RUSTC", "RUSTFLAGS",
@@ -143,11 +143,11 @@ def tool_output(*command):
     return subprocess.run(command, capture_output=True, text=True, check=True).stdout
 
 
-def audit_digest(files, entrypoint, packages):
+def audit_digest(files, packages, *, excluded):
     owned = tuple(f"crates/{package}/" for package in packages)
     inputs = {}
     for path, (mode, checksum) in files.items():
-        if path == entrypoint or path.startswith("build_support/"):
+        if excluded(path) or path.startswith("build_support/"):
             # The build helper is already bound by the compiler receipt.
             continue
         if (path.startswith("crates/") and not path.startswith(owned)
@@ -158,22 +158,35 @@ def audit_digest(files, entrypoint, packages):
     return hashlib.sha256(serialized).hexdigest()
 
 
-def audited_entrypoint(prior, files, compiler, affected, changed):
+def audited_reuse(prior, files, compiler, affected, changed):
     binary = compiler["binary"]
-    packages, approved = RELEASE_AUDITS[binary]
-    entrypoint = f"crates/{binary}/src/main.rs"
-    if changed and (affected != [binary] or changed != [entrypoint]):
-        return False
+    packages, approved_entrypoint, approved_dependencies = RELEASE_AUDITS[binary]
+    service = f"crates/{binary}/src/"
+    entrypoint = service + "main.rs"
     rustc = compiler["rustc"].splitlines()
-    return (
+    require(
         "host: x86_64-unknown-linux-musl" in rustc
         and "commit-hash: 31fca3adb283cc9dfd56b49cdee9a96eb9c96ffd" in rustc
         and compiler["cargo"].strip() == "cargo 1.96.1 (356927216 2026-06-26)"
         and compiler["environment"] == {"CARGO_INCREMENTAL": hashlib.sha256(b"1").hexdigest()}
         and entrypoint in files and prior["files"][entrypoint][0] == files[entrypoint][0]
-        and audit_digest(prior["files"], entrypoint, packages) == approved
-        and audit_digest(files, entrypoint, packages) == approved
+        and set(affected) <= {binary}
+        and all(path.startswith(service) and path.endswith(".rs") for path in changed),
+        "unqualified workspace input change",
     )
+    previous = prior["files"]
+    if all(audit_digest(snapshot, packages, excluded=lambda path: path == entrypoint)
+           == approved_entrypoint for snapshot in (previous, files)):
+        return True
+    # The reviewed dependency graph cannot read service Rust files or release
+    # stamps in its compile-time code. An edited service can introduce such
+    # reads itself, so rebuild its own targets on every changed release until
+    # both source snapshots qualify for reuse of the service library.
+    is_service_rust = lambda path: path.startswith(service) and path.endswith(".rs")
+    require(all(audit_digest(snapshot, packages, excluded=is_service_rust)
+                == approved_dependencies for snapshot in (previous, files)),
+            "unqualified workspace input change")
+    return False
 
 
 def compiler_inputs(binary, files):
@@ -243,11 +256,11 @@ def prepare(root, target, binary, plan):
         affected, changed = rebuild_set(prior["files"], files, directories, reverse)
         release_changed = prior["producer"] != {name: os.environ.get(name) for name in RELEASE_VARIABLES}
         retain = bool(changed or release_changed)
-        # Package ownership cannot account for opaque macro reads. A macro in
-        # an upstream workspace dependency can read the service's entry point
-        # or release stamp. Discard the entire uncertified workspace target.
-        require(not retain or audited_entrypoint(prior, files, compiler, affected, changed),
-                "unqualified workspace input change")
+        # Opaque compile-time reads are not in Cargo's package graph.
+        # Preserve only the workspace units covered by a release audit.
+        keep_service_library = not retain or audited_reuse(prior, files, compiler, affected, changed)
+        if not keep_service_library:
+            invalidate_service(target, binary)
         # git archive stamps the entire checkout with the candidate commit
         # time. Now that equality is proven, its timestamps carry no freshness
         # information. Without normalization Cargo recompiles unchanged units.
@@ -264,14 +277,25 @@ def prepare(root, target, binary, plan):
                 os.utime(root / name, ns=(now, now))
             require(all((root / name).stat().st_mtime_ns > latest for name in changed),
                     "source clock does not advance restored fingerprints")
-        print("Workspace cache compatible. Invalidated: none", flush=True)
-        if retain:
+        invalidated = "none" if keep_service_library else binary
+        print(f"Workspace cache compatible. Invalidated: {invalidated}", flush=True)
+        if retain and keep_service_library:
             print(f"Workspace cache retained {binary} library under its release audit", flush=True)
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f"Workspace cache fallback: {error}", flush=True)
         reset(target, allow_legacy=prior is None)
 
     plan.write_text(json.dumps({"compiler": compiler, "files": files, "packages": list(directories.values())}))
+
+
+def invalidate_service(target, binary):
+    release = target / "release"
+    for directory, pattern in ((".fingerprint", PACKAGE_DIR), ("build", PACKAGE_DIR),
+                               ("incremental", INCREMENTAL_DIR), ("deps", LIBRARY)):
+        for item in (release / directory).glob("*"):
+            match = pattern.fullmatch(item.name)
+            if match and match[1] in (binary, binary.replace("-", "_")):
+                discard(item)
 
 
 def retain_session(path):

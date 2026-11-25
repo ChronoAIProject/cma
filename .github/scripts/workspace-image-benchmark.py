@@ -13,13 +13,15 @@ import tempfile
 import time
 
 from staging_cd_build import build, inspect
-from staging_cd_build_cache import bridge, source_identity
+from staging_cd_build_cache import TRANSFER_SECONDS, bridge, source_identity
 from staging_cd_build_cargo_keys import CargoKey
 from staging_cd_build_progress import summarize
+from staging_cd_cargo_artifact import MAX_BUNDLE_BYTES, MAX_EXPANDED_BYTES
 from staging_cd_reservations import next_reservation
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARIES = {"am": "cma", "eg": "cmaeg"}
+WORKSPACE_DEPENDENCY = {"am": "layer2-core", "eg": "cmaeg-core"}
 WARM_MAX_SECONDS = 540
 LIBRARY_PROBE = "workspace-library-probe"
 LIBRARY_EDITS = {
@@ -154,11 +156,13 @@ def seal_seed(tool, bundle, builder, reserved, source, receipt):
     # has read-only GitHub permissions and never writes an Actions cache.
     key = CargoKey(key.family.replace("cma-cd-cargo-v3-", "cma-cd-cargo-v4-", 1), key.graph, key.source)
     started = time.monotonic()
-    tool.transfer("extract", bundle, builder.name, namespace=builder.namespace)
+    tool.transfer("extract", bundle, builder.name, namespace=builder.namespace,
+                  timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES)
     receipt.update(export_seconds=round(time.monotonic() - started, 3),
                    compressed_bytes=sum(item.stat().st_size for item in bundle.glob("*.tar.gz")),
                    expanded_limit_exceeded=(bundle / "oversize").exists())
-    tool.seal(bundle, key.prefix, family=key.family, source=key.source, graph=key.graph)
+    tool.seal(bundle, key.prefix, family=key.family, source=key.source, graph=key.graph,
+              max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
     receipt["bytes"] = sum(item.stat().st_size for item in bundle.iterdir())
     return key
 
@@ -183,16 +187,23 @@ def verify_image(archive, component, revision, version, *, library=False):
         run(["docker", "image", "rm", name])
 
 
-def measure_warm(tool, key, work, component, reserved, case, result):
+def measure_warm(tool, key, work, component, reserved, case, result, *, seed="seed", export=None):
     with Builder(work / "layers", False) as builder:
         started = time.monotonic()
-        tool.validate_bundle(work / "seed", key.prefix, family=key.family)
-        tool.transfer("inject", work / "seed", builder.name, namespace=builder.namespace)
+        tool.validate_bundle(work / seed, key.prefix, family=key.family,
+                             max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
+        tool.transfer("inject", work / seed, builder.name, namespace=builder.namespace,
+                      timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES)
         restore = round(time.monotonic() - started, 3)
         archive, result[case] = measure(builder, reserved, work / case)
         result[case]["restore_seconds"] = restore
-        verify_image(archive, component, reserved["source"], reserved["version"], library=case == "warm_library")
+        result[case]["restore_and_image_seconds"] = round(restore + result[case]["seconds"], 3)
+        verify_image(archive, component, reserved["source"], reserved["version"], library=case != "warm")
         archive.unlink()
+        if export:
+            result[export] = {}
+            return seal_seed(tool, work / export, builder, reserved, work / case / "source", result[export])
+    return None
 
 
 def main():
@@ -217,16 +228,25 @@ def main():
             measure_warm(tool, key, work, args.component, warm_request, "warm", result)
             library = edited_revision(seed, args.component, work / "index", library=True)
             library_request = reservation(args.component, library, [cold_request])
-            measure_warm(tool, key, work, args.component, library_request, "warm_library", result)
+            library_key = measure_warm(tool, key, work, args.component, library_request,
+                                       "warm_library", result, export="library_seed")
+            next_request = reservation(args.component, library, [library_request])
+            measure_warm(tool, library_key, work, args.component, next_request,
+                         "warm_library_next_release", result, seed="library_seed")
             binary = BINARIES[args.component]
             measured = result["warm"]
             if (measured["retained_workspace_libraries"] != [binary]
                     or measured["service_targets"] != [f"{binary}:main"]):
                 raise ValueError("Executable-only build did not reuse its audited workspace library")
-            if result["warm_library"]["service_targets"] != [f"{binary}:lib", f"{binary}:main"]:
-                raise ValueError("Library edit did not compile the library and executable")
-            if measured["seconds"] > WARM_MAX_SECONDS:
-                raise ValueError("Warm image build exceeds 540 seconds")
+            for case in ("warm_library", "warm_library_next_release"):
+                measurement = result[case]
+                if (measurement["service_targets"] != [f"{binary}:lib", f"{binary}:main"]
+                        or measurement["workspace_invalidation"] != [binary]
+                        or WORKSPACE_DEPENDENCY[args.component] not in measurement["fresh"]):
+                    raise ValueError(f"{case} did not rebuild the service and reuse its workspace dependency")
+            for case in ("warm", "warm_library", "warm_library_next_release"):
+                if result[case]["seconds"] > WARM_MAX_SECONDS:
+                    raise ValueError(f"{case} image build exceeds {WARM_MAX_SECONDS} seconds")
             result["status"] = "pass"
     finally:
         args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")

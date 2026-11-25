@@ -181,8 +181,12 @@ pub fn snapshot(_: proc_macro::TokenStream) -> proc_macro::TokenStream {
             return toolchain(*command)
 
         packages = ("cma",)
-        checksum = cache.audit_digest(cache.inventory(self.root, skip=("target",)), main, packages)
-        self.enterContext(patch.dict(cache.RELEASE_AUDITS, {"cma": (packages, checksum)}))
+        files = cache.inventory(self.root, skip=("target",))
+        entrypoint = cache.audit_digest(files, packages, excluded=lambda path: path == main)
+        dependencies = cache.audit_digest(
+            files, packages, excluded=lambda path: path.startswith("crates/cma/src/") and path.endswith(".rs"),
+        )
+        self.enterContext(patch.dict(cache.RELEASE_AUDITS, {"cma": (packages, entrypoint, dependencies)}))
         self.enterContext(patch.object(cache, "tool_output", native_tool))
 
     def test_audited_stamp_and_executable_edit_retain_same_package_library(self):
@@ -228,23 +232,28 @@ pub fn snapshot(_: proc_macro::TokenStream) -> proc_macro::TokenStream {
         self.assertEqual(output, "second:42:42")
         self.assertEqual(self.clean_output("second"), output)
 
-    def test_changed_call_site_stays_unqualified_after_building_a_new_seed(self):
+    def test_edited_library_is_rebuilt_for_the_next_release_from_its_seed(self):
         main = self.split_targets()
-        self.vendored_reader('if std::env::var("CHRONO_BUILD_SHA").unwrap() == "first" { 41 } '
-                             'else if std::fs::read_to_string(root.join("src/main.rs")).unwrap()'
-                             '.contains("42") { 42 } else { 41 }')
+        self.vendored_reader('if std::env::var("CHRONO_BUILD_SHA").unwrap() == "first" { 41 } else { 42 }')
         self.approved_projection(main)
         self.assertEqual(self.build("first")[2], "first:41:41")
         lockfile = cache.digest(self.root / "Cargo.lock")
         self.write("crates/cma/src/lib.rs", "pub fn value() -> u32 { fixture_reader::snapshot!() }")
-        self.assertIn("unqualified workspace input change", self.build("first")[0])
-        self.write(main, (self.root / main).read_text().replace("= 41", "= 42"))
-        notes, _, output = self.build("second")
-        self.assertIn("unqualified workspace input change", notes)
-        self.assertNotIn("under its release audit", notes)
-        self.assertEqual(cache.digest(self.root / "Cargo.lock"), lockfile)
-        self.assertEqual(output, "second:42:42")
+        notes, rust, output = self.build("first")
+        self.assertIn("Invalidated: cma", notes)
+        self.assertIn("Fresh untouched", rust)
+        self.assertIn("crates/cma/src/lib.rs --error-format", rust)
+        self.assertEqual(output, "first:41:41")
+
+        # The fresh seed contains the edited library. A release-stamp change
+        # still invalidates its opaque macro while equal dependencies stay fresh.
+        notes, rust, output = self.build("second")
+        self.assertIn("Invalidated: cma", notes)
+        self.assertIn("Fresh untouched", rust)
+        self.assertIn("crates/cma/src/lib.rs --error-format", rust)
+        self.assertEqual(output, "second:41:42")
         self.assertEqual(self.clean_output("second"), output)
+        self.assertEqual(cache.digest(self.root / "Cargo.lock"), lockfile)
 
     def test_transitive_macro_observes_new_stamp(self):
         self.verify_transitive_reader(
