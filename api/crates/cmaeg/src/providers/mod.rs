@@ -17,6 +17,7 @@ mod media_continuations;
 mod permits;
 mod preparation;
 mod probe;
+mod profile_transfer;
 mod recovery;
 mod registry;
 mod reset;
@@ -40,6 +41,7 @@ pub use client_types::{
 pub use context::EventContextSnapshot;
 pub(crate) use frozen::FrozenSubmission;
 pub use probe::AgentCardProbe;
+pub(crate) use profile_transfer::ProfileTransferRequest;
 pub use recovery::{RecoveryEvent, RecoveryIdentity, RecoverySnapshot, RecoveryStream};
 pub use registry::{
     PreparationPaths, ProviderEntry, ProviderKind, ProviderPath, ProviderPaths, ProviderRegistry,

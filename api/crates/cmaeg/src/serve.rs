@@ -66,25 +66,8 @@ pub(crate) async fn serve(
         config.channel_cache.clone(),
         observers.index.clone(),
     );
-    if config.turns.provider_execution_attribution_enabled {
-        state.activity = Arc::new((*state.activity).clone().with_execution_attribution(true));
-    }
-    if config.profile_revisions_enabled
-        && (!config.routing.recovery_enabled
-            || !config.routing.admission_enabled
-            || !state.records.channel_mutation_custody()
-            || state.records.database().is_none())
-    {
-        return Err(
-            "channel profile revisions require durable routed admission and local mutation custody"
-                .into(),
-        );
-    }
-    state.profile_revisions_enabled = config.profile_revisions_enabled;
-    state
-        .resolver
-        .require_current_profile_reads(config.profile_revisions_enabled);
-    activity::configure(&mut state, &mut observers).await?;
+    crate::channels::profile_revision::configure(&config, &mut state)?;
+    activity::configure(&config, &mut state, &mut observers).await?;
     let telegram = Arc::new(telegram::TelegramClient::production(
         config.delivery.reply_timeout,
     )?);

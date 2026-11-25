@@ -13,6 +13,10 @@ use cmaeg_core::{
 };
 use serde::{Deserialize, Serialize};
 
+#[path = "profile_reset.rs"]
+mod resets;
+pub(crate) use resets::{reset_partition, ResetInput};
+
 const KIND: &str = "cmaeg_partition_profile_v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +33,12 @@ pub(crate) struct Assignment {
     binding_id: String,
     profile_digest: String,
     credential_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pending_operation: Option<String>,
+    #[serde(default)]
+    incarnation: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    first_revision: Option<u64>,
 }
 
 impl Assignment {
@@ -91,8 +101,11 @@ async fn prepare(
         binding_id: active.provider.binding_id.to_string(),
         profile_digest: active.profile_digest.to_owned(),
         credential_fingerprint: hash_secret(active.credential.as_str()),
+        pending_operation: None,
+        incarnation: 0,
+        first_revision: Some(active.revision),
     };
-    let validate = |assignment: Assignment| {
+    let validate = |assignment: Assignment, version| {
         if assignment.kind != candidate.kind
             || assignment.id != candidate.id
             || assignment.owner != candidate.owner
@@ -104,11 +117,23 @@ async fn prepare(
             return Err(Error::Corrupt);
         }
         assignment.view(channel)?;
-        Ok(Some((assignment, None)))
+        if allow_new && assignment.pending_operation.is_some() {
+            return Err(Error::Lost);
+        }
+        let write = store.prepare(
+            &id,
+            &assignment.owner,
+            &assignment,
+            Write {
+                expected: Some(version),
+                channel: Some((channel.record_id.to_string(), current.version)),
+                ..Default::default()
+            },
+        )?;
+        Ok(Some((assignment, Some(write))))
     };
     match store.read::<Assignment>(&id, false).await? {
-        Some((retained, 1)) => return validate(retained),
-        Some(_) => return Err(Error::Corrupt),
+        Some((retained, version)) => return validate(retained, version),
         None if !allow_new => return Err(Error::Lost),
         None => {}
     }
@@ -232,7 +257,7 @@ pub(crate) async fn event_channel(
         .await
         .map_err(|_| ResolveError::Unavailable)?
         .ok_or(ResolveError::InvalidDefinition)?;
-        if assignment.revision != 1 {
+        if assignment.first_revision.unwrap_or(assignment.revision) != 1 {
             return Err(ResolveError::InvalidDefinition);
         }
         1
@@ -325,14 +350,14 @@ pub(super) async fn baseline(
     else {
         return Err(Error::Corrupt);
     };
-    if let Some(write) = write {
+    if let Some(write) = write.filter(|value| value.expected.is_none()) {
         if store.batch(&[write]).await.is_err() {
-            let Some((retained, None)) =
+            let Some((retained, Some(guard))) =
                 prepare(store, current, &consumer, conversation, false).await?
             else {
                 return Err(Error::Lost);
             };
-            if retained != assignment {
+            if retained != assignment || guard.expected.is_none() {
                 return Err(Error::Lost);
             }
         }
@@ -436,7 +461,32 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(again, retained);
-        assert!(insert.is_none());
+        assert_eq!(insert.as_ref().and_then(|guard| guard.expected), Some(1));
+        let stale_admission = admission(insert);
+        peer.write(
+            &id,
+            owner,
+            &retained,
+            Write {
+                expected: Some(1),
+                channel: Some((channel.definition.record_id.to_string(), channel.version)),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(right
+            .put_profile_admission(
+                "fixture-stale-assignment",
+                owner,
+                b"fixture",
+                expiry,
+                &stale_admission,
+                &[],
+                None
+            )
+            .await
+            .is_err());
         fixture.cleanup().await;
     }
 }

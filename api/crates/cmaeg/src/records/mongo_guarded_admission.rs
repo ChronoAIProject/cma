@@ -88,7 +88,6 @@ impl MongoRecords {
         if let Some(assignment) = assignment {
             if assignment.owner != owner
                 || assignment.id.is_empty()
-                || assignment.expected.is_some()
                 || assignment.expires_at.is_some()
                 || assignment.blob.is_empty()
                 || assignment.blob.len() > 65536
@@ -100,24 +99,38 @@ impl MongoRecords {
             {
                 return Err(RecordError::Rejected("invalid partition assignment".into()));
             }
-            self.db
-                .collection::<Record>(CONNECTIONS)
-                .insert_one(Record {
-                    id: assignment.id.clone(),
-                    owner: owner.into(),
-                    blob: Binary {
-                        subtype: BinarySubtype::Generic,
-                        bytes: assignment.blob.clone(),
-                    },
-                    version: 1,
-                    schema_version: 1,
-                    guard_revision: 0,
-                    replica: None,
-                    expires_at: None,
-                })
-                .session(&mut session)
-                .await
-                .map_err(failure)?;
+            if let Some(version) = assignment.expected {
+                let updated = self.db.collection::<Document>(CONNECTIONS).update_one(
+                    doc! {"_id": &assignment.id, "owner": owner,
+                        "version": i64::try_from(version).map_err(|_| RecordError::Rejected("invalid partition assignment version".into()))?},
+                    doc! {"$inc": {"guard_revision": 1_i64}},
+                ).session(&mut session).await.map_err(failure)?;
+                if updated.matched_count != 1 {
+                    return Err(RecordError::GuardConflict {
+                        scope: "partition_assignment",
+                        expected: version,
+                    });
+                }
+            } else {
+                self.db
+                    .collection::<Record>(CONNECTIONS)
+                    .insert_one(Record {
+                        id: assignment.id.clone(),
+                        owner: owner.into(),
+                        blob: Binary {
+                            subtype: BinarySubtype::Generic,
+                            bytes: assignment.blob.clone(),
+                        },
+                        version: 1,
+                        schema_version: 1,
+                        guard_revision: 0,
+                        replica: None,
+                        expires_at: None,
+                    })
+                    .session(&mut session)
+                    .await
+                    .map_err(failure)?;
+            }
         }
         let row = Record {
             id: id.into(),

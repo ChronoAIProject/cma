@@ -68,14 +68,7 @@ pub fn management_router(state: ManagementState) -> Router {
             "/v1/channels/{channel_id}",
             get(get_channel).put(update_channel).delete(delete_channel),
         )
-        .route(
-            "/v1/channels/{channel_id}/profile-revisions/baseline",
-            post(super::profile_revisions::baseline),
-        )
-        .route(
-            "/v1/channels/{channel_id}/profile-revisions",
-            put(super::profile_revisions::publish),
-        )
+        .merge(super::profile_revisions::routes())
         .route("/v1/channels/{channel_id}/test", post(test_channel))
         .route(
             "/v1/channels/{channel_id}/sources/{source_index}/test",

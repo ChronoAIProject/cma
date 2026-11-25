@@ -19,6 +19,25 @@ use cmaeg_core::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+pub(crate) fn configure(config: &crate::Config, state: &mut ManagementState) -> Result<(), String> {
+    if config.profile_revisions_enabled
+        && (!config.routing.recovery_enabled
+            || !config.routing.admission_enabled
+            || !state.records.channel_mutation_custody()
+            || state.records.database().is_none())
+    {
+        return Err(
+            "channel profile revisions require durable routed admission and local mutation custody"
+                .into(),
+        );
+    }
+    state.profile_revisions_enabled = config.profile_revisions_enabled;
+    state
+        .resolver
+        .require_current_profile_reads(config.profile_revisions_enabled);
+    Ok(())
+}
+
 #[derive(Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RevisionRequest {

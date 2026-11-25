@@ -13,10 +13,20 @@ use crate::{
 use axum::{
     extract::{Path, State},
     response::{IntoResponse, Response},
-    Json,
+    routing::{post, put},
+    Json, Router,
 };
 use serde::Deserialize;
 use utoipa::ToSchema;
+
+pub(super) fn routes() -> Router<ManagementState> {
+    Router::new()
+        .route(
+            "/v1/channels/{channel_id}/profile-revisions/baseline",
+            post(baseline),
+        )
+        .route("/v1/channels/{channel_id}/profile-revisions", put(publish))
+}
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
