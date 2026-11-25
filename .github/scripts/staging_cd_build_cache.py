@@ -7,6 +7,7 @@ import subprocess
 import tarfile
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from staging_cd_build import snapshot
@@ -54,7 +55,7 @@ def layer_options(env, component):
 
 
 class BuildCache:
-    def __init__(self, root, env, source, component):
+    def __init__(self, root, env, source, component, *, cache_day=None):
         context(env)  # Authority failures are never downgraded to cache misses.
         require(component == env["CD_COMPONENT"], "Build cache component differs")
         self.component, self.env = component, env
@@ -62,7 +63,8 @@ class BuildCache:
         require(not self.root.is_symlink(), "Build cache root is invalid")
         self.root.mkdir(mode=0o700, exist_ok=True)
         self.accepted, self.pending = self.root / "accepted", self.root / "pending"
-        self.key = identity(source, component) if component in ("am", "eg") else None
+        self.cache_day = cache_day if cache_day is not None else datetime.now(timezone.utc).date()
+        self.key = identity(source, component, day=self.cache_day) if component in ("am", "eg") else None
         self.namespace = uuid.uuid4().hex
         self.restore_result = "miss"
         self.export_reason = None

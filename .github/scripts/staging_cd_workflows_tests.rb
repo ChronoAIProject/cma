@@ -720,6 +720,7 @@ class StagingWorkflowTest < Minitest::Test
   # Optional steps whose failure only costs time; publication decides the outcome later.
   OPTIONAL = ['Expose cache runtime to the Buildx client', 'Check release ownership',
               'Restore compatible Cargo mounts', 'Retain accepted Cargo mounts',
+              'Index the exact graph of the retained Cargo mounts',
               'Restore bounded layer archive', 'Validate restored layer archive',
               'Seal accepted layer archive', 'Retain sealed layer archive for admission'].freeze
   OPTIONAL_CACHES = {
