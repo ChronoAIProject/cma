@@ -4,6 +4,7 @@ import { absoluteFilePath } from './filePath';
 import { homeFilePath } from '../fileChanges';
 import { ChangedFiles } from './ChangedFiles';
 import type { FileChange } from '../fileChanges';
+import { saveAgentDownload } from '../saveDelivery';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AgentFileError,
@@ -46,7 +47,7 @@ export function FileExplorer({
   readonly agentId: string;
   readonly readOnly: boolean;
   readonly onClose: () => void;
-  readonly onAccessChanged?: () => void;
+  readonly onAccessChanged?: (downloadMessage?: string) => void;
 }) {
   const knownDirectory =
     suppliedDirectory === undefined
@@ -67,6 +68,7 @@ export function FileExplorer({
   const [draft, setDraft] = useState<string>();
   const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [denied, setDenied] = useState(false);
   const [error, setErrorState] = useState<string>();
   // A later successful listing of the failed folder clears its alert (#2268).
@@ -89,7 +91,7 @@ export function FileExplorer({
   const blocked = readOnly || denied;
 
   const failure = useCallback(
-    (cause: unknown) => {
+    (cause: unknown, download = false) => {
       if (lifetime.current?.signal.aborted) return;
       setError(
         cause instanceof AgentFileError && cause.code === 'file_runtime_unsupported'
@@ -112,7 +114,8 @@ export function FileExplorer({
         setContent(undefined);
         setDraft(undefined);
         setSelected(undefined);
-        onAccessChanged?.();
+        if (download) onAccessChanged?.(cause.message);
+        else onAccessChanged?.();
       }
     },
     [onAccessChanged, setError],
@@ -202,7 +205,7 @@ export function FileExplorer({
       if (!request.signal.aborted) setReading(false);
     }
   };
-  const run = async (action: (signal: AbortSignal) => Promise<void>) => {
+  const run = async (action: (signal: AbortSignal) => Promise<void>, download = false) => {
     const signal = lifetime.current?.signal;
     if (!active || mutation.current || !signal || signal.aborted || denied) return;
     mutation.current = true;
@@ -211,7 +214,7 @@ export function FileExplorer({
     try {
       await action(signal);
     } catch (cause) {
-      if (!signal.aborted) failure(cause);
+      if (!signal.aborted) failure(cause, download);
     } finally {
       mutation.current = false;
       setBusy(false);
@@ -249,17 +252,17 @@ export function FileExplorer({
     if (!selected) return;
     const file = selected;
     void run(async (signal) => {
-      const blob = await client.download(agentId, file.path, { signal });
-      if (signal.aborted) return;
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = file.name;
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    });
+      setDownloading(true);
+      setNotice(undefined);
+      try {
+        const blob = await client.download(agentId, file.path, { signal });
+        signal.throwIfAborted();
+        saveAgentDownload(blob, file.name);
+      } finally {
+        setDownloading(false);
+        if (signal.aborted) setError('Download was interrupted. Try downloading the file again.');
+      }
+    }, true);
   };
   const remove = (path: string, folder: boolean) => {
     if (blocked) return;
@@ -404,6 +407,7 @@ export function FileExplorer({
           {notice}
         </Alert>
       ) : null}
+      {downloading ? <p role="status">Downloading file…</p> : null}
       {confirm ? (
         <Alert
           tone="warning"
