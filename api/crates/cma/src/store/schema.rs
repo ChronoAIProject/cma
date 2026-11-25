@@ -30,6 +30,7 @@ pub(super) async fn verify_existing_collections(
     }
     if collections.contains(&"agents") {
         super::agent_log_segments::schema::verify(database).await?;
+        super::turn_timeouts::floor::verify(database).await?;
     }
     Ok(())
 }
@@ -99,6 +100,9 @@ pub(super) async fn refuse_unknown_versions(
                 )));
             }
         }
+        if *name == super::settings::SETTINGS {
+            super::billing_authority::require_legacy_compatible(database).await?;
+        }
         if legacy_count > 0 {
             tracing::warn!(
                 parent: None,
@@ -121,12 +125,23 @@ pub(super) fn require_current(version: i64) -> Result<(), StoreError> {
 }
 
 fn unknown_version_filter(collection: &str) -> Document {
-    let versions = if matches!(collection, "agents" | "agent_reuse_bindings") {
+    let versions = if collection == "sandboxes" {
+        vec![
+            1_i64,
+            super::work_schema::RENEWED_VERSION,
+            super::work_schema::PREPARED_VERSION,
+            super::work_schema::RUNTIME_MIGRATION_VERSION,
+        ]
+    } else if matches!(collection, "agents" | "agent_reuse_bindings" | "bots") {
         vec![1_i64, 2]
-    } else if matches!(
-        collection,
-        "sandboxes" | "workspaces" | "sandbox_credentials"
-    ) {
+    } else if collection == "sandbox_credentials" {
+        vec![
+            1_i64,
+            super::work_schema::RENEWED_VERSION,
+            super::work_schema::PREPARED_VERSION,
+            super::turn_timeouts::floor::VERSION,
+        ]
+    } else if collection == "workspaces" {
         vec![
             1_i64,
             super::work_schema::RENEWED_VERSION,
@@ -135,7 +150,7 @@ fn unknown_version_filter(collection: &str) -> Document {
     } else {
         vec![DOCUMENT_SCHEMA_VERSION]
     };
-    doc! {
+    let unsupported = doc! {
         "$or": [
             { "document_schema_version": { "$nin": versions } },
             {
@@ -145,6 +160,11 @@ fn unknown_version_filter(collection: &str) -> Document {
             },
             { "document_schema_version": { "$type": "array" } },
         ]
+    };
+    if collection == super::settings::SETTINGS {
+        super::billing_authority::exclude_known_envelopes(unsupported)
+    } else {
+        unsupported
     }
 }
 
@@ -303,10 +323,11 @@ mod tests {
             versions("agent_reuse_bindings"),
             mongodb::bson::bson!([1_i64, 2_i64])
         );
+        assert_eq!(versions("bots"), mongodb::bson::bson!([1_i64, 2_i64]));
         assert_eq!(versions("agent_log"), mongodb::bson::bson!([1_i64]));
         assert_eq!(
             versions("sandboxes"),
-            mongodb::bson::bson!([1_i64, 3_i64, 4_i64])
+            mongodb::bson::bson!([1_i64, 3_i64, 4_i64, 5_i64])
         );
         assert_eq!(
             versions("workspaces"),

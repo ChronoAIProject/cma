@@ -67,6 +67,8 @@ export function useUsageReport(
   active = true,
   owner?: UsageReportOwner,
   forceOnMount = false,
+  measured = false,
+  initialEnabled = false,
 ) {
   const visible = useUsageVisible(active);
   const [revision, setRevision] = useState(0);
@@ -122,6 +124,9 @@ export function useUsageReport(
       false,
       revision > 0,
       scope.principal,
+      false,
+      measured,
+      initialEnabled,
     );
   }, [
     admin,
@@ -132,6 +137,8 @@ export function useUsageReport(
     scope.cacheKey,
     scope.principal,
     selection,
+    measured,
+    initialEnabled,
     visible,
   ]);
 
@@ -158,6 +165,8 @@ export function useUsageReport(
     stopped: entry.stopped,
     generatedAt: entry.generatedAt,
     pending: entry.pending,
+    initial: entry.initial,
+    initialProjection: entry.initialProjection,
     refreshing: entry.refreshing,
     stale: Boolean(report && (entry.stale || entry.refreshing)),
     error: entry.error,

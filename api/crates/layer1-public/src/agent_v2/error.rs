@@ -14,6 +14,7 @@ pub(super) enum Error {
     History,
     Unavailable,
     Missing,
+    ExternalApprovalCapability,
 }
 impl Error {
     pub fn code(self) -> &'static str {
@@ -31,6 +32,7 @@ impl Error {
             Self::History => "agent_history_unavailable",
             Self::Unavailable => "agent_read_unavailable",
             Self::Missing => "agent_not_found",
+            Self::ExternalApprovalCapability => "external_approval_capability_required",
         }
     }
     pub fn message(self) -> &'static str {
@@ -43,6 +45,7 @@ impl Error {
             Self::History => "The requested Agent history cannot be verified.",
             Self::Unavailable => "Agent history is temporarily unavailable.",
             Self::Missing => "The Agent is unavailable to this caller.",
+            Self::ExternalApprovalCapability => "This conversation requires external approval support. Reload with a compatible client.",
         }
     }
     pub fn response(self) -> Response {
@@ -53,6 +56,7 @@ impl Error {
             Self::Live(_) => unreachable!("handled above"),
             Self::Query | Self::Cursor | Self::BeyondHead => StatusCode::BAD_REQUEST,
             Self::Incarnation => StatusCode::CONFLICT,
+            Self::ExternalApprovalCapability => StatusCode::CONFLICT,
             Self::Missing => StatusCode::NOT_FOUND,
             Self::History | Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
         };

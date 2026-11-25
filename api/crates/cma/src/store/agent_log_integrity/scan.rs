@@ -1,5 +1,6 @@
 //! Explicit complete audit; all fallbacks keep caller accounting.
 use super::*;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     cooperative_budget::Policy,
     execution_sections::{Clock, MonotonicClock},
@@ -80,6 +81,30 @@ pub(in crate::store) async fn scan_complete_log_with_snapshot_session<F>(
 where
     F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
 {
+    scan_complete_log_with_snapshot_policy(
+        caller,
+        store,
+        agent_id,
+        last_seq,
+        session,
+        IntegrityFailurePolicy::Quarantine,
+        visit,
+    )
+    .await
+}
+
+pub(in crate::store) async fn scan_complete_log_with_snapshot_policy<F>(
+    caller: ScanCaller,
+    store: &MongoSandboxStore,
+    agent_id: &AgentId,
+    last_seq: u64,
+    session: &mut mongodb::ClientSession,
+    failure_policy: IntegrityFailurePolicy,
+    visit: F,
+) -> Result<LogSummary, TransactionLogError>
+where
+    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
+{
     scan_complete_log(
         caller,
         store,
@@ -88,7 +113,7 @@ where
         session,
         CompleteScanOptions {
             snapshot: true,
-            failure_policy: IntegrityFailurePolicy::Quarantine,
+            failure_policy,
         },
         visit,
     )
@@ -143,7 +168,7 @@ where
                     TransactionLogError::Domain(SandboxStoreError::Corrupt(_))
                 )
             {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 proof::quarantine_row(store, row).await?;
             }
             return Err(error);
@@ -192,7 +217,7 @@ where
             ))
         )
     {
-        let _ = session.abort_transaction().await;
+        let _ = session.abort_guarded().await;
         if let Some(row) = row.as_ref() {
             proof::quarantine_row(store, row).await?;
         }

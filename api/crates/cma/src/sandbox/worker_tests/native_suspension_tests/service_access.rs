@@ -39,6 +39,7 @@ async fn native_scope_grants_resume_exact_old_identity_with_new_scope_after_each
             .store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision: paused.revision,
                 sandbox: Box::new(granted.clone()),
                 event_at: rfc3339_at(now),
@@ -181,6 +182,7 @@ async fn revise_hot(
         .store
         .commit(SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision: active.revision,
             sandbox: Box::new(changed),
             event_at: rfc3339_at(*now),

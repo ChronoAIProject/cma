@@ -7,10 +7,13 @@ on:
         required: true
 permissions:
   contents: "read"
+  issues: "read"
 jobs:
   images:
     concurrency:
-      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'cma-develop-cache-readers' || format('ci-image-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.component) }}
+      # Develop writes one BuildKit scope per component. Serialize writers to
+      # the same scope while letting independent image checks run in parallel.
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('cma-develop-ci-image-{0}', matrix.component) || format('ci-image-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.component) }}
       queue: max
       cancel-in-progress: false
     name: "Image (${{ matrix.component }})"
@@ -39,7 +42,7 @@ jobs:
           python3 -B .github/scripts/runtime_image_hygiene_tests.py
           python3 -B .github/scripts/runtime_image_machine_id_tests.py
       -
-        uses: "actions/setup-node@v6"
+        uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
         with:
           node-version: "24.15.0"
           package-manager-cache: false
@@ -168,6 +171,7 @@ jobs:
           restore-keys: cache-trivy-
       -
         name: "Vulnerability scan"
+        if: "matrix.component != 'runtime'"
         uses: "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
         with:
           cache: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
@@ -177,7 +181,29 @@ jobs:
           exit-code: "1"
           ignore-unfixed: true
       -
-        uses: "actions/setup-node@v6"
+        # Pinned runtime inputs build the same packages while the advisory
+        # database keeps changing; the gate decides which findings this change owns.
+        name: "Runtime vulnerability scan"
+        if: "matrix.component == 'runtime'"
+        uses: "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25"
+        with:
+          cache: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
+          image-ref: "${{ steps.image-name.outputs.name }}:ci"
+          format: "json"
+          output: "${{ runner.temp }}/runtime-vulnerabilities.json"
+          severity: "HIGH,CRITICAL"
+          exit-code: "0"
+          ignore-unfixed: true
+      -
+        name: "Runtime vulnerability gate"
+        if: "matrix.component == 'runtime'"
+        timeout-minutes: 5
+        env:
+          BASE_SHA: "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}"
+          GH_TOKEN: "${{ github.token }}"
+        run: "python3 -B .github/scripts/image_vulnerability_gate.py --component runtime --report \"$RUNNER_TEMP/runtime-vulnerabilities.json\" --base \"$BASE_SHA\""
+      -
+        uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
         if: "matrix.component == 'runtime'"
         with:
           node-version: 26
@@ -194,7 +220,7 @@ jobs:
       -
         name: "Retain runtime image evidence"
         if: "always() && matrix.component == 'runtime'"
-        uses: "actions/upload-artifact@v4"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
         with:
           name: "runtime-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}"
           path: |
@@ -216,7 +242,7 @@ jobs:
       -
         name: "Retain ledger storage evidence"
         if: "always() && (matrix.component == 'runtime')"
-        uses: "actions/upload-artifact@v4"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
         with:
           name: "ledger-storage-${{ matrix.component }}-${{ github.run_id }}-${{ github.run_attempt }}"
           path: "${{ runner.temp }}/ledger-storage.json"
@@ -227,7 +253,7 @@ jobs:
         if: "matrix.component == 'web'"
         run: "python3 .github/scripts/web-build-identity.py cma-web:ci \"$GITHUB_SHA\" \"git-${GITHUB_SHA:0:12}\""
       -
-        uses: "actions/setup-node@v6"
+        uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
         if: "matrix.component == 'web'"
         with:
           node-version: "24.15.0"
@@ -276,7 +302,7 @@ jobs:
         name: "Retain web image browser evidence"
         if: "always() && matrix.component == 'web'"
         timeout-minutes: 3
-        uses: "actions/upload-artifact@v4"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
         with:
           name: "web-image-browser-${{ github.run_id }}-${{ github.run_attempt }}"
           path: "${{ runner.temp }}/web-image-upload/"
@@ -291,10 +317,26 @@ jobs:
           IMAGE_COMPONENT: "${{ matrix.component }}"
         run: "python3 .github/scripts/export-ci-native-image.py \"$IMAGE_COMPONENT\" \"$GITHUB_SHA\" \"$RUNNER_TEMP/ci-native-image\""
       -
+        name: "Install pinned image secret scanner"
+        if: "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/tl/release/')))"
+        timeout-minutes: 5
+        env:
+          CD_COMPONENT: "${{ matrix.component == 'api' && 'am' || matrix.component == 'cmaeg' && 'eg' || matrix.component }}"
+        run: |
+          bash .github/scripts/staging_cd_transport.sh
+          bash .github/scripts/install-image-gitleaks.sh
+      -
+        name: "Scan tested image as staging publication does"
+        if: "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/tl/release/')))"
+        timeout-minutes: 30
+        env:
+          IMAGE_COMPONENT: "${{ matrix.component }}"
+        run: "python3 -B .github/scripts/ci_image_secret_scan.py \"$IMAGE_COMPONENT\" \"$RUNNER_TEMP/ci-native-image\" \"$GITHUB_SHA\""
+      -
         name: "Retain tested native image"
         if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
         timeout-minutes: 10
-        uses: "actions/upload-artifact@v4"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
         with:
           name: "ci-native-image-${{ matrix.component }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
           path: "${{ runner.temp }}/ci-native-image/"

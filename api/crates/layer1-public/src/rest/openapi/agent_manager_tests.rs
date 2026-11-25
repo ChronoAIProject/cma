@@ -81,8 +81,8 @@ fn focused_contract_preserves_existing_operations_and_identities() {
             operation_count += 1;
         }
     }
-    assert_eq!(focused["paths"].as_object().unwrap().len(), 90);
-    assert_eq!(operation_count, 105);
+    assert_eq!(focused["paths"].as_object().unwrap().len(), 92);
+    assert_eq!(operation_count, 107);
     assert_eq!(focused["servers"][0]["url"], "/");
     assert_eq!(focused["info"]["title"], "CMA Agent Manager API");
     assert!(focused["info"]["description"]
@@ -170,6 +170,7 @@ fn public_contract_preserves_optional_task_and_desktop_creation_contracts() {
         assert_eq!(contract["x-cma-task-repository"], json!(true));
         assert_eq!(contract["x-cma-agent-title-mode"], json!(true));
         assert_eq!(contract["x-cma-task-templates-v1"], json!(true));
+        assert_eq!(contract["x-cma-task-templates-v2"], json!(true));
         let schema = &contract["components"]["schemas"]["AgentLifecycleCreateRequest"];
         assert!(schema["properties"].get("title_mode").is_some());
         assert!(!schema["required"]

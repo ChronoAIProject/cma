@@ -23,7 +23,6 @@ const permissions = {
 
 const taskNavigationProps = {
   scope: '',
-  choices: { options: [{ value: '', label: 'Personal' }], selected: undefined, unavailable: false },
   route: { kind: 'agent_manager' } as const,
   viewerId: 'task-navigation-viewer',
   permissions,
@@ -158,6 +157,8 @@ it('restores shared task scope, focus and scroll after browsing a different envi
             },
           ],
         });
+      if (new URL(String(input)).pathname === '/api/v1/organizations')
+        return Response.json({ items: [] });
       return Response.json({ code: 'not_found' }, { status: 404 });
     },
   });
@@ -173,14 +174,6 @@ it('restores shared task scope, focus and scroll after browsing a different envi
           route={route}
           onNavigate={onNavigate}
           client={client}
-          choices={{
-            options: [
-              { value: '', label: 'Personal' },
-              { value: 'shared', label: 'Shared' },
-            ],
-            selected: undefined,
-            unavailable: false,
-          }}
           navigation={{ status: 'ready', items: navigationFixture(), refresh: vi.fn() }}
         />
       </div>
@@ -193,7 +186,7 @@ it('restores shared task scope, focus and scroll after browsing a different envi
   scrollport.scrollTop = 240;
   await user.click(screen.getByRole('button', { name: 'Environments' }));
   await expandNavigationFilters(user);
-  await chooseOption(user, 'Navigation scope', 'Personal');
+  expect(screen.getByRole('button', { name: 'Navigation scope' })).toHaveTextContent('Personal');
   await user.click(screen.getByRole('link', { name: /Atlas/ }));
   scrollport.scrollTop = 0;
   await user.click(screen.getByRole('button', { name: 'Tasks' }));

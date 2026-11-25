@@ -101,9 +101,12 @@ async fn apply_transaction(
     session: &mut mongodb::ClientSession,
     transaction: &SandboxTransaction,
 ) -> Result<Receipt, ApplyError> {
-    crate::store::work_publication::fence(store, session)
+    crate::store::work_publication::fence_transaction(store, session)
         .await
-        .map_err(ApplyError::Domain)?;
+        .map_err(|error| match error {
+            crate::store::work_publication::FenceError::Domain(error) => ApplyError::Domain(error),
+            crate::store::work_publication::FenceError::Driver(error) => ApplyError::Driver(error),
+        })?;
     match transaction {
         SandboxTransaction::CreateWorktreeAndAgent {
             worktree,
@@ -135,6 +138,7 @@ async fn apply_transaction(
         }
         SandboxTransaction::SaveSandboxAndAppend {
             command_revival,
+            released_runtime,
             expected_revision,
             sandbox,
             event_at,
@@ -143,7 +147,7 @@ async fn apply_transaction(
             sandbox_save::apply(
                 store,
                 session,
-                command_revival.as_deref(),
+                (command_revival.as_deref(), released_runtime.as_ref()),
                 *expected_revision,
                 sandbox,
                 event_at,

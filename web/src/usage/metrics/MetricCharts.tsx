@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import type { UsageMetricReport } from '@cma/client';
+import type { UsageMetricReport, UsageMetricSeries } from '@cma/client';
 import { MetricChart } from './MetricChart';
 import { MetricsNotice } from './MetricsNotice';
 import { useUsageRead } from './useReport';
@@ -12,6 +12,7 @@ export function MetricCharts({
   group,
   metric,
   active,
+  initialCharts,
   onFailure,
 }: {
   readonly api: MetricsClient;
@@ -19,6 +20,7 @@ export function MetricCharts({
   readonly group: Group;
   readonly metric?: Metric;
   readonly active: boolean;
+  readonly initialCharts?: readonly UsageMetricSeries[];
   readonly onFailure: (failure: MetricsFailure) => void;
 }) {
   const load = useCallback(
@@ -30,7 +32,16 @@ export function MetricCharts({
       ),
     [api, report.report_id, group, metric],
   );
-  const charts = useUsageRead(load, active, api);
+  const requestedMetrics: readonly Metric[] = metric ? [metric] : ['cpu', 'memory', 'disk'];
+  const initial =
+    group === 'total' &&
+    initialCharts &&
+    requestedMetrics.every((requested) =>
+      initialCharts.some((series) => series.metric === requested),
+    )
+      ? initialCharts.filter((series) => requestedMetrics.includes(series.metric))
+      : undefined;
+  const charts = useUsageRead(load, active && initial === undefined, api);
   useEffect(() => {
     if (charts.error?.denied || charts.error?.expired) onFailure(charts.error);
   }, [charts.error, onFailure]);
@@ -39,7 +50,7 @@ export function MetricCharts({
       <MetricsNotice failure={charts.error} onRetry={charts.retry} />
       {charts.loading && <p role="status">Loading measured charts…</p>}
       {group === 'owner' && <p>Top owners and Other cover the entire selected cohort.</p>}
-      {charts.data?.map((series) => (
+      {(initial ?? charts.data)?.map((series) => (
         <MetricChart
           key={series.metric}
           series={series}

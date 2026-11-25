@@ -46,7 +46,7 @@ impl DesktopCapability {
 
 pub struct DesktopCreationService {
     adapter: Arc<dyn SandboxAdapter>,
-    default_image: String,
+    released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
     verified_image: Option<String>,
 }
 
@@ -54,6 +54,22 @@ impl DesktopCreationService {
     pub fn new(
         adapter: Arc<dyn SandboxAdapter>,
         default_image: String,
+        verified_image: Option<String>,
+    ) -> Result<Arc<Self>, &'static str> {
+        Self::with_released(
+            adapter,
+            Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
+                default_image,
+                None,
+            )),
+            verified_image,
+        )
+    }
+
+    /// The default image is the source's agent-lane release at each check.
+    pub fn with_released(
+        adapter: Arc<dyn SandboxAdapter>,
+        released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
         verified_image: Option<String>,
     ) -> Result<Arc<Self>, &'static str> {
         if verified_image.as_ref().is_some_and(|image| {
@@ -69,7 +85,7 @@ impl DesktopCreationService {
         }
         Ok(Arc::new(Self {
             adapter,
-            default_image,
+            released,
             verified_image,
         }))
     }
@@ -80,9 +96,35 @@ impl DesktopCreationService {
         capacity: SandboxCapacity,
         parent: Option<&Sandbox>,
     ) -> DesktopCapability {
+        self.capability_for_verified(
+            self.verified_image.as_deref(),
+            selected_image,
+            capacity,
+            parent,
+        )
+        .await
+    }
+
+    /// Check a fresh desktop canary using its separately verified catalog image.
+    pub async fn canary_capability(
+        &self,
+        verified_image: &str,
+        capacity: SandboxCapacity,
+    ) -> DesktopCapability {
+        self.capability_for_verified(Some(verified_image), Some(verified_image), capacity, None)
+            .await
+    }
+
+    async fn capability_for_verified(
+        &self,
+        verified_image: Option<&str>,
+        selected_image: Option<&str>,
+        capacity: SandboxCapacity,
+        parent: Option<&Sandbox>,
+    ) -> DesktopCapability {
         let mut result =
             DesktopCapability::unavailable("This deployment has no verified desktop runtime.");
-        let Some(verified) = self.verified_image.as_deref() else {
+        let Some(verified) = verified_image else {
             return result;
         };
         if self.adapter.browser().is_none() {
@@ -94,6 +136,7 @@ impl DesktopCreationService {
                 "This deployment cannot retain the desktop runtime's home identity.".into();
             return result;
         }
+        let default_image = self.released.snapshot().agent;
         let image = parent
             .and_then(|sandbox| {
                 sandbox
@@ -102,7 +145,7 @@ impl DesktopCreationService {
                     .map(|runtime| runtime.runtime_version.as_str())
             })
             .or(selected_image)
-            .unwrap_or(&self.default_image);
+            .unwrap_or(&default_image);
         if image != verified {
             result.reason = "This image is not verified for desktop creation. Existing Sandboxes require an explicit upgrade; they will not restart automatically.".into();
             return result;

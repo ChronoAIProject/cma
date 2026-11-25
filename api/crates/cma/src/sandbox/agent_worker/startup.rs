@@ -234,7 +234,8 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        self.open_conversation_with_context(agent, None, now).await
+        // The context path owns the open and publication state machines.
+        Box::pin(self.open_conversation_with_context(agent, None, now)).await
     }
 
     pub(super) async fn open_conversation_with_context(

@@ -302,3 +302,63 @@ fn limits_can_change_but_revisions_and_internal_keys_remain_bounded() {
         ));
     }
 }
+
+#[test]
+fn snapshots_require_confirmed_identity_and_continue_on_reader_only_until_original_expiry() {
+    let time = Arc::new(AtomicU64::new(100));
+    let actor = caller("owner");
+    let scope = scope(&actor);
+    let issuer = codec(UsageCursorPolicy::Strict, &time).with_snapshot_issuance(true);
+    let reader = codec(UsageCursorPolicy::ReaderOnly, &time);
+    let legacy = codec(UsageCursorPolicy::IssueSigned, &time);
+    let snapshot = UsageSnapshot {
+        time: 80,
+        increment: 17,
+    };
+    let mut first = issuer.begin(&scope, &PageRequest::default()).unwrap();
+    assert!(matches!(first.view, PageView::Snapshot(None)));
+    assert_eq!(first.as_of(), Some(100));
+    first.confirm_snapshot(snapshot).unwrap();
+    let token = issuer
+        .finish(&scope, first, Some("sbx_a".into()))
+        .unwrap()
+        .unwrap();
+    assert!(token.starts_with("u2."));
+    let wrong_version = token.replacen("u2.", "u1.", 1);
+    rejected(&reader, &scope, &wrong_version);
+    let mut parts: Vec<_> = token.split('.').map(str::to_string).collect();
+    let body = URL_SAFE_NO_PAD.decode(&parts[1]).unwrap();
+    let mut payload: Payload = serde_json::from_slice(&body).unwrap();
+    payload.snapshot.as_mut().unwrap().increment += 1;
+    parts[1] = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
+    rejected(&reader, &scope, &parts.join("."));
+    time.store(900, Ordering::SeqCst);
+    let mut second = reader.begin(&scope, &page(&token)).unwrap();
+    assert!(matches!(second.view, PageView::Snapshot(Some(value)) if value == snapshot));
+    assert_eq!(second.as_of(), Some(100));
+    assert!(second
+        .confirm_snapshot(UsageSnapshot {
+            increment: 18,
+            ..snapshot
+        })
+        .is_err());
+    second.confirm_snapshot(snapshot).unwrap();
+    let next = reader
+        .finish(&scope, second, Some("sbx_b".into()))
+        .unwrap()
+        .unwrap();
+    time.store(999, Ordering::SeqCst);
+    let mut last = issuer.begin(&scope, &page(&next)).unwrap();
+    last.confirm_snapshot(snapshot).unwrap();
+    time.store(1000, Ordering::SeqCst);
+    assert!(issuer.finish(&scope, last, None).is_err());
+    rejected(&reader, &scope, &next);
+    let legacy_token = issue(&legacy, &scope, "sbx_a");
+    let chain = issuer.begin(&scope, &page(&legacy_token)).unwrap();
+    assert!(matches!(chain.view, PageView::Live));
+    assert!(issuer
+        .finish(&scope, chain, Some("sbx_b".into()))
+        .unwrap()
+        .unwrap()
+        .starts_with("u1."));
+}

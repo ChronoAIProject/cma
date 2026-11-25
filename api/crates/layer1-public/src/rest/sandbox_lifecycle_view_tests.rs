@@ -1,5 +1,8 @@
 use super::*;
 use layer2_core::sandbox::{RuntimeBinding, SandboxReviveCause};
+use layer2_core::sandbox::{
+    SandboxRotationIdentity, SandboxRuntimeUpdateRequest, SandboxRuntimeUpdateState, TypedFailure,
+};
 
 fn capturing_sandbox() -> Sandbox {
     let mut value = stored_sandbox("sbx_capturing", "owner", SandboxStatus::Active, 4);
@@ -14,6 +17,127 @@ fn capturing_sandbox() -> Sandbox {
     value.begin_checkpoint_capture(NOW.into()).unwrap();
     value.revision = 1;
     value
+}
+
+#[tokio::test]
+async fn parked_runtime_result_reaches_list_and_owner_detail_without_runtime_metadata() {
+    for revive in [false, true] {
+        let fixture = fixture(10);
+        let mut value = if revive {
+            paused_sandbox("sbx_parked", "owner")
+        } else {
+            let mut value = capturing_sandbox();
+            value.lifecycle.checkpoint_capture = None;
+            value
+        };
+        value.lifecycle.runtime_update = Some(SandboxRuntimeUpdateState {
+            checked_at: NOW.into(),
+            observed_version: "runtime-target".into(),
+            request: Some(SandboxRuntimeUpdateRequest {
+                target_version: "runtime-target".into(),
+                requested_at: NOW.into(),
+                automatic: false,
+                started_at: Some(NOW.into()),
+                completed_at: None,
+                failure: None,
+                retained_transition: None,
+            }),
+        });
+        if revive {
+            value
+                .begin_revive(SandboxReviveCause::ExplicitRequest, NOW.into())
+                .unwrap();
+        } else {
+            let identity = SandboxRotationIdentity::capture(&value, &[]).unwrap();
+            value
+                .begin_image_rotation("runtime-target".into(), identity, NOW.into())
+                .unwrap();
+        }
+        let fence = value
+            .work
+            .claim("fixture-worker".into(), NOW, "2026-09-05T01:00:00Z".into())
+            .unwrap();
+        value
+            .park_failed_runtime_update(
+                TypedFailure {
+                    class: "terminal_validation".into(),
+                    detail: "Synthetic refusal".into(),
+                },
+                "fixture-worker",
+                fence,
+                NOW.into(),
+            )
+            .unwrap();
+        value.revision = 1;
+        value.validate().unwrap();
+        let basic = serde_json::to_value(crate::rest::instances_openapi_shapes::SandboxView::from(
+            &value,
+        ))
+        .unwrap();
+        assert_eq!(
+            basic["lifecycle"]["result"]["code"],
+            "runtime_update_parked"
+        );
+        assert_eq!(basic["lifecycle"]["result"]["actions"], json!(["observe"]));
+        assert!(basic.get("runtime_update").is_none());
+        let admin = serde_json::to_value(crate::rest::admin::sandboxes::SandboxDetailView::from(
+            layer2_core::sandbox::SandboxAdminView {
+                sandbox: value.clone(),
+                workspaces: vec![],
+                agents: vec![],
+            },
+        ))
+        .unwrap();
+        assert_eq!(admin["lifecycle"]["result"], basic["lifecycle"]["result"]);
+        fixture.store.create_sandbox(value.clone()).await.unwrap();
+        let (status, detail) = json_response(
+            &fixture.router,
+            authenticated(
+                Method::GET,
+                &format!("/api/v1/sandboxes/{}", value.id),
+                None,
+                None,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            detail["lifecycle"]["result"]["actions"],
+            json!(["observe", "retire"])
+        );
+        let (status, list) = json_response(
+            &fixture.router,
+            authenticated(Method::GET, "/api/v1/sandboxes", None, None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let listed = list["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["id"] == value.id.to_string())
+            .unwrap();
+        for projected in [&basic, &detail, listed] {
+            assert_eq!(projected["lifecycle"]["result"]["state"], "failed");
+            assert_eq!(
+                projected["lifecycle"]["result"]["code"],
+                "runtime_update_parked"
+            );
+            assert_eq!(projected["lifecycle"]["result"]["continuing"], false);
+            assert!(projected["lifecycle"]["result"]
+                .get("retry_after_seconds")
+                .is_none());
+            assert_eq!(
+                projected["lifecycle"]["result"]["operation_id"],
+                basic["lifecycle"]["result"]["operation_id"]
+            );
+            assert_public_lifecycle(projected);
+        }
+        assert_eq!(
+            fixture.store.get_sandbox(&value.id).await.unwrap(),
+            Some(value)
+        );
+    }
 }
 
 fn assert_public_lifecycle(value: &Value) {

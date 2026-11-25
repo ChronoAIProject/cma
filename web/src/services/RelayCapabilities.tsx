@@ -16,6 +16,8 @@ export interface RelayAuthoringCapabilities {
   readonly native_whatsapp_groups_writes_enabled?: boolean | null;
   readonly native_whatsapp_auto_activation_enabled?: boolean | null;
   readonly native_telegram_message_events_enabled?: boolean | null;
+  readonly native_telegram_member_joins_enabled?: boolean | null;
+  readonly relay_telegram_member_joins_enabled?: boolean | null;
   readonly native_discord_thread_history_enabled?: boolean | null;
   readonly native_telegram_topic_lifecycle_enabled?: boolean | null;
   readonly native_telegram_topic_creation_enabled?: boolean | null;
@@ -48,6 +50,7 @@ export interface RelayAuthoringCapabilities {
 export interface RelayDiscovery {
   readonly status: 'loading' | 'ready' | 'legacy' | 'failed';
   readonly authoring?: RelayAuthoringCapabilities;
+  readonly managedTelegramSetup?: boolean;
   readonly agentTools?: readonly AgentToolCapability[];
   readonly retry?: () => void;
 }
@@ -60,6 +63,10 @@ export interface AgentToolCapability {
   readonly open_world: boolean;
 }
 interface CapabilityView {
+  readonly platforms?: readonly {
+    readonly id: string;
+    readonly connection_methods: readonly string[];
+  }[];
   readonly relay_authoring?: RelayAuthoringCapabilities | null;
   readonly agent_tools?: readonly AgentToolCapability[] | null;
 }
@@ -90,6 +97,12 @@ export function RelayCapabilitiesProvider({
           setDiscovery({
             status: value.relay_authoring ? 'ready' : 'legacy',
             authoring: value.relay_authoring ?? undefined,
+            managedTelegramSetup:
+              value.platforms?.some(
+                (platform) =>
+                  platform.id === 'telegram' &&
+                  platform.connection_methods.includes('managed_create'),
+              ) === true,
             agentTools: value.agent_tools ?? undefined,
           });
       },

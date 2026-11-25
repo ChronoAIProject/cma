@@ -1,6 +1,6 @@
 //! Public projections and sanitized management refusals.
 use super::{
-    management::{ChannelListItem, ChannelResponse, EndpointResponse, ProviderResponse},
+    management::{ChannelListItem, ChannelResponse, ProviderResponse},
     problems::{no_store, problem},
 };
 use crate::channels::management::{ManagementError, ManagementState};
@@ -31,39 +31,7 @@ pub(super) fn channel_response(
         record_id: record_id.to_string(),
         version,
         provider,
-        endpoints: EndpointResponse {
-            native_lark_webhook_url: definition
-                .sources
-                .iter()
-                .any(|s| matches!(s, cmaeg_core::channel::Source::NativeLark(_)))
-                .then(|| {
-                    format!(
-                        "{}/v1/native-lark/{}",
-                        state.advertised_api_url(),
-                        channel_id
-                    )
-                }),
-            whatsapp_webhook_url: definition
-                .sources
-                .iter()
-                .any(|source| matches!(source, cmaeg_core::channel::Source::Whatsapp { .. }))
-                .then(|| format!("{}/v1/whatsapp/{}", state.advertised_api_url(), channel_id)),
-            nyxid_callback_url: format!(
-                "{}/v1/callbacks/{}",
-                state.advertised_api_url(),
-                channel_id
-            ),
-            telegram_webhook_url: definition
-                .sources
-                .iter()
-                .any(|source| matches!(source, cmaeg_core::channel::Source::Telegram { .. }))
-                .then(|| format!("{}/v1/telegram/{}", state.advertised_api_url(), channel_id)),
-            custom_event_url: format!(
-                "{}/v1/channels/{}/events",
-                state.advertised_api_url(),
-                channel_id
-            ),
-        },
+        endpoints: super::channel_endpoints::channel_endpoints(state, channel_id, definition),
         definition: super::schema::PublicChannelDefinition::new(definition, version),
     })
 }
@@ -157,10 +125,61 @@ pub(super) fn service_authorized(headers: &HeaderMap, expected: &str) -> bool {
     token.as_bytes().ct_eq(expected.as_bytes()).into()
 }
 
+/// Why a provider request failed. Only closed phrases and an HTTP status leave
+/// the gateway: transport text can name internal addresses.
+pub(super) fn provider_failure_detail(error: &crate::providers::ProviderError) -> String {
+    use crate::providers::ProviderError;
+    let reason = match error {
+        ProviderError::Capacity => {
+            "the gateway's provider concurrency is exhausted; retry later".to_owned()
+        }
+        ProviderError::ConversationMissing => "the provider conversation is missing".to_owned(),
+        ProviderError::Unavailable(detail) => match detail.as_str() {
+            "provider request timed out" => "the provider request timed out".to_owned(),
+            "provider transport failed" => "the provider was unreachable".to_owned(),
+            other => match other
+                .strip_prefix("provider returned HTTP ")
+                .and_then(|status| status.parse::<u16>().ok())
+                .filter(|status| (100..=599).contains(status))
+            {
+                Some(status) => format!("the provider answered HTTP {status}"),
+                None => "the provider or its service credential was unavailable".to_owned(),
+            },
+        },
+        ProviderError::ResponseMalformed(_) => "the provider response is malformed".to_owned(),
+        ProviderError::Sse(_) => "the provider stream ended before a terminal answer".to_owned(),
+        _ => return "provider request failed".to_owned(),
+    };
+    format!("provider request failed: {reason}")
+}
+
+/// Name the provider's answer without echoing arbitrary provider text.
+fn release_refused_detail(status: u16, code: &str) -> String {
+    let named = !code.is_empty()
+        && code.len() <= 64
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+    let answer = if named {
+        format!("HTTP {status} {code}")
+    } else {
+        format!("HTTP {status}")
+    };
+    format!(
+        "The provider refused to release this channel's binding ({answer}). The channel was not deleted and keeps its version. A channel whose creation never became ready cannot process events. The provider must release the binding, or report it absent with 404, before deletion can complete."
+    )
+}
+
+#[cfg(test)]
+#[path = "management_release_tests.rs"]
+mod release_tests;
+
 pub(super) fn management_error(error: ManagementError) -> Response {
     use crate::telemetry::http_failure::FailureStage;
     let stage = match &error {
-        ManagementError::Provider(_) => FailureStage::ChannelProvider,
+        ManagementError::Provider(_) | ManagementError::ReleaseRefused { .. } => {
+            FailureStage::ChannelProvider
+        }
         ManagementError::Record(_) | ManagementError::NotFound => FailureStage::ChannelRecord,
         ManagementError::Invalid(_) => FailureStage::RequestValidation,
         _ => FailureStage::ChannelOperation,
@@ -221,10 +240,11 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             ProblemCode::ProviderBusy,
             format!("provider is busy; retry_after={retry_after:?}"),
         ),
-        ManagementError::Provider(_) => (
+        // Closed details only: a transport error can name internal addresses.
+        ManagementError::Provider(error) => (
             StatusCode::SERVICE_UNAVAILABLE,
             ProblemCode::ProviderUnavailable,
-            "provider request failed".into(),
+            provider_failure_detail(&error),
         ),
         ManagementError::Record(crate::records::RecordError::Conflict { expected, actual }) => (
             StatusCode::CONFLICT,
@@ -247,6 +267,11 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             ProblemCode::Conflict,
             format!("expected version {expected}, actual {actual:?}"),
         ),
+        ManagementError::ReleaseRefused { status, code } => (
+            StatusCode::CONFLICT,
+            ProblemCode::ProviderRejected,
+            release_refused_detail(status, &code),
+        ),
         ManagementError::Unauthorized => (
             StatusCode::UNAUTHORIZED,
             ProblemCode::NotAuthenticated,
@@ -264,6 +289,49 @@ pub(super) fn management_error(error: ManagementError) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn provider_failures_name_their_class_without_transport_text() {
+        use crate::providers::ProviderError;
+        for (error, detail) in [
+            (
+                ProviderError::Unavailable("provider returned HTTP 502".into()),
+                "provider request failed: the provider answered HTTP 502",
+            ),
+            (
+                ProviderError::Unavailable("provider request timed out".into()),
+                "provider request failed: the provider request timed out",
+            ),
+            (
+                ProviderError::Unavailable("provider transport failed".into()),
+                "provider request failed: the provider was unreachable",
+            ),
+            (
+                ProviderError::Unavailable(
+                    "error sending request for url (http://internal.example.svc/token)".into(),
+                ),
+                "provider request failed: the provider or its service credential was unavailable",
+            ),
+            (
+                ProviderError::Capacity,
+                "provider request failed: the gateway's provider concurrency is exhausted; retry later",
+            ),
+            (
+                ProviderError::Sse("frame too large".into()),
+                "provider request failed: the provider stream ended before a terminal answer",
+            ),
+        ] {
+            let response = management_error(ManagementError::Provider(error));
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["code"], "provider_unavailable");
+            assert_eq!(body["detail"], detail);
+            assert!(!body["detail"].as_str().unwrap().contains("internal.example"));
+        }
+    }
 
     #[tokio::test]
     async fn known_removed_binding_has_actionable_conflict_instead_of_generic_bad_gateway() {

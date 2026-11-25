@@ -35,6 +35,7 @@ async fn terminal_only_recovery_preserves_deleted_rows_and_delivery_history() {
             proof: native_proof,
             snapshot: before.clone(),
             target_runtime_version: "image-latest".into(),
+            released_runtime: None,
             automatic: false,
             requested_at: NOW.into(),
         })
@@ -159,6 +160,7 @@ async fn generic_saves_cannot_bypass_recovery_admission_or_quiescence_audit() {
         proof: proof(&snapshot),
         snapshot: snapshot.clone(),
         target_runtime_version: "image-latest".into(),
+        released_runtime: None,
         automatic: false,
         requested_at: NOW.into(),
     };
@@ -218,6 +220,7 @@ async fn generic_saves_cannot_bypass_recovery_admission_or_quiescence_audit() {
         store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision: current.revision,
                 sandbox: Box::new(next.clone()),
                 event_at: NOW.into(),

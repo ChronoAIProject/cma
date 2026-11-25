@@ -12,6 +12,56 @@ impl layer3_adapter::ConversationSettingsSupport for Ready {
 const GUIDANCE: &str = "Publish retained documents with the managed document tools.";
 
 #[tokio::test]
+async fn transport_refresh_dispatch_and_ack_preserve_the_pinned_guidance() {
+    const PINNED: &str = "Guidance captured at admission";
+    const OWNER: &str = "  Owner's exact instructions\n";
+    struct AdmissionPinned;
+    impl AgentInstructionPolicy for AdmissionPinned {
+        fn owner_prompt(&self, agent: &Agent) -> String {
+            agent.system_prompt().to_owned()
+        }
+        fn compose(&self, _agent: &Agent, owner: &str) -> String {
+            format!("{PINNED}\n\n{owner}")
+        }
+        fn pinned_managed_guidance(&self, _agent: &Agent) -> Option<&'static str> {
+            Some(PINNED)
+        }
+    }
+
+    let store = Arc::new(InMemorySandboxStore::default());
+    let mut ready = test_agent(AgentStatus::Ready, None);
+    let prompt = format!("{PINNED}\n\n{OWNER}");
+    ready.profile.content.system_prompt = prompt.clone();
+    ready.conversation.settings = Some(AgentSettings {
+        system_prompt: Some(prompt.clone()),
+        ..ready.settings()
+    });
+    seed_active_parent(&store).await;
+    store.create_agent(ready.clone()).await.unwrap();
+    let (sender, inputs) = recording_sender(Ok(()));
+    let registry = TestRuntimeRegistry::new(
+        full_capabilities(),
+        sender.with_settings_support(Arc::new(Ready)),
+    );
+    let service = AgentOperationService::new(store.clone(), registry)
+        .with_instruction_policy(Arc::new(AdmissionPinned));
+    assert!(service
+        .refresh_managed_context_at_origin(&ready.id, 2, GUIDANCE, &[], Some("https://new.example"))
+        .await
+        .unwrap());
+    assert!(matches!(
+        inputs.lock().unwrap().as_slice(),
+        [ConversationInput::RefreshContext { guidance, service_origin: Some(origin), .. }]
+        if guidance == PINNED && origin == "https://new.example"
+    ));
+    let saved = store.get_agent(&ready.id).await.unwrap().unwrap();
+    assert_eq!(saved.conversation.managed_guidance_revision, 2);
+    assert_eq!(saved.system_prompt(), prompt);
+    assert_eq!(saved.system_prompt().matches(PINNED).count(), 1);
+    assert_eq!(saved.profile, ready.profile);
+}
+
+#[tokio::test]
 async fn managed_context_ack_is_one_time_and_preserves_owner_state() {
     let store = Arc::new(InMemorySandboxStore::default());
     let mut ready = test_agent(AgentStatus::Ready, None);

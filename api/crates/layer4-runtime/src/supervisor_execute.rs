@@ -9,6 +9,7 @@ impl Supervisor {
             RequestFrame::Install(_)
                 | RequestFrame::BootstrapRestore(_)
                 | RequestFrame::Credential(_)
+                | RequestFrame::CredentialForReceiver { .. }
                 | RequestFrame::Restore(_)
                 | RequestFrame::ResumeCheckpointWriters(_)
                 | RequestFrame::Resources
@@ -70,7 +71,32 @@ impl Supervisor {
             }
             RequestFrame::Install(request) => self.install(request).await,
             RequestFrame::BootstrapRestore(request) => self.bootstrap_restore(request).await,
-            RequestFrame::Credential(frame) => self.credential(frame).await,
+            RequestFrame::Credential(frame) if frame.github_route.is_none() => {
+                self.credential(frame).await
+            }
+            RequestFrame::Credential(_) => Err(RuntimeError::rejected(
+                "credential_receiver_required",
+                "a bound credential requires the negotiated runtime receiver",
+            )),
+            RequestFrame::CredentialForReceiver {
+                receiver,
+                boot_id,
+                credential,
+            } => {
+                if credential.github_route.is_none()
+                    || receiver.sandbox_id != self.config.sandbox_id
+                    || receiver.generation != self.config.generation
+                    || Some(&receiver.home_identity) != self.config.home_identity.as_ref()
+                    || boot_id != self.boot_id
+                {
+                    return Err(RuntimeError::rejected(
+                        "credential_receiver_changed",
+                        "credential receiver does not match the negotiated runtime",
+                    ));
+                }
+                self.runtime_status(receiver).await?;
+                self.credential(credential).await
+            }
             RequestFrame::RecoverWorkspacePrepare(_)
             | RequestFrame::PrepareWorkspace(_)
             | RequestFrame::WorkspaceSetup(_)
@@ -131,7 +157,9 @@ impl Supervisor {
             RequestFrame::Resources => Ok(ResponseFrame::Resources(
                 self.resources.sample(std::time::Instant::now()).into(),
             )),
-            RequestFrame::WorkspaceRemovalSupport(_)
+            RequestFrame::ProveAgentProcessClosed(_)
+            | RequestFrame::FenceAgentRestart(_)
+            | RequestFrame::WorkspaceRemovalSupport(_)
             | RequestFrame::ReconcileWorkspaceRemoval(_)
             | RequestFrame::RuntimeStatus(_)
             | RequestFrame::ToolProxyStatus(_) => {

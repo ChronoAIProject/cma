@@ -19,6 +19,7 @@ mod sandbox_controls_tests;
 mod startup_failure_tests;
 mod suggested_reply_tests;
 mod targeted_control_tests;
+mod task_audit_tests;
 pub(in crate::store) mod work_tests;
 use layer2_core::ids::{AgentCommandId, AgentResponseId};
 use layer2_core::sandbox::agent_io::*;

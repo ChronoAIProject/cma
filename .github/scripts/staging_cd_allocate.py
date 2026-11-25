@@ -34,7 +34,7 @@ REFUSAL_CODES = {
     "Source already has conflicting final versions": "FINAL_VERSION_CONFLICT",
     "Source must belong to exactly one merged develop PR": "MERGED_PR_NOT_UNIQUE",
     "Merged PR identity changed": "MERGED_PR_IDENTITY_CHANGED",
-    "Merged PR must carry exactly one supported version-upgrade label": "VERSION_LABEL_REQUIRED",
+    "Merged PR has conflicting or unsupported version-upgrade labels": "VERSION_LABEL_REQUIRED",
     "Version labels are malformed": "VERSION_LABELS_INVALID",
     "Release source is not on verified develop first-parent history": "SOURCE_HISTORY_INVALID",
     # Split by its cause in github_read_code; this is the code of no known cause.

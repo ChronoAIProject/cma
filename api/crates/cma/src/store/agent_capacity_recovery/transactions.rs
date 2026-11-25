@@ -1,6 +1,7 @@
 //! One accepted-work attempt per exclusive transaction. An uncertain commit
 //! never repeats the mutation or authorizes a runtime attachment/acknowledgement.
 use super::authority::RecoveryAuthority;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::{
     agent_capacity_recovery::{
         ports::{ClaimOutcome, CommitOutcome, RecoveryError, RecoveryLookup},
@@ -11,7 +12,7 @@ use layer2_core::sandbox::{
 };
 use mongodb::ClientSession;
 
-use super::{admission, authority, receipts, settlement};
+use super::{admission, authority, observations, receipts, settlement};
 use crate::store::{
     agent_log_integrity::TransactionLogError,
     agent_log_segments::transaction_scope::TransactionScope,
@@ -38,7 +39,9 @@ pub(in crate::store) async fn admit(
         .await
         .map_err(|_| RecoveryError::Unavailable)?;
     let result = admission::persist_admission(store, input, &mut scope).await;
-    finish(scope.release(), result).await
+    let outcome = finish(scope.release(), result).await;
+    observations::commit(observations::Stage::Admitted, &outcome);
+    outcome
 }
 
 /// The caller obtains fresh resource authority for each call. This read does
@@ -67,7 +70,7 @@ pub(in crate::store) async fn lookup_accepted(
     .await;
     // There have been no writes or commit attempts. A read-abort error does not
     // turn absence into a known-aborted *publication*.
-    let _ = scope.release().abort_transaction().await;
+    let _ = scope.release().abort_guarded().await;
     Ok(match result.map_err(error)? {
         Some(stored) => RecoveryLookup::Recorded(Box::new(stored.work)),
         None => RecoveryLookup::Unknown,
@@ -82,14 +85,22 @@ pub(in crate::store) async fn reconcile(
     expected: &RecoveryWork,
 ) -> Result<CommitOutcome<RecoveryWork>, RecoveryError> {
     expected.validate()?;
-    Ok(
-        match lookup_accepted(store, authorized, &expected.request).await? {
-            RecoveryLookup::Recorded(actual) if actual.as_ref() == expected => {
-                CommitOutcome::Recorded(*actual)
-            }
-            _ => CommitOutcome::Unknown,
-        },
-    )
+    let result = match lookup_accepted(store, authorized, &expected.request).await? {
+        RecoveryLookup::Recorded(actual) if actual.as_ref() == expected => {
+            CommitOutcome::Recorded(*actual)
+        }
+        _ => CommitOutcome::Unknown,
+    };
+    if expected.phase
+        == layer2_core::sandbox::agent_capacity_recovery::state::RecoveryPhase::Completed
+        && matches!(result, CommitOutcome::Recorded(_))
+    {
+        observations::cohort(
+            observations::Stage::Completed,
+            observations::Outcome::Replay,
+        );
+    }
+    Ok(result)
 }
 
 pub(in crate::store) async fn claim(
@@ -129,7 +140,9 @@ pub(in crate::store) async fn complete(
         .map_err(|_| RecoveryError::Unavailable)?;
     let result =
         settlement::complete(store, authorized, claim, confirmation, now, &mut scope).await;
-    finish(scope.release(), result).await
+    let outcome = finish(scope.release(), result).await;
+    observations::commit(observations::Stage::Completed, &outcome);
+    outcome
 }
 
 pub(in crate::store) async fn retry(
@@ -158,7 +171,7 @@ pub(super) async fn finish<T>(
     let value = match result {
         Ok(value) => value,
         Err(failure) => {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(error(failure));
         }
     };
