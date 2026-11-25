@@ -48,8 +48,8 @@ def layer_options(env, component):
     args = []
     for scope in (SCOPES[component], *EXTRA_IMPORTS.get(component, ())):
         args.extend(("--cache-from", cache(scope)))
-    if env.get("GITHUB_EVENT_NAME") == "push" and env.get("GITHUB_REF") == "refs/heads/develop":
-        args += ["--cache-to", cache(SCOPES[component]) + ",mode=max,ignore-error=true"]
+    # The GHA exporter cannot cap or reserve its bytes before uploading. Keep
+    # the existing scopes readable throughout the migration to sealed archives.
     return args
 
 
@@ -68,6 +68,7 @@ class BuildCache:
         self.export_reason = None
         self.export_headroom = None
         self.export_retained_groups = None
+        self.layer_root = Path(env["RUNNER_TEMP"]) / "cma-layer-cache"
 
     def restore(self):
         self.restore_result = "miss"
@@ -93,14 +94,23 @@ class BuildCache:
 
     def build_options(self):
         args = layer_options(self.env, self.component) if self.build_environment() else []
+        if self.env.get("CD_LAYER_ARCHIVE_CACHE") == "enabled":
+            restored = self.layer_root / "restored"
+            pending = self.layer_root / "pending"
+            require(not self.layer_root.is_symlink() and not pending.is_symlink(), "Layer cache path is invalid")
+            if restored.is_dir() and not restored.is_symlink():
+                args += ["--cache-from", "type=local,src=" + str(restored)]
+            if pending.exists():
+                shutil.rmtree(pending)
+            args += ["--cache-to", "type=local,mode=min,ignore-error=true,dest=" + str(pending)]
         if self.key is not None:
             args += ["--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + self.namespace]
         return args
 
     def exports_layers(self):
-        # True exactly when build_options() asks BuildKit to write this scope's
-        # layers. Every other build only imports them, so no save is expected.
-        return bool(self.build_environment()) and "--cache-to" in layer_options(self.env, self.component)
+        # The legacy remote layer export is permanently read-only. Local
+        # archives are verified and admitted separately after publication.
+        return False
 
     def build_environment(self):
         # Buildx's cache client needs these; build steps, registry transport and

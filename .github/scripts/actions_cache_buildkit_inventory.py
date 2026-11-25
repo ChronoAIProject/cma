@@ -5,6 +5,7 @@ import os
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,6 +25,23 @@ BLOB = re.compile("buildkit-blob-1-(" + DIGEST + ")")
 RESULTS_LOOKUP = "/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL"
 MAX_INDEXES = 1000
 MAX_INDEX_BYTES = 1024 * 1024
+
+
+class ProofError(ValueError):
+    """Identify the failed observation without printing remote response content."""
+
+    def __init__(self, phase, cause):
+        self.phase = phase
+        self.cause_type = type(cause).__name__
+        super().__init__(str(cause))
+
+
+@contextmanager
+def observing(phase):
+    try:
+        yield
+    except Exception as error:
+        raise ProofError(phase, error) from error
 
 
 class RejectRedirect(HTTPRedirectHandler):
@@ -143,17 +161,24 @@ def develop_blobs(api):
 
 
 def snapshot(api, reader, revision, now):
-    api.require_live_policy(revision)
+    with observing("develop-before"):
+        api.require_live_policy(revision)
     # The exact index key/version must be unique across all refs. Only blob
     # candidates are scoped to develop.
-    pinned = indexes(entries_with_prefix(api, INDEX_PREFIX))
-    before = develop_blobs(api)
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        reachable = set().union(*pool.map(lambda row: reader(row.key, row.size), pinned.values()))
-    after = develop_blobs(api)
-    if indexes(entries_with_prefix(api, INDEX_PREFIX)) != pinned:
-        raise ValueError("BuildKit indexes changed during inventory")
-    api.require_live_policy(revision)
+    with observing("indexes-before"):
+        pinned = indexes(entries_with_prefix(api, INDEX_PREFIX))
+    with observing("blobs-before"):
+        before = develop_blobs(api)
+    with observing("index-content"):
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            reachable = set().union(*pool.map(lambda row: reader(row.key, row.size), pinned.values()))
+    with observing("blobs-after"):
+        after = develop_blobs(api)
+    with observing("indexes-after"):
+        if indexes(entries_with_prefix(api, INDEX_PREFIX)) != pinned:
+            raise ValueError("BuildKit indexes changed during inventory")
+    with observing("develop-after"):
+        api.require_live_policy(revision)
     cutoff = now - timedelta(hours=24)
     candidates = [entry for entry in after.values() if entry.version == CACHE_VERSION
                   and entry.key not in reachable and entry.accessed <= cutoff
@@ -181,6 +206,9 @@ def main(path, env):
 if __name__ == "__main__":
     try:
         main(sys.argv[1], os.environ)
+    except ProofError as error:
+        print(f"BuildKit cache inventory failed at {error.phase} ({error.cause_type})", file=sys.stderr)
+        sys.exit(1)
     except Exception as error:
         print(f"BuildKit cache inventory failed ({type(error).__name__})", file=sys.stderr)
         sys.exit(1)

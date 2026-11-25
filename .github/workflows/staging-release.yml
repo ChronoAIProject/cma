@@ -21,6 +21,7 @@ permissions:
 jobs:
   publish:
     name: Publish
+    cache-mode: read
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'
     runs-on: ubuntu-24.04
     timeout-minutes: 300
@@ -111,6 +112,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_COMPONENT: ${{ inputs.component }}
         run: python3 -B .github/scripts/image_detector_cache.py
+      - name: Restore bounded layer archive
+        id: layer-restore
+        if: vars.CMA_BOUNDED_LAYER_CACHE == 'true' && steps.ownership.outputs.superseded != 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/cma-layer-cache/archive.tar
+          key: cma-layer-archive-v1-${{ inputs.component }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: cma-layer-archive-v1-${{ inputs.component }}-
+          fail-on-cache-miss: false
+      - name: Validate restored layer archive
+        if: steps.layer-restore.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: python3 -B .github/scripts/buildkit_cache_archive.py restore "$RUNNER_TEMP/cma-layer-cache/restored" "$RUNNER_TEMP/cma-layer-cache/archive.tar"
       - name: Build the exact reserved release archive
         id: producer
         if: >-
@@ -122,6 +139,7 @@ jobs:
           CD_COMPONENT: ${{ inputs.component }}
           CD_TASKS: ${{ inputs.tasks }}
           CD_BUILD_CACHE: enabled
+          CD_LAYER_ARCHIVE_CACHE: ${{ vars.CMA_BOUNDED_LAYER_CACHE == 'true' && 'enabled' || '' }}
         run: python3 -B .github/scripts/staging_cd_produce.py
       - name: Build once, scan every layer, and publish exact bytes
         timeout-minutes: 270
@@ -133,8 +151,29 @@ jobs:
           CD_RECEIPTS_PATH: ${{ runner.temp }}/public-receipts/receipts.json
           CD_PREPARED_ARCHIVE: ${{ steps.producer.outputs.prepared }}
           CD_BUILD_CACHE: enabled
+          CD_LAYER_ARCHIVE_CACHE: ${{ vars.CMA_BOUNDED_LAYER_CACHE == 'true' && 'enabled' || '' }}
           CD_LAYER_SCAN_CACHE: enabled
         run: python3 -B .github/scripts/staging_cd_publish.py
+      - name: Seal accepted layer archive
+        id: seal-layer-archive
+        if: success() && vars.CMA_BOUNDED_LAYER_CACHE == 'true' && steps.publication.outputs.disposition == ''
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          rm -f "$RUNNER_TEMP/cma-layer-cache/archive.tar"
+          python3 -B .github/scripts/buildkit_cache_archive.py seal "$RUNNER_TEMP/cma-layer-cache/pending" "$RUNNER_TEMP/cma-layer-cache/archive.tar"
+      - name: Retain sealed layer archive for admission
+        id: layer-archive
+        if: steps.seal-layer-archive.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cma-layer-cache-${{ inputs.component }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cma-layer-cache/archive.tar
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
       - name: Retain complete layer detector evidence
         timeout-minutes: 10
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop'

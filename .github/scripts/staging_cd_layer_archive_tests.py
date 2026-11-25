@@ -1,0 +1,234 @@
+import hashlib
+import io
+import json
+import tarfile
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import Mock, patch
+
+import yaml
+
+import buildkit_cache_archive as archive
+from actions_cache_retention import BUDGET
+from actions_cargo_budget import Account as CargoAccount, stored_bound
+from actions_layer_admission import Account, PREFIX, reserve, retire_verified, select, source_run
+from staging_cd_cache_retention_tests import Inventory, entry
+from staging_cd_cache_retention_tests import ROOT
+
+
+def blob(root, payload, media):
+    encoded = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+    digest = hashlib.sha256(encoded).hexdigest()
+    (root / "blobs" / "sha256" / digest).write_bytes(encoded)
+    return {"digest": "sha256:" + digest, "size": len(encoded), "mediaType": media}
+
+
+def populate(root):
+    (root / "blobs" / "sha256").mkdir(parents=True)
+    (root / "oci-layout").write_text('{"imageLayoutVersion":"1.0.0"}')
+    data = blob(root, b"synthetic layer", "application/vnd.oci.image.layer.v1.tar+gzip")
+    config = blob(root, {"layers": [{"blob": data["digest"], "parent": -1}]},
+                  "application/vnd.buildkit.cacheconfig.v0")
+    manifest = blob(root, {"schemaVersion": 2, "config": config, "layers": [data]},
+                    "application/vnd.oci.image.manifest.v1+json")
+    (root / "index.json").write_text(json.dumps({"schemaVersion": 2, "manifests": [manifest]}))
+    return data
+
+
+class ArchiveTests(unittest.TestCase):
+    def test_verified_oci_cache_round_trip(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            populate(root / "source")
+            (root / "source" / "cache.lock").touch()
+            archive.seal(root / "source", root / "archive.tar")
+            archive.restore(root / "archive.tar", root / "restored")
+            self.assertEqual(archive.inventory(root / "source"), archive.inventory(root / "restored"))
+            self.assertFalse((root / "restored" / "cache.lock").exists())
+
+    def test_missing_or_changed_layer_prevents_save(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = populate(root / "source")
+            path = root / "source" / "blobs" / "sha256" / data["digest"][7:]
+            original = path.read_bytes()
+            for payload in (None, b"changed layer!!"):
+                path.unlink()
+                if payload is not None:
+                    path.write_bytes(payload)
+                with self.assertRaises(ValueError):
+                    archive.seal(root / "source", root / "archive.tar")
+                self.assertFalse((root / "archive.tar").exists())
+                if payload is None:
+                    path.write_bytes(original)
+
+    def test_member_and_final_archive_bounds(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            populate(root / "source")
+            for limit in ({"MAX_MEMBERS": 4}, {"MAX_BYTES": 100}, {"MAX_BYTES": 4096}):
+                with patch.multiple(archive, **limit), self.assertRaises(ValueError):
+                    archive.seal(root / "source", root / "archive.tar")
+                self.assertFalse((root / "archive.tar").exists())
+
+    def test_invalid_member_leaves_no_restore(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            stored = root / "archive.tar"
+            with tarfile.open(stored, "w") as output:
+                member = tarfile.TarInfo("outside.txt")
+                member.size = 4
+                output.addfile(member, io.BytesIO(b"data"))
+            with self.assertRaises(ValueError):
+                archive.restore(stored, root / "restored")
+            self.assertFalse((root / "restored").exists())
+
+
+class AdmissionTests(unittest.TestCase):
+    def setUp(self):
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.archive = Path(directory.name) / "archive.tar"
+        self.archive.write_bytes(b"synthetic")
+        self.cap = stored_bound(self.archive.stat().st_size)
+        self.key = PREFIX + "am-123-1"
+        self.old = PREFIX + "eg-122-1"
+        self.account = Account({})
+        self.ledger = Mock()
+        self.ledger.read.return_value = ("a" * 40, self.account)
+        self.cargo = Mock()
+        self.cargo.read.return_value = ("b" * 40, CargoAccount({}))
+
+    def admission(self, *entries):
+        return reserve(Inventory(*entries), self.ledger, self.cargo, self.key, self.archive, "c" * 40)
+
+    def test_whole_archive_charge_must_fit_and_prior_generation_survives(self):
+        old = entry(1, self.old, size=20)
+        for size in (BUDGET - self.cap - 20, BUDGET - self.cap - 19, BUDGET):
+            self.assertFalse(self.admission(old, entry(2, "unrelated", size=size))["allowed"])
+        self.ledger.advance.assert_not_called()
+        self.assertTrue(self.admission(old, entry(2, "unrelated", size=BUDGET - self.cap - 21))["allowed"])
+        self.assertEqual(self.account.charges, {self.key: self.cap})
+        self.ledger.advance.assert_called_once()
+
+    def test_unknown_uploads_and_legacy_charges_are_counted(self):
+        self.account.charges[self.old] = self.cap
+        self.cargo.read.return_value[1].charges["legacy"] = self.cap
+        external = entry(3, "unrelated", size=BUDGET - 3 * self.cap)
+        self.assertFalse(self.admission(external)["allowed"])
+        self.assertEqual(self.account.charges, {self.old: self.cap})
+        self.assertFalse(self.admission(external, entry(4, self.old, size=self.cap))["allowed"])
+        self.assertEqual(self.account.charges, {})
+
+    def test_changed_ledger_ref_or_duplicate_candidate_withholds(self):
+        self.ledger.read.side_effect = [("a" * 40, self.account), ("b" * 40, Account({}))]
+        self.assertFalse(self.admission()["allowed"])
+        self.ledger.advance.assert_not_called()
+        self.ledger.read.side_effect = None
+        self.account.charges.clear()
+        self.assertFalse(self.admission(entry(2, self.key))["allowed"])
+        self.ledger.advance.assert_not_called()
+
+
+class ProducerTests(unittest.TestCase):
+    def test_only_exact_successful_protected_publication_is_selected(self):
+        run = {"id": 42, "run_attempt": 2, "head_sha": "a" * 40}
+        artifact = {"name": "cma-layer-cache-am-42-2", "id": 17, "size_in_bytes": 100,
+                    "expired": False, "digest": "sha256:" + "a" * 64}
+        job = {"name": "Release am / Publish", "run_id": 42, "run_attempt": 2, "head_sha": "a" * 40,
+               "status": "completed", "conclusion": "success",
+               "steps": [{"name": "Retain sealed layer archive for admission", "conclusion": "success"}]}
+        api = Mock()
+        api.list.side_effect = [[artifact], [job]]
+        self.assertEqual(select(api, run, "am"), 17)
+        api.list.side_effect = [[artifact], [dict(job, run_attempt=1)]]
+        with self.assertRaises(ValueError):
+            select(api, run, "am")
+        api.list.side_effect = [[artifact], [dict(job, conclusion="failure")]]
+        with self.assertRaises(ValueError):
+            select(api, run, "am")
+
+    def test_dispatch_and_nonprotected_publishers_are_refused(self):
+        from staging_cd_versions import REPOSITORY
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "event.json"
+            run = {"id": 42, "run_attempt": 2, "head_sha": "a" * 40, "status": "completed",
+                   "event": "push", "head_branch": "develop", "path": ".github/workflows/staging-cd.yml",
+                   "head_repository": {"full_name": REPOSITORY}, "repository": {"full_name": REPOSITORY}}
+            env = {"GITHUB_REPOSITORY": REPOSITORY, "GITHUB_REF": "refs/heads/develop",
+                   "GITHUB_EVENT_NAME": "workflow_run", "GITHUB_EVENT_PATH": str(path),
+                   "GITHUB_WORKFLOW_REF": f"{REPOSITORY}/.github/workflows/cache-retention.yml@refs/heads/develop",
+                   "CD_LAYER_ARCHIVE_CACHE": "enabled"}
+            path.write_text(json.dumps({"action": "completed", "workflow_run": run}))
+            self.assertEqual(source_run(env), run)
+            for changes in ({"GITHUB_EVENT_NAME": "workflow_dispatch"}, {"CD_LAYER_ARCHIVE_CACHE": "disabled"}):
+                with self.assertRaises(ValueError):
+                    source_run(env | changes)
+            path.write_text(json.dumps({"action": "completed", "workflow_run": run | {"head_branch": "topic"}}))
+            with self.assertRaises(ValueError):
+                source_run(env)
+
+    def test_layer_save_is_off_by_default_and_detached_from_publication(self):
+        workflows = ROOT / '.github' / 'workflows'
+        release = yaml.safe_load((workflows / 'staging-release.yml').read_text())
+        publisher = release['jobs']['publish']
+        self.assertEqual(publisher['cache-mode'], 'read')
+        self.assertEqual(set(release['jobs']), {'publish', 'finalize'})
+        step = next(s for s in publisher['steps'] if s.get('id') == 'seal-layer-archive')
+        self.assertIn("vars.CMA_BOUNDED_LAYER_CACHE == 'true'", step['if'])
+        self.assertIn('success()', step['if'])
+        workflow = yaml.safe_load((workflows / 'cache-retention.yml').read_text())
+        writer = workflow['jobs']['retain_layers']
+        self.assertEqual(writer['cache-mode'], 'write')
+        self.assertEqual(writer['permissions'], {'contents': 'write', 'actions': 'read'})
+        self.assertEqual(writer['concurrency'], {'group': 'cma-develop-layer-cache-admission',
+                                               'queue': 'max', 'cancel-in-progress': False})
+        self.assertIn("vars.CMA_BOUNDED_LAYER_CACHE == 'true'", writer['if'])
+        self.assertIn("github.event_name == 'workflow_run'", writer['if'])
+        self.assertIn("github.event.workflow_run.path == '.github/workflows/staging-cd.yml'", writer['if'])
+        save = writer['steps'][-1]
+        self.assertTrue(save['uses'].startswith('actions/cache/save@'))
+        self.assertEqual(save['if'], "steps.reserve-layer-archive.outputs.allowed == 'true'")
+        reader = workflow['jobs']['verify_layers']
+        self.assertEqual(reader['needs'], 'retain_layers')
+        self.assertEqual(reader['cache-mode'], 'read')
+        self.assertEqual(reader['concurrency'], writer['concurrency'])
+        self.assertEqual(reader['steps'][-1]['if'], "steps.verify-archive.outcome == 'success'")
+
+
+class RetirementTests(unittest.TestCase):
+    def test_only_same_family_and_version_after_fresh_successor(self):
+        from dataclasses import replace
+        old = entry(1, PREFIX + 'am-10-1')
+        keep = entry(4, PREFIX + 'am-11-1')
+        unrelated = entry(2, PREFIX + 'eg-10-1')
+        another_version = replace(entry(3, PREFIX + 'am-9-1'), version='other')
+        newer = entry(5, PREFIX + 'am-12-1')
+        legacy = entry(6, 'buildkit-blob-1-sha256:' + 'a' * 64)
+        api = Inventory(old, keep, unrelated, another_version, newer, legacy)
+        api.active_runs = Mock(return_value=[{'id': 42}])
+        self.assertEqual(retire_verified(api, keep.key, 'a' * 40)['deleted_bytes'], 0)
+        api.delete.assert_not_called()
+        api.active_runs.return_value = []
+        self.assertEqual(retire_verified(api, keep.key, 'a' * 40)['deleted_bytes'], old.size)
+        api.delete.assert_called_once_with(old.id)
+        self.assertEqual(set(api.rows), {keep.id, unrelated.id, another_version.id, newer.id, legacy.id})
+
+    def test_duplicate_or_changed_successor_refuses_retirement(self):
+        from dataclasses import replace
+        old = entry(1, PREFIX + 'am-10-1')
+        keep = entry(4, PREFIX + 'am-11-1')
+        api = Inventory(old, keep, replace(keep, id=5))
+        api.active_runs = Mock(return_value=[])
+        with self.assertRaises(ValueError):
+            retire_verified(api, keep.key, 'a' * 40)
+        api.delete.assert_not_called()
+        api.rows.pop(5)
+        api.visible = Mock(return_value=None)
+        self.assertEqual(retire_verified(api, keep.key, 'a' * 40)['deleted_bytes'], 0)
+        api.delete.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()
