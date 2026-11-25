@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import type { ToolCall } from '../model';
+import { FileNavigationMemory } from '../files/useFileNavigation';
 
 interface OperationObservation {
   readonly toolCalls: readonly ToolCall[];
@@ -14,10 +15,12 @@ export class AgentComputerObservation {
       readonly client: object;
       readonly subject: string;
       readonly agentId?: string;
+      readonly authEpoch?: number;
     },
     private readonly openTerminal?: () => void,
     private readonly closeComputer?: () => void,
   ) {}
+  readonly fileNavigation = new FileNavigationMemory();
   private value: OperationObservation | undefined;
   private readonly listeners = new Set<() => void>();
   private terminal: { readonly id: string; readonly revision: number } | undefined;
