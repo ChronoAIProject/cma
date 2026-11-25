@@ -429,7 +429,7 @@ mutations.concat([
   ->(d) { repo_jobs.call(d)['result']['needs'].delete('scanner-tests') },
   ->(d) { repo_jobs.call(d)['result']['steps'].last['run'] = 'true' }
 ])
-mutations.each do |mutate|
+(mutations + KeyProviderCIContract.mutations).each do |mutate|
   copy = Marshal.load(Marshal.dump(documents))
   mutate.call(copy)
   begin
