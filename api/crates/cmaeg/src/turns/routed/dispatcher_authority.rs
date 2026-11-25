@@ -13,6 +13,19 @@ pub trait Authority: Send + Sync {
         &'a self,
         identity: &'a EventIdentity,
     ) -> BoxFuture<'a, Result<Arc<ResolvedChannel>, ExecutionError>>;
+    fn assigned_channel<'a>(
+        &'a self,
+        current: Arc<ResolvedChannel>,
+        _target: &'a StoredTarget,
+    ) -> BoxFuture<'a, Result<Arc<ResolvedChannel>, ExecutionError>> {
+        Box::pin(async move {
+            if current.definition.secrets.profile_revisions.is_some() {
+                Err(ExecutionError::AuthorityChanged)
+            } else {
+                Ok(current)
+            }
+        })
+    }
     fn native_control<'a>(
         &'a self,
         _current: &'a ResolvedChannel,
@@ -32,6 +45,30 @@ pub trait Authority: Send + Sync {
     }
 }
 impl Authority for ChannelResolver {
+    fn assigned_channel<'a>(
+        &'a self,
+        current: Arc<ResolvedChannel>,
+        target: &'a StoredTarget,
+    ) -> BoxFuture<'a, Result<Arc<ResolvedChannel>, ExecutionError>> {
+        Box::pin(async move {
+            let baseline = current
+                .definition
+                .secrets
+                .profile_revisions
+                .as_ref()
+                .is_some_and(|history| !history.baseline_complete)
+                && current.definition.provider == target.launch.provider;
+            crate::channels::profile_assignment::execution_channel(
+                self,
+                current,
+                &target.launch.consumer,
+                &target.launch.event.conversation_id,
+                baseline,
+            )
+            .await
+            .map_err(|_| ExecutionError::AuthorityChanged)
+        })
+    }
     fn native_control<'a>(
         &'a self,
         current: &'a ResolvedChannel,
@@ -91,6 +128,7 @@ pub(super) async fn current_target(
     target: &StoredTarget,
 ) -> Result<Arc<ResolvedChannel>, ExecutionError> {
     let current = authority.current(&plan.identity).await?;
+    let current = authority.assigned_channel(current, target).await?;
     validate_current(&current, plan, target)?;
     authority.native_control(&current, plan, target).await?;
     Ok(current)

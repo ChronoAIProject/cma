@@ -56,6 +56,7 @@ pub(crate) async fn admit(
     current: &ResolvedChannel,
     consumer: &ConsumerId,
     conversation: &ConversationId,
+    allow_new: bool,
 ) -> Result<Option<Assignment>, Error> {
     let channel = &current.definition;
     let Some(history) = channel.secrets.profile_revisions.as_ref() else {
@@ -108,6 +109,7 @@ pub(crate) async fn admit(
     match store.read::<Assignment>(&id, false).await? {
         Some((retained, 1)) => return validate(retained),
         Some(_) => return Err(Error::Corrupt),
+        None if !allow_new => return Err(Error::Lost),
         None => {}
     }
     // The Mongo channel guard writes the channel row and inserts the permanent
@@ -140,13 +142,14 @@ pub(crate) async fn execution_channel(
     current: std::sync::Arc<ResolvedChannel>,
     consumer: &ConsumerId,
     conversation: &ConversationId,
+    allow_new: bool,
 ) -> Result<std::sync::Arc<ResolvedChannel>, super::resolver::ResolveError> {
     use super::resolver::ResolveError;
     if current.definition.secrets.profile_revisions.is_none() || !consumer.is_default() {
         return Ok(current);
     }
     let store = resolver.profile_assignment_store()?;
-    let assignment = admit(&store, &current, consumer, conversation)
+    let assignment = admit(&store, &current, consumer, conversation, allow_new)
         .await
         .map_err(|_| ResolveError::Unavailable)?
         .ok_or(ResolveError::InvalidDefinition)?;
@@ -195,8 +198,9 @@ pub(crate) async fn pin_legacy(
         .consumer
         .clone()
         .unwrap_or_else(ConsumerId::default_consumer);
-    request.channel = execution_channel(resolver, current, &consumer, &request.conversation_id)
-        .await
-        .map_err(|_| unavailable())?;
+    request.channel =
+        execution_channel(resolver, current, &consumer, &request.conversation_id, true)
+            .await
+            .map_err(|_| unavailable())?;
     Ok(())
 }

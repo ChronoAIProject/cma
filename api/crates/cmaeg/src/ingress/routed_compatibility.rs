@@ -46,6 +46,8 @@ impl RoutedIngress {
                         "routed_admission_paused",
                     ));
                 }
+                let assigned = self.assign_profile(request).await?;
+                let request = &assigned;
                 let candidate = Candidate::prepare_compatibility(
                     request,
                     &source.body,

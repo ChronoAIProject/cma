@@ -53,6 +53,7 @@ mod message_event;
 pub(crate) mod telegram;
 pub struct RoutedIngress {
     plans: PlanStore,
+    profile_resolver: Option<crate::channels::resolver::ChannelResolver>,
     schedule: ScheduleHandle,
     keys: Arc<MasterKeyRing>,
     records: BTreeSet<String>,
@@ -79,6 +80,7 @@ impl RoutedIngress {
     ) -> Self {
         Self {
             plans,
+            profile_resolver: None,
             schedule,
             keys,
             records,
@@ -98,6 +100,24 @@ impl RoutedIngress {
     pub fn selected(&self, record: &RecordId) -> bool {
         self.records.contains(record.as_str())
     }
+    pub(crate) fn with_profile_resolver(
+        mut self,
+        resolver: crate::channels::resolver::ChannelResolver,
+    ) -> Self {
+        self.profile_resolver = Some(resolver);
+        self
+    }
+
+    async fn assign_profile(&self, request: &LaunchRequest) -> Result<LaunchRequest, Problem> {
+        let mut request = request.clone();
+        crate::channels::profile_assignment::pin_legacy(
+            self.profile_resolver.as_ref(),
+            &mut request,
+        )
+        .await?;
+        Ok(request)
+    }
+
     pub fn with_native_discovery(
         mut self,
         selection: crate::discord::selection::Selection,
@@ -205,7 +225,7 @@ impl RoutedIngress {
                         "routing_admission_refused",
                     )
                 })?;
-                let OrdinaryPlan::Routed(plan) = decision else {
+                let OrdinaryPlan::Routed(mut plan) = decision else {
                     return Ok(None);
                 };
                 if !self.admission_enabled || !self.schedule.accepting() {
@@ -239,6 +259,27 @@ impl RoutedIngress {
                         "routed_delivery_unsupported",
                     )
                 })?;
+                let assigned = if let Some(target) = plan.targets.iter_mut().find(|target| {
+                    target.consumer.is_default()
+                        && request
+                            .channel
+                            .definition
+                            .secrets
+                            .profile_revisions
+                            .is_some()
+                }) {
+                    let mut desired = request.clone();
+                    desired.consumer = None;
+                    desired.conversation_id = target.event.conversation_id.clone();
+                    let mut assigned = self.assign_profile(&desired).await?;
+                    target.provider = assigned.channel.definition.provider.clone();
+                    assigned.consumer = request.consumer.clone();
+                    assigned.conversation_id = request.conversation_id.clone();
+                    assigned
+                } else {
+                    request.clone()
+                };
+                let request = &assigned;
                 let candidate = if message_plan.is_some() {
                     Candidate::prepare_message_event_with_generation(
                         request,
