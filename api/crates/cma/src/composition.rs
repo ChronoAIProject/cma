@@ -465,14 +465,7 @@ impl ControlPlaneComposition {
             auth.clone(),
             recorder,
             (limits, config),
-            (
-                crate::health::router_with_workers(
-                    stores.clone(),
-                    workers.clone(),
-                    crate::health::pointer_release_source(&stores, config)?,
-                ),
-                tool_routes,
-            ),
+            (routes::health(&stores, &workers, config)?, tool_routes),
             relay.as_ref(),
         );
         let router = binding_diagnostics::router(binding_diagnostics, router);
