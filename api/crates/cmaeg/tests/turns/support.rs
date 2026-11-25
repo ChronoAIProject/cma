@@ -30,6 +30,8 @@ pub struct Fixture {
     pub tracker: Arc<TurnTracker>,
     pub readiness: Readiness,
     pub outcomes: mpsc::Receiver<DeliveryCommand>,
+    #[allow(dead_code)]
+    pub delivery_commands: mpsc::Sender<DeliveryCommand>,
     pub channel: Arc<ResolvedChannel>,
     // This fixture also compiles in turn_metrics, which exercises live streams only.
     #[allow(dead_code)]
@@ -78,8 +80,10 @@ impl Fixture {
         );
         let readiness = Readiness::initialized();
         let tracker = TurnTracker::new(readiness.clone());
-        let (delivery, outcomes) = mpsc::channel(64);
-        let delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(delivery));
+        let (delivery_commands, outcomes) = mpsc::channel(64);
+        let delivery = Arc::new(cmaeg::delivery::router::ShardedScheduler::new(
+            delivery_commands.clone(),
+        ));
         let recovery_channel = Arc::new(TestRecoveryChannel::default());
         let mut runner = TurnRunner::new(client, tracker.clone(), delivery, config);
         if recovery {
@@ -115,6 +119,7 @@ impl Fixture {
             tracker,
             readiness,
             outcomes,
+            delivery_commands,
             channel,
             recovery_channel,
             keys,

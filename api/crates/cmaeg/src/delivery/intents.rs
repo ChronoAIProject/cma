@@ -6,7 +6,7 @@ use cmaeg_core::{
     message::OutboundMessage,
     seal::{EventRefPayload, MessageRefPayload},
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 use tokio::sync::oneshot;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplySource {
@@ -40,6 +40,7 @@ pub enum DeliveryCommand {
     StreamOutcome {
         turn: Arc<LaunchRequest>,
         outcome: TurnOutcome,
+        accepted_deadline: Option<Instant>,
         /// Identity from this provider stream, independent of Activity's current response.
         answer_response_id: Option<String>,
         recovery: Option<Arc<crate::turns::RecoveryAuthority>>,

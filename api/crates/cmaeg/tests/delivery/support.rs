@@ -327,6 +327,7 @@ impl App {
                 turn: self.turn.clone(),
                 outcome,
                 answer_response_id: None,
+                accepted_deadline: None,
                 recovery: None,
             })
             .await

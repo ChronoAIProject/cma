@@ -131,7 +131,7 @@ impl TurnRunner {
         let prepare_deadline = (turn.received_at + self.prepare.budget).min(deadline);
         let mut admitted = Some(sender);
         let recovery = self.recovery_authority.as_ref().and_then(|authority| {
-            super::RecoveryAuthority::new(authority.clone(), turn.clone()).map(Arc::new)
+            super::RecoveryAuthority::new(authority.clone(), turn.clone(), deadline).map(Arc::new)
         });
         let result = tokio::time::timeout_at(deadline.into(), async {
             let fenced = ticket.waits();
@@ -213,8 +213,7 @@ impl TurnRunner {
         if error.detail == "stream_authority_changed" {
             let _ = self
                 .delivery
-                .submit(super::outcomes::DeliveryCommand::RetireStream { turn })
-                .await;
+                .try_submit(super::outcomes::DeliveryCommand::RetireStream { turn });
             return;
         }
         let accepted = admitted.is_none();
@@ -236,6 +235,7 @@ impl TurnRunner {
                     turn,
                     outcome,
                     answer_response_id: None,
+                    accepted_deadline: None,
                     recovery: Some(recovery),
                 });
         } else {

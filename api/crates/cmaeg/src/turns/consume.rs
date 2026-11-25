@@ -57,7 +57,16 @@ pub(super) async fn consume(
                 tracing::info!(metric="cmaeg_provider_accept_seconds",duration_seconds=accepted.at.saturating_duration_since(stream.request_started).as_secs_f64(),"provider accepted turn");
                 if let Some(sender) = admitted.take() {let _ = sender.send(LaunchOutcome::Accepted {response_id:accepted.response_id.clone()});}
                 accepted_response = Some(accepted.response_id.clone());
-                send(delivery,&turn,TurnOutcome::Accepted {response_id:accepted.response_id,thread_reply:accepted.thread_reply}, None, None).await?;
+                delivery.submit(DeliveryCommand::StreamOutcome {
+                    turn: turn.clone(),
+                    outcome: TurnOutcome::Accepted {
+                        response_id: accepted.response_id,
+                        thread_reply: accepted.thread_reply,
+                    },
+                    accepted_deadline: recovery_authority.map(|authority| authority.deadline),
+                    answer_response_id: None,
+                    recovery: None,
+                }).await.map_err(|_| "delivery_unavailable")?;
             }
             observed = stream.events.recv_observed() => {
                 let (event, bound_to_accepted, recovery_gate) = match observed {
@@ -161,6 +170,7 @@ async fn send(
             turn: turn.clone(),
             outcome,
             answer_response_id,
+            accepted_deadline: None,
             recovery,
         })
         .await

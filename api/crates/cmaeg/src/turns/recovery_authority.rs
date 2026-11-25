@@ -1,4 +1,4 @@
-use std::{fmt, sync::Arc};
+use std::{fmt, sync::Arc, time::Instant};
 
 use cmaeg_core::{
     activity::SourceKind,
@@ -44,6 +44,7 @@ impl RecoveryChannelAuthority for ChannelResolver {
 pub struct RecoveryAuthority {
     authority: Arc<dyn RecoveryChannelAuthority>,
     turn: Arc<LaunchRequest>,
+    pub(super) deadline: Instant,
 }
 
 impl fmt::Debug for RecoveryAuthority {
@@ -58,8 +59,13 @@ impl RecoveryAuthority {
     pub(super) fn new(
         authority: Arc<dyn RecoveryChannelAuthority>,
         turn: Arc<LaunchRequest>,
+        deadline: Instant,
     ) -> Option<Self> {
-        matches!(turn.activity.source, SourceKind::Custom).then_some(Self { authority, turn })
+        matches!(turn.activity.source, SourceKind::Custom).then_some(Self {
+            authority,
+            turn,
+            deadline,
+        })
     }
 
     pub(crate) async fn current(&self) -> Option<Arc<ResolvedChannel>> {

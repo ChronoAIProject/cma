@@ -13,6 +13,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::time::Instant;
 use tracing::Instrument;
 const MAX_EVENTS: usize = 8192;
+const EVENT_RETENTION: Duration = Duration::from_secs(30);
 pub(super) async fn run(
     mut commands: super::queue::Receiver<DeliveryCommand>,
     sender: Arc<Sender>,
@@ -173,6 +174,7 @@ async fn handle(
             turn,
             outcome,
             answer_response_id,
+            accepted_deadline,
             recovery,
         } => {
             tracing::info!(outcome = outcome.kind(), "provider turn outcome");
@@ -270,6 +272,9 @@ async fn handle(
             if custom {
                 if matches!(outcome, TurnOutcome::Accepted { .. }) {
                     state.terminal_at = None;
+                    state.accepted_deadline = state
+                        .accepted_deadline
+                        .max(accepted_deadline.map(Instant::from_std));
                 }
                 if let Some(delivered) = sender
                     .custom
@@ -359,10 +364,14 @@ fn reserve(events: &mut HashMap<EventKey, EventState>, id: &EventKey) -> bool {
     events.contains_key(id) || events.len() < MAX_EVENTS
 }
 fn expire(events: &mut HashMap<EventKey, EventState>) {
+    let now = Instant::now();
     events.retain(|_, state| {
+        // Retain a queued terminal outcome through the ordinary retention window,
+        // even when a full queue prevented the turn from submitting retirement.
         state
             .terminal_at
-            .is_none_or(|at| at.elapsed() < Duration::from_secs(30))
+            .or(state.accepted_deadline)
+            .is_none_or(|at| now.saturating_duration_since(at) < EVENT_RETENTION)
     });
 }
 async fn timers(
