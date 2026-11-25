@@ -125,6 +125,34 @@ it('uses the registered CMA provider consistently for a new channel without chan
     profile: { metadata: { provider: 'cma' } },
   });
 });
+it('includes an environment by default only when creating a profile-managed CMA channel', () => {
+  const draft = channelDraft(undefined, 'owner');
+  const credentials = { agent_key: 'fixture-provider' };
+  const profile = object(draft.profile);
+  const provider = object(draft.provider);
+  const defaultEnvironment = {
+    size: { cpu_cores: 1, memory_gib: 2 },
+    workspace: { type: 'directory', name: 'workspace' },
+  };
+  expect(channelRequest(draft, credentials)).toHaveProperty(
+    'profile.environment',
+    defaultEnvironment,
+  );
+  const managed = { ...draft, provider: { ...provider, target: { type: 'profile' } } };
+  expect(channelRequest(managed, credentials)).toHaveProperty(
+    'profile.environment',
+    defaultEnvironment,
+  );
+  const environment = { ...defaultEnvironment, size: { cpu_cores: 2, memory_gib: 4 } };
+  expect(
+    channelRequest({ ...managed, profile: { ...profile, environment } }, credentials),
+  ).toHaveProperty('profile.environment', environment);
+  const existing = { ...draft, provider: { ...provider, target: { type: 'existing_agent' } } };
+  const external = { ...draft, provider: { ...provider, slug: 'external' } };
+  expect(channelRequest(existing, credentials)).not.toHaveProperty('profile.environment');
+  expect(channelRequest(external, credentials)).not.toHaveProperty('profile.environment');
+  expect(channelRequest(managed, {}, fixture())).not.toHaveProperty('profile.environment');
+});
 it('preserves unknown writable fields and exact existing bindings while excluding server-only fields and unchanged credentials', () => {
   const source = fixture();
   source.definition.connection_ref = 'connection_retained';

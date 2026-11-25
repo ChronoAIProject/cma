@@ -107,6 +107,7 @@ pub(crate) struct FeatureFlags {
     pub sandbox_detail_timings: bool,
     pub agent_file_read_timings: bool,
     pub bounded_response_reads: bool,
+    pub active_log_proofs: bool,
     pub bounded_transcript_reads: bool,
     pub privacy_export_enabled: bool,
     pub bounded_usage_reads: bool,
@@ -354,6 +355,7 @@ impl FeatureFlags {
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
+            active_log_proofs: flag(lookup, "CHRONO_AGENT_LOG_ACTIVE_PROOFS_ENABLED")?,
             bounded_transcript_reads: flag(
                 lookup,
                 "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED",
@@ -392,6 +394,9 @@ impl FeatureFlags {
         }
         if flags.am_startup_health_serving && flags.am_failure_containment_enabled {
             return Err("CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED cannot be combined with CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED".into());
+        }
+        if flags.am_empty_warm_pool_startup && !flags.am_startup_health_serving {
+            return Err("CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED requires CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED".into());
         }
         Ok(flags)
     }

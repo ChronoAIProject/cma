@@ -354,3 +354,34 @@ it('keeps a save failure visible when an unrelated folder refresh succeeds', asy
   await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
   expect(screen.getByRole('alert')).toHaveTextContent('file changed');
 });
+
+it.each([
+  ['a'.repeat(256) + '.txt', 'a'.repeat(251) + '.txt'],
+  ['界'.repeat(86), '界'.repeat(85)],
+])(
+  'refuses a filename over the UTF-8 byte limit and allows the boundary',
+  async (invalid, valid) => {
+    const { client } = fixture();
+    await screen.findByRole('button', { name: 'hello.txt' });
+    await userEvent.click(screen.getByRole('button', { name: 'New file' }));
+    const input = screen.getByRole('textbox', { name: 'File name' });
+    fireEvent.change(input, { target: { value: invalid } });
+    const submit = screen.getByRole('button', { name: /^Create$/ });
+    expect(submit).toBeDisabled();
+    expect(input).toHaveAccessibleDescription(
+      'File and folder names must be at most 255 UTF-8 bytes.',
+    );
+    fireEvent.submit(submit.closest('form')!);
+    expect(client.write).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: valid } });
+    expect(submit).toBeEnabled();
+    await userEvent.click(submit);
+    await waitFor(() =>
+      expect(client.write).toHaveBeenCalledExactlyOnceWith(
+        'agent-one',
+        { path: valid, content_base64: '', directory: false },
+        expect.any(Object),
+      ),
+    );
+  },
+);

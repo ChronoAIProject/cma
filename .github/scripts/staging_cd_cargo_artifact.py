@@ -7,7 +7,9 @@ instead. A later run accepts one only from a verified producer job and with an
 exact artifact digest; the existing bundle validator then decides between an
 exact restore, an incremental-only graph fallback and a cold build.
 """
+from datetime import datetime
 import hashlib
+from itertools import islice
 import json
 import os
 from pathlib import Path
@@ -19,6 +21,7 @@ import time
 import zipfile
 
 import ci_retry
+from staging_cd_build_cargo_keys import CARGO_NAMESPACE
 
 REPO = "ChronoAIProject/cma"
 WORKFLOW = ".github/workflows/staging-cd.yml"
@@ -55,9 +58,13 @@ def require(value, reason="refused"):
         raise Refused(reason)
 
 
-def artifact_name(component):
+def artifact_name(component, family=None):
     require(component in COMPONENTS, "component")
-    return "cma-cd-cargo-" + component
+    if family is None:
+        return "cma-cd-cargo-" + component
+    require(re.fullmatch(re.escape(CARGO_NAMESPACE + component + "-") + r"[0-9a-f]{64}-", family),
+            "family")
+    return family.removesuffix("-")
 
 
 def context(env):
@@ -102,8 +109,8 @@ def on_develop(root, source, head, timeout):
     return result.returncode == 0 and source in result.stdout.split()
 
 
-def validate_artifact(artifact, component):
-    require(isinstance(artifact, dict) and artifact.get("name") == artifact_name(component)
+def validate_artifact(artifact, name):
+    require(isinstance(artifact, dict) and artifact.get("name") == name
             and artifact.get("expired") is False and type(artifact.get("id")) is int and artifact["id"] > 0
             and type(artifact.get("size_in_bytes")) is int
             and 0 < artifact["size_in_bytes"] <= MAX_ARTIFACT_BYTES
@@ -140,6 +147,12 @@ def validate_producer(run, jobs, artifact, component):
     require(len(matches) == 1 and matches[0].get("status") == "completed"
             and matches[0].get("conclusion") == "success" and matches[0].get("head_sha") == source
             and matches[0].get("run_id") == run_id and matches[0].get("run_attempt") == attempt, "producer")
+    # A different family can leave an older attempt's artifact behind on a
+    # rerun. Bind the upload to the successful Publish job of the same attempt.
+    started, created, completed = (datetime.fromisoformat(value) for value in (
+        matches[0].get("started_at"), artifact.get("created_at"), matches[0].get("completed_at")))
+    require(all(instant.tzinfo is not None for instant in (started, created, completed))
+            and started <= created <= completed, "producer")
     return {"producer_run": run_id, "producer_attempt": attempt, "producer_source": source}
 
 
@@ -151,7 +164,7 @@ def file_digest(path):
     return "sha256:" + value.hexdigest()
 
 
-def unpack(archive_path, artifact, destination):
+def unpack(archive_path, artifact, destination, family):
     item = archive_path.lstat()
     require(stat.S_ISREG(item.st_mode) and item.st_size <= MAX_ARTIFACT_BYTES, "archive")
     require(file_digest(archive_path) == artifact["digest"], "digest")
@@ -165,6 +178,14 @@ def unpack(archive_path, artifact, destination):
                     and 0 < member.file_size <= MAX_ARTIFACT_BYTES, "members")
             total += member.file_size
         require(total <= MAX_ARTIFACT_BYTES, "members")
+        # The name is only a lookup hint. Check the sealed bundle's own prefix
+        # before extracting its large mounts or returning it to the build.
+        manifest = archive.getinfo("manifest.json")
+        require(manifest.file_size < 4096, "manifest")
+        metadata = json.loads(archive.read(manifest))
+        prefix = metadata.get("prefix") if isinstance(metadata, dict) else None
+        require(isinstance(prefix, str) and re.fullmatch(re.escape(family) + r"[0-9a-f]{64}-", prefix),
+                "family")
         destination.mkdir(mode=0o700)
         for member in members:
             with archive.open(member) as source, (destination / member.filename).open("xb") as target:
@@ -188,6 +209,8 @@ FAILURES = (Refused, KeyError, TypeError, ValueError, AttributeError, EOFError, 
 def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develop, sleep=time.sleep):
     destination = context(env)
     component = env["CD_COMPONENT"]
+    family = env.get("CD_CARGO_CACHE_FAMILY", "")
+    names = (artifact_name(component, family), artifact_name(component))
     require(not destination.exists() and not destination.is_symlink(), "destination")
     destination.parent.mkdir(mode=0o700, exist_ok=True)
     require(destination.parent.is_dir() and not destination.parent.is_symlink(), "destination")
@@ -208,18 +231,28 @@ def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develo
         return ci_retry.call(attempt, name="cargo-artifact-read", classify=ci_retry.classify,
                              deadline=deadline, clock=clock, sleep=sleep)
 
+    def candidates():
+        # Family-specific names avoid fetching a multi-GiB archive from a
+        # different toolchain. Legacy names bridge the artifact retention window.
+        for name in names:
+            if clock() >= deadline:
+                return
+            listing = read(f"repos/{REPO}/actions/artifacts?name={name}&per_page={LISTING}", 10)
+            require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list), "listing")
+            rows = [row for row in listing["artifacts"] if isinstance(row, dict)
+                    and row.get("name") == name and isinstance(row.get("workflow_run"), dict)
+                    and row["workflow_run"].get("head_branch") == "develop"
+                    and type(row["workflow_run"].get("repository_id")) is int
+                    and row["workflow_run"].get("head_repository_id") == row["workflow_run"]["repository_id"]]
+            rows.sort(key=lambda row: row.get("id") if type(row.get("id")) is int else 0, reverse=True)
+            for row in rows:
+                yield name, row
+
     root = Path.cwd() if root is None else root
-    listing = read(f"repos/{REPO}/actions/artifacts?name={artifact_name(component)}&per_page={LISTING}", 10)
-    require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list), "listing")
-    rows = [row for row in listing["artifacts"] if isinstance(row, dict)
-            and isinstance(row.get("workflow_run"), dict) and row["workflow_run"].get("head_branch") == "develop"
-            and type(row["workflow_run"].get("repository_id")) is int
-            and row["workflow_run"].get("head_repository_id") == row["workflow_run"]["repository_id"]]
-    rows.sort(key=lambda row: row.get("id") if type(row.get("id")) is int else 0, reverse=True)
     download = destination.parent / "artifact.zip"
-    for artifact in rows[:CANDIDATES]:
+    for name, artifact in islice(candidates(), CANDIDATES):
         try:
-            origin = validate_artifact(artifact, component)
+            origin = validate_artifact(artifact, name)
             require(str(origin["id"]) != env["GITHUB_RUN_ID"], "self")
             require(ancestry(root, origin["head_sha"], env["GITHUB_SHA"], remaining(10)), "ancestry")
             run = read(f"repos/{REPO}/actions/runs/{origin['id']}", 10)
@@ -228,7 +261,7 @@ def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develo
             jobs = read(f"repos/{REPO}/actions/runs/{origin['id']}/attempts/{attempt}/jobs?per_page=100", 10)
             producer = validate_producer(run, jobs, artifact, component)
             read(f"repos/{REPO}/actions/artifacts/{artifact['id']}/zip", DOWNLOAD_SECONDS, download)
-            unpack(download, artifact, destination)
+            unpack(download, artifact, destination, family)
             return {"state": "RESTORED", **producer, "artifact_id": artifact["id"],
                     "artifact_digest": artifact["digest"]}
         except FAILURES as error:

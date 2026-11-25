@@ -280,9 +280,11 @@ function PendingQueuedEdit({ text }: { readonly text: string }) {
 export function UnappliedQueuedEdits({
   drafts,
   onDismiss,
+  canUse,
 }: {
   readonly drafts: readonly { key: string; text: string }[];
   readonly onDismiss?: (key: string) => void;
+  readonly canUse?: () => boolean;
 }) {
   if (!drafts.length) return null;
   return (
@@ -294,6 +296,7 @@ export function UnappliedQueuedEdits({
           label="Unapplied edit"
           description="The queued message changed before this edit could be applied. Copy your draft to use it again."
           onDismiss={onDismiss && (() => onDismiss(key))}
+          canUse={canUse}
         />
       ))}
     </section>
@@ -305,11 +308,13 @@ function SavedQueuedEdit({
   label,
   description,
   onDismiss,
+  canUse,
 }: {
   readonly text: string;
   readonly label: string;
   readonly description: string;
   readonly onDismiss?: () => void;
+  readonly canUse?: () => boolean;
 }) {
   const [copy, setCopy] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
   const [dismissFailed, setDismissFailed] = useState(false);
@@ -324,6 +329,7 @@ function SavedQueuedEdit({
         size="sm"
         disabled={copy === 'copying'}
         onClick={async () => {
+          if (canUse?.() === false) return;
           setCopy('copying');
           try {
             await navigator.clipboard.writeText(text);
@@ -339,6 +345,7 @@ function SavedQueuedEdit({
         <Button
           size="sm"
           onClick={() => {
+            if (canUse?.() === false) return;
             try {
               onDismiss();
             } catch {

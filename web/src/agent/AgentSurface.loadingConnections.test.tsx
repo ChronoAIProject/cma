@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, agentClient } from '../test/agent';
 import { workspaceFixture, sandboxFixture } from '../test/hierarchy';
 import { connectionClient, type ConnectionReport } from '../connections/client';
@@ -7,6 +8,9 @@ import { AgentSurface } from './AgentSurface';
 import { accessRequests } from './accessRequests';
 import { conversationFromTranscript } from './conversation';
 import type { AgentController } from './controller';
+import { createClient } from '@cma/client';
+import { AgentV2Session } from './transport/client';
+import { agentTransportJournal, clearAgentTransport } from './transport/journal';
 
 const connected: ConnectionReport = {
   owner: 'owner',
@@ -304,4 +308,105 @@ it('rejects an early result for a different owner after the conversation finishe
     target: { value: 'Not sent' },
   });
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+});
+
+it('shows a settled local queued edit with confirmed owner access during connection verification', async () => {
+  sessionStorage.clear();
+  const owner = 'owner';
+  const journal = agentTransportJournal(sessionStorage, owner, 'agt_1');
+  journal.select(true);
+  const intent = journal.queuedInputs.retain({
+    key: 'edit-key',
+    responseId: 'response-id',
+    commandId: 'command-id',
+    revision: 1,
+    original: 'Original',
+    action: 'edit',
+    text: 'My unapplied draft',
+  });
+  journal.queuedInputs.settle(intent, true);
+  const ready = controller();
+  if (ready.state.status !== 'ready') throw new Error('Ready fixture');
+  const dismiss = vi.fn((key: string) => journal.queuedInputs.dismissUnappliedEdit(key));
+  const session = new AgentV2Session(createClient(), journal, owner, {
+    storage: sessionStorage,
+    currentUser: async () => owner,
+  });
+  const queuedInputs = {
+    items: [],
+    outcomes: [],
+    managedCommandIds: new Set<string>(),
+    unappliedEdits: journal.queuedInputs
+      .unappliedEdits()
+      .map(({ key, text }) => ({ key, text: text! })),
+    dismissUnappliedEdit: dismiss,
+    refresh: vi.fn(),
+    edit: vi.fn(),
+    remove: vi.fn(),
+    recover: vi.fn(),
+  };
+  const pendingConnection = deferred<ConnectionReport>();
+  vi.mocked(connectionClient.check).mockReturnValue(new Promise(() => {}));
+  vi.mocked(connectionClient.check).mockReturnValueOnce(pendingConnection.promise);
+  let view = setup({
+    controller: {
+      ...ready,
+      state: { ...ready.state, v2: session },
+      queuedInputs,
+      controlBaselineReady: true,
+    },
+  });
+  const draft = () => screen.queryByRole('textbox', { name: 'Unapplied edit' });
+  expect(draft()).toHaveValue('My unapplied draft');
+  expect(draft()).toHaveAttribute('readonly');
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  await act(async () => pendingConnection.resolve({ ...connected, owner: 'another-owner' }));
+  expect(draft()).toBeNull();
+  expect(
+    screen.getByText('Your CMA account changed. Open the Agent again to continue.'),
+  ).toBeVisible();
+  const retry = deferred<ConnectionReport>();
+  vi.mocked(connectionClient.check).mockReturnValueOnce(retry.promise);
+  fireEvent.click(screen.getByRole('button', { name: 'Retry connections' }));
+  expect(draft()).toBeNull();
+  await act(async () => retry.resolve(connected));
+  expect(draft()).toHaveValue('My unapplied draft');
+  view.rerender(<AgentSurface {...view.props} accessUncertain />);
+  expect(draft()).toBeNull();
+  view.rerender(<AgentSurface {...view.props} accessAuthorized={false} />);
+  expect(draft()).toBeNull();
+  view.rerender(<AgentSurface {...view.props} viewerId="another-owner" />);
+  expect(draft()).toBeNull();
+  view.rerender(<AgentSurface {...view.props} />);
+  expect(draft()).toHaveValue('My unapplied draft');
+  view.unmount();
+  const reopened = agentTransportJournal(sessionStorage, owner, 'agt_1');
+  const reopenedSession = new AgentV2Session(createClient(), reopened, owner, {
+    storage: sessionStorage,
+    currentUser: async () => owner,
+  });
+  view = setup({
+    controller: {
+      ...ready,
+      state: { ...ready.state, v2: reopenedSession },
+      queuedInputs,
+      controlBaselineReady: true,
+    },
+  });
+  expect(draft()).toHaveValue('My unapplied draft');
+  const user = userEvent.setup();
+  const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+  await user.click(screen.getByRole('button', { name: 'Copy edit' }));
+  expect(copy).toHaveBeenCalledExactlyOnceWith('My unapplied draft');
+  await user.click(screen.getByRole('button', { name: 'Dismiss draft' }));
+  expect(dismiss).toHaveBeenCalledExactlyOnceWith('edit-key');
+  expect(reopened.queuedInputs.unappliedEdits()).toEqual([]);
+  clearAgentTransport(sessionStorage);
+  agentTransportJournal(sessionStorage, owner, 'agt_1').select(true);
+  view.rerender(<AgentSurface {...view.props} />);
+  expect(draft()).toBeNull();
+  expect(queuedInputs.edit).not.toHaveBeenCalled();
+  expect(queuedInputs.remove).not.toHaveBeenCalled();
+  expect(queuedInputs.recover).not.toHaveBeenCalled();
+  expect(ready.send).not.toHaveBeenCalled();
 });

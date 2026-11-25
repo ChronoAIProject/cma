@@ -45,6 +45,20 @@ export const triggerDispatch: Record<string, Dispatch> = {
     client.launches.entryIntent(param('public_id')),
   'POST /api/v1/triggers/public/{public_id}/launches': ({ client, param, body, command }) =>
     client.launches.createOrResume(param('public_id'), body, command),
+  'POST /api/v2/triggers/public/{public_id}/launches': ({
+    client,
+    param,
+    body,
+    command,
+    fixture,
+  }) =>
+    client.launches.createOrResumeBound(param('public_id'), body, {
+      ...command,
+      expectedSubject: Buffer.from(
+        (fixture.request.headers['x-cma-expected-subject'] ?? '').slice(3),
+        'base64url',
+      ).toString('utf8'),
+    }),
   'GET /api/v1/launches': ({ client, options }) => client.launches.list(options),
   'GET /api/v1/launches/{id}': ({ client, param }) => client.launches.read(param('id')),
   'POST /api/v1/launches/{id}/start': ({ client, param, body, command }) =>

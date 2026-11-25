@@ -214,10 +214,10 @@ class CacheTests(unittest.TestCase):
         self.assertIn("--exclude=./src", compact)
         self.assertIn(f"max_expanded={bound}", compact)
         self.assertIn(f"max_compressed={cache.MAX_ARCHIVE_BYTES}", compact)
-        self.assertIn('"$registry" -cf - $skip_src .', compact)
+        self.assertIn('archive_stream "$registry" "$registry_archive" $skip_src .', compact)
         self.assertIn("target_entry=.\n", compact)
-        self.assertIn('"$target" -cf - "$target_entry"', compact)
-        self.assertIn('"$target" -cf - "$@"', compact)
+        self.assertIn('archive_stream "$target" "$target_archive" "$target_entry"', compact)
+        self.assertIn('archive_stream "$target" "$target_archive" "$@"', compact)
         self.assertNotIn("rm -rf /cache", compact)
         legacy = cache.dockerfile("extract", bound, compact_registry=True, incremental_only=True)
         self.assertIn("--exclude=./src", legacy)
@@ -295,6 +295,56 @@ class CacheTests(unittest.TestCase):
                     cache.seal(output, self.prefix, family="example", max_archive=max_compressed, max_content=1000000)
                 with tarfile.open(output / "target.tar.gz") as archive:
                     self.assertTrue(all("cma-111" in member.name for member in archive))
+
+    def test_many_candidates_bound_the_number_of_archive_compressions(self):
+        import random
+        import shutil
+
+        registry, target, output = (self.root / name for name in ("registry", "target", "export"))
+        registry.mkdir()
+        (registry / "package.crate").write_bytes(b"package")
+        source = random.Random(3358)
+        for number in range(30):
+            group = target / "release/incremental" / f"crate-{number:02d}" / "s-final"
+            group.mkdir(parents=True)
+            (group / "work-products.bin").write_bytes(source.randbytes(32768))
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        calls = self.root / "gzip-calls"
+        gzip = shutil.which("gzip")
+        self.assertIsNotNone(gzip)
+        wrapper = bin_dir / "gzip"
+        wrapper.write_text('#!/bin/sh\n[ "$1" != "-1" ] || echo compress >> "$COUNT_FILE"\nexec "$REAL_GZIP" "$@"\n')
+        wrapper.chmod(0o755)
+        env = {**os.environ, "COPYFILE_DISABLE": "1", "PATH": f"{bin_dir}:{os.environ['PATH']}",
+               "COUNT_FILE": str(calls), "REAL_GZIP": gzip}
+        script = cache.export_script(400000, 140000, 500)
+        subprocess.run(["bash", "-c", script, "export", str(registry), str(target), str(output)], env=env, check=True)
+        self.assertLessEqual(len(calls.read_text().splitlines()), 5)
+        self.assertTrue((output / "compacted").exists())
+        (output / "compacted").unlink()
+        cache.seal(output, self.prefix, family="example", max_archive=140000, max_content=400000)
+
+    def test_gateway_compaction_keeps_the_executable_and_gateway_crates_first(self):
+        import random
+
+        registry, target, output = (self.root / name for name in ("registry", "target", "export"))
+        registry.mkdir()
+        (registry / "package.crate").write_bytes(b"package")
+        source = random.Random(2098)
+        groups = ("aaa-other-111", "cmaeg-222", "cmaeg_core-333")
+        for name in groups:
+            group = target / "release/incremental" / name / "s-final"
+            group.mkdir(parents=True)
+            (group / "work-products.bin").write_bytes(source.randbytes(12000))
+        script = cache.export_script(1000000, 32000, 100)
+        subprocess.run(["bash", "-c", script, "export", str(registry), str(target), str(output)],
+                       env={**os.environ, "COPYFILE_DISABLE": "1"}, check=True)
+        self.assertEqual((output / "compacted").read_text().strip(), "2")
+        (output / "compacted").unlink()
+        cache.seal(output, self.prefix, family="example", max_archive=32000, max_content=1000000)
+        with tarfile.open(output / "target.tar.gz") as archive:
+            self.assertEqual({Path(member.name).parts[2] for member in archive}, set(groups[1:]))
 
     def test_am_compaction_refuses_when_no_complete_group_fits(self):
         registry = self.root / "registry"

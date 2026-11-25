@@ -48,6 +48,7 @@ impl MongoSandboxStore {
             sandbox_snapshot_reads: false,
             sandbox_batched_reads: false,
             bounded_response_reads: false,
+            active_log_proofs: false,
             writer_policy: Default::default(),
             bindings,
             client: client.clone(),

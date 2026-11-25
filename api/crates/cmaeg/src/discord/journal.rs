@@ -191,10 +191,13 @@ impl DurableJournal {
         }
         result
     }
-    pub(super) async fn discard_checkpoint(&self) -> Result<(), GatewayError> {
+    pub(super) async fn discard_checkpoint(&self, release_lease: bool) -> Result<(), GatewayError> {
         let _guard = self.serial.lock().await;
         let (mut lease, version) = self.fenced().await?;
         lease.checkpoint = None;
+        if release_lease {
+            lease.lease_until = 0;
+        }
         self.save(&lease, version).await
     }
     pub async fn release(&self) -> Result<(), GatewayError> {

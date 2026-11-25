@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 
 mod activity_indexes;
 mod activity_page_index;
+pub(in crate::store) mod agent_log_active_proofs;
 mod agent_log_segments;
 pub(in crate::store) mod agent_log_source_keys;
 mod agent_owner_index;
@@ -209,7 +210,11 @@ async fn apply_indexes(
         .map_err(|_| "migration requires a supported replica set or mongos")?;
     if matches!(
         step,
-        Step::BindingIndexes | Step::MeasuredCustody | Step::MeasuredBatches | Step::MeasuredIndex
+        Step::BindingIndexes
+            | Step::MeasuredCustody
+            | Step::MeasuredBatches
+            | Step::MeasuredIndex
+            | Step::AgentLogActiveProofs
     ) {
         step.inspect(database).await?;
     }

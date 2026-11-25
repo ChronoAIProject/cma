@@ -163,6 +163,10 @@ impl DesktopAuthFixture {
         self.provider.release.notify_one();
     }
 
+    pub(crate) fn database_name(&self) -> &str {
+        self.db.name()
+    }
+
     pub(crate) async fn cleanup(mut self) {
         let server = self.server.take().unwrap();
         server.abort();

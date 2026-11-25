@@ -22,6 +22,9 @@ pub(in crate::store) async fn read(
     if !is_segmented(store, agent, &mut session).await? {
         return legacy(store, agent, after, limit, &mut session).await;
     }
+    if let Some(page) = sealed_page(store, agent, after, limit, &mut session).await? {
+        return Ok(Some(page));
+    }
     let source = capture::capture(store, agent, &mut session, capture::CaptureMode::Snapshot)
         .await
         .map_err(segment_error)?;
@@ -47,6 +50,82 @@ pub(in crate::store) async fn read(
             entries.push(entry);
         }
     }
+    Ok(Some(entries))
+}
+
+/// A sealed page can verify its original rows against immutable leaf digests
+/// without materializing unrelated active history. Keep semantic projection
+/// and head validation in the same source snapshot.
+async fn sealed_page(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    after: u64,
+    limit: u16,
+    session: &mut ClientSession,
+) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+    let row = store
+        .agents
+        .find_one(doc! {"_id":agent.id.as_str()})
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut *session)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        .ok_or(SandboxStoreError::NotFound)?;
+    if crate::store::agents::read_agent(&row)? != *agent {
+        return Err(SandboxStoreError::SequenceConflict);
+    }
+    let head = segments::read_head(store, &row, session, true)
+        .await
+        .map_err(segment_error)?;
+    let through = agent
+        .conversation
+        .last_seq
+        .min(after.saturating_add(u64::from(limit)));
+    if after >= through || through >= head.active_start_seq as u64 {
+        return Ok(None);
+    }
+    segments::verify_terminal_seal(store, &head, session)
+        .await
+        .map_err(segment_error)?;
+    segments::projection::read(store, agent, &head, session)
+        .await
+        .map_err(segment_error)?;
+    let mut entries = Vec::new();
+    let mut bytes = 2;
+    let mut full = false;
+    segments::visit_range(
+        store,
+        &head,
+        LogRange {
+            after,
+            through,
+            limit,
+        },
+        session,
+        true,
+        |entry| {
+            validate_lineage(agent, &entry)?;
+            if full {
+                return Ok(());
+            }
+            let size = serde_json::to_vec(&entry)
+                .map_err(|_| SandboxStoreError::Corrupt("invalid Agent event".into()))?
+                .len()
+                + usize::from(!entries.is_empty());
+            if bytes + size > MAX_BYTES {
+                if entries.is_empty() {
+                    return Err(SandboxStoreError::AgentLogCapacityExceeded);
+                }
+                full = true;
+            } else {
+                bytes += size;
+                entries.push(entry);
+            }
+            Ok(())
+        },
+    )
+    .await
+    .map_err(segment_error)?;
     Ok(Some(entries))
 }
 

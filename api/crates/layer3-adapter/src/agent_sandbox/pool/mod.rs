@@ -19,15 +19,18 @@ pub use native_home_snapshots::{
     NativeHomeSnapshotObservation, NativeHomeSnapshotRequest, NativeHomeSnapshotSource,
 };
 pub use native_home_store::NativeHomeVolumes;
+mod binding_resources;
 mod management;
 mod model;
 mod pod_policy;
+mod startup_observation;
 pub use pod_policy::NativeFsGroupChangePolicy;
 mod reconciliation;
 mod recovery;
 mod retirement;
 mod retirement_inventory;
 mod runtime;
+mod spare_inventory;
 mod target_fence;
 pub use target_fence::NativePoolTarget;
 pub(crate) mod runtime_upgrade;
@@ -42,7 +45,7 @@ use super::{api_error, rejected, unavailable, AgentSandboxConfig, OWNER_LABEL};
 use crate::{HomeVolumePolicy, Result};
 
 pub use cleanup::{NativePoolCleanup, NativePoolMember};
-pub use control::NativePoolControl;
+pub use control::{NativePoolControl, NativePoolDrain};
 pub use home_origin::NativePoolHomeOrigin;
 pub use management::NativePoolConfiguration;
 pub use model::{
