@@ -8,7 +8,14 @@ pub(super) fn role_with_index_operation(
 ) -> Document {
     let mut grants: Vec<_> = COLLECTIONS
         .iter()
-        .filter(|name| ![retained_consents::COLLECTION, MEASURED_CUSTODY].contains(name))
+        .filter(|name| {
+            ![
+                retained_consents::COLLECTION,
+                MEASURED_CUSTODY,
+                USAGE_PROJECTIONS,
+            ]
+            .contains(name)
+        })
         .filter(|name| include_optional || !OPTIONAL_COLLECTIONS.contains(name))
         .map(|name| {
             let mut actions = ACTIONS.to_vec();
@@ -27,6 +34,7 @@ pub(super) fn role_with_index_operation(
         );
     }
     if include_optional {
+        grants.push(doc! {"resource":{"db":database,"collection":USAGE_PROJECTIONS},"actions":USAGE_PROJECTION_ACTIONS});
         // Detached legal receipts have no account or Sandbox selector. Their
         // writer can create the namespace and append receipts only.
         grants.push(doc! {"resource":{"db":database,"collection":retained_consents::COLLECTION},"actions":retained_consents::ACTIONS});

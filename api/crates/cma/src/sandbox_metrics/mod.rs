@@ -43,6 +43,10 @@ impl MetricsWorkers {
         .map_err(|e| e.to_string())?;
         let store = store.with_view_policy(config.usage_metrics.views.clone());
         store
+            .require_projection_schema()
+            .await
+            .map_err(|e| e.to_string())?;
+        store
             .initialize_allocation_buckets(store.view_policy.allocation_rollups_enabled)
             .await
             .map_err(|e| e.to_string())?;

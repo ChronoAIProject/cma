@@ -2,7 +2,7 @@ use super::*;
 use layer2_core::sandbox_metrics::{Report, ReportStatus};
 
 impl ReportingStore {
-    async fn initial_namespace(&self, report: &Report) -> Result<Document> {
+    pub(super) async fn initial_namespace(&self, report: &Report) -> Result<Document> {
         let job = self.collection(JOBS)
             .find_one(doc! {"_id":&report.report_id,"principal":&report.scope.principal,"admin":report.scope.admin})
             .max_time(DB_DEADLINE).await.map_err(unavailable)?.ok_or(MetricsError::NotFound)?;

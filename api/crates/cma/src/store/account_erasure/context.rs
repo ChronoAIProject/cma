@@ -362,7 +362,7 @@ pub(super) async fn load_cohort_with_receipt(
     if contexts.is_empty() {
         return Ok(contexts);
     }
-    history::discover(db, &mut contexts).await?;
+    history::discover(db, &mut contexts, !receipt.usage_projections_absent).await?;
     for context in &mut contexts {
         context
             .refresh(db)

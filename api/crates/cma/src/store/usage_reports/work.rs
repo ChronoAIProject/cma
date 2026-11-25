@@ -1,4 +1,4 @@
-use super::*;
+use super::{aggregate_projections, *};
 use crate::store::transaction_scope as tx;
 use layer2_core::sandbox_metrics::{Report, ReportStatus, Row, Sort};
 use mongodb::options::ReturnDocument;
@@ -65,11 +65,13 @@ impl ReportingStore {
         };
         // Cleanup is fenced in the same read-model transaction as the lease.
         // A delayed former worker cannot erase its successor's cached rows.
-        tx::run(&self.client, (self, &lease), |&(store, lease), session| {
+        let previous_projection = d.contains_key(aggregate_projections::GENERATION_FIELD);
+        tx::run(&self.client, (self, &lease, previous_projection), |&(store, lease, previous_projection), session| {
             Box::pin(async move {
         if store
             .collection(JOBS)
-            .update_one(lease.fence(), doc! {"$set":{"bytes":0_i64,"row_count":0_i64,"chart_count":0_i64,"record":encode(&lease.report)?,"logical_expires_at":lease.report.expires_at as i64,"expires_at":if lease.view.is_some() { mongodb::bson::Bson::Null } else { expires(lease.report.expires_at+86_400).into() }}})
+            .update_one(lease.fence(), doc! {"$set":{"bytes":0_i64,"row_count":0_i64,"chart_count":0_i64,"record":encode(&lease.report)?,"logical_expires_at":lease.report.expires_at as i64,"expires_at":if lease.view.is_some() { mongodb::bson::Bson::Null } else { expires(lease.report.expires_at+86_400).into() }},
+                "$unset":{aggregate_projections::GENERATION_FIELD:""}})
             .session(&mut *session)
             .await
             .map_err(tx::mongo)?
@@ -78,7 +80,8 @@ impl ReportingStore {
         {
             return Err(MetricsError::Unavailable.into());
         }
-        for collection in [ROWS, CHARTS] {
+        let projections = previous_projection.then_some(aggregate_projections::COLLECTION);
+        for collection in [ROWS, CHARTS].into_iter().chain(projections) {
             store.collection(collection)
                 .delete_many(doc! {"report_id":&lease.report.report_id})
                 .session(&mut *session)
@@ -104,7 +107,10 @@ impl ReportingStore {
             if !self.retire_expired_report(&d).await? {
                 continue;
             }
-            for collection in [ROWS, CHARTS] {
+            let projections = d
+                .contains_key(aggregate_projections::GENERATION_FIELD)
+                .then_some(aggregate_projections::COLLECTION);
+            for collection in [ROWS, CHARTS].into_iter().chain(projections) {
                 let result=self.db.run_command(doc! {"delete":collection,"deletes":[{"q":{"report_id":id},"limit":0}],"maxTimeMS":2000_i64})
                     .await.map_err(unavailable)?;
                 if result.get_array("writeErrors").is_ok_and(|v| !v.is_empty())
@@ -137,7 +143,12 @@ impl ReportingStore {
         // A scan is only a candidate: claiming or completing can advance its
         // generation/deadline before deletion. Retire the exact live record
         // first, conflicting with chunk transactions and excluding new claims.
+        let projection = candidate
+            .get(aggregate_projections::GENERATION_FIELD)
+            .cloned()
+            .unwrap_or_else(|| doc! {"$exists":false}.into());
         let filter = doc! {"_id":candidate.get_str("_id").map_err(unavailable)?,
+        aggregate_projections::GENERATION_FIELD:projection,
         "reserved":true,"generation":candidate.get_i64("generation").map_err(unavailable)?,
         "state":candidate.get_str("state").map_err(unavailable)?,
         "$expr":{"$or":[{"$lte":["$logical_expires_at",server_seconds()]},

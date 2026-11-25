@@ -100,24 +100,18 @@ pub async fn read_series(
     } else {
         "sandbox_id"
     };
-    let selected: Vec<String> = if let Some(id) = &query.series_id {
-        vec![id.clone()]
-    } else if query.group_by == GroupBy::Total {
-        Vec::new()
-    } else {
-        let mut c=collection.aggregate([doc!{"$match":{"report_id":&report.report_id,"metric":query.metric.index() as i64,"chunk":0_i64}},
-            doc!{"$group":{"_id":format!("${field}"),"rank":{"$sum":"$rank"}}},doc!{"$sort":{"rank":-1,"_id":1}},doc!{"$limit":top as i64}]).max_time(db_deadline).await.map_err(unavailable)?;
-        let mut ids = Vec::new();
-        while let Some(d) = c.try_next().await.map_err(unavailable)? {
-            ids.push(d.get_str("_id").map_err(unavailable)?.into());
+    let selected = match (&query.series_id, query.group_by) {
+        (Some(id), _) => vec![id.clone()],
+        (None, GroupBy::Total) => Vec::new(),
+        (None, _) => {
+            ranked_series(&collection, report, query.metric, field, top, db_deadline).await?
         }
-        ids
     };
     let mut filter = doc! {"report_id":&report.report_id,"metric":query.metric.index() as i64};
     if let Some(id) = &query.series_id {
         filter.insert(field, id);
     }
-    let mut cursor = collection
+    let cursor = collection
         .find(filter)
         .sort(doc! {"sandbox_id":1,"chunk":1})
         .batch_size(100)
@@ -125,54 +119,31 @@ pub async fn read_series(
         .await
         .map_err(unavailable)?;
     let mut grouped = BTreeMap::<String, Vec<Bucket>>::new();
-    let mut sandbox = String::new();
-    let mut group = String::new();
-    let mut sparse = BTreeMap::new();
-    let mut expectations = Vec::new();
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while let Some(doc) = cursor.try_next().await.map_err(unavailable)? {
-        if std::time::Instant::now() > deadline {
-            return Err(MetricsError::Busy);
-        }
-        let next = doc.get_str("sandbox_id").map_err(unavailable)?;
-        if !sandbox.is_empty() && sandbox != next {
-            merge_sandbox(
-                &mut grouped,
-                &group,
-                &sparse,
-                &expectations,
-                report,
-                query.metric,
-            );
-            sparse.clear();
-            expectations.clear();
-        }
-        sandbox = next.into();
-        let identity = doc.get_str(field).map_err(unavailable)?;
-        group = if query.group_by == GroupBy::Total {
-            "total"
-        } else if selected.iter().any(|s| s == identity) {
-            identity
-        } else {
-            "other"
-        }
-        .into();
-        let record: ChartChunk = decode(&doc)?;
-        expectations.extend(record.expectations);
-        for p in record.buckets {
-            sparse.insert(p.from, p);
-        }
-    }
-    if !sandbox.is_empty() {
-        merge_sandbox(
-            &mut grouped,
-            &group,
-            &sparse,
-            &expectations,
-            report,
-            query.metric,
-        );
-    } else if query.series_id.is_some() {
+    fold_sandbox_series(
+        cursor,
+        report,
+        query.metric,
+        deadline,
+        |sandbox, owner, points| {
+            let identity = if query.group_by == GroupBy::Owner {
+                owner
+            } else {
+                sandbox
+            };
+            let group = if query.group_by == GroupBy::Total {
+                "total"
+            } else if selected.iter().any(|s| s == identity) {
+                identity
+            } else {
+                "other"
+            };
+            merge_buckets(grouped.entry(group.into()).or_default(), &points);
+            Ok(())
+        },
+    )
+    .await?;
+    if grouped.is_empty() && query.series_id.is_some() {
         return Err(MetricsError::NotFound);
     }
     let lines = grouped
@@ -196,27 +167,83 @@ pub async fn read_series(
     })
 }
 
-fn merge_sandbox(
-    grouped: &mut BTreeMap<String, Vec<Bucket>>,
-    group: &str,
-    sparse: &BTreeMap<u64, Bucket>,
-    expectations: &[Expectation],
+pub(super) async fn ranked_series(
+    collection: &Collection<Document>,
     report: &Report,
     metric: Metric,
-) {
-    let complete = series::complete(
-        sparse,
-        expectations,
-        metric,
-        report.effective_range,
-        report.query.step_seconds,
-    );
-    let target = grouped.entry(group.into()).or_default();
+    field: &str,
+    top: usize,
+    db_deadline: Duration,
+) -> Result<Vec<String>> {
+    let mut cursor = collection
+        .aggregate([
+            doc! {"$match":{"report_id":&report.report_id,"metric":metric.index() as i64,"chunk":0_i64}},
+            doc! {"$group":{"_id":format!("${field}"),"rank":{"$sum":"$rank"}}},
+            doc! {"$sort":{"rank":-1,"_id":1}},
+            doc! {"$limit":top as i64},
+        ])
+        .max_time(db_deadline)
+        .await
+        .map_err(unavailable)?;
+    let mut ids = Vec::new();
+    while let Some(doc) = cursor.try_next().await.map_err(unavailable)? {
+        ids.push(doc.get_str("_id").map_err(unavailable)?.into());
+    }
+    Ok(ids)
+}
+
+pub(super) async fn fold_sandbox_series(
+    mut cursor: mongodb::Cursor<Document>,
+    report: &Report,
+    metric: Metric,
+    deadline: std::time::Instant,
+    mut consume: impl FnMut(&str, &str, Vec<Bucket>) -> Result<()>,
+) -> Result<()> {
+    let mut sandbox = String::new();
+    let mut owner = String::new();
+    let mut sparse = BTreeMap::new();
+    let mut expectations = Vec::new();
+    let complete = |sparse: &BTreeMap<u64, Bucket>, expectations: &[Expectation]| {
+        series::complete(
+            sparse,
+            expectations,
+            metric,
+            report.effective_range,
+            report.query.step_seconds,
+        )
+    };
+    while let Some(doc) = cursor.try_next().await.map_err(unavailable)? {
+        if std::time::Instant::now() > deadline {
+            return Err(MetricsError::Busy);
+        }
+        let next = doc.get_str("sandbox_id").map_err(unavailable)?;
+        if !sandbox.is_empty() && sandbox != next {
+            consume(&sandbox, &owner, complete(&sparse, &expectations))?;
+            sparse.clear();
+            expectations.clear();
+        }
+        sandbox.clear();
+        sandbox.push_str(next);
+        owner.clear();
+        owner.push_str(doc.get_str("owner").map_err(unavailable)?);
+        let record: ChartChunk = decode(&doc)?;
+        expectations.extend(record.expectations);
+        for point in record.buckets {
+            sparse.insert(point.from, point);
+        }
+    }
+    if !sandbox.is_empty() {
+        consume(&sandbox, &owner, complete(&sparse, &expectations))?;
+    }
+    Ok(())
+}
+
+pub(super) fn merge_buckets(target: &mut Vec<Bucket>, points: &[Bucket]) {
     if target.is_empty() {
-        *target = complete;
+        target.extend_from_slice(points);
     } else {
-        for (a, b) in target.iter_mut().zip(&complete) {
-            a.merge(b);
+        for (target, point) in target.iter_mut().zip(points) {
+            target.merge(point);
         }
     }
 }

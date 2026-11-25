@@ -25,6 +25,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     super::usage_reports::JOBS,
     super::usage_reports::ROWS,
     super::usage_reports::CHARTS,
+    super::migrations::usage_projections::COLLECTION,
     super::usage_reports::CONTROL,
     super::request_limits::COLLECTION,
     "visitor_launch_days",
@@ -187,6 +188,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
 ];
 // These stores activate separately. Existing credentials still start while disabled.
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
+    super::migrations::usage_projections::COLLECTION,
     retained_consents::COLLECTION,
     super::migrations::measured_custody::COLLECTION,
     super::sandbox_usage_export::CAPTURES,
@@ -208,6 +210,8 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     "resource_execution_records_v1",
     "resource_revocation_operations_v1",
 ];
+const USAGE_PROJECTIONS: &str = super::migrations::usage_projections::COLLECTION;
+const USAGE_PROJECTION_ACTIONS: &[&str] = &["find", "insert", "remove", "listIndexes"];
 const MEASURED_CUSTODY: &str = super::migrations::measured_custody::COLLECTION;
 pub(super) const MEASURED_CUSTODY_ACTIONS: &[&str] = &["find", "insert", "listIndexes"];
 const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
@@ -308,6 +312,8 @@ fn validate_index_role(
                 action == "listCollections"
             } else if collection == super::provenance_progress::COLLECTION {
                 super::provenance_progress::ACTIONS.contains(&action)
+            } else if collection == USAGE_PROJECTIONS {
+                USAGE_PROJECTION_ACTIONS.contains(&action)
             } else if collection == MEASURED_CUSTODY {
                 MEASURED_CUSTODY_ACTIONS.contains(&action)
             } else if collection == retained_consents::COLLECTION {
@@ -350,6 +356,13 @@ fn validate_index_role(
     {
         return Err(denied());
     }
+    if grants.get(USAGE_PROJECTIONS).is_some_and(|actions| {
+        !USAGE_PROJECTION_ACTIONS
+            .iter()
+            .all(|action| actions.contains(*action))
+    }) {
+        return Err(denied());
+    }
     if grants.get(MEASURED_CUSTODY).is_some_and(|actions| {
         !MEASURED_CUSTODY_ACTIONS
             .iter()
@@ -357,6 +370,7 @@ fn validate_index_role(
     }) || !COLLECTIONS.iter().all(|name| {
         *name == retained_consents::COLLECTION
             || *name == MEASURED_CUSTODY
+            || *name == USAGE_PROJECTIONS
             || (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
             || ACTIONS
                 .iter()

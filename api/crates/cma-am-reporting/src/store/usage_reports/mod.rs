@@ -1,16 +1,20 @@
 mod admission;
 pub use admission::{Admission, AdmissionBudget, AdmissionRequest, CONTROL, JOBS};
 mod chart_encoding;
+mod chart_projections;
 mod charts;
 mod control;
 mod controlled_updates;
 mod owners;
+mod projection_reads;
 mod reports;
 mod rows;
 
+pub use chart_projections::{build_chart_projections, ProjectionBatch};
 pub use charts::{chart_documents, read_series};
 pub use control::fence as control_fence;
 pub use owners::{read_owner_page, validate_owner_page};
+pub use projection_reads::read_chart_projection;
 pub use reports::report_membership_pipeline;
 pub use rows::{read_row, read_row_page};
 

@@ -62,7 +62,11 @@ const SOURCES: &[Source] = &[
     source!("sandbox_usage_reports", "principal", Reports => "_id"),
 ];
 
-pub(super) async fn discover(db: &Database, contexts: &mut [Context]) -> Result<(), Error> {
+pub(super) async fn discover(
+    db: &Database,
+    contexts: &mut [Context],
+    usage_projections_present: bool,
+) -> Result<(), Error> {
     let subjects: Vec<_> = contexts
         .iter()
         .map(|context| context.subject.clone())
@@ -85,6 +89,20 @@ pub(super) async fn discover(db: &Database, contexts: &mut [Context]) -> Result<
             _ => {}
         }
         scan(db, contexts, source, filter, &[source.owner], false).await?;
+    }
+    if usage_projections_present {
+        // A materialized aggregate derives from all frozen members, including
+        // members of an administrator's report.
+        let source = source!("sandbox_usage_report_rows", "owner", Reports => "report_id");
+        scan(
+            db,
+            contexts,
+            &source,
+            doc! {"owner":{"$in":&subjects}},
+            &["owner"],
+            false,
+        )
+        .await?;
     }
     activity::protect_organizations(db, contexts).await?;
     // Actor attribution never grants personal ownership of organization data.

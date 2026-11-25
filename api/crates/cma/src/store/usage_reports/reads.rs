@@ -141,6 +141,18 @@ impl MetricsStore for ReportingStore {
         self.read_owners(report, query).await
     }
     async fn series(&self, report: &Report, query: SeriesQuery) -> Result<Series> {
-        cma_am_reporting::read_series(self.collection(CHARTS), report, query, DB_DEADLINE).await
+        let charts = self.collection(CHARTS);
+        let Some(generation) = self.projected_generation(report).await? else {
+            return cma_am_reporting::read_series(charts, report, query, DB_DEADLINE).await;
+        };
+        cma_am_reporting::read_chart_projection(
+            &self.collection(aggregate_projections::COLLECTION),
+            charts,
+            report,
+            query,
+            generation,
+            DB_DEADLINE,
+        )
+        .await
     }
 }

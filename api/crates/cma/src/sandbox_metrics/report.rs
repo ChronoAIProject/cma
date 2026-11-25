@@ -414,6 +414,12 @@ impl MetricsWorkers {
             "sandbox report coverage");
         report.summary = Some(summary);
         trace
+            .stage(
+                Stage::Write,
+                self.store.prepare_aggregate_projections(lease, &report),
+            )
+            .await?;
+        trace
             .stage(Stage::Authority, self.store.reauthorize(&report))
             .await?;
         if now() >= report.expires_at {

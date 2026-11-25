@@ -1,11 +1,13 @@
 //! Bounded owner rankings over the frozen report, never a new collection job.
-use super::*;
+use super::{aggregate_projections, *};
+use cma_am_reporting::ProjectionBatch;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::{
     cursor::Cursor, disambiguate_options_with_context, option_label, FilterOption, Metric,
     OptionContext, OptionKind, Order, OwnerAllocation, OwnerAllocationQuery, OwnerAllocations,
     OwnerContextAccess, Report, Sort,
 };
+use std::time::Instant;
 
 impl ReportingStore {
     pub(super) async fn read_owner_allocations(
@@ -55,30 +57,41 @@ impl ReportingStore {
             doc! {"$sort":{"allocated_hours":-1,"_id":1}},
             doc! {"$limit":i64::from(limit)+1},
         ]);
-        let pipeline = [
-            doc! {"$match":{"report_id":&report.report_id}},
-            doc! {"$group":{"_id":"$owner",
-            "allocated_hours":{"$sum":format!("$record.allocated_period.{}",query.field())},
-            "sandbox_count":{"$sum":1_i64},
-            "complete":{"$min":"$record.allocated_period.complete"}}},
-            // Names must be resolved against the whole cohort: pages are later
-            // displayed together, including equal-context ties across a boundary.
-            // The thin identity facet stays inside Mongo's document/memory limits,
-            // the existing two-second DB deadline and five-second request budget.
-            doc! {"$facet":{"page":page,"count":[{"$count":"total"}],"identities":[
-                {"$project":{"_id":1}},
-                {"$sort":{"_id":1}},
-                {"$lookup":{"from":"users","localField":"_id","foreignField":"_id","as":"identity"}},
-                {"$project":{"name":{"$arrayElemAt":["$identity.display_name",0]},
-                    "first_seen_at":{"$arrayElemAt":["$identity.first_seen_at",0]}}}
-            ]}},
-        ];
+        let projected = self.projected_generation(report).await?;
+        let (collection, mut pipeline) = if let Some(generation) = projected {
+            (
+                aggregate_projections::COLLECTION,
+                vec![
+                    doc! {"$match":{"report_id":&report.report_id,"generation":generation,
+                    "document_schema_version":1_i64,"kind":"owner_allocation","metric":query.metric.index() as i64}},
+                    doc! {"$project":{"_id":"$series","allocated_hours":1,"sandbox_count":1,"complete":1}},
+                ],
+            )
+        } else {
+            (ROWS, owner_totals(report, query.field()).into())
+        };
+        // Resolve names across the entire cohort, including equal-context
+        // ties whose owners appear on different pages.
+        let mut facets = doc! {"page":page,"count":[{"$count":"total"}],"identities":[
+            {"$project":{"_id":1}},
+            {"$sort":{"_id":1}},
+            {"$lookup":{"from":"users","localField":"_id","foreignField":"_id","as":"identity"}},
+            {"$project":{"name":{"$arrayElemAt":["$identity.display_name",0]},
+                "first_seen_at":{"$arrayElemAt":["$identity.first_seen_at",0]}}}
+        ]};
+        if projected.is_some() {
+            facets.insert(
+                "coverage",
+                vec![doc! {"$group":{"_id":null,"members":{"$sum":"$sandbox_count"}}}],
+            );
+        }
+        pipeline.push(doc! {"$facet":facets});
         // Mongo errors can include user data. Do not log driver errors here.
 
         #[cfg(test)]
         let query_started = std::time::Instant::now();
         let mut cursor = self
-            .collection(ROWS)
+            .collection(collection)
             .aggregate(pipeline)
             .allow_disk_use(false)
             .max_time(DB_DEADLINE)
@@ -89,6 +102,23 @@ impl ReportingStore {
             .await
             .map_err(|_| MetricsError::Unavailable)?
             .ok_or(MetricsError::Unavailable)?;
+        if projected.is_some() {
+            let members = document
+                .get_array("coverage")
+                .map_err(unavailable)?
+                .first()
+                .and_then(|value| value.as_document())
+                .and_then(|value| value.get_i64("members").ok())
+                .unwrap_or(0);
+            let expected = report
+                .summary
+                .as_ref()
+                .ok_or(MetricsError::Unavailable)?
+                .sandbox_count;
+            if u64::try_from(members).ok() != Some(expected) {
+                return Err(MetricsError::Unavailable);
+            }
+        }
         #[cfg(test)]
         tracing::info!(target: "cma::store::usage_reports::budget", reason = "owner_aggregate_sample", probe = true, elapsed_ms = query_started.elapsed().as_millis() as u64);
         #[cfg(test)]
@@ -185,4 +215,57 @@ impl ReportingStore {
             total_count,
         })
     }
+
+    pub(super) async fn build_owner_allocation_projections(
+        &self,
+        report: &Report,
+        base: &Document,
+        batch: &mut ProjectionBatch,
+        deadline: Instant,
+    ) -> Result<()> {
+        for (metric, field) in [
+            (Metric::Cpu, "cpu_core_hours"),
+            (Metric::Memory, "memory_gib_hours"),
+            (Metric::Disk, "disk_gib_hours"),
+        ] {
+            let mut cursor = self
+                .collection(ROWS)
+                .aggregate(owner_totals(report, field))
+                .allow_disk_use(false)
+                .max_time(DB_DEADLINE)
+                .await
+                .map_err(|_| MetricsError::Unavailable)?;
+            while let Some(mut row) = cursor
+                .try_next()
+                .await
+                .map_err(|_| MetricsError::Unavailable)?
+            {
+                if Instant::now() >= deadline {
+                    return Err(MetricsError::Busy);
+                }
+                let owner = row
+                    .remove("_id")
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                    .ok_or(MetricsError::Unavailable)?;
+                let mut document = base.clone();
+                document.extend(
+                    doc! {"kind":"owner_allocation","metric":metric.index() as i64,
+                    "series":owner,"chunk":0_i64},
+                );
+                document.extend(row);
+                batch.push(document)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn owner_totals(report: &Report, field: &str) -> [Document; 2] {
+    [
+        doc! {"$match":{"report_id":&report.report_id}},
+        doc! {"$group":{"_id":"$owner",
+        "allocated_hours":{"$sum":format!("$record.allocated_period.{field}")},
+        "sandbox_count":{"$sum":1_i64},
+        "complete":{"$min":"$record.allocated_period.complete"}}},
+    ]
 }

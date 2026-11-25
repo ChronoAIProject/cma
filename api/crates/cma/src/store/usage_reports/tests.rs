@@ -1,3 +1,4 @@
+mod aggregate_projections;
 mod binding_fence;
 mod initial_snapshot;
 mod ownership;

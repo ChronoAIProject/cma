@@ -1,5 +1,6 @@
 //! Isolated, bounded reporting pool and disposable immutable report snapshots.
 mod admission;
+mod aggregate_projections;
 mod allocation_deadline;
 pub(super) use allocation_deadline::{allocation_operation, ALLOCATION_DB_DEADLINE};
 mod budget;
