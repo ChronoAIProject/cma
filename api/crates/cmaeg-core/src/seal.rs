@@ -38,8 +38,8 @@ pub mod whatsapp_reaction;
 pub use console_login::{open_console_login, seal_console_login, ConsoleLogin, CONSOLE_LOGIN_TTL};
 pub use event_ref::{EventRef, EventRefPayload, ReplyAddress};
 pub use interaction::{
-    open_blob, open_connection, open_consumer_interaction, open_interaction, seal_blob,
-    seal_connection, seal_consumer_interaction, seal_interaction,
+    open_blob, open_connection, open_consumer_interaction, open_interaction, open_retained_channel,
+    seal_blob, seal_connection, seal_consumer_interaction, seal_interaction, seal_retired_channel,
 };
 pub use lineage::{Lineage, RootId};
 pub use media_link::{MediaLinkPayload, MediaLinkRef, MAX_MEDIA_LINK_TTL};
@@ -63,6 +63,7 @@ pub enum TokenKind {
     EventRef,
     MessageRef,
     Blob,
+    RetiredChannel,
     Interaction,
     /// An interaction card owned by a non-default consumer.
     ConsumerInteraction,
@@ -82,6 +83,7 @@ impl TokenKind {
             Self::EventRef => "ev",
             Self::MessageRef => "mr",
             Self::Blob => "bl",
+            Self::RetiredChannel => "rc",
             Self::Interaction => "in",
             Self::ConsumerInteraction => "ic",
             Self::ReplyTarget => "rt",

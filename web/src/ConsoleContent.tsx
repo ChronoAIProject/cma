@@ -153,6 +153,7 @@ export function ConsoleContent({
     !accessUncertain,
     permissions,
     settlements,
+    { view: routePath(route), environment: route.kind === 'sandbox' },
   );
   const environments = useEnvironmentNavigation(
     navigation,
@@ -446,6 +447,7 @@ export function ConsoleContent({
                 busySandboxIds={actions.busySandboxIds}
                 deletingSandboxIds={actions.deletingSandboxIds}
                 onViewDeletion={actions.viewDeletion}
+                deletionNotice={actions.environmentNotice}
                 onNavigate={(next) => {
                   if (next.kind !== 'usage') onSidebarNavigate();
                   onNavigate(next);

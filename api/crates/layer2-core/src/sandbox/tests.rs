@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 #[path = "answer_deliverables_tests.rs"]
 mod answer_deliverables;
+#[path = "lifecycle_transition_contract_tests.rs"]
+mod transition_contract;
 
 use super::store::{
     AgentLogStore, AgentStore, SandboxEventStore, SandboxStore, SandboxTransaction,

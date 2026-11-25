@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { DeletionDialog } from './DeletionDialog';
 import { useResourceActions } from './ResourceActions';
@@ -109,6 +109,12 @@ async function open(f: ReturnType<typeof fixture>, initial = f.request) {
   await act(() => vi.advanceTimersByTimeAsync(0));
   if (initial.accepted) {
     fireEvent.click(screen.getByRole('button', { name: 'Reopen request' }));
+    const progress = screen.getByRole('dialog', { name: 'Deletion progress' });
+    fireEvent.click(
+      within(progress).getByRole('button', {
+        name: `View ${f.target === 'Sandbox' ? 'Sandbox' : 'Agent'} deletion status (1)`,
+      }),
+    );
     await act(() => vi.advanceTimersByTimeAsync(0));
   }
   expect(screen.getByRole('dialog')).toHaveAccessibleName(`Deleting ${f.target}`);
