@@ -9,6 +9,26 @@ use tower::ServiceExt;
 mod capacity;
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
+    if let Some(mode) = name.strip_prefix("binding_profile_transfer_") {
+        use capacity::TransferOutcome;
+        let outcome = match mode {
+            "reserved" | "anonymous" | "forbidden" | "invalid" => TransferOutcome::Reserved,
+            "missing" => TransferOutcome::Missing,
+            "conflict" => TransferOutcome::Conflict,
+            "unavailable" => TransferOutcome::Unavailable,
+            _ => return None,
+        };
+        return Some(Scenario {
+            router: capacity::profile_transfer_fixture(outcome),
+            subject: (mode != "anonymous").then_some("manager"),
+            authorization: if mode == "forbidden" {
+                Authorization::none()
+            } else {
+                management::authority()
+            },
+            symbols: Default::default(),
+        });
+    }
     if name == "binding_management_capacity" {
         return Some(Scenario {
             router: capacity::fixture(),
