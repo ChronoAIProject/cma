@@ -41,6 +41,26 @@ class CacheTests(unittest.TestCase):
                 member.size = 4
                 archive.addfile(member, io.BytesIO(b'data'))
 
+    def test_am_compacted_bundle_is_sealed_and_restores_without_the_marker(self):
+        import staging_cd_build_cache as module
+
+        writer_env = dict(self.env, CD_COMPONENT="am")
+        cache = BuildCache(ROOT, writer_env, ROOT, "am")
+        tool = bridge()
+
+        def transfer(operation, directory, **kwargs):
+            self.assertEqual(operation, "extract")
+            self.assertTrue(kwargs["compact_registry"])
+            self.assertEqual(kwargs["max_archive"], module.MAX_BUNDLE_BYTES)
+            self.populate(directory)
+            (directory / "compacted").write_text("2\n")
+
+        with patch.object(module, "bridge", return_value=tool), patch.object(tool, "transfer", side_effect=transfer):
+            self.assertTrue(cache.export_mounts())
+        self.assertEqual(cache.export_retained_groups, 2)
+        self.assertFalse((cache.accepted / "compacted").exists())
+        tool.validate_bundle(cache.accepted, cache.key.prefix, family=cache.key.family)
+
     def test_layer_cache_exports_only_on_protected_develop_pushes(self):
         for event, ref, writer in [('push', 'refs/heads/develop', True),
                                    ('push', 'refs/heads/main', False),
