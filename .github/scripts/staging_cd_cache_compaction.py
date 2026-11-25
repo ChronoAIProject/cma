@@ -1,4 +1,4 @@
-"""Bounded, read-only export of AM Cargo cache mounts."""
+"""Bounded, read-only export of Rust service Cargo cache mounts."""
 
 
 def export_script(max_expanded, max_compressed, max_members):
@@ -106,6 +106,8 @@ remaining_compressed=$((max_compressed - registry_compressed))
 remaining_members=$((max_members - registry_members))
 : > "$tmp/candidates"
 for group in "$target"/release/incremental/cma-* \
+    "$target"/release/incremental/cmaeg-* \
+    "$target"/release/incremental/cmaeg_*-* \
     "$target"/release/incremental/layer2_core-* \
     "$target"/release/incremental/layer1_public-* \
     "$target"/release/incremental/layer3_adapter-* \

@@ -41,11 +41,9 @@ class CacheTests(unittest.TestCase):
                 member.size = 4
                 archive.addfile(member, io.BytesIO(b'data'))
 
-    def test_am_compacted_bundle_is_sealed_and_restores_without_the_marker(self):
+    def test_rust_service_compacted_bundle_is_sealed_and_restores_without_the_marker(self):
         import staging_cd_build_cache as module
 
-        writer_env = dict(self.env, CD_COMPONENT="am")
-        cache = BuildCache(ROOT, writer_env, ROOT, "am")
         tool = bridge()
 
         def transfer(operation, directory, **kwargs):
@@ -55,11 +53,15 @@ class CacheTests(unittest.TestCase):
             self.populate(directory)
             (directory / "compacted").write_text("2\n")
 
-        with patch.object(module, "bridge", return_value=tool), patch.object(tool, "transfer", side_effect=transfer):
-            self.assertTrue(cache.export_mounts())
-        self.assertEqual(cache.export_retained_groups, 2)
-        self.assertFalse((cache.accepted / "compacted").exists())
-        tool.validate_bundle(cache.accepted, cache.key.prefix, family=cache.key.family)
+        for component in ("am", "eg"):
+            with self.subTest(component=component):
+                writer_env = dict(self.env, CD_COMPONENT=component)
+                cache = BuildCache(ROOT, writer_env, ROOT, component)
+                with patch.object(module, "bridge", return_value=tool), patch.object(tool, "transfer", side_effect=transfer):
+                    self.assertTrue(cache.export_mounts())
+                self.assertEqual(cache.export_retained_groups, 2)
+                self.assertFalse((cache.accepted / "compacted").exists())
+                tool.validate_bundle(cache.accepted, cache.key.prefix, family=cache.key.family)
 
     def test_legacy_layer_cache_is_read_only(self):
         for event, ref in [('push', 'refs/heads/develop'),
