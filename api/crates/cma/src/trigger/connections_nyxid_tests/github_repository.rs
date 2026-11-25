@@ -36,8 +36,13 @@ impl GithubRepositoryFixture {
         Self { provider }
     }
 
-    pub(crate) fn broker(&self) -> Arc<NyxidServiceConnectionBroker> {
-        Arc::new(broker(&self.provider, Tokens::available()))
+    pub(crate) fn broker(&self) -> Arc<crate::trigger::CmaServiceConnectionBroker> {
+        Arc::new(
+            crate::trigger::CmaServiceConnectionBroker::with_fixture_provider(broker(
+                &self.provider,
+                Tokens::available(),
+            )),
+        )
     }
 }
 

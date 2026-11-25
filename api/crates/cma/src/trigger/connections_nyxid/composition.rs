@@ -26,6 +26,14 @@ enum BrokerMode {
 }
 
 impl CmaServiceConnectionBroker {
+    #[cfg(test)]
+    pub(in crate::trigger) fn with_fixture_provider(broker: NyxidServiceConnectionBroker) -> Self {
+        Self {
+            mode: BrokerMode::Provider(Box::new(broker)),
+            subscriptions: None,
+        }
+    }
+
     pub(crate) async fn github_connections(
         &self,
         owner: &SubjectId,
