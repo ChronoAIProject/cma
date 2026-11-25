@@ -124,6 +124,7 @@ use self::schemas::*;
         super::agents::create,
         super::agents::lifecycle_creation::create_lifecycle,
         super::agents::read_lifecycle_operation,
+        super::agents::cancel_lifecycle_operation,
         super::creation_outcomes::routes::lookup,
         super::agents::list,
         super::agents::read,

@@ -62,7 +62,7 @@ async fn exporter(State(used): State<Arc<AtomicU64>>, uri: Uri) -> String {
         "metric": {
             "cluster": "synthetic", "namespace": "runtime", "__name__": metric.name(),
             "job": "kubelet", "metrics_path": metric.metrics_path(),
-            "persistentvolumeclaim": "home", "pvc_uid": "pvc-synthetic",
+            "persistentvolumeclaim": "home", "pvc_uid": if used.load(Ordering::Relaxed) == 0 { "wrong-pvc" } else { "pvc-synthetic" },
         },
         "timestamps": [30_001], "values": [value],
     })
@@ -147,6 +147,12 @@ async fn measured_capture_command_replays_a_partial_window_and_retains_a_dispute
         execute(&database, &source, sandbox, range).await.unwrap()["disputed"],
         1
     );
+    assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 3);
+    used.store(0, Ordering::Relaxed);
+    let rejected = execute(&database, &source, sandbox, range).await.unwrap();
+    assert_eq!(rejected["status"], "no_attributable_observations");
+    assert_eq!(rejected["unattributed_source_series"], 2);
+    assert_eq!(rejected["unattributed_source_samples"], 2);
     assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 3);
     server.abort();
     database.drop().await.unwrap();

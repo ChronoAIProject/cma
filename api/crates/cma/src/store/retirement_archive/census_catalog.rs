@@ -25,6 +25,12 @@ pub(super) const OUTSIDE_MANIFEST: &[&str] = &[
     super::super::retained_consents::COLLECTION,
     crate::store::migrations::measured_custody::COLLECTION,
     crate::store::migrations::usage_projections::COLLECTION,
+    crate::store::migrations::measured_batches::COLLECTION,
+    crate::store::migrations::measured_index::PROJECTIONS,
+    crate::store::migrations::measured_index::MANIFESTS,
+    crate::store::migrations::measured_index::BATCHES,
+    // Reconstructible proof over segmented source bytes. Segmented heads already refuse legacy archives.
+    crate::store::agent_log_segments::active_proof::COLLECTION,
 ];
 pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("account_deletions", Independent),

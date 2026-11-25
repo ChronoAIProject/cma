@@ -12,6 +12,7 @@ mod batches;
 pub(crate) mod catalog;
 mod context;
 mod drain_qualification;
+pub(in crate::store) mod erase_source_log;
 mod guards;
 mod identity_activity;
 mod identity_refs;

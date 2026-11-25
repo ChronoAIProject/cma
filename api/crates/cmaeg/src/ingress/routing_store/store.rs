@@ -12,6 +12,7 @@ use std::{
 
 #[derive(Clone)]
 pub struct PlanStore {
+    pub(crate) start_measurement: Option<crate::telemetry::provider_start::Measurement>,
     pub(super) records: RecordClient,
     pub(super) keys: Arc<MasterKeyRing>,
     pub(super) clock: Arc<dyn Fn() -> i64 + Send + Sync>,
@@ -21,6 +22,7 @@ impl PlanStore {
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         Self {
             admission_queue: None,
+            start_measurement: None,
             records: records.interactions(),
             keys,
             clock: Arc::new(|| {
@@ -29,6 +31,14 @@ impl PlanStore {
                     .map_or(0, |time| time.as_secs().try_into().unwrap_or(i64::MAX))
             }),
         }
+    }
+
+    pub fn with_start_measurement(
+        mut self,
+        measurement: crate::telemetry::provider_start::Measurement,
+    ) -> Self {
+        self.start_measurement = Some(measurement);
+        self
     }
 
     #[cfg(test)]
@@ -160,9 +170,21 @@ impl PlanStore {
         candidate: &Candidate,
         github_guard: Option<(String, u64, Vec<AuthorityGuard>)>,
     ) -> Result<AdmittedPlan, AdmissionError> {
+        if let Some(measurement) = &self.start_measurement {
+            measurement.offered(&candidate.identity().admission_id());
+        }
         candidate.live((self.clock)())?;
         if let Some(plan) = self.load(candidate.identity()).await? {
-            return self.queue_committed(same_request(candidate, plan)?).await;
+            let plan = same_request(candidate, plan)?;
+            if let Some(measurement) = &self.start_measurement {
+                measurement.admitted(
+                    &plan.admission_id,
+                    plan.admitted_at,
+                    plan.targets.len(),
+                    None,
+                );
+            }
+            return self.queue_committed(plan).await;
         }
         for (index, chunk) in candidate.bytes.chunks(CHUNK_BYTES).enumerate() {
             candidate.live((self.clock)())?;
@@ -180,9 +202,15 @@ impl PlanStore {
         candidate.live((self.clock)())?;
         let manifest = &candidate.manifest;
         let bytes = codec::encode(manifest)?;
+        let commit_lower = self.start_measurement.as_ref().map(|m| m.now());
         let result = trace::record(
             Stage::RootWrite,
-            self.create_root(manifest, &bytes, github_guard),
+            self.create_root(
+                manifest,
+                &bytes,
+                github_guard,
+                candidate.profile_admission.as_ref(),
+            ),
         )
         .await;
         if matches!(&result, Err(RecordError::GuardConflict { .. })) {
@@ -200,7 +228,18 @@ impl PlanStore {
                     }
                 };
                 match trace::admission(Stage::RootReadback, readback).await {
-                    Ok(Some(plan)) => self.queue_committed(same_request(candidate, plan)?).await,
+                    Ok(Some(plan)) => {
+                        let plan = same_request(candidate, plan)?;
+                        if let Some(measurement) = &self.start_measurement {
+                            measurement.admitted(
+                                &plan.admission_id,
+                                plan.admitted_at,
+                                plan.targets.len(),
+                                if result.is_ok() { commit_lower } else { None },
+                            );
+                        }
+                        self.queue_committed(plan).await
+                    }
                     Ok(None) if matches!(result, Err(RecordError::Conflict { .. })) => {
                         Err(AdmissionError::ExpiredOrUnavailable)
                     }

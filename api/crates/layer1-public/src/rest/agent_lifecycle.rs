@@ -232,6 +232,8 @@ pub enum AgentLifecycleOperationReadError {
     Forbidden,
     #[error("the Agent lifecycle operation store is unavailable")]
     Unavailable,
+    #[error("{0}")]
+    Conflict(String),
 }
 
 impl IntoResponse for AgentLifecycleOperationReadError {
@@ -252,15 +254,27 @@ impl IntoResponse for AgentLifecycleOperationReadError {
                 "agent-lifecycle-operation-unavailable",
                 "temporarily_unavailable",
             ),
+            Self::Conflict(_) => (
+                StatusCode::CONFLICT,
+                "agent-lifecycle-operation-conflict",
+                "creation_cancellation_unavailable",
+            ),
         };
         let body = super::problem_document(status, slug, &self.to_string(), code);
         super::problem_response(status, body)
     }
 }
 
-/// Read port for durable lifecycle status and phase events.
+/// Owner-scoped operation status, phase events and cancellation before allocation.
 #[async_trait]
 pub trait AgentLifecycleOperationReader: Send + Sync {
+    async fn cancel_unallocated(
+        &self,
+        _caller: &Caller,
+        _operation_id: &str,
+    ) -> Result<AgentLifecycleOperationView, AgentLifecycleOperationReadError> {
+        Err(AgentLifecycleOperationReadError::Unavailable)
+    }
     async fn read(
         &self,
         caller: &Caller,
