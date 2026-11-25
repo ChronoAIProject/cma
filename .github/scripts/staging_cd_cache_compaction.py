@@ -17,11 +17,23 @@ output=$3
 mkdir -p "$output"
 registry_archive="$output/registry.tar.gz"
 target_archive="$output/target.tar.gz"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+mkfifo "$tmp/raw"
 
-measure() {
-    archive_compressed=$(wc -c < "$1")
-    archive_expanded=$(gzip -dc "$1" | wc -c)
-    archive_members=$(tar -tzf "$1" | wc -l)
+archive_stream() {
+    source=$1
+    archive=$2
+    shift 2
+    # Count the actual tar stream without decompressing the completed archive
+    # a second time. Keep the independent member-list and seal checks.
+    wc -c < "$tmp/raw" > "$tmp/raw-count" &
+    counter=$!
+    tar -C "$source" -cf - "$@" | tee "$tmp/raw" | gzip -1 > "$archive"
+    wait "$counter"
+    archive_compressed=$(wc -c < "$archive")
+    archive_expanded=$(cat "$tmp/raw-count")
+    archive_members=$(tar -tzf "$archive" | wc -l)
 }
 
 fits() {
@@ -44,8 +56,7 @@ refuse_budget() {
 }
 
 archive_registry() {
-    tar -C "$registry" -cf - $skip_src . | gzip -1 > "$registry_archive"
-    measure "$registry_archive"
+    archive_stream "$registry" "$registry_archive" $skip_src .
     registry_compressed=$archive_compressed
     registry_expanded=$archive_expanded
     registry_members=$archive_members
@@ -69,9 +80,10 @@ if ! fits "$registry_expanded" "$registry_compressed" "$registry_members"; then
         refuse_budget "$registry_expanded" "$registry_compressed"
 fi
 
+attempts=0
 if [ "$total" -le "$bound_kib" ]; then
-    tar -C "$target" -cf - . | gzip -1 > "$target_archive"
-    measure "$target_archive"
+    attempts=1
+    archive_stream "$target" "$target_archive" .
     if fits "$((registry_expanded + archive_expanded))" \
         "$((registry_compressed + archive_compressed))" \
         "$((registry_members + archive_members))"; then
@@ -88,13 +100,11 @@ fi
 
 # Work within the existing artifact budgets. Select complete crate groups in
 # stable priority order. The normal Cargo build handles any omitted group.
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-set --
 visited_names=""
 remaining_expanded=$((max_expanded - registry_expanded))
 remaining_compressed=$((max_compressed - registry_compressed))
 remaining_members=$((max_members - registry_members))
+: > "$tmp/candidates"
 for group in "$target"/release/incremental/cma-* \
     "$target"/release/incremental/layer2_core-* \
     "$target"/release/incremental/layer1_public-* \
@@ -121,33 +131,68 @@ for group in "$target"/release/incremental/cma-* \
     done
     [ "$completed" -eq 1 ] || continue
     kib=$(du -sk "$group" | cut -f1)
-    [ "$((kib * 1024))" -le "$remaining_expanded" ] || continue
-
-    relative="release/incremental/$name"
-    # Each provisional archive is independent. A hard link whose other
-    # name lies outside this group is stored with its contents.
-    tar -C "$target" -cf - "$relative" | gzip -1 > "$tmp/group.tar.gz"
-    measure "$tmp/group.tar.gz"
-    if [ "$archive_expanded" -le "$remaining_expanded" ] &&
-       [ "$archive_compressed" -le "$remaining_compressed" ] &&
-       [ "$archive_members" -le "$remaining_members" ]; then
-        set -- "$@" "$relative"
-        remaining_expanded=$((remaining_expanded - archive_expanded))
-        remaining_compressed=$((remaining_compressed - archive_compressed))
-        remaining_members=$((remaining_members - archive_members))
-    fi
-    rm -f "$tmp/group.tar.gz"
+    members=$(find "$group" -print | wc -l)
+    # Estimate the tar allocation, including a header and possible padding for
+    # each member. Exact archive checks remain authoritative for sparse files.
+    expanded=$((kib * 1024 + members * 1024 + 10240))
+    printf '%s %s %s\n' "release/incremental/$name" "$expanded" "$members" >> "$tmp/candidates"
 done
 
+# Estimate compressed contribution using the previous observed roughly 2:1
+# ratio. Every accepted artifact must still pass the exact compressed bound.
+set --
+expanded_left=$remaining_expanded
+compressed_left=$remaining_compressed
+members_left=$remaining_members
+while read -r relative expanded members; do
+    compressed=$(((expanded + 1) / 2))
+    if [ "$expanded" -le "$expanded_left" ] &&
+       [ "$compressed" -le "$compressed_left" ] &&
+       [ "$members" -le "$members_left" ]; then
+        set -- "$@" "$relative"
+        expanded_left=$((expanded_left - expanded))
+        compressed_left=$((compressed_left - compressed))
+        members_left=$((members_left - members))
+    fi
+done < "$tmp/candidates"
+
+# A full target archive, including any initial whole-target attempt, counts
+# toward the same rewrite budget. When actual sizes exceed the estimate,
+# preserve a deterministic prefix of the selected complete crate groups.
+while [ "$attempts" -lt 3 ] && [ "$#" -gt 0 ]; do
+    attempts=$((attempts + 1))
+    archive_stream "$target" "$target_archive" "$@"
+    if fits "$((registry_expanded + archive_expanded))" \
+        "$((registry_compressed + archive_compressed))" \
+        "$((registry_members + archive_members))"; then
+        printf '%s\n' "$#" > "$output/compacted"
+        exit 0
+    fi
+    keep=$(($# - 1))
+    if [ "$archive_compressed" -gt "$remaining_compressed" ]; then
+        limit=$(($# * remaining_compressed / archive_compressed))
+        [ "$limit" -ge "$keep" ] || keep=$limit
+    fi
+    if [ "$archive_expanded" -gt "$remaining_expanded" ]; then
+        limit=$(($# * remaining_expanded / archive_expanded))
+        [ "$limit" -ge "$keep" ] || keep=$limit
+    fi
+    if [ "$archive_members" -gt "$remaining_members" ]; then
+        limit=$(($# * remaining_members / archive_members))
+        [ "$limit" -ge "$keep" ] || keep=$limit
+    fi
+    # Rotate the retained prefix to the end and remove the suffix.
+    seen=0
+    count=$#
+    while [ "$seen" -lt "$count" ]; do
+        next=$1
+        shift
+        [ "$seen" -ge "$keep" ] || set -- "$@" "$next"
+        seen=$((seen + 1))
+    done
+done
+[ "$attempts" -gt 0 ] || refuse empty
 [ "$#" -gt 0 ] || refuse empty
-# Produce one actual tar containing only the chosen complete groups. Tar
-# resolves hard links among names present in this export.
-tar -C "$target" -cf - "$@" | gzip -1 > "$target_archive"
-measure "$target_archive"
-fits "$((registry_expanded + archive_expanded))" \
-    "$((registry_compressed + archive_compressed))" \
-    "$((registry_members + archive_members))" ||
-    refuse_budget "$((registry_expanded + archive_expanded))" \
-        "$((registry_compressed + archive_compressed))"
-printf '%s\n' "$#" > "$output/compacted"
+refuse_budget "$((registry_expanded + archive_expanded))" \
+    "$((registry_compressed + archive_compressed))"
 '''
