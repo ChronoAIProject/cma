@@ -4,6 +4,8 @@ mod delivery;
 mod producer;
 pub(crate) use delivery::{DeliveryAttempt, DeliveryOutcome};
 mod inventory;
+mod measured;
+pub(crate) use measured::{repair_command, retain_binding_bridge};
 mod outbox;
 pub(crate) use outbox::FrozenUsageEvent;
 mod payload;

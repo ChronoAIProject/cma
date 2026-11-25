@@ -1,4 +1,4 @@
-//! Frozen census before usage capture, including account and backup custody.
+//! Frozen census before usage capture, including retained home backups.
 pub(super) const SHA256: &str = "9e05849e87157114e2b365c1cf68a6fa5295091d42d536d824fa9ea4f6e2fc9a";
 pub(super) const COLLECTIONS: &[&str] = &[
     "account_deletions",

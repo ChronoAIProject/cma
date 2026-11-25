@@ -36,6 +36,10 @@ pub(super) const PRE_BACKUP_SHA256: &str = pre_backup::SHA256;
 pub(super) const PRE_BACKUP_ACCOUNT_COLLECTIONS: &[&str] = pre_backup_accounts::COLLECTIONS;
 #[cfg(test)]
 pub(super) const PRE_BACKUP_ACCOUNT_SHA256: &str = pre_backup_accounts::SHA256;
+#[cfg(test)]
+pub(super) const PRE_CAPTURE_BACKUP_COLLECTIONS: &[&str] = pre_capture_backups::COLLECTIONS;
+#[cfg(test)]
+pub(super) const PRE_CAPTURE_BACKUP_SHA256: &str = pre_capture_backups::SHA256;
 
 #[cfg(test)]
 pub(super) const LEGACY_COLLECTIONS: &[&str] = legacy::COLLECTIONS;

@@ -81,6 +81,10 @@ impl CaptureStore {
             }
             streams.push(stream.id);
         }
+        streams.extend(self.measured_delivery_page(after).await?);
+        streams.sort();
+        streams.dedup();
+        streams.truncate(32);
         Ok(streams)
     }
 

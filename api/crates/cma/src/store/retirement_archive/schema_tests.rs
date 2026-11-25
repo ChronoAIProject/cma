@@ -73,12 +73,12 @@ async fn frozen_pre_capture_census_requires_new_evidence_namespaces_to_be_empty(
         (pre_capture::COLLECTIONS, pre_capture::SHA256),
         (pre_execution::COLLECTIONS, pre_execution::SHA256),
         (
-            pre_capture_backups::COLLECTIONS,
-            pre_capture_backups::SHA256,
-        ),
-        (
             pre_capture_accounts::COLLECTIONS,
             pre_capture_accounts::SHA256,
+        ),
+        (
+            pre_capture_backups::COLLECTIONS,
+            pre_capture_backups::SHA256,
         ),
     ] {
         let audit: Vec<_> = super::super::census_catalog::AUDIT

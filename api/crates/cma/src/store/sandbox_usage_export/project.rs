@@ -202,7 +202,7 @@ impl CaptureStore {
     }
 }
 
-fn read_capture(document: &Document) -> Result<Captured, SandboxStoreError> {
+pub(super) fn read_capture(document: &Document) -> Result<Captured, SandboxStoreError> {
     let capture: Captured = decode(document)?;
     let event = &capture.source;
     if document.get_str("_id").ok() != Some(event.transaction_id().as_str())
