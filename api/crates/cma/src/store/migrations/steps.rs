@@ -1,8 +1,8 @@
 //! The explicit manifest registry is also the migrator's reader floor.
 use super::{
     activity_indexes, activity_page_index, agent_log_segments, agent_log_source_keys,
-    agent_owner_index, binding_indexes, collection_indexes, measured_custody, opening_index,
-    sandbox_usage_capture, turn_policy_index, Result,
+    agent_owner_index, binding_indexes, collection_indexes, command_cohort_index, measured_custody,
+    opening_index, sandbox_usage_capture, turn_policy_index, Result,
 };
 use mongodb::bson::{doc, Document};
 
@@ -17,12 +17,13 @@ pub(super) enum Step {
     AgentLogSegments,
     AgentLogSourceKeys,
     BindingIndexes,
+    CommandCohort,
     SandboxUsageCapture,
     MeasuredCustody,
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 11] = [
+    pub(super) const ALL: [Self; 12] = [
         Self::MeasuredCustody,
         Self::SandboxUsageCapture,
         Self::Activity,
@@ -34,6 +35,7 @@ impl Step {
         Self::AgentLogSegments,
         Self::AgentLogSourceKeys,
         Self::BindingIndexes,
+        Self::CommandCohort,
     ];
     pub(super) fn parse(id: &str) -> Result<Self> {
         Self::ALL
@@ -43,6 +45,7 @@ impl Step {
     }
     pub(super) fn id(self) -> &'static str {
         match self {
+            Self::CommandCohort => command_cohort_index::ID,
             Self::MeasuredCustody => measured_custody::ID,
             Self::SandboxUsageCapture => sandbox_usage_capture::ID,
             Self::BindingIndexes => binding_indexes::ID,
@@ -58,6 +61,7 @@ impl Step {
     }
     pub(super) fn checksum(self) -> String {
         match self {
+            Self::CommandCohort => command_cohort_index::checksum(),
             Self::MeasuredCustody => measured_custody::checksum(),
             Self::SandboxUsageCapture => sandbox_usage_capture::checksum(),
             Self::BindingIndexes => binding_indexes::checksum(),
@@ -76,6 +80,7 @@ impl Step {
     }
     pub(super) fn max_changes(self) -> i64 {
         match self {
+            Self::CommandCohort => 1,
             Self::MeasuredCustody => 1,
             Self::SandboxUsageCapture => crate::store::sandbox_usage_export::schema::MAX_STEPS,
             Self::BindingIndexes => 11,
@@ -97,6 +102,7 @@ impl Step {
             Self::Activity | Self::ActivityPage => &["activity"],
             Self::LedgerCollection => &collection_indexes::COLLECTIONS,
             Self::AgentOpening => &opening_index::COLLECTIONS,
+            Self::CommandCohort => &["agent_commands"],
             Self::AgentOwnerPage | Self::TurnPolicyDue => &["agents"],
             Self::AgentLogSourceKeys => &["agent_log"],
             Self::AgentLogSegments => crate::store::agent_log_segments::COLLECTIONS,
@@ -112,6 +118,7 @@ impl Step {
             | Self::AgentOwnerPage
             | Self::TurnPolicyDue
             | Self::AgentLogSourceKeys
+            | Self::CommandCohort
             | Self::MeasuredCustody
             | Self::BindingIndexes => "created_indexes",
         }
@@ -121,6 +128,11 @@ impl Step {
         database: &mongodb::Database,
     ) -> Result<Vec<(&'static str, Document)>> {
         match self {
+            Self::CommandCohort => Ok(command_cohort_index::inspect(database)
+                .await?
+                .into_iter()
+                .map(|index| ("agent_commands", index))
+                .collect()),
             Self::MeasuredCustody => measured_custody::inspect(database).await,
             Self::SandboxUsageCapture => Err("usage migration requires schema-unit inspection"),
             Self::BindingIndexes => binding_indexes::inspect(database).await,
@@ -161,6 +173,9 @@ impl Step {
         index: Document,
     ) -> Result<bool> {
         match self {
+            Self::CommandCohort if collection == "agent_commands" => {
+                command_cohort_index::create(database, index).await
+            }
             Self::MeasuredCustody if collection == measured_custody::COLLECTION => {
                 measured_custody::create(database, index).await
             }

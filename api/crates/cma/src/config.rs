@@ -57,6 +57,7 @@ pub(crate) use shell_settings::BackendFreeConfig;
 
 mod features;
 mod quiet_output;
+pub(crate) mod task_audit;
 mod task_experience;
 pub(crate) use features::home_backup::HomeBackupConfig;
 pub(crate) use features::FeatureFlags;
@@ -167,6 +168,7 @@ pub struct Config {
     pub bind: SocketAddr,
     pub(crate) http_connection_max_age: Option<std::time::Duration>,
     pub metrics_bind: SocketAddr,
+    pub(crate) task_audit: Option<task_audit::Selection>,
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
     pub agent_access_retained_origins: Vec<String>,
@@ -367,6 +369,7 @@ impl Config {
             bind,
             http_connection_max_age: http_connections::max_age(&mut lookup)?,
             metrics_bind,
+            task_audit: task_audit::Selection::from_lookup(&mut lookup)?,
             public_stream_limit: public_streams::from_lookup(&mut lookup)?,
             relay_capacity: RelayCapacityConfig::from_lookup(&mut lookup)?,
             public_url,
