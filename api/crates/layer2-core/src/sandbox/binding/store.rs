@@ -7,6 +7,15 @@ use crate::sandbox::store::SandboxStoreError;
 /// additionally fences the exact parent revision in the same transaction.
 #[async_trait::async_trait]
 pub trait BindingStore: Send + Sync {
+    async fn transfer_profile_conversation(
+        &self,
+        _request: super::ProfileTransferRequest,
+        _enabled: bool,
+    ) -> Result<super::ProfileTransferReceipt, super::BindingError> {
+        Err(super::BindingError::ResetRefused(
+            "partition_reset_unsupported",
+        ))
+    }
     async fn conversation_reset_state(
         &self,
         binding: &str,
@@ -213,6 +222,7 @@ pub fn validate_conversation_write(
             if binding.state == BindingState::Ready
                 && next.generation == binding.generation
                 && next.revision == 1
+                && next.profile_transfer.is_none()
                 && (matches!(
                     next.state,
                     BindingConversationState::Provisioning | BindingConversationState::Retiring

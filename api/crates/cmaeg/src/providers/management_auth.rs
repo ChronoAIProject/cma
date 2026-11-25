@@ -47,7 +47,8 @@ impl CmaManagementAuth {
         };
         matches!(parts.as_slice(), [binding] if id(binding))
             || matches!(parts.as_slice(), [binding,"preparation-inspections" | "preparations"] if id(binding))
-            || matches!(parts.as_slice(), [binding,"conversations",conversation] if id(binding) && id(conversation))
+            || matches!(parts.as_slice(), [binding,"conversations"] if id(binding))
+            || matches!(parts.as_slice(), [binding,"conversations",conversation] | [binding,"conversations",conversation,"profile-drift"] if id(binding) && id(conversation))
     }
     pub(super) fn with_service(mut self, token: crate::service_auth::ServiceAuth) -> Self {
         self.token = token;
@@ -74,7 +75,7 @@ impl CmaManagementAuth {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
         };
-        matches!(parts.as_slice(), [binding, "conversations", conversation, "resets"] if id(binding) && id(conversation))
+        matches!(parts.as_slice(), [binding, "conversations", conversation, "resets" | "profile-transfers"] if id(binding) && id(conversation))
     }
     pub(super) fn permits_worker_classifier(&self, url: &Url) -> bool {
         url.origin() == self.origin
