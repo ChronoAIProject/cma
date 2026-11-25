@@ -458,7 +458,6 @@ impl SandboxReconciler {
             Err(error) => error,
         };
         if error.is_native_home_identity_refusal() {
-            // Home verification can race a new durable binding.
             let current = measure(
                 Stage::DurableRead,
                 self.store.get_sandbox(&sandbox.id),
@@ -473,6 +472,7 @@ impl SandboxReconciler {
             }) {
                 return Err(SandboxStoreError::Conflict);
             }
+            return Err(transient::native_home_identity(error));
         }
         Err(provider_error(error))
     }

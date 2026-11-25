@@ -19,16 +19,19 @@ pub(super) enum StartupFailure {
 }
 
 pub(super) fn provider_error(error: AdapterError) -> SandboxStoreError {
+    let failure =
+        matches!(error, AdapterError::Unavailable(_)).then_some(StartupFailure::Unavailable);
+    record(error, failure)
+}
+
+pub(super) fn native_home_identity(error: AdapterError) -> SandboxStoreError {
+    record(error, Some(StartupFailure::NativeHomeIdentity))
+}
+
+fn record(error: AdapterError, failure: Option<StartupFailure>) -> SandboxStoreError {
     let mapped = SandboxStoreError::Unavailable(format!(
         "sandbox runtime authority is unavailable: {error}"
     ));
-    let failure = match error {
-        AdapterError::Unavailable(_) => Some(StartupFailure::Unavailable),
-        error if error.is_native_home_identity_refusal() => {
-            Some(StartupFailure::NativeHomeIdentity)
-        }
-        _ => None,
-    };
     if let (Some(failure), SandboxStoreError::Unavailable(message)) = (failure, &mapped) {
         let _ = FAILURE.try_with(|slot| *slot.borrow_mut() = Some((message.clone(), failure)));
     }

@@ -1,5 +1,5 @@
 use super::super::provider_error;
-use super::{classify, StartupFailure};
+use super::{classify, native_home_identity, StartupFailure};
 use futures_util::{stream::FuturesUnordered, StreamExt};
 use layer2_core::sandbox::SandboxStoreError;
 use layer3_adapter::AdapterError;
@@ -61,10 +61,12 @@ async fn native_home_identity_refusal_is_classified_only_for_its_own_mapped_erro
     let missing_home =
         || AdapterError::Rejected("native home identity changed or disappeared".into());
     let (_, failure) = classify(async { Err::<(), _>(provider_error(missing_home())) }).await;
+    assert_eq!(failure, None);
+    let (_, failure) = classify(async { Err::<(), _>(native_home_identity(missing_home())) }).await;
     assert_eq!(failure, Some(StartupFailure::NativeHomeIdentity));
 
     let (_, failure) = classify(async {
-        let _mapped = provider_error(missing_home());
+        let _mapped = native_home_identity(missing_home());
         Err::<(), _>(store_unavailable())
     })
     .await;
