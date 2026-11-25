@@ -188,7 +188,10 @@ if (command === 'cargo') {
     if (scenario === 'readiness-retry' && phase !== 'init' && !fs.existsSync(marker)) {
       fs.writeFileSync(marker, 'attempted'); process.exit(1);
     }
-    console.log('1');
+    if (phase === 'primary' && args.at(-1).includes('topologyVersion')) {
+      const id = require('node:crypto').createHash('sha256').update(args[1]).digest('hex').slice(0, 24);
+      console.log(id + ' ' + Date.now());
+    } else console.log('1');
   }
   else if (args[0] === 'port') console.log('127.0.0.1:'+JSON.parse(fs.readFileSync(file(args[1]))).port);
   else if (args[0] === 'ps') {
