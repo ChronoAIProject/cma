@@ -73,7 +73,7 @@ function operationsPage(response) {
   );
 }
 
-export async function startFixture() {
+export async function startFixture({ plainReturnsDesktop = false } = {}) {
   const fixtures = new Map();
   const counts = { plain: 0, desktop: 0, sends: 0, cancels: 0, reports: 0, deletes: 0 };
   let next = 1;
@@ -102,7 +102,7 @@ export async function startFixture() {
       const record = {
         agent: id('agt', index),
         sandbox: id('sbx', index),
-        desktop,
+        desktop: desktop || plainReturnsDesktop,
         state: 'ready',
       };
       if (desktop) counts.desktop += 1;

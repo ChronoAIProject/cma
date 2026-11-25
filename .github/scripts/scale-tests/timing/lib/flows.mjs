@@ -228,10 +228,11 @@ export class OwnedResources {
       this.bindAgentDetail(detail.body);
       await this.save();
       return detail.body;
-    }, (detail) => agentReady(detail, desktop));
+    }, agentReady);
     requireCheck(agent.id === this.record.agentId && this.record.sandboxId, 'created_identity_mismatch');
+    requireCheck(agent.desktop === desktop, 'creation_variant_mismatch');
     this.record.state = 'ready'; await this.save();
-    return { operation_succeeded: true, agent_ready: true, sandbox_active: true, desktop_verified: desktop };
+    return { operation_succeeded: true, agent_ready: true, sandbox_active: true, desktop_verified: agent.desktop };
   }
   bindAgentDetail(agent) {
     requireCheck(agent.id === this.record.agentId && /^sbx_[a-f0-9]{32}$/.test(agent.sandbox?.id ?? '') &&
