@@ -1,7 +1,5 @@
 //! CMA Agent collection, detail, creation, and deletion routes.
 
-use std::{future::Future, sync::Arc};
-
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -13,6 +11,12 @@ use layer2_core::profiles::AgentProfileRef;
 use layer2_core::sandbox::{AgentDetailReading, AgentOrigin, CreateAgent};
 use layer2_core::{AgentId, AgentProfileId, Caller, Capability, WorkspaceId};
 
+#[path = "agent_command_execution.rs"]
+mod command_execution;
+use command_execution::execute_empty_command_with_claim;
+pub(super) use command_execution::{
+    execute_command, execute_command_with_claim, execute_empty_command,
+};
 #[path = "agent_state.rs"]
 mod agent_state;
 mod inventory;
@@ -22,7 +26,7 @@ use super::agent_openapi_shapes::{AgentView, CreateAgentRequest};
 use super::agent_shared_shapes::{
     AccessibleAgentListItemView, AccessibleAgentPageView, AccessibleAgentView,
 };
-use super::idempotency::{self, IdempotencyKey, RequestBody};
+use super::idempotency::{IdempotencyKey, RequestBody};
 use super::instance_problem::InstanceProblem;
 use super::profiles_problem::ProfileProblem;
 use super::profiles_sandbox::readable_revision;
@@ -50,6 +54,10 @@ pub(super) fn routes() -> Router<AgentRoutesState> {
             get(read_lifecycle_operation),
         )
         .route("/api/v1/agents/{id}", get(read).delete(delete_agent))
+        .route(
+            "/api/v1/agents/{id}/restart",
+            post(super::owner_agent_restart::restart),
+        )
         .route(
             "/api/v1/agents/{id}/suggestions",
             get(super::suggestions::read),
@@ -116,6 +124,8 @@ pub fn agent_router(state: AgentRoutesState) -> Router {
     routes()
         .merge(super::agent_operate::routes())
         .merge(super::agent_reads::routes())
+        .merge(super::agent_original_request::routes())
+        .merge(super::agent_reply_preview::routes())
         .merge(super::agent_retained_output::routes())
         .with_state(state)
 }
@@ -251,22 +261,37 @@ pub(crate) async fn read(
     } else {
         AgentDetailReading::Personal(Box::new(state.reads.lineage(&caller, &id).await?))
     };
-    let (view, private) = match (detail, state.sandbox_profile_readability.as_deref()) {
-        (AgentDetailReading::Personal(lineage), Some(profiles)) => {
-            let pinned = &lineage.sandbox.profile;
-            let readable =
+    let (view, private) = match detail {
+        AgentDetailReading::Personal(lineage) => {
+            let readable = if let Some(profiles) = state.sandbox_profile_readability.as_deref() {
+                let pinned = &lineage.sandbox.profile;
                 match readable_revision(profiles, &caller, pinned.id.as_str(), pinned.revision)
                     .await
                 {
                     Ok(revision) => Some(revision.digest == pinned.digest),
                     Err(ProfileProblem::Forbidden | ProfileProblem::NotFound) => Some(false),
                     Err(_) => None,
-                };
-            let view =
+                }
+            } else {
+                None
+            };
+            let restart_available = state.owner_agent_restart.is_some()
+                && lineage.agent.owner == caller.subject
+                && caller.authorization.allows(Capability::UseOwnSandboxes)
+                && lineage.sandbox.status == layer2_core::sandbox::SandboxStatus::Active
+                && lineage
+                    .agent
+                    .admit_owner_restart(&lineage.worktree, layer2_core::now_rfc3339())
+                    .is_ok();
+            let mut view =
                 AgentView::from_lineage(*lineage, None).with_sandbox_profile_readability(readable);
-            (AccessibleAgentView::Personal(Box::new(view)), true)
+            view.restart_available = restart_available.then_some(true);
+            (
+                AccessibleAgentView::Personal(Box::new(view)),
+                restart_available || state.sandbox_profile_readability.is_some(),
+            )
         }
-        (detail, _) => (AccessibleAgentView::from(detail), false),
+        detail => (AccessibleAgentView::from(detail), false),
     };
     let body = Json(view.with_agent_page(&state.agent_page_origin));
     let mut response = body.into_response();
@@ -297,18 +322,39 @@ pub(crate) async fn delete_agent(
 ) -> Response {
     let command_state = state.clone();
     let operation_caller = caller.clone();
-    execute_empty_command(
+    let agent_id = AgentId(id.clone());
+    execute_empty_command_with_claim(
         &state,
         &caller,
         key,
         format!("agent:delete:{id}"),
-        move || async move {
-            command_state
-                .agents
-                .delete(&operation_caller, &AgentId(id))
-                .await
-                .map_err(InstanceProblem::from_delete)?;
-            Ok(StatusCode::ACCEPTED.into_response())
+        move |_guard| {
+            #[cfg(feature = "qualification-hooks")]
+            let qualification = command_state.qualification_for(
+                _guard,
+                layer2_core::qualification::ControlOperation::Delete,
+                &agent_id,
+            );
+            async move {
+                #[cfg(feature = "qualification-hooks")]
+                if let Some((checkpoint, context)) = qualification {
+                    let scheduled = command_state
+                        .agents
+                        .delete_with_result(&operation_caller, &agent_id)
+                        .await
+                        .map_err(InstanceProblem::from_delete)?;
+                    checkpoint
+                        .after_schedule(context, (&scheduled).into())
+                        .await;
+                    return Ok(StatusCode::ACCEPTED.into_response());
+                }
+                command_state
+                    .agents
+                    .delete(&operation_caller, &agent_id)
+                    .await
+                    .map_err(InstanceProblem::from_delete)?;
+                Ok(StatusCode::ACCEPTED.into_response())
+            }
         },
     )
     .await
@@ -321,71 +367,6 @@ pub(super) async fn read_view(
 ) -> Result<AgentView, InstanceProblem> {
     let lineage = state.reads.lineage(caller, id).await?;
     Ok(AgentView::from_lineage(lineage, None))
-}
-
-pub(super) async fn execute_command<T, F, Fut>(
-    state: &AgentRoutesState,
-    caller: &Caller,
-    key: IdempotencyKey,
-    operation: String,
-    body: Result<RequestBody<T>, BodyProblem>,
-    execute: F,
-) -> Response
-where
-    T: serde::de::DeserializeOwned,
-    F: FnOnce(T) -> Fut,
-    Fut: Future<Output = Result<Response, InstanceProblem>>,
-{
-    if let Err(problem) = require_use(caller) {
-        return problem.into_response();
-    }
-    let (guard, body, _) = match idempotency::required_command(
-        key,
-        Arc::clone(&state.operation_records),
-        caller,
-        operation,
-        body,
-    )
-    .await
-    {
-        Ok(parts) => parts,
-        Err(response) => return response,
-    };
-    let result: Result<Response, Response> = match body {
-        Ok(body) => execute(body).await.map_err(IntoResponse::into_response),
-        Err(error) => Err(error.into_response()),
-    };
-    guard.finish(result).await
-}
-
-pub(super) async fn execute_empty_command<F, Fut>(
-    state: &AgentRoutesState,
-    caller: &Caller,
-    key: IdempotencyKey,
-    operation: String,
-    execute: F,
-) -> Response
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<Response, InstanceProblem>>,
-{
-    if let Err(problem) = require_use(caller) {
-        return problem.into_response();
-    }
-    let guard = match idempotency::required_empty_command(
-        key,
-        Arc::clone(&state.operation_records),
-        caller,
-        operation,
-    )
-    .await
-    {
-        Ok(guard) => guard,
-        Err(response) => return response,
-    };
-    guard
-        .finish(execute().await.map_err(IntoResponse::into_response))
-        .await
 }
 
 fn require_use(caller: &Caller) -> Result<(), InstanceProblem> {

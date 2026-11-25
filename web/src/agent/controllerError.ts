@@ -5,7 +5,11 @@ import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { approvalBaselineMessage } from './transport/approvalBaseline';
 import { readableError } from '../vocabulary/errors';
 import { currentAgentStatus } from './status';
-import { STOPPED_AGENT_MESSAGE, STOP_RESPONSE_GUIDANCE } from './stopAgentCopy';
+import {
+  RESTART_AVAILABLE_MESSAGE,
+  STOPPED_AGENT_MESSAGE,
+  STOP_RESPONSE_GUIDANCE,
+} from './stopAgentCopy';
 
 export function errorMessage(error: unknown): string {
   const approval = approvalBaselineMessage(error);
@@ -25,6 +29,26 @@ export function isLegacySuggestionRefusal(error: unknown): error is ApiError {
   );
 }
 
+export function isV2InputRefusal(error: unknown, interrupting: boolean): boolean {
+  return (
+    error instanceof ApiError &&
+    ((error.status === 422 &&
+      ([
+        'invalid_response_input',
+        'invalid_answer_context',
+        'invalid_control_request',
+        'invalid_interrupt_request',
+      ].includes(error.code ?? '') ||
+        (interrupting && error.code === 'capability_unsupported'))) ||
+      (error.status === 409 &&
+        [
+          'response_control_not_admitted',
+          'response_interrupt_not_admitted',
+          'agent_command_not_admissible',
+        ].includes(error.code ?? '')))
+  );
+}
+
 export function stoppedInputMessage(
   error: unknown,
   current: AgentResourceState,
@@ -38,7 +62,9 @@ export function stoppedInputMessage(
     current.detail.id === agentId &&
     currentAgentStatus(current.detail, current.conversation) === 'stopped'
   )
-    return `${STOPPED_AGENT_MESSAGE} ${STOP_RESPONSE_GUIDANCE}`;
+    return current.detail.restartAvailable
+      ? RESTART_AVAILABLE_MESSAGE
+      : `${STOPPED_AGENT_MESSAGE} ${STOP_RESPONSE_GUIDANCE}`;
 }
 
 /** A transient projection failure must not cancel an already admitted send. */

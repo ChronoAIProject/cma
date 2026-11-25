@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "binding-holds-operator",
+      "operation": "GET /api/v1/admin/runtime-binding-holds",
+      "scenario": "binding_holds_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/runtime-binding-holds",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "observed_at": "2026-09-05T00:00:00Z",
+          "observed_sandboxes": 1,
+          "registered_reporters": 2,
+          "unavailable_reporters": 1,
+          "truncated": false,
+          "reports": [
+            {
+              "reporter": "reporter-1",
+              "sample": {
+                "observed_at": "2026-09-05T00:00:00Z",
+                "truncated": false,
+                "holds": [
+                  {
+                    "sandbox_id": "sandbox-a",
+                    "owner": "owner-a",
+                    "owner_name": "Alex Chen",
+                    "reason": "unavailable",
+                    "phase": "deferred",
+                    "first_held_at": "2026-09-05T00:00:00Z",
+                    "attempts": 3,
+                    "retry_not_before": "2026-09-05T00:01:00Z",
+                    "adapter_error_class": null
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-holds-anonymous",
+      "operation": "GET /api/v1/admin/runtime-binding-holds",
+      "scenario": "binding_holds_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/runtime-binding-holds",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-holds-forbidden",
+      "operation": "GET /api/v1/admin/runtime-binding-holds",
+      "scenario": "binding_holds_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/runtime-binding-holds",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-holds-disabled",
+      "operation": "GET /api/v1/admin/runtime-binding-holds",
+      "scenario": "binding_holds_disabled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/runtime-binding-holds",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "binding-holds-unavailable",
+      "operation": "GET /api/v1/admin/runtime-binding-holds",
+      "scenario": "binding_holds_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/runtime-binding-holds",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/binding-observation-unavailable",
+          "title": "binding observation unavailable",
+          "status": 503,
+          "detail": "Runtime binding observations could not be read.",
+          "code": "binding_observation_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

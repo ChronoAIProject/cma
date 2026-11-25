@@ -39,6 +39,17 @@ pub struct ConversationState {
     pub queued_messages: Vec<QueuedAgentMessage>,
 }
 
+impl ConversationState {
+    pub(super) fn interrupt_active_turn(&mut self) -> Option<super::AgentLogKind> {
+        let turn_sequence = self.active_turn.take()?;
+        let terminal = super::AgentLogKind::TurnInterrupted { turn_sequence };
+        if let Some(task) = self.observations.task_acceptance.as_mut() {
+            task.observe_execution(Some(turn_sequence), std::slice::from_ref(&terminal));
+        }
+        Some(terminal)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentStopReason {
@@ -123,6 +134,22 @@ pub struct Agent {
 }
 
 impl Agent {
+    /// Derive the terminal event once the caller has proved the current native Close.
+    /// The command record still carries the exact delivery outcome before the Stop.
+    pub fn settle_owner_stop_turn(&mut self) -> Option<super::AgentLogKind> {
+        if self.work.step != AgentWorkStep::PublishStopped
+            || self.requested_stop_reason != Some(AgentStopReason::Owner)
+            || !self
+                .work
+                .receipts
+                .iter()
+                .any(|receipt| receipt.step == AgentWorkStep::CloseProcess)
+        {
+            return None;
+        }
+        self.conversation.interrupt_active_turn()
+    }
+
     pub fn validate_for_admission(&self, worktree: &Worktree) -> Result<(), SandboxModelError> {
         self.validate_lineage(worktree)?;
         if self.work.step == AgentWorkStep::WaitForWorkspace
@@ -394,6 +421,49 @@ impl Agent {
             .checked_add(1)
             .ok_or_else(|| SandboxModelError::invalid_value("agent.revision"))?;
         Ok(())
+    }
+
+    /// Select the process named by the admitted Open, including an uncertain Open
+    /// that still needs cleanup. The initial incarnation keeps its legacy ID.
+    pub fn close_process_request(
+        &self,
+    ) -> Result<layer3_adapter::AgentCloseRequest, SandboxModelError> {
+        use layer3_adapter::{AgentCloseRequest, AgentProcessAction, AgentSlot};
+
+        let incarnation = self
+            .open_process_incarnation()?
+            .ok_or_else(|| SandboxModelError::invalid_value("agent.work.open_process"))?;
+        Ok(AgentCloseRequest::new(
+            AgentProcessAction::Close.operation_id(self.id.as_str(), incarnation),
+            AgentSlot::new(self.id.as_str()),
+        ))
+    }
+
+    pub(super) fn open_process_incarnation(&self) -> Result<Option<u64>, SandboxModelError> {
+        let mut opens = self
+            .work
+            .receipts
+            .iter()
+            .filter(|receipt| receipt.step == AgentWorkStep::OpenConversation)
+            .map(|receipt| receipt.operation_id.as_str())
+            .chain(
+                self.work
+                    .cleanup_debt
+                    .iter()
+                    .filter(|debt| debt.step == AgentWorkStep::OpenConversation)
+                    .map(|debt| debt.operation_id.as_str()),
+            );
+        let invalid = || SandboxModelError::invalid_value("agent.work.open_process");
+        let Some(operation) = opens.next() else {
+            return Ok(None);
+        };
+        if opens.next().is_some() {
+            return Err(invalid());
+        }
+        layer3_adapter::AgentProcessAction::Open
+            .incarnation(self.id.as_str(), operation)
+            .map(Some)
+            .ok_or_else(invalid)
     }
 
     pub fn operation_id(&self, step: super::AgentWorkStep) -> String {

@@ -19,7 +19,7 @@ impl AgentWorker {
                     "agent lifecycle lease is no longer held",
                 )
             })?;
-        let request = validated_open_request(agent, context)?;
+        let request = self.recorded_open_request(agent, context).await?;
         let recovered_prompt = agent.conversation.active_turn.map(|turn| {
             layer3_adapter::PromptIdentity::new(
                 &target.conversation_id,
@@ -246,7 +246,58 @@ impl AgentWorker {
         }
     }
 
-    pub(super) fn attach(
+    pub(in super::super) async fn recorded_open_request(
+        &self,
+        agent: &Agent,
+        context: &AgentContext,
+    ) -> Result<AgentOpenRequest, WorkerFailure> {
+        let open = agent
+            .work
+            .receipts
+            .iter()
+            .find(|receipt| receipt.step == AgentWorkStep::OpenConversation);
+        let numbered = open
+            .and_then(|receipt| {
+                layer3_adapter::AgentProcessAction::Open
+                    .incarnation(agent.id.as_str(), &receipt.operation_id)
+            })
+            .is_some_and(|incarnation| incarnation > 1);
+        if !numbered {
+            return validated_open_request(agent, context);
+        }
+        let invalid = || {
+            WorkerFailure::retryable(
+                "agent_restart_open_unavailable",
+                "the exact numbered Agent Open could not be verified",
+            )
+        };
+        let request = self
+            .dependencies
+            .store
+            .restart_connection_open(agent)
+            .await
+            .map_err(|_| invalid())?
+            .ok_or_else(invalid)?;
+        if !request.has_valid_sha256()
+            || open.is_none_or(|receipt| {
+                receipt.operation_id != request.operation_id
+                    || receipt.request_sha256 != request.request_sha256
+            })
+            || request.resume_conversation != agent.conversation.conversation_id
+            || request.options != runtime_options(agent, &context.sandbox, &context.worktree)
+            || request.restart_runtime.as_ref().is_none_or(|pin| {
+                context.sandbox.runtime.as_ref().is_none_or(|binding| {
+                    binding.boot_id.as_ref() != Some(&pin.boot_id)
+                        || binding.provision_generation != Some(pin.runtime.generation)
+                })
+            })
+        {
+            return Err(invalid());
+        }
+        Ok(request)
+    }
+
+    pub(in crate::sandbox::agent_worker) fn attach(
         &self,
         agent: &Agent,
         conversation_id: String,

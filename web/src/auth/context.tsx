@@ -14,6 +14,7 @@ import { retainDocumentShareToken } from '../documents/shareToken';
 import { retainAgentShareForSignIn } from '../resources/agentShareToken';
 import { retainTaskViewer } from '../create/taskIdentity';
 import { retainAgentDraftOwner } from '../agent/draftIdentity';
+import { retainPreparationDraftOwner } from '../preparation/preparationDraftIdentity';
 import { releaseNavigationGuard } from '../routing/navigationGuard';
 
 /**
@@ -69,22 +70,32 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     let failures = 0;
     let last: AuthState = { status: 'checking' };
     let pendingNavigation = false;
+    let pendingRefresh = false;
     let leaving: ReturnType<typeof setTimeout> | undefined;
 
     const refresh = (mayNavigate = false) => {
-      if (!live || inFlight || leaving !== undefined) return;
+      if (!live || leaving !== undefined) return;
+      if (inFlight) {
+        pendingRefresh = true;
+        return;
+      }
       clearTimeout(timer);
       inFlight = true;
       allowSessionReads(false);
       const version = ++currentRead.current;
+      let canFollowUp = false;
       void provider
         .current()
         .then((next) => {
           if (live && version === currentRead.current) {
-            if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
-            else if (next.status === 'anonymous') {
+            canFollowUp = next.status === 'authenticated' || next.status === 'anonymous';
+            if (next.status === 'authenticated') {
+              retainAgentDraftOwner(next.user.id);
+              retainPreparationDraftOwner(next.user.id);
+            } else if (next.status === 'anonymous') {
               releaseNavigationGuard();
               retainAgentDraftOwner();
+              retainPreparationDraftOwner();
             }
             if (next.status !== 'error') last = next;
             let leavingSilently = false;
@@ -137,10 +148,11 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         })
         .finally(() => {
           inFlight = false;
-          if (live && pendingNavigation) {
-            pendingNavigation = false;
-            refresh(true);
-          }
+          const followUp = pendingNavigation || (pendingRefresh && canFollowUp);
+          const navigate = pendingNavigation;
+          pendingNavigation = false;
+          pendingRefresh = false;
+          if (live && version === currentRead.current && followUp) refresh(navigate);
         });
     };
     const backgroundRefresh = () => refresh();
@@ -195,9 +207,14 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         await provider.signIn(returnTo, options);
         const next = await provider.current();
         if (version !== currentRead.current) return;
-        if (next.status === 'authenticated') retainTaskViewer(next.user.id);
-        if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
-        else if (next.status === 'anonymous') retainAgentDraftOwner();
+        if (next.status === 'authenticated') {
+          retainTaskViewer(next.user.id);
+          retainAgentDraftOwner(next.user.id);
+          retainPreparationDraftOwner(next.user.id);
+        } else if (next.status === 'anonymous') {
+          retainAgentDraftOwner();
+          retainPreparationDraftOwner();
+        }
         allowSessionReads(next.status === 'authenticated');
         setOutage(undefined);
         setState(next);
@@ -219,6 +236,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     try {
       retainTaskViewer();
       retainAgentDraftOwner();
+      retainPreparationDraftOwner();
       setState({ status: 'checking' });
       await provider.signOut();
       if (version !== currentRead.current) return;

@@ -83,6 +83,7 @@ async fn run_case(count: usize, park: bool) {
                     started_at: None,
                     completed_at: None,
                     failure: None,
+                    retained_transition: None,
                 }),
             });
         }
@@ -133,6 +134,7 @@ async fn run_case(count: usize, park: bool) {
             .await
             .unwrap();
         let guard = AgentReopenGuard {
+            owner_restart: None,
             sandbox: SandboxMutationGuard::capture(&parent),
             agent_fence: agent.work.next_fence,
             native_conversation_id: native.clone(),
@@ -419,6 +421,7 @@ async fn prove_refusal_fences(
         agent_revision: agent.revision,
         checkpoint: None,
         owner: Some(authority.token.clone()),
+        released: None,
     };
     assert_eq!(
         store

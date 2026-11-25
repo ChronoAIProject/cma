@@ -1,6 +1,7 @@
 use super::*;
 use layer2_core::sandbox_usage::UsageEventKind;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use layer2_core::sandbox_usage_cursor::UsageSnapshot;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 const OWN: &[Capability] = &[Capability::UseOwnSandboxes];
 const ADMIN: &[Capability] = &[Capability::UseOwnSandboxes, Capability::ReadAllSandboxes];
@@ -12,6 +13,7 @@ struct Pages {
     lists: AtomicUsize,
     events: AtomicUsize,
     reads: AtomicUsize,
+    snapshot_missing: AtomicBool,
 }
 
 fn row(id: &str) -> SandboxUsage {
@@ -74,6 +76,24 @@ impl SandboxUsageStore for Pages {
             .collect();
         Ok(page(rows, request.limit, |row| row.sandbox_id.to_string()))
     }
+    async fn usage_snapshot_page(
+        &self,
+        owner: Option<&SubjectId>,
+        request: &PageRequest,
+        snapshot: Option<UsageSnapshot>,
+    ) -> Result<(Page<SandboxUsage>, UsageSnapshot), SandboxStoreError> {
+        let observed = UsageSnapshot {
+            time: 75,
+            increment: 1,
+        };
+        if let Some(expected) = snapshot {
+            assert_eq!(expected, observed);
+        }
+        if self.snapshot_missing.load(Ordering::SeqCst) {
+            return Err(SandboxStoreError::InvalidPage);
+        }
+        Ok((self.usage_page(owner, request).await?, observed))
+    }
     async fn usage_summary(
         &self,
         _: Option<&SubjectId>,
@@ -121,10 +141,14 @@ struct Fixture {
 }
 impl Fixture {
     fn new(policy: UsageCursorPolicy) -> Self {
+        Self::with_snapshots(policy, false)
+    }
+    fn with_snapshots(policy: UsageCursorPolicy, enabled: bool) -> Self {
         let store = Arc::new(Pages::default());
         let clock = Arc::new(AtomicU64::new(100));
         let time = clock.clone();
         let cursors = UsageCursors::new(&[7; 32], policy)
+            .with_snapshot_issuance(enabled)
             .with_clock(Arc::new(move || time.load(Ordering::SeqCst)));
         Self {
             router: sandbox_usage_router(SandboxUsageService::new(store.clone(), cursors)),
@@ -362,7 +386,7 @@ async fn reader_first_transition_retains_legacy_behavior_but_never_accepts_bad_s
 }
 
 #[test]
-fn usage_openapi_documents_bound_continuations_and_typed_refusals_without_a_snapshot_claim() {
+fn usage_openapi_documents_bound_continuations_and_typed_refusals() {
     let document = serde_json::to_value(super::super::document()).unwrap();
     for path in [LIST, ALL, "/api/v1/usage/sandboxes/{id}/events"] {
         let operation = &document["paths"][path]["get"];
@@ -375,7 +399,29 @@ fn usage_openapi_documents_bound_continuations_and_typed_refusals_without_a_snap
         assert_eq!(cursor["in"], "query");
         assert_eq!(cursor["schema"]["maxLength"], 4096);
         let description = cursor["description"].as_str().unwrap();
-        assert!(description.contains("15 minutes") && description.contains("not a"));
+        assert!(description.contains("15 minutes") && description.contains("same read view"));
         assert!(operation["responses"]["400"]["content"]["application/problem+json"].is_object());
     }
+}
+
+#[tokio::test]
+async fn snapshot_pages_share_as_of_and_missing_history_returns_the_restart_problem() {
+    let fixture = Fixture::with_snapshots(UsageCursorPolicy::Strict, true);
+    let first = fixture
+        .call(&format!("{LIST}?limit=1"), Some("owner"), OWN, 200)
+        .await;
+    assert_eq!(first["as_of"], 100);
+    let next = first["next"].as_str().unwrap();
+    assert!(next.starts_with("u2."));
+    fixture.clock.store(120, Ordering::SeqCst);
+    let path = format!("{LIST}?limit=1&cursor={next}");
+    let second = fixture.call(&path, Some("owner"), OWN, 200).await;
+    assert_eq!(second["as_of"], 100);
+    fixture.store.snapshot_missing.store(true, Ordering::SeqCst);
+    let missing = fixture.call(&path, Some("owner"), OWN, 400).await;
+    assert_eq!(missing["code"], "invalid_query");
+    assert_eq!(
+        missing["detail"],
+        "Usage continuation is invalid or expired. Restart from the first page without a cursor."
+    );
 }

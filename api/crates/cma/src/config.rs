@@ -50,12 +50,14 @@ pub use rate_limits::RateLimitConfig;
 mod relay_capacity;
 mod runtime;
 mod runtime_capacity;
+mod runtime_migration;
 mod shell_settings;
 pub(crate) use relay_capacity::RelayCapacityConfig;
 pub(crate) use shell_settings::BackendFreeConfig;
 
 mod features;
 mod quiet_output;
+pub(crate) mod task_audit;
 mod task_experience;
 pub(crate) use features::home_backup::HomeBackupConfig;
 pub(crate) use features::FeatureFlags;
@@ -75,7 +77,7 @@ mod usage_transport;
 pub(crate) use bot_father::BotFatherConfig;
 pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use profiles::DefaultProfileConfig;
-pub(crate) use runtime::RuntimeConfig;
+pub(crate) use runtime::{canary as runtime_canary, RuntimeConfig};
 pub(crate) use sandbox_billing::SandboxBillingConfig;
 pub(crate) use sandbox_metrics::MetricsConfig;
 pub(crate) use usage_billing::UsageBillingConfig;
@@ -166,6 +168,7 @@ pub struct Config {
     pub bind: SocketAddr,
     pub(crate) http_connection_max_age: Option<std::time::Duration>,
     pub metrics_bind: SocketAddr,
+    pub(crate) task_audit: Option<task_audit::Selection>,
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
     pub agent_access_retained_origins: Vec<String>,
@@ -366,6 +369,7 @@ impl Config {
             bind,
             http_connection_max_age: http_connections::max_age(&mut lookup)?,
             metrics_bind,
+            task_audit: task_audit::Selection::from_lookup(&mut lookup)?,
             public_stream_limit: public_streams::from_lookup(&mut lookup)?,
             relay_capacity: RelayCapacityConfig::from_lookup(&mut lookup)?,
             public_url,
@@ -433,6 +437,8 @@ use validation::{
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::{desktop_canary_config, retained_runtime_config};
 
 #[cfg(test)]
 mod graduation_tests;

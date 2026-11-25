@@ -43,3 +43,6 @@ mod legacy_bounds;
 
 #[path = "indexed_tests/shared.rs"]
 mod shared;
+
+#[path = "indexed_tests/combined_observation.rs"]
+mod combined_observation;

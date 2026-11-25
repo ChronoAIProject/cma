@@ -96,9 +96,35 @@ impl DesktopCreationService {
         capacity: SandboxCapacity,
         parent: Option<&Sandbox>,
     ) -> DesktopCapability {
+        self.capability_for_verified(
+            self.verified_image.as_deref(),
+            selected_image,
+            capacity,
+            parent,
+        )
+        .await
+    }
+
+    /// Check a fresh desktop canary using its separately verified catalog image.
+    pub async fn canary_capability(
+        &self,
+        verified_image: &str,
+        capacity: SandboxCapacity,
+    ) -> DesktopCapability {
+        self.capability_for_verified(Some(verified_image), Some(verified_image), capacity, None)
+            .await
+    }
+
+    async fn capability_for_verified(
+        &self,
+        verified_image: Option<&str>,
+        selected_image: Option<&str>,
+        capacity: SandboxCapacity,
+        parent: Option<&Sandbox>,
+    ) -> DesktopCapability {
         let mut result =
             DesktopCapability::unavailable("This deployment has no verified desktop runtime.");
-        let Some(verified) = self.verified_image.as_deref() else {
+        let Some(verified) = verified_image else {
             return result;
         };
         if self.adapter.browser().is_none() {

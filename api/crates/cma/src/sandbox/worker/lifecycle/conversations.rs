@@ -134,6 +134,7 @@ impl SandboxWorker {
             );
             let authority_fence = agent.work.next_fence;
             let guard = AgentReopenGuard {
+                owner_restart: None,
                 sandbox: SandboxMutationGuard::capture(&sandbox),
                 agent_fence: authority_fence,
                 native_conversation_id: conversation_id.clone(),

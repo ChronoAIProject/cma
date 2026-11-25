@@ -53,6 +53,7 @@ impl AgentUpdateRecorder for Recorder {
 
 fn guard() -> AgentReopenGuard {
     AgentReopenGuard {
+        owner_restart: None,
         sandbox: SandboxMutationGuard {
             sandbox_id: layer2_core::SandboxId("sbx_reopen".into()),
             owner: layer2_core::SubjectId::new("owner"),

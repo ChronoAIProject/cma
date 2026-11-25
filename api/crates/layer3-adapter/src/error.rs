@@ -59,6 +59,14 @@ pub enum AdapterError {
 }
 
 impl AdapterError {
+    pub(crate) const NATIVE_HOME_IDENTITY_REFUSAL: &str =
+        "native home identity changed or disappeared";
+
+    #[must_use]
+    pub fn is_native_home_identity_refusal(&self) -> bool {
+        matches!(self, Self::Rejected(detail) if detail == Self::NATIVE_HOME_IDENTITY_REFUSAL)
+    }
+
     /// Add diagnostic context without changing the failure category.
     #[must_use]
     pub fn context(self, context: &str) -> Self {

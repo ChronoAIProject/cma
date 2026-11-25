@@ -11,6 +11,7 @@ use std::sync::{
 
 pub(crate) fn target() -> PoolTarget {
     let spec = NativePoolSpec {
+        cold_canary: false,
         image: RuntimeImage {
             uri: format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
             labels: BTreeMap::from([
@@ -493,3 +494,6 @@ mod retirement_tests;
 
 #[path = "startup_tests.rs"]
 mod startup_tests;
+
+#[path = "runtime_pointer_tests.rs"]
+pub(crate) mod runtime_pointer;

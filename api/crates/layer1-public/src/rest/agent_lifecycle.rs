@@ -177,6 +177,8 @@ pub enum AgentLifecycleFailure {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AgentLifecycleOperationView {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accepted_at: Option<String>,
     pub status: String,
     pub phase: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

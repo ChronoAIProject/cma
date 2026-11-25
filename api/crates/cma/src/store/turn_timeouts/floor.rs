@@ -92,7 +92,9 @@ mod tests {
     #[test]
     fn turn_policy_floor_is_not_an_ordinary_work_version() {
         let marker = super::document();
-        assert!(crate::store::work_schema::require(&marker).is_err());
+        // Credential and Sandbox record schemas have independent version
+        // numbers. The aggregate reader still refuses a credential marker.
+        assert!(crate::store::work_schema::read::<mongodb::bson::Document>(&marker).is_err());
         assert!(
             marker.get_i64("document_schema_version").unwrap()
                 > crate::store::work_schema::PREPARED_VERSION,

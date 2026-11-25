@@ -217,3 +217,31 @@ pub(super) fn tools(
         config.gateway.as_ref(),
     )?))
 }
+
+pub(super) fn runtime_canaries(
+    config: &crate::config::Config,
+    lifecycle: Arc<crate::agent_lifecycle::InlineAgentLifecycle>,
+) -> Result<Router, String> {
+    let canaries =
+        crate::agent_lifecycle::runtime_canary::Canaries::new(&config.runtime, lifecycle)?;
+    Ok(layer1_public::rest::runtime_canary::runtime_canary_router(
+        Arc::new(canaries),
+    ))
+}
+
+pub(super) fn retained_runtime_transitions(
+    config: &crate::config::Config,
+    stores: &MongoStores,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+) -> Result<Router, String> {
+    let service = crate::sandbox::retained_runtime_service::RetainedRuntimeService::new(
+        &config.runtime,
+        config.deployment_id.clone(),
+        stores.sandbox_model.clone(),
+        stores.agent_lifecycle.canary_database(),
+        adapter,
+    )?;
+    Ok(layer1_public::rest::retained_runtime_transition::router(
+        Arc::new(service),
+    ))
+}

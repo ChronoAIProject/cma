@@ -420,3 +420,100 @@ fn agent_control_reconciliation_errors_fail_closed() {
         AgentControlStoreError::Corrupt("bad receipt".into())
     );
 }
+
+#[test]
+fn historical_owner_stop_is_separate_from_the_replacement_stop() {
+    use layer3_adapter::{AgentCloseRequest, AgentProcessAction, AgentSlot};
+
+    let mut original = agent_for_worker("agt_restart_stop_predecessor", NOW);
+    original.conversation.conversation_id = Some("retained-conversation".into());
+    original.conversation.runtime_generation = Some(1);
+    let first_stop = ControlOperation::new(ControlRequest::Stop(AgentStopRequest {
+        target: AgentControlTarget::from(&original),
+        reason: AgentStopReason::Owner,
+        requested_at: NOW.into(),
+    }));
+    let old_scheduled = first_stop
+        .request
+        .plan(original.clone())
+        .unwrap()
+        .into_agent();
+    let old_receipt = first_stop.receipt_update(&old_scheduled).unwrap();
+    let mut replacement = original;
+    replacement.revision = old_scheduled.revision + 4;
+    replacement
+        .work
+        .schedule(AgentWorkStep::None, MINUTE.into());
+    replacement.status = AgentStatus::Starting;
+    let close = AgentCloseRequest::new(
+        AgentProcessAction::Close.operation_id(replacement.id.as_str(), 1),
+        AgentSlot::new(replacement.id.as_str()),
+    );
+    let field = "control_restart_predecessor_v1";
+    let mut document = doc! {
+        (field): {
+            "restart_revision": replacement.revision as i64,
+            "conversation_id": "retained-conversation",
+            "provision_generation": 1_i64,
+            "closed_incarnation": 1_i64,
+            "restart_incarnation": 2_i64,
+            "close_operation_id": &close.operation_id,
+            "close_request_sha256": &close.request_sha256,
+            "stop": old_receipt.get_document(STOP_RECEIPT_FIELD).unwrap(),
+        },
+    };
+    let decoded = read_control_receipts(&document, &replacement).unwrap();
+    assert!(!first_stop.was_recorded(&decoded, &old_scheduled));
+
+    replacement.status = AgentStatus::Ready;
+    replacement.revision += 1;
+    replacement.conversation.runtime_generation = Some(2);
+    let second_stop = ControlOperation::new(ControlRequest::Stop(AgentStopRequest {
+        target: AgentControlTarget::from(&replacement),
+        reason: AgentStopReason::Owner,
+        requested_at: MINUTE.into(),
+    }));
+    let new_scheduled = second_stop
+        .request
+        .plan(replacement.clone())
+        .unwrap()
+        .into_agent();
+    document.extend(second_stop.receipt_update(&new_scheduled).unwrap());
+    let decoded = read_control_receipts(&document, &new_scheduled).unwrap();
+    assert!(second_stop.was_recorded(&decoded, &new_scheduled));
+    assert!(!first_stop.was_recorded(&decoded, &old_scheduled));
+
+    let mut stale = document.clone();
+    stale.extend(old_receipt.clone());
+    assert!(matches!(
+        read_control_receipts(&stale, &new_scheduled),
+        Err(AgentControlStoreError::Corrupt(_))
+    ));
+    let mut wrong_close = document.clone();
+    wrong_close
+        .get_document_mut(field)
+        .unwrap()
+        .insert("close_request_sha256", "0".repeat(64));
+    assert!(matches!(
+        read_control_receipts(&wrong_close, &new_scheduled),
+        Err(AgentControlStoreError::Corrupt(_))
+    ));
+    let mut wrong_owner = document.clone();
+    let request = wrong_owner
+        .get_document_mut(field)
+        .unwrap()
+        .get_document_mut("stop")
+        .unwrap()
+        .get_document_mut("request")
+        .unwrap()
+        .get_document_mut("request")
+        .unwrap();
+    request
+        .get_document_mut("target")
+        .unwrap()
+        .insert("owner", "other-owner");
+    assert!(matches!(
+        read_control_receipts(&wrong_owner, &new_scheduled),
+        Err(AgentControlStoreError::Corrupt(_))
+    ));
+}

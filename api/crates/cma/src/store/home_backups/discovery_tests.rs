@@ -25,6 +25,7 @@ pub(super) fn retained(id: &str, native: bool) -> Sandbox {
                 request: NativePoolClaimRequest {
                     pool: NativePoolBinding {
                         spec: NativePoolSpec {
+                            cold_canary: false,
                             image: layer3_adapter::RuntimeImage {
                                 uri: format!("registry.example/runtime@sha256:{}", "a".repeat(64)),
                                 labels: BTreeMap::from([

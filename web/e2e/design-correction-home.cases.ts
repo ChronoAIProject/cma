@@ -1,3 +1,4 @@
+import { selectHomeTemplate } from './home-simplification.fixture';
 import { createHash } from 'node:crypto';
 import { test, expect, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
@@ -411,7 +412,7 @@ export function registerDesignCorrectionHomeCases() {
           page.getByRole('heading', { name: /^Good (morning|afternoon|evening)\.$/ }),
         ).toHaveCSS('font-size', width === 1440 ? '36px' : '28px');
         await input.fill('Research a topic while retaining this independent task draft.');
-        await page.getByRole('button', { name: 'Research a topic' }).click();
+        await selectHomeTemplate(page, 'Research a topic');
         await expect(page.getByLabel('Topic', { exact: true })).toBeFocused();
         await expect(page.getByRole('button', { name: 'Start task' })).toBeDisabled();
         await page.getByRole('button', { name: 'Write a task without a template' }).click();
@@ -420,7 +421,7 @@ export function registerDesignCorrectionHomeCases() {
         await expect(input).toHaveValue(
           'Research a topic while retaining this independent task draft.',
         );
-        await page.getByRole('button', { name: 'Write a document' }).click();
+        await selectHomeTemplate(page, 'Write a document');
         await page.getByLabel('Subject', { exact: true }).fill('Keep this partial document draft');
         await page.getByRole('button', { name: 'Write a task without a template' }).click();
         await expect(keepDraft).toBeVisible();
@@ -460,6 +461,7 @@ export function registerDesignCorrectionHomeCases() {
         await expect(dialog.getByRole('button', { name: 'Add repo' })).toBeDisabled();
         await dialog.getByLabel('Repository ref').fill('feature/landing');
         await expect(dialog.getByRole('button', { name: 'Add repo' })).toBeEnabled();
+        await page.mouse.move(0, 0);
         await expect(dialog.getByRole('button', { name: 'Add repo' })).toHaveCSS(
           'background-color',
           'rgb(200, 245, 66)',

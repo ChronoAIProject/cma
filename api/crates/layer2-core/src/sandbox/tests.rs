@@ -76,7 +76,7 @@ fn agent_snapshot() -> AgentProfileSnapshot {
     }
 }
 
-fn sandbox() -> Sandbox {
+pub(super) fn sandbox() -> Sandbox {
     Sandbox {
         id: SandboxId("sbx_test".into()),
         owner: SubjectId("owner".into()),
@@ -120,7 +120,7 @@ fn sandbox() -> Sandbox {
     }
 }
 
-fn workspace() -> Workspace {
+pub(super) fn workspace() -> Workspace {
     Workspace {
         id: WorkspaceId("wks_test".into()),
         sandbox_id: SandboxId("sbx_test".into()),
@@ -142,7 +142,7 @@ fn workspace() -> Workspace {
     }
 }
 
-fn worktree() -> Worktree {
+pub(super) fn worktree() -> Worktree {
     Worktree {
         id: WorktreeId("wkt_test".into()),
         workspace_id: WorkspaceId("wks_test".into()),
@@ -158,7 +158,7 @@ fn worktree() -> Worktree {
     }
 }
 
-fn agent() -> Agent {
+pub(super) fn agent() -> Agent {
     Agent {
         id: AgentId("agt_test".into()),
         worktree_id: WorktreeId("wkt_test".into()),
@@ -249,6 +249,7 @@ fn every_status_pair_is_governed_by_an_explicit_whitelist() {
         (SandboxStatus::CredentialRotating, SandboxStatus::Retiring),
         (SandboxStatus::Rotating, SandboxStatus::Active),
         (SandboxStatus::Rotating, SandboxStatus::Pausing),
+        (SandboxStatus::Rotating, SandboxStatus::Paused),
         (SandboxStatus::Rotating, SandboxStatus::Retiring),
         (SandboxStatus::Failed, SandboxStatus::Retiring),
         (SandboxStatus::Retiring, SandboxStatus::Retired),

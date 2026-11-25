@@ -42,10 +42,13 @@ it('keeps the submitted task, repository and original key across connection chec
   const check = vi.spyOn(connectionClient, 'check').mockResolvedValue(confirmedConnections);
   const view = render(home(client));
   const action = await button();
-  const task = screen.getByRole('region', { name: 'Submitted task' });
+  const task = screen.getByRole('region', { name: 'Original request' });
   expect(task).toHaveTextContent(repositoryTask.initial_message);
-  expect(task).toHaveTextContent('example/project');
-  expect(task).toHaveTextContent('main');
+  fireEvent.click(screen.getByText('Setup details'));
+  expect(screen.getByRole('region', { name: 'Requested repository' })).toHaveTextContent(
+    'example/project',
+  );
+  expect(screen.getByRole('region', { name: 'Requested repository' })).toHaveTextContent('main');
   expect(check).not.toHaveBeenCalled();
   fireEvent.click(action);
   expect(await screen.findByText(/Connections confirmed. The original repository/)).toBeVisible();

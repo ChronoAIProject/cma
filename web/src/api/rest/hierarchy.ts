@@ -271,6 +271,7 @@ export function agentDetail(value: Wire.Agent): AgentDetail {
     firstMessage: firstMessage(value.first_message),
     failure: value.failure,
     stopReason: value.stop_reason,
+    restartAvailable: value.restart_available,
     createdAt: value.created_at,
     updatedAt: value.updated_at,
     readyAt: value.ready_at,
