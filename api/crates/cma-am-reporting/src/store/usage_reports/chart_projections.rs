@@ -116,7 +116,7 @@ pub async fn build_ranked_projections(
     db_deadline: Duration,
     deadline: Instant,
 ) -> Result<()> {
-    build_ranked_with_batch(collection, report, base, batch, db_deadline, deadline, 100).await
+    build_ranked_with_batch(collection, report, base, batch, db_deadline, deadline, 1000).await
 }
 
 #[cfg(feature = "test-support")]

@@ -243,7 +243,9 @@ impl ReportingStore {
         // A scratch batch never contributes an incomplete family.
         let charts = self.collection(CHARTS);
         let mut family = ProjectionBatch::new(batch.remaining_bytes());
-        let deadline = work_deadline.min(Instant::now() + Duration::from_secs(10));
+        // Three metric folds share the remaining report deadline. A ranked
+        // family publishes only after all metrics finish within this bound.
+        let deadline = work_deadline.min(Instant::now() + Duration::from_secs(20));
         if Instant::now() < deadline {
             let result = Self::within_family_deadline(
                 deadline,
