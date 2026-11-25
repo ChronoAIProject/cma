@@ -109,10 +109,12 @@ test('candidate runtime pins repository ref and native first task reads that che
         assert(JSON.stringify(body.input).includes(task));
         const execution = declared.find((tool) => tool.name === 'functions')?.tools?.find((tool) => tool.name === 'exec');
         const command = { cmd: 'cat proof.txt; git rev-parse HEAD; printf TASK_EXECUTED_04 > first-task.txt' };
-        if (execution) assert(Object.hasOwn(JSON.parse(body.client_metadata['x-codex-turn-metadata']).code_mode_tool_names, 'exec_command'));
-        else assert(declared.some((tool) => tool.name === 'exec_command'));
+        if (execution) {
+          const metadata = JSON.parse(body.client_metadata['x-codex-turn-metadata']);
+          if (metadata.code_mode_tool_names) assert(Object.hasOwn(metadata.code_mode_tool_names, 'exec_command'));
+        } else assert(declared.some((tool) => tool.name === 'exec_command'));
         output = [{ id: 'fc_repository_read', call_id: 'call_repository_read', status: 'completed',
-          ...(execution ? { type: 'custom_tool_call', namespace: 'functions', name: 'exec', input: 'text(await tools.exec_command(' + JSON.stringify(command) + '));' }
+          ...(execution ? { type: 'custom_tool_call', namespace: 'functions', name: 'exec', input: "const entry = ALL_TOOLS.find(t => t.name === 'exec_command'); if (!entry) throw new Error('Missing native command tool'); text(await tools[entry.name](" + JSON.stringify(command) + '));' }
             : { type: 'function_call', name: 'exec_command', arguments: JSON.stringify(command) }) }];
       } else {
         const results = body.input.filter((item) => ['function_call_output', 'custom_tool_call_output'].includes(item.type));
