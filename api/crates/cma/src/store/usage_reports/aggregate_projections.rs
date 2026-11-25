@@ -329,8 +329,12 @@ impl ReportingStore {
             ])
             .max_time(DB_DEADLINE)
             .await
-            .map_err(unavailable)?;
-        while let Some(row) = cursor.try_next().await.map_err(unavailable)? {
+            .map_err(cma_am_reporting::optional_query_error)?;
+        while let Some(row) = cursor
+            .try_next()
+            .await
+            .map_err(cma_am_reporting::optional_query_error)?
+        {
             if Instant::now() >= deadline {
                 return Err(MetricsError::Busy);
             }

@@ -87,14 +87,14 @@ pub async fn build_chart_totals(
             .batch_size(100)
             .max_time(db_deadline)
             .await
-            .map_err(unavailable)?;
+            .map_err(optional_query_error)?;
         let mut total = None;
         fold_sandbox_series(
             cursor,
             report,
             metric,
             deadline,
-            unavailable,
+            optional_query_error,
             |_, _, points| {
                 merge_buckets(total.get_or_insert_with(Vec::new), &points);
                 Ok(())

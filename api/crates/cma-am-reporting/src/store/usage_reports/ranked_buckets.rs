@@ -88,9 +88,14 @@ struct ResidualBucket {
     min: PrefixFloat,
     max: PrefixFloat,
     excluded: [u64; MAX_TOP],
+    excluded_total: u64,
 }
 impl ResidualBucket {
     fn add(&mut self, count: usize, value: &Bucket) -> Result<()> {
+        self.excluded_total = self
+            .excluded_total
+            .checked_add(value.excluded_count)
+            .ok_or(MetricsError::Unavailable)?;
         if count > self.active {
             self.from_to[self.active..count].fill((value.from, value.to));
             self.active = count;

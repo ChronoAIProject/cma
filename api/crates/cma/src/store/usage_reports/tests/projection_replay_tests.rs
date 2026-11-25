@@ -185,3 +185,118 @@ async fn optional_chart_query_timeout_retains_completed_totals() {
     );
     store.db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires disposable Mongo contract runner with failpoints"]
+async fn optional_contributor_query_timeout_preserves_legacy_report() {
+    use crate::config::report_views::{ViewPolicy, WarmScope};
+    use crate::store::migrations::usage_projections::{self, COLLECTION};
+
+    let f = Fixture::new().await;
+    let store = f.store.with_view_policy(ViewPolicy {
+        aggregate_projections_enabled: true,
+        view_scopes: vec![WarmScope {
+            admin: true,
+            principal: "operator".into(),
+            sandbox_id: None,
+        }],
+        ..Default::default()
+    });
+    for (collection, index) in usage_projections::inspect(&store.db).await.unwrap() {
+        store
+            .db
+            .run_command(doc! {"createIndexes":collection,"indexes":[index]})
+            .await
+            .unwrap();
+    }
+    let at = now();
+    seed(&store, &[state(0, at - 3600), state(1, at - 3600)]).await;
+    let scope = scope("operator", true);
+    store
+        .submit(
+            scope.clone(),
+            ReportInput::default().validate(at).unwrap(),
+            at,
+        )
+        .await
+        .unwrap();
+    let lease = store
+        .claim_report("report:0", "contributor-family")
+        .await
+        .unwrap()
+        .unwrap();
+    let generated =
+        crate::sandbox_metrics::generate_fixture_with_collection(f.store.clone(), &lease, false)
+            .await
+            .unwrap();
+    f.commands.clear();
+    // The first matching aggregation counts immutable source rows. The next
+    // groups those rows by contributor for optional projection construction.
+    f.successor.client.database("admin").run_command(doc! {
+        "configureFailPoint":"failCommand","mode":{"skip":1},"data":{
+            "failCommands":["aggregate"],"appName":&f.app,"namespace":format!("{}.{ROWS}", store.db.name()),"errorCode":50
+        }
+    }).await.unwrap();
+    let outcome = store
+        .prepare_aggregate_projections(
+            &lease,
+            &generated,
+            None,
+            std::time::Instant::now() + Duration::from_secs(30),
+        )
+        .await;
+    f.disable().await;
+    outcome.unwrap();
+    let row_aggregations: Vec<_> = f
+        .commands
+        .started
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(name, command)| {
+            name == "aggregate" && command.get_str("aggregate").ok() == Some(ROWS)
+        })
+        .map(|(_, command)| command.clone())
+        .collect();
+    assert_eq!(row_aggregations.len(), 2);
+    assert!(row_aggregations[1]
+        .get_array("pipeline")
+        .unwrap()
+        .iter()
+        .any(|stage| stage
+            .as_document()
+            .and_then(|doc| doc.get_document("$group").ok())
+            .is_some_and(|group| group.get_str("_id").ok() == Some("$owner"))));
+    store.finish_report(&lease, generated, true).await.unwrap();
+    let report = store
+        .report(&scope, &lease.report.report_id, now())
+        .await
+        .unwrap();
+    assert_eq!(report.status, ReportStatus::Ready);
+    assert!(store
+        .projected_family(&report, "chart_total")
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        store
+            .collection(COLLECTION)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    let query = SeriesQuery {
+        metric: Metric::Cpu,
+        group_by: GroupBy::Total,
+        series_id: None,
+        top: None,
+    };
+    let legacy = f.store.series(&report, query.clone()).await.unwrap();
+    let fallback = store.series(&report, query).await.unwrap();
+    assert_eq!(
+        serde_json::to_vec(&legacy).unwrap(),
+        serde_json::to_vec(&fallback).unwrap()
+    );
+    store.db.drop().await.unwrap();
+}
