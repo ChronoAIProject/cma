@@ -238,11 +238,20 @@ class RecoveryEvidence:
         mongo, common = timestamp(cut["mongo_at"]), timestamp(cut["common_at"])
         require(common <= mongo <= loss and loss - mongo <= timedelta(minutes=5) and loss - common <= timedelta(hours=1), "Recovery point objective exceeded")
         fields(cut["data_classes"], CUSTODY, "Consistent cut class inventory differs")
-        for item in cut["data_classes"].values():
-            fields(item, {"checkpoint_sha256", "available_at", "independent_copy_sha256", "copy_domain_sha256"}, "Consistent cut class is missing its copy")
+        for data_class, item in cut["data_classes"].items():
+            fields(item, {"checkpoint_sha256", "available_at", "independent_copy_sha256", "copy_storage_sha256",
+                          "source_storage_sha256", "copy_domain_sha256"}, "Consistent cut class is missing its copy")
             require(item["checkpoint_sha256"] == cut["checkpoint_sha256"] and common <= timestamp(item["available_at"]) <= loss
-                    and hashes(item[key] for key in ("independent_copy_sha256", "copy_domain_sha256"))
+                    and hashes(item[key] for key in ("independent_copy_sha256", "copy_storage_sha256", "source_storage_sha256", "copy_domain_sha256"))
                     and item["copy_domain_sha256"] != fault["source_domain_sha256"], "Consistent data-class cut differs")
+            self.source_storage.add(item["source_storage_sha256"])
+            copy_identity = {"data_class": data_class, **{key: item[key] for key in
+                             ("independent_copy_sha256", "copy_storage_sha256", "source_storage_sha256", "copy_domain_sha256")}}
+            for identity in (item["independent_copy_sha256"], item["copy_storage_sha256"]):
+                require(identity not in self.source_storage | self.targets
+                        and self.exercise_copies.setdefault(identity, copy_identity) == copy_identity,
+                        "Data-class backup aliases another storage identity")
+                self.backup_storage.add(identity)
         mongo_point = self.artifact(cut["mongo_point"])
         fields(mongo_point, {"run_id", "fault_sha256", "copy_sha256", "earliest_at", "latest_at", "recoverable_at", "observed_at"},
                "Independent Mongo recovery point is incomplete")
@@ -371,7 +380,9 @@ def verify(scope_bytes, expected_hash, index, files):
     evidence = RecoveryEvidence(scope, files, historical_copies)
     regional = {name: evidence.execution(reference, name, scope["inventory"], True) for name, reference in index["regional"].items()}
     sample = {key: evidence.execution(reference, key, {key}, False) for key, reference in index["home_sample"].items()}
-    require(not evidence.targets & evidence.backup_storage, "A recovery destination aliases a backup copy")
+    require(not evidence.targets & (evidence.backup_storage | evidence.source_storage)
+            and not evidence.source_storage & evidence.backup_storage,
+            "A source, backup or recovery destination aliases another storage identity")
     candidate_sha = sha256(scope["candidate"])
     inventory_sha = sha256({key: {name: value for name, value in home.items() if not name.startswith("backup_")}
                             for key, home in scope["inventory"].items()})

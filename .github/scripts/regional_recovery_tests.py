@@ -129,7 +129,8 @@ class Campaign:
             'observed_at': self.time(minute - 1)})
         cut = {'run_id': run, 'fault_sha256': fault, 'mongo_at': self.time(minute - 2), 'common_at': self.time(minute - 20),
                'checkpoint_sha256': checkpoint, 'mongo_point': mongo_point, 'data_classes': {kind: {'checkpoint_sha256': checkpoint, 'available_at': self.time(minute - 1),
-                                                                          'independent_copy_sha256': sha256(run + kind), 'copy_domain_sha256': sha256('backup')} for kind in CUSTODY},
+                                                                          'independent_copy_sha256': sha256(run + kind), 'copy_storage_sha256': sha256(run + kind + 'storage'),
+                                                                          'source_storage_sha256': sha256('source-' + kind), 'copy_domain_sha256': sha256('backup')} for kind in CUSTODY},
                'home_backups': {key: {**{field: copy[field] for field in ('backup_sha256', 'backup_storage_sha256', 'backup_domain_sha256')},
                                           'checkpoint_sha256': checkpoint, 'available_at': copy['completed_at']} for key, copy in copies.items()}}
         cut_ref = self.reference(name + '-cut', cut)
@@ -241,6 +242,35 @@ class RecoveryTests(unittest.TestCase):
         self.campaign.scope['commitments']['model_gateway'] = ref['sha256']
         with self.assertRaises(Refusal):
             self.campaign.verify()
+
+    def test_data_class_copy_cannot_alias_a_restored_home(self):
+        key = next(iter(self.campaign.inventory))
+        execution = self.campaign.read(self.campaign.index['regional']['runtime_region'])
+        mongo = self.campaign.read(execution['cut'])['data_classes']['mongo']
+        self.rejected('readback', lambda row: row['homes'][key].update(restored_storage_sha256=mongo['independent_copy_sha256']))
+
+    def test_physical_data_class_copy_cannot_alias_a_restored_home(self):
+        key = next(iter(self.campaign.inventory))
+        execution = self.campaign.read(self.campaign.index['regional']['runtime_region'])
+        mongo = self.campaign.read(execution['cut'])['data_classes']['mongo']
+        self.rejected('readback', lambda row: row['homes'][key].update(restored_storage_sha256=mongo['copy_storage_sha256']))
+
+    def test_data_class_copy_cannot_alias_a_source_volume(self):
+        source = next(iter(self.campaign.inventory.values()))['source_storage_sha256']
+        self.rejected('cut', lambda row: row['data_classes']['objects'].update(independent_copy_sha256=source))
+
+    def test_later_data_class_copy_cannot_alias_an_earlier_restore(self):
+        key = next(iter(self.campaign.inventory))
+        execution = self.campaign.read(self.campaign.index['regional']['control_plane'])
+        target = self.campaign.read(execution['readback'])['homes'][key]['restored_storage_sha256']
+        self.rejected('cut', lambda row: row['data_classes']['objects'].update(copy_storage_sha256=target))
+
+    def test_reuse_of_same_independent_readonly_copy(self):
+        execution = self.campaign.read(self.campaign.index['regional']['control_plane'])
+        copy = self.campaign.read(execution['cut'])['data_classes']['objects']
+        identities = {key: copy[key] for key in ('independent_copy_sha256', 'copy_storage_sha256', 'source_storage_sha256', 'copy_domain_sha256')}
+        self.campaign.mutate_execution('runtime_region', 'cut', lambda row: row['data_classes']['objects'].update(identities))
+        self.campaign.verify()
 
     def test_mongo_pitr_copy_must_support_claimed_point(self):
         self.rejected('cut', lambda row: row['data_classes']['mongo'].update(available_at=row['common_at']))
