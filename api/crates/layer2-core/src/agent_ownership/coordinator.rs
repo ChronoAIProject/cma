@@ -15,7 +15,9 @@ use super::{
 };
 use crate::AgentId;
 
-const RECONCILIATION_OWNER_READ_BUDGET: Duration = Duration::from_millis(200);
+#[path = "coordinator_reconciliation.rs"]
+mod reconciliation;
+pub use reconciliation::ForeignReconciliationOwners;
 #[path = "coordinator_acquisition.rs"]
 mod acquisition;
 #[path = "coordinator_activation.rs"]
@@ -163,34 +165,6 @@ impl OwnershipCoordinator {
             .and_then(|slot| slot.authority.as_ref())
             .filter(|authority| authority.is_current())
             .cloned()
-    }
-
-    /// A live foreign lease can defer one background reconciliation visit.
-    /// The store checks expiry. No lease observation is retained or grants authority.
-    pub async fn observe_foreign_reconciliation_owner(&self, id: &AgentId) -> bool {
-        if !self.can_observe_reconciliation_owner(id).await {
-            return false;
-        }
-        let Ok(Ok(Some(lease))) =
-            tokio::time::timeout(RECONCILIATION_OWNER_READ_BUDGET, self.store.owner(id)).await
-        else {
-            return false;
-        };
-        let token = lease.token;
-        token.agent_id == *id
-            && token.protocol == super::PROTOCOL_VERSION
-            && token.epoch > 0
-            && !token.instance_id.is_empty()
-            && token.instance_id != self.instance_id
-            && self.can_observe_reconciliation_owner(id).await
-    }
-
-    async fn can_observe_reconciliation_owner(&self, id: &AgentId) -> bool {
-        // Let ordinary acquisition handle all locally tracked authorities,
-        // including revoked authorities and unresolved cancelled receivers.
-        self.is_ready()
-            && self.skipped_heartbeats.load(Ordering::Acquire) == 0
-            && !self.owned.lock().unwrap().contains_key(id)
     }
 
     /// A successful renewal never revives an authority already cancelled locally.
