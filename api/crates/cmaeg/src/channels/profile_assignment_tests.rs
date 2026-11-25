@@ -152,6 +152,13 @@ async fn profile_baseline_fences_legacy_roots_and_pins_prebaseline_admissions() 
     );
     ingress::rewrite_ref(&mut request, |event| event.expires_at = now + 900);
     let mut current = (*request.channel).clone();
+    let worker_hash =
+        super::super::resolver::decode_key_hash(&current.definition.secrets.agent_key_hash)
+            .unwrap();
+    current.agent_key_hash = worker_hash;
+    current
+        .consumer_keys
+        .push((ConsumerId::default_consumer(), worker_hash));
     assert!(requires_guard(&current.definition, true));
     assert!(current.definition.secrets.profile_revisions.is_none());
     let old_binding = current.definition.provider.clone();
