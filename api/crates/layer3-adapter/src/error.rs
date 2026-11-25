@@ -35,6 +35,8 @@ pub enum AdapterError {
     NativeClaimNotReady(crate::agent_sandbox::NativeClaimGuardReason),
     #[error("runtime rejected request: {0}")]
     Rejected(String),
+    #[error("native pool or template differs from its recorded configuration")]
+    NativePoolConfigurationDrift,
     /// Current authority no longer permits the operation.
     #[error("current access authority was revoked")]
     AccessRevoked,
@@ -85,6 +87,7 @@ impl AdapterError {
             held @ Self::RuntimeStartupHold(_) => held,
             guarded @ Self::NativeClaimNotReady(_) => guarded,
             Self::Rejected(message) => context(Self::Rejected, message, detail),
+            Self::NativePoolConfigurationDrift => Self::NativePoolConfigurationDrift,
             Self::AccessRevoked => Self::AccessRevoked,
             refusal @ Self::SkillUpgradeRefused(_) => refusal,
             Self::OperationIdentityConflict(message) => {

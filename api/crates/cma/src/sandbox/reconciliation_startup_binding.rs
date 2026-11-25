@@ -84,13 +84,20 @@ impl SandboxReconciler {
                     return Ok(false);
                 }
                 Err(SandboxStoreError::Unavailable(_))
-                    if self.startup_native_home_hold_enabled
-                        && failure == Some(transient::StartupFailure::NativeHomeIdentity) =>
+                    if failure == Some(transient::StartupFailure::NativePoolConfigurationDrift)
+                        || (self.startup_native_home_hold_enabled
+                            && failure == Some(transient::StartupFailure::NativeHomeIdentity)) =>
                 {
                     let sandbox_hash =
                         format!("{:x}", Sha256::digest(sandbox.id.as_str().as_bytes()));
-                    tracing::warn!(target: "cma_startup", parent: None, attempt, sandbox_hash,
-                        "Sandbox native home identity refused during startup binding; deferred to background reconciliation");
+                    let reason = match failure {
+                        Some(transient::StartupFailure::NativePoolConfigurationDrift) => {
+                            "native_pool_configuration_drift"
+                        }
+                        _ => "native_home_identity_refused",
+                    };
+                    tracing::warn!(target: "cma_startup", parent: None, attempt, sandbox_hash, reason,
+                        "Sandbox native binding deferred to background reconciliation");
                     hold.refused();
                     return Ok(false);
                 }

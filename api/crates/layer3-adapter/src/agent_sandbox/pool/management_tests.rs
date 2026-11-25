@@ -269,3 +269,71 @@ async fn inventory_requires_complete_consistent_nonduplicating_bounded_pages() {
         assert!(state.list_queries[1].contains("continue=next"));
     }
 }
+
+#[tokio::test]
+async fn pool_drift_observation_preserves_uid_retirement_and_healthy_plan_authority() {
+    let fixture = Fixture::new().await;
+    let first = fixture.client.configure(&spec(), 2).await.unwrap().binding;
+    let mut another = spec();
+    another.cpu_millis += 100;
+    let plan = fixture.client.plan(&another).unwrap();
+    let second = fixture.client.configure(&another, 2).await.unwrap().binding;
+    ready(&fixture, &second, 2);
+    let old = fixture.row("sandboxtemplates", &first.template_name);
+    fixture.edit("sandboxtemplates", &first.template_name, |row| {
+        row["spec"]["podTemplate"]["spec"]["containers"][0]["image"] = json!("drift");
+    });
+    assert_eq!(
+        fixture.client.inventory().await.unwrap_err(),
+        crate::AdapterError::NativePoolConfigurationDrift
+    );
+    assert_eq!(
+        fixture
+            .client
+            .observe_admitting_pool(&first)
+            .await
+            .unwrap_err(),
+        crate::AdapterError::NativePoolConfigurationDrift
+    );
+    assert_eq!(
+        fixture
+            .client
+            .observe_planned_pool(&plan)
+            .await
+            .unwrap()
+            .unwrap()
+            .binding,
+        second
+    );
+    fixture.edit("sandboxwarmpools", &first.name, |row| {
+        row["metadata"]["uid"] = json!("replacement");
+    });
+    assert!(matches!(
+        fixture.client.observe_admitting_pool(&first).await,
+        Err(crate::AdapterError::Rejected(_))
+    ));
+    fixture.edit("sandboxwarmpools", &first.name, |row| {
+        row["metadata"]["uid"] = json!(first.uid);
+        row["metadata"]["annotations"][super::retirement::RETIRING] = json!("true");
+    });
+    assert!(matches!(
+        fixture.client.observe_admitting_pool(&first).await,
+        Err(crate::AdapterError::Rejected(_))
+    ));
+    fixture.edit("sandboxwarmpools", &first.name, |row| {
+        row["metadata"]["annotations"]
+            .as_object_mut()
+            .unwrap()
+            .remove(super::retirement::RETIRING);
+    });
+    fixture.edit("sandboxtemplates", &first.template_name, |row| *row = old);
+    assert_eq!(
+        fixture
+            .client
+            .observe_admitting_pool(&first)
+            .await
+            .unwrap()
+            .binding,
+        first
+    );
+}

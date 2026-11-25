@@ -22,6 +22,7 @@ pub use native_home_store::NativeHomeVolumes;
 mod management;
 mod model;
 mod pod_policy;
+mod startup_observation;
 pub use pod_policy::NativeFsGroupChangePolicy;
 mod reconciliation;
 mod recovery;

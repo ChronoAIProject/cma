@@ -245,16 +245,6 @@ impl AgentSandboxPools {
         Err(unavailable("native pool inventory exceeds its page bound"))
     }
 
-    pub async fn observe_admitting_pool(
-        &self,
-        binding: &NativePoolBinding,
-    ) -> Result<NativePoolStatus> {
-        let (_, pool) = self.bound_resources(binding).await?;
-        super::retirement::admitting(&pool)?;
-        self.verify_seed(&binding.spec.home).await?;
-        status(binding.clone(), &pool)
-    }
-
     /// Select only the exact immutable image/resources/home and current Pod
     /// policy. The caller must persist this binding before creating a claim.
     pub async fn select(&self, spec: &NativePoolSpec) -> Result<Option<NativePoolBinding>> {
@@ -314,20 +304,21 @@ impl AgentSandboxPools {
             self.pools.get(&binding.name),
         );
         let template = template.map_err(api_error)?;
-        model::verify(&template, &desired)?;
+        model::verify_identity(&template, &desired)?;
         if template.uid().as_deref() != Some(&binding.template_uid) {
             return Err(rejected("native pool template UID changed"));
         }
         let actual = actual.map_err(api_error)?;
-        let desired = model::pool(&config, &binding.spec, &template, target(&actual)?)?;
-        model::verify(&actual, &desired)?;
+        let desired_pool = model::pool(&config, &binding.spec, &template, target(&actual)?)?;
+        model::verify_identity(&actual, &desired_pool)?;
         if actual.uid().as_deref() != Some(&binding.uid) {
             return Err(rejected("native pool UID changed"));
         }
+        Self::verify_pool_specs(&template, &desired, &actual, &desired_pool)?;
         Ok((template, actual))
     }
 
-    async fn discover(&self, pool: &DynamicObject) -> Result<NativePoolStatus> {
+    pub(super) async fn discover(&self, pool: &DynamicObject) -> Result<NativePoolStatus> {
         let encoded = pool
             .annotations()
             .get(DEFINITION_ANNOTATION)
@@ -349,10 +340,25 @@ impl AgentSandboxPools {
             .get(&desired.name_any())
             .await
             .map_err(api_error)?;
-        model::verify(&template, &desired)?;
-        let desired = model::pool(&config, &definition.spec, &template, target(pool)?)?;
-        model::verify(pool, &desired)?;
+        model::verify_identity(&template, &desired)?;
+        let desired_pool = model::pool(&config, &definition.spec, &template, target(pool)?)?;
+        model::verify_identity(pool, &desired_pool)?;
+        Self::verify_pool_specs(&template, &desired, pool, &desired_pool)?;
         status(binding(&config, &definition.spec, &template, pool)?, pool)
+    }
+
+    fn verify_pool_specs(
+        template: &DynamicObject,
+        desired_template: &DynamicObject,
+        pool: &DynamicObject,
+        desired_pool: &DynamicObject,
+    ) -> Result<()> {
+        let specs = model::verify_spec(template, desired_template)
+            .and_then(|()| model::verify_spec(pool, desired_pool));
+        if specs.is_err() {
+            super::retirement::admitting(pool)?;
+        }
+        specs
     }
 
     pub(super) async fn apply_target(

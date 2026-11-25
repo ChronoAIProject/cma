@@ -344,3 +344,71 @@ async fn startup_drain_never_claims_or_zeroes_a_prewarmed_default() {
         ]
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn startup_pool_drift_requires_exact_target_and_preserves_healthy_capacity_gate() {
+    for allow_empty in [false, true] {
+        let store = Arc::new(resize::Targets::default());
+        let planner = resize::Planner::default();
+        let image = resize::pinned("agent", 'a');
+        let pool = resize::deployment(store.clone(), planner.clone(), &image, None);
+        pool.ensure_default().await.unwrap();
+        let original = {
+            let mut rows = store.rows.lock().unwrap();
+            let row = rows.first_mut().unwrap();
+            row.target_replicas = 2;
+            row.applied_revision = row.revision;
+            row.binding = Some(resize::Planner::binding(&row.plan));
+            row.clone()
+        };
+        let mut observation = NativePoolStatus {
+            binding: original.binding.clone().unwrap(),
+            desired_replicas: 2,
+            ready_replicas: 0,
+            observed: false,
+        };
+        planner.inventory.lock().unwrap().push(observation.clone());
+        planner.inventory_drift.store(true, Ordering::SeqCst);
+        let policy = StartupPoolPolicy {
+            allow_empty,
+            ..Default::default()
+        };
+        let await_pool = || {
+            await_ready_with_fencing(
+                &*store,
+                &planner,
+                &original.plan,
+                Duration::from_secs(3),
+                policy,
+                None,
+                None,
+            )
+        };
+
+        // Drift on a historical pool is no proof for the current target.
+        assert_eq!(await_pool().await, Err(WarmPoolError::Unavailable));
+        observation.ready_replicas = 1;
+        observation.observed = true;
+        planner.inventory.lock().unwrap()[0] = observation;
+        assert_eq!(await_pool().await, Ok(()));
+
+        planner.bound_drift.store(true, Ordering::SeqCst);
+        assert_eq!(await_pool().await, Ok(()));
+        assert_eq!(
+            store.find(&original.id).await.unwrap().unwrap().binding,
+            original.binding
+        );
+        assert_eq!(
+            store
+                .find(&original.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .target_replicas,
+            2
+        );
+
+        planner.retiring.store(true, Ordering::SeqCst);
+        assert_eq!(await_pool().await, Err(WarmPoolError::Conflict));
+    }
+}

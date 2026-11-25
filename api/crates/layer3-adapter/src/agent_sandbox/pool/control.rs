@@ -1,6 +1,6 @@
 use super::{
     AgentSandboxPools, NativePoolBinding, NativePoolClaim, NativePoolClaimRequest,
-    NativePoolCleanup, NativePoolSpec, NativePoolStatus, Result,
+    NativePoolCleanup, NativePoolConfiguration, NativePoolSpec, NativePoolStatus, Result,
 };
 use crate::HomeVolumeAttachment;
 
@@ -60,6 +60,24 @@ pub trait NativePoolControl: Send + Sync {
         replicas: u32,
     ) -> Result<NativePoolStatus>;
     async fn inventory(&self) -> Result<Vec<NativePoolStatus>>;
+    /// Observe the one immutable plan without creating or resizing its provider resources.
+    async fn observe_planned_pool(
+        &self,
+        configuration: &NativePoolConfiguration,
+    ) -> Result<Option<NativePoolStatus>> {
+        let mut matching = self.inventory().await?.into_iter().filter(|status| {
+            status.binding.spec == configuration.spec
+                && status.binding.pod_policy == configuration.pod_policy
+                && status.binding.config_sha256 == configuration.config_sha256
+        });
+        let found = matching.next();
+        if matching.next().is_some() {
+            return Err(crate::AdapterError::Rejected(
+                "native pool plan is ambiguous".into(),
+            ));
+        }
+        Ok(found)
+    }
     /// Read the exact pool and its admission barrier from the provider.
     async fn observe_admitting_pool(
         &self,
@@ -131,6 +149,12 @@ impl NativePoolControl for AgentSandboxPools {
     }
     async fn inventory(&self) -> Result<Vec<NativePoolStatus>> {
         self.inventory().await
+    }
+    async fn observe_planned_pool(
+        &self,
+        configuration: &NativePoolConfiguration,
+    ) -> Result<Option<NativePoolStatus>> {
+        self.observe_planned_pool(configuration).await
     }
     async fn observe_admitting_pool(
         &self,

@@ -208,7 +208,9 @@ impl NativeWarmPools {
             }
             return self.reconcile_candidate(provider, target).await;
         }
-        reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing).await
+        reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing)
+            .await
+            .map(|_| true)
     }
 }
 
@@ -410,7 +412,24 @@ async fn reconcile_one(
     let Some(target) = store.claim().await? else {
         return Ok(false);
     };
-    reconcile_claimed(store, provider, target, false).await
+    reconcile_claimed(store, provider, target, false)
+        .await
+        .map(|_| true)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PoolApply {
+    Settled,
+    ConfigurationDrift,
+}
+
+fn provider_apply_error(error: layer3_adapter::AdapterError) -> WarmPoolError {
+    match error {
+        layer3_adapter::AdapterError::NativePoolConfigurationDrift => {
+            WarmPoolError::ProviderConfigurationDrift
+        }
+        _ => WarmPoolError::Unavailable,
+    }
 }
 
 async fn reconcile_claimed(
@@ -418,7 +437,7 @@ async fn reconcile_claimed(
     provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
     mut target: PoolTarget,
     target_fencing: bool,
-) -> Result<bool, WarmPoolError> {
+) -> Result<PoolApply, WarmPoolError> {
     if target.retiring {
         return Err(WarmPoolError::Conflict);
     }
@@ -428,7 +447,7 @@ async fn reconcile_claimed(
             let status = provider
                 .configure_planned(&target.plan, 0)
                 .await
-                .map_err(|_| WarmPoolError::Unavailable)?;
+                .map_err(provider_apply_error)?;
             store.bind(&target, &status.binding).await?;
             target.binding = Some(status.binding);
         }
@@ -447,14 +466,18 @@ async fn reconcile_claimed(
         } else {
             provider.resize(binding, target.target_replicas).await
         }
-        .map_err(|_| WarmPoolError::Unavailable)?;
+        .map_err(provider_apply_error)?;
         Ok::<(), WarmPoolError>(())
     };
-    let success = matches!(
-        tokio::time::timeout(Duration::from_secs(30), result).await,
-        Ok(Ok(()))
-    );
+    let result = tokio::time::timeout(Duration::from_secs(30), result).await;
+    let success = matches!(result, Ok(Ok(())));
     store.finish(&target, success).await?;
     telemetry::applied(&target, success);
-    Ok(true)
+    Ok(
+        if matches!(result, Ok(Err(WarmPoolError::ProviderConfigurationDrift))) {
+            PoolApply::ConfigurationDrift
+        } else {
+            PoolApply::Settled
+        },
+    )
 }

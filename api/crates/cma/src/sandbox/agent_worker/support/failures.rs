@@ -40,7 +40,7 @@ pub(in crate::sandbox::agent_worker) fn adapter_failure(error: AdapterError) -> 
         AdapterError::Rejected(detail) | AdapterError::OperationIdentityConflict(detail) => {
             WorkerFailure::terminal("agent_runtime_rejected", detail)
         }
-        error @ AdapterError::DesktopFailed => {
+        error @ (AdapterError::DesktopFailed | AdapterError::NativePoolConfigurationDrift) => {
             WorkerFailure::terminal("agent_runtime_rejected", error.to_string())
         }
         AdapterError::Unsupported(detail) => {

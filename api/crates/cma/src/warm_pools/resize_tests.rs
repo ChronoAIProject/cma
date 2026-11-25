@@ -392,6 +392,8 @@ impl PoolTargetStore for Targets {
 pub(super) struct Planner {
     pub(super) inventory: Arc<Mutex<Vec<NativePoolStatus>>>,
     pub(super) retiring: Arc<AtomicBool>,
+    pub(super) inventory_drift: Arc<AtomicBool>,
+    pub(super) bound_drift: Arc<AtomicBool>,
 }
 
 impl Planner {
@@ -428,6 +430,9 @@ impl NativePoolControl for Planner {
         unreachable!("seeding and startup never configure an unawaited pool")
     }
     async fn inventory(&self) -> layer3_adapter::Result<Vec<NativePoolStatus>> {
+        if self.inventory_drift.load(Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::NativePoolConfigurationDrift);
+        }
         Ok(self.inventory.lock().unwrap().clone())
     }
     async fn observe_admitting_pool(
@@ -438,6 +443,9 @@ impl NativePoolControl for Planner {
             return Err(layer3_adapter::AdapterError::Rejected(
                 "retiring pool".into(),
             ));
+        }
+        if self.bound_drift.load(Ordering::SeqCst) {
+            return Err(layer3_adapter::AdapterError::NativePoolConfigurationDrift);
         }
         self.inventory
             .lock()

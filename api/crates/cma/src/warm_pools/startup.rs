@@ -1,9 +1,9 @@
 //! Prevent the first allocation after promotion from taking an avoidable cold path.
 use super::{
     reconcile_claimed, NativePoolConfiguration, NativePoolSpec, NativePoolStatus, NativeWarmPools,
-    PoolTarget, PoolTargetStore, WarmPoolError,
+    PoolApply, PoolTarget, PoolTargetStore, WarmPoolError,
 };
-use layer3_adapter::agent_sandbox::NativePoolControl;
+use layer3_adapter::{agent_sandbox::NativePoolControl, AdapterError};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
@@ -242,6 +242,12 @@ pub(super) async fn await_ready_with_fencing(
             match boot_effect(writer, step(store, provider, plan, policy)).await {
                 Ok(true) => return Ok(()),
                 Ok(false) => {}
+                Err(WarmPoolError::ProviderConfigurationDrift) => {
+                    tracing::warn!(target: "cma_warm_pool_startup", parent: None,
+                        reason = "native_pool_configuration_drift", config_sha256 = %plan.config_sha256,
+                        "Agent Manager will serve with a degraded default native pool");
+                    return Ok(());
+                }
                 Err(WarmPoolError::Conflict) => return Err(WarmPoolError::Conflict),
                 Err(_) => tracing::warn!("default native pool startup readiness will retry"),
             }
@@ -287,43 +293,48 @@ async fn step(
         return Ok(true);
     }
     if target.binding.is_some() && target.applied_revision == target.revision {
-        let inventory = provider
-            .inventory()
-            .await
-            .map_err(|_| WarmPoolError::Unavailable)?;
+        let inventory = match provider.inventory().await {
+            Ok(inventory) => inventory,
+            Err(AdapterError::NativePoolConfigurationDrift) => {
+                let binding = target.binding.as_ref().ok_or(WarmPoolError::Conflict)?;
+                let observation = provider.observe_admitting_pool(binding).await;
+                if matches!(
+                    &observation,
+                    Err(AdapterError::NativePoolConfigurationDrift)
+                ) {
+                    if current_target(store, &target).await? {
+                        return Err(WarmPoolError::ProviderConfigurationDrift);
+                    }
+                    return Ok(false);
+                }
+                vec![observation.map_err(observation_error)?]
+            }
+            Err(_) => return Err(WarmPoolError::Unavailable),
+        };
         let capacity = observed_capacity(&target, &inventory);
         let ready = capacity.is_some_and(|ready| ready > 0);
         let empty = policy.allow_empty && capacity == Some(0);
         if ready || empty {
             if empty {
                 let binding = target.binding.as_ref().ok_or(WarmPoolError::Conflict)?;
-                let confirmed = provider.observe_admitting_pool(binding).await.map_err(
-                    |error| match error {
-                        layer3_adapter::AdapterError::Rejected(_) => WarmPoolError::Conflict,
-                        _ => WarmPoolError::Unavailable,
-                    },
-                )?;
+                let confirmed = match provider.observe_admitting_pool(binding).await {
+                    Err(AdapterError::NativePoolConfigurationDrift) => {
+                        if current_target(store, &target).await? {
+                            return Err(WarmPoolError::ProviderConfigurationDrift);
+                        }
+                        return Ok(false);
+                    }
+                    result => result.map_err(observation_error)?,
+                };
                 if observed_capacity(&target, &[confirmed]) != Some(0) {
                     return Ok(false);
                 }
             }
             // An operator may resize while the provider observation is in flight.
-            let current = store
-                .find(&target.id)
-                .await?
-                .ok_or(WarmPoolError::Unavailable)?;
-            if current.revision == target.revision
-                && current.plan == target.plan
-                && current.binding == target.binding
-                && current.applied_revision == current.revision
-                && current.target_replicas == target.target_replicas
-                && current.error.is_none()
-                && !current.retiring
-                && !current.retired
-            {
+            if current_target(store, &target).await? {
                 if empty {
                     tracing::warn!(target: "cma_warm_pool_startup", parent: None,
-                        reason = "provider_reports_zero_ready", desired = current.target_replicas,
+                        reason = "provider_reports_zero_ready", desired = target.target_replicas,
                         "Agent Manager will serve while the default native pool fills");
                 }
                 return Ok(true);
@@ -339,10 +350,20 @@ async fn step(
             // Release preparation can create the exact pool before promotion.
             // Bind its original UIDs under the durable lease so normal initial
             // configure(0) cannot drain already-warm members during startup.
-            let inventory = provider
-                .inventory()
-                .await
-                .map_err(|_| WarmPoolError::Unavailable)?;
+            let inventory = match provider.inventory().await {
+                Ok(inventory) => inventory,
+                Err(AdapterError::NativePoolConfigurationDrift) => {
+                    match provider.observe_planned_pool(plan).await {
+                        Ok(observed) => observed.into_iter().collect(),
+                        Err(AdapterError::NativePoolConfigurationDrift) => {
+                            store.finish(&claimed, false).await?;
+                            return Err(WarmPoolError::ProviderConfigurationDrift);
+                        }
+                        Err(error) => return Err(observation_error(error)),
+                    }
+                }
+                Err(_) => return Err(WarmPoolError::Unavailable),
+            };
             let mut matching = inventory.into_iter().filter(|status| {
                 status.binding.spec == plan.spec
                     && status.binding.pod_policy == plan.pod_policy
@@ -356,9 +377,38 @@ async fn step(
                 claimed.binding = Some(existing.binding);
             }
         }
-        reconcile_claimed(store, provider, claimed, policy.target_fencing).await?;
+        if reconcile_claimed(store, provider, claimed, policy.target_fencing).await?
+            == PoolApply::ConfigurationDrift
+        {
+            return Err(WarmPoolError::ProviderConfigurationDrift);
+        }
     }
     Ok(false)
+}
+
+fn observation_error(error: AdapterError) -> WarmPoolError {
+    match error {
+        AdapterError::Rejected(_) => WarmPoolError::Conflict,
+        _ => WarmPoolError::Unavailable,
+    }
+}
+
+async fn current_target(
+    store: &dyn PoolTargetStore,
+    target: &PoolTarget,
+) -> Result<bool, WarmPoolError> {
+    let current = store
+        .find(&target.id)
+        .await?
+        .ok_or(WarmPoolError::Unavailable)?;
+    Ok(current.revision == target.revision
+        && current.plan == target.plan
+        && current.binding == target.binding
+        && current.applied_revision == current.revision
+        && current.target_replicas == target.target_replicas
+        && current.error.is_none()
+        && !current.retiring
+        && !current.retired)
 }
 
 #[cfg(test)]
