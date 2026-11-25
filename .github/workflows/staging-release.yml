@@ -120,8 +120,8 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ runner.temp }}/cma-layer-cache/archive.tar
-          key: cma-layer-archive-v1-${{ inputs.component }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: cma-layer-archive-v1-${{ inputs.component }}-
+          key: cma-layer-archive-v1-${{ inputs.component }}--${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: cma-layer-archive-v1-${{ inputs.component }}--
           fail-on-cache-miss: false
       - name: Validate restored layer archive
         if: steps.layer-restore.outcome == 'success'
@@ -140,6 +140,7 @@ jobs:
           CD_TASKS: ${{ inputs.tasks }}
           CD_BUILD_CACHE: enabled
           CD_LAYER_ARCHIVE_CACHE: ${{ vars.CMA_BOUNDED_LAYER_CACHE == 'true' && 'enabled' || '' }}
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
         run: python3 -B .github/scripts/staging_cd_produce.py
       - name: Build once, scan every layer, and publish exact bytes
         timeout-minutes: 270
@@ -152,11 +153,12 @@ jobs:
           CD_PREPARED_ARCHIVE: ${{ steps.producer.outputs.prepared }}
           CD_BUILD_CACHE: enabled
           CD_LAYER_ARCHIVE_CACHE: ${{ vars.CMA_BOUNDED_LAYER_CACHE == 'true' && 'enabled' || '' }}
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
           CD_LAYER_SCAN_CACHE: enabled
         run: python3 -B .github/scripts/staging_cd_publish.py
       - name: Seal accepted layer archive
         id: seal-layer-archive
-        if: success() && vars.CMA_BOUNDED_LAYER_CACHE == 'true' && steps.publication.outputs.disposition == ''
+        if: success() && vars.CMA_BOUNDED_LAYER_CACHE == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && steps.publication.outputs.disposition == ''
         continue-on-error: true
         timeout-minutes: 5
         run: |

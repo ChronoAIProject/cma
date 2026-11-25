@@ -62,7 +62,7 @@ def check_component_cache_writers(documents)
     web_nodes.first.dig('with', 'cache') == "${{ #{develop} && 'npm' || '' }}", 'setup-node may save a PR cache')
   writers = (images + web).select { |s| s.fetch('uses', '').match?(%r{\Aactions/cache(?:/save)?@}) }
   require_check(writers.size == 1 && writers.first['uses'].start_with?('actions/cache/save@') &&
-    writers.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (success() && #{develop} && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true')",
+    writers.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (success() && #{develop} && matrix.component == 'api' && vars.CMA_LAYER_CACHE_WRITER_FLOOR != 'true' && steps.api-cargo-cache-export.outputs.ready == 'true')",
     'only the accepted develop Cargo archive may be saved')
   restore = 'actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830'
   npm = {'path' => '${{ steps.npm-cache.outputs.directory }}',

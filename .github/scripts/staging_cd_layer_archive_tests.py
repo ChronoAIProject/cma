@@ -11,7 +11,7 @@ import yaml
 
 import buildkit_cache_archive as archive
 from actions_cache_retention import BUDGET
-from actions_cargo_budget import Account as CargoAccount, stored_bound
+from actions_cargo_budget import Account as CargoAccount, SCHEMA as CARGO_SCHEMA, stored_bound
 from actions_layer_admission import Account, PREFIX, reserve, retire_verified, select, source_run
 from staging_cd_cache_retention_tests import Inventory, entry
 from staging_cd_cache_retention_tests import ROOT
@@ -28,11 +28,15 @@ def populate(root):
     (root / "blobs" / "sha256").mkdir(parents=True)
     (root / "oci-layout").write_text('{"imageLayoutVersion":"1.0.0"}')
     data = blob(root, b"synthetic layer", "application/vnd.oci.image.layer.v1.tar+gzip")
-    config = blob(root, {"layers": [{"blob": data["digest"], "parent": -1}]},
+    config = blob(root, {"layers": [{"blob": data["digest"], "parent": -1}],
+                         "records": [{"digest": "sha256:" + "b" * 64, "layers": [{"layer": 0}]}]},
                   "application/vnd.buildkit.cacheconfig.v0")
-    manifest = blob(root, {"schemaVersion": 2, "config": config, "layers": [data]},
+    manifest = blob(root, {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                           "config": config, "layers": [data]},
                     "application/vnd.oci.image.manifest.v1+json")
-    (root / "index.json").write_text(json.dumps({"schemaVersion": 2, "manifests": [manifest]}))
+    manifest["annotations"] = {"org.opencontainers.image.ref.name": "latest"}
+    (root / "index.json").write_text(json.dumps({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json",
+                                                 "manifests": [manifest]}))
     return data
 
 
@@ -92,16 +96,14 @@ class AdmissionTests(unittest.TestCase):
         self.archive = Path(directory.name) / "archive.tar"
         self.archive.write_bytes(b"synthetic")
         self.cap = stored_bound(self.archive.stat().st_size)
-        self.key = PREFIX + "am-123-1"
-        self.old = PREFIX + "eg-122-1"
+        self.key = PREFIX + "am--123-1"
+        self.old = PREFIX + "eg--122-1"
         self.account = Account({})
         self.ledger = Mock()
         self.ledger.read.return_value = ("a" * 40, self.account)
-        self.cargo = Mock()
-        self.cargo.read.return_value = ("b" * 40, CargoAccount({}))
 
     def admission(self, *entries):
-        return reserve(Inventory(*entries), self.ledger, self.cargo, self.key, self.archive, "c" * 40)
+        return reserve(Inventory(*entries), self.ledger, self.key, self.archive, "c" * 40)
 
     def test_whole_archive_charge_must_fit_and_prior_generation_survives(self):
         old = entry(1, self.old, size=20)
@@ -114,12 +116,22 @@ class AdmissionTests(unittest.TestCase):
 
     def test_unknown_uploads_and_legacy_charges_are_counted(self):
         self.account.charges[self.old] = self.cap
-        self.cargo.read.return_value[1].charges["legacy"] = self.cap
+        cargo_key = "cma-cd-cargo-v4-am-" + "a" * 64 + "-" + "b" * 64 + "-22-1"
+        self.account.charges[cargo_key] = self.cap
         external = entry(3, "unrelated", size=BUDGET - 3 * self.cap)
         self.assertFalse(self.admission(external)["allowed"])
-        self.assertEqual(self.account.charges, {self.old: self.cap})
+        self.assertEqual(self.account.charges, {self.old: self.cap, cargo_key: self.cap})
         self.assertFalse(self.admission(external, entry(4, self.old, size=self.cap))["allowed"])
-        self.assertEqual(self.account.charges, {})
+        self.assertEqual(self.account.charges, {cargo_key: self.cap})
+
+    def test_migration_preserves_legacy_charge_and_refuses_legacy_decoder(self):
+        cargo_key = "cma-cd-cargo-v4-am-" + "a" * 64 + "-" + "b" * 64 + "-22-1"
+        old = {"schema": CARGO_SCHEMA, "charges": {cargo_key: self.cap}}
+        account = Account.decode(old)
+        self.assertEqual(account.charges, old["charges"])
+        account.charges[self.key] = self.cap
+        with self.assertRaises(ValueError):
+            CargoAccount.decode(account.encode())
 
     def test_changed_ledger_ref_or_duplicate_candidate_withholds(self):
         self.ledger.read.side_effect = [("a" * 40, self.account), ("b" * 40, Account({}))]
@@ -159,10 +171,11 @@ class ProducerTests(unittest.TestCase):
             env = {"GITHUB_REPOSITORY": REPOSITORY, "GITHUB_REF": "refs/heads/develop",
                    "GITHUB_EVENT_NAME": "workflow_run", "GITHUB_EVENT_PATH": str(path),
                    "GITHUB_WORKFLOW_REF": f"{REPOSITORY}/.github/workflows/cache-retention.yml@refs/heads/develop",
-                   "CD_LAYER_ARCHIVE_CACHE": "enabled"}
+                   "CD_LAYER_ARCHIVE_CACHE": "enabled", "CD_LAYER_CACHE_WRITER_FLOOR": "verified"}
             path.write_text(json.dumps({"action": "completed", "workflow_run": run}))
             self.assertEqual(source_run(env), run)
-            for changes in ({"GITHUB_EVENT_NAME": "workflow_dispatch"}, {"CD_LAYER_ARCHIVE_CACHE": "disabled"}):
+            for changes in ({"GITHUB_EVENT_NAME": "workflow_dispatch"}, {"CD_LAYER_ARCHIVE_CACHE": "disabled"},
+                            {"CD_LAYER_CACHE_WRITER_FLOOR": ""}):
                 with self.assertRaises(ValueError):
                     source_run(env | changes)
             path.write_text(json.dumps({"action": "completed", "workflow_run": run | {"head_branch": "topic"}}))
@@ -185,6 +198,7 @@ class ProducerTests(unittest.TestCase):
         self.assertEqual(writer['concurrency'], {'group': 'cma-develop-layer-cache-admission',
                                                'queue': 'max', 'cancel-in-progress': False})
         self.assertIn("vars.CMA_BOUNDED_LAYER_CACHE == 'true'", writer['if'])
+        self.assertIn("vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true'", writer['if'])
         self.assertIn("github.event_name == 'workflow_run'", writer['if'])
         self.assertIn("github.event.workflow_run.path == '.github/workflows/staging-cd.yml'", writer['if'])
         save = writer['steps'][-1]
@@ -196,37 +210,67 @@ class ProducerTests(unittest.TestCase):
         self.assertEqual(reader['concurrency'], writer['concurrency'])
         self.assertEqual(reader['steps'][-1]['if'], "steps.verify-archive.outcome == 'success'")
 
+    def test_runtime_prefix_excludes_omarchy_in_both_restore_paths(self):
+        from actions_layer_admission import archive_key
+        run = {'id': 123, 'run_attempt': 1}
+        runtime = archive_key('runtime', run)
+        omarchy = archive_key('runtime-omarchy', run)
+        self.assertTrue(runtime.startswith(PREFIX + 'runtime--'))
+        self.assertFalse(omarchy.startswith(PREFIX + 'runtime--'))
+        for name, job in (('staging-release', 'publish'), ('ci-images', 'images')):
+            document = yaml.safe_load((ROOT / '.github' / 'workflows' / (name + '.yml')).read_text())
+            restore = next(step for step in document['jobs'][job]['steps'] if step.get('id') == 'layer-restore')
+            self.assertTrue(restore['with']['restore-keys'].endswith(' }}--'))
+
 
 class RetirementTests(unittest.TestCase):
+    def setUp(self):
+        temp = TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.restored = Path(temp.name) / 'restored'
+        populate(self.restored)
+
     def test_only_same_family_and_version_after_fresh_successor(self):
         from dataclasses import replace
-        old = entry(1, PREFIX + 'am-10-1')
-        keep = entry(4, PREFIX + 'am-11-1')
-        unrelated = entry(2, PREFIX + 'eg-10-1')
-        another_version = replace(entry(3, PREFIX + 'am-9-1'), version='other')
-        newer = entry(5, PREFIX + 'am-12-1')
+        old = entry(1, PREFIX + 'am--10-1')
+        keep = entry(4, PREFIX + 'am--11-1')
+        unrelated = entry(2, PREFIX + 'eg--10-1')
+        another_version = replace(entry(3, PREFIX + 'am--9-1'), version='other')
+        newer = entry(5, PREFIX + 'am--12-1')
         legacy = entry(6, 'buildkit-blob-1-sha256:' + 'a' * 64)
         api = Inventory(old, keep, unrelated, another_version, newer, legacy)
         api.active_runs = Mock(return_value=[{'id': 42}])
-        self.assertEqual(retire_verified(api, keep.key, 'a' * 40)['deleted_bytes'], 0)
+        self.assertEqual(retire_verified(api, keep.key, 'a' * 40, self.restored)['deleted_bytes'], 0)
         api.delete.assert_not_called()
         api.active_runs.return_value = []
-        self.assertEqual(retire_verified(api, keep.key, 'a' * 40)['deleted_bytes'], old.size)
+        self.assertEqual(retire_verified(api, keep.key, 'a' * 40, self.restored)['deleted_bytes'], old.size)
         api.delete.assert_called_once_with(old.id)
         self.assertEqual(set(api.rows), {keep.id, unrelated.id, another_version.id, newer.id, legacy.id})
 
     def test_duplicate_or_changed_successor_refuses_retirement(self):
         from dataclasses import replace
-        old = entry(1, PREFIX + 'am-10-1')
-        keep = entry(4, PREFIX + 'am-11-1')
+        old = entry(1, PREFIX + 'am--10-1')
+        keep = entry(4, PREFIX + 'am--11-1')
         api = Inventory(old, keep, replace(keep, id=5))
         api.active_runs = Mock(return_value=[])
         with self.assertRaises(ValueError):
-            retire_verified(api, keep.key, 'a' * 40)
+            retire_verified(api, keep.key, 'a' * 40, self.restored)
         api.delete.assert_not_called()
         api.rows.pop(5)
         api.visible = Mock(return_value=None)
-        self.assertEqual(retire_verified(api, keep.key, 'a' * 40)['deleted_bytes'], 0)
+        self.assertEqual(retire_verified(api, keep.key, 'a' * 40, self.restored)['deleted_bytes'], 0)
+        api.delete.assert_not_called()
+
+    def test_hash_valid_layer_tree_without_cache_configuration_cannot_retire(self):
+        layer = blob(self.restored, b'valid hash, no cache records', 'application/vnd.oci.image.layer.v1.tar+gzip')
+        layer['annotations'] = {'org.opencontainers.image.ref.name': 'latest'}
+        (self.restored / 'index.json').write_text(json.dumps({'schemaVersion': 2,
+            'mediaType': 'application/vnd.oci.image.index.v1+json', 'manifests': [layer]}))
+        old = entry(1, PREFIX + 'am--10-1')
+        keep = entry(4, PREFIX + 'am--11-1')
+        api = Inventory(old, keep)
+        with self.assertRaises(ValueError):
+            retire_verified(api, keep.key, 'a' * 40, self.restored)
         api.delete.assert_not_called()
 
 

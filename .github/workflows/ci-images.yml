@@ -131,8 +131,8 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ runner.temp }}/cma-layer-cache/archive.tar
-          key: cma-layer-archive-v1-${{ matrix.component == 'api' && 'am' || matrix.component == 'cmaeg' && 'eg' || matrix.component }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: cma-layer-archive-v1-${{ matrix.component == 'api' && 'am' || matrix.component == 'cmaeg' && 'eg' || matrix.component }}-
+          key: cma-layer-archive-v1-${{ matrix.component == 'api' && 'am' || matrix.component == 'cmaeg' && 'eg' || matrix.component }}--${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: cma-layer-archive-v1-${{ matrix.component == 'api' && 'am' || matrix.component == 'cmaeg' && 'eg' || matrix.component }}--
           fail-on-cache-miss: false
       - name: Validate restored layer archive
         id: layer-validate
@@ -386,7 +386,7 @@ jobs:
           retention-days: 1
       -
         name: "Save accepted API Cargo cache archive"
-        if: "steps.staging-image.outputs.adopted != 'true' && (success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true')"
+        if: "steps.staging-image.outputs.adopted != 'true' && (success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && vars.CMA_LAYER_CACHE_WRITER_FLOOR != 'true' && steps.api-cargo-cache-export.outputs.ready == 'true')"
         uses: "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830"
         timeout-minutes: 3
         continue-on-error: true

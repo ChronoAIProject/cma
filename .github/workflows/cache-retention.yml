@@ -112,7 +112,7 @@ jobs:
   retain_layers:
     name: Retain bounded layer cache
     if: >-
-      vars.CMA_BOUNDED_LAYER_CACHE == 'true' && github.event_name == 'workflow_run' &&
+      vars.CMA_BOUNDED_LAYER_CACHE == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && github.event_name == 'workflow_run' &&
       github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma' &&
       github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'develop' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
@@ -144,6 +144,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_COMPONENT: ${{ matrix.component }}
           CD_LAYER_ARCHIVE_CACHE: enabled
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
         run: python3 -B .github/scripts/actions_layer_admission.py select
       - name: Download exact candidate
         if: steps.layer-candidate.outputs.artifact != ''
@@ -186,6 +187,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_COMPONENT: ${{ matrix.component }}
           CD_LAYER_ARCHIVE_CACHE: enabled
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
         run: python3 -B .github/scripts/actions_layer_admission.py reserve
       - name: Save admitted layer archive
         if: steps.reserve-layer-archive.outputs.allowed == 'true'
@@ -199,7 +201,7 @@ jobs:
     name: Verify bounded layer cache on a fresh runner
     needs: retain_layers
     if: >-
-      vars.CMA_BOUNDED_LAYER_CACHE == 'true' && github.event_name == 'workflow_run' &&
+      vars.CMA_BOUNDED_LAYER_CACHE == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && github.event_name == 'workflow_run' &&
       github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma' &&
       github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'develop' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
@@ -230,7 +232,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ runner.temp }}/cma-layer-cache/archive.tar
-          key: cma-layer-archive-v1-${{ matrix.component }}-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+          key: cma-layer-archive-v1-${{ matrix.component }}--${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           fail-on-cache-miss: false
       - name: Verify restored archive bytes and graph
         id: verify-archive
@@ -244,5 +246,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_COMPONENT: ${{ matrix.component }}
           CD_LAYER_ARCHIVE_CACHE: enabled
+          CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
           LAYER_EXACT_CACHE_HIT: ${{ steps.verify-restore.outputs.cache-hit }}
         run: python3 -B .github/scripts/actions_layer_admission.py verify

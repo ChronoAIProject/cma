@@ -100,9 +100,10 @@ class BuildCache:
             require(not self.layer_root.is_symlink() and not pending.is_symlink(), "Layer cache path is invalid")
             if restored.is_dir() and not restored.is_symlink():
                 args += ["--cache-from", "type=local,src=" + str(restored)]
-            if pending.exists():
-                shutil.rmtree(pending)
-            args += ["--cache-to", "type=local,mode=min,ignore-error=true,dest=" + str(pending)]
+            if self.env.get("CD_LAYER_CACHE_WRITER_FLOOR") == "verified":
+                if pending.exists():
+                    shutil.rmtree(pending)
+                args += ["--cache-to", "type=local,mode=min,image-manifest=true,oci-mediatypes=true,ignore-error=true,dest=" + str(pending)]
         if self.key is not None:
             args += ["--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + self.namespace]
         return args

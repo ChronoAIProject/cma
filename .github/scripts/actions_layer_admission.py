@@ -8,19 +8,17 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
-from actions_cache_retention import BUDGET, DEVELOP
+from actions_cache_retention import BUDGET, CARGO, DEVELOP
 from actions_cache_sweep import Actions
-from actions_cargo_budget import BudgetRef, stored_bound
-from buildkit_cache_archive import MAX_BYTES
+from actions_cargo_budget import BudgetRef, MAX_CHARGE as CARGO_MAX_CHARGE, SCHEMA as CARGO_SCHEMA, stored_bound
+from buildkit_cache_archive import MAX_BYTES, inventory as validate_archive
 from staging_cd_common import require
 from staging_cd_versions import REPOSITORY
 
 
 PREFIX = "cma-layer-archive-v1-"
-KEY = re.compile(PREFIX + r"(am|eg|web|runtime|runtime-omarchy)-([1-9][0-9]*)-([1-9][0-9]*)")
-REF = "heads/automation/layer-cache-budget-v1"
-SCHEMA = "layer-cache-budget-v1"
-HEADER = "Account for outstanding develop layer archives\n\n"
+KEY = re.compile(PREFIX + r"(am|eg|web|runtime|runtime-omarchy)--([1-9][0-9]*)-([1-9][0-9]*)")
+SCHEMA = "shared-cache-budget-v1"
 MAX_CHARGE = stored_bound(MAX_BYTES)
 
 
@@ -30,12 +28,15 @@ class Account:
 
     @classmethod
     def decode(cls, doc):
-        require(isinstance(doc, dict) and set(doc) == {"schema", "charges"} and doc["schema"] == SCHEMA,
+        require(isinstance(doc, dict) and set(doc) == {"schema", "charges"}
+                and doc["schema"] in (CARGO_SCHEMA, SCHEMA),
                 "Invalid layer cache budget format")
         charges = doc["charges"]
         require(isinstance(charges, dict) and len(charges) <= 1024, "Invalid layer cache budget charges")
         for key, limit in charges.items():
-            require(KEY.fullmatch(key) and type(limit) is int and 0 < limit <= MAX_CHARGE,
+            cap = CARGO_MAX_CHARGE if CARGO.fullmatch(key) else MAX_CHARGE if KEY.fullmatch(key) else 0
+            require(type(limit) is int and 0 < limit <= cap
+                    and (doc["schema"] == SCHEMA or CARGO.fullmatch(key)),
                     "Invalid layer cache charge")
         return cls(charges)
 
@@ -44,7 +45,7 @@ class Account:
 
 
 def archive_key(component, run):
-    key = PREFIX + f"{component}-{run['id']}-{run['run_attempt']}"
+    key = PREFIX + f"{component}--{run['id']}-{run['run_attempt']}"
     require(KEY.fullmatch(key), "Invalid layer cache archive key")
     return key
 
@@ -53,7 +54,8 @@ def source_run(env):
     require(env.get("GITHUB_REPOSITORY") == REPOSITORY and env.get("GITHUB_REF") == DEVELOP
             and env.get("GITHUB_EVENT_NAME") == "workflow_run"
             and env.get("GITHUB_WORKFLOW_REF") == f"{REPOSITORY}/.github/workflows/cache-retention.yml@{DEVELOP}"
-            and env.get("CD_LAYER_ARCHIVE_CACHE") == "enabled", "Layer cache authority differs")
+            and env.get("CD_LAYER_ARCHIVE_CACHE") == "enabled"
+            and env.get("CD_LAYER_CACHE_WRITER_FLOOR") == "verified", "Layer cache authority differs")
     event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text())
     run = event["workflow_run"]
     require(event["action"] == "completed" and run["status"] == "completed" and run["event"] == "push"
@@ -91,7 +93,7 @@ def select(api, run, component):
     return artifact["id"]
 
 
-def reserve(api, ledger, cargo_ledger, key, archive, revision):
+def reserve(api, ledger, key, archive, revision):
     require(KEY.fullmatch(key), "Invalid archive key")
     info = archive.lstat()
     require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and 0 < info.st_size <= MAX_BYTES,
@@ -99,10 +101,9 @@ def reserve(api, ledger, cargo_ledger, key, archive, revision):
     cap = stored_bound(info.st_size)
     api.require_live_policy(revision)
     previous, account = ledger.read()
-    cargo_revision, cargo = cargo_ledger.read()
     initial = dict(account.charges)
     entries = api.entries()
-    relevant = set(account.charges) | set(cargo.charges) | {key}
+    relevant = set(account.charges) | {key}
     visible = {}
     for entry in entries:
         if entry.ref == DEVELOP and entry.size and entry.key in relevant:
@@ -112,17 +113,15 @@ def reserve(api, ledger, cargo_ledger, key, archive, revision):
         if pending in visible:
             require(visible[pending] <= limit, "Stored layer cache exceeded its reservation")
             del account.charges[pending]
-    # A previous Cargo writer can still finish a reserved upload. Count its
-    # outstanding reservation until the corresponding entry becomes visible.
-    for pending, limit in cargo.charges.items():
-        require(visible.get(pending, 0) <= limit, "Stored Cargo archive exceeded its reservation")
-    cargo_pending = sum(limit for pending, limit in cargo.charges.items() if pending not in visible)
+    # Migrate in the original Cargo ref using the same fast-forward mutation.
+    # An old writer that read the previous revision loses the ref update; an
+    # old reader of the new schema refuses. Existing charges survive migration.
     observed = sum(entry.size for entry in entries)
-    outstanding = sum(account.charges.values()) + cargo_pending
+    outstanding = sum(account.charges.values())
     allowed = key not in visible and key not in account.charges and observed + outstanding + cap < BUDGET
     if allowed:
         account.charges[key] = cap
-    if ledger.read()[0] != previous or cargo_ledger.read()[0] != cargo_revision:
+    if ledger.read()[0] != previous:
         return {"allowed": False, "reason": "budget-revision-changed"}
     if account.charges != initial:
         api.require_live_policy(revision)
@@ -131,8 +130,9 @@ def reserve(api, ledger, cargo_ledger, key, archive, revision):
             "archive_bound_bytes": cap, "budget_bytes": BUDGET}
 
 
-def retire_verified(api, key, revision):
+def retire_verified(api, key, revision, restored):
     """Retire only our own archive generations after a fresh exact restore."""
+    validate_archive(restored)
     component = KEY.fullmatch(key)[1]
     api.require_live_policy(revision)
     entries = api.entries()
@@ -140,7 +140,7 @@ def retire_verified(api, key, revision):
     require(len(matches) == 1, "Verified cache identity is ambiguous")
     keep = matches[0]
     require(keep.size <= MAX_CHARGE, "Verified cache exceeds stored size bound")
-    family = PREFIX + component + "-"
+    family = PREFIX + component + "--"
     older = [entry for entry in entries if entry.ref == DEVELOP and entry.key.startswith(family)
              and KEY.fullmatch(entry.key) and KEY.fullmatch(entry.key)[1] == component
              and entry.version == keep.version and entry.created < keep.created]
@@ -179,11 +179,11 @@ def main(env, mode):
         return
     if mode == "verify":
         require(env.get("LAYER_EXACT_CACHE_HIT") == "true", "Fresh exact layer restore is required")
-        result = retire_verified(api, key, env["GITHUB_SHA"])
+        result = retire_verified(api, key, env["GITHUB_SHA"], archive.parent / "verified")
         print(json.dumps(result), flush=True)
         return
-    ledger = BudgetRef(api.api, ref=REF, account_type=Account, header=HEADER)
-    result = reserve(api, ledger, BudgetRef(api.api), key, archive, env["GITHUB_SHA"])
+    ledger = BudgetRef(api.api, account_type=Account)
+    result = reserve(api, ledger, key, archive, env["GITHUB_SHA"])
     with Path(env["GITHUB_OUTPUT"]).open("a") as output:
         output.write(f"key={key}\nallowed={str(result['allowed']).lower()}\n")
     print(json.dumps(result), flush=True)
