@@ -242,16 +242,19 @@ impl Measurement {
         } else {
             0.0
         });
-        let ages = window_valid
-            .then(|| oldest_unstarted(&state, now))
-            .flatten();
-        for (bound, index) in [("lower", 0), ("upper", 1)] {
-            let value = ages.map_or(f64::NAN, |elapsed| {
-                Duration::from_nanos(elapsed[index]).as_secs_f64()
-            });
-            metrics::gauge!(super::names::PROVIDER_START_OLDEST_UNSTARTED, "bound" => bound)
-                .set(value);
-        }
+        let upper = if window_valid {
+            oldest_local_candidate_upper(&state, now)
+        } else {
+            None
+        };
+        let upper_seconds = upper.map_or(f64::NAN, |elapsed| {
+            Duration::from_nanos(elapsed).as_secs_f64()
+        });
+        // Another replica may have started or completed a locally admitted target.
+        metrics::gauge!(super::names::PROVIDER_START_OLDEST_LOCAL_CANDIDATE, "bound" => "lower")
+            .set(f64::NAN);
+        metrics::gauge!(super::names::PROVIDER_START_OLDEST_LOCAL_CANDIDATE, "bound" => "upper")
+            .set(upper_seconds);
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -352,8 +355,8 @@ impl Drop for ExecutorGuard {
         metrics::gauge!(super::names::PROVIDER_START_ACTIVE).decrement(1.0);
     }
 }
-fn oldest_unstarted(state: &State, now: u64) -> Option<[u64; 2]> {
-    let mut oldest = [0, 0];
+fn oldest_local_candidate_upper(state: &State, now: u64) -> Option<u64> {
+    let mut oldest = 0;
     for row in state.rows.values().filter(|row| {
         row.admitted
             && row.first_post_ns.is_none()
@@ -361,9 +364,8 @@ fn oldest_unstarted(state: &State, now: u64) -> Option<[u64; 2]> {
             && row.accepted_ns.is_none()
             && row.completed_ns.is_none()
     }) {
-        let (lower, upper) = start_lag(row, now)?;
-        oldest[0] = oldest[0].max(lower);
-        oldest[1] = oldest[1].max(upper);
+        let (_, upper) = start_lag(row, now)?;
+        oldest = oldest.max(upper);
     }
     Some(oldest)
 }

@@ -185,3 +185,50 @@ async fn retry_after_another_dispatcher_post_is_not_a_first_write_sample() {
         .render()
         .contains(crate::telemetry::names::PROVIDER_START_LAG));
 }
+
+#[tokio::test]
+async fn local_candidate_age_cannot_prove_waiting_across_dispatchers() {
+    use crate::telemetry::names::PROVIDER_START_OLDEST_LOCAL_CANDIDATE as AGE;
+
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let _guard = metrics::set_default_local_recorder(&recorder);
+    let measurement = Measurement::new(4).unwrap();
+    let setup = setup(Some(measurement.clone())).await;
+    let http = HttpServer::start().await;
+    let observe = || {
+        measurement.record_window_metrics();
+        let output = recorder.handle().render();
+        assert!(output.contains(&format!("{AGE}{{bound=\"lower\"}} NaN")));
+        let prefix = format!("{AGE}{{bound=\"upper\"}} ");
+        output
+            .lines()
+            .find_map(|line| line.strip_prefix(&prefix))
+            .unwrap()
+            .parse::<f64>()
+            .unwrap()
+    };
+    let before = observe();
+    let remote = http_port(&setup, &http, None).dispatcher();
+    let DispatchOutcome::Replay {
+        mut lease,
+        response_id,
+        ..
+    } = remote
+        .dispatch(&setup.plan.identity, &setup.target().id, "remote-owner")
+        .await
+        .unwrap()
+    else {
+        panic!("remote owner must accept the POST")
+    };
+    acknowledge_no_effect(&setup, &mut lease, &response_id, 0, true).await;
+    remote
+        .journal()
+        .complete(&mut lease, &response_id)
+        .await
+        .unwrap();
+    remote.journal().release(&mut lease).await.unwrap();
+    assert_eq!(http.seen().len(), 1);
+    assert!(measurement.snapshot().samples[0].completed_ns.is_none());
+    let after = observe();
+    assert!(before.is_finite() && after.is_finite() && after >= before);
+}
