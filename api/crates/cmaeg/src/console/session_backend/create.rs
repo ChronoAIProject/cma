@@ -5,6 +5,7 @@ use super::{
     schema::QUOTA,
     *,
 };
+use crate::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{doc, DateTime, Document},
@@ -79,7 +80,7 @@ impl MongoSessionBackend {
                     )
                     .await;
                 match result {
-                    Ok(row) => match session.commit_transaction().await {
+                    Ok(row) => match session.commit_guarded().await {
                         Ok(()) => return Ok(row),
                         Err(error) if known_abort(&error) && attempt < 4 => {}
                         Err(_) => return Err(StoreError::Unavailable),
@@ -87,7 +88,7 @@ impl MongoSessionBackend {
                     Err(error) => {
                         // An abort is cleanup, never evidence that an uncertain
                         // commit failed. This branch has not attempted commit.
-                        if session.abort_transaction().await.is_err() {
+                        if session.abort_guarded().await.is_err() {
                             tracing::warn!(
                                 "console session transaction abort acknowledgement unavailable"
                             );

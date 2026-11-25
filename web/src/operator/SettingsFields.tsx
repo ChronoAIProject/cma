@@ -1,5 +1,4 @@
-import { useId } from 'react';
-import { Input } from '../ui/Input';
+import { ValidatedNumberInput } from './ValidatedNumberInput';
 
 export function IdleThresholdFields({
   seconds,
@@ -73,30 +72,22 @@ export function NumberField({
   readonly error?: string;
   readonly onChange: (value: number) => void;
 }) {
-  const id = useId();
   return (
     <label className="operator-field">
       <span>{label}</span>
-      <Input
+      <ValidatedNumberInput
         aria-label={label}
-        type="number"
         value={Number.isNaN(value) ? '' : value}
         min={minimum}
         max={maximum}
         step={step}
         required
         disabled={disabled}
-        aria-invalid={error !== undefined}
-        aria-describedby={error === undefined ? undefined : id}
+        error={error}
         onChange={(event) =>
           onChange(event.target.value === '' ? Number.NaN : Number(event.target.value))
         }
       />
-      {error === undefined ? null : (
-        <span id={id} className="operator-failure">
-          {error}
-        </span>
-      )}
     </label>
   );
 }

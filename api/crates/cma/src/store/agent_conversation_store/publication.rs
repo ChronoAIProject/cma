@@ -1,5 +1,6 @@
 //! Conversation publication and capacity settlement share one atomic writer.
 use super::*;
+use crate::store::agent_log_integrity::trusted_summary_at_head;
 
 #[cfg(test)]
 pub(super) async fn apply_mutation(
@@ -8,7 +9,7 @@ pub(super) async fn apply_mutation(
     mutation: &AgentConversationMutation,
     session: &mut mongodb::ClientSession,
 ) -> Result<ConversationReceipt, ApplyError> {
-    apply_mutation_with_capacity(caller, store, mutation, session, None).await
+    apply_mutation_with_capacity(caller, store, mutation, session, None, None).await
 }
 
 pub(in crate::store) async fn apply_mutation_with_capacity(
@@ -17,28 +18,41 @@ pub(in crate::store) async fn apply_mutation_with_capacity(
     mutation: &AgentConversationMutation,
     session: &mut mongodb::ClientSession,
     capacity: Option<&layer2_core::sandbox::store::AgentConversationCapacitySettlement>,
+    exact_checkpoint: Option<&layer2_core::sandbox::store::AgentMessageCheckpoint>,
 ) -> Result<ConversationReceipt, ApplyError> {
-    let current_row = store
-        .agents
-        .find_one(doc! { "_id": mutation.agent.id.as_str() })
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?
-        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    let current_row = crate::store::stale_turns::find_with_proof_budget(
+        &store.agents,
+        doc! { "_id": mutation.agent.id.as_str() },
+        session,
+        false,
+    )
+    .await
+    .map_err(ApplyError::Driver)?
+    .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
     before(store, &current, mutation, session).await?;
     // These alternative proof futures are large in debug builds. Keep their
     // state off the nested Trigger/conversation publication stack.
-    let (actual_last_seq, latest_turn, log_summary, semantic) = match Box::pin(trusted_summary(
-        store,
-        &current,
-        &current_row,
-        caller,
-        session,
-        false,
-    ))
-    .await?
-    {
+    let summary = if exact_checkpoint.is_some() {
+        Box::pin(trusted_summary_at_head(
+            store,
+            &current,
+            &current_row,
+            session,
+        ))
+        .await?
+    } else {
+        Box::pin(trusted_summary(
+            store,
+            &current,
+            &current_row,
+            caller,
+            session,
+            false,
+        ))
+        .await?
+    };
+    let (actual_last_seq, latest_turn, log_summary, semantic) = match summary {
         Some(summary) => {
             let semantic = summary.semantic().cloned().ok_or_else(|| {
                 ApplyError::Domain(SandboxStoreError::Corrupt(
@@ -51,6 +65,10 @@ pub(in crate::store) async fn apply_mutation_with_capacity(
                 summary,
                 semantic,
             )
+        }
+        None if exact_checkpoint.is_some() => {
+            // The stale-turn proof budget cannot authorize a full-log audit.
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
         None => {
             let mut entries = Vec::new();
@@ -139,8 +157,18 @@ pub(in crate::store) async fn apply_mutation_with_capacity(
         session,
     ))
     .await?;
-    replace_agent(store, &current, mutation, integrity.integrity, session).await?;
-    checkpoint::carry(store, &current_row, &current, &mutation.agent, session).await?;
+    replace_agent(
+        store,
+        &current,
+        mutation,
+        integrity.integrity,
+        exact_checkpoint,
+        session,
+    )
+    .await?;
+    if exact_checkpoint.is_none() {
+        checkpoint::carry(store, &current_row, &current, &mutation.agent, session).await?;
+    }
     insert_logs(store, &integrity.documents, session).await?;
     crate::store::suggestions::enqueue(store, &mutation.agent, &logs, session).await?;
     Ok(ConversationReceipt {
@@ -160,9 +188,12 @@ pub(in crate::store) async fn before(
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
     store
-        .fence_agent_effect(&mutation.agent.id, session)
+        .fence_agent_effect_transaction(&mutation.agent.id, session)
         .await
-        .map_err(ApplyError::Domain)?;
+        .map_err(|error| match error {
+            crate::store::agent_ownership::FenceError::Domain(error) => ApplyError::Domain(error),
+            crate::store::agent_ownership::FenceError::Driver(error) => ApplyError::Driver(error),
+        })?;
     // Command reservation also writes this Agent, so this transaction cannot
     // miss a concurrently admitted message and then take its idle boundary.
     if mutation.is_managed_context_admission() && store.agent_commands.find_one(doc! {

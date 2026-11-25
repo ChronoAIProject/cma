@@ -20,7 +20,8 @@ pub(crate) async fn serve(config: BackendFreeConfig) -> Result<(), String> {
     }
     let recorder = telemetry::install()?;
     let _metrics_server =
-        telemetry::server::Server::start(config.server.metrics_bind, recorder).await?;
+        telemetry::server::Server::start(config.server.metrics_bind, recorder, Default::default())
+            .await?;
     let (router, standing) = compose(&config).await?;
     let app = crate::with_request_context(crate::with_cors(router, config.server.cors_origins));
     let listener = tokio::net::TcpListener::bind(config.server.bind)

@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::resource_access::{
     plan_share_mutation, ResourceAccessSnapshot, ResourceAccessStoreError, ResourceShare,
     ResourceShareStore, ShareChange, ShareMutation, ShareMutationReceipt,
@@ -7,7 +8,7 @@ use mongodb::bson::doc;
 use mongodb::ClientSession;
 
 use super::super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction, CommitOutcome,
+    commit_transaction, is_confirmed_body_retry, signed, start_transaction, CommitOutcome,
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
 use super::{records, snapshot, ReadError};
@@ -44,12 +45,12 @@ impl ResourceShareStore for MongoSandboxStore {
             let receipt = match apply(self, &request, &mut session).await {
                 Ok(receipt) => receipt,
                 Err(ReadError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(ReadError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
-                    if is_transient(&error) || is_duplicate_key(&error) {
+                    let _ = session.abort_guarded().await;
+                    if is_confirmed_body_retry(&error) {
                         continue;
                     }
                     return Err(ResourceAccessStoreError::Unavailable);
@@ -224,7 +225,22 @@ pub(in crate::store) async fn fence_lineage(
     for (collection, id, revision) in rows {
         let revision =
             signed(revision, "resource revision").map_err(|_| ResourceAccessStoreError::Corrupt)?;
-        let result=collection.update_one(crate::store::work_schema::for_collection(collection, doc!{"_id":id,"revision":revision,"document_schema_version":DOCUMENT_SCHEMA_VERSION}),doc!{"$inc":{"resource_share_guard":1_i64}}).session(&mut *session).await?;
+        let mut filter = doc! {"_id": id, "revision": revision, "document_schema_version": DOCUMENT_SCHEMA_VERSION};
+        if collection.name() == store.agents.name() {
+            // The snapshot validated the Agent's envelope. Fence its exact
+            // revision without changing the version, log or head.
+            filter.insert(
+                "document_schema_version",
+                doc! {"$in": [DOCUMENT_SCHEMA_VERSION, 2_i64]},
+            );
+        }
+        let result = collection
+            .update_one(
+                crate::store::work_schema::for_collection(collection, filter),
+                doc! {"$inc": {"resource_share_guard": 1_i64}},
+            )
+            .session(&mut *session)
+            .await?;
         if result.matched_count != 1 {
             return Err(ResourceAccessStoreError::Conflict.into());
         }

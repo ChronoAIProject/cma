@@ -1,12 +1,58 @@
-//! Release only an unchanged cleanup claim after definitively aborted publication.
+//! Requeue an unchanged cleanup claim after a preflight refusal or a definite abort.
 use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Agent, AgentWorkStep};
 
-use super::{support::WorkerFailure, AgentWorker};
+use super::{cleanup::CleanupPreflightError, support::WorkerFailure, AgentWorker};
+use crate::store::CLEANUP_RETRY_DEADLINE;
 
 impl AgentWorker {
+    pub(super) async fn finish_cleanup_preflight(
+        &self,
+        claimed: &Agent,
+        error: CleanupPreflightError,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let failure = match error {
+            CleanupPreflightError::Read(SandboxStoreError::Unavailable(_)) => {
+                WorkerFailure::retryable(
+                    "agent_cleanup_preflight_unavailable",
+                    "cleanup could not read current parent records",
+                )
+            }
+            CleanupPreflightError::ArchivePending => WorkerFailure::retryable(
+                "agent_cleanup_archive_pending",
+                "cleanup is waiting for the retirement archive to be verified",
+            ),
+            CleanupPreflightError::Read(error) => return Err(error),
+        };
+        let started = tokio::time::Instant::now();
+        // The scheduler's timestamp can predate ownership and admission I/O.
+        // Never translate that delay into extra time on the stored claim.
+        let cutoff = now.max(SystemTime::now());
+        let remaining = claimed
+            .work
+            .lease
+            .as_ref()
+            .and_then(|lease| layer2_core::seconds_from_rfc3339(&lease.expires_at))
+            .and_then(|seconds| SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
+            .and_then(|expires| expires.duration_since(cutoff).ok())
+            .ok_or(SandboxStoreError::Conflict)?;
+        let deadline = started
+            .checked_add(remaining)
+            .ok_or(SandboxStoreError::Conflict)?;
+        CLEANUP_RETRY_DEADLINE
+            .scope(deadline, async {
+                let result = self
+                    .requeue_cleanup(claimed, failure, now, self.config.retry_delay)
+                    .await;
+                self.finish_capacity_attempt(claimed, result, now + started.elapsed())
+                    .await
+            })
+            .await
+    }
+
     pub(in crate::sandbox) async fn finish_cleanup_attempt(
         &self,
         claimed: &Agent,
@@ -18,12 +64,29 @@ impl AgentWorker {
             // authority or replace their existing reconciliation path.
             return result;
         }
-        let started = tokio::time::Instant::now();
         let failure = WorkerFailure::retryable(
             "agent_cleanup_publication_conflict",
             "cleanup publication conflicted; retrying the unchanged cleanup claim",
         );
+        self.requeue_cleanup(claimed, failure, now, Duration::from_secs(1))
+            .await
+    }
+
+    async fn requeue_cleanup(
+        &self,
+        claimed: &Agent,
+        failure: WorkerFailure,
+        now: SystemTime,
+        base_delay: Duration,
+    ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         for attempt in 0..8 {
+            if CLEANUP_RETRY_DEADLINE
+                .try_with(|deadline| tokio::time::Instant::now() >= *deadline)
+                .unwrap_or(false)
+            {
+                return Err(SandboxStoreError::Conflict);
+            }
             let current = self
                 .dependencies
                 .store
@@ -37,9 +100,7 @@ impl AgentWorker {
             if !same_cleanup_claim(claimed, &current, &self.config.holder, at) {
                 return Err(SandboxStoreError::Conflict);
             }
-            let delay = self
-                .retry_decision(&current, &failure, Duration::from_secs(1))
-                .delay;
+            let delay = self.retry_decision(&current, &failure, base_delay).delay;
             // Only schedule the original durable step. Its next worker owns
             // the fresh fence and reuses stable external operation receipts.
             match self

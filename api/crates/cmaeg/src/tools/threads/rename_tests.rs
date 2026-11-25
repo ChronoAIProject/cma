@@ -15,7 +15,7 @@ async fn request(app: &App, value: Value, key: &str) -> reqwest::Response {
         .await
         .unwrap()
 }
-async fn rename(app: &App, target: Value, name: &str, key: &str) -> Value {
+pub(super) async fn rename(app: &App, target: Value, name: &str, key: &str) -> Value {
     let response = request(
         app,
         json!({"target":target,"action":"rename","name":name}),

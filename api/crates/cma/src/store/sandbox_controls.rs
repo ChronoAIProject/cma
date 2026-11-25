@@ -5,6 +5,7 @@ use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
     MongoSandboxStore, TRANSACTION_ATTEMPTS,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use layer2_core::ids::SandboxCommandId;
 use layer2_core::sandbox::control::*;
@@ -181,11 +182,11 @@ impl MongoSandboxStore {
             let result = match transaction::apply(self, &change, &mut session).await {
                 Ok(result) => result,
                 Err(ApplyError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(ApplyError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     if is_transient(&error) || is_duplicate_key(&error) {
                         tokio::task::yield_now().await;
                         continue;
@@ -194,7 +195,7 @@ impl MongoSandboxStore {
                 }
             };
             if let Err(error) = change.require_current() {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             // Authorization and queue lifetime include all transaction IO. An
@@ -203,7 +204,7 @@ impl MongoSandboxStore {
                 && matches!(result.status, SandboxControlStatus::Applied { .. })
                 && result.expired(&layer2_core::now_rfc3339())?
             {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxControlError::Conflict);
             }
             match commit_transaction(&mut session).await {

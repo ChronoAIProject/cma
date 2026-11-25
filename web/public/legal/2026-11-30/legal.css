@@ -1,0 +1,20 @@
+html {
+  color-scheme: light dark;
+}
+
+body {
+  font-family: system-ui, sans-serif;
+  line-height: 1.6;
+}
+
+main {
+  max-inline-size: 72ch;
+  margin-inline: auto;
+  padding: 1rem;
+}
+
+@media print {
+  body {
+    font-family: serif;
+  }
+}

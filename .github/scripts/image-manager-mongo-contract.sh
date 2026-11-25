@@ -46,6 +46,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+bash "$repo_root/.github/scripts/pull-pinned-image.sh" "$mongo_image"
 docker run --detach --name "$contract_name" --label "$contract_label" \
   --publish 127.0.0.1::27017 --memory 2g --memory-swap 2g --cpus 2 --pids-limit 256 \
   --tmpfs /data/db:rw,size=1073741824 --tmpfs /data/configdb:rw,size=16777216 \
@@ -83,6 +84,13 @@ contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~optional_forms_storage)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~optional_media_continuation_storage)'
+# A cancelled commit or abort must not strand its row locks, and the runtime
+# grant must end its own session (#3299). Failpoints are server-global.
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~transaction_terminal::)'
+# History migration and writer grants require this authenticated replica set.
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~activity::history::mongo_tests::)'
 # Owner-key custody needs both real authentication and a replica set. Reuse
 # this owned fixture; exact nextest selection fails if the contract disappears.
 contract_nextest eg run \
@@ -96,6 +104,8 @@ contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=management) and test(~github_integrations::)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=management) and test(~organization_channels::)'
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(test) and binary(=management) and test(=record_management::mongo_legacy_read_is_owned_and_read_only)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=github_source)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
@@ -115,6 +125,9 @@ contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
 # Require corrupt-head isolation and healthy frontier progress against real Mongo.
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~replicas::partition_discovery::)'
+
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(=records::mongo::replica_schema::tests::replica_migration_recovers_after_second_index_conflict)'
 
 # Explicit selection keeps replica delivery tests environmental in normal unit
 # runs while requiring their real authenticated Mongo execution in this gate.

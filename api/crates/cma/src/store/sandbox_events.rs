@@ -1,5 +1,8 @@
 //! Gap-free Mongo event stream for sandbox lifecycle changes.
 
+mod retry;
+
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::{SandboxEventStore, SandboxStoreError, MAX_PAGE_SIZE};
 use layer2_core::sandbox::{SandboxEvent, SandboxEventKind};
@@ -15,7 +18,7 @@ use super::sandbox_mongo::{
 };
 
 pub(super) fn sandbox_event_indexes() -> Vec<IndexModel> {
-    vec![IndexModel::builder()
+    let sequence = IndexModel::builder()
         .keys(doc! { "sandbox_id": 1, "seq": 1 })
         .options(
             IndexOptions::builder()
@@ -23,7 +26,10 @@ pub(super) fn sandbox_event_indexes() -> Vec<IndexModel> {
                 .unique(true)
                 .build(),
         )
-        .build()]
+        .build();
+    std::iter::once(sequence)
+        .chain(super::retained_reopen::receipt_indexes())
+        .collect()
 }
 
 pub(super) async fn ensure_indexes(
@@ -38,7 +44,7 @@ pub(super) async fn ensure_indexes(
         })
 }
 
-fn event_id(id: &SandboxId, seq: u64) -> String {
+pub(super) fn event_id(id: &SandboxId, seq: u64) -> String {
     format!("{}:{seq:020}", id.as_str())
 }
 
@@ -116,6 +122,17 @@ pub(super) async fn append_in_transaction(
     appended_at: String,
     kind: SandboxEventKind,
 ) -> Result<SandboxEvent, TransactionEventError> {
+    append_with_receipt(store, session, sandbox_id, appended_at, kind, None).await
+}
+
+pub(super) async fn append_with_receipt(
+    store: &MongoSandboxStore,
+    session: &mut ClientSession,
+    sandbox_id: &SandboxId,
+    appended_at: String,
+    kind: SandboxEventKind,
+    receipt: Option<Document>,
+) -> Result<SandboxEvent, TransactionEventError> {
     let aggregate = store
         .sandboxes
         .find_one(crate::store::work_schema::query(doc! {
@@ -168,7 +185,10 @@ pub(super) async fn append_in_transaction(
         appended_at,
         kind,
     };
-    let document = event_document(&event).map_err(TransactionEventError::Domain)?;
+    let mut document = event_document(&event).map_err(TransactionEventError::Domain)?;
+    if let Some(receipt) = receipt {
+        document.insert("retained_reopen_receipt", receipt);
+    }
     store
         .sandbox_events
         .insert_one(document)
@@ -270,6 +290,14 @@ async fn reconcile_append_after_unknown(
 
 #[async_trait::async_trait]
 impl SandboxEventStore for MongoSandboxStore {
+    async fn lifecycle_retry_started_at(
+        &self,
+        sandbox_id: &SandboxId,
+        admitted_at: &str,
+    ) -> Result<Option<String>, SandboxStoreError> {
+        retry::started_at(self, sandbox_id, admitted_at).await
+    }
+
     async fn append_sandbox_event(
         &self,
         sandbox_id: &SandboxId,
@@ -307,16 +335,16 @@ impl SandboxEventStore for MongoSandboxStore {
             {
                 Ok(event) => event,
                 Err(TransactionEventError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(error);
                 }
                 Err(TransactionEventError::Driver(error)) if is_transient(&error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     last_transient = Some(error.to_string());
                     continue;
                 }
                 Err(TransactionEventError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             };

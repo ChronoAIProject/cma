@@ -1,4 +1,5 @@
 use super::*;
+use layer2_core::sandbox::ServiceConnectionSelection;
 
 impl MongoSandboxStore {
     #[allow(clippy::too_many_arguments)]
@@ -12,11 +13,39 @@ impl MongoSandboxStore {
         authorization: AgentAuthorizationRevision,
         key: &str,
     ) -> Result<AgentAccessRecord, AgentAccessError> {
+        self.approve_agent_access_with_connection(
+            owner,
+            agent,
+            id,
+            services,
+            None,
+            baseline,
+            authorization,
+            key,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn approve_agent_access_with_connection(
+        &self,
+        owner: &SubjectId,
+        agent: &AgentId,
+        id: &str,
+        services: Vec<ServiceId>,
+        connection: Option<ServiceConnectionSelection>,
+        baseline: &[ServiceId],
+        authorization: AgentAuthorizationRevision,
+        key: &str,
+    ) -> Result<AgentAccessRecord, AgentAccessError> {
         let mut services = services;
         validate_access_services(&services.iter().map(ToString::to_string).collect::<Vec<_>>())?;
         services.sort();
         if services.windows(2).any(|pair| pair[0] == pair[1])
             || !valid_owner_authorization(&authorization)
+            || connection
+                .as_ref()
+                .is_some_and(|selection| !selection.matches_scope(&services))
         {
             return Err(AgentAccessError::Invalid);
         }
@@ -26,10 +55,14 @@ impl MongoSandboxStore {
             if let Some(AgentAccessDecision::Approved {
                 command_key_hash,
                 services: previous,
+                connection: previous_connection,
                 ..
             }) = &record.decision
             {
-                if command_key_hash == &key_hash && previous == &services {
+                if command_key_hash == &key_hash
+                    && previous == &services
+                    && previous_connection == &connection
+                {
                     return Ok(record);
                 }
                 return Err(AgentAccessError::Conflict.into());
@@ -43,7 +76,8 @@ impl MongoSandboxStore {
             }) {
                 return Err(AgentAccessError::Conflict.into());
             }
-            let snapshot = validate_lineage(self, &record.requester, session, false).await?;
+            let snapshot =
+                validate_lineage_transaction(self, &record.requester, session, false).await?;
             let required = snapshot
                 .resource
                 .lineage
@@ -81,6 +115,7 @@ impl MongoSandboxStore {
             record.decision = Some(AgentAccessDecision::Approved {
                 command_key_hash: key_hash.clone(),
                 services: services.clone(),
+                connection: connection.clone(),
                 authorization: authorization.clone(),
             });
             replace(self, revision, &record, session).await?;
@@ -110,7 +145,8 @@ impl MongoSandboxStore {
             ) {
                 return Err(AgentAccessError::Conflict.into());
             }
-            let snapshot = validate_lineage(self, &record.requester, session, false).await?;
+            let snapshot =
+                validate_lineage_transaction(self, &record.requester, session, false).await?;
             fence(self, &snapshot, session).await?;
             let revision = record.revision;
             record.revision += 1;
@@ -142,7 +178,8 @@ impl MongoSandboxStore {
             if record.phase != AgentAccessPhase::Connecting && !record.phase.applying() {
                 return Err(AgentAccessError::Conflict.into());
             }
-            let snapshot = validate_lineage(self, &record.requester, session, false).await?;
+            let snapshot =
+                validate_lineage_transaction(self, &record.requester, session, false).await?;
             fence(self, &snapshot, session).await?;
             Ok(record.approved_services()?.to_vec())
         })

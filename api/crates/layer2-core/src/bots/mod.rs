@@ -4,6 +4,7 @@ pub use authority::{BotDelegation, BotOwnerAuthority, BotOwnership};
 mod control;
 mod creation;
 pub use control::*;
+mod effects;
 mod execution;
 mod model;
 mod profiles;
@@ -31,6 +32,8 @@ pub enum BotError {
     Conflict,
     #[error("{0}")]
     Invalid(String),
+    #[error("new custom image selections are unavailable")]
+    ImageSelectionUnsupported,
     #[error("the selected services need to be connected before creating this consumer")]
     ConnectionRequired {
         services: Vec<String>,

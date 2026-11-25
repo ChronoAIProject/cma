@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { STOP_RESPONSE_GUIDANCE } from './stopAgentCopy';
 import './StopAgentDialog.css';
 
 export function StopAgentDialog({
@@ -110,9 +111,10 @@ export function StopAgentDialog({
         }
       >
         <p>
-          Stop this Agent and end its active work. Its conversation history and Worktree are
+          Stopping this Agent ends its active work. Its conversation history and Worktree are
           retained. Delete remains a separate action.
         </p>
+        <p>{STOP_RESPONSE_GUIDANCE}</p>
       </Modal>
     );
   return (

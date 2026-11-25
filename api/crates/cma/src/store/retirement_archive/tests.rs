@@ -10,8 +10,11 @@ use layer3_adapter::{permanent_custody::PermanentCustody, HomeVolumePolicy, Home
 
 #[path = "backup_compatibility_tests.rs"]
 mod backup_compatibility_tests;
+#[path = "canary_compatibility_tests.rs"]
+mod canary_compatibility_tests;
 #[path = "census_tests.rs"]
 mod census_tests;
+pub(in crate::store) use census_tests::prepare_source;
 #[path = "commit_test_support.rs"]
 mod commit_support;
 #[path = "completion_tests.rs"]
@@ -20,9 +23,6 @@ mod completion_tests;
 mod schema_compatibility_tests;
 
 pub(super) async fn fixture() -> (Temp, ArchiveStore, Request, Vec<u8>) {
-    let temp = Temp::new();
-    let mut request = request(&temp);
-    request.sandbox_id = "sbx_retirement_fixture".into();
     let client = Client::with_uri_str(
         std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable Mongo required"),
     )
@@ -32,6 +32,14 @@ pub(super) async fn fixture() -> (Temp, ArchiveStore, Request, Vec<u8>) {
         "retirement_archive_{}",
         uuid::Uuid::new_v4().simple()
     ));
+    fixture_on(database).await
+}
+
+async fn fixture_on(database: Database) -> (Temp, ArchiveStore, Request, Vec<u8>) {
+    let client = database.client().clone();
+    let temp = Temp::new();
+    let mut request = request(&temp);
+    request.sandbox_id = "sbx_retirement_fixture".into();
     let mut sandbox = crate::store::sandbox_mongo_integration_tests::sandbox(&request.sandbox_id);
     sandbox.status = SandboxStatus::Retiring;
     sandbox.work.step = SandboxWorkStep::StopAgents;
@@ -83,6 +91,36 @@ pub(super) async fn fixture() -> (Temp, ArchiveStore, Request, Vec<u8>) {
         .await
         .unwrap();
     (temp, ArchiveStore { client, database }, request, bytes)
+}
+
+pub(in crate::store) async fn verify_legal_consent_census(admin: &Database, runtime: &Database) {
+    let (_temp, admin_store, request, bytes) = fixture_on(admin.clone()).await;
+    admin_store.admit(&request, &bytes).await.unwrap();
+    let store = ArchiveStore {
+        client: runtime.client().clone(),
+        database: runtime.clone(),
+    };
+    let custody = Custody::default();
+    let current = export::build(&store, &request, &bytes, &custody, None)
+        .await
+        .unwrap();
+    // These are the exact schema and names accepted by the predecessor.
+    assert_eq!(
+        current.schema_sha256,
+        super::schema::PRE_LEGAL_CONSENT_SHA256
+    );
+    let names: std::collections::BTreeSet<_> = current
+        .database
+        .iter()
+        .map(|row| row.collection.as_str())
+        .collect();
+    let predecessor: std::collections::BTreeSet<_> = super::schema::PRE_LEGAL_CONSENT_COLLECTIONS
+        .iter()
+        .copied()
+        .collect();
+    assert_eq!(names, predecessor);
+    assert_eq!(names.len(), current.database.len());
+    assert!(super::matches_current(&current, current.clone()).unwrap());
 }
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]

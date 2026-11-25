@@ -15,6 +15,10 @@ pub(super) const STOP_RECEIPT_FIELD: &str = "control_stop_receipt";
 pub(super) const DELETE_RECEIPT_FIELD: &str = "control_delete_receipt";
 const CONTROL_OPERATION_PREFIX: &str = "ctl_";
 
+#[path = "agent_restart_control_predecessor.rs"]
+mod restart;
+pub(super) use restart::{restore_owner_stop, FIELD as RESTART_PREDECESSOR_FIELD};
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -72,6 +76,19 @@ pub(super) struct ControlOperation {
 }
 
 impl ControlOperation {
+    pub(super) fn restore(
+        request: ControlRequest,
+        operation_id: String,
+    ) -> Result<Self, AgentControlStoreError> {
+        if !operation_id_is_valid(&operation_id) {
+            return Err(corrupt("stored Agent control operation ID is invalid"));
+        }
+        Ok(Self {
+            request,
+            operation_id,
+        })
+    }
+
     pub(super) fn new(request: ControlRequest) -> Self {
         Self {
             request,
@@ -96,6 +113,13 @@ impl ControlOperation {
     ) -> Result<Document, AgentControlStoreError> {
         let scheduled_revision =
             i64::try_from(scheduled.revision).map_err(|_| AgentControlStoreError::Conflict)?;
+        self.receipt_at(scheduled_revision)
+    }
+
+    pub(super) fn receipt_at(
+        &self,
+        scheduled_revision: i64,
+    ) -> Result<Document, AgentControlStoreError> {
         let receipt = ControlReceipt {
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
             operation_id: self.operation_id.clone(),
@@ -107,6 +131,19 @@ impl ControlOperation {
         let mut update = Document::new();
         update.insert(self.request.receipt_field(), receipt);
         Ok(update)
+    }
+
+    pub(super) fn delete_after_restart_cancellation(&self) -> Self {
+        self.delete_after_restart_teardown(self.request.target().expected_revision)
+    }
+
+    pub(super) fn delete_after_restart_teardown(&self, revision: u64) -> Self {
+        let mut operation = self.clone();
+        if let ControlRequest::Delete(request) = &mut operation.request {
+            request.target.expected_status = AgentStatus::Stopped;
+            request.target.expected_revision = revision;
+        }
+        operation
     }
 
     pub(super) fn was_recorded(&self, receipts: &StoredControlReceipts, scheduled: &Agent) -> bool {
@@ -136,12 +173,51 @@ pub(super) struct StoredControlReceipts {
     delete: Option<ControlReceipt>,
 }
 
+pub(super) fn owner_stop_operation(receipts: &StoredControlReceipts) -> Option<&str> {
+    let stop = receipts.stop.as_ref()?;
+    matches!(&stop.request, ControlRequest::Stop(request)
+        if request.reason == layer2_core::sandbox::AgentStopReason::Owner)
+    .then_some(stop.operation_id.as_str())
+}
+
+pub(super) fn matches_restart_predecessor(
+    row: &Document,
+    acceptance: &layer2_core::sandbox::store::AgentRestartAcceptance,
+) -> bool {
+    restart::matches_acceptance(row, acceptance)
+}
+
+pub(super) fn consume_restart_predecessor(
+    receipts: &StoredControlReceipts,
+    stopped_at: &str,
+    acceptance: &layer2_core::sandbox::store::AgentRestartAcceptance,
+) -> Result<Document, AgentControlStoreError> {
+    let stop = receipts
+        .stop
+        .as_ref()
+        .ok_or(AgentControlStoreError::Conflict)?;
+    let ControlRequest::Stop(request) = &stop.request else {
+        return Err(AgentControlStoreError::Conflict);
+    };
+    if request.reason != layer2_core::sandbox::AgentStopReason::Owner
+        || receipts.delete.is_some()
+        || layer2_core::seconds_from_rfc3339(&request.requested_at).is_none_or(|requested_at| {
+            layer2_core::seconds_from_rfc3339(&acceptance.source.predecessor_close.completed_at)
+                .is_none_or(|closed_at| closed_at < requested_at)
+        })
+    {
+        return Err(AgentControlStoreError::Conflict);
+    }
+    restart::encode_predecessor(stop, stopped_at, acceptance)
+}
+
 pub(super) fn read_control_receipts(
     document: &Document,
     agent: &Agent,
 ) -> Result<StoredControlReceipts, AgentControlStoreError> {
     let stop = read_receipt(document, STOP_RECEIPT_FIELD, true)?;
     let delete = read_receipt(document, DELETE_RECEIPT_FIELD, false)?;
+    restart::validate_predecessor(document, agent, stop.as_ref(), delete.as_ref())?;
     if stop
         .iter()
         .chain(delete.iter())
@@ -175,6 +251,48 @@ pub(super) fn read_control_receipts(
     Ok(StoredControlReceipts { stop, delete })
 }
 
+pub(super) async fn observe_owner_stop_receipt(
+    store: &super::sandbox_mongo::MongoSandboxStore,
+    agent: &Agent,
+) -> Result<bool, layer2_core::sandbox::store::SandboxStoreError> {
+    use layer2_core::sandbox::store::SandboxStoreError;
+    use mongodb::bson::doc;
+
+    let revision = super::sandbox_mongo::signed(agent.revision, "owner Stop revision")
+        .map_err(SandboxStoreError::Corrupt)?;
+    let row = store
+        .agents
+        .find_one(doc! {"_id": agent.id.as_str(), "revision": revision})
+        .projection(doc! {(STOP_RECEIPT_FIELD): 1})
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+    Ok(row
+        .as_ref()
+        .is_some_and(|row| has_owner_stop_receipt(row, agent)))
+}
+
+pub(super) fn has_owner_stop_receipt(row: &Document, agent: &Agent) -> bool {
+    let Ok(StoredControlReceipts {
+        stop: Some(receipt),
+        ..
+    }) = read_control_receipts(row, agent)
+    else {
+        return false;
+    };
+    let ControlRequest::Stop(request) = receipt.request else {
+        return false;
+    };
+    let Some(requested) = layer2_core::seconds_from_rfc3339(&request.requested_at) else {
+        return false;
+    };
+    request.reason == layer2_core::sandbox::AgentStopReason::Owner
+        && agent.work.receipts.iter().any(|close| {
+            close.step == layer2_core::sandbox::AgentWorkStep::CloseProcess
+                && layer2_core::seconds_from_rfc3339(&close.completed_at)
+                    .is_some_and(|completed| completed >= requested)
+        })
+}
+
 fn receipt_belongs_to_agent(receipt: &ControlReceipt, agent: &Agent) -> bool {
     let target = receipt.request.target();
     target.agent_id == agent.id
@@ -196,6 +314,15 @@ fn read_receipt(
     };
     let receipt: ControlReceipt = mongodb::bson::deserialize_from_bson(value.clone())
         .map_err(|error| corrupt(&format!("stored {field} is invalid: {error}")))?;
+    validate_receipt(&receipt, field, stop)?;
+    Ok(Some(receipt))
+}
+
+fn validate_receipt(
+    receipt: &ControlReceipt,
+    field: &str,
+    stop: bool,
+) -> Result<(), AgentControlStoreError> {
     let expected_revision = receipt
         .request
         .target()
@@ -218,7 +345,7 @@ fn read_receipt(
     {
         return Err(corrupt(&format!("stored {field} is inconsistent")));
     }
-    Ok(Some(receipt))
+    Ok(())
 }
 
 fn operation_id_is_valid(value: &str) -> bool {

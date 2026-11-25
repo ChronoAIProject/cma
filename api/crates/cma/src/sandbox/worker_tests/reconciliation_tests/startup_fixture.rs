@@ -16,14 +16,25 @@ pub(super) struct Control {
     pub cancelled: AtomicUsize,
     pub cleanup: AtomicUsize,
     pub homes: AtomicUsize,
+    pub refuse_binding_inventory: std::sync::atomic::AtomicBool,
+    pub inventory_calls: AtomicUsize,
     pub gates: Vec<Semaphore>,
     pub count: usize,
     pub fail: Option<usize>,
+    /// The injected failure: a transient stream/assignment timeout, or a refusal.
+    pub transient: Option<&'static str>,
+    /// Set once startup has returned and the background sweep takes over.
+    pub sweeping: std::sync::atomic::AtomicBool,
     pub delay: Duration,
 }
 
 impl Control {
-    fn new(count: usize, fail: Option<usize>, delay: Duration) -> Arc<Self> {
+    fn new(
+        count: usize,
+        fail: Option<usize>,
+        transient: Option<&'static str>,
+        delay: Duration,
+    ) -> Arc<Self> {
         Arc::new(Self {
             started: AtomicUsize::new(0),
             settled: AtomicUsize::new(0),
@@ -32,14 +43,22 @@ impl Control {
             cancelled: AtomicUsize::new(0),
             cleanup: AtomicUsize::new(0),
             homes: AtomicUsize::new(0),
+            refuse_binding_inventory: std::sync::atomic::AtomicBool::new(false),
+            inventory_calls: AtomicUsize::new(0),
             gates: (0..count).map(|_| Semaphore::new(0)).collect(),
             count,
             fail,
+            transient,
+            sweeping: std::sync::atomic::AtomicBool::new(false),
             delay,
         })
     }
     fn cleanup_barrier(&self) {
         assert_eq!(self.active.load(Ordering::SeqCst), 0);
+        if self.sweeping.load(Ordering::SeqCst) {
+            // The sweep revisits bindings; only startup cleanup is barrier-bound.
+            return;
+        }
         assert_eq!(self.settled.load(Ordering::SeqCst), self.count);
         assert!(self.fail.is_none());
     }
@@ -76,7 +95,17 @@ impl HostedBackend for Backend {
         self.inner.provision(request).await
     }
     async fn inventory(&self) -> layer3_adapter::Result<Vec<RuntimeObservation>> {
-        self.inner.inventory().await
+        let call = self.control.inventory_calls.fetch_add(1, Ordering::SeqCst);
+        if !self.control.refuse_binding_inventory.load(Ordering::SeqCst) {
+            return self.inner.inventory().await;
+        }
+        if call == 0 {
+            // Omit the binding from startup's initial snapshot so it refreshes.
+            return Ok(Vec::new());
+        }
+        Err(layer3_adapter::AdapterError::Rejected(
+            "native home identity changed or disappeared".into(),
+        ))
     }
     async fn adopt(
         &self,
@@ -96,9 +125,12 @@ impl HostedBackend for Backend {
             tokio::time::sleep(self.control.delay).await;
         }
         let result = if self.control.fail == Some(index) {
-            Err(layer3_adapter::AdapterError::Unavailable(
-                "injected startup adoption failure".into(),
-            ))
+            Err(match self.control.transient {
+                Some(detail) => layer3_adapter::AdapterError::Unavailable(detail.into()),
+                None => layer3_adapter::AdapterError::Rejected(
+                    "injected startup adoption refusal".into(),
+                ),
+            })
         } else {
             self.inner.adopt(handle, request).await
         };
@@ -172,6 +204,16 @@ pub(super) async fn fixture(
     fail: Option<usize>,
     delay: Duration,
 ) -> Fixture {
+    fixture_with(count, headroom, fail, None, delay).await
+}
+
+pub(super) async fn fixture_with(
+    count: usize,
+    headroom: Option<usize>,
+    fail: Option<usize>,
+    transient: Option<&'static str>,
+    delay: Duration,
+) -> Fixture {
     let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
     let (base, now) = active_with_exact_image(&harness).await;
     assert!(base.lifecycle.home.is_none());
@@ -185,7 +227,7 @@ pub(super) async fn fixture(
             .adapter
             .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
                 1,
-                sandbox_spec(&sandbox, "test"),
+                sandbox_spec(&sandbox, "test").unwrap(),
             ))
             .await
             .unwrap();
@@ -196,11 +238,11 @@ pub(super) async fn fixture(
         harness.store.create_sandbox(sandbox.clone()).await.unwrap();
         authority.insert(sandbox.id.clone(), sandbox);
     }
-    let mut orphan = sandbox_spec(&base, "test");
+    let mut orphan = sandbox_spec(&base, "test").unwrap();
     orphan.sandbox_id = "sbx_startup_orphan".into();
     harness.adapter.provision(&orphan).await.unwrap();
     let inventory = harness.adapter.runtime_inventory().await.unwrap();
-    let control = Control::new(count, fail, delay);
+    let control = Control::new(count, fail, transient, delay);
     let adapter = CodexAdapter::with_backend(
         Backend {
             inner: harness.backend.clone(),

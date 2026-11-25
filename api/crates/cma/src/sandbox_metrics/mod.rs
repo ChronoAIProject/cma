@@ -232,6 +232,8 @@ pub(crate) async fn generate_fixture_with_collection(
 }
 
 #[cfg(test)]
+pub(crate) use source::collect_fixture;
+#[cfg(test)]
 pub(crate) use warmer::warm_fixture;
 
 #[cfg(test)]

@@ -121,7 +121,8 @@ class EntrypointTests(unittest.TestCase):
                         self.assertEqual(gate.main(), expected)
 
     def test_ci_entrypoints_reject_unknown_or_malformed_events(self):
-        cases = [(self.payload, 'workflow_dispatch'), ({}, 'push')]
+        cases = [(self.payload, 'workflow_run'), (self.payload, 'workflow_dispatch'),
+                 (self.payload, 'schedule'), ({}, 'push')]
         for payload, name in self.full_events():
             wrong_repo = copy.deepcopy(payload)
             wrong_repo['repository']['full_name'] = 'other/repository'
@@ -136,8 +137,13 @@ class EntrypointTests(unittest.TestCase):
             cases.append((bad, 'pull_request'))
         for payload, name in cases:
             self.event.write_text(json.dumps(payload))
+            environment = dict(
+                self.environment, GITHUB_EVENT_NAME=name, GITHUB_REF='refs/heads/main',
+                GITHUB_SHA='b' * 40, NEEDS=json.dumps(needs('repo')),
+                SELECTOR_RESULT='success', DEPLOYABLES='[]',
+            )
             with self.subTest(payload=payload, event=name), \
-                    patch.dict(os.environ, dict(self.environment, GITHUB_EVENT_NAME=name, NEEDS=json.dumps(needs('repo')), SELECTOR_RESULT='success', DEPLOYABLES='[]')), \
+                    patch.dict(os.environ, environment), \
                     redirect_stdout(io.StringIO()):
                 with patch('sys.argv', ['selection', '--ci']), patch.object(selection, 'determine') as determine:
                     self.assertEqual(selection.main(), 1)

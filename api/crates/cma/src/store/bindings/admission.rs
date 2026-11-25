@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::agent_admission::helper_error::HelperError;
 use layer2_core::sandbox::binding::BindingAdmissionFence;
 use layer2_core::sandbox::store::{AgentAdmission, SandboxAdmission, WorkspaceAdmission};
 use mongodb::ClientSession;
@@ -9,6 +10,16 @@ impl BindingCollections {
         fence: &BindingAdmissionFence,
         session: &mut ClientSession,
     ) -> Result<ProviderBinding, SandboxStoreError> {
+        self.fence_transaction(fence, session)
+            .await
+            .map_err(|error| error.into_store_error(driver))
+    }
+
+    async fn fence_transaction(
+        &self,
+        fence: &BindingAdmissionFence,
+        session: &mut ClientSession,
+    ) -> Result<ProviderBinding, HelperError> {
         // Every conversation mutation also writes this document, so this fence
         // serializes creation with both parent and conversation retirement.
         let result = self
@@ -22,18 +33,18 @@ impl BindingCollections {
             )
             .session(&mut *session)
             .await
-            .map_err(driver)?;
+            .map_err(HelperError::Driver)?;
         if result.matched_count != 1 {
-            return Err(SandboxStoreError::Conflict);
+            return Err(SandboxStoreError::Conflict.into());
         }
         self.records
             .find_one(doc! {"_id": &fence.binding_id})
             .session(&mut *session)
             .await
-            .map_err(driver)?
+            .map_err(HelperError::Driver)?
             .map(read_binding)
             .transpose()?
-            .ok_or(SandboxStoreError::Conflict)
+            .ok_or_else(|| SandboxStoreError::Conflict.into())
     }
 
     pub(in crate::store) async fn admit_sandbox(
@@ -65,9 +76,9 @@ impl BindingCollections {
         &self,
         admission: &AgentAdmission,
         session: &mut ClientSession,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Result<(), HelperError> {
         if let Some(fence) = &admission.binding {
-            let binding = self.fence(fence, session).await?;
+            let binding = self.fence_transaction(fence, session).await?;
             let proof = fence
                 .conversation
                 .as_ref()
@@ -81,7 +92,7 @@ impl BindingCollections {
                 .find_one(doc! {"_id": key})
                 .session(&mut *session)
                 .await
-                .map_err(driver)?
+                .map_err(HelperError::Driver)?
                 .map(read_conversation)
                 .transpose()?
                 .ok_or(SandboxStoreError::Conflict)?;

@@ -125,6 +125,8 @@ async fn run(case: Case, segmented: bool) {
             .await
     };
     fixture::clear(&admin).await;
+    // The injected commit error can precede the applied commit's visibility.
+    crate::store::test_visibility::majority_barrier(&admin, &database).await;
     let saved = h.stored(&claimed.id).await;
     let logs = h.store.agent_log(&claimed.id, 0, 100).await.unwrap();
     let requests = h.backend.requests().await;

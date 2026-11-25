@@ -66,6 +66,8 @@ pub enum AgentControlStoreError {
     StopReasonConflict,
     #[error("agent changed while the control operation was requested")]
     Conflict,
+    #[error("an exact native Agent Close observation is required")]
+    RestartEvidenceRequired,
     #[error("agent worktree recovery is not eligible")]
     WorktreeRecoveryConflict,
     #[error("agent limit reached: {live} of {limit}")]
@@ -104,6 +106,15 @@ pub trait AgentControlStore: Send + Sync {
         _now: String,
     ) -> Result<Agent, AgentControlStoreError> {
         Err(AgentControlStoreError::WorktreeRecoveryConflict)
+    }
+
+    /// Read an exact acceptance or atomically reserve capacity for a proven restart.
+    /// A replay never needs a fresh runtime observation.
+    async fn schedule_agent_restart(
+        &self,
+        _request: super::AgentRestartRequest,
+    ) -> Result<super::AgentRestartAcceptance, AgentControlStoreError> {
+        Err(AgentControlStoreError::Conflict)
     }
 
     /// Schedule stop once; matching active stop work is an idempotent replay.

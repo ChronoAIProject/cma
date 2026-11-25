@@ -1,10 +1,21 @@
 use crate::sandbox::{
-    Agent, AgentStatus, Sandbox, SandboxImageRotationPhase, SandboxLifecycleOperation,
-    SandboxRevivePhase, SandboxWorkStep,
+    Agent, AgentStatus, AgentWorkLease, AgentWorkStep, Sandbox, SandboxImageRotationPhase,
+    SandboxLifecycleOperation, SandboxRevivePhase, SandboxStatus, SandboxWorkStep,
 };
 use crate::seconds_from_rfc3339;
 
 use super::{SandboxMutationGuard, SandboxStoreError};
+
+/// The checkpoint observed before dispatch, paired with the owner that
+/// returned the refusal. Parking must compare it in the lifecycle transaction.
+#[derive(Debug, Clone)]
+pub struct ReopenRefusalFence {
+    pub agent_id: crate::AgentId,
+    pub agent_revision: u64,
+    pub checkpoint: Option<Box<super::AgentMessageCheckpoint>>,
+    pub owner: Option<crate::agent_ownership::OwnershipToken>,
+    pub released: Option<layer3_adapter::ReleasedRuntime>,
+}
 
 /// Authority for recording replacement output before publishing a reopened Agent.
 /// Stores must validate and write-fence the parent in the checkpoint transaction.
@@ -14,16 +25,46 @@ pub struct AgentReopenGuard {
     pub agent_fence: u64,
     pub native_conversation_id: String,
     pub runtime_generation: u64,
+    pub owner_restart: Option<OwnerRestartOutputFence>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OwnerRestartOutputFence {
+    pub agent_id: crate::AgentId,
+    pub restart_operation: String,
+    pub open_operation: String,
+    pub open_request_sha256: String,
+    pub lease: AgentWorkLease,
 }
 
 impl AgentReopenGuard {
     pub fn project(&self, agent: &Agent) -> Result<Agent, SandboxStoreError> {
+        let exact_work = match &self.owner_restart {
+            Some(restart) => {
+                agent.id == restart.agent_id
+                    && agent.status == AgentStatus::Starting
+                    && agent.work.step == AgentWorkStep::RestartConversation
+                    && agent.work.lease.as_ref() == Some(&restart.lease)
+                    && matches!(agent.work.cleanup_debt.as_slice(), [debt]
+                    if debt.step == AgentWorkStep::OpenConversation
+                        && debt.operation_id == restart.open_operation
+                        && debt.request_sha256 == restart.open_request_sha256)
+                    && agent
+                        .conversation
+                        .runtime_generation
+                        .and_then(|prior| prior.checked_add(1))
+                        == Some(self.runtime_generation)
+            }
+            None => {
+                agent.status == AgentStatus::Paused
+                    && agent.work.lease.is_none()
+                    && !agent.work.step.is_pending()
+            }
+        };
         if agent.sandbox_id != self.sandbox.sandbox_id
             || agent.owner != self.sandbox.owner
-            || agent.status != AgentStatus::Paused
+            || !exact_work
             || agent.work.next_fence != self.agent_fence
-            || agent.work.lease.is_some()
-            || agent.work.step.is_pending()
             || agent.requested_stop_reason.is_some()
             || agent.conversation.active_turn.is_some()
             || agent
@@ -51,13 +92,26 @@ impl AgentReopenGuard {
         at: &str,
     ) -> Result<(), SandboxStoreError> {
         self.project(agent)?;
+        if let Some(restart) = &self.owner_restart {
+            let now = seconds_from_rfc3339(at);
+            let expires = seconds_from_rfc3339(&restart.lease.expires_at);
+            return if self.sandbox.matches(parent)
+                && parent.status == SandboxStatus::Active
+                && parent.lifecycle.operation.is_none()
+                && matches!((now, expires), (Some(now), Some(expires)) if now < expires)
+            {
+                Ok(())
+            } else {
+                Err(SandboxStoreError::Conflict)
+            };
+        }
         let expires = parent
             .work
             .lease
             .as_ref()
             .and_then(|lease| seconds_from_rfc3339(&lease.expires_at));
         let now = seconds_from_rfc3339(at);
-        if SandboxMutationGuard::capture(parent) != self.sandbox
+        if !self.sandbox.matches(parent)
             || parent.work.step != SandboxWorkStep::RunLifecycleOperation
             || !matches!((now, expires), (Some(now), Some(expires)) if now < expires)
             || parent

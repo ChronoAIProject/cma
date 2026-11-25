@@ -1,5 +1,6 @@
 //! Cached STOP observations schedule work. Only this transactional evidence
 //! authorizes a new cancellation receipt or a durable platform pause.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::budget::{BudgetError, ClosureReason};
 use mongodb::bson::doc;
 use mongodb::ClientSession;
@@ -84,7 +85,7 @@ impl MongoSandboxStore {
                     }
                 },
                 result => {
-                    if let Err(error) = session.abort_transaction().await {
+                    if let Err(error) = session.abort_guarded().await {
                         tracing::warn!(event = "platform_stop_abort", error = %error,
                             "could not confirm platform stop receipt abort");
                     }

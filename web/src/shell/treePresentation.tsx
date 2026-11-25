@@ -3,15 +3,25 @@ import { toneDot } from '../ui/Badge';
 import { statusLabel, statusTone } from '../vocabulary/status';
 import { CharacterAvatar, characterPhase } from '../character/CharacterAvatar';
 import { characterForStatus } from '../character/status';
+import type { StatusTone } from '../vocabulary/status';
+
+interface ObservedPresentation {
+  readonly label: string;
+  readonly tone: StatusTone;
+}
 
 /** A row's status word with its dot from the shared tone (§12.1), then any facts. */
-export function stateMeta(status: Parameters<typeof statusLabel>[0], extra?: ReactNode) {
-  const tone = statusTone(status);
+export function stateMeta(
+  status: Parameters<typeof statusLabel>[0],
+  extra?: ReactNode,
+  observation?: ObservedPresentation,
+) {
+  const tone = observation?.tone ?? statusTone(status);
   return (
     <>
       <span className="tree-row__state" data-tone={tone}>
         {toneDot(tone)}
-        {statusLabel(status)}
+        {observation?.label ?? statusLabel(status)}
       </span>
       {extra}
     </>
@@ -30,15 +40,16 @@ export function agentSignal(
   agentId: string,
   size: number,
   color?: string,
+  observation?: ObservedPresentation,
 ) {
   const presence = characterForStatus(status);
   return (
-    <span className="tree-row__signal" title={statusLabel(status)}>
+    <span className="tree-row__signal" title={observation?.label ?? statusLabel(status)}>
       <CharacterAvatar
         pose={presence.pose}
-        tone={presence.tone}
+        tone={observation?.tone === 'error' ? 'error' : presence.tone}
         color={color}
-        still={!presence.animate}
+        still={presence.pose === 'preparing' || observation !== undefined || !presence.animate}
         phase={characterPhase(agentId)}
         size={size}
       />
@@ -64,7 +75,9 @@ export function lineMeta(status: Parameters<typeof statusLabel>[0], updatedAt: s
 }
 
 function visibleRows(tree: HTMLElement): HTMLElement[] {
-  return [...tree.querySelectorAll<HTMLElement>('[role="treeitem"]')];
+  return [...tree.querySelectorAll<HTMLElement>('[role="treeitem"]')].filter(
+    (row) => !row.closest('details:not([open]), [hidden]'),
+  );
 }
 
 export function keyboardNavigation(event: KeyboardEvent<HTMLDivElement>) {

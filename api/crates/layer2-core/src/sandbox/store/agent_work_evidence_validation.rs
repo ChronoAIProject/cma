@@ -1,3 +1,5 @@
+use layer3_adapter::{AgentCloseRequest, AgentProcessAction, AgentSlot};
+
 use crate::sandbox::{
     Agent, AgentCleanupDebt, AgentLogKind, AgentStatus, AgentWorkReceipt, AgentWorkStep,
     SandboxEventKind, Worktree,
@@ -37,6 +39,15 @@ fn validate_receipts(agent: &Agent, appended_at: &str) -> Result<(), SandboxStor
         return Err(SandboxStoreError::Conflict);
     }
     let ceiling = stamp(appended_at)?;
+    let open_incarnation = agent
+        .open_process_incarnation()
+        .map_err(|_| SandboxStoreError::Conflict)?;
+    // Initial startup cannot acquire authority over a replacement process.
+    if agent.work.step == AgentWorkStep::OpenConversation
+        && open_incarnation.is_some_and(|incarnation| incarnation > 1)
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
     let mut prior_rank = None;
     let mut prior_stamp = None;
     for (index, receipt) in agent.work.receipts.iter().enumerate() {
@@ -47,7 +58,10 @@ fn validate_receipts(agent: &Agent, appended_at: &str) -> Result<(), SandboxStor
             receipt.step,
             &receipt.operation_id,
             &receipt.request_sha256,
-        ) || prior_rank.is_some_and(|prior| prior >= rank)
+        ) || (closes_process(receipt.step)
+            && open_incarnation
+                .is_some_and(|incarnation| !matches_process_close(agent, receipt, incarnation)))
+            || prior_rank.is_some_and(|prior| prior >= rank)
             || prior_stamp.is_some_and(|prior| prior > completed)
             || completed > ceiling
             || agent.work.receipts[..index]
@@ -109,7 +123,15 @@ pub(super) fn validate_advance_history(
     }
     let mut expected_debt = current.work.cleanup_debt.clone();
     if let Some(receipt) = appended {
-        if receipt.step != current.work.step || receipt.completed_at != mutation.appended_at {
+        if receipt.step != current.work.step
+            || receipt.completed_at != mutation.appended_at
+            || (closes_process(receipt.step)
+                && !current.open_process_incarnation().is_ok_and(|open| {
+                    open.is_some_and(|incarnation| {
+                        matches_process_close(current, receipt, incarnation)
+                    })
+                }))
+        {
             return Err(SandboxStoreError::Conflict);
         }
         if startup_effect(receipt.step)
@@ -204,14 +226,38 @@ fn valid_evidence(agent: &Agent, step: AgentWorkStep, operation_id: &str, sha256
     }
     let expected = match step {
         AgentWorkStep::MaterializeHome => Some(format!("agent:{}:home:create:v1", agent.id)),
-        AgentWorkStep::OpenConversation => Some(format!("agent:{}:open:v1", agent.id)),
+        AgentWorkStep::OpenConversation => {
+            return AgentProcessAction::Open
+                .incarnation(agent.id.as_str(), operation_id)
+                .is_some();
+        }
         AgentWorkStep::CloseProcess | AgentWorkStep::EnsureProcessClosed => {
-            Some(format!("agent:{}:close:v1", agent.id))
+            return match AgentProcessAction::Close.incarnation(agent.id.as_str(), operation_id) {
+                Some(1) => true,
+                Some(_) => {
+                    AgentCloseRequest::new(operation_id, AgentSlot::new(agent.id.as_str()))
+                        .request_sha256
+                        == sha256
+                }
+                None => false,
+            };
         }
         AgentWorkStep::RemoveHome => Some(format!("agent:{}:home:remove:v1", agent.id)),
         _ => None,
     };
     expected.is_none_or(|expected| expected == operation_id)
+}
+
+fn closes_process(step: AgentWorkStep) -> bool {
+    matches!(
+        step,
+        AgentWorkStep::CloseProcess | AgentWorkStep::EnsureProcessClosed
+    )
+}
+
+fn matches_process_close(agent: &Agent, receipt: &AgentWorkReceipt, incarnation: u64) -> bool {
+    AgentProcessAction::Close.incarnation(agent.id.as_str(), &receipt.operation_id)
+        == Some(incarnation)
 }
 
 fn valid_sha256(value: &str) -> bool {
@@ -275,6 +321,7 @@ pub(super) fn validate_evidence(
         PublicationKind::Stop => matches!(
             mutation.agent_logs.as_slice(),
             [AgentLogKind::Stopped { reason }]
+                | [AgentLogKind::TurnInterrupted { .. }, AgentLogKind::Stopped { reason }]
                 if next.stop_reason.as_ref().is_some_and(|stop| stop.as_str() == reason)
         ),
         PublicationKind::Delete => {

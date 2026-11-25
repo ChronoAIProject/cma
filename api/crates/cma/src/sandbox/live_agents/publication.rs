@@ -38,22 +38,18 @@ impl LiveAgentRegistry {
             .staged
             .remove(&attachment.agent_id)
             .ok_or(LiveAgentRegistryError::NotAttached)?;
-        let Some(activation) = entry.activation.take() else {
+        let AttachmentInput::Connected { activation, .. } = &mut entry.input else {
             entry.task.abort();
             return Err(LiveAgentRegistryError::NotAttached);
         };
-        if activation
-            .send(LiveAgentAttachmentIdentity {
-                agent_id: attachment.agent_id.clone(),
-                conversation_id: entry.conversation_id.clone(),
-                runtime_generation: entry.runtime_generation,
-                authority_fence: entry.authority_fence,
-                nonce: entry.nonce,
-            })
-            .is_err()
-        {
-            entry.task.abort();
+        if entry.task.is_finished() {
             return Err(LiveAgentRegistryError::NotAttached);
+        }
+        if let Some(activation) = activation.take() {
+            if activation.send(attachment.identity()).is_err() {
+                entry.task.abort();
+                return Err(LiveAgentRegistryError::NotAttached);
+            }
         }
         entry.published = true;
         if let Some(replaced) = state.entries.insert(attachment.agent_id.clone(), entry) {
@@ -88,7 +84,15 @@ impl LiveAgentRegistry {
             target.runtime_generation,
             authority_fence,
         )?;
-        if entry.runtime_generation != target.runtime_generation || entry.task.is_finished() {
+        if !matches!(
+            entry.input,
+            AttachmentInput::Connected {
+                activation: Some(_),
+                ..
+            }
+        ) || entry.runtime_generation != target.runtime_generation
+            || entry.task.is_finished()
+        {
             return Ok(None);
         }
         entry.authority_fence = authority_fence;

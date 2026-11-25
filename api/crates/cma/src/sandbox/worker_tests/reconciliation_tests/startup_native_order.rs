@@ -4,6 +4,7 @@ use super::*;
 use layer2_core::sandbox::store::SandboxStore;
 use layer3_adapter::agent_sandbox::{AgentSandboxClient, AgentSandboxConfig, NativeHomeVolumes};
 use layer3_adapter::hosted::AgentSandboxBackend;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::Semaphore;
 
 #[path = "startup_native_order_backend.rs"]
@@ -15,6 +16,9 @@ struct Control {
     api: Arc<Mutex<api::ApiState>>,
     status_gate: Semaphore,
     status_entered: Notify,
+    hold_next_home_check: AtomicBool,
+    home_check_gate: Semaphore,
+    home_check_entered: Notify,
     other_gate: Semaphore,
     other_entered: Notify,
     other_started: AtomicUsize,
@@ -31,6 +35,9 @@ impl Control {
             api,
             status_gate: Semaphore::new(0),
             status_entered: Notify::new(),
+            hold_next_home_check: AtomicBool::new(false),
+            home_check_gate: Semaphore::new(0),
+            home_check_entered: Notify::new(),
             other_gate: Semaphore::new(0),
             other_entered: Notify::new(),
             other_started: AtomicUsize::new(0),
@@ -116,7 +123,7 @@ impl NativeStartup {
             let handle = provisioning
                 .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
                     1,
-                    crate::sandbox::runtime_mapping::sandbox_spec(&sibling, "test"),
+                    crate::sandbox::runtime_mapping::sandbox_spec(&sibling, "test").unwrap(),
                 ))
                 .await
                 .unwrap();

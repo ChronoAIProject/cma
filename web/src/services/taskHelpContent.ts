@@ -1,4 +1,5 @@
 import type { HelpTopic } from '../routing/docsRoutes';
+import { statusLabel } from '../vocabulary/status';
 
 interface HelpScenario {
   readonly title: string;
@@ -52,9 +53,8 @@ export const TASK_GUIDES: Record<HelpTopic, TaskGuide> = {
       },
       {
         title: 'Delete a task in a paused Sandbox',
-        state: 'A stopped or failed Agent can be deleted after its Sandbox returns to Active.',
-        action:
-          'From the task menu, choose Open Sandbox to resume. Choose Resume if the Sandbox offers it. After it becomes Active, return to the task and choose Delete.',
+        state: `A stopped or failed Agent can be deleted after its Sandbox returns to ${statusLabel('active')}.`,
+        action: `From the task menu, choose Open Sandbox to resume. Choose Resume if the Sandbox offers it. Wait until its status is ${statusLabel('active')}, then return to the task and choose Delete.`,
         completion:
           'Task deletion removes this Agent and its Worktree. The separate Delete action on the Sandbox removes the environment and all its Workspaces and Agents after its own confirmation.',
       },
@@ -87,7 +87,7 @@ export const TASK_GUIDES: Record<HelpTopic, TaskGuide> = {
         state:
           'You may see Awaiting confirmation, an unconfirmed creation, or a message that the task could not be confirmed. A lost connection does not prove the request failed.',
         action:
-          'Return to the original task or conversation with browser Back. Use the recovery action on that request, such as Recover original task or Recover creation. Keep its saved request intact; do not start a replacement or send the same instruction as a new message while the outcome is unknown.',
+          'For a task, return to the original task or conversation and choose Recover original task when offered. For a document in Artifacts, choose Retry creation in the open creation dialog. If you left the dialog, choose Resume creation in Artifacts to reopen the saved request, then choose Retry creation. Keep the original request while its outcome is unknown.',
         completion:
           'A confirmed receipt, recorded progress, or the original message appearing in the conversation establishes what was accepted. If the result remains unknown, keep checking the original request. Help navigation does not retry or submit work.',
       },
