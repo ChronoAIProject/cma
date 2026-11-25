@@ -2,17 +2,20 @@ use super::*;
 use crate::background::{BackgroundBudget, BackgroundWork};
 use crate::sandbox::binding_lifecycle_test_support::ConnectionSweep;
 use std::time::Duration;
+use tokio::sync::Notify;
 
 #[derive(Default)]
 struct PrefixProbe {
     visits: AtomicU64,
     blocked: AtomicBool,
+    entered_when_blocked: Notify,
 }
 
 impl PrefixProbe {
     async fn observe(&self) {
         self.visits.fetch_add(1, Ordering::Relaxed);
         if self.blocked.load(Ordering::Relaxed) {
+            self.entered_when_blocked.notify_one();
             std::future::pending::<()>().await;
         }
     }
@@ -404,12 +407,19 @@ async fn agent_reconciliation_continuation_keeps_transport_limit_after_cancellat
     );
     let now = SystemTime::now();
     let mut sweep = ConnectionSweep::default();
-    assert!(tokio::time::timeout(
-        Duration::from_secs(1),
-        worker.reconcile_connection_slice(now, &mut sweep),
-    )
-    .await
-    .is_err());
+    {
+        let reconciliation = worker.reconcile_connection_slice(now, &mut sweep);
+        tokio::pin!(reconciliation);
+        tokio::select! {
+            outcome = &mut reconciliation => panic!("reconciliation settled before reaching the blocked probe: {outcome:?}"),
+            () = probes[0].entered_when_blocked.notified() => {}
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), &mut reconciliation)
+                .await
+                .is_err()
+        );
+    }
     assert_eq!(probes[0].visits.load(Ordering::Relaxed), 1);
     probes[0].blocked.store(false, Ordering::Relaxed);
     assert!(!worker
