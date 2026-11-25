@@ -1,3 +1,5 @@
+#[path = "dispatch_restart.rs"]
+mod restart;
 #[path = "dispatch_restore.rs"]
 mod restore;
 
@@ -363,35 +365,6 @@ async fn uncertain_first_admission_recovery_attaches_same_id_and_posts_identical
     assert_eq!(posts.len(), 1);
     assert!(!posts[0].body.contains("title-sentinel"));
     assert!(!posts[0].body.contains("body-sentinel"));
-}
-
-#[tokio::test]
-#[ignore = "requires authenticated disposable service Mongo fixture"]
-async fn restart_after_pending_receipt_dispatches_once_from_new_gateway_instance() {
-    let (mut f, app, _channel_id) = ready_dispatch_fixture().await;
-    block_first_dispatch(&mut f, "restart").await;
-    let (webhook, _body) = pending_webhook(&f, &app, "restart-pending").await;
-    sleep(Duration::from_secs(1)).await;
-    for child in &mut f.children {
-        child.kill().await.unwrap();
-    }
-    let _ = webhook.await;
-    f.base = f.replica().await;
-    wait_for_posts(&f, 1).await;
-    let receipt = f
-        .read(
-            &f.base,
-            &format!(
-                "/v1/github/apps/{}/deliveries/restart-pending",
-                app["app_ref"].as_str().unwrap()
-            ),
-            "token-alice",
-        )
-        .await;
-    assert_eq!(receipt.status(), 200);
-    let receipt: serde_json::Value = receipt.json().await.unwrap();
-    assert_eq!(receipt["task_ids"].as_array().unwrap().len(), 1);
-    assert_eq!(response_posts(&f).len(), 1);
 }
 
 async fn owner_app_and_channel(
