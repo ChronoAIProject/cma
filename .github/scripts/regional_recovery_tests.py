@@ -206,6 +206,33 @@ class RecoveryTests(unittest.TestCase):
             self.assertIn(row['integrated_rpo_seconds'], (1200, 1260, 1320))
         self.assertEqual(output.stat().st_mode & 0o777, 0o600)
 
+    def set_restore_intervals(self, intervals):
+        def update(row):
+            self.assertEqual(len(intervals), len(row['homes']))
+            for home, (start, finish) in zip(row['homes'].values(), intervals):
+                home.update(started_at=stamp(68 + start, 23), verified_at=stamp(68 + finish, 23))
+
+        self.campaign.mutate_execution('runtime_region', 'readback', update)
+
+    def test_parallel_restoration_with_queue_gap(self):
+        # Two simultaneous restores, a 20-minute queue gap, then ten serial restores.
+        self.set_restore_intervals([(0, 10), (0, 10)] + [(30 + i, 31 + i) for i in range(10)])
+        report = self.campaign.verify()['regional']['runtime_region']
+        total_bytes = sum(home['used_bytes'] for home in self.campaign.inventory.values())
+        self.assertEqual(report['restore_bytes_per_second'], total_bytes / (40 * 60))
+        self.assertEqual(report['home_max_rto_seconds'], 44 * 60)
+        self.assertEqual(report['verified_service_seconds'], 100 * 60)
+
+    def test_sequential_restoration_with_gaps_is_refused(self):
+        self.set_restore_intervals([(2 * i, 2 * i + 1) for i in range(12)])
+        with self.assertRaisesRegex(Refusal, 'Parallel home restoration is unproven'):
+            self.campaign.verify()
+
+    def test_touching_restore_intervals_are_refused(self):
+        self.set_restore_intervals([(i, i + 1) for i in range(12)])
+        with self.assertRaisesRegex(Refusal, 'Parallel home restoration is unproven'):
+            self.campaign.verify()
+
     def test_missing_scope(self):
         self.campaign.index['regional'].pop('runtime_region')
         with self.assertRaises(Refusal):

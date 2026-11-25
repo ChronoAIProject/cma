@@ -328,8 +328,9 @@ class RecoveryEvidence:
             home_finishes.append(home_time)
             home_times.append((home_time - loss).total_seconds())
         if regional:
-            require(sum((finish - start).total_seconds() for start, finish in zip(home_starts, home_finishes))
-                    > (max(home_finishes) - min(home_starts)).total_seconds(), "Parallel home restoration is unproven")
+            intervals = sorted(zip(home_starts, home_finishes))
+            require(any(next_start < finish for (_, finish), (next_start, _) in zip(intervals, intervals[1:])),
+                    "Parallel home restoration is unproven")
             self.stage_order(row["stages"], row["run_id"], loss, verified, reviewed)
         else:
             require(row["stages"] is None, "Sample recovery has regional readiness evidence")
