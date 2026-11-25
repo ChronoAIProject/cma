@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AuthContextProvider, useAuth } from './context';
+import { SIGN_OUT_NOTICE_KEY } from './signOutNotice';
 import type { AuthProvider, AuthState } from './types';
 
 const owner = (id: string): AuthState => ({
@@ -19,10 +20,12 @@ function deferred() {
 }
 
 function View() {
-  const { state, retry, signIn, signOut } = useAuth();
+  const { state, retry, signIn, signOut, explicitlySignedOut, sessionReadSignal } = useAuth();
   return (
     <>
       <p>{state.status === 'authenticated' ? state.user.id : state.status}</p>
+      <output aria-label="sign-out notice">{explicitlySignedOut ? 'received' : 'none'}</output>
+      <output aria-label="session reads">{sessionReadSignal.aborted ? 'paused' : 'allowed'}</output>
       <button onClick={retry}>Retry</button>
       <button onClick={() => void signIn()}>Sign in</button>
       <button onClick={() => void signOut()}>Sign out</button>
@@ -67,8 +70,10 @@ beforeEach(() => {
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
 });
 afterEach(() => {
+  window.localStorage.removeItem(SIGN_OUT_NOTICE_KEY);
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 it.each(['focus', 'online', 'visibilitychange', 'retry'])(
@@ -217,4 +222,71 @@ it('does not let a queued navigation restart silent sign-in after explicit sign-
   expect(current).toHaveBeenCalledTimes(2);
   expect(silent).toHaveBeenCalledOnce();
   expect(screen.getByText('anonymous')).toBeInTheDocument();
+});
+
+it('discards an in-flight identity reply when another tab signs out', async () => {
+  const { current, held } = await fixture();
+  expect(screen.getByText('owner-a')).toBeInTheDocument();
+
+  window.localStorage.setItem(SIGN_OUT_NOTICE_KEY, crypto.randomUUID());
+  fireEvent(window, new StorageEvent('storage', { key: SIGN_OUT_NOTICE_KEY }));
+  expect(screen.getByText('anonymous')).toBeInTheDocument();
+  expect(screen.getByLabelText('sign-out notice')).toHaveTextContent('received');
+  expect(screen.getByLabelText('session reads')).toHaveTextContent('paused');
+
+  await act(async () => held.resolve(owner('owner-a')));
+  await hint('focus');
+  expect(screen.queryByText('owner-a')).not.toBeInTheDocument();
+  expect(current).toHaveBeenCalledTimes(2);
+});
+
+it('hides the saved page until its restored session has been verified', async () => {
+  const current = vi.fn<AuthProvider['current']>().mockResolvedValueOnce(owner('owner-a'));
+  const restored = deferred();
+  current.mockReturnValueOnce(restored.promise);
+  mount({ current, signIn: vi.fn(), signOut: vi.fn() });
+  await act(async () => {});
+  expect(screen.getByText('owner-a')).toBeInTheDocument();
+  expect(screen.getByLabelText('session reads')).toHaveTextContent('allowed');
+
+  fireEvent(window, new PageTransitionEvent('pagehide', { persisted: true }));
+  expect(screen.getByText('checking')).toBeInTheDocument();
+  expect(screen.getByLabelText('session reads')).toHaveTextContent('paused');
+  fireEvent(window, new PageTransitionEvent('pageshow', { persisted: true }));
+  expect(current).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText('owner-a')).not.toBeInTheDocument();
+
+  await act(async () => restored.resolve({ status: 'anonymous' }));
+  expect(screen.getByText('anonymous')).toBeInTheDocument();
+  expect(screen.getByLabelText('session reads')).toHaveTextContent('paused');
+});
+
+it('uses the live sign-out notice when storage has no record and ignores malformed data', async () => {
+  const channel = new EventTarget();
+  const close = vi.fn();
+  vi.stubGlobal(
+    'BroadcastChannel',
+    class {
+      addEventListener = channel.addEventListener.bind(channel);
+      close = close;
+    },
+  );
+  const { current, view, held } = await fixture();
+  await act(async () => held.resolve(owner('owner-a')));
+
+  act(() => {
+    channel.dispatchEvent(new MessageEvent('message', { data: { type: 'sign-out' } }));
+  });
+  expect(screen.getByText('owner-a')).toBeInTheDocument();
+  expect(screen.getByLabelText('sign-out notice')).toHaveTextContent('none');
+
+  act(() => {
+    channel.dispatchEvent(new MessageEvent('message', { data: crypto.randomUUID() }));
+  });
+  expect(screen.getByText('anonymous')).toBeInTheDocument();
+  expect(screen.getByLabelText('sign-out notice')).toHaveTextContent('received');
+  expect(window.localStorage.getItem(SIGN_OUT_NOTICE_KEY)).toBeNull();
+  expect(current).toHaveBeenCalledTimes(2);
+  view.unmount();
+  expect(close).toHaveBeenCalledOnce();
 });

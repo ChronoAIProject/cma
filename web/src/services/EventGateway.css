@@ -174,7 +174,7 @@
 .gateway-detail--create > header {
   padding: 0;
 }
-.gateway-detail--create .gateway-create-header h1.page-header__title:focus {
+.gateway-detail--create .gateway-create-header h1[tabindex]:focus {
   box-shadow: var(--focus-ring);
 }
 @media (max-width: 600px) {

@@ -19,6 +19,10 @@
   border-bottom: 1px solid var(--dsw-alias-border-l2);
   transition: border-color var(--ds-transition-duration) var(--ds-ease-in-out);
 }
+.agent-desktop__header > :first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .agent-desktop[data-controller='user'] .agent-desktop__header,
 .agent-desktop[data-controller='agent'] .agent-desktop__header {
   border-bottom-color: var(--dsw-alias-state-business-primary);

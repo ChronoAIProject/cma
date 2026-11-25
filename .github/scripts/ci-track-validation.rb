@@ -46,11 +46,11 @@ def check_component_cache_writers(documents)
   }, 'image Node setup must disable automatic and explicit dependency caching')
   scope = "matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component"
   builds = images.select { |s| s.fetch('uses', '').start_with?('docker/build-push-action@') }
-  require_check(builds.size == 2 && builds.all? { |s| s.dig('with', 'cache-from') == "type=gha,version=2,scope=${{ #{scope} }}" },
-    'both image builds must restore the component cache')
+  bounded = "${{ steps.layer-validate.outcome == 'success' && format('type=local,src={0}/cma-layer-cache/restored', runner.temp) || '' }}"
+  require_check(builds.size == 2 && builds.all? { |s| s.dig('with', 'cache-from').to_s.lines.map(&:strip) ==
+    ["type=gha,version=2,scope=${{ #{scope} }}", bounded] }, 'both image builds must restore validated component caches')
   exports = builds.map { |s| s.dig('with', 'cache-to') }.compact
-  require_check(exports == ["${{ #{develop} && format('type=gha,version=2,mode=max,ignore-error=true,scope={0}', #{scope}) || '' }}"],
-    'image layers may be exported only on develop pushes, and a failed export must never fail the build')
+  require_check(exports.empty?, 'CI image builds must not publish unbounded layers')
   {'docker/setup-qemu-action' => 'cache-image', 'docker/setup-buildx-action' => 'cache-binary',
    'aquasecurity/trivy-action' => 'cache'}.each do |action, option|
     step = images.find { |s| s.fetch('uses', '').start_with?(action + '@') }
@@ -62,7 +62,7 @@ def check_component_cache_writers(documents)
     web_nodes.first.dig('with', 'cache') == "${{ #{develop} && 'npm' || '' }}", 'setup-node may save a PR cache')
   writers = (images + web).select { |s| s.fetch('uses', '').match?(%r{\Aactions/cache(?:/save)?@}) }
   require_check(writers.size == 1 && writers.first['uses'].start_with?('actions/cache/save@') &&
-    writers.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (success() && #{develop} && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true')",
+    writers.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (success() && #{develop} && matrix.component == 'api' && vars.CMA_LAYER_CACHE_WRITER_FLOOR != 'true' && steps.api-cargo-cache-export.outputs.ready == 'true')",
     'only the accepted develop Cargo archive may be saved')
   restore = 'actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830'
   npm = {'path' => '${{ steps.npm-cache.outputs.directory }}',
@@ -483,12 +483,10 @@ def check_omarchy_archive(steps)
   epochs = build.fetch('build-args', '').lines.map(&:strip).grep(/\ASOURCE_DATE_EPOCH=/)
   require_check(build['outputs'] == 'type=docker,rewrite-timestamp=true' && epochs == ['SOURCE_DATE_EPOCH=0'],
     'Omarchy must rewrite layer timestamps to the fixed epoch')
-  save = steps.find { |s| s['name'] == 'Save qualified Omarchy layer cache' }
   storage = {'path' => OmarchyCIContract::CACHE_PATH, 'key' => OmarchyCIContract::CACHE_KEY}
   require_check(restore && restore['if'] == STAGING_IMAGE_FALLBACK && restore['uses'].start_with?('actions/cache/restore@') &&
     restore['with'] == storage.merge('fail-on-cache-miss' => false), 'PRs must restore only an exact Omarchy archive')
   hit = "steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true'"
-  writer = OmarchyCIContract::CACHE_WRITE
   protected_cache = "${{ #{OmarchyCIContract::DEVELOP_PUSH} }}"
   {'actions/setup-node' => ['package-manager-cache', false],
    'docker/setup-buildx-action' => ['cache-binary', protected_cache],
@@ -501,11 +499,10 @@ def check_omarchy_archive(steps)
   require_check(db && db['uses'].start_with?('actions/cache/restore@') &&
     db['if'] == "github.event_name != 'push' || github.ref != 'refs/heads/develop'" &&
     db.dig('with', 'restore-keys') == 'cache-trivy-', 'Omarchy PR scans must restore the Trivy database')
-  require_check(build['cache-from'].to_s.strip == "${{ #{hit} && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}",
+  bounded = "${{ steps.layer-validate.outcome == 'success' && format('type=local,src={0}/cma-layer-cache/restored', runner.temp) || '' }}"
+  require_check(build['cache-from'].to_s.lines.map(&:strip) == ["${{ #{hit} && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}", bounded],
     'a partial restore must build Omarchy cold')
-  require_check(build['cache-to'] == "${{ #{writer} && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}",
-    'Omarchy may export new layers only on a develop push with a cache miss')
+  require_check(!build.key?('cache-to'), 'Omarchy layers use the bounded publication archive')
   writers = steps.select { |s| s.fetch('uses', '').match?(%r{\Aactions/cache(?:/save)?@}) }
-  require_check(save && writers == [save] && save['uses'].start_with?('actions/cache/save@') && save['with'] == storage &&
-    save['if'] == "#{STAGING_IMAGE_FALLBACK} && (success() && #{writer})" && steps.last == save, 'only a qualified develop push may save the Omarchy archive')
+  require_check(writers.empty?, 'Omarchy CI may only restore its layer archive')
 end

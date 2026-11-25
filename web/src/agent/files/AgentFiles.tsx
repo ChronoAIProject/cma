@@ -16,7 +16,7 @@ export function AgentFiles({
   readonly agentId: string;
   readonly active: boolean;
   readonly readOnly?: boolean;
-  readonly onAccessChanged?: () => void;
+  readonly onAccessChanged?: (downloadMessage?: string) => void;
   readonly workingDirectory?: string;
 }) {
   const files = useCmaClient().files;

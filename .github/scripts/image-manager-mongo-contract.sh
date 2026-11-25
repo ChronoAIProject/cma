@@ -80,6 +80,14 @@ contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
 contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma-image-manager) and kind(test) and (binary(=mongo_isolation) or binary(=browser_session))'
 
+# Migration contracts require isolated credentials, real DDL and a replica set.
+contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cma-service-migrations) and kind(lib)'
+contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cma-image-manager) and kind(lib) and test(~migrations::tests::)'
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~migrations::)'
+
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~optional_forms_storage)'
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
@@ -171,3 +179,8 @@ CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
 
 contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma) and test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure)'
+
+CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
+  CMA_TEST_CMA_EXECUTABLE="${CARGO_TARGET_DIR:-$PWD/target}/debug/cma" \
+  contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cma) and test(=store::agent_log_segments::active_proof::prepare::tests::active_proof_operator_cli_uses_generated_isolated_role)'
