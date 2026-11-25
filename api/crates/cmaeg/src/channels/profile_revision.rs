@@ -372,6 +372,7 @@ pub async fn publish(
     ))
     .map_err(ManagementError::Invalid)?;
     desired.provider.capabilities.clear();
+    desired.secrets.agent_key_hash = hash_secret(request.agent_key.as_str());
     desired.secrets.provider_credential = Some(request.agent_key);
     desired.mutation = None;
     desired.validate().map_err(ManagementError::Invalid)?;

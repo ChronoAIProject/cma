@@ -125,16 +125,24 @@ pub(crate) async fn reset_partition(
         .resolver
         .profile_assignment_store()
         .map_err(|_| lost())?;
-    let (mut assignment, assignment_version) = load_assignment(&store, &current, &input).await?;
     let id = index_id(
         OPERATION,
         &[&creator.subject, current.id.as_str(), input.operation_id],
     );
-    let operation = if let Some((operation, _)) = store
+    let existing = store
         .read::<Operation>(&id, false)
         .await
-        .map_err(|_| lost())?
-    {
+        .map_err(|_| lost())?;
+    if let Some((operation, _)) = &existing {
+        if operation.conversation_id != input.conversation.as_str()
+            || operation.request.request_digest != input.request_digest
+            || operation.request.expected_agent_id != input.expected_agent_id
+        {
+            return Err(refuse("partition_reset_key_conflict"));
+        }
+    }
+    let (mut assignment, assignment_version) = load_assignment(&store, &current, &input).await?;
+    let operation = if let Some((operation, _)) = existing {
         verify_operation(&operation, creator, &current, &input, &assignment)?;
         if let Some(outcome) = operation.outcome.clone() {
             return outcome.result();
