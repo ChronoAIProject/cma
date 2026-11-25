@@ -298,16 +298,25 @@ class NewestFinalTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertEqual(read_finals(Path.cwd(), token, chain, runner=listed),
                                  (COMMITS[9], dict.fromkeys(LANES, (None, "denied"))))
-        # A newer develop head than this plan's makes the run stale: no tag object is read.
+        # Only a verified first-parent advance lets planning skip the event.
         listed = Mock(return_value=subprocess.CompletedProcess([], 0, Tags(develop=COMMITS[15]).advertisement(), ""))
-        with patch("staging_cd_plan_window.GitHub", side_effect=AssertionError):
+        with patch.object(DevelopHistory, "from_head", return_value=history(16)), \
+                patch("staging_cd_plan_window.GitHub", side_effect=AssertionError):
             self.assertEqual(read_finals(Path.cwd(), "fixture", chain, runner=listed), (COMMITS[15], None))
-        # A develop head this plan already contains is not newer: its finals are read.
-        for develop in (COMMITS[9], COMMITS[7]):
-            with self.subTest(develop=develop):
-                listed = Mock(return_value=subprocess.CompletedProcess([], 0, Tags(develop=develop).advertisement(), ""))
-                self.assertEqual(read_finals(Path.cwd(), "fixture", chain, runner=listed),
-                                 (develop, dict.fromkeys(LANES, (None, "new"))))
+        clock = Clock()
+        with patch.object(DevelopHistory, "from_head", return_value=DevelopHistory(COMMITS[15], [COMMITS[15]])):
+            self.assertEqual(read_finals(Path.cwd(), "fixture", chain, runner=listed, clock=clock, sleep=clock.sleep),
+                             (None, dict.fromkeys(LANES, (None, "unreadable"))))
+        self.assertTrue(clock.waits)
+
+    def test_lagging_advertisement_is_retried_before_reading_finals(self):
+        older, current = (subprocess.CompletedProcess([], 0, Tags(develop=head).advertisement(), "")
+                          for head in (COMMITS[7], COMMITS[9]))
+        clock = Clock()
+        runner = Mock(side_effect=[older, current])
+        self.assertEqual(read_finals(Path.cwd(), "fixture", history(), runner=runner, clock=clock, sleep=clock.sleep),
+                         (COMMITS[9], dict.fromkeys(LANES, (None, "new"))))
+        self.assertEqual((runner.call_count, len(clock.waits)), (2, 1))
 
 
 # Every lane is in the manifest from the start of these histories.

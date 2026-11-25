@@ -56,6 +56,8 @@ REFUSAL_CODES = {
     "Allocation planned a duplicate reservation": "RESERVATION_PLAN_INVALID",
     "Unknown reservation component": "RESERVATION_PLAN_INVALID",
     "Allocation tag inventory is incomplete": "INVENTORY_INCOMPLETE",
+    "Develop history has not reached the push": "DEVELOP_ADVERTISEMENT_UNSETTLED",
+    "Develop ancestry could not be verified": "DEVELOP_ADVERTISEMENT_UNSETTLED",
     "Allocation tag inventory exceeds 16 MiB": "INVENTORY_TOO_LARGE",
     "Allocation reservation readback differs": "RESERVATION_VERIFY_FAILED",
     "Allocation reservation readback is unavailable": "RESERVATION_NOT_VISIBLE",
@@ -71,7 +73,7 @@ TRANSIENT_CODES = frozenset({
     "VERSION_LABELS_INVALID", "GITHUB_READ_TRANSIENT", "GITHUB_RESPONSE_INVALID", "RESERVATION_COLLISION_LIMIT",
     "RESERVATION_PUSH_FAILED", "RESERVATION_VERIFY_FAILED", "FINAL_SETTLEMENT_UNCERTAIN", "DEADLINE_EXCEEDED",
     "READ_FAILED", "WRITE_UNCERTAIN", "INVENTORY_INCOMPLETE", "INVENTORY_CLAIM_ORPHANED", "RESERVATION_COLLISION",
-    "RESERVATION_NOT_VISIBLE",
+    "RESERVATION_NOT_VISIBLE", "DEVELOP_ADVERTISEMENT_UNSETTLED",
 })
 # A transient refusal raised before the reservation push started left nothing
 # on the remote, so the whole allocation runs once more in the same job, with
