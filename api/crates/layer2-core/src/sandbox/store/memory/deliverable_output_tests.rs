@@ -23,7 +23,7 @@ async fn deliverable_failure_summary_obeys_output_writer_policy_and_survives_rep
     for (id, historical) in [("native", false), ("historical", true)] {
         let started = serde_json::from_value(serde_json::json!({
             "sessionUpdate":"tool_call", "toolCallId":id,
-            "title":"mcp.cma_access.describe_deliverable", "kind":"execute",
+            "title":"Verify an answer deliverable", "kind":"execute",
             "status":if historical {"failed"} else {"in_progress"},
             "rawInput":input, "rawOutput":if historical {result.clone()} else {serde_json::Value::Null}
         })).unwrap();
@@ -74,7 +74,7 @@ async fn deliverable_failure_summary_obeys_output_writer_policy_and_survives_rep
     let disabled = DurableAgentUpdateRecorder::new(store.clone());
     let started = serde_json::from_value(serde_json::json!({
         "sessionUpdate":"tool_call","toolCallId":"disabled","status":"failed",
-        "title":"mcp.cma_access.describe_deliverable","rawInput":input,"rawOutput":result
+        "title":"Verify an answer deliverable","rawInput":input,"rawOutput":result
     }))
     .unwrap();
     let receipt = disabled
