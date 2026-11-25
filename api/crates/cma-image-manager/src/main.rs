@@ -27,11 +27,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", schema::runtime_role(&db_name));
         return Ok(());
     }
+    if args == ["--print-migration-operator-role"] {
+        println!(
+            "{}",
+            cma_service_migrations::operator_role(&db_name, cma_image_manager::migrations::LEDGER)
+        );
+        return Ok(());
+    }
     if args == ["--print-migration-role"] {
         println!("{}", schema::migration_role(&db_name));
         return Ok(());
     }
-    if !args.is_empty() && args != ["--migrate"] {
+    if !args.is_empty() && args != ["--migrate"] && !args[0].starts_with("--migration-") {
         return Err(
             "usage: cma-image-manager [--migrate|--print-runtime-role|--print-migration-role]"
                 .into(),
@@ -39,8 +46,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mongo = mongodb::Client::with_uri_str(required(CMA_IM_MONGODB_URI)?).await?;
     let database = mongo.database(&db_name);
-    if args == ["--migrate"] {
-        schema::migrate(&database).await?;
+    if !args.is_empty() {
+        cma_image_manager::migrations::cli(&database, &args).await?;
         return Ok(());
     }
     let authority = cma_service_auth::mongodb_authority::MongoAuthorityMode::from_env(

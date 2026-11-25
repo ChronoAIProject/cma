@@ -1,9 +1,6 @@
 //! Explicit data-owner migration. Runtime startup only verifies prerequisites;
 //! it never creates a collection, changes its validator or creates an index.
-use super::{
-    mongo::{bounded, majority},
-    StoreError, SERVER_TIMEOUT,
-};
+use super::{mongo::bounded, StoreError, SERVER_TIMEOUT};
 use cma_service_auth::mongodb_authority::{verify_shared_schema, MongoAuthorityMode};
 use futures_util::TryStreamExt;
 use mongodb::{
@@ -72,38 +69,27 @@ pub fn role(database: &str, migration: bool) -> Document {
 }
 
 pub async fn migrate(db: &Database) -> Result<(), StoreError> {
-    let concern =
-        mongodb::bson::serialize_to_document(&majority()).map_err(|_| StoreError::Invalid)?;
-    let result = db.run_command(doc! {"create":COLLECTION,"validator":validator(),
-        "validationLevel":"strict","validationAction":"error","writeConcern":concern.clone(),"maxTimeMS":2000_i64}).await;
-    match result {
-        Ok(_) => {}
-        Err(error) if matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(command) if command.code == 48) =>
-        {
-            db.run_command(
-                doc! {"collMod":COLLECTION,"validator":validator(),"validationLevel":"strict",
-                "validationAction":"error","writeConcern":concern,"maxTimeMS":2000_i64},
-            )
-            .await
-            .map_err(|_| StoreError::Unavailable)?;
-        }
-        Err(_) => return Err(StoreError::Unavailable),
-    }
-    let rows = db.collection::<Document>(COLLECTION);
-    rows.create_indexes(indexes())
-        .write_concern(majority())
-        .max_time(SERVER_TIMEOUT)
+    cma_service_migrations::marker_with_fields(
+        db,
+        COLLECTION,
+        QUOTA,
+        "schema_version",
+        &[1],
+        1,
+        doc! {"kind":"control"},
+    )
+    .await
+    .map_err(|_| StoreError::Invalid)?;
+    cma_service_migrations::collection(db, COLLECTION, validator(), true)
         .await
         .map_err(|_| StoreError::Unavailable)?;
-    rows.update_one(
-        doc! {"_id":QUOTA},
-        doc! {"$setOnInsert":{"kind":"control","schema_version":1_i32,
-        "fence":0_i64,"observed_at":mongodb::bson::DateTime::now()}},
-    )
-    .upsert(true)
-    .write_concern(majority())
-    .await
-    .map_err(|_| StoreError::Unavailable)?;
+    cma_service_migrations::indexes(db, COLLECTION, indexes())
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    cma_service_migrations::update(db, COLLECTION, doc! {"_id":QUOTA}, doc! {"$setOnInsert":{"kind":"control","schema_version":1_i32,"fence":0_i64,"observed_at":if cma_service_migrations::describing() {mongodb::bson::DateTime::from_millis(0)} else {mongodb::bson::DateTime::now()}}}, true, false).await.map_err(|_| StoreError::Unavailable)?;
+    if cma_service_migrations::inspecting() {
+        return Ok(());
+    }
     verify(db).await
 }
 

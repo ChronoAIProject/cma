@@ -27,31 +27,49 @@ fn keys() -> Document {
 }
 
 pub async fn migrate(db: &Database) -> Result<(), RecordError> {
+    cma_service_migrations::marker(db, MIGRATIONS, "replicas", "version", &[1], 1)
+        .await
+        .map_err(failure)?;
     super::migrate(db).await?;
     for collection in [CONNECTIONS, INTERACTIONS] {
-        db.collection::<Document>(collection)
-            .create_index(
-                IndexModel::builder()
-                    .keys(keys())
-                    .options(
-                        IndexOptions::builder()
-                            .name(INDEX.to_owned())
-                            .partial_filter_expression(doc! {"replica":{"$exists":true}})
-                            .build(),
-                    )
-                    .build(),
-            )
-            .await
-            .map_err(failure)?;
+        cma_service_migrations::indexes(
+            db,
+            collection,
+            vec![IndexModel::builder()
+                .keys(keys())
+                .options(
+                    IndexOptions::builder()
+                        .name(INDEX.to_owned())
+                        .partial_filter_expression(doc! {"replica":{"$exists":true}})
+                        .build(),
+                )
+                .build()],
+        )
+        .await
+        .map_err(failure)?;
     }
-    db.run_command(doc! {"collMod":MIGRATIONS,"validator":migration_validator()})
-        .await
-        .map_err(failure)?;
-    db.collection::<Document>(MIGRATIONS)
-        .update_one(doc! {"_id":"replicas"}, doc! {"$set":{"version":1}})
-        .upsert(true)
-        .await
-        .map_err(failure)?;
+    cma_service_migrations::collection_with_predecessors(
+        db,
+        MIGRATIONS,
+        migration_validator(),
+        false,
+        crate::records::mongo::migration_predecessors(),
+    )
+    .await
+    .map_err(failure)?;
+    cma_service_migrations::update(
+        db,
+        MIGRATIONS,
+        doc! {"_id":"replicas"},
+        doc! {"$set":{"version":1}},
+        true,
+        false,
+    )
+    .await
+    .map_err(failure)?;
+    if cma_service_migrations::inspecting() {
+        return Ok(());
+    }
     verify(db).await
 }
 

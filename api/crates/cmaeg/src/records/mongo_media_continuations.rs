@@ -145,53 +145,77 @@ impl MongoRecords {
 }
 
 pub async fn migrate(db: &Database) -> Result<(), RecordError> {
+    cma_service_migrations::marker(db, MIGRATIONS, "media_continuations", "version", &[1], 1)
+        .await
+        .map_err(failure)?;
     let validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,
     "required":["_id","owner","blob","version","schema_version","expires_at"],"properties":{
     "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},
     "blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},
     "schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0},"expires_at":{"bsonType":"date"}}}};
-    match db.run_command(doc! {"create":MEDIA_CONTINUATIONS,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await {
-        Ok(_) => {},
-        Err(error) if matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(command) if command.code == 48) => {
-            db.run_command(doc! {"collMod":MEDIA_CONTINUATIONS,"validator":validator,"validationLevel":"strict","validationAction":"error"}).await.map_err(failure)?;
-        },
-        Err(error) => return Err(failure(error)),
-    }
-    let records = db.collection::<Document>(MEDIA_CONTINUATIONS);
-    records
-        .create_index(IndexModel::builder().keys(doc! {"owner":1,"_id":1}).build())
-        .await
-        .map_err(failure)?;
-    records
-        .create_index(
+    // The published schema before 1f86a1b6 omitted only the optional guard revision.
+    let mut predecessor = validator.clone();
+    predecessor
+        .get_document_mut("$jsonSchema")
+        .unwrap()
+        .get_document_mut("properties")
+        .unwrap()
+        .remove("guard_revision");
+    cma_service_migrations::collection_with_predecessors(
+        db,
+        MEDIA_CONTINUATIONS,
+        validator,
+        true,
+        vec![predecessor],
+    )
+    .await
+    .map_err(failure)?;
+    cma_service_migrations::indexes(
+        db,
+        MEDIA_CONTINUATIONS,
+        vec![
+            IndexModel::builder().keys(doc! {"owner":1,"_id":1}).build(),
             IndexModel::builder()
                 .keys(doc! {"expires_at":1})
                 .options(IndexOptions::builder().expire_after(Duration::ZERO).build())
                 .build(),
-        )
-        .await
-        .map_err(failure)?;
-    let indexes: Vec<IndexModel> = records
-        .list_indexes()
-        .await
-        .map_err(failure)?
-        .try_collect()
-        .await
-        .map_err(failure)?;
-    if !indexes_valid(&indexes) {
-        return Err(RecordError::Rejected(
-            "media continuation index requires exact ID/owner indexes and full TTL expiry".into(),
-        ));
-    }
-    db.run_command(doc! {"collMod":MIGRATIONS,"validator":super::schema::migration_validator(),"validationLevel":"strict","validationAction":"error"}).await.map_err(failure)?;
-    db.collection::<Document>(MIGRATIONS)
-        .update_one(
-            doc! {"_id":"media_continuations"},
-            doc! {"$set":{"version":1}},
-        )
-        .upsert(true)
-        .await
-        .map_err(failure)?;
+        ],
+    )
+    .await
+    .map_err(failure)?;
+    cma_service_migrations::exact_indexes(
+        db,
+        MEDIA_CONTINUATIONS,
+        vec![
+            IndexModel::builder().keys(doc! {"owner":1,"_id":1}).build(),
+            IndexModel::builder()
+                .keys(doc! {"expires_at":1})
+                .options(IndexOptions::builder().expire_after(Duration::ZERO).build())
+                .build(),
+        ],
+        indexes_valid,
+    )
+    .await
+    .map_err(failure)?;
+    cma_service_migrations::collection_with_predecessors(
+        db,
+        MIGRATIONS,
+        super::schema::migration_validator(),
+        false,
+        crate::records::mongo::migration_predecessors(),
+    )
+    .await
+    .map_err(failure)?;
+    cma_service_migrations::update(
+        db,
+        MIGRATIONS,
+        doc! {"_id":"media_continuations"},
+        doc! {"$set":{"version":1}},
+        true,
+        false,
+    )
+    .await
+    .map_err(failure)?;
     Ok(())
 }
 

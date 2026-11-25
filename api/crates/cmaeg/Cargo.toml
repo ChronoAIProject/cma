@@ -6,6 +6,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+cma-service-migrations = { path = "../cma-service-migrations" }
 cma-allocator-qualification = { path = "../cma-allocator-qualification" }
 aes = "0.8"
 cbc = "0.1"

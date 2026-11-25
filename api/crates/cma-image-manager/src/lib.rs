@@ -2,6 +2,7 @@
 pub mod auth;
 pub mod cloud;
 pub mod http;
+pub mod migrations;
 pub mod model;
 pub mod openapi;
 pub mod permissions;

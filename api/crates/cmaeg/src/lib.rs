@@ -19,6 +19,7 @@ pub mod ingress;
 pub mod interactions;
 pub mod mcp;
 pub mod media;
+pub mod migrations;
 pub mod native_lark;
 pub mod native_media;
 pub mod net;

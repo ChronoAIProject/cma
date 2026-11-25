@@ -365,8 +365,8 @@ fn failure(_: mongodb::error::Error) -> RecordError {
 
 #[path = "mongo_schema.rs"]
 mod schema;
-pub(crate) use schema::migration_validator;
 pub use schema::{guard_migration_required, migrate, role, verify, verify_with_authority};
+pub(crate) use schema::{migration_predecessors, migration_validator};
 #[path = "mongo_replica_schema.rs"]
 mod replica_schema;
 pub use replica_schema::migrate as migrate_replicas;
