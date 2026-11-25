@@ -72,6 +72,7 @@ impl ConsumerGateway {
             .with_state(platform.clone());
         let platform_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let config = cmaeg::Config {
+            profile_revisions_enabled: false,
             github_enabled: false,
             native_media_presentations_enabled: false,
             native_discord_voice_enabled: false,

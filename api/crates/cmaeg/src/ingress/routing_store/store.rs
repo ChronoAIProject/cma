@@ -182,7 +182,12 @@ impl PlanStore {
         let bytes = codec::encode(manifest)?;
         let result = trace::record(
             Stage::RootWrite,
-            self.create_root(manifest, &bytes, github_guard),
+            self.create_root(
+                manifest,
+                &bytes,
+                github_guard,
+                candidate.profile_admission.as_ref(),
+            ),
         )
         .await;
         if matches!(&result, Err(RecordError::GuardConflict { .. })) {

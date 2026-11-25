@@ -30,6 +30,7 @@ pub(super) fn role_for(database: &str, apply: bool, step: Step) -> Document {
                 | Step::MeasuredCustody
                 | Step::MeasuredBatches
                 | Step::MeasuredIndex
+                | Step::AgentLogActiveProofs
         ) {
             vec!["listIndexes", "createIndex", "createCollection"]
         } else {
@@ -45,6 +46,7 @@ pub(super) fn role_for(database: &str, apply: bool, step: Step) -> Document {
             | Step::MeasuredCustody
             | Step::MeasuredBatches
             | Step::MeasuredIndex
+            | Step::AgentLogActiveProofs
     ) {
         grants
             .push(doc! {"resource":{"db":database,"collection":""},"actions":["listCollections"]});

@@ -66,10 +66,8 @@ pub(crate) async fn serve(
         config.channel_cache.clone(),
         observers.index.clone(),
     );
-    if config.turns.provider_execution_attribution_enabled {
-        state.activity = Arc::new((*state.activity).clone().with_execution_attribution(true));
-    }
-    activity::configure(&mut state, &mut observers).await?;
+    crate::channels::profile_revision::configure(&config, &mut state)?;
+    activity::configure(&config, &mut state, &mut observers).await?;
     let telegram = Arc::new(telegram::TelegramClient::production(
         config.delivery.reply_timeout,
     )?);
@@ -251,6 +249,7 @@ pub(crate) async fn serve(
             observers.activity.clone(),
         )),
     )?
+    .with_profile_revisions(config.profile_revisions_enabled)
     .with_whatsapp_receipts(whatsapp_receipts)
     .with_telegram(telegram.clone())
     .with_telegram_effects(telegram_effects || config.native_telegram_received_reactions_enabled)

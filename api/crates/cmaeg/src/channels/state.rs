@@ -56,6 +56,7 @@ pub struct ManagementState {
     /// Providers whose existing-Agent original-media continuation path is ready.
     pub custom_existing_agent_media_providers: BTreeSet<String>,
     pub multi_consumer_writes_enabled: bool,
+    pub profile_revisions_enabled: bool,
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
     pub lark_resource_writes_enabled: bool,
@@ -219,6 +220,7 @@ impl ManagementState {
             custom_durable_execution_enabled: false,
             custom_existing_agent_media_providers: BTreeSet::new(),
             multi_consumer_writes_enabled: false,
+            profile_revisions_enabled: false,
             dynamic_sources_writes_enabled: false,
             relay_raw_verification_writes_enabled: false,
             lark_resource_writes_enabled: false,

@@ -83,10 +83,13 @@ returns 409, including changing an omitted default into an explicit reference.
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}` | - | - | 204 empty; 401/403/409/503 ProblemDocument |
 | `POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections` | InspectPreparationRequest | - | 200 PreparationInspectionView; 400/401/403/404/409/503 ProblemDocument |
 | `POST /api/v1/cmaeg/bindings/{binding_id}/preparations` | PrepareBindingRequest | Idempotency-Key | 200 PreparationReceiptView; 400/401/403/404/409/503 ProblemDocument |
+| `GET /api/v1/cmaeg/bindings/{binding_id}/conversations` | - | - | 200 BindingConversationCatalogView; 401/403/404/409/503 ProblemDocument |
 | `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | optional empty object | - | 200/201 BindingConversationView; 400/401/403/404/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 200 BindingConversationInspectionView; 400/401/403/404/409/503 ProblemDocument |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 204 empty; 400/401/403/404/409/503 ProblemDocument |
 | `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets` | ResetConversationRequest; Idempotency-Key | - | 200 ConversationResetView; 400/401/403/404/409/503 ProblemDocument |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-drift` | DesiredProfileRequest | - | 200 DesiredProfileDriftView or null; 401/403/404/409/503 ProblemDocument |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/profile-transfers` | TransferConversationRequest | Idempotency-Key | 200 ProfileTransferView; 400/401/403/404/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}` | - | - | 200 EventContext; 401/403/404/503 Responses error |
 | `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment` | raw binary; upload query | Content-Type, Content-Length | 201 AgentAttachment; 400/403/409/413/429/503 media error |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment` | - | - | 200 AgentAttachment; 403/404/503 media error |
