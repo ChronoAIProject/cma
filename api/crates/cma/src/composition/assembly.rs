@@ -422,7 +422,7 @@ impl ControlPlaneComposition {
                 crate::health::router_with_workers(
                     stores.clone(),
                     workers.clone(),
-                    crate::health::pointer_release_source(&stores, config),
+                    crate::health::pointer_release_source(&stores, config)?,
                 ),
                 tool_routes.merge(service_portal::router(
                     auth.clone(),

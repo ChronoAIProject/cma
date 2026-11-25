@@ -136,6 +136,37 @@ impl MongoReleasedRuntimes {
         Ok(Some(document.record))
     }
 
+    pub(crate) async fn observation(
+        &self,
+    ) -> Result<(ReleasedLaneRecord, Option<ReleasedLaneRecord>), SandboxStoreError> {
+        let mut session = self
+            .database
+            .client()
+            .start_session()
+            .snapshot(true)
+            .await
+            .map_err(unavailable)?;
+        let mut lanes = [None, None];
+        for (lane, observed) in [ReleasedLane::Agent, ReleasedLane::Machine]
+            .into_iter()
+            .zip(&mut lanes)
+        {
+            let found = self
+                .lanes
+                .find_one(doc! { "_id": self.id(lane) })
+                .read_concern(mongodb::options::ReadConcern::snapshot())
+                .session(&mut session)
+                .await
+                .map_err(unavailable)?;
+            *observed = found
+                .map(|document| self.verify(lane, document))
+                .transpose()?
+                .map(|document| document.record);
+        }
+        let [agent, machine] = lanes;
+        Ok((agent.ok_or(SandboxStoreError::NotFound)?, machine))
+    }
+
     pub(super) async fn has_served_image(
         &self,
         lane: ReleasedLane,

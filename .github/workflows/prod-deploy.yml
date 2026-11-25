@@ -72,6 +72,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_RELEASE_SET: ${{ inputs.release_set }}
           CD_RUNTIME_POINTER_PUBLICATION_ENABLED: ${{ vars.CMA_PRODUCTION_RUNTIME_POINTER_PUBLICATION_ENABLED }}
+          CD_RUNTIME_POINTER_STAGING_QUALIFICATION: ${{ vars.CMA_RUNTIME_POINTER_STAGING_QUALIFICATION }}
         run: python3 -B .github/scripts/prod_cd_select.py
       - name: Restore public tool download cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -145,7 +146,6 @@ jobs:
           CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
           CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
           CD_RUNTIME_POINTER_PUBLICATION_ENABLED: ${{ vars.CMA_PRODUCTION_RUNTIME_POINTER_PUBLICATION_ENABLED }}
-          CD_RUNTIME_POINTER_READINESS: ${{ vars.CMA_PRODUCTION_AM_READINESS }}
           CD_RUNTIME_POINTER_READ_TOKEN: ${{ github.token }}
           CD_RUNTIME_POINTER_TOKEN: ${{ secrets.CD_RUNTIME_POINTER_TOKEN }}
         run: '"$RUNNER_TEMP/cma-deploy-tools/venv/bin/python" -B .github/scripts/staging_cd_invoke.py'

@@ -22,7 +22,7 @@ def promote(receipts, publications, history, registry, read_ready, *, environmen
         require(clock() < deadline, "Runtime pointer publication budget expired")
         advance(component, selected, publications[component], history, registry,
                 environment=environment, fence=fence)
-    await_active(receipts, read_ready, deadline=deadline, clock=clock, sleep=sleep)
+    return await_active(receipts, read_ready, deadline=deadline, clock=clock, sleep=sleep)
 
 
 def advance(component, selected, publications, history, registry, *, environment, fence):
@@ -79,7 +79,7 @@ def await_active(receipts, read_ready, *, deadline, clock=time.monotonic, sleep=
                 qualified_lane(lanes.get(READINESS_LANES[component]), receipt["digest"])
                 for component, receipt in receipts.items()
             ) and clock() < deadline:
-                return
+                return lanes
         sleep(min(5, max(0, deadline - clock())))
         remaining = deadline - clock()
     raise Refusal("Agent Manager did not promote the qualified runtime within the deployment budget")

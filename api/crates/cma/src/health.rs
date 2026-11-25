@@ -3,7 +3,13 @@
 use layer2_core::diagnostic_context::DiagnosticContext;
 use std::{sync::Arc, time::Duration};
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::get,
+    Json, Router,
+};
 use layer2_core::StoreError;
 use tokio::{sync::watch, time::Instant};
 
@@ -53,7 +59,7 @@ struct HealthState {
     workers: Option<crate::worker_supervision::Workers>,
     diagnostics: Option<Arc<Recorder>>,
     backend_free: bool,
-    runtime_release: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
+    runtime_release: Option<Arc<releases::Proof>>,
 }
 
 #[cfg(test)]
@@ -64,7 +70,7 @@ pub fn router(probe: Arc<dyn ReadinessProbe>) -> Router {
 pub(crate) fn router_with_workers(
     probe: Arc<dyn ReadinessProbe>,
     workers: crate::worker_supervision::Workers,
-    runtime_release: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
+    runtime_release: Option<Arc<releases::Proof>>,
 ) -> Router {
     monitored(
         probe,
@@ -92,7 +98,7 @@ fn monitored(
     workers: Option<crate::worker_supervision::Workers>,
     backend_free: bool,
     diagnostics: Option<Arc<Recorder>>,
-    runtime_release: Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>>,
+    runtime_release: Option<Arc<releases::Proof>>,
 ) -> Router {
     let (result, state) = watch::channel(None);
     // The sender owns no receiver. Dropping the last router cancels the check
@@ -135,13 +141,16 @@ fn health_routes(state: HealthState) -> Router {
 pub(crate) fn pointer_release_source(
     stores: &MongoStores,
     config: &crate::config::Config,
-) -> Option<Arc<dyn layer3_adapter::ReleasedRuntimeSource>> {
-    config
+) -> Result<Option<Arc<releases::Proof>>, String> {
+    let following = config
         .runtime
         .runtime_pointer
         .as_ref()
-        .filter(|pointer| pointer.can_follow())
-        .map(|_| stores.released_runtime.clone())
+        .is_some_and(|pointer| pointer.can_follow());
+    if !following {
+        return Ok(None);
+    }
+    releases::Proof::configured(stores).map(|proof| proof.map(Arc::new))
 }
 
 async fn monitor(
@@ -209,7 +218,7 @@ pub(crate) async fn liveness() -> &'static str {
     "ok"
 }
 
-async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
+async fn readiness(State(state): State<HealthState>, headers: HeaderMap) -> Response {
     let check = state.store.borrow().clone();
     let age = check.as_ref().map(|check| check.completed.elapsed());
     let failure = match &check {
@@ -254,17 +263,11 @@ async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
     if state.backend_free {
         body["sandbox"] = serde_json::json!({ "available": false });
     }
-    if let Some(release) = state.runtime_release.filter(|_| ready) {
-        let snapshot = release.snapshot();
-        if let Some(revisions) = snapshot.lane_revisions {
-            // Expose only durable defaults for the two public runtime
-            // repositories. This reads the same cache as new admissions.
-            let machine = snapshot.machine.as_deref().zip(revisions.machine);
-            body["runtime_release"] = serde_json::json!({
-                "agent": releases::lane(&snapshot.agent, revisions.agent, false),
-                "machine": machine.and_then(|(image, revision)| releases::lane(image, revision, true)),
-            });
-        }
+    if headers.contains_key(releases::CHALLENGE) {
+        return match state.runtime_release {
+            Some(proof) => proof.observe(&headers, ready).await,
+            None => StatusCode::NOT_FOUND.into_response(),
+        };
     }
     (
         if ready {
@@ -274,6 +277,7 @@ async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
         },
         Json(body),
     )
+        .into_response()
 }
 
 mod releases;

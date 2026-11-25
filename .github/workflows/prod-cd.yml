@@ -105,6 +105,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CD_RUNTIME_POINTER_PUBLICATION_ENABLED: ${{ vars.CMA_PRODUCTION_RUNTIME_POINTER_PUBLICATION_ENABLED }}
+          CD_RUNTIME_POINTER_STAGING_QUALIFICATION: ${{ vars.CMA_RUNTIME_POINTER_STAGING_QUALIFICATION }}
           CD_PRIVATE_CONTROLLER: ${{ github.workspace }}/.github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}/prod/chrono-cd
         run: '"$RUNNER_TEMP/prod-cd-select/bin/python" -B .github/scripts/prod_cd_select.py'
       - name: Remove private checkout

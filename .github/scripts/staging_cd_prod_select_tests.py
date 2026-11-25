@@ -1,5 +1,6 @@
 """Production selection: release commit proof, version choice and staging evidence."""
 
+import hashlib
 import io
 import json
 import tempfile
@@ -10,6 +11,7 @@ from unittest.mock import Mock, patch
 
 import prod_cd_select as select
 from staging_cd_common import Refusal
+from staging_cd_deploy_result import POINTER_SCHEMA
 from staging_cd_policy import selected, switches
 from staging_cd_targets import RUNTIME_TARGETS, TARGETS
 from staging_cd_versions import DEPLOYABLES
@@ -144,6 +146,41 @@ class EvidenceTests(unittest.TestCase):
         for bad in (run_view(7, path=".github/workflows/ci.yml"), run_view(7, branch="feature"),
                     run_view(7, event="pull_request"), dict(run_view(7), id=8)):
             self.assertFalse(select.trusted_run(Mock(return_value=bad), 7))
+
+    def test_runtime_requires_the_exact_staging_pointer_row(self):
+        image = "ghcr.io/chronoaiproject/cma-runtime@sha256:" + "8" * 64
+        request = self.staging_runs([run_view(14)], {14: [artifact(7, 14)]})
+        row = {"state": select.VERIFIED, "image": image, "source_sha": RELEASED}
+        proof = {"schema": POINTER_SCHEMA, "environment": "staging", "revision": 2,
+                 "build": MERGE, "build_digest": "sha256:" + "9" * 64}
+        artifacts = (row, dict(row, pointer=dict(proof, environment="production")),
+                     dict(row, source_sha=PREVIOUS, pointer=proof), dict(row, pointer=proof))
+        for index, artifact_row in enumerate(artifacts):
+            with self.subTest(case=index):
+                download = Mock(return_value=evidence({"runtime": artifact_row}))
+                result = select.staging_verified({"runtime": image}, request, download, pointer_source=RELEASED)
+                self.assertEqual(result, {"runtime"} if index == 3 else set())
+
+    def test_initial_runtime_qualification_requires_two_promotions_on_one_build(self):
+        proof = {"schema": POINTER_SCHEMA, "environment": "staging", "revision": 2,
+                 "build": MERGE, "build_digest": "sha256:" + "9" * 64}
+        agent = {"state": select.VERIFIED, "pointer": proof}
+        machine = {"state": select.VERIFIED, "pointer": dict(proof, revision=3)}
+        request = Mock(side_effect=[run_view(14), {"artifacts": [artifact(7, 14)]}])
+        archive = evidence({"runtime": agent, "runtime-omarchy": machine})
+        reference = "14:7:" + hashlib.sha256(archive).hexdigest()
+        select.initial_pointer_qualification(reference, request, Mock(return_value=archive))
+        cases = ({"runtime": agent},
+                 {"runtime": agent, "runtime-omarchy": dict(machine, pointer=dict(proof, build=PREVIOUS))})
+        for rows in cases:
+            request = Mock(side_effect=[run_view(14), {"artifacts": [artifact(7, 14)]}])
+            incomplete = evidence(rows)
+            with self.assertRaises(Refusal):
+                select.initial_pointer_qualification(
+                    "14:7:" + hashlib.sha256(incomplete).hexdigest(), request, Mock(return_value=incomplete))
+        request = Mock(side_effect=[run_view(14), {"artifacts": [artifact(7, 14)]}])
+        with self.assertRaisesRegex(Refusal, "qualification changed"):
+            select.initial_pointer_qualification(reference, request, Mock(return_value=evidence(cases[0])))
 
     def staging_runs(self, runs, artifacts, workflow="staging-cd.yml"):
         """A request stub: workflow run listings, then each run's own artifacts."""
@@ -320,14 +357,17 @@ class PlanTests(unittest.TestCase):
             args = (env, api, registry, policy)
             kwargs = dict(root=Path(directory), download=Mock(), deployables=DEPLOYABLES,
                           runner=git_runner([MERGE, PREVIOUS, RELEASED]))
-            with patch.object(select, "staging_verified", return_value={"runtime"}) as evidence:
+            with patch.object(select, "initial_pointer_qualification"), \
+                    patch.object(select, "staging_verified", return_value={"runtime"}) as evidence:
                 value, source = select.plan(*args, **kwargs)
                 self.assertEqual(source, RELEASED)
                 self.assertEqual(value["receipts"], {"runtime": candidate})
                 self.assertEqual(evidence.call_args.args[0], {
                     "runtime": candidate["repository"] + "@" + candidate["digest"],
                 })
-            with patch.object(select, "staging_verified", return_value=set()), \
+                self.assertEqual(evidence.call_args.kwargs, {"pointer_source": RELEASED})
+            with patch.object(select, "initial_pointer_qualification"), \
+                    patch.object(select, "staging_verified", return_value=set()), \
                     self.assertRaisesRegex(Refusal, "never verified"):
                 select.plan(*args, **kwargs)
 

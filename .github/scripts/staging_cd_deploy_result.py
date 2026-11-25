@@ -5,14 +5,26 @@ import stat
 import sys
 
 import ci_outcome
-from staging_cd_common import require
+from staging_cd_common import matches, require
 from staging_cd_receipts import canonical, sha256
 from staging_cd_set import document, private_document, release_set, validate_set
+from staging_cd_targets import RUNTIME_TARGETS
 
 SCHEMA = "cma-private-deployment-result-v1"
 STATES = {"controller-verified": "none", "withheld": "deployed-compatibility-unqualified",
           "unverified": "deployment-unverified"}
 INVALID_EVIDENCE = "invalid-public-evidence"
+POINTER_SCHEMA = "cma-runtime-pointer-promotion-v1"
+
+
+def pointer_verified(row, environment):
+    proof = row.get("pointer")
+    return (row.get("state") == "controller-verified" and isinstance(proof, dict)
+            and set(proof) == {"schema", "environment", "revision", "build", "build_digest"}
+            and proof["schema"] == POINTER_SCHEMA and proof["environment"] == environment
+            and type(proof["revision"]) is int and proof["revision"] > 0
+            and matches(r"[0-9a-f]{40}", proof["build"])
+            and matches(r"sha256:[0-9a-f]{64}", proof["build_digest"]))
 
 
 def validate(result, request, code):
@@ -24,12 +36,18 @@ def validate(result, request, code):
     require(isinstance(rows, dict) and set(rows) == set(request["components"]),
             "Private deployment outcome coverage differs")
     for component, row in rows.items():
-        require(isinstance(row, dict) and set(row) == {"state", "reason", "image", "source_sha"}
+        required = {"state", "reason", "image", "source_sha"}
+        require(isinstance(row, dict) and required <= row.keys() <= required | {"pointer"}
                 and isinstance(row["state"], str) and row["state"] in STATES
                 and row["reason"] == STATES[row["state"]]
                 and row["image"] == request["components"][component]["image"]
                 and row["source_sha"] == request["components"][component]["source_sha"],
                 "Private deployment outcome contains unexpected data")
+        if "pointer" in row:
+            require(component in RUNTIME_TARGETS and any(pointer_verified(row, environment)
+                    for environment in ("staging", "production"))
+                    and (component == "runtime" or row["pointer"]["environment"] == "staging"),
+                    "Private runtime pointer outcome is invalid")
     states = {row["state"] for row in rows.values()}
     require((code != 0 or states == {"controller-verified"})
             and (code != 50 or states == {"controller-verified", "withheld"})

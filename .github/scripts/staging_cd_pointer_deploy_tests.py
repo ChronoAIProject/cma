@@ -14,6 +14,16 @@ from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt
 from staging_cd_set import document, private_document, release_set
 
 
+def observed(receipt, pods=None):
+    return {"configuration": "a" * 64, "pods": pods or {"b" * 64: 0},
+            "build": {"source": "e" * 40, "digest": "sha256:" + "f" * 64},
+            "lanes": {"runtime": {"digest": receipt["digest"], "revision": 2}}}
+
+
+def observe_promotion(_receipts, _publications, _history, _registry, read, **_kwargs):
+    return read(10)["runtime_release"]
+
+
 class PointerDeployTests(unittest.TestCase):
     def test_normal_controller_receives_non_runtime_and_disabled_sets(self):
         runner, mask = Mock(return_value=17), Mock()
@@ -43,14 +53,13 @@ class PointerDeployTests(unittest.TestCase):
         request = private_document(release_set(receipts))
         env = {"CD_RUNTIME_POINTER_PUBLICATION_ENABLED": "true", "CD_RUNTIME_POINTER_TOKEN": "fixture-package-key",
                "GITHUB_ACTOR": "fixture-writer"}
-        cohort = {"configuration": "a" * 64, "pods": {"b" * 64: 0}}
-        healthy = {"status": "ready", "runtime_release": {"agent": {"digest": receipt["digest"], "revision": 2}}}
+        cohort = observed(receipt)
         runner, mask = Mock(), Mock()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "release.json"
-            with patch.object(deploy, "readiness_reader", return_value=Mock(return_value=healthy)), \
-                    patch.object(deploy, "GitHub"), patch.object(deploy, "Registry"), \
-                    patch.object(deploy, "cohort", return_value=cohort) as observe, patch.object(deploy, "promote") as promote:
+            with patch.object(deploy, "GitHub"), patch.object(deploy, "Registry"), \
+                    patch.object(deploy, "cohort", return_value=cohort) as observe, \
+                    patch.object(deploy, "promote", side_effect=observe_promotion) as promote:
                 self.assertEqual(deploy.run(runner, Path("controller.py"), path, request, receipts, timestamp(), "release",
                                             "staging", env, {"LANG": "C"}, 990, mask), 0)
                 self.assertEqual(observe.call_count, 2)
@@ -59,6 +68,9 @@ class PointerDeployTests(unittest.TestCase):
             self.assertEqual(result["request"], sha256(request))
             self.assertEqual(result["components"]["runtime"]["state"], "controller-verified")
             self.assertEqual(result["components"]["runtime"]["image"], request["components"]["runtime"]["image"])
+            self.assertEqual(result["components"]["runtime"]["pointer"],
+                             {"schema": deploy.POINTER_SCHEMA, "environment": "staging", "revision": 2,
+                              "build": "e" * 40, "build_digest": "sha256:" + "f" * 64})
         runner.assert_not_called()
         mask.assert_called_once_with("fixture-package-key")
 
@@ -66,14 +78,13 @@ class PointerDeployTests(unittest.TestCase):
         receipt = fixture_runtime_receipt()
         receipts = {"runtime": receipt}
         request = private_document(release_set(receipts))
-        first = {"configuration": "a" * 64, "pods": {"b" * 64: 0, "c" * 64: 0}}
-        last = {"configuration": "a" * 64, "pods": {"b" * 64: 0, "d" * 64: 0}}
-        healthy = {"status": "ready", "runtime_release": {"agent": {"digest": receipt["digest"], "revision": 2}}}
+        first = observed(receipt, {"b" * 64: 0, "c" * 64: 0})
+        last = observed(receipt, {"b" * 64: 0, "d" * 64: 0})
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "release.json"
-            with patch.object(deploy, "readiness_reader", return_value=Mock(return_value=healthy)), \
-                    patch.object(deploy, "GitHub"), patch.object(deploy, "Registry"), \
-                    patch.object(deploy, "cohort", side_effect=[first, last]), patch.object(deploy, "promote"):
+            with patch.object(deploy, "GitHub"), patch.object(deploy, "Registry"), \
+                    patch.object(deploy, "cohort", side_effect=[first, last]), \
+                    patch.object(deploy, "promote", side_effect=observe_promotion):
                 with self.assertRaisesRegex(Refusal, "cohort changed"):
                     deploy.execute(Path("controller.py"), path, request, receipts, timestamp(), {}, {}, limit=990)
             self.assertFalse(path.with_name("component-result.json").exists())
@@ -103,7 +114,7 @@ class PointerDeployTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "release.json"
-            with patch.object(deploy, "readiness_reader", return_value=Mock(return_value={})), \
+            with patch.object(deploy, "cohort", return_value=observed(receipts["runtime"])), \
                     patch.object(deploy, "execute", side_effect=promote):
                 env = {"CD_RUNTIME_POINTER_PUBLICATION_ENABLED": "true", "CD_RUNTIME_POINTER_TOKEN": "fixture"}
                 self.assertEqual(deploy.run(rollout, Path("controller.py"), path, request, receipts, timestamp(),
@@ -129,7 +140,7 @@ class PointerDeployTests(unittest.TestCase):
         env = {"CD_RUNTIME_POINTER_PUBLICATION_ENABLED": "true", "CD_RUNTIME_POINTER_TOKEN": "fixture"}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "release.json"
-            with patch.object(deploy, "readiness_reader", return_value=Mock(return_value={})), \
+            with patch.object(deploy, "cohort", return_value=observed(receipts["runtime"])), \
                     patch.object(deploy, "execute") as execute, \
                     patch("staging_cd_clock.time.time", side_effect=[now, now + 121]):
                 with self.assertRaisesRegex(Refusal, "admission budget expired"):

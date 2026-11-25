@@ -6,20 +6,17 @@ from pathlib import Path
 import stat
 import sys
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 
 from cd_target import PRODUCTION, STAGING, name as target_name
 from prod_cd_select import release_bounds
 from runtime_pointer_publication import READINESS_LANES, promote, qualified_lane
 from staging_cd_clock import remaining
 from staging_cd_common import Refusal, matches, require
-from staging_cd_deploy_result import read as read_component_result
+from staging_cd_deploy_result import POINTER_SCHEMA, read as read_component_result
 from staging_cd_github import GitHub
 from staging_cd_process import run as run_process
 from staging_cd_receipts import canonical, sha256
-from staging_cd_registry import NoRedirect, Registry
+from staging_cd_registry import Registry
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_set import document, private_document, release_set
 from staging_cd_targets import RUNTIME_TARGETS
@@ -33,6 +30,7 @@ def run(runner, script, path, request, receipts, started, mode, target, env, chi
         require(enabled and runtimes == {"runtime"}, "Production requires an authorized Agent runtime pointer")
     if enabled and runtimes:
         masker(env.get("CD_RUNTIME_POINTER_TOKEN"))
+        require(env.get("CD_RUNTIME_POINTER_TOKEN"), "Runtime pointer publication needs a registry writer")
         apps = {key: receipt for key, receipt in receipts.items() if key not in RUNTIME_TARGETS}
         if not apps:
             return execute(script, path, request, receipts, started, env, child_env, limit=limit)
@@ -42,9 +40,9 @@ def run(runner, script, path, request, receipts, started, mode, target, env, chi
 
 def coordinated(runner, script, path, request, receipts, apps, started, env, child_env, *, limit):
     """A separately admitted app rollout completes before its runtime pointers may move."""
-    read_ready = readiness_reader(env.get("CD_RUNTIME_POINTER_READINESS", ""))
-    require(env.get("CD_RUNTIME_POINTER_TOKEN") and isinstance(read_ready(min(10, remaining(started))), dict),
-            "Runtime pointer publication is unavailable for the coordinated release")
+    target = target_name(env)
+    preflight = cohort(script, path, request, path.with_name("pointer-cohort-preflight.json"), child_env,
+                       min(40, remaining(started)), target, phase="preflight")
     runtimes = {key: receipt for key, receipt in receipts.items() if key in RUNTIME_TARGETS}
     app_request = private_document(release_set(apps))
     runtime_request = private_document(release_set(runtimes))
@@ -56,7 +54,8 @@ def coordinated(runner, script, path, request, receipts, apps, started, env, chi
     app_result = read_component_result(app_path.with_name("component-result.json"), app_request, code)
     require(app_result is not None, "Coordinated application deployment lacks a serving receipt")
     remaining(started)
-    execute(script, runtime_path, runtime_request, runtimes, started, env, child_env, limit=limit)
+    execute(script, runtime_path, runtime_request, runtimes, started, env, child_env, limit=limit,
+            proof=(path, request), expected_lanes=preflight["lanes"])
     runtime_result = read_component_result(runtime_path.with_name("component-result.json"), runtime_request, 0)
     require(runtime_result is not None, "Coordinated runtime deployment lacks a serving receipt")
     write_result(path.with_name("component-result.json"), request,
@@ -74,70 +73,75 @@ def subrequest(original, label, request):
     return path
 
 
-def cohort(script, path, request, output, child_env, timeout, target):
+def cohort(script, path, request, output, child_env, timeout, target, *, phase="promotion"):
     reader = script.with_name("runtime_pointer_cohort.py")
     require(reader.is_file() and not reader.is_symlink(), "Runtime pointer cohort reader is unavailable")
     require(run_process([sys.executable, "-B", str(reader), "--release-set", str(path),
-                         "--output", str(output), "--read-seconds", str(timeout), "--environment", target],
+                         "--output", str(output), "--read-seconds", str(timeout), "--environment", target,
+                         "--phase", phase],
                         child_env, timeout + 2, cwd=script.parents[2], grace_seconds=6) == 0,
             "Runtime pointer cohort could not be verified")
     details = output.lstat()
     require(stat.S_ISREG(details.st_mode) and not details.st_mode & 0o077 and details.st_size <= 8192,
             "Runtime pointer cohort result is invalid")
     value = document(output.read_text(encoding="utf-8"))
-    require(isinstance(value, dict) and set(value) == {"schema", "request", "configuration", "pods"}
-            and value["schema"] == "cma-runtime-pointer-cohort-v1" and value["request"] == sha256(request)
+    require(isinstance(value, dict) and set(value) == {"schema", "request", "configuration", "pods", "build", "lanes"}
+            and value["schema"] == "cma-runtime-pointer-cohort-v2" and value["request"] == sha256(request)
             and matches(r"[0-9a-f]{64}", value["configuration"]) and isinstance(value["pods"], dict)
             and bool(value["pods"]) and all(matches(r"[0-9a-f]{64}", key) and type(count) is int and count >= 0
                                            for key, count in value["pods"].items()),
             "Runtime pointer cohort result is unbound")
+    build, lanes = value["build"], value["lanes"]
+    require(isinstance(build, dict) and set(build) == {"digest", "source"}
+            and matches(r"sha256:[0-9a-f]{64}", build["digest"]) and matches(r"[0-9a-f]{40}", build["source"])
+            and isinstance(lanes, dict) and "runtime" in lanes and lanes.keys() <= RUNTIME_TARGETS
+            and all(isinstance(lane, dict) and set(lane) == {"digest", "revision"}
+                    and matches(r"sha256:[0-9a-f]{64}", lane["digest"])
+                    and qualified_lane(lane, lane["digest"]) for lane in lanes.values()),
+            "Runtime pointer observation is invalid")
     return value
 
 
-def readiness_reader(endpoint):
-    url = urllib.parse.urlsplit(endpoint)
-    require(url.scheme == "https" and url.hostname and not url.username and not url.password
-            and url.path == "/ready" and not url.query and not url.fragment,
-            "Agent Manager readiness endpoint is invalid")
-    opener = urllib.request.build_opener(NoRedirect())
-
-    def read(timeout):
-        request = urllib.request.Request(endpoint, headers={"Accept": "application/json", "Cache-Control": "no-store"})
-        try:
-            with opener.open(request, timeout=min(10, timeout)) as response:
-                return document(response.read(65537).decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            if error.code in {429, 502, 503, 504}:
-                return None
-            raise
-        except (TimeoutError, urllib.error.URLError):
-            return None
-
-    return read
-
-
-def execute(script, path, request, receipts, started, env, child_env, *, limit):
+def execute(script, path, request, receipts, started, env, child_env, *, limit, proof=None, expected_lanes=None):
     remaining(started)
     target = target_name(env)
     deadline = time.monotonic() + remaining(started, limit)
-    read_ready = readiness_reader(env.get("CD_RUNTIME_POINTER_READINESS", ""))
     api = GitHub(env.get("CD_RUNTIME_POINTER_READ_TOKEN"), local_tags=local_tag_reader(Path.cwd(), deadline=deadline),
                  deadline=deadline)
     registry = Registry(credential=env.get("CD_RUNTIME_POINTER_TOKEN"), actor=env.get("GITHUB_ACTOR"),
                         deadline=deadline)
-    baseline = cohort(script, path, request, path.with_name("pointer-cohort-before.json"), child_env,
-                      min(40, remaining(started)), target)
-    ready = read_ready(min(10, remaining(started)))
-    require(isinstance(ready, dict) and ready.get("status") == "ready"
-            and isinstance(ready.get("runtime_release"), dict)
-            and all(isinstance(ready["runtime_release"].get(READINESS_LANES[key]), dict)
-                    for key in receipts),
-            "Serving Agent Manager readiness is unavailable before publication")
+    proof_path, proof_request = proof or (path, request)
+    baseline = cohort(script, proof_path, proof_request, proof_path.with_name("pointer-cohort-before.json"),
+                      child_env, min(40, remaining(started)), target)
+    require(receipts.keys() <= baseline["lanes"].keys()
+            and (expected_lanes is None or expected_lanes == baseline["lanes"]),
+            "Active runtime changed before pointer publication")
     publications = {component: api.tags(component) for component in receipts}
     history = release_bounds(env, Path.cwd())[1] if target == PRODUCTION else api.history()
+    attempt = 0
+    authorized = set()
+
+    def observe(timeout):
+        nonlocal attempt
+        attempt += 1
+        current = cohort(script, proof_path, proof_request,
+                         proof_path.with_name(f"pointer-cohort-observation-{attempt}.json"),
+                         child_env, min(40, timeout), target)
+        require(all(current[key] == baseline[key] for key in ("configuration", "pods", "build")),
+                "Agent Manager cohort changed during pointer promotion")
+        require(current["lanes"].keys() == baseline["lanes"].keys(),
+                "Runtime release authority changed its configured lanes")
+        for component, prior in baseline["lanes"].items():
+            active = current["lanes"][component]
+            candidate = receipts.get(component)
+            require(active == prior or (
+                candidate is not None and component in authorized and active["revision"] > prior["revision"]
+                and active["digest"] == candidate["digest"]
+            ), "Runtime release authority changed outside this deployment")
+        return current["lanes"]
 
     def fence(candidates):
-        remaining(started)
+        observe(remaining(started))
         if target == PRODUCTION:
             released, current = release_bounds(env, Path.cwd())
             require(released == current.head, "A newer production release owns runtime pointer publication")
@@ -147,22 +151,26 @@ def execute(script, path, request, receipts, started, env, child_env, *, limit):
         else:
             api.require_current_versions(candidates)
         remaining(started)
+        authorized.update(candidates)
 
-    promote(receipts, publications, history, registry, read_ready, environment=target, fence=fence,
-            deadline=deadline - 45)
-    final = cohort(script, path, request, path.with_name("pointer-cohort-after.json"), child_env,
-                   min(40, remaining(started, limit)), target)
-    require(final["configuration"] == baseline["configuration"] and final["pods"] == baseline["pods"],
-            "Agent Manager cohort changed during pointer promotion")
-    ready = read_ready(min(10, remaining(started, limit)))
-    require(isinstance(ready, dict) and ready.get("status") == "ready"
-            and isinstance(ready.get("runtime_release"), dict)
-            and all(qualified_lane(ready["runtime_release"].get(READINESS_LANES[key]), row["digest"])
-                    for key, row in receipts.items()), "The qualified runtime ceased to be active")
+    def read_ready(timeout):
+        # The publisher has now confirmed every exact pointer, including replays.
+        authorized.update(receipts)
+        lanes = observe(timeout)
+        return {"status": "ready", "runtime_release": {READINESS_LANES[key]: lane for key, lane in lanes.items()}}
+
+    active = promote(receipts, publications, history, registry, read_ready, environment=target, fence=fence,
+                     deadline=deadline - 5)
 
     components = {component: {"state": "controller-verified", "reason": "none",
                               "image": row["image"], "source_sha": row["source_sha"]}
                   for component, row in request["components"].items()}
+    for component in components:
+        lane = active[READINESS_LANES[component]]
+        components[component]["pointer"] = {
+            "schema": POINTER_SCHEMA, "environment": target, "revision": lane["revision"],
+            "build": baseline["build"]["source"], "build_digest": baseline["build"]["digest"],
+        }
     write_result(path.with_name("component-result.json"), request, components)
     return 0
 
