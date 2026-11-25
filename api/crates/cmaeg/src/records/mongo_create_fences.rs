@@ -5,7 +5,7 @@ use futures_util::{FutureExt, TryStreamExt};
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, Document},
     error::{Error, ErrorKind, WriteFailure},
-    options::{Acknowledgment, ReadConcern, ReturnDocument, WriteConcern},
+    options::ReturnDocument,
     ClientSession, Database,
 };
 use serde::Deserialize;
@@ -88,31 +88,27 @@ impl MongoRecords {
                 .await?;
         }
         let result = tokio::time::timeout(TRANSACTION_TIMEOUT, async {
-            let mut session = self.db.client().start_session().await?;
-            session
-                .start_transaction()
-                .read_concern(ReadConcern::snapshot())
-                .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
-                .and_run(
-                    (&self.db, &self.records, identity, &channel, connection),
-                    |session, (db, records, identity, channel, connection)| {
-                        async move {
-                            if guard(db, identity, session).await?.cancelled {
-                                return Err(Error::custom(RecordError::GuardConflict {
-                                    scope: "channel_create",
-                                    expected: 0,
-                                }));
-                            }
-                            if let Some(connection) = connection {
-                                claim_connection(db, identity, connection, session).await?;
-                            }
-                            records.insert_one(*channel).session(session).await?;
-                            Ok(u64::from(initial_version))
+            crate::transaction_start::and_run_write(
+                &self.db,
+                (&self.db, &self.records, identity, &channel, connection),
+                |session, (db, records, identity, channel, connection)| {
+                    async move {
+                        if guard(db, identity, session).await?.cancelled {
+                            return Err(Error::custom(RecordError::GuardConflict {
+                                scope: "channel_create",
+                                expected: 0,
+                            }));
                         }
-                        .boxed()
-                    },
-                )
-                .await
+                        if let Some(connection) = connection {
+                            claim_connection(db, identity, connection, session).await?;
+                        }
+                        records.insert_one(*channel).session(session).await?;
+                        Ok(u64::from(initial_version))
+                    }
+                    .boxed()
+                },
+            )
+            .await
         })
         .await
         .map_err(deadline)?;
@@ -148,42 +144,38 @@ impl MongoRecords {
                     "Channel writer floor is unavailable".into(),
                 )));
             }
-            let mut session = self.db.client().start_session().await?;
-            session
-                .start_transaction()
-                .read_concern(ReadConcern::snapshot())
-                .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
-                .and_run(
-                    (&self.db, &self.records, identity, keys),
-                    |session, (db, records, identity, keys)| {
-                        async move {
-                            let fence = guard(db, identity, session).await?;
-                            if records
-                                .find_one(doc! {"_id": identity.record, "owner": identity.subject})
-                                .session(&mut *session)
-                                .await?
-                                .is_some()
-                            {
-                                return Err(Error::custom(CancelCreate::RecordPresent));
-                            }
-                            if !fence.cancelled {
-                                if owned_connection_claim(db, identity, keys, session).await? {
-                                    return Err(Error::custom(CancelCreate::CreatePending));
-                                }
-                                db.collection::<Document>(CREATE_FENCES)
-                                    .update_one(
-                                        doc! {"_id": identity.key()},
-                                        doc! {"$set": {"cancelled": true}},
-                                    )
-                                    .session(session)
-                                    .await?;
-                            }
-                            Ok(CancelCreate::FencedAbsent)
+            crate::transaction_start::and_run_write(
+                &self.db,
+                (&self.db, &self.records, identity, keys),
+                |session, (db, records, identity, keys)| {
+                    async move {
+                        let fence = guard(db, identity, session).await?;
+                        if records
+                            .find_one(doc! {"_id": identity.record, "owner": identity.subject})
+                            .session(&mut *session)
+                            .await?
+                            .is_some()
+                        {
+                            return Err(Error::custom(CancelCreate::RecordPresent));
                         }
-                        .boxed()
-                    },
-                )
-                .await
+                        if !fence.cancelled {
+                            if owned_connection_claim(db, identity, keys, session).await? {
+                                return Err(Error::custom(CancelCreate::CreatePending));
+                            }
+                            db.collection::<Document>(CREATE_FENCES)
+                                .update_one(
+                                    doc! {"_id": identity.key()},
+                                    doc! {"$set": {"cancelled": true}},
+                                )
+                                .session(session)
+                                .await?;
+                        }
+                        Ok(CancelCreate::FencedAbsent)
+                    }
+                    .boxed()
+                },
+            )
+            .await
         })
         .await
         .map_err(deadline)?;
