@@ -5,7 +5,7 @@ use super::{
 };
 use crate::providers::ProviderError;
 use axum::http::StatusCode;
-use cmaeg_core::ids::RecordId;
+use cmaeg_core::{channel::ChannelMutationKind, ids::RecordId};
 use std::sync::atomic::Ordering;
 
 #[tokio::test]
@@ -280,10 +280,12 @@ async fn incomplete_channel_can_retire_after_its_provider_credential_is_lost() {
 
 #[tokio::test]
 async fn bind_started_before_retirement_cannot_publish_readiness() {
-    for custody in [false, true] {
+    for (custody, mixed_custody) in [(false, false), (true, false), (false, true)] {
         let fixture = Fixture::new(false, custody).await;
         let caller = fixture.state().await;
-        let other = fixture.state().await;
+        let other = fixture
+            .state_with_custody(fixture.custody || mixed_custody)
+            .await;
         let creator = owner("alice", false);
         let body = fixture.body();
         let record_id = RecordId::new(body["record_id"].as_str().unwrap()).unwrap();
@@ -294,9 +296,32 @@ async fn bind_started_before_retirement_cannot_publish_readiness() {
         });
         wait(&fixture.peer.started).await;
 
-        let pending = super::creation::load_record(&other, &creator, &record_id)
+        let mut pending = super::creation::load_record(&other, &creator, &record_id)
             .await
             .unwrap();
+        if mixed_custody {
+            let definition = &pending.definition;
+            super::mutation::Reservation::acquire(
+                &other.records,
+                &other.master_keys,
+                definition,
+                pending.record.version,
+                super::mutation::Intent {
+                    operation: ChannelMutationKind::Create,
+                    expected_version: pending.record.version,
+                    fingerprint: definition.creation.as_ref().unwrap().fingerprint.clone(),
+                    desired: definition,
+                },
+            )
+            .await
+            .unwrap();
+            pending = super::creation::load_record(&other, &creator, &record_id)
+                .await
+                .unwrap();
+            let tracked = pending.definition.mutation.as_ref().unwrap();
+            assert_eq!(tracked.operation, ChannelMutationKind::Create);
+            assert!(tracked.effect.is_none() && tracked.completed.is_empty());
+        }
         management::retire_unready(
             &other,
             &creator,
@@ -305,6 +330,19 @@ async fn bind_started_before_retirement_cannot_publish_readiness() {
         )
         .await
         .unwrap();
+        *fixture.peer.refuse_delete.lock().unwrap() =
+            Some((StatusCode::NOT_FOUND, "binding_not_found"));
+        assert!(matches!(
+            management::delete(
+                &other,
+                &creator,
+                &pending.channel_id,
+                pending.record.version
+            )
+            .await,
+            Err(ManagementError::Conflict { .. })
+        ));
+        assert_eq!(fixture.peer.calls.lock().unwrap().as_slice(), ["PUT"]);
         fixture.peer.resume.notify_one();
         assert!(create.await.unwrap().is_err());
         let retired = management::load(&other, &creator, &pending.channel_id)

@@ -88,11 +88,14 @@ impl Fixture {
         }
     }
     pub async fn state(&self) -> ManagementState {
+        self.state_with_custody(self.custody).await
+    }
+    pub async fn state_with_custody(&self, custody: bool) -> ManagementState {
         let records = match &self.mongo {
             Some(mongo) => mongo.records(&self.base).await,
             None => RecordClient::new(&self.base, "fixture-service").unwrap(),
         }
-        .with_channel_mutation_custody(self.custody);
+        .with_channel_mutation_custody(custody);
         let registry = ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":self.base,"kind":"responses_http","paths":{"agent_card":"/card","binding":"/bindings/{binding_id}","conversation":"/bindings/{binding_id}/conversations/{conversation_id}","responses":"/responses"},"max_inflight":8}]).to_string()).unwrap();
         ManagementState::new(
             Arc::new(

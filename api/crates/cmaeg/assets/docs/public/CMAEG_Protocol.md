@@ -288,8 +288,10 @@ The request preserves the provider binding and any outstanding effect. It can
 be used while the provider or its credentials are unavailable.
 Repeat the same retirement request to recover a lost response. Stale versions
 and channels whose creation is complete are refused. Use the reported
-`retirement_expected_version` for a later ordinary DELETE. An unresolved
-provider effect requires reconciliation before cleanup can continue.
+`retirement_expected_version` to identify the retained retirement. An earlier
+create may still have provider work in flight, even when the current record also
+shows a tracked mutation. Ordinary DELETE holds the record while that work
+remains unresolved.
 
 ### Flow H — Replica restart and recovery boundaries
 

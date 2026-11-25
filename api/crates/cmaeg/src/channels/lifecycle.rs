@@ -80,8 +80,7 @@ pub(crate) async fn retire_unready(
             fingerprint: String::new(),
             intended: STANDARD.encode(seal_definition(&state.master_keys, &definition)?),
             completed: Vec::new(),
-            // Without custody, a different instance may still have a bind in flight.
-            effect: Some(UNCONFIRMED_CREATE.into()),
+            effect: None,
         },
     };
     // Store the original provider effect and target. Change the operation so
@@ -90,7 +89,13 @@ pub(crate) async fn retire_unready(
     mutation.operation = ChannelMutationKind::Delete;
     mutation.original_version = version;
     mutation.fingerprint = format!("{version:064x}");
+    // A tracked reservation cannot prove that an earlier replica used custody.
+    // The retirement marker retains that obligation independently of the tracked
+    // effect. A hold in the existing effect field also fences older readers.
     mutation.completed.push(RETIRE_UNREADY.into());
+    mutation
+        .effect
+        .get_or_insert_with(|| UNCONFIRMED_CREATE.into());
     definition.mutation = Some(mutation);
     definition.validate().map_err(ManagementError::Invalid)?;
     let blob = seal_definition(&state.master_keys, &definition)?;
@@ -132,6 +137,7 @@ pub async fn delete(
     let current = load(state, creator, channel_id).await?;
     if super::mutation::original_version(&current.definition, current.record.version)
         != expected_version
+        || unready_retirement_version(&current.definition).is_some()
     {
         return Err(ManagementError::Conflict {
             expected: expected_version,
