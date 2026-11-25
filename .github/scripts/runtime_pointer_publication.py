@@ -53,11 +53,12 @@ def advance(component, selected, publications, history, registry, *, environment
         require(history.position(predecessor["source"]) < selected_position,
                 "Runtime pointer cannot move to an older or conflicting source")
 
-    fence({component: selected})
+    write_request = registry.prepare_runtime_pointer(repository, environment, digest)
     require(registry.runtime_pointer(repository, environment) == current,
             "Runtime pointer changed before publication")
+    fence({component: selected})
     try:
-        registry.write_runtime_pointer(repository, environment, digest)
+        registry.write_runtime_pointer(write_request, digest)
     except (Refusal, OSError, subprocess.SubprocessError):
         if registry.runtime_pointer(repository, environment, settle=True) == digest:
             return True

@@ -1,6 +1,7 @@
 """The selected runtime release requires both a matching pointer and an active cohort."""
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -61,12 +62,12 @@ class PointerDeployTests(unittest.TestCase):
         runner.assert_not_called()
         mask.assert_called_once_with("fixture-package-key")
 
-    def test_new_manager_cohort_prevents_runtime_deployment_receipt(self):
+    def test_partial_manager_replacement_prevents_runtime_deployment_receipt(self):
         receipt = fixture_runtime_receipt()
         receipts = {"runtime": receipt}
         request = private_document(release_set(receipts))
-        first = {"configuration": "a" * 64, "pods": {"b" * 64: 0}}
-        last = {"configuration": "c" * 64, "pods": {"d" * 64: 0}}
+        first = {"configuration": "a" * 64, "pods": {"b" * 64: 0, "c" * 64: 0}}
+        last = {"configuration": "a" * 64, "pods": {"b" * 64: 0, "d" * 64: 0}}
         healthy = {"status": "ready", "runtime_release": {"agent": {"digest": receipt["digest"], "revision": 2}}}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "release.json"
@@ -111,3 +112,27 @@ class PointerDeployTests(unittest.TestCase):
             self.assertEqual(result["request"], sha256(request))
             self.assertEqual(set(result["components"]), {"am", "runtime"})
         self.assertEqual(calls, ["am", "runtime"])
+
+    def test_slow_application_rollout_cannot_renew_pointer_admission(self):
+        receipts = {"am": fixture_receipt(component="am"), "runtime": fixture_runtime_receipt()}
+        request = private_document(release_set(receipts))
+        now = int(time.time())
+
+        def rollout(_script, path, *_args):
+            app_request = document(path.read_text())
+            deploy.write_result(path.with_name("component-result.json"), app_request, {
+                key: {"state": "controller-verified", "reason": "none", "image": row["image"],
+                      "source_sha": row["source_sha"]} for key, row in app_request["components"].items()
+            })
+            return 0
+
+        env = {"CD_RUNTIME_POINTER_PUBLICATION_ENABLED": "true", "CD_RUNTIME_POINTER_TOKEN": "fixture"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "release.json"
+            with patch.object(deploy, "readiness_reader", return_value=Mock(return_value={})), \
+                    patch.object(deploy, "execute") as execute, \
+                    patch("staging_cd_clock.time.time", side_effect=[now, now + 121]):
+                with self.assertRaisesRegex(Refusal, "admission budget expired"):
+                    deploy.run(rollout, Path("controller.py"), path, request, receipts, timestamp(now), "release",
+                               "staging", env, {}, 990, Mock())
+                execute.assert_not_called()

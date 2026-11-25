@@ -55,7 +55,8 @@ def coordinated(runner, script, path, request, receipts, apps, started, env, chi
         return code if code != 50 else 20
     app_result = read_component_result(app_path.with_name("component-result.json"), app_request, code)
     require(app_result is not None, "Coordinated application deployment lacks a serving receipt")
-    execute(script, runtime_path, runtime_request, runtimes, started, env, child_env, limit=limit, admitted=True)
+    remaining(started)
+    execute(script, runtime_path, runtime_request, runtimes, started, env, child_env, limit=limit)
     runtime_result = read_component_result(runtime_path.with_name("component-result.json"), runtime_request, 0)
     require(runtime_result is not None, "Coordinated runtime deployment lacks a serving receipt")
     write_result(path.with_name("component-result.json"), request,
@@ -115,7 +116,8 @@ def readiness_reader(endpoint):
     return read
 
 
-def execute(script, path, request, receipts, started, env, child_env, *, limit, admitted=False):
+def execute(script, path, request, receipts, started, env, child_env, *, limit):
+    remaining(started)
     target = target_name(env)
     deadline = time.monotonic() + remaining(started, limit)
     read_ready = readiness_reader(env.get("CD_RUNTIME_POINTER_READINESS", ""))
@@ -123,10 +125,9 @@ def execute(script, path, request, receipts, started, env, child_env, *, limit, 
                  deadline=deadline)
     registry = Registry(credential=env.get("CD_RUNTIME_POINTER_TOKEN"), actor=env.get("GITHUB_ACTOR"),
                         deadline=deadline)
-    write_limit = limit if admitted else None
     baseline = cohort(script, path, request, path.with_name("pointer-cohort-before.json"), child_env,
-                      min(40, remaining(started, write_limit)), target)
-    ready = read_ready(min(10, remaining(started, write_limit)))
+                      min(40, remaining(started)), target)
+    ready = read_ready(min(10, remaining(started)))
     require(isinstance(ready, dict) and ready.get("status") == "ready"
             and isinstance(ready.get("runtime_release"), dict)
             and all(isinstance(ready["runtime_release"].get(READINESS_LANES[key]), dict)
@@ -136,23 +137,23 @@ def execute(script, path, request, receipts, started, env, child_env, *, limit, 
     history = release_bounds(env, Path.cwd())[1] if target == PRODUCTION else api.history()
 
     def fence(candidates):
-        remaining(started, write_limit)
+        remaining(started)
         if target == PRODUCTION:
-            require(datetime.now(timezone(timedelta(hours=8))).hour != 2,
-                    "Production runtime pointer writes are paused during the release blackout")
             released, current = release_bounds(env, Path.cwd())
             require(released == current.head, "A newer production release owns runtime pointer publication")
             require_released_versions(candidates, current)
+            require(datetime.now(timezone(timedelta(hours=8))).hour != 2,
+                    "Production runtime pointer writes are paused during the release blackout")
         else:
             api.require_current_versions(candidates)
+        remaining(started)
 
     promote(receipts, publications, history, registry, read_ready, environment=target, fence=fence,
             deadline=deadline - 45)
     final = cohort(script, path, request, path.with_name("pointer-cohort-after.json"), child_env,
                    min(40, remaining(started, limit)), target)
-    require(final["configuration"] == baseline["configuration"] and all(
-        count == baseline["pods"][pod] for pod, count in final["pods"].items() if pod in baseline["pods"]
-    ) and any(pod in final["pods"] for pod in baseline["pods"]), "Agent Manager cohort changed during pointer promotion")
+    require(final["configuration"] == baseline["configuration"] and final["pods"] == baseline["pods"],
+            "Agent Manager cohort changed during pointer promotion")
     ready = read_ready(min(10, remaining(started, limit)))
     require(isinstance(ready, dict) and ready.get("status") == "ready"
             and isinstance(ready.get("runtime_release"), dict)

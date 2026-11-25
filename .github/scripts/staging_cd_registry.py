@@ -91,19 +91,21 @@ class Registry:
         result = self._manifest(repository, RUNTIME_POINTER_TAGS[environment], absent=not settle, settle=settle)
         return result[0] if result else None
 
-    def write_runtime_pointer(self, repository, environment, digest):
+    def prepare_runtime_pointer(self, repository, environment, digest):
         require(repository in RUNTIME_REPOSITORIES and environment in RUNTIME_POINTER_TAGS
                 and matches(r"sha256:[0-9a-f]{64}", digest), "Runtime pointer write is invalid")
         require(self.credential is not None, "Runtime pointer writer needs a registry credential")
         manifest = self._manifest(repository, digest, absent=False, settle=False, raw=True)
         _, body, data = manifest
         token = self._token(repository, "pull,push")
-        timeout = ci_retry.attempt_timeout(30, self.deadline, self.retry.get("clock", time.monotonic))
-        require(timeout is not None, "Registry write budget expired")
         url = "https://ghcr.io/v2/" + repository[len("ghcr.io/"):] + "/manifests/" + RUNTIME_POINTER_TAGS[environment]
-        request = urllib.request.Request(url, data=data, method="PUT", headers={
+        return urllib.request.Request(url, data=data, method="PUT", headers={
             "Authorization": "Bearer " + token, "Content-Type": body["mediaType"],
         })
+
+    def write_runtime_pointer(self, request, digest):
+        timeout = ci_retry.attempt_timeout(30, self.deadline, self.retry.get("clock", time.monotonic))
+        require(timeout is not None, "Registry write budget expired")
         with self.opener.open(request, timeout=timeout) as response:
             require(response.status == 201 and response.headers.get("Docker-Content-Digest", digest) == digest,
                     "Registry did not confirm the runtime pointer manifest")

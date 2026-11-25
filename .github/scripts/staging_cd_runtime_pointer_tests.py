@@ -32,7 +32,9 @@ class PointerPublicationTests(unittest.TestCase):
                 self.assertTrue(advance(component, candidate, [fixture_tag(previous), fixture_tag(candidate)],
                                         history, registry, environment="staging", fence=fence))
                 fence.assert_called_once_with({component: candidate})
-                registry.write_runtime_pointer.assert_called_once_with(candidate["repository"], "staging", candidate["digest"])
+                registry.prepare_runtime_pointer.assert_called_once_with(candidate["repository"], "staging", candidate["digest"])
+                registry.write_runtime_pointer.assert_called_once_with(registry.prepare_runtime_pointer.return_value,
+                                                                       candidate["digest"])
                 registry.runtime_pointer.assert_called_with(candidate["repository"], "staging", settle=True)
 
     def test_production_first_publication_and_replay(self):
@@ -45,7 +47,9 @@ class PointerPublicationTests(unittest.TestCase):
         fence = Mock()
         self.assertTrue(advance(*args, environment="production", fence=fence))
         self.assertFalse(advance(*args, environment="production", fence=fence))
-        registry.write_runtime_pointer.assert_called_once_with(candidate["repository"], "production", candidate["digest"])
+        registry.prepare_runtime_pointer.assert_called_once_with(candidate["repository"], "production", candidate["digest"])
+        registry.write_runtime_pointer.assert_called_once_with(registry.prepare_runtime_pointer.return_value,
+                                                               candidate["digest"])
         fence.assert_called_once()
 
     def test_unknown_and_later_predecessors_cannot_be_overwritten(self):
@@ -89,11 +93,32 @@ class PointerPublicationTests(unittest.TestCase):
         registry.manifest.return_value = (candidate["digest"], {})
         history = DevelopHistory(CANDIDATE, [CANDIDATE])
         args = ("runtime", candidate, [fixture_tag(candidate)], history, registry)
-        registry.runtime_pointer.side_effect = [None, None, "sha256:" + "3" * 64]
+        registry.runtime_pointer.side_effect = [None, None, None, "sha256:" + "3" * 64]
         with self.assertRaisesRegex(Refusal, "superseded"):
             advance(*args, environment="staging", fence=Mock(side_effect=Refusal("superseded")))
         with self.assertRaisesRegex(Refusal, "changed before publication"):
             advance(*args, environment="staging", fence=Mock())
+        registry.write_runtime_pointer.assert_not_called()
+
+    def test_blackout_entered_during_registry_preparation_refuses_before_put(self):
+        candidate = release("runtime", CANDIDATE, "2")
+        registry = Mock()
+        registry.manifest.return_value = (candidate["digest"], {})
+        registry.runtime_pointer.return_value = None
+        in_blackout = False
+
+        def prepare(*_args):
+            nonlocal in_blackout
+            in_blackout = True
+
+        def fence(_candidates):
+            if in_blackout:
+                raise Refusal("production blackout")
+
+        registry.prepare_runtime_pointer.side_effect = prepare
+        with self.assertRaisesRegex(Refusal, "production blackout"):
+            advance("runtime", candidate, [fixture_tag(candidate)], DevelopHistory(CANDIDATE, [CANDIDATE]),
+                    registry, environment="production", fence=fence)
         registry.write_runtime_pointer.assert_not_called()
 
     def test_uncertain_copy_uses_the_observed_tag_without_repeating_the_write(self):
@@ -154,7 +179,9 @@ class ActiveRuntimeTests(unittest.TestCase):
                 DevelopHistory(CANDIDATE, [CANDIDATE, OLDER]), registry, read,
                 environment="staging", fence=Mock(), deadline=8, clock=lambda: current[0],
                 sleep=lambda delay: current.__setitem__(0, current[0] + delay))
-        registry.write_runtime_pointer.assert_called_once_with(agent["repository"], "staging", agent["digest"])
+        registry.prepare_runtime_pointer.assert_called_once_with(agent["repository"], "staging", agent["digest"])
+        registry.write_runtime_pointer.assert_called_once_with(registry.prepare_runtime_pointer.return_value,
+                                                               agent["digest"])
         self.assertEqual([call.args for call in read.call_args_list], [(8,), (3,)])
 
     def test_omarchy_is_refused_before_any_production_pointer_write(self):

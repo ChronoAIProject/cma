@@ -85,7 +85,9 @@ class RegistryTests(unittest.TestCase):
                                    self.response(raw, {"Docker-Content-Digest": digest}),
                                    self.response({"token": "push-fixture"}),
                                    contextlib.nullcontext(confirmed)]
-        registry.write_runtime_pointer(repository, "production", digest)
+        prepared = registry.prepare_runtime_pointer(repository, "production", digest)
+        self.assertEqual(opener.open.call_count, 3)
+        registry.write_runtime_pointer(prepared, digest)
         push_token = opener.open.call_args_list[2].args[0]
         self.assertIn("%3Apull%2Cpush", push_token.full_url)
         request = opener.open.call_args.args[0]
@@ -101,7 +103,7 @@ class RegistryTests(unittest.TestCase):
         digest = "sha256:" + "a" * 64
         for environment, reference in (("staging", digest), ("production", "latest"), ("other", digest)):
             with self.subTest(environment=environment, reference=reference), self.assertRaises(Refusal):
-                Registry(opener).write_runtime_pointer(repository, environment, reference)
+                Registry(opener).prepare_runtime_pointer(repository, environment, reference)
         opener.open.assert_not_called()
 
     def test_settle_read_waits_for_a_just_written_tag_and_names_a_lasting_absence(self):
