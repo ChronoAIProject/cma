@@ -30,8 +30,8 @@ class CacheTests(unittest.TestCase):
                     "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "CD_COMPONENT": "eg",
                     "RUNNER_TEMP": str(self.root), "CD_TASKS": json.dumps([{"component": "eg", "mode": "resume"}])}
 
-    def cache(self):
-        return BuildCache(ROOT, self.env, ROOT, "eg")
+    def cache(self, *, day=None):
+        return BuildCache(ROOT, self.env, ROOT, "eg", cache_day=day)
 
     def populate(self, directory, target_member="release/incremental/synthetic/work-products.bin"):
         directory.mkdir()
@@ -248,17 +248,13 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(transfer.call_count, 2)
 
     def test_yesterdays_bundle_seeds_only_incremental_state_after_midnight(self):
-        import staging_cd_build_cache
         tool = bridge()
         yesterday, today = date(2026, 11, 20), date(2026, 11, 21)
-        with patch.object(staging_cd_build_cache, 'identity',
-                          side_effect=lambda root, component: identity(root, component, day=yesterday)):
-            producer = self.cache()
+        producer = self.cache(day=yesterday)
         self.populate(producer.accepted)
         tool.seal(producer.accepted, producer.key.prefix, family=producer.key.family)
-        with patch.object(staging_cd_build_cache, 'identity',
-                          side_effect=lambda root, component: identity(root, component, day=today)):
-            cache = self.cache()
+        cache = self.cache(day=today)
+        self.assertEqual(self.cache(day=producer.cache_day).key, producer.key)
         self.assertEqual(cache.key.family, producer.key.family)
         self.assertNotEqual(cache.key.prefix, producer.key.prefix)
         with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
@@ -499,8 +495,12 @@ class CacheTests(unittest.TestCase):
         self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'", workflow)
         self.assertIn("run: python3 -B .github/scripts/staging_cd_cargo_artifact.py", workflow)
         self.assertIn("CD_CARGO_CACHE_FAMILY: ${{ steps.build-cache.outputs.family }}", workflow)
+        self.assertIn("CD_CARGO_CACHE_PREFIX: ${{ steps.build-cache.outputs.prefix }}", workflow)
         self.assertIn("name: ${{ steps.publication.outputs.build-cache-artifact }}", workflow)
         self.assertIn("path: ${{ steps.build-cache.outputs.directory }}", workflow)
+        self.assertIn("if: steps.cargo-bundle.outcome == 'success'", workflow)
+        self.assertIn("name: ${{ steps.publication.outputs.build-cache-index }}", workflow)
+        self.assertIn("path: ${{ steps.build-cache.outputs.directory }}/manifest.json", workflow)
         self.assertIn('actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd', workflow)
         self.assertIn('core.setSecret(value)', workflow)
         self.assertNotIn('core.info(value)', workflow)

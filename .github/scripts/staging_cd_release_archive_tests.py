@@ -6,15 +6,16 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import staging_cd_publish
 import staging_cd_produce
 
 from staging_cd_build_cargo_keys import CargoKey
 from staging_cd_common import Refusal
-from staging_cd_release_archive import ARCHIVE, MANIFEST, load, path_for, seal
+from staging_cd_release_archive import ARCHIVE, LEGACY_SCHEMA, MANIFEST, load, path_for, seal
 from staging_cd_receipts_tests import fixture_identity, fixture_receipt
 
 
@@ -27,11 +28,28 @@ class ArchiveHandoffTests(unittest.TestCase):
             directory.mkdir()
             archive = directory / ARCHIVE
             archive.write_bytes(b"synthetic OCI archive")
-            seal(directory, identity, "a" * 32)
+            day = date(2026, 11, 25)
+            seal(directory, identity, "a" * 32, day)
             handoff = load(directory, identity)
             self.assertEqual(handoff.path, archive)
             self.assertEqual(handoff.cache_namespace, "a" * 32)
+            self.assertEqual(handoff.cache_day, day)
             self.assertEqual(handoff.sha256, json.loads((directory / MANIFEST).read_text())["archive_sha256"])
+
+    def test_legacy_handoff_has_no_authority_to_reseal_cargo_for_the_publisher_day(self):
+        identity = fixture_identity(component="am")
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / ARCHIVE).write_bytes(b"synthetic OCI archive")
+            seal(directory, identity, "a" * 32, date(2026, 11, 25))
+            manifest = directory / MANIFEST
+            document = json.loads(manifest.read_text())
+            manifest.write_text(json.dumps(dict(document, cache_day="2026-11-31")))
+            with self.assertRaisesRegex(Refusal, "cache identity is malformed"):
+                load(directory, identity)
+            document.pop("cache_day")
+            manifest.write_text(json.dumps(dict(document, schema=LEGACY_SCHEMA)))
+            self.assertIsNone(load(directory, identity).cache_day)
 
     def test_normal_release_consumes_the_prepared_archive_without_rebuilding(self):
         receipt = fixture_receipt(component="am")
@@ -55,12 +73,13 @@ class ArchiveHandoffTests(unittest.TestCase):
             producer_authority = stack.enter_context(patch.object(staging_cd_produce, "Reservations")).return_value
             publisher_authority = stack.enter_context(patch.object(staging_cd_publish, "Reservations")).return_value
             stack.enter_context(patch.object(staging_cd_publish, "Registry"))
-            cache = Mock(key=CargoKey("cma-cd-cargo-v4-am-" + "e" * 64 + "-", "f" * 64),
+            producer_day = date(2026, 11, 25)
+            cache = Mock(key=CargoKey("cma-cd-cargo-v4-am-" + "e" * 64 + "-", "f" * 64), cache_day=producer_day,
                          namespace="a" * 32, restore_result="hit", export_headroom=None, export_retained_groups=None)
             cache.exports_layers.return_value = True
             cache.export_mounts.return_value = True
-            for module in (staging_cd_produce, staging_cd_publish):
-                stack.enter_context(patch.object(module, "BuildCache", return_value=cache))
+            stack.enter_context(patch.object(staging_cd_produce, "BuildCache", return_value=cache))
+            publisher_cache = stack.enter_context(patch.object(staging_cd_publish, "BuildCache", return_value=cache))
             stack.enter_context(patch.object(staging_cd_publish, "identity", return_value=(identity, None, None)))
 
             def build(_root, _reservation, directory, *, progress, **_kwargs):
@@ -80,6 +99,9 @@ class ArchiveHandoffTests(unittest.TestCase):
             self.assertEqual(staging_cd_publish.main(), 0)
             self.assertIn("build-cache-artifact=" + cache.key.family.removesuffix("-") + "\n",
                           (root / "output").read_text())
+            self.assertIn("build-cache-index=graph-" + cache.key.prefix.removesuffix("-") + "\n",
+                          (root / "output").read_text())
+            publisher_cache.assert_called_once_with(root, ANY, ANY, "am", cache_day=producer_day)
             cache.export_mounts.assert_called_once()
             self.assertEqual(output.getvalue().count("CACHE-SAVE cache=build-layers component=am"), 1)
             self.assertIn("result=not-saved reason=read-only", output.getvalue())
