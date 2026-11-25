@@ -281,9 +281,7 @@ it('uses the live sign-out notice when storage has no record and ignores malform
   expect(screen.getByLabelText('sign-out notice')).toHaveTextContent('none');
 
   act(() => {
-    channel.dispatchEvent(
-      new MessageEvent('message', { data: crypto.randomUUID() }),
-    );
+    channel.dispatchEvent(new MessageEvent('message', { data: crypto.randomUUID() }));
   });
   expect(screen.getByText('anonymous')).toBeInTheDocument();
   expect(screen.getByLabelText('sign-out notice')).toHaveTextContent('received');
