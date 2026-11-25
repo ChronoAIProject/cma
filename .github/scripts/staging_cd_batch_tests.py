@@ -7,9 +7,10 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from staging_cd_common import Refusal
+import staging_cd_git_tests as fixtures
 import staging_cd_comparisons as comparisons
 import staging_cd_queue as queue
 
@@ -146,6 +147,44 @@ class BatchBoundaryTests(unittest.TestCase):
         for budget in (0, 2400, True, '60'):
             with self.subTest(budget=budget), self.assertRaises(Refusal):
                 self.invoke(self.rows, budget=budget)
+
+    def test_old_push_reads_current_develop_without_changing_workflow_checkout(self):
+        fixture = fixtures.GitPublicationTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.git('remote', 'add', 'origin', str(fixture.remote))
+        fixture.git('fetch', 'origin')
+        fixture.git('checkout', '--detach', fixture.source)
+        successor = fixture.git('commit-tree', fixture.tree, '-p', fixture.source, data='Successor push')
+        fixture.git('push', str(fixture.remote), successor + ':refs/heads/develop')
+        self.assertEqual(fixture.git('rev-parse', 'origin/develop'), fixture.source)
+        outputs = fixture.root / 'outputs'
+        outputs.touch()
+        env = {'GITHUB_OUTPUT': str(outputs), 'GITHUB_EVENT_NAME': 'push', 'GITHUB_SHA': fixture.source}
+        read_finals = Mock(side_effect=AssertionError('Old pushes do not read release tags'))
+        with patch.dict(queue.os.environ, env), patch.object(queue, 'event_identity'), \
+                patch.object(queue.Path, 'cwd', return_value=fixture.work), \
+                patch.object(queue, 'read_finals', read_finals), redirect_stdout(io.StringIO()):
+            self.assertEqual(queue.main([]), 0)
+        encoded, changed, complete = outputs.read_text().splitlines()
+        self.assertEqual(json.loads(encoded.removeprefix('queue=')),
+                         {'head': successor, 'event_source': fixture.source, 'changes': []})
+        self.assertEqual((changed, complete), ('changed=false', 'complete=true'))
+        self.assertEqual(fixture.git('rev-parse', 'HEAD'), fixture.source)
+        read_finals.assert_not_called()
+
+    def test_failed_develop_fetch_cannot_plan_from_the_checkout_ref(self):
+        with tempfile.TemporaryDirectory() as directory:
+            outputs = Path(directory) / 'outputs'
+            outputs.touch()
+            env = {'GITHUB_OUTPUT': str(outputs), 'GITHUB_EVENT_NAME': 'push', 'GITHUB_SHA': self.second}
+            with patch.dict(queue.os.environ, env), patch.object(queue, 'event_identity'), \
+                    patch.object(queue, 'git', side_effect=Refusal('Fixture fetch failed')) as git, \
+                    patch.object(queue, 'release_queue') as plan, redirect_stdout(io.StringIO()):
+                self.assertEqual(queue.main([]), 1)
+            self.assertEqual(git.call_args.args[1], 'fetch')
+            plan.assert_not_called()
+            self.assertEqual(outputs.read_text(), '')
 
     def test_stopped_plan_saves_progress_then_the_gate_fails_with_the_catalogued_reason(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -11,6 +11,23 @@ LEVELS = {"version-upgrade:" + level: level for level in ("major", "minor", "pat
 BASE_VERSION = "0.10.0"
 REPOSITORY = "ChronoAIProject/cma"
 SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+RETIRED_SOURCE = "730c1bfcb804e86531e838f84bd2133013a6f4a2"
+RETIRED_SOURCES = frozenset({("runtime", RETIRED_SOURCE), ("runtime-desktop", RETIRED_SOURCE)})
+BURNED_VERSIONS = {component: "0.10.1" for component, _ in RETIRED_SOURCES}
+
+
+def version_floor(component):
+    return BURNED_VERSIONS.get(component, BASE_VERSION)
+
+
+def require_publishable_source(component, source):
+    require((component, source) not in RETIRED_SOURCES, "Retired source cannot be published")
+
+
+def require_publishable_release(identity):
+    component = identity["component"]
+    require_publishable_source(component, identity["source"])
+    require(identity["version"] != BURNED_VERSIONS.get(component), "Burned release version cannot be reused")
 
 
 @dataclass(frozen=True)
@@ -88,10 +105,11 @@ def merged_pr_level(revision, request):
 def plan_version(component, level, tags, source_revision):
     require(component in DEPLOYABLES and matches(r"[0-9a-f]{40}", source_revision),
             "Deployable or source revision is invalid")
+    require_publishable_source(component, source_revision)
     require(isinstance(tags, list), "Version tag inventory is malformed")
     deployable = DEPLOYABLES[component]
     prefix = deployable + "/v"
-    highest, seen, published = BASE_VERSION, set(), []
+    highest, seen, published = version_floor(component), set(), []
     for tag in tags:
         require(isinstance(tag, dict) and isinstance(tag.get("name"), str), "Version tag inventory is malformed")
         if not tag["name"].startswith(prefix):
@@ -107,6 +125,7 @@ def plan_version(component, level, tags, source_revision):
             # import keeps semver/identity rules independent of persistence.
             from staging_cd_receipts import validate_receipt
             receipt = validate_receipt(tag.get("receipt"))
+            require_publishable_release(receipt["identity"])
             require(receipt["tag"] == name and receipt["source"] == source_revision,
                     "Existing version receipt differs from its tag")
             published.append(VersionPlan(component, current, name, receipt["repository"], receipt))
