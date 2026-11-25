@@ -91,10 +91,13 @@ impl RetirementRevocationWorker {
             if !matches!(&claim.issuance.identity, IssuanceIdentity::Prepared { provider_identity, .. } if provider_identity == &provider) {
                 return Ok(false);
             }
-            let Some(token) = self.owner_tokens.exact_token(&claim.owner_authority).await else {
+            let Some(admission) = self.custody.admit_retirement_revocation(&claim, &provider).await? else {
                 return Ok(false);
             };
-            let Some(admission) = self.custody.admit_retirement_revocation(&claim, &provider).await? else {
+            if !self.custody.retirement_revocation_admission_current(&admission).await? {
+                return Ok(false);
+            }
+            let Some(token) = self.owner_tokens.exact_token(&claim.owner_authority).await else {
                 return Ok(false);
             };
             if !self.custody.retirement_revocation_admission_current(&admission).await? {

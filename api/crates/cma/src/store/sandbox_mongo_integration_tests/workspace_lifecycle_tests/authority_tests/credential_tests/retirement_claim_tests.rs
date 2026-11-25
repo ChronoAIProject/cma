@@ -688,7 +688,10 @@ async fn independent_retirement_effect_worker_requires_retained_authority_and_ex
         }
         let observed = records.find_one(filter.clone()).await.unwrap().unwrap();
         let marker = observed.get_document("retirement_custody").unwrap();
-        assert_eq!(marker.contains_key("revocation_dispatch"), dispatches);
+        assert_eq!(
+            marker.contains_key("revocation_dispatch"),
+            dispatches || case == "missing_authority"
+        );
         assert_eq!(
             marker.contains_key("revocation_observation"),
             case == "confirmed"
@@ -763,6 +766,75 @@ async fn independent_retirement_effect_worker_requires_retained_authority_and_ex
             } else {
                 usize::from(dispatches)
             }
+        );
+        f.cleanup().await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn independent_retirement_effect_erasure_precedes_real_owner_resolution() {
+    use crate::auth::RetirementErasureAuthorityFixture;
+    use crate::sandbox::retirement_revocation::RetirementRevocationWorker;
+    use crate::store::account_deletions::MongoAccountDeletionStore;
+    use layer2_core::account_deletion::AccountDeletionStore;
+
+    for api in [false, true] {
+        let authority = RetirementErasureAuthorityFixture::new(api).await;
+        let mut f =
+            Fixture::new_with_runtime("retirement_erasure_before_resolver", true, true).await;
+        f.controller = ManagedSandboxCredentials::new(
+            f.issuer.clone(),
+            Arc::new(ExactTokens),
+            f.custody.clone(),
+        );
+        let issuing = f.issue(1);
+        let mint = f.prepare().await;
+        let (_worker, _) = retirement_fixture::begin(&f).await;
+        let (worker, _) = retirement_fixture::native_custody_worker(&f, true, true);
+        assert!(worker
+            .run_one(&f.claim.id, SystemTime::now())
+            .await
+            .unwrap());
+        accepted(mint);
+        assert!(matches!(
+            issuing.await.unwrap().unwrap(),
+            Err(CredentialError::Uncertain)
+        ));
+        let database = f.client.database(&f.name);
+        let records = database.collection::<Document>("sandbox_credential_issuance");
+        let filter = doc! {"_id":f.claim.id.as_str()};
+        // Install a matching, genuinely retained login or API consent in the
+        // synthetic marker. Effect admission is independent of the parent.
+        let selector = mongodb::bson::serialize_to_bson(&authority.selector).unwrap();
+        records.update_one(filter.clone(), doc! {"$set":{"issuance_owner_authority":&selector,"retirement_custody.owner_authority":&selector}}).await.unwrap();
+        let deletions = MongoAccountDeletionStore::open(&database).await.unwrap();
+        deletions
+            .request(&f.claim.owner, "erasure-before-retained-resolution", &at(0))
+            .await
+            .unwrap();
+        let independent = independent_custody(&f).await;
+        let revoker = RetirementRevocationWorker::new(
+            independent.clone(),
+            f.issuer.clone(),
+            authority.auth(),
+            "erasure-fenced-revoker".into(),
+        );
+        assert!(revoker.run_one().await.unwrap());
+        authority.assert_unchanged().await;
+        let row = records.find_one(filter).await.unwrap().unwrap();
+        let marker = row.get_document("retirement_custody").unwrap();
+        assert!(!marker.contains_key("revocation_dispatch"));
+        assert!(!marker.contains_key("revocation_observation"));
+        assert!(marker.contains_key("retry_at"));
+        assert_eq!(
+            independent.issuance(&f.claim).await.unwrap().unwrap().state,
+            IssuanceState::Unknown
+        );
+        assert_eq!(
+            f.peer
+                .count_route("DELETE", "/api/v1/api-keys/fixture-provider-key"),
+            0
         );
         f.cleanup().await;
     }

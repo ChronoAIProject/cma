@@ -226,3 +226,32 @@ async fn retirement_key_revocation_requires_exact_synchronous_success() {
         assert_eq!(peer.count(), 1);
     }
 }
+
+#[tokio::test]
+async fn retirement_key_path_preserves_literal_ids_and_refuses_dot_segments() {
+    let mut peer = Peer::start().await;
+    let issuer = issuer(&peer.origin);
+    for id in [".", ".."] {
+        assert!(matches!(
+            issuer.revoke(id, "contract-owner-bearer").await,
+            Err(KeyIssuerError::UnexpectedAuthority)
+        ));
+        assert!(matches!(
+            issuer
+                .revoke_retirement_key(id, "contract-owner-bearer")
+                .await,
+            Err(KeyIssuerError::UnexpectedAuthority)
+        ));
+    }
+    assert_eq!(peer.count(), 0);
+    let task = tokio::spawn(async move {
+        issuer
+            .revoke_retirement_key("fixture..key", "contract-owner-bearer")
+            .await
+    });
+    let request = peer.next().await;
+    assert_eq!(request.uri.path(), "/api/v1/api-keys/fixture..key");
+    request.respond(200, "fixture response");
+    assert!(finish(task).await.is_ok());
+    assert_eq!(peer.count(), 1);
+}

@@ -20,6 +20,8 @@ mod browser_login;
 mod browser_origins;
 mod browser_session;
 mod cookie_authorization;
+#[cfg(test)]
+pub(crate) use cookie_authorization::RetirementErasureAuthorityFixture;
 mod creation_outcomes;
 pub mod deferred_commands;
 mod desktop;

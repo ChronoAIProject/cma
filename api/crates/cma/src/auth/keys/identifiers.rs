@@ -11,7 +11,10 @@ pub(super) fn validate_credential_id(value: &str) -> Result<(), KeyIssuerError> 
 }
 
 pub(crate) fn valid_provider_key_id(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 256 && valid_identifier_bytes(value)
+    !value.is_empty()
+        && value.len() <= 256
+        && !matches!(value, "." | "..")
+        && valid_identifier_bytes(value)
 }
 
 pub(super) fn key_name(deployment: &str, credential_id: &str) -> Result<String, KeyIssuerError> {
@@ -32,4 +35,18 @@ fn valid_identifier_bytes(value: &str) -> bool {
     value
         .bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_provider_key_id;
+
+    #[test]
+    fn provider_key_path_segment_excludes_reserved_whole_dot_segments() {
+        assert!(!valid_provider_key_id("."));
+        assert!(!valid_provider_key_id(".."));
+        for id in ["a.b", "name..id", ".leading", "trailing.", "fixture-key_1"] {
+            assert!(valid_provider_key_id(id));
+        }
+    }
 }
