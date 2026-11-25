@@ -193,5 +193,9 @@ pub(super) fn applied(target: &PoolTarget, success: bool) {
     }
 }
 
+pub(crate) fn startup(outcome: &'static str) {
+    metrics::counter!("cma_warm_pool_startup_total", "outcome" => outcome).increment(1);
+}
+
 #[cfg(test)]
 mod tests;
