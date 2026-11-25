@@ -80,11 +80,13 @@ struct ProxyDns;
 impl Resolve for ProxyDns {
     fn resolve(&self, name: Name) -> Resolving {
         Box::pin(async move {
-            let addresses =
-                tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host((name.as_str(), 0)))
-                    .await
-                    .map_err(|_| DnsFailure)?
-                    .map_err(|_| DnsFailure)?;
+            let addresses = tokio::time::timeout(
+                DNS_TIMEOUT,
+                tokio::net::lookup_host((name.as_str().to_owned(), 0)),
+            )
+            .await
+            .map_err(|_| DnsFailure)?
+            .map_err(|_| DnsFailure)?;
             Ok(Box::new(addresses) as Addrs)
         })
     }
@@ -159,4 +161,54 @@ pub(super) fn failure(
         })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn transport_errors_distinguish_dns_and_connection_refusal() {
+        struct FailedLookup;
+
+        impl Resolve for FailedLookup {
+            fn resolve(&self, _name: Name) -> Resolving {
+                Box::pin(async {
+                    Err(Box::new(DnsFailure) as Box<dyn std::error::Error + Send + Sync>)
+                })
+            }
+        }
+
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .dns_resolver(Arc::new(FailedLookup))
+            .build()
+            .unwrap();
+        let dns = client
+            .post("http://github-proxy-fixture.invalid/write")
+            .send()
+            .await
+            .unwrap_err();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let connect = client
+            .post(format!("http://{address}/write"))
+            .send()
+            .await
+            .unwrap_err();
+
+        for (error, code) in [(dns, "github_proxy_dns"), (connect, "github_proxy_connect")] {
+            let response = transport_error(&error, None, Some(1));
+            assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let problem: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(problem["code"], code);
+            assert_eq!(problem["retryable"], true);
+            assert_eq!(problem["connection_id"], serde_json::Value::Null);
+            assert!(!problem["message"].as_str().unwrap().contains(".invalid"));
+        }
+    }
 }
