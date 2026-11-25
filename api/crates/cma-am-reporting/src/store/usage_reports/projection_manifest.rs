@@ -276,7 +276,7 @@ impl ProjectionManifest {
 
     pub fn allocation_order(&self, metric: i64) -> Result<&[Bson]> {
         self.allocations
-            .get_array(&metric.to_string())
+            .get_array(metric.to_string())
             .map(Vec::as_slice)
             .map_err(unavailable)
     }
@@ -309,7 +309,8 @@ mod tests {
         stored.extend(original.clone());
         let raw = RawDocumentBuf::try_from(&original).unwrap();
         let manifest =
-            ProjectionManifest::build(1, &[raw.clone()], raw.as_bytes().len() as i64).unwrap();
+            ProjectionManifest::build(1, std::slice::from_ref(&raw), raw.as_bytes().len() as i64)
+                .unwrap();
         let parsed = ProjectionManifest::parse(1, &manifest).unwrap();
         assert!(parsed.has_family("chart_total"));
         parsed
