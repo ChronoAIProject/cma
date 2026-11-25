@@ -7,6 +7,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use cmaeg_core::{
     channel::{ChannelDefinition, ChannelMutation, ChannelMutationKind},
     ids::ChannelId,
+    seal::seal_blob,
     ValidationError,
 };
 
@@ -72,16 +73,24 @@ pub(crate) async fn retire_unready(
                 actual: Some(version),
             });
         }
-        None => ChannelMutation {
-            nonce: uuid::Uuid::new_v4().to_string(),
-            operation_id: uuid::Uuid::new_v4().to_string(),
-            operation: ChannelMutationKind::Delete,
-            original_version: version,
-            fingerprint: String::new(),
-            intended: STANDARD.encode(seal_definition(&state.master_keys, &definition)?),
-            completed: Vec::new(),
-            effect: None,
-        },
+        None => {
+            // The enclosing record retains the entire target. This hold has
+            // no dispatchable provider step and commits to that target by digest.
+            let target = super::mutation::fingerprint(&definition);
+            let intended = seal_blob(&state.master_keys, target.as_bytes()).map_err(|_| {
+                ManagementError::Internal("retirement target cannot be sealed".into())
+            })?;
+            ChannelMutation {
+                nonce: uuid::Uuid::new_v4().to_string(),
+                operation_id: uuid::Uuid::new_v4().to_string(),
+                operation: ChannelMutationKind::Delete,
+                original_version: version,
+                fingerprint: String::new(),
+                intended: STANDARD.encode(intended),
+                completed: Vec::new(),
+                effect: None,
+            }
+        }
     };
     // Store the original provider effect and target. Change the operation so
     // readers reject activation even when their local custody switch is off.

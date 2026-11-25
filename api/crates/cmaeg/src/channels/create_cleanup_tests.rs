@@ -279,6 +279,44 @@ async fn incomplete_channel_can_retire_after_its_provider_credential_is_lost() {
 }
 
 #[tokio::test]
+async fn retirement_preserves_an_incomplete_channel_with_a_maximum_length_prompt() {
+    let fixture = Fixture::new(false, false).await;
+    let state = fixture.state().await;
+    let creator = owner("alice", false);
+    let mut body = fixture.body();
+    let record_id = RecordId::new(body["record_id"].as_str().unwrap()).unwrap();
+    let prompt = "x".repeat(cmaeg_core::profile::MAX_SYSTEM_PROMPT_BYTES);
+    body["profile"]["context"]["system_prompt"] = prompt.clone().into();
+    *fixture.peer.refuse_bind.lock().unwrap() = Some(StatusCode::BAD_REQUEST);
+    assert!(
+        management::create(&state, &creator, serde_json::from_value(body).unwrap())
+            .await
+            .is_err()
+    );
+    let pending = super::creation::load_record(&state, &creator, &record_id)
+        .await
+        .unwrap();
+    assert_eq!(pending.definition.profile.context.system_prompt, prompt);
+    management::retire_unready(
+        &state,
+        &creator,
+        &pending.channel_id,
+        pending.record.version,
+    )
+    .await
+    .unwrap();
+    let retired = management::load(&state, &creator, &pending.channel_id)
+        .await
+        .unwrap();
+    assert_eq!(retired.definition.profile.context.system_prompt, prompt);
+    assert_eq!(
+        management::unready_retirement_version(&retired.definition),
+        Some(pending.record.version)
+    );
+    assert_eq!(fixture.peer.calls.lock().unwrap().as_slice(), ["PUT"]);
+}
+
+#[tokio::test]
 async fn bind_started_before_retirement_cannot_publish_readiness() {
     for (custody, mixed_custody) in [(false, false), (true, false), (false, true)] {
         let fixture = Fixture::new(false, custody).await;
