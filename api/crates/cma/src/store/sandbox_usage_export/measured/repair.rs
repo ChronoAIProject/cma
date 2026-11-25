@@ -78,6 +78,12 @@ impl CaptureStore {
                     .session(&mut *session).await.map_err(Driver)?.ok_or_else(|| Domain(corrupt()))?;
                 if row.get_bool("complete").map_err(|_| Domain(corrupt()))? { return Ok(true); }
                 store.fence_measured(session,lease).await?;
+                // A repair recomputes retained evidence without a fresh source read.
+                // Keep the request pending while an authoritative refresh hold exists.
+                if store.collection(INVENTORY).find_one(doc! {"_id":keys::id(&keys::hold(&lease.stream.id, publication.manifest.input.minute))})
+                    .session(&mut *session).await.map_err(Driver)?.is_some() {
+                    return Ok(false);
+                }
                 store.publish_fenced(session,lease,publication,"algorithm_correction",false).await?;
                 let matched = store.collection(INVENTORY).update_one(doc! {"_id":keys::id(key),"complete":false},
                     doc! {"$set":{"complete":true,"result_manifest":&publication.digest}})

@@ -169,6 +169,24 @@ async fn rebuild_due(f: &Fixture) {
     f.store.rebuild_measured_completeness().await.unwrap();
 }
 
+async fn assert_retained_refresh_hold(f: &Fixture, original: &FactHead, outbox: &[Document]) {
+    assert_eq!(super::refresh::head(f).await, *original);
+    assert_eq!(f.rows(OUTBOX).await, outbox);
+    let lease = f.lease().await;
+    let hold = f
+        .store
+        .collection(INVENTORY)
+        .find_one(doc! { "_id":keys::id(&keys::hold(&lease.stream.id, f.minute)) })
+        .await
+        .unwrap()
+        .unwrap();
+    f.store.release_measured(&lease).await.unwrap();
+    assert_eq!(
+        hold.get_str("reason").unwrap(),
+        "refresh_source_unavailable"
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn completeness_pending_rebuild_respects_current_refresh_hold() {
@@ -180,6 +198,18 @@ async fn completeness_pending_rebuild_respects_current_refresh_hold() {
     let source = Source::new(&f).await;
     assert!(source.run(&f).await);
     let original = head(&f).await;
+    let repair = super::super::repair::MeasuredRepair {
+        source_stream: f.stream.id.clone(),
+        minute: f.minute,
+        evidence_digest: original.evidence_id.clone(),
+        predecessor_event: original.event_id.clone(),
+    };
+    // The production repair CLI opens the store with emission disabled.
+    let mut repair_config = f.store.config.clone();
+    repair_config.completeness_enabled = false;
+    let repair_store = CaptureStore::open(&f.store.client, f.db.name(), repair_config)
+        .await
+        .unwrap();
     assert!(current_statement(&f).await.is_none());
 
     retry(&f).await;
@@ -191,6 +221,11 @@ async fn completeness_pending_rebuild_respects_current_refresh_hold() {
     rebuild_due(&f).await;
     assert!(current_statement(&f).await.is_none());
     assert_eq!(head(&f).await, original);
+    let retained = f.rows(OUTBOX).await;
+    assert!(!repair_store.repair_measured(&repair, true).await.unwrap());
+    assert!(!f.store.repair_measured(&repair, true).await.unwrap());
+    assert!(current_statement(&f).await.is_none());
+    assert_retained_refresh_hold(&f, &original, &retained).await;
 
     // A fresh complete refresh can clear the authoritative hold without
     // changing the retained fact head.
@@ -230,6 +265,9 @@ async fn completeness_pending_rebuild_respects_current_refresh_hold() {
         Some("refresh_source_unavailable")
     );
 
+    assert!(!repair_store.repair_measured(&repair, true).await.unwrap());
+    assert!(!f.store.repair_measured(&repair, true).await.unwrap());
+    assert_retained_refresh_hold(&f, &original, &retained).await;
     rebuild_due(&f).await;
     let after_rebuild = current_statement(&f).await.unwrap();
     assert_eq!(after_rebuild.revision, held.revision);
@@ -242,6 +280,13 @@ async fn completeness_pending_rebuild_respects_current_refresh_hold() {
     let recovered = current_statement(&f).await.unwrap();
     assert_eq!(recovered.revision.0, held.revision.0 + 1);
     assert!(recovered.producer_hold.is_none());
+    assert_eq!(head(&f).await, original);
+    assert!(repair_store.repair_measured(&repair, true).await.unwrap());
+    assert!(repair_store.repair_measured(&repair, true).await.unwrap());
+    assert_eq!(
+        current_statement(&f).await.unwrap().revision,
+        recovered.revision
+    );
     assert_eq!(head(&f).await, original);
     assert_eq!(
         f.store
