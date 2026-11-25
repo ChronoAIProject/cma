@@ -32,6 +32,7 @@ describe('channel record management', () => {
       address: { state: 'not_recorded' },
       retirement: { expected_version: 3, state: 'cleanup_unconfirmed' },
     },
+    { ...valid, creation: 'legacy', address: { state: 'not_recorded' }, retirement: null },
     { ...valid, creation: 'incomplete', address: { state: 'unverifiable' } },
     { ...valid, pending_operation: null },
     ...['create', 'update', 'delete', 'audit_routing', 'audit_attachments'].map(
