@@ -39,6 +39,7 @@ impl RoutedIngress {
         {
             Some(plan) => plan,
             None => {
+                validate_legacy_command(request)?;
                 if !self.admission_enabled || !self.schedule.accepting() {
                     return Err(Problem::new(
                         ProblemCode::ProviderUnavailable,

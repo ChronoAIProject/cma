@@ -26,6 +26,24 @@ fn enabled(setup: &mut Setup) -> Arc<Queue> {
         .plans = setup.server.store().with_admission_queue(queue.clone());
     queue
 }
+
+#[tokio::test]
+async fn command_refusal_precedes_every_new_default_dispatch() {
+    let request = fixture::request(|_| {}, fixture::message("/to absent-fixture hello"));
+    for (selected, replicated) in [(false, false), (false, true), (true, false), (true, true)] {
+        let mut setup = Setup::new(&request, selected).await;
+        if replicated {
+            enabled(&mut setup);
+        }
+        assert!(matches!(
+            setup.launch(request.clone(), b"wire", true).await,
+            LaunchOutcome::Refused(Problem { status: 403, detail: Some(detail), .. })
+                if detail == "target_unknown"
+        ));
+        assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), 0);
+        assert_eq!(setup.legacy.0.load(Ordering::SeqCst), 0);
+    }
+}
 async fn one(setup: &Setup) -> AdmittedPlan {
     let page = setup
         .server
